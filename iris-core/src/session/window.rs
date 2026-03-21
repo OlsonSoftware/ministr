@@ -1,0 +1,380 @@
+//! Context window estimation model.
+//!
+//! The [`WindowEstimator`] tracks cumulative tokens delivered to an agent and
+//! models how the agent's context window fills up. It supports configurable
+//! eviction assumptions (FIFO or LRU) to estimate which previously-delivered
+//! content may have been dropped from the agent's working context.
+
+use std::collections::VecDeque;
+
+use serde::{Deserialize, Serialize};
+
+use super::types::EvictionPolicy;
+
+/// A record of a single delivery in the window estimator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WindowEntry {
+    /// Identifier for the delivered content.
+    content_id: String,
+    /// Token cost of this delivery.
+    token_count: usize,
+    /// Monotonic sequence number for ordering.
+    sequence: u64,
+}
+
+/// Estimates the agent's context window usage based on delivered content.
+///
+/// Maintains an ordered queue of deliveries and tracks cumulative token usage.
+/// When the estimated usage exceeds the window capacity, entries are evicted
+/// according to the configured [`EvictionPolicy`].
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::session::{WindowEstimator, EvictionPolicy};
+///
+/// let mut estimator = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+///
+/// estimator.record("s1", 300);
+/// estimator.record("s2", 400);
+/// assert_eq!(estimator.estimated_used(), 700);
+/// assert_eq!(estimator.estimated_remaining(), 300);
+///
+/// // Recording more content causes FIFO eviction of oldest
+/// estimator.record("s3", 500);
+/// assert!(estimator.estimated_used() <= 1000);
+/// ```
+pub struct WindowEstimator {
+    /// Maximum context window capacity in tokens.
+    capacity: usize,
+    /// Eviction policy to apply when capacity is exceeded.
+    policy: EvictionPolicy,
+    /// Ordered queue of deliveries (front = oldest).
+    entries: VecDeque<WindowEntry>,
+    /// Current total token count in the estimated window.
+    current_tokens: usize,
+    /// Monotonic sequence counter.
+    next_sequence: u64,
+    /// Content IDs that have been evicted from the estimated window.
+    evicted: Vec<String>,
+}
+
+/// Summary of the estimated window state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowStatus {
+    /// Total capacity in tokens.
+    pub capacity: usize,
+    /// Estimated tokens currently in the window.
+    pub used: usize,
+    /// Estimated tokens remaining.
+    pub remaining: usize,
+    /// Number of active entries in the window.
+    pub entry_count: usize,
+    /// Total entries evicted since session start.
+    pub evicted_count: usize,
+}
+
+impl WindowEstimator {
+    /// Create a new window estimator with the given capacity and eviction policy.
+    #[must_use]
+    pub fn new(capacity: usize, policy: EvictionPolicy) -> Self {
+        Self {
+            capacity,
+            policy,
+            entries: VecDeque::new(),
+            current_tokens: 0,
+            next_sequence: 0,
+            evicted: Vec::new(),
+        }
+    }
+
+    /// Record a content delivery in the window model.
+    ///
+    /// If the new delivery would push total tokens over capacity, existing
+    /// entries are evicted according to the eviction policy until there is
+    /// room or the queue is empty.
+    pub fn record(&mut self, content_id: &str, token_count: usize) {
+        // If this content was already delivered, remove the old entry first
+        if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id) {
+            if let Some(old) = self.entries.remove(pos) {
+                self.current_tokens = self.current_tokens.saturating_sub(old.token_count);
+            }
+        }
+
+        let entry = WindowEntry {
+            content_id: content_id.to_string(),
+            token_count,
+            sequence: self.next_sequence,
+        };
+        self.next_sequence += 1;
+
+        self.current_tokens += token_count;
+        self.entries.push_back(entry);
+
+        // Evict until we're within capacity
+        self.evict_to_capacity();
+    }
+
+    /// Mark a content ID as recently accessed (LRU only).
+    ///
+    /// Moves the entry to the back of the queue so it won't be evicted soon.
+    /// No-op under FIFO policy.
+    pub fn touch(&mut self, content_id: &str) {
+        if self.policy != EvictionPolicy::Lru {
+            return;
+        }
+
+        if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id) {
+            if let Some(mut entry) = self.entries.remove(pos) {
+                entry.sequence = self.next_sequence;
+                self.next_sequence += 1;
+                self.entries.push_back(entry);
+            }
+        }
+    }
+
+    /// Estimated tokens currently in the agent's context window.
+    #[must_use]
+    pub fn estimated_used(&self) -> usize {
+        self.current_tokens
+    }
+
+    /// Estimated tokens remaining in the agent's context window.
+    #[must_use]
+    pub fn estimated_remaining(&self) -> usize {
+        self.capacity.saturating_sub(self.current_tokens)
+    }
+
+    /// The window capacity in tokens.
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Whether the window is at or over capacity.
+    #[must_use]
+    pub fn is_full(&self) -> bool {
+        self.current_tokens >= self.capacity
+    }
+
+    /// Get a snapshot of the current window state.
+    #[must_use]
+    pub fn status(&self) -> WindowStatus {
+        WindowStatus {
+            capacity: self.capacity,
+            used: self.current_tokens,
+            remaining: self.estimated_remaining(),
+            entry_count: self.entries.len(),
+            evicted_count: self.evicted.len(),
+        }
+    }
+
+    /// Content IDs that have been evicted from the estimated window.
+    #[must_use]
+    pub fn evicted_ids(&self) -> &[String] {
+        &self.evicted
+    }
+
+    /// Check whether a content ID is currently in the estimated window.
+    #[must_use]
+    pub fn is_in_window(&self, content_id: &str) -> bool {
+        self.entries.iter().any(|e| e.content_id == content_id)
+    }
+
+    /// Evict entries from the front of the queue until we're within capacity.
+    fn evict_to_capacity(&mut self) {
+        while self.current_tokens > self.capacity {
+            if let Some(evicted) = self.entries.pop_front() {
+                self.current_tokens = self.current_tokens.saturating_sub(evicted.token_count);
+                self.evicted.push(evicted.content_id);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_estimator_is_empty() {
+        let est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        assert_eq!(est.estimated_used(), 0);
+        assert_eq!(est.estimated_remaining(), 1000);
+        assert_eq!(est.capacity(), 1000);
+        assert!(!est.is_full());
+        assert!(est.evicted_ids().is_empty());
+    }
+
+    #[test]
+    fn record_tracks_tokens() {
+        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+
+        est.record("s1", 300);
+        assert_eq!(est.estimated_used(), 300);
+        assert_eq!(est.estimated_remaining(), 700);
+
+        est.record("s2", 400);
+        assert_eq!(est.estimated_used(), 700);
+        assert_eq!(est.estimated_remaining(), 300);
+    }
+
+    #[test]
+    fn fifo_eviction_when_over_capacity() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+
+        est.record("s1", 200);
+        est.record("s2", 200);
+        // Now at 400/500
+
+        est.record("s3", 300);
+        // Would be 700 > 500, so s1 (200) gets evicted -> 500
+
+        assert!(!est.is_in_window("s1"));
+        assert!(est.is_in_window("s2"));
+        assert!(est.is_in_window("s3"));
+        assert_eq!(est.estimated_used(), 500);
+        assert_eq!(est.evicted_ids(), &["s1"]);
+    }
+
+    #[test]
+    fn fifo_evicts_multiple_entries() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+
+        est.record("s1", 100);
+        est.record("s2", 100);
+        est.record("s3", 100);
+        // At 300/500
+
+        est.record("s4", 400);
+        // Would be 700 > 500, need to evict s1 (100) -> 600 > 500, evict s2 (100) -> 500
+
+        assert!(!est.is_in_window("s1"));
+        assert!(!est.is_in_window("s2"));
+        assert!(est.is_in_window("s3"));
+        assert!(est.is_in_window("s4"));
+        assert_eq!(est.estimated_used(), 500);
+        assert_eq!(est.evicted_ids(), &["s1", "s2"]);
+    }
+
+    #[test]
+    fn lru_touch_prevents_eviction() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Lru);
+
+        est.record("s1", 200);
+        est.record("s2", 200);
+        // At 400/500
+
+        // Touch s1, making s2 the LRU candidate
+        est.touch("s1");
+
+        est.record("s3", 300);
+        // Would be 700 > 500, evict LRU (front of queue) = s2
+
+        assert!(est.is_in_window("s1"), "s1 was touched, should survive");
+        assert!(!est.is_in_window("s2"), "s2 was LRU, should be evicted");
+        assert!(est.is_in_window("s3"));
+        assert_eq!(est.evicted_ids(), &["s2"]);
+    }
+
+    #[test]
+    fn touch_is_noop_for_fifo() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+
+        est.record("s1", 200);
+        est.record("s2", 200);
+        est.touch("s1"); // Should do nothing for FIFO
+
+        est.record("s3", 300);
+        // FIFO evicts s1 first regardless of touch
+
+        assert!(!est.is_in_window("s1"));
+        assert!(est.is_in_window("s2"));
+    }
+
+    #[test]
+    fn re_recording_updates_existing_entry() {
+        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+
+        est.record("s1", 300);
+        est.record("s2", 200);
+        assert_eq!(est.estimated_used(), 500);
+
+        // Re-record s1 with different token count
+        est.record("s1", 150);
+        assert_eq!(est.estimated_used(), 350); // 200 + 150
+        assert!(est.is_in_window("s1"));
+    }
+
+    #[test]
+    fn status_snapshot() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        est.record("s1", 200);
+        est.record("s2", 200);
+
+        let status = est.status();
+        assert_eq!(status.capacity, 500);
+        assert_eq!(status.used, 400);
+        assert_eq!(status.remaining, 100);
+        assert_eq!(status.entry_count, 2);
+        assert_eq!(status.evicted_count, 0);
+    }
+
+    #[test]
+    fn status_after_eviction() {
+        let mut est = WindowEstimator::new(300, EvictionPolicy::Fifo);
+        est.record("s1", 200);
+        est.record("s2", 200);
+
+        let status = est.status();
+        assert_eq!(status.used, 200);
+        assert_eq!(status.entry_count, 1);
+        assert_eq!(status.evicted_count, 1);
+    }
+
+    #[test]
+    fn is_in_window_for_absent_content() {
+        let est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        assert!(!est.is_in_window("nonexistent"));
+    }
+
+    #[test]
+    fn large_single_entry_evicts_everything() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        est.record("s1", 100);
+        est.record("s2", 100);
+
+        // This single entry exceeds capacity. Eviction removes s1, s2,
+        // then "big" itself since 600 > 500 — the window ends up empty.
+        est.record("big", 600);
+        assert!(!est.is_in_window("s1"));
+        assert!(!est.is_in_window("s2"));
+        assert!(!est.is_in_window("big"));
+        assert_eq!(est.estimated_used(), 0);
+        assert_eq!(est.evicted_ids(), &["s1", "s2", "big"]);
+    }
+
+    #[test]
+    fn touch_nonexistent_is_noop() {
+        let mut est = WindowEstimator::new(1000, EvictionPolicy::Lru);
+        est.record("s1", 100);
+        est.touch("nonexistent"); // Should not panic
+        assert_eq!(est.estimated_used(), 100);
+    }
+
+    #[test]
+    fn window_status_serializes() {
+        let status = WindowStatus {
+            capacity: 1000,
+            used: 500,
+            remaining: 500,
+            entry_count: 3,
+            evicted_count: 1,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let back: WindowStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, status);
+    }
+}

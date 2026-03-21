@@ -139,16 +139,16 @@ phases:
 - id: P5
   name: Session Shadow & Budget Management
   tagline: Track what the agent has, estimate what it lost, manage the budget
-  status: pending
+  status: in_progress
   problem: No existing retrieval system knows what context the agent already has. Without session state, iris would re-deliver identical content every turn — the worst possible use of scarce context window tokens
   solution: Implement the session shadow (delivered items + window estimation), deduplication, fault-based eviction correction, budget tracking with pressure mode, and the iris_budget/iris_compress/iris_evicted tools
   tasks:
   - text: Implement Session struct — id, created_at, agent_context_budget, delivered BTreeMap, trajectory vector
-    checked: false
+    checked: true
   - text: Implement DeliveredItem tracking — content_id, resolution, token_count, turn_delivered, content_hash
-    checked: false
+    checked: true
   - text: Build window estimation model — cumulative token tracking with configurable FIFO/LRU eviction assumption
-    checked: false
+    checked: true
   - text: Implement deduplication — compare incoming results against session shadow, skip already-delivered content
     checked: false
   - text: Implement delta updates — detect when a previously-delivered section has changed, return only the diff
@@ -158,7 +158,7 @@ phases:
   - text: Implement iris_evicted tool — accept explicit agent feedback on dropped content_ids
     checked: false
   - text: Build budget tracker — configurable max_context_tokens, threshold-based pressure mode (default 80%)
-    checked: false
+    checked: true
   - text: Implement pressure mode behavior — auto-compress responses to claim-level, attach eviction recommendations
     checked: false
   - text: Implement eviction ranking — score delivered content by recency, relevance decay, and dependency graph
