@@ -122,6 +122,35 @@ pub struct CorpusConfig {
     pub claim_extraction: ClaimExtractionMode,
 }
 
+impl CorpusConfig {
+    /// Load corpus configuration from a `meta.toml` file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::Io`] if the file cannot be read, or
+    /// [`StorageError::Serialization`] if the TOML is malformed.
+    pub fn load(path: &Path) -> Result<Self, StorageError> {
+        let contents = std::fs::read_to_string(path)?;
+        toml::from_str(&contents).map_err(|e| StorageError::Serialization {
+            reason: e.to_string(),
+        })
+    }
+
+    /// Save corpus configuration to a `meta.toml` file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::Io`] if the file cannot be written, or
+    /// [`StorageError::Serialization`] if serialization fails.
+    pub fn save(&self, path: &Path) -> Result<(), StorageError> {
+        let toml_str = toml::to_string_pretty(self).map_err(|e| StorageError::Serialization {
+            reason: e.to_string(),
+        })?;
+        std::fs::write(path, toml_str)?;
+        Ok(())
+    }
+}
+
 impl Default for CorpusConfig {
     fn default() -> Self {
         Self {
@@ -246,5 +275,26 @@ mod tests {
         assert_eq!(config.name, "my-docs");
         assert!(!config.watch);
         assert_eq!(config.claim_extraction, ClaimExtractionMode::ModelAssisted);
+    }
+
+    #[test]
+    fn corpus_config_save_and_load_roundtrip() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let config = CorpusConfig {
+            name: "roundtrip".into(),
+            source_dirs: vec![PathBuf::from("/docs")],
+            model: Some("bge-small".into()),
+            watch: false,
+            claim_extraction: ClaimExtractionMode::ModelAssisted,
+        };
+        config.save(tmp.path()).unwrap();
+        let loaded = CorpusConfig::load(tmp.path()).unwrap();
+        assert_eq!(config, loaded);
+    }
+
+    #[test]
+    fn corpus_config_load_missing_file() {
+        let result = CorpusConfig::load(Path::new("/nonexistent/meta.toml"));
+        assert!(result.is_err());
     }
 }

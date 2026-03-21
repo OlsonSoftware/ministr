@@ -1,0 +1,5 @@
+# Ignore everything except tracked project files
+*
+!.gitignore
+!project.json
+!roadmap.yaml
