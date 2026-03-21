@@ -7,6 +7,7 @@ pub mod config;
 pub mod embedding;
 pub mod error;
 pub mod extraction;
+pub mod index;
 pub mod ingestion;
 pub mod parser;
 pub mod storage;
