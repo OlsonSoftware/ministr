@@ -85,8 +85,8 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Implement ServerHandler trait via rmcp with stdio transport and #[tool] macro-based tool registration
-- [ ] Wire up iris-cli binary entry point — argument parsing (clap), corpus path, config loading, server startup
+- [x] Implement ServerHandler trait via rmcp with stdio transport and #[tool] macro-based tool registration
+- [x] Wire up iris-cli binary entry point — argument parsing (clap), corpus path, config loading, server startup
 - [ ] Implement iris_survey tool — vector search over section embeddings, return ranked summaries with relevance scores
 - [ ] Implement iris_read tool — full section text by hierarchical ID with heading_path and claims_available count
 - [ ] Implement iris_extract tool — claim-level retrieval within a specific section, filtered by query relevance

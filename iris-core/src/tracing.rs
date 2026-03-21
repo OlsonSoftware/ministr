@@ -31,15 +31,16 @@ pub fn init_tracing() {
         .map(|v| v.eq_ignore_ascii_case("json"))
         .unwrap_or(false);
 
+    // Always write to stderr so stdout remains free for MCP stdio transport.
     if json {
         tracing_subscriber::registry()
             .with(filter)
-            .with(fmt::layer().json())
+            .with(fmt::layer().json().with_writer(std::io::stderr))
             .init();
     } else {
         tracing_subscriber::registry()
             .with(filter)
-            .with(fmt::layer())
+            .with(fmt::layer().with_writer(std::io::stderr))
             .init();
     }
 }

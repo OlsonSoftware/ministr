@@ -12,6 +12,9 @@ workspace = true
 [dependencies]
 iris-core.workspace = true
 iris-mcp.workspace = true
+clap.workspace = true
+rmcp.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 miette.workspace = true

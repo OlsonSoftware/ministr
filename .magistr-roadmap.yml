@@ -110,14 +110,14 @@ phases:
 - id: P4
   name: MCP Server & Core Tools
   tagline: Wire up rmcp and expose iris_survey, iris_read, iris_extract as MCP tools
-  status: pending
+  status: in_progress
   problem: The agent needs a standards-compliant MCP interface to discover, survey, read, and extract context from the index — the progressive disclosure model that replaces one-shot RAG
   solution: Implement ServerHandler via rmcp with stdio transport, exposing the three core tools (iris_survey, iris_read, iris_extract) plus iris://status and iris://corpus resources. Include budget_status in every response
   tasks:
   - text: 'Implement ServerHandler trait via rmcp with stdio transport and #[tool] macro-based tool registration'
-    checked: false
+    checked: true
   - text: Wire up iris-cli binary entry point — argument parsing (clap), corpus path, config loading, server startup
-    checked: false
+    checked: true
   - text: Implement iris_survey tool — vector search over section embeddings, return ranked summaries with relevance scores
     checked: false
   - text: Implement iris_read tool — full section text by hierarchical ID with heading_path and claims_available count
