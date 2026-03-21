@@ -357,4 +357,203 @@ mod tests {
         // elapsed should work without panicking
         let _elapsed = session.elapsed();
     }
+
+    // --- Exhaustive deduplication tests ---
+
+    #[test]
+    fn re_delivery_at_different_resolution_updates_record() {
+        let mut session = make_session();
+
+        // First deliver as section
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+        assert_eq!(
+            session.get_delivered(&cid("s1")).unwrap().resolution,
+            Resolution::Section
+        );
+
+        // Re-deliver as claim (e.g. after extract)
+        session.record_delivery(&cid("s1"), Resolution::Claim, 30, 2, "h2".into());
+
+        // Should update resolution and token count
+        assert_eq!(session.delivered_count(), 1);
+        let item = session.get_delivered(&cid("s1")).unwrap();
+        assert_eq!(item.resolution, Resolution::Claim);
+        assert_eq!(item.token_count, 30);
+        assert_eq!(session.total_delivered_tokens(), 30);
+    }
+
+    #[test]
+    fn has_changed_after_re_delivery_with_new_hash() {
+        let mut session = make_session();
+
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "v1".into());
+        assert!(!session.has_changed(&cid("s1"), "v1"));
+
+        // Re-deliver with updated hash
+        session.record_delivery(&cid("s1"), Resolution::Section, 210, 2, "v2".into());
+        assert!(
+            !session.has_changed(&cid("s1"), "v2"),
+            "should match new hash"
+        );
+        assert!(
+            session.has_changed(&cid("s1"), "v1"),
+            "old hash should show change"
+        );
+        assert!(
+            session.has_changed(&cid("s1"), "v3"),
+            "unknown hash should show change"
+        );
+    }
+
+    #[test]
+    fn large_trajectory_accumulation() {
+        let mut session = make_session();
+
+        for i in 0u32..200 {
+            let id = format!("section-{i}");
+            session.record_delivery(
+                &cid(&id),
+                Resolution::Section,
+                10,
+                i / 10,
+                format!("h{i}"),
+            );
+        }
+
+        assert_eq!(session.delivered_count(), 200);
+        assert_eq!(session.total_delivered_tokens(), 2000);
+        assert_eq!(session.trajectory().len(), 200);
+        assert_eq!(session.current_turn(), 19);
+    }
+
+    #[test]
+    fn large_trajectory_with_re_deliveries() {
+        let mut session = make_session();
+
+        // Deliver 50 items, then re-deliver half of them
+        for i in 0..50 {
+            session.record_delivery(
+                &cid(&format!("s{i}")),
+                Resolution::Section,
+                100,
+                1,
+                format!("h{i}"),
+            );
+        }
+        for i in 0..25 {
+            session.record_delivery(
+                &cid(&format!("s{i}")),
+                Resolution::Section,
+                80,
+                2,
+                format!("h{i}-v2"),
+            );
+        }
+
+        // 50 unique items, but 25 were re-delivered with lower token count
+        assert_eq!(session.delivered_count(), 50);
+        // 25 items at 80 tokens + 25 items at 100 tokens
+        assert_eq!(session.total_delivered_tokens(), 25 * 80 + 25 * 100);
+        // Trajectory has all 75 entries (50 + 25 re-deliveries)
+        assert_eq!(session.trajectory().len(), 75);
+    }
+
+    #[test]
+    fn concurrent_deliveries_same_turn() {
+        let mut session = make_session();
+
+        // Multiple items delivered in the same turn (e.g. survey results)
+        session.record_delivery(&cid("s1"), Resolution::Summary, 50, 1, "h1".into());
+        session.record_delivery(&cid("s2"), Resolution::Section, 200, 1, "h2".into());
+        session.record_delivery(&cid("s3"), Resolution::Claim, 20, 1, "h3".into());
+        session.record_delivery(&cid("s4"), Resolution::Summary, 60, 1, "h4".into());
+
+        assert_eq!(session.delivered_count(), 4);
+        assert_eq!(session.total_delivered_tokens(), 330);
+        assert_eq!(session.current_turn(), 1);
+
+        // All are independently tracked
+        assert!(session.is_delivered(&cid("s1")));
+        assert!(session.is_delivered(&cid("s2")));
+        assert!(session.is_delivered(&cid("s3")));
+        assert!(session.is_delivered(&cid("s4")));
+    }
+
+    #[test]
+    fn session_with_zero_budget() {
+        let session = Session::new(
+            SessionId::from("zero-budget".to_string()),
+            0,
+            EvictionPolicy::Fifo,
+        );
+        assert_eq!(session.agent_context_budget, 0);
+        assert_eq!(session.delivered_count(), 0);
+        assert_eq!(session.total_delivered_tokens(), 0);
+    }
+
+    #[test]
+    fn delivered_items_ordered_by_content_id() {
+        let mut session = make_session();
+
+        // BTreeMap keys are sorted, so delivered items should be in key order
+        session.record_delivery(&cid("charlie"), Resolution::Section, 100, 1, "h1".into());
+        session.record_delivery(&cid("alpha"), Resolution::Section, 100, 1, "h2".into());
+        session.record_delivery(&cid("bravo"), Resolution::Section, 100, 1, "h3".into());
+
+        let ids: Vec<&str> = session
+            .delivered_items()
+            .map(|item| item.content_id.0.as_str())
+            .collect();
+        assert_eq!(ids, vec!["alpha", "bravo", "charlie"]);
+    }
+
+    #[test]
+    fn delivered_item_serde_roundtrip() {
+        let item = DeliveredItem {
+            content_id: ContentId("test-id".into()),
+            resolution: Resolution::Section,
+            token_count: 250,
+            turn_delivered: 3,
+            content_hash: "abc123".into(),
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        let back: DeliveredItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.content_id, item.content_id);
+        assert_eq!(back.resolution, item.resolution);
+        assert_eq!(back.token_count, item.token_count);
+        assert_eq!(back.turn_delivered, item.turn_delivered);
+        assert_eq!(back.content_hash, item.content_hash);
+    }
+
+    #[test]
+    fn turn_counter_takes_max_not_sequential() {
+        let mut session = make_session();
+
+        // Deliver at turn 5, then turn 3 — current_turn should stay at 5
+        session.record_delivery(&cid("s1"), Resolution::Section, 100, 5, "h1".into());
+        assert_eq!(session.current_turn(), 5);
+
+        session.record_delivery(&cid("s2"), Resolution::Section, 100, 3, "h2".into());
+        assert_eq!(session.current_turn(), 5, "turn should not decrease");
+
+        session.record_delivery(&cid("s3"), Resolution::Section, 100, 7, "h3".into());
+        assert_eq!(session.current_turn(), 7, "turn should advance to 7");
+    }
+
+    #[test]
+    fn session_id_equality_and_hash() {
+        use std::collections::HashSet;
+
+        let id1 = SessionId::from("sess-1".to_string());
+        let id2 = SessionId::from("sess-1".to_string());
+        let id3 = SessionId::from("sess-2".to_string());
+
+        assert_eq!(id1, id2);
+        assert_ne!(id1, id3);
+
+        let mut set = HashSet::new();
+        set.insert(id1.clone());
+        assert!(set.contains(&id2));
+        assert!(!set.contains(&id3));
+    }
 }

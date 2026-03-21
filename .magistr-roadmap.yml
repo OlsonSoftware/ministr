@@ -133,7 +133,7 @@ phases:
   - text: Implement graceful error handling — map iris-core errors to MCP ErrorData with user-friendly messages
     checked: true
   - text: Write end-to-end integration test — start MCP server, send JSON-RPC tool calls, verify responses
-    checked: false
+    checked: true
   - text: Test with real MCP client (Claude Code) — verify tool discovery, survey/read/extract flow on a sample corpus
     checked: false
 - id: P5
@@ -170,9 +170,9 @@ phases:
   - text: Add session persistence to SQLite — save/restore session shadows for crash recovery
     checked: false
   - text: Write exhaustive tests for session shadow — deduplication, fault correction, window estimation accuracy
-    checked: false
+    checked: true
   - text: Write tests for budget manager — pressure mode transitions, eviction ranking, compression token savings
-    checked: false
+    checked: true
 - id: P6
   name: Prefetch Engine & Coherence
   tagline: Predict what the agent needs next and notify when source documents change

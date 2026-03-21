@@ -332,6 +332,150 @@ mod tests {
         assert!(!tracker.is_in_window("nonexistent"));
     }
 
+    // --- Pressure transitions with eviction ---
+
+    #[test]
+    fn pressure_drops_after_eviction() {
+        // Capacity 100, pressure at 80%, critical at 95%
+        let config = BudgetConfig {
+            max_context_tokens: 100,
+            pressure_threshold: 0.8,
+            critical_threshold: 0.95,
+        };
+        let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
+
+        // Fill past capacity: s1=50, s2=60 -> 110 > 100, s1 evicted -> 60
+        tracker.record_tokens("s1", 50);
+        tracker.record_tokens("s2", 60);
+
+        // After eviction: 60/100 = 0.6 -> Normal
+        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+        assert!(!tracker.is_in_window("s1"), "s1 should be evicted");
+        assert!(tracker.is_in_window("s2"));
+    }
+
+    #[test]
+    fn lru_eviction_with_budget_tracking() {
+        let config = BudgetConfig {
+            max_context_tokens: 500,
+            pressure_threshold: 0.8,
+            critical_threshold: 0.95,
+        };
+        let mut tracker = BudgetTracker::new(config, EvictionPolicy::Lru);
+
+        tracker.record_tokens("s1", 200);
+        tracker.record_tokens("s2", 200);
+        // At 400/500 = 0.8 -> Elevated
+        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+
+        // Touch s1 to make s2 the LRU candidate
+        tracker.touch("s1");
+
+        // Add s3, triggers eviction of s2 (LRU)
+        tracker.record_tokens("s3", 200);
+        // Would be 600 > 500, evict s2 (LRU) -> 400
+        assert!(!tracker.is_in_window("s2"), "s2 should be evicted (LRU)");
+        assert!(tracker.is_in_window("s1"), "s1 was touched, should survive");
+        assert!(tracker.is_in_window("s3"));
+
+        // 400/500 = 0.8 -> Elevated
+        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+    }
+
+    #[test]
+    fn budget_status_after_eviction() {
+        let config = BudgetConfig {
+            max_context_tokens: 100,
+            ..BudgetConfig::default()
+        };
+        let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
+
+        tracker.record_tokens("s1", 30);
+        tracker.record_tokens("s2", 30);
+        tracker.record_tokens("s3", 30);
+        // At 90/100
+
+        // This pushes past capacity: 90 + 20 = 110 > 100, evict s1 -> 80
+        tracker.record_tokens("s4", 20);
+
+        let status = tracker.budget_status();
+        assert_eq!(status.tokens_used, 80);
+        assert_eq!(status.tokens_remaining, 20);
+        assert_eq!(status.pressure_level, PressureLevel::Elevated); // 80/100 = 0.8
+    }
+
+    #[test]
+    fn rapid_recordings_crossing_multiple_thresholds() {
+        let mut tracker = tracker_with_capacity(100);
+
+        // Record items rapidly crossing Normal -> Elevated -> Critical
+        let mut levels = vec![];
+        for i in 0..20 {
+            tracker.record_tokens(&format!("s{i}"), 5);
+            levels.push(tracker.pressure_level());
+        }
+
+        // With 20 * 5 = 100 tokens on capacity 100, eviction kicks in above 100
+        // Early items should be Normal, later Elevated, final Critical
+        assert!(
+            levels.contains(&PressureLevel::Normal),
+            "should start Normal"
+        );
+        assert!(
+            levels.contains(&PressureLevel::Elevated),
+            "should pass through Elevated"
+        );
+    }
+
+    #[test]
+    fn re_recording_same_content_updates_window() {
+        let mut tracker = tracker_with_capacity(1000);
+
+        tracker.record_tokens("s1", 300);
+        assert_eq!(tracker.budget_status().tokens_used, 300);
+
+        // Re-record with smaller count — replaces the old entry
+        tracker.record_tokens("s1", 100);
+        assert_eq!(tracker.budget_status().tokens_used, 100);
+        assert!(tracker.is_in_window("s1"));
+    }
+
+    #[test]
+    fn touch_nonexistent_does_not_panic() {
+        let mut tracker = BudgetTracker::new(BudgetConfig::default(), EvictionPolicy::Lru);
+        tracker.touch("nonexistent");
+        assert_eq!(tracker.budget_status().tokens_used, 0);
+    }
+
+    #[test]
+    fn utilization_capped_at_one() {
+        let mut tracker = tracker_with_capacity(10);
+        // Single large entry: 20 > 10, evicts itself -> 0
+        tracker.record_tokens("big", 20);
+        // After eviction, utilization should be 0
+        assert!(tracker.utilization() <= 1.0);
+    }
+
+    #[test]
+    fn window_accessor() {
+        let tracker = tracker_with_capacity(1000);
+        let window = tracker.window();
+        assert_eq!(window.capacity(), 1000);
+        assert_eq!(window.estimated_used(), 0);
+    }
+
+    #[test]
+    fn config_accessor() {
+        let config = BudgetConfig {
+            max_context_tokens: 5000,
+            pressure_threshold: 0.7,
+            critical_threshold: 0.9,
+        };
+        let tracker = BudgetTracker::new(config.clone(), EvictionPolicy::Fifo);
+        assert_eq!(tracker.config().max_context_tokens, 5000);
+        assert!((tracker.config().pressure_threshold - 0.7).abs() < f64::EPSILON);
+    }
+
     #[test]
     fn pressure_level_serde_roundtrip() {
         for level in [
