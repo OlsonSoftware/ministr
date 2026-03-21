@@ -90,11 +90,11 @@ phases:
   - text: Implement configurable model selection — support swapping embedding models via corpus meta.toml
     checked: true
   - text: Define VectorIndex trait — insert, search_knn, delete, persist, load operations
-    checked: false
+    checked: true
   - text: Implement HnswIndex using hnswlib-rs — decoupled graph/storage, cosine similarity, configurable M and ef
-    checked: false
+    checked: true
   - text: Add memory-mapped persistence for the HNSW index (vectors.hnsw + vectors.meta) via memmap2
-    checked: false
+    checked: true
   - text: Embed all three resolution levels at ingestion — summaries, sections, and claims get separate vectors
     checked: false
   - text: Build multi-resolution query pipeline — search across summary/section/claim levels, merge and rank results
