@@ -5,3 +5,4 @@
 //! and request/response mapping.
 
 pub mod error;
+pub mod server;
