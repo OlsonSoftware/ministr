@@ -463,4 +463,250 @@ mod tests {
             assert!(claim.text.split_whitespace().count() <= 10);
         }
     }
+
+    // --- Precision / recall on a hand-labeled corpus ---
+
+    /// A labeled sentence: `(text, expected_is_claim)`.
+    ///
+    /// True positives: factual, verifiable statements with technical content.
+    /// True negatives: questions, fragments, vague prose, instructions.
+    const LABELED_CORPUS: &[(&str, bool)] = &[
+        // ---- True claims (should be extracted) ----
+        ("The API uses JWT tokens with RS256 signing.", true),
+        ("Rate limits are set to 100 requests per minute.", true),
+        ("The server runs on port 8080 by default.", true),
+        ("Redis is used for caching with a 5 minute TTL.", true),
+        (
+            "The database supports up to 10,000 concurrent connections.",
+            true,
+        ),
+        ("PostgreSQL stores all user data in encrypted form.", true),
+        (
+            "The system provides automatic failover for all services.",
+            true,
+        ),
+        ("TLS 1.3 is required for all external connections.", true),
+        (
+            "The response payload contains a JSON object with 3 fields.",
+            true,
+        ),
+        (
+            "Each worker thread handles approximately 500 requests per second.",
+            true,
+        ),
+        (
+            "The deployment pipeline runs 4 stages before production.",
+            true,
+        ),
+        (
+            "Kubernetes manages container orchestration across 12 nodes.",
+            true,
+        ),
+        ("The OAuth2 flow requires a client ID and secret.", true),
+        (
+            "GraphQL queries are validated against the schema at compile time.",
+            true,
+        ),
+        (
+            "The HNSW index stores vectors in a memory-mapped file.",
+            true,
+        ),
+        (
+            "Batch ingestion processes up to 1000 documents per minute.",
+            true,
+        ),
+        (
+            "The circuit breaker opens after 5 consecutive failures.",
+            true,
+        ),
+        (
+            "Prometheus collects metrics every 15 seconds from all endpoints.",
+            true,
+        ),
+        (
+            "The retry policy uses exponential backoff with a maximum of 30 seconds.",
+            true,
+        ),
+        ("SQLite uses WAL mode for concurrent read access.", true),
+        // ---- Non-claims (should not be extracted) ----
+        ("What is the rate limit?", false),
+        ("How does authentication work?", false),
+        ("See above.", false),
+        ("For more details, refer to the documentation.", false),
+        ("Note the following.", false),
+        ("In this section we discuss the approach.", false),
+        ("Consider the trade-offs carefully.", false),
+        ("The following example shows how to do this.", false),
+        ("Let us now turn to the next topic.", false),
+        ("As mentioned earlier, there are several options.", false),
+        ("First, set up the environment.", false),
+        ("Click the button to proceed.", false),
+        ("Open the terminal and run the command.", false),
+        ("Remember to save your work frequently.", false),
+        ("Think about what you want to achieve.", false),
+        ("Why did the test fail?", false),
+        ("Where can I find the logs?", false),
+        ("Summary of the chapter.", false),
+        ("Next steps and recommendations.", false),
+        ("Table of contents below.", false),
+    ];
+
+    /// Compute precision and recall against the labeled corpus.
+    ///
+    /// The corpus is joined into a single text block and run through the extractor.
+    /// Each labeled sentence is matched against the extracted claims to determine
+    /// true positives, false positives, and false negatives.
+    fn compute_precision_recall() -> (f64, f64) {
+        let full_text: String = LABELED_CORPUS
+            .iter()
+            .map(|(s, _)| *s)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let claims = extract_claims(&full_text);
+        let extracted_texts: Vec<&str> = claims.iter().map(|c| c.text.as_str()).collect();
+
+        let mut true_positives: u32 = 0;
+        let mut false_positives: u32 = 0;
+        let mut false_negatives: u32 = 0;
+
+        // Check each extracted claim against labels
+        for extracted in &extracted_texts {
+            let is_labeled_claim = LABELED_CORPUS.iter().any(|(s, label)| {
+                *label && extracted.trim_end_matches('.') == s.trim_end_matches('.')
+            });
+            if is_labeled_claim {
+                true_positives += 1;
+            } else {
+                // Extracted something not labeled as a claim (or not in corpus)
+                false_positives += 1;
+            }
+        }
+
+        // Check each labeled claim to see if it was extracted
+        for (sentence, is_claim) in LABELED_CORPUS {
+            if *is_claim {
+                let was_extracted = extracted_texts
+                    .iter()
+                    .any(|e| e.trim_end_matches('.') == sentence.trim_end_matches('.'));
+                if !was_extracted {
+                    false_negatives += 1;
+                }
+            }
+        }
+
+        let precision = if true_positives + false_positives == 0 {
+            0.0
+        } else {
+            f64::from(true_positives) / f64::from(true_positives + false_positives)
+        };
+
+        let recall = if true_positives + false_negatives == 0 {
+            0.0
+        } else {
+            f64::from(true_positives) / f64::from(true_positives + false_negatives)
+        };
+
+        (precision, recall)
+    }
+
+    #[test]
+    fn claim_extraction_precision() {
+        let (precision, _recall) = compute_precision_recall();
+        assert!(
+            precision >= 0.70,
+            "precision {precision:.2} is below the 0.70 threshold"
+        );
+    }
+
+    #[test]
+    fn claim_extraction_recall() {
+        let (_precision, recall) = compute_precision_recall();
+        assert!(
+            recall >= 0.70,
+            "recall {recall:.2} is below the 0.70 threshold"
+        );
+    }
+
+    #[test]
+    fn claim_extraction_f1() {
+        let (precision, recall) = compute_precision_recall();
+        let f1 = if precision + recall == 0.0 {
+            0.0
+        } else {
+            2.0 * precision * recall / (precision + recall)
+        };
+        assert!(
+            f1 >= 0.70,
+            "F1 score {f1:.2} (P={precision:.2}, R={recall:.2}) is below the 0.70 threshold"
+        );
+    }
+
+    /// Edge-case corpus: abbreviations, code references, mixed content.
+    const EDGE_CASE_CORPUS: &[(&str, bool)] = &[
+        // Claims with abbreviations — should still be extracted
+        (
+            "Dr. Smith's API uses RSA-256 encryption for all tokens.",
+            true,
+        ),
+        ("The server e.g. nginx handles 10,000 connections.", true),
+        // Technical claims with version numbers
+        ("Python 3.12 introduces the new buffer protocol.", true),
+        ("The v2.0 API returns HTTP 429 when rate-limited.", true),
+        // Non-claims: imperatives, fragments, vague
+        ("Install the package via pip.", false),
+        ("Run the tests before merging.", false),
+        ("See also the appendix.", false),
+        ("Overview of changes.", false),
+    ];
+
+    #[test]
+    fn edge_case_precision_recall() {
+        let full_text: String = EDGE_CASE_CORPUS
+            .iter()
+            .map(|(s, _)| *s)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let claims = extract_claims(&full_text);
+        let extracted_texts: Vec<&str> = claims.iter().map(|c| c.text.as_str()).collect();
+
+        let mut true_positives: u32 = 0;
+        let mut false_negatives: u32 = 0;
+
+        for (sentence, is_claim) in EDGE_CASE_CORPUS {
+            if *is_claim {
+                let was_extracted = extracted_texts
+                    .iter()
+                    .any(|e| e.trim_end_matches('.') == sentence.trim_end_matches('.'));
+                if was_extracted {
+                    true_positives += 1;
+                } else {
+                    false_negatives += 1;
+                }
+            }
+        }
+
+        let expected_claims =
+            u32::try_from(EDGE_CASE_CORPUS.iter().filter(|(_, c)| *c).count()).unwrap();
+        let recall = f64::from(true_positives) / f64::from(expected_claims);
+        assert!(
+            recall >= 0.50,
+            "edge-case recall {recall:.2} ({true_positives}/{expected_claims}) — \
+             missed: {false_negatives} claims"
+        );
+
+        // No non-claim should be extracted
+        for (sentence, is_claim) in EDGE_CASE_CORPUS {
+            if !*is_claim {
+                let was_extracted = extracted_texts
+                    .iter()
+                    .any(|e| e.trim_end_matches('.') == sentence.trim_end_matches('.'));
+                assert!(
+                    !was_extracted,
+                    "non-claim was incorrectly extracted: {sentence}"
+                );
+            }
+        }
+    }
 }
