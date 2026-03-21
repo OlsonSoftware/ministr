@@ -3,7 +3,7 @@ preamble: Context cache controller for LLM agents, implemented as a Rust MCP ser
 phases:
 - id: P0
   name: Foundation
-  status: in_progress
+  status: done
   tasks:
   - text: Initialize Cargo workspace with iris-core, iris-mcp, iris-cli crates and edition = "2024"
     checked: true
@@ -16,17 +16,17 @@ phases:
   - text: Set up GitHub Actions CI workflow calling just validate on push/PR
     checked: true
   - text: Define core error types with thiserror — IndexError, SessionError, StorageError, ParseError in iris-core
-    checked: false
+    checked: true
   - text: Set up tracing infrastructure with tracing-subscriber, EnvFilter, and structured JSON output
-    checked: false
+    checked: true
   - text: 'Define core domain types: ContentId, SectionId, ClaimId, Resolution enum, DocumentTree, Section, Claim'
-    checked: false
+    checked: true
   - text: Add miette integration to iris-cli and iris-mcp for user-facing diagnostic errors
-    checked: false
+    checked: true
   - text: Create config.toml schema and loader for global iris configuration (~/.iris/config.toml)
-    checked: false
+    checked: true
   - text: Write unit tests for error types, config loading, and domain type construction
-    checked: false
+    checked: true
 - id: P1
   name: Multi-Resolution Index
   status: pending

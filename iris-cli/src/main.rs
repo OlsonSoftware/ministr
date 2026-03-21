@@ -4,9 +4,12 @@ use miette::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    miette::set_hook(Box::new(|_| {
+        Box::new(miette::MietteHandlerOpts::new().build())
+    }))
+    .expect("miette hook should be set once");
+
+    iris_core::tracing::init_tracing();
 
     tracing::info!("iris starting");
 

@@ -8,17 +8,17 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Initialize Cargo workspace with iris-core, iris-mcp, iris-cli crates and edition = "2024"
-- [ ] Add #![deny(unsafe_code)] to all crate roots and configure workspace-level dependencies
-- [ ] Configure clippy (pedantic + deny warnings), rustfmt, cargo-deny, and cargo-audit
-- [ ] Create justfile with build, test, lint, fmt, coverage, audit, deny, and validate recipes
-- [ ] Set up GitHub Actions CI workflow calling just validate on push/PR
-- [ ] Define core error types with thiserror — IndexError, SessionError, StorageError, ParseError in iris-core
-- [ ] Set up tracing infrastructure with tracing-subscriber, EnvFilter, and structured JSON output
-- [ ] Define core domain types: ContentId, SectionId, ClaimId, Resolution enum, DocumentTree, Section, Claim
-- [ ] Add miette integration to iris-cli and iris-mcp for user-facing diagnostic errors
-- [ ] Create config.toml schema and loader for global iris configuration (~/.iris/config.toml)
-- [ ] Write unit tests for error types, config loading, and domain type construction
+- [x] Initialize Cargo workspace with iris-core, iris-mcp, iris-cli crates and edition = "2024"
+- [x] Add #![deny(unsafe_code)] to all crate roots and configure workspace-level dependencies
+- [x] Configure clippy (pedantic + deny warnings), rustfmt, cargo-deny, and cargo-audit
+- [x] Create justfile with build, test, lint, fmt, coverage, audit, deny, and validate recipes
+- [x] Set up GitHub Actions CI workflow calling just validate on push/PR
+- [x] Define core error types with thiserror — IndexError, SessionError, StorageError, ParseError in iris-core
+- [x] Set up tracing infrastructure with tracing-subscriber, EnvFilter, and structured JSON output
+- [x] Define core domain types: ContentId, SectionId, ClaimId, Resolution enum, DocumentTree, Section, Claim
+- [x] Add miette integration to iris-cli and iris-mcp for user-facing diagnostic errors
+- [x] Create config.toml schema and loader for global iris configuration (~/.iris/config.toml)
+- [x] Write unit tests for error types, config loading, and domain type construction
 
 ---
 
