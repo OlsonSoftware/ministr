@@ -26,15 +26,15 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Create ~/.iris/corpora/<name>/ on-disk layout with meta.toml, content.db, sessions/
-- [ ] Implement SQLite schema — documents, sections, claims, summaries tables with parent-child relationships
-- [ ] Add file_hashes table for tracking source file content hashes (incremental re-indexing)
-- [ ] Configure WAL journal mode, NORMAL synchronous, and busy timeout for concurrent reads
-- [ ] Implement Storage trait in iris-core with CRUD operations for documents, sections, claims
-- [ ] Wrap rusqlite Connection with tokio::spawn_blocking for async-safe database access
-- [ ] Add schema migration system (versioned migrations, forward-only) for future upgrades
-- [ ] Implement corpus configuration (meta.toml) — source directories, embedding model choice, parser settings
-- [ ] Write integration tests against real SQLite — CRUD, concurrent reads, WAL behavior, migration rollforward
+- [x] Create ~/.iris/corpora/<name>/ on-disk layout with meta.toml, content.db, sessions/
+- [x] Implement SQLite schema — documents, sections, claims, summaries tables with parent-child relationships
+- [x] Add file_hashes table for tracking source file content hashes (incremental re-indexing)
+- [x] Configure WAL journal mode, NORMAL synchronous, and busy timeout for concurrent reads
+- [x] Implement Storage trait in iris-core with CRUD operations for documents, sections, claims
+- [x] Wrap rusqlite Connection with tokio::spawn_blocking for async-safe database access
+- [x] Add schema migration system (versioned migrations, forward-only) for future upgrades
+- [x] Implement corpus configuration (meta.toml) — source directories, embedding model choice, parser settings
+- [x] Write integration tests against real SQLite — CRUD, concurrent reads, WAL behavior, migration rollforward
 
 ---
 

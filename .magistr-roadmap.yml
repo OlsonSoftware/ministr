@@ -29,26 +29,26 @@ phases:
     checked: true
 - id: P1
   name: Multi-Resolution Index
-  status: pending
+  status: done
   tasks:
   - text: Create ~/.iris/corpora/<name>/ on-disk layout with meta.toml, content.db, sessions/
-    checked: false
+    checked: true
   - text: Implement SQLite schema — documents, sections, claims, summaries tables with parent-child relationships
-    checked: false
+    checked: true
   - text: Add file_hashes table for tracking source file content hashes (incremental re-indexing)
-    checked: false
+    checked: true
   - text: Configure WAL journal mode, NORMAL synchronous, and busy timeout for concurrent reads
-    checked: false
+    checked: true
   - text: Implement Storage trait in iris-core with CRUD operations for documents, sections, claims
-    checked: false
+    checked: true
   - text: Wrap rusqlite Connection with tokio::spawn_blocking for async-safe database access
-    checked: false
+    checked: true
   - text: Add schema migration system (versioned migrations, forward-only) for future upgrades
-    checked: false
+    checked: true
   - text: Implement corpus configuration (meta.toml) — source directories, embedding model choice, parser settings
-    checked: false
+    checked: true
   - text: Write integration tests against real SQLite — CRUD, concurrent reads, WAL behavior, migration rollforward
-    checked: false
+    checked: true
 - id: P2
   name: Session Intelligence
   status: pending
