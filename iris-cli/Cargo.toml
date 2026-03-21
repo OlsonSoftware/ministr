@@ -10,8 +10,8 @@ description = "CLI entry point for the iris MCP server"
 workspace = true
 
 [dependencies]
+iris-core.workspace = true
 iris-mcp.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 miette.workspace = true
