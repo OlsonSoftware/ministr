@@ -11,6 +11,7 @@
 //! - [`BudgetTracker`] — threshold-based pressure levels driving response compression
 
 mod budget;
+pub mod delta;
 mod types;
 mod window;
 

@@ -243,11 +243,9 @@ fn test_context() -> RequestContext<RoleServer> {
 
 /// Helper to call a tool by name with JSON arguments through the MCP protocol layer.
 async fn call_tool(server: &IrisServer, name: &str, args: serde_json::Value) -> CallToolResult {
-    let arguments = args.as_object().map(|m| {
-        m.iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
-    });
+    let arguments = args
+        .as_object()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
     let param = CallToolRequestParam {
         name: Cow::Owned(name.to_string()),
         arguments,
@@ -279,6 +277,10 @@ async fn list_tools_returns_all_iris_tools() {
     assert!(
         tool_names.contains(&"iris_extract"),
         "should list iris_extract, got: {tool_names:?}"
+    );
+    assert!(
+        tool_names.contains(&"iris_evicted"),
+        "should list iris_evicted, got: {tool_names:?}"
     );
 }
 
@@ -417,7 +419,7 @@ async fn survey_deduplicates_already_delivered_content() {
 }
 
 #[tokio::test]
-async fn read_returns_already_delivered_for_unchanged_content() {
+async fn read_re_request_re_delivers_with_fault_correction() {
     let server = setup_server().await;
 
     // First read — full content
@@ -430,7 +432,8 @@ async fn read_returns_already_delivered_for_unchanged_content() {
     let j1: serde_json::Value = serde_json::from_str(extract_text(&r1.content)).unwrap();
     assert!(j1["text"].is_string(), "first read returns full text");
 
-    // Second read — same section, unchanged
+    // Second read — re-request of unchanged content triggers fault correction
+    // and re-delivers the full text (agent lost it from context)
     let r2 = call_tool(
         &server,
         "iris_read",
@@ -438,12 +441,10 @@ async fn read_returns_already_delivered_for_unchanged_content() {
     )
     .await;
     let j2: serde_json::Value = serde_json::from_str(extract_text(&r2.content)).unwrap();
-    assert_eq!(
-        j2["already_delivered"],
-        serde_json::Value::Bool(true),
-        "re-read of unchanged content should indicate already_delivered"
+    assert!(
+        j2["text"].is_string(),
+        "re-request should re-deliver full text"
     );
-    assert!(j2["delivered_at_turn"].is_number());
     assert!(j2["budget_status"].is_object());
 }
 

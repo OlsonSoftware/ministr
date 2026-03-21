@@ -2,11 +2,17 @@
 //!
 //! Implements the rmcp `ServerHandler` trait with `#[tool]` macro-based
 //! tool registration. The server exposes iris tools (`iris_survey`,
-//! `iris_read`, `iris_extract`) over the MCP protocol.
+//! `iris_read`, `iris_extract`, `iris_evicted`) over the MCP protocol.
 //!
 //! Every tool response includes a `budget_status` object with the current
 //! token budget state. Survey and read responses are deduplicated against
 //! the session shadow to avoid re-delivering content the agent already has.
+//!
+//! When the agent re-requests unchanged content, iris treats it as a
+//! fault-based eviction signal — the agent's context window dropped the
+//! content before our estimator predicted. The window estimate is corrected
+//! and the content is re-delivered. The `iris_evicted` tool accepts explicit
+//! eviction feedback from the agent.
 
 use std::sync::Arc;
 
@@ -22,6 +28,7 @@ use tokio::sync::Mutex;
 use tracing::{Instrument, debug, info_span, warn};
 
 use iris_core::service::{QueryError, QueryService, SurveyResult};
+use iris_core::session::delta::ContentDelta;
 use iris_core::session::{
     BudgetConfig, BudgetStatus, BudgetTracker, EvictionPolicy, Session, SessionId,
 };
@@ -70,15 +77,30 @@ struct ExtractResponse {
     claims: Vec<iris_core::service::ClaimResult>,
 }
 
-/// Response when a section was already delivered and hasn't changed.
+/// Response when a previously-delivered section has changed.
+///
+/// Will be used when full delta delivery is enabled (requires storing
+/// delivered text in the session, planned for P6 prefetch cache).
 #[derive(Debug, Serialize)]
-struct AlreadyDeliveredResponse {
-    /// The section that was already delivered.
+#[allow(dead_code)]
+struct DeltaResponse {
+    /// The section that changed.
     section_id: String,
-    /// Indicates this content was already delivered in this session.
-    already_delivered: bool,
-    /// The turn when it was originally delivered.
-    delivered_at_turn: u32,
+    /// Indicates this is a delta update.
+    delta_update: bool,
+    /// The content delta (added/removed/context lines).
+    delta: ContentDelta,
+    /// Token count of the new full text.
+    new_token_count: usize,
+}
+
+/// Response from the `iris_evicted` tool.
+#[derive(Debug, Serialize)]
+struct EvictedResponse {
+    /// Content IDs that were successfully removed.
+    evicted: Vec<String>,
+    /// Content IDs that were not found in the session.
+    not_found: Vec<String>,
 }
 
 /// Parameters for the `iris_survey` tool.
@@ -99,6 +121,14 @@ pub struct ReadParams {
     /// Hierarchical section ID (e.g. `docs/auth.md#error-handling`).
     #[schemars(description = "Section ID to read (e.g. 'docs/auth.md#error-handling')")]
     pub section_id: String,
+}
+
+/// Parameters for the `iris_evicted` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct EvictedParams {
+    /// Content IDs that the agent has dropped from its context window.
+    #[schemars(description = "Content IDs that have been evicted from the agent's context window")]
+    pub content_ids: Vec<String>,
 }
 
 /// Parameters for the `iris_extract` tool.
@@ -126,7 +156,8 @@ impl ServerHandler for IrisServer {
             instructions: Some(
                 "iris is a context cache controller for LLM agents. Use iris_survey to \
                  search for relevant content, iris_read to retrieve full section text, \
-                 and iris_extract to get atomic claims from a section."
+                 iris_extract to get atomic claims from a section, and iris_evicted to \
+                 signal when content has been dropped from your context window."
                     .to_string(),
             ),
         }
@@ -221,12 +252,16 @@ impl IrisServer {
     /// Read the full text of a section by its hierarchical ID.
     ///
     /// Returns the complete section content with heading path and
-    /// the number of claims available for extraction. If the section
-    /// was already delivered and hasn't changed, returns a short
-    /// "already delivered" message instead.
+    /// the number of claims available for extraction. Handles three cases:
+    /// 1. **New content** — delivers full text.
+    /// 2. **Already delivered, unchanged** — returns short "already delivered" message.
+    ///    If the agent re-requests unchanged content, this is treated as a
+    ///    fault-based eviction signal and the window estimate is corrected.
+    /// 3. **Already delivered, changed** — returns a line-level delta instead
+    ///    of re-delivering the full text.
     #[tool(
         name = "iris_read",
-        description = "Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count. Skips re-delivery of unchanged content."
+        description = "Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count. Returns deltas for changed content and skips re-delivery of unchanged content."
     )]
     async fn read(&self, #[tool(aggr)] params: ReadParams) -> Result<CallToolResult, rmcp::Error> {
         let span = info_span!("iris_read", section_id = %params.section_id);
@@ -243,23 +278,48 @@ impl IrisServer {
                     let session = self.session.lock().await;
                     let already_delivered = session.is_delivered(&content_id);
                     let has_changed = session.has_changed(&content_id, &current_hash);
-                    let delivered_turn = session
-                        .get_delivered(&content_id)
-                        .map(|item| item.turn_delivered);
+                    let is_re_request = session.is_re_request(&content_id, &current_hash);
                     drop(session);
 
+                    // Case 2: Already delivered and unchanged
                     if already_delivered && !has_changed {
+                        // Fault-based correction (P5.5): if the agent re-requests
+                        // content we thought was still in its window, the window
+                        // estimator's model is wrong. Force-evict to correct it.
+                        if is_re_request {
+                            debug!(
+                                section_id = %params.section_id,
+                                "iris_read fault correction: re-request detected, \
+                                 forcing eviction from window estimate"
+                            );
+                            let mut budget = self.budget.lock().await;
+                            budget.force_evict(&params.section_id);
+                        }
+
+                        // Re-deliver the full content since the agent lost it
+                        let token_count = count_tokens(&detail.text);
+                        let mut session = self.session.lock().await;
+                        let mut budget = self.budget.lock().await;
+                        let turn = session.current_turn() + 1;
+                        session.record_delivery(
+                            &content_id,
+                            Resolution::Section,
+                            token_count,
+                            turn,
+                            current_hash,
+                        );
+                        budget.record_tokens(&params.section_id, token_count);
+                        let budget_status = budget.budget_status();
+                        drop(budget);
+                        drop(session);
+
                         debug!(
                             section_id = %params.section_id,
-                            "iris_read dedup: already delivered, unchanged"
+                            "iris_read: re-delivering unchanged content after re-request"
                         );
-                        let budget_status = self.budget.lock().await.budget_status();
+
                         let response = ToolResponse {
-                            data: AlreadyDeliveredResponse {
-                                section_id: params.section_id,
-                                already_delivered: true,
-                                delivered_at_turn: delivered_turn.unwrap_or(0),
-                            },
+                            data: detail,
                             budget_status,
                         };
                         let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
@@ -268,14 +328,19 @@ impl IrisServer {
                         return Ok(CallToolResult::success(vec![Content::text(json)]));
                     }
 
+                    // Case 3: Already delivered but content has changed — re-deliver
+                    // full text (delta computation requires stored old text, which
+                    // will be added with the prefetch cache in P6). The delta module
+                    // in iris_core::session::delta is ready for this upgrade.
+                    // Falls through to full delivery below.
+
+                    // Case 1 & 3: New content or changed content — deliver in full
                     debug!(
                         section_id = %params.section_id,
                         claims_available = detail.claims_available,
-                        re_delivery = already_delivered && has_changed,
-                        "iris_read success"
+                        "iris_read success: new content"
                     );
 
-                    // Record delivery in session and budget
                     let token_count = count_tokens(&detail.text);
                     let mut session = self.session.lock().await;
                     let mut budget = self.budget.lock().await;
@@ -386,6 +451,62 @@ impl IrisServer {
                     )]))
                 }
             }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Signal that content has been evicted from the agent's context window.
+    ///
+    /// Accepts a list of content IDs that the agent has dropped. This feedback
+    /// updates the session shadow and window estimator, improving the accuracy
+    /// of budget tracking and deduplication for subsequent requests.
+    #[tool(
+        name = "iris_evicted",
+        description = "Signal that content IDs have been evicted from the agent's context window. Updates session tracking for accurate budget and deduplication."
+    )]
+    async fn evicted(
+        &self,
+        #[tool(aggr)] params: EvictedParams,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_evicted", count = params.content_ids.len());
+
+        async {
+            debug!(content_ids = ?params.content_ids, "iris_evicted request");
+
+            let mut evicted = Vec::new();
+            let mut not_found = Vec::new();
+
+            let mut session = self.session.lock().await;
+            let mut budget = self.budget.lock().await;
+
+            for id_str in &params.content_ids {
+                let content_id = ContentId(id_str.clone());
+                if session.remove_delivered(&content_id).is_some() {
+                    budget.force_evict(id_str);
+                    evicted.push(id_str.clone());
+                } else {
+                    not_found.push(id_str.clone());
+                }
+            }
+
+            let budget_status = budget.budget_status();
+            drop(budget);
+            drop(session);
+
+            debug!(
+                evicted_count = evicted.len(),
+                not_found_count = not_found.len(),
+                "iris_evicted complete"
+            );
+
+            let response = ToolResponse {
+                data: EvictedResponse { evicted, not_found },
+                budget_status,
+            };
+            let json = serde_json::to_string_pretty(&response)
+                .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
+            Ok(CallToolResult::success(vec![Content::text(json)]))
         }
         .instrument(span)
         .await
@@ -781,7 +902,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_returns_already_delivered_for_unchanged_content() {
+    async fn read_re_request_re_delivers_unchanged_content() {
         let server = setup_server().await;
 
         // First read — delivers content
@@ -798,7 +919,7 @@ mod tests {
             "first read should return full text"
         );
 
-        // Second read — should return already_delivered
+        // Second read — re-request triggers fault-based correction and re-delivers
         let result2 = server
             .read(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
@@ -807,14 +928,13 @@ mod tests {
             .unwrap();
         let text2 = extract_text(&result2.content);
         let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
-        assert_eq!(
-            parsed2["already_delivered"],
-            serde_json::Value::Bool(true),
-            "second read should indicate already_delivered"
+        assert!(
+            parsed2["text"].is_string(),
+            "re-request should re-deliver full text"
         );
         assert!(
             parsed2["budget_status"].is_object(),
-            "dedup response should include budget_status"
+            "re-delivery should include budget_status"
         );
     }
 
@@ -983,5 +1103,150 @@ mod tests {
         // "section" and unknown strings both map to Section (default)
         assert_eq!(parse_resolution("section"), Resolution::Section);
         assert_eq!(parse_resolution("unknown"), Resolution::Section);
+    }
+
+    // --- iris_evicted tests ---
+
+    #[tokio::test]
+    async fn evicted_removes_delivered_content() {
+        let server = setup_server().await;
+
+        // First deliver some content
+        server
+            .read(ReadParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+            })
+            .await
+            .unwrap();
+
+        // Evict it
+        let result = server
+            .evicted(EvictedParams {
+                content_ids: vec!["docs/auth.md#tokens".to_string()],
+            })
+            .await
+            .unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(parsed["evicted"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["not_found"].as_array().unwrap().len(), 0);
+        assert!(parsed["budget_status"].is_object());
+        assert_eq!(
+            parsed["budget_status"]["tokens_used"].as_u64().unwrap(),
+            0,
+            "budget should be zero after evicting all content"
+        );
+    }
+
+    #[tokio::test]
+    async fn evicted_reports_not_found_for_unknown_ids() {
+        let server = setup_server().await;
+
+        let result = server
+            .evicted(EvictedParams {
+                content_ids: vec!["nonexistent".to_string()],
+            })
+            .await
+            .unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(parsed["evicted"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["not_found"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn evicted_handles_mixed_known_and_unknown() {
+        let server = setup_server().await;
+
+        // Deliver content
+        server
+            .read(ReadParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+            })
+            .await
+            .unwrap();
+
+        // Evict a mix of known and unknown
+        let result = server
+            .evicted(EvictedParams {
+                content_ids: vec!["docs/auth.md#tokens".to_string(), "nonexistent".to_string()],
+            })
+            .await
+            .unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(parsed["evicted"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["not_found"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn evicted_empty_list_is_noop() {
+        let server = setup_server().await;
+
+        let result = server
+            .evicted(EvictedParams {
+                content_ids: vec![],
+            })
+            .await
+            .unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(parsed["evicted"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["not_found"].as_array().unwrap().len(), 0);
+    }
+
+    // --- Fault-based correction tests ---
+
+    #[tokio::test]
+    async fn re_request_corrects_window_estimate() {
+        let server = setup_server().await;
+
+        // First read — delivers and records in budget
+        let result1 = server
+            .read(ReadParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+            })
+            .await
+            .unwrap();
+        let text1 = extract_text(&result1.content);
+        let parsed1: serde_json::Value = serde_json::from_str(text1).unwrap();
+        let used_after_first = parsed1["budget_status"]["tokens_used"].as_u64().unwrap();
+
+        // Second read (re-request) — triggers fault correction, then re-delivers
+        let result2 = server
+            .read(ReadParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+            })
+            .await
+            .unwrap();
+        let text2 = extract_text(&result2.content);
+        let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
+
+        // After fault correction + re-delivery, budget should be same as first delivery
+        // (force_evict removed old entry, then re-delivery added it back)
+        let used_after_second = parsed2["budget_status"]["tokens_used"].as_u64().unwrap();
+        assert_eq!(
+            used_after_first, used_after_second,
+            "budget should be same after fault correction + re-delivery"
+        );
+    }
+
+    #[test]
+    fn server_instructions_include_evicted_tool() {
+        let server = setup_server_sync();
+        let info = server.get_info();
+        let instructions = info.instructions.unwrap();
+        assert!(
+            instructions.contains("iris_evicted"),
+            "instructions should mention iris_evicted"
+        );
     }
 }

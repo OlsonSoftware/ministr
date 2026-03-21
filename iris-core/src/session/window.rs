@@ -181,6 +181,22 @@ impl WindowEstimator {
         self.entries.iter().any(|e| e.content_id == content_id)
     }
 
+    /// Force-evict a specific content ID from the window.
+    ///
+    /// Used when the agent signals that content has been dropped from its context
+    /// (either explicitly via `iris_evicted` or implicitly via re-request).
+    /// Returns `true` if the content was found and removed.
+    pub fn force_evict(&mut self, content_id: &str) -> bool {
+        if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id) {
+            if let Some(entry) = self.entries.remove(pos) {
+                self.current_tokens = self.current_tokens.saturating_sub(entry.token_count);
+                self.evicted.push(entry.content_id);
+                return true;
+            }
+        }
+        false
+    }
+
     /// Evict entries from the front of the queue until we're within capacity.
     fn evict_to_capacity(&mut self) {
         while self.current_tokens > self.capacity {
@@ -548,5 +564,74 @@ mod tests {
 
         // Even after capacity is exactly met, remaining should be 0 not negative
         assert_eq!(est.estimated_remaining(), 0);
+    }
+
+    // --- force_evict tests ---
+
+    #[test]
+    fn force_evict_removes_entry_and_frees_tokens() {
+        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+
+        est.record("s1", 300);
+        est.record("s2", 200);
+        assert_eq!(est.estimated_used(), 500);
+
+        let removed = est.force_evict("s1");
+        assert!(removed);
+        assert!(!est.is_in_window("s1"));
+        assert!(est.is_in_window("s2"));
+        assert_eq!(est.estimated_used(), 200);
+        assert!(est.evicted_ids().contains(&"s1".to_string()));
+    }
+
+    #[test]
+    fn force_evict_nonexistent_returns_false() {
+        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        est.record("s1", 100);
+
+        let removed = est.force_evict("nonexistent");
+        assert!(!removed);
+        assert_eq!(est.estimated_used(), 100);
+    }
+
+    #[test]
+    fn force_evict_already_evicted_returns_false() {
+        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+        est.record("s1", 60);
+        est.record("s2", 60);
+        // s1 auto-evicted (120 > 100)
+        assert!(!est.is_in_window("s1"));
+
+        let removed = est.force_evict("s1");
+        assert!(!removed, "already evicted content should not be found");
+    }
+
+    #[test]
+    fn force_evict_middle_entry() {
+        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        est.record("s1", 100);
+        est.record("s2", 200);
+        est.record("s3", 300);
+
+        est.force_evict("s2");
+        assert!(est.is_in_window("s1"));
+        assert!(!est.is_in_window("s2"));
+        assert!(est.is_in_window("s3"));
+        assert_eq!(est.estimated_used(), 400);
+    }
+
+    #[test]
+    fn force_evict_updates_status() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        est.record("s1", 200);
+        est.record("s2", 200);
+
+        est.force_evict("s1");
+
+        let status = est.status();
+        assert_eq!(status.used, 200);
+        assert_eq!(status.remaining, 300);
+        assert_eq!(status.entry_count, 1);
+        assert_eq!(status.evicted_count, 1);
     }
 }

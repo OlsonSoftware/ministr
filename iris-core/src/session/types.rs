@@ -207,6 +207,29 @@ impl Session {
     pub fn delivered_items(&self) -> impl Iterator<Item = &DeliveredItem> {
         self.delivered.values()
     }
+
+    /// Remove a delivered item from the session shadow.
+    ///
+    /// Used when the agent explicitly signals it has evicted content from
+    /// its context window (via `iris_evicted`). Returns the removed item
+    /// if it existed.
+    pub fn remove_delivered(&mut self, content_id: &ContentId) -> Option<DeliveredItem> {
+        self.delivered.remove(&content_id.0)
+    }
+
+    /// Detect whether a re-request indicates the agent lost this content.
+    ///
+    /// Returns `true` if the content was previously delivered with the same
+    /// hash (unchanged), meaning the agent is re-requesting content we
+    /// thought it still had. This is an implicit eviction signal — the
+    /// agent's context window dropped the content before our estimator
+    /// predicted it would.
+    #[must_use]
+    pub fn is_re_request(&self, content_id: &ContentId, current_hash: &str) -> bool {
+        self.delivered
+            .get(&content_id.0)
+            .is_some_and(|item| item.content_hash == current_hash)
+    }
 }
 
 #[cfg(test)]
@@ -411,13 +434,7 @@ mod tests {
 
         for i in 0u32..200 {
             let id = format!("section-{i}");
-            session.record_delivery(
-                &cid(&id),
-                Resolution::Section,
-                10,
-                i / 10,
-                format!("h{i}"),
-            );
+            session.record_delivery(&cid(&id), Resolution::Section, 10, i / 10, format!("h{i}"));
         }
 
         assert_eq!(session.delivered_count(), 200);
@@ -538,6 +555,67 @@ mod tests {
 
         session.record_delivery(&cid("s3"), Resolution::Section, 100, 7, "h3".into());
         assert_eq!(session.current_turn(), 7, "turn should advance to 7");
+    }
+
+    // --- remove_delivered tests ---
+
+    #[test]
+    fn remove_delivered_returns_item_and_removes_it() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+
+        let removed = session.remove_delivered(&cid("s1"));
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().token_count, 200);
+        assert!(!session.is_delivered(&cid("s1")));
+        assert_eq!(session.delivered_count(), 0);
+        assert_eq!(session.total_delivered_tokens(), 0);
+    }
+
+    #[test]
+    fn remove_delivered_nonexistent_returns_none() {
+        let mut session = make_session();
+        assert!(session.remove_delivered(&cid("nonexistent")).is_none());
+    }
+
+    #[test]
+    fn remove_delivered_does_not_affect_trajectory() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+        session.record_delivery(&cid("s2"), Resolution::Section, 100, 1, "h2".into());
+
+        session.remove_delivered(&cid("s1"));
+
+        // Trajectory preserves history even after removal
+        assert_eq!(session.trajectory().len(), 2);
+        assert!(!session.is_delivered(&cid("s1")));
+        assert!(session.is_delivered(&cid("s2")));
+    }
+
+    // --- is_re_request tests ---
+
+    #[test]
+    fn is_re_request_detects_unchanged_re_request() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "hash1".into());
+
+        // Same hash = re-request (agent lost it but content unchanged)
+        assert!(session.is_re_request(&cid("s1"), "hash1"));
+    }
+
+    #[test]
+    fn is_re_request_false_when_content_changed() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "hash1".into());
+
+        // Different hash = content changed, not a re-request signal
+        assert!(!session.is_re_request(&cid("s1"), "hash2"));
+    }
+
+    #[test]
+    fn is_re_request_false_for_undelivered_content() {
+        let session = make_session();
+        assert!(!session.is_re_request(&cid("unknown"), "anything"));
     }
 
     #[test]

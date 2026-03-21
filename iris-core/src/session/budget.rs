@@ -177,6 +177,15 @@ impl BudgetTracker {
     pub fn is_in_window(&self, content_id: &str) -> bool {
         self.window.is_in_window(content_id)
     }
+
+    /// Force-evict a content ID from the budget tracker's window.
+    ///
+    /// Used when the agent signals that content has been dropped, either
+    /// explicitly (via `iris_evicted`) or implicitly (via re-request).
+    /// Returns `true` if the content was found and removed.
+    pub fn force_evict(&mut self, content_id: &str) -> bool {
+        self.window.force_evict(content_id)
+    }
 }
 
 #[cfg(test)]
