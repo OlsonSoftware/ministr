@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 1;
+pub const CURRENT_SCHEMA_VERSION: usize = 2;
 
 /// Returns the migration set for the content database.
 ///
@@ -56,6 +56,31 @@ fn migrations() -> Migrations<'static> {
                 content_hash TEXT NOT NULL,
                 last_indexed TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
+            ",
+        ),
+        // V2: Session persistence — sessions and delivered items for crash recovery
+        M::up(
+            "
+            CREATE TABLE sessions (
+                id             TEXT PRIMARY KEY NOT NULL,
+                context_budget INTEGER NOT NULL,
+                current_turn   INTEGER NOT NULL DEFAULT 0,
+                created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+
+            CREATE TABLE session_deliveries (
+                session_id     TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                content_id     TEXT NOT NULL,
+                resolution     TEXT NOT NULL,
+                token_count    INTEGER NOT NULL,
+                turn_delivered INTEGER NOT NULL,
+                content_hash   TEXT NOT NULL,
+                position       INTEGER NOT NULL,
+                PRIMARY KEY (session_id, content_id)
+            );
+
+            CREATE INDEX idx_session_deliveries_session ON session_deliveries(session_id);
             ",
         ),
     ])
@@ -152,6 +177,8 @@ mod tests {
         assert!(tables.contains(&"sections".to_string()));
         assert!(tables.contains(&"claims".to_string()));
         assert!(tables.contains(&"file_hashes".to_string()));
+        assert!(tables.contains(&"sessions".to_string()));
+        assert!(tables.contains(&"session_deliveries".to_string()));
     }
 
     #[test]

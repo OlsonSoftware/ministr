@@ -139,7 +139,7 @@ phases:
 - id: P5
   name: Session Shadow & Budget Management
   tagline: Track what the agent has, estimate what it lost, manage the budget
-  status: in_progress
+  status: done
   problem: No existing retrieval system knows what context the agent already has. Without session state, iris would re-deliver identical content every turn — the worst possible use of scarce context window tokens
   solution: Implement the session shadow (delivered items + window estimation), deduplication, fault-based eviction correction, budget tracking with pressure mode, and the iris_budget/iris_compress/iris_evicted tools
   tasks:
@@ -168,7 +168,7 @@ phases:
   - text: Implement iris_compress tool — generate compressed summaries for content the agent wants to evict
     checked: true
   - text: Add session persistence to SQLite — save/restore session shadows for crash recovery
-    checked: false
+    checked: true
   - text: Write exhaustive tests for session shadow — deduplication, fault correction, window estimation accuracy
     checked: true
   - text: Write tests for budget manager — pressure mode transitions, eviction ranking, compression token savings

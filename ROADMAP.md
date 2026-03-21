@@ -119,7 +119,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Implement eviction ranking — score delivered content by recency, relevance decay, and dependency graph
 - [x] Implement iris_budget tool — return total_budget, estimated_used, pressure_level, eviction_candidates
 - [x] Implement iris_compress tool — generate compressed summaries for content the agent wants to evict
-- [ ] Add session persistence to SQLite — save/restore session shadows for crash recovery
+- [x] Add session persistence to SQLite — save/restore session shadows for crash recovery
 - [x] Write exhaustive tests for session shadow — deduplication, fault correction, window estimation accuracy
 - [x] Write tests for budget manager — pressure mode transitions, eviction ranking, compression token savings
 
