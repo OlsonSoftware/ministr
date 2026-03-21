@@ -9,12 +9,14 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, instrument, warn};
 
+use crate::embedding::Embedder;
 use crate::error::IngestionError;
 use crate::extraction::claims::{ClaimExtractor, HeuristicClaimExtractor};
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
+use crate::index::VectorIndex;
 use crate::parser::{DocumentParser, MarkdownParser};
 use crate::storage::traits::{FileHashRecord, Storage};
-use crate::types::Section;
+use crate::types::{DocumentTree, Section, VectorId};
 
 /// Result of ingesting a corpus directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +35,8 @@ pub struct IngestionStats {
     pub total_sections: usize,
     /// Total claims extracted across all indexed files.
     pub total_claims: usize,
+    /// Total embeddings inserted into the vector index.
+    pub total_embeddings: usize,
 }
 
 /// Maximum number of sentences in a section-level summary.
@@ -105,6 +109,7 @@ impl IngestionPipeline {
             files_failed: 0,
             total_sections: 0,
             total_claims: 0,
+            total_embeddings: 0,
         };
 
         info!(count = files.len(), "discovered files for ingestion");
@@ -256,6 +261,368 @@ impl IngestionPipeline {
             claims: claim_count,
         })
     }
+}
+
+impl IngestionPipeline {
+    /// Ingest a directory with multi-resolution embedding.
+    ///
+    /// This method extends [`ingest_directory`](Self::ingest_directory) by also
+    /// embedding summaries, sections, and claims into the vector index. When
+    /// re-indexing a changed file, old embeddings are deleted before inserting new ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IngestionError`] if directory traversal, storage, or embedding fails.
+    #[instrument(skip(self, storage, embedder, index), fields(dir = %dir.display()))]
+    pub async fn ingest_directory_with_embeddings<S, E, I>(
+        &self,
+        dir: &Path,
+        storage: &S,
+        embedder: &E,
+        index: &I,
+    ) -> Result<IngestionStats, IngestionError>
+    where
+        S: Storage,
+        E: Embedder,
+        I: VectorIndex,
+    {
+        let files = discover_files(dir)?;
+        let mut stats = IngestionStats {
+            files_discovered: files.len(),
+            files_skipped: 0,
+            files_indexed: 0,
+            files_removed: 0,
+            files_failed: 0,
+            total_sections: 0,
+            total_claims: 0,
+            total_embeddings: 0,
+        };
+
+        info!(
+            count = files.len(),
+            "discovered files for ingestion (with embeddings)"
+        );
+
+        for file_path in &files {
+            let relative = file_path
+                .strip_prefix(dir)
+                .unwrap_or(file_path)
+                .to_string_lossy()
+                .to_string();
+
+            match self
+                .ingest_file_with_embeddings(file_path, &relative, storage, embedder, index)
+                .await
+            {
+                Ok(FileResult::Skipped) => {
+                    debug!(path = %relative, "unchanged, skipping");
+                    stats.files_skipped += 1;
+                }
+                Ok(FileResult::Indexed { sections, claims }) => {
+                    debug!(path = %relative, sections, claims, "indexed with embeddings");
+                    stats.files_indexed += 1;
+                    stats.total_sections += sections;
+                    stats.total_claims += claims;
+                }
+                Err(e) => {
+                    warn!(path = %relative, error = %e, "failed to ingest file");
+                    stats.files_failed += 1;
+                }
+            }
+        }
+
+        // Remove documents for files that no longer exist
+        let existing_docs = storage
+            .list_documents()
+            .await
+            .map_err(IngestionError::from)?;
+        for doc in &existing_docs {
+            let full_path = dir.join(&doc.source_path);
+            if !full_path.exists() {
+                debug!(path = %doc.source_path, "file removed, deleting from index");
+                // Delete embeddings before removing document from storage
+                delete_document_vectors(&doc.id, storage, index).await?;
+                storage
+                    .delete_document(&doc.id)
+                    .await
+                    .map_err(IngestionError::from)?;
+                storage
+                    .delete_file_hash(&doc.source_path)
+                    .await
+                    .map_err(IngestionError::from)?;
+                stats.files_removed += 1;
+            }
+        }
+
+        info!(
+            indexed = stats.files_indexed,
+            skipped = stats.files_skipped,
+            removed = stats.files_removed,
+            failed = stats.files_failed,
+            "ingestion with embeddings complete"
+        );
+
+        Ok(stats)
+    }
+
+    /// Ingest a single file with multi-resolution embedding.
+    #[instrument(skip(self, storage, embedder, index), fields(path = %relative_path))]
+    async fn ingest_file_with_embeddings<S, E, I>(
+        &self,
+        file_path: &Path,
+        relative_path: &str,
+        storage: &S,
+        embedder: &E,
+        index: &I,
+    ) -> Result<FileResult, IngestionError>
+    where
+        S: Storage,
+        E: Embedder,
+        I: VectorIndex,
+    {
+        // Read file content
+        let content = tokio::fs::read(file_path)
+            .await
+            .map_err(|e| IngestionError::Io {
+                path: file_path.to_path_buf(),
+                source: e,
+            })?;
+
+        let content_str = String::from_utf8(content).map_err(|_| IngestionError::Encoding {
+            path: file_path.to_path_buf(),
+        })?;
+
+        // Compute content hash
+        let hash = compute_sha256(&content_str);
+
+        // Check if file is unchanged
+        let existing_hash = storage
+            .get_file_hash(relative_path)
+            .await
+            .map_err(IngestionError::from)?;
+
+        if let Some(ref existing) = existing_hash {
+            if existing.content_hash == hash {
+                return Ok(FileResult::Skipped);
+            }
+        }
+
+        // Parse the document
+        let mut doc = self.parser.parse(Path::new(relative_path), &content_str)?;
+
+        // Handle paragraph-boundary splitting
+        doc.sections = doc
+            .sections
+            .into_iter()
+            .flat_map(|s| split_large_headingless_section(s, relative_path))
+            .collect();
+
+        // Enrich sections with claims and summaries
+        let (section_count, claim_count) = enrich_sections(
+            &mut doc.sections,
+            &self.claim_extractor,
+            &self.summary_generator,
+        );
+
+        // Generate document-level summary
+        let all_text = collect_all_text(&doc.sections);
+        if !all_text.is_empty() {
+            doc.summary = Some(
+                self.summary_generator
+                    .summarize(&all_text, DOC_SUMMARY_MAX_SENTENCES),
+            );
+        }
+
+        // Delete old document + embeddings if re-indexing
+        if existing_hash.is_some() {
+            delete_document_vectors(&doc.id, storage, index).await?;
+            storage
+                .delete_document(&doc.id)
+                .await
+                .map_err(IngestionError::from)?;
+        }
+
+        // Store the enriched document
+        storage
+            .insert_document(&doc)
+            .await
+            .map_err(IngestionError::from)?;
+
+        // Embed all resolution levels
+        embed_document(&doc, embedder, index)?;
+
+        // Update file hash
+        storage
+            .upsert_file_hash(&FileHashRecord {
+                path: relative_path.to_string(),
+                content_hash: hash,
+            })
+            .await
+            .map_err(IngestionError::from)?;
+
+        Ok(FileResult::Indexed {
+            sections: section_count,
+            claims: claim_count,
+        })
+    }
+}
+
+/// Embed a document tree at all three resolution levels.
+///
+/// Inserts vectors for:
+/// - Document-level summary (if present)
+/// - Each section's summary (if present) and full text
+/// - Each claim
+fn embed_document<E: Embedder, I: VectorIndex>(
+    doc: &DocumentTree,
+    embedder: &E,
+    index: &I,
+) -> Result<usize, IngestionError> {
+    let mut texts: Vec<String> = Vec::new();
+    let mut ids: Vec<VectorId> = Vec::new();
+
+    // Document-level summary
+    if let Some(ref summary) = doc.summary {
+        if !summary.trim().is_empty() {
+            ids.push(VectorId::doc_summary(doc.id.as_ref()));
+            texts.push(summary.clone());
+        }
+    }
+
+    // Collect section and claim texts
+    collect_embeddable_items(&doc.sections, &mut ids, &mut texts);
+
+    if texts.is_empty() {
+        return Ok(0);
+    }
+
+    // Batch embed all texts
+    let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let vectors = embedder
+        .embed(&text_refs)
+        .map_err(|e| IngestionError::Embedding {
+            reason: e.to_string(),
+        })?;
+
+    // Insert each vector into the index
+    for (vid, vector) in ids.iter().zip(vectors.iter()) {
+        index
+            .insert(vid.as_str(), vector)
+            .map_err(|e| IngestionError::Embedding {
+                reason: format!("failed to insert vector {vid}: {e}"),
+            })?;
+    }
+
+    let count = ids.len();
+    debug!(embeddings = count, doc_id = %doc.id, "embedded document");
+    Ok(count)
+}
+
+/// Recursively collect embeddable items (section summaries, section texts, claims).
+fn collect_embeddable_items(
+    sections: &[Section],
+    ids: &mut Vec<VectorId>,
+    texts: &mut Vec<String>,
+) {
+    for section in sections {
+        // Section summary
+        if let Some(ref summary) = section.summary {
+            if !summary.trim().is_empty() {
+                ids.push(VectorId::sec_summary(section.id.as_ref()));
+                texts.push(summary.clone());
+            }
+        }
+
+        // Section full text
+        if !section.text.trim().is_empty() {
+            ids.push(VectorId::section(section.id.as_ref()));
+            texts.push(section.text.clone());
+        }
+
+        // Claims
+        for claim in &section.claims {
+            if !claim.text.trim().is_empty() {
+                ids.push(VectorId::claim(claim.id.as_ref()));
+                texts.push(claim.text.clone());
+            }
+        }
+
+        // Recurse into children
+        collect_embeddable_items(&section.children, ids, texts);
+    }
+}
+
+/// Delete all vectors associated with a document from the index.
+///
+/// Queries storage for the document's sections and claims, derives their
+/// vector IDs, and deletes them from the index.
+async fn delete_document_vectors<S: Storage, I: VectorIndex>(
+    doc_id: &crate::types::ContentId,
+    storage: &S,
+    index: &I,
+) -> Result<usize, IngestionError> {
+    let mut deleted = 0;
+
+    // Delete document summary vector
+    let vid = VectorId::doc_summary(doc_id.as_ref());
+    if index
+        .delete(vid.as_str())
+        .map_err(|e| IngestionError::Embedding {
+            reason: e.to_string(),
+        })?
+    {
+        deleted += 1;
+    }
+
+    // Get all sections for this document
+    let sections = storage
+        .list_sections(doc_id)
+        .await
+        .map_err(IngestionError::from)?;
+
+    for section in &sections {
+        // Delete section summary vector
+        let vid = VectorId::sec_summary(section.id.as_ref());
+        if index
+            .delete(vid.as_str())
+            .map_err(|e| IngestionError::Embedding {
+                reason: e.to_string(),
+            })?
+        {
+            deleted += 1;
+        }
+
+        // Delete section text vector
+        let vid = VectorId::section(section.id.as_ref());
+        if index
+            .delete(vid.as_str())
+            .map_err(|e| IngestionError::Embedding {
+                reason: e.to_string(),
+            })?
+        {
+            deleted += 1;
+        }
+
+        // Delete claim vectors
+        let claims = storage
+            .list_claims(&section.id)
+            .await
+            .map_err(IngestionError::from)?;
+        for claim in &claims {
+            let vid = VectorId::claim(claim.id.as_ref());
+            if index
+                .delete(vid.as_str())
+                .map_err(|e| IngestionError::Embedding {
+                    reason: e.to_string(),
+                })?
+            {
+                deleted += 1;
+            }
+        }
+    }
+
+    debug!(deleted, doc_id = %doc_id, "deleted document vectors");
+    Ok(deleted)
 }
 
 impl Default for IngestionPipeline {
@@ -862,5 +1229,240 @@ mod tests {
 
         let docs = storage.list_documents().await.unwrap();
         assert_eq!(docs.len(), 3);
+    }
+
+    // --- Embedding ingestion tests ---
+
+    /// Deterministic mock embedder for testing (no model download needed).
+    struct MockEmbedder {
+        dim: usize,
+    }
+
+    impl crate::embedding::Embedder for MockEmbedder {
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, crate::error::IndexError> {
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    let mut v = vec![0.0f32; self.dim];
+                    for (i, b) in t.bytes().enumerate() {
+                        v[i % self.dim] += f32::from(b) / 255.0;
+                    }
+                    let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    if norm > 0.0 {
+                        for x in &mut v {
+                            *x /= norm;
+                        }
+                    }
+                    v
+                })
+                .collect())
+        }
+
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+    }
+
+    fn make_mock_embedder_and_index() -> (MockEmbedder, crate::index::HnswIndex) {
+        let dim = 8;
+        let embedder = MockEmbedder { dim };
+        let index = crate::index::HnswIndex::new(dim, 10_000).unwrap();
+        (embedder, index)
+    }
+
+    #[tokio::test]
+    async fn ingest_with_embeddings_creates_vectors() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("test.md"),
+            "# API Reference\n\n\
+             The auth service uses JWT tokens with RS256 signing.\n\n\
+             ## Rate Limits\n\n\
+             Rate limits are 100 requests per minute per API key.\n",
+        )
+        .unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let (embedder, index) = make_mock_embedder_and_index();
+        let pipeline = IngestionPipeline::new();
+
+        let stats = pipeline
+            .ingest_directory_with_embeddings(tmp.path(), &storage, &embedder, &index)
+            .await
+            .unwrap();
+
+        assert_eq!(stats.files_indexed, 1);
+        assert!(stats.total_sections > 0);
+
+        // Vector index should have embeddings
+        assert!(!index.is_empty());
+
+        // Should have doc summary + section summaries + section texts + claims
+        let vec_count = index.len();
+        assert!(
+            vec_count >= 3,
+            "expected at least 3 vectors, got {vec_count}"
+        );
+    }
+
+    #[tokio::test]
+    async fn embedding_ingestion_skips_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("doc.md"),
+            "# Hello\n\nThe world is round.\n",
+        )
+        .unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let (embedder, index) = make_mock_embedder_and_index();
+        let pipeline = IngestionPipeline::new();
+
+        // First ingestion
+        pipeline
+            .ingest_directory_with_embeddings(tmp.path(), &storage, &embedder, &index)
+            .await
+            .unwrap();
+
+        let count_after_first = index.len();
+
+        // Second ingestion — same content
+        let stats2 = pipeline
+            .ingest_directory_with_embeddings(tmp.path(), &storage, &embedder, &index)
+            .await
+            .unwrap();
+
+        assert_eq!(stats2.files_skipped, 1);
+        assert_eq!(stats2.files_indexed, 0);
+        // Vector count should not change
+        assert_eq!(index.len(), count_after_first);
+    }
+
+    #[tokio::test]
+    async fn embedding_ingestion_updates_changed_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file_path = tmp.path().join("doc.md");
+        std::fs::write(
+            &file_path,
+            "# V1\n\nOriginal content about authentication.\n",
+        )
+        .unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let (embedder, index) = make_mock_embedder_and_index();
+        let pipeline = IngestionPipeline::new();
+
+        // First ingestion
+        pipeline
+            .ingest_directory_with_embeddings(tmp.path(), &storage, &embedder, &index)
+            .await
+            .unwrap();
+
+        let count_v1 = index.len();
+
+        // Modify file with more sections
+        std::fs::write(
+            &file_path,
+            "# V2\n\nUpdated content.\n\n## New Section\n\nNew information about rate limits.\n",
+        )
+        .unwrap();
+
+        // Second ingestion — should delete old vectors and insert new ones
+        pipeline
+            .ingest_directory_with_embeddings(tmp.path(), &storage, &embedder, &index)
+            .await
+            .unwrap();
+
+        // Should have vectors (old ones deleted, new ones inserted)
+        assert!(!index.is_empty());
+        // V2 has more sections, so likely more vectors
+        assert!(index.len() >= count_v1);
+    }
+
+    #[tokio::test]
+    async fn embedding_ingestion_removes_deleted_file_vectors() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("keep.md"),
+            "# Keep\n\nThis file stays in the index.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("remove.md"),
+            "# Remove\n\nThis file will be deleted from the index.\n",
+        )
+        .unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let (embedder, index) = make_mock_embedder_and_index();
+        let pipeline = IngestionPipeline::new();
+
+        // First ingestion
+        pipeline
+            .ingest_directory_with_embeddings(tmp.path(), &storage, &embedder, &index)
+            .await
+            .unwrap();
+
+        let count_before = index.len();
+        assert!(count_before > 0);
+
+        // Delete one file
+        std::fs::remove_file(tmp.path().join("remove.md")).unwrap();
+
+        // Second ingestion — should remove vectors for deleted file
+        let stats2 = pipeline
+            .ingest_directory_with_embeddings(tmp.path(), &storage, &embedder, &index)
+            .await
+            .unwrap();
+
+        assert_eq!(stats2.files_removed, 1);
+        // Should have fewer vectors now
+        assert!(index.len() < count_before);
+    }
+
+    #[tokio::test]
+    async fn embed_document_creates_multi_resolution_vectors() {
+        let doc = crate::types::DocumentTree {
+            id: crate::types::ContentId("doc1".into()),
+            title: "Test".into(),
+            source_path: "test.md".into(),
+            sections: vec![crate::types::Section {
+                id: SectionId("test.md#s1".into()),
+                heading_path: vec!["Section One".into()],
+                depth: 1,
+                text: "The authentication system uses JWT tokens.".into(),
+                structural_nodes: vec![],
+                children: vec![],
+                claims: vec![crate::types::Claim {
+                    id: crate::types::ClaimId("c1".into()),
+                    text: "JWT tokens use RS256 signing.".into(),
+                    section_id: SectionId("test.md#s1".into()),
+                }],
+                summary: Some("Auth system overview.".into()),
+            }],
+            summary: Some("Document about authentication.".into()),
+        };
+
+        let (embedder, index) = make_mock_embedder_and_index();
+        let count = embed_document(&doc, &embedder, &index).unwrap();
+
+        // Should have: doc summary + sec summary + section text + claim = 4
+        assert_eq!(count, 4);
+        assert_eq!(index.len(), 4);
+
+        // Verify specific vector IDs exist by searching
+        let query = embedder
+            .embed(&["auth"])
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let results = index.search_knn(&query, 10).unwrap();
+
+        let result_ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
+        assert!(result_ids.contains(&"doc-summary::doc1"));
+        assert!(result_ids.contains(&"sec-summary::test.md#s1"));
+        assert!(result_ids.contains(&"section::test.md#s1"));
+        assert!(result_ids.contains(&"claim::c1"));
     }
 }
