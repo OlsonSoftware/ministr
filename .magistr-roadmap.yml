@@ -62,9 +62,9 @@ phases:
   - text: Preserve code blocks, tables, and lists as typed structural nodes within sections
     checked: true
   - text: Implement heuristic claim extraction — sentence splitting, named entity filtering, assertion detection
-    checked: false
+    checked: true
   - text: Implement extractive summary generation — TF-IDF top-k sentence selection per section and per document
-    checked: false
+    checked: true
   - text: Build ingestion pipeline orchestrator — parse, section, extract claims, summarize, store to SQLite
     checked: false
   - text: 'Handle edge cases: documents without headings (paragraph-boundary splitting), empty sections, nested lists'
@@ -72,7 +72,7 @@ phases:
   - text: Implement incremental re-indexing — compare file hashes, re-parse only changed files, update only changed sections
     checked: false
   - text: Add token counting utility (cl100k_base compatible) for accurate budget tracking on all content units
-    checked: false
+    checked: true
   - text: Write tests for Markdown parsing — heading hierarchy, code blocks, tables, GFM extensions, frontmatter
     checked: true
   - text: Write tests for claim extraction quality — precision/recall on a hand-labeled test corpus
