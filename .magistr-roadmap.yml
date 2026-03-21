@@ -106,7 +106,7 @@ phases:
   - text: Write benchmarks for embedding throughput (docs/sec) and search latency (p50/p99) at 1k/10k/100k sections
     checked: false
   - text: Write tests for vector index — insert/search/delete correctness, persistence round-trip, concurrent reads
-    checked: false
+    checked: true
 - id: P4
   name: MCP Server & Core Tools
   tagline: Wire up rmcp and expose iris_survey, iris_read, iris_extract as MCP tools
@@ -129,9 +129,9 @@ phases:
   - text: Expose MCP resources — iris://status (index stats) and iris://corpus/{path} (document metadata)
     checked: false
   - text: 'Add #[instrument] tracing spans to all MCP tool handlers with request/response logging at DEBUG level'
-    checked: false
+    checked: true
   - text: Implement graceful error handling — map iris-core errors to MCP ErrorData with user-friendly messages
-    checked: false
+    checked: true
   - text: Write end-to-end integration test — start MCP server, send JSON-RPC tool calls, verify responses
     checked: false
   - text: Test with real MCP client (Claude Code) — verify tool discovery, survey/read/extract flow on a sample corpus
