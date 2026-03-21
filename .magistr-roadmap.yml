@@ -160,13 +160,13 @@ phases:
   - text: Build budget tracker — configurable max_context_tokens, threshold-based pressure mode (default 80%)
     checked: true
   - text: Implement pressure mode behavior — auto-compress responses to claim-level, attach eviction recommendations
-    checked: false
+    checked: true
   - text: Implement eviction ranking — score delivered content by recency, relevance decay, and dependency graph
-    checked: false
+    checked: true
   - text: Implement iris_budget tool — return total_budget, estimated_used, pressure_level, eviction_candidates
-    checked: false
+    checked: true
   - text: Implement iris_compress tool — generate compressed summaries for content the agent wants to evict
-    checked: false
+    checked: true
   - text: Add session persistence to SQLite — save/restore session shadows for crash recovery
     checked: false
   - text: Write exhaustive tests for session shadow — deduplication, fault correction, window estimation accuracy

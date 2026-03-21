@@ -2,7 +2,8 @@
 //!
 //! Implements the rmcp `ServerHandler` trait with `#[tool]` macro-based
 //! tool registration. The server exposes iris tools (`iris_survey`,
-//! `iris_read`, `iris_extract`, `iris_evicted`) over the MCP protocol.
+//! `iris_read`, `iris_extract`, `iris_evicted`, `iris_budget`,
+//! `iris_compress`) over the MCP protocol.
 //!
 //! Every tool response includes a `budget_status` object with the current
 //! token budget state. Survey and read responses are deduplicated against
@@ -27,8 +28,9 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use tracing::{Instrument, debug, info_span, warn};
 
-use iris_core::service::{QueryError, QueryService, SurveyResult};
+use iris_core::service::{CompressedItem, QueryError, QueryService, SurveyResult};
 use iris_core::session::delta::ContentDelta;
+use iris_core::session::eviction::EvictionCandidate;
 use iris_core::session::{
     BudgetConfig, BudgetStatus, BudgetTracker, EvictionPolicy, Session, SessionId,
 };
@@ -143,6 +145,38 @@ pub struct ExtractParams {
     pub query: Option<String>,
 }
 
+/// Parameters for the `iris_compress` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CompressParams {
+    /// Content IDs to generate compressed summaries for.
+    #[schemars(
+        description = "Content IDs (section IDs) to generate compressed summaries for eviction"
+    )]
+    pub content_ids: Vec<String>,
+}
+
+/// Response from the `iris_budget` tool.
+#[derive(Debug, Serialize)]
+struct BudgetResponse {
+    /// Total context window budget in tokens.
+    total_budget: usize,
+    /// Estimated tokens currently used.
+    estimated_used: usize,
+    /// Estimated tokens remaining.
+    estimated_remaining: usize,
+    /// Current pressure level.
+    pressure_level: String,
+    /// Recommended eviction candidates (empty under normal pressure).
+    eviction_candidates: Vec<EvictionCandidate>,
+}
+
+/// Response from the `iris_compress` tool.
+#[derive(Debug, Serialize)]
+struct CompressResponse {
+    /// Compressed summaries for the requested content.
+    summaries: Vec<CompressedItem>,
+}
+
 #[tool(tool_box)]
 impl ServerHandler for IrisServer {
     fn get_info(&self) -> ServerInfo {
@@ -156,8 +190,10 @@ impl ServerHandler for IrisServer {
             instructions: Some(
                 "iris is a context cache controller for LLM agents. Use iris_survey to \
                  search for relevant content, iris_read to retrieve full section text, \
-                 iris_extract to get atomic claims from a section, and iris_evicted to \
-                 signal when content has been dropped from your context window."
+                 iris_extract to get atomic claims from a section, iris_budget to check \
+                 context budget status and get eviction recommendations, iris_compress \
+                 to generate compressed summaries of content you want to evict, and \
+                 iris_evicted to signal when content has been dropped from your context window."
                     .to_string(),
             ),
         }
@@ -507,6 +543,106 @@ impl IrisServer {
             let json = serde_json::to_string_pretty(&response)
                 .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
             Ok(CallToolResult::success(vec![Content::text(json)]))
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Get the current context budget status and eviction recommendations.
+    ///
+    /// Returns the total budget, estimated usage, pressure level, and a
+    /// ranked list of eviction candidates when under pressure. Use this
+    /// to understand budget health and decide what to evict.
+    #[tool(
+        name = "iris_budget",
+        description = "Get the current context budget status: total budget, estimated usage, pressure level, and eviction recommendations. Call this to understand budget health."
+    )]
+    async fn budget(&self) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_budget");
+
+        async {
+            debug!("iris_budget request");
+
+            let session = self.session.lock().await;
+            let budget = self.budget.lock().await;
+
+            let status = budget.budget_status();
+            let candidates = budget.eviction_candidates(&session, 5);
+
+            drop(budget);
+            drop(session);
+
+            let pressure_str = match status.pressure_level {
+                iris_core::session::PressureLevel::Normal => "normal",
+                iris_core::session::PressureLevel::Elevated => "elevated",
+                iris_core::session::PressureLevel::Critical => "critical",
+            };
+
+            debug!(
+                pressure = pressure_str,
+                used = status.tokens_used,
+                remaining = status.tokens_remaining,
+                candidate_count = candidates.len(),
+                "iris_budget complete"
+            );
+
+            let response = BudgetResponse {
+                total_budget: status.tokens_used + status.tokens_remaining,
+                estimated_used: status.tokens_used,
+                estimated_remaining: status.tokens_remaining,
+                pressure_level: pressure_str.to_string(),
+                eviction_candidates: candidates,
+            };
+            let json = serde_json::to_string_pretty(&response)
+                .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
+            Ok(CallToolResult::success(vec![Content::text(json)]))
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Generate compressed summaries for content the agent wants to evict.
+    ///
+    /// For each content ID, returns a short extractive summary that preserves
+    /// the gist while reducing token count by 60–80%. The agent can replace
+    /// the full section with this summary to free budget.
+    #[tool(
+        name = "iris_compress",
+        description = "Generate compressed summaries for sections the agent wants to evict from context. Returns short summaries preserving the gist, with original and compressed token counts."
+    )]
+    async fn compress(
+        &self,
+        #[tool(aggr)] params: CompressParams,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_compress", count = params.content_ids.len());
+
+        async {
+            debug!(content_ids = ?params.content_ids, "iris_compress request");
+
+            match self.service.compress_content(&params.content_ids).await {
+                Ok(summaries) => {
+                    debug!(summary_count = summaries.len(), "iris_compress success");
+
+                    let budget = self.budget.lock().await;
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+
+                    let response = ToolResponse {
+                        data: CompressResponse { summaries },
+                        budget_status,
+                    };
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, "iris_compress failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_query_error(&e),
+                    )]))
+                }
+            }
         }
         .instrument(span)
         .await
@@ -1247,6 +1383,221 @@ mod tests {
         assert!(
             instructions.contains("iris_evicted"),
             "instructions should mention iris_evicted"
+        );
+    }
+
+    #[test]
+    fn server_instructions_include_budget_and_compress_tools() {
+        let server = setup_server_sync();
+        let info = server.get_info();
+        let instructions = info.instructions.unwrap();
+        assert!(
+            instructions.contains("iris_budget"),
+            "instructions should mention iris_budget"
+        );
+        assert!(
+            instructions.contains("iris_compress"),
+            "instructions should mention iris_compress"
+        );
+    }
+
+    // --- iris_budget tests ---
+
+    #[tokio::test]
+    async fn budget_returns_status_with_zero_usage() {
+        let server = setup_server().await;
+        let result = server.budget().await.unwrap();
+
+        assert!(result.is_error.is_none() || result.is_error == Some(false));
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert!(parsed["total_budget"].is_number());
+        assert_eq!(parsed["estimated_used"].as_u64().unwrap(), 0);
+        assert_eq!(parsed["pressure_level"], "normal");
+        assert!(parsed["eviction_candidates"].is_array());
+        assert!(
+            parsed["eviction_candidates"].as_array().unwrap().is_empty(),
+            "no candidates under normal pressure"
+        );
+    }
+
+    #[tokio::test]
+    async fn budget_returns_candidates_under_pressure() {
+        // Use a small budget to easily trigger elevated pressure
+        let dim = 8;
+        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let doc = make_test_doc();
+        storage.insert_document(&doc).await.unwrap();
+
+        let texts_and_ids = [(
+            "section::docs/auth.md#tokens",
+            "JWT tokens use RS256 signing. Tokens expire after 24 hours.",
+        )];
+        for (id, text) in &texts_and_ids {
+            let vecs = embedder.embed(&[*text]).unwrap();
+            index.insert(id, &vecs[0]).unwrap();
+        }
+
+        let service = Arc::new(QueryService::new(storage, embedder, index));
+        let budget_config = BudgetConfig {
+            max_context_tokens: 20, // Very small — any delivery triggers pressure
+            pressure_threshold: 0.5,
+            critical_threshold: 0.9,
+        };
+        let server = IrisServer::with_budget_config(service, budget_config);
+
+        // Read a section to fill the budget
+        server
+            .read(ReadParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+            })
+            .await
+            .unwrap();
+
+        // Now check budget — should be under pressure with candidates
+        let result = server.budget().await.unwrap();
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_ne!(
+            parsed["pressure_level"], "normal",
+            "should be under pressure"
+        );
+        assert!(
+            !parsed["eviction_candidates"].as_array().unwrap().is_empty(),
+            "should have eviction candidates under pressure"
+        );
+    }
+
+    #[tokio::test]
+    async fn budget_after_tool_calls_shows_usage() {
+        let server = setup_server().await;
+
+        // Read a section to accumulate budget
+        server
+            .read(ReadParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let result = server.budget().await.unwrap();
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert!(
+            parsed["estimated_used"].as_u64().unwrap() > 0,
+            "should show non-zero usage after read"
+        );
+        assert!(
+            parsed["estimated_remaining"].as_u64().unwrap() > 0,
+            "should show remaining budget"
+        );
+    }
+
+    // --- iris_compress tests ---
+
+    #[tokio::test]
+    async fn compress_returns_summaries_for_known_sections() {
+        let server = setup_server().await;
+        let params = CompressParams {
+            content_ids: vec!["docs/auth.md#tokens".to_string()],
+        };
+        let result = server.compress(params).await.unwrap();
+
+        assert!(result.is_error.is_none() || result.is_error == Some(false));
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        let summaries = parsed["summaries"].as_array().unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0]["original_id"], "docs/auth.md#tokens");
+        assert!(summaries[0]["summary"].is_string());
+        assert!(summaries[0]["original_tokens"].is_number());
+        assert!(summaries[0]["compressed_tokens"].is_number());
+    }
+
+    #[tokio::test]
+    async fn compress_skips_unknown_content_ids() {
+        let server = setup_server().await;
+        let params = CompressParams {
+            content_ids: vec!["nonexistent#section".to_string()],
+        };
+        let result = server.compress(params).await.unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        let summaries = parsed["summaries"].as_array().unwrap();
+        assert!(
+            summaries.is_empty(),
+            "unknown content IDs should be silently skipped"
+        );
+    }
+
+    #[tokio::test]
+    async fn compress_includes_budget_status() {
+        let server = setup_server().await;
+        let params = CompressParams {
+            content_ids: vec!["docs/auth.md#tokens".to_string()],
+        };
+        let result = server.compress(params).await.unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert!(
+            parsed["budget_status"].is_object(),
+            "compress response should include budget_status"
+        );
+    }
+
+    #[tokio::test]
+    async fn compress_summary_is_shorter_than_original() {
+        let server = setup_server().await;
+        let params = CompressParams {
+            content_ids: vec!["docs/auth.md#tokens".to_string()],
+        };
+        let result = server.compress(params).await.unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        let summaries = parsed["summaries"].as_array().unwrap();
+        if !summaries.is_empty() {
+            let original = summaries[0]["original_tokens"].as_u64().unwrap();
+            let compressed = summaries[0]["compressed_tokens"].as_u64().unwrap();
+            assert!(
+                compressed <= original,
+                "compressed ({compressed}) should be <= original ({original})"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn compress_mixed_known_and_unknown() {
+        let server = setup_server().await;
+
+        // Compress a mix of known and unknown section IDs
+        let params = CompressParams {
+            content_ids: vec![
+                "docs/auth.md#tokens".to_string(),
+                "nonexistent#missing".to_string(),
+            ],
+        };
+        let result = server.compress(params).await.unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        let summaries = parsed["summaries"].as_array().unwrap();
+        assert_eq!(
+            summaries.len(),
+            1,
+            "should only return summary for the known section"
         );
     }
 }

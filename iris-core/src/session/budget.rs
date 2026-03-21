@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::eviction::{EvictionCandidate, EvictionRanker};
+use super::types::Session;
 use super::window::WindowEstimator;
 
 /// Pressure level indicating how close the agent is to its context budget.
@@ -185,6 +187,26 @@ impl BudgetTracker {
     /// Returns `true` if the content was found and removed.
     pub fn force_evict(&mut self, content_id: &str) -> bool {
         self.window.force_evict(content_id)
+    }
+
+    /// Get eviction candidates ranked by priority.
+    ///
+    /// Uses the [`EvictionRanker`] to score delivered items from the session
+    /// by recency, token weight, and resolution priority. Returns up to
+    /// `max_candidates` items, sorted best-to-evict first.
+    ///
+    /// Only returns candidates when pressure is elevated or critical.
+    /// Under normal pressure, returns an empty list.
+    #[must_use]
+    pub fn eviction_candidates(
+        &self,
+        session: &Session,
+        max_candidates: usize,
+    ) -> Vec<EvictionCandidate> {
+        if self.pressure_level() == PressureLevel::Normal {
+            return Vec::new();
+        }
+        EvictionRanker::rank(session, max_candidates)
     }
 }
 
@@ -510,5 +532,97 @@ mod tests {
         let back: BudgetStatus = serde_json::from_str(&json).unwrap();
         assert_eq!(back.tokens_used, status.tokens_used);
         assert_eq!(back.pressure_level, status.pressure_level);
+    }
+
+    // --- eviction_candidates tests ---
+
+    #[test]
+    fn eviction_candidates_empty_under_normal_pressure() {
+        let mut tracker = tracker_with_capacity(1000);
+        let mut session = crate::session::Session::new(
+            crate::session::SessionId::from("test".to_string()),
+            1000,
+            EvictionPolicy::Fifo,
+        );
+
+        tracker.record_tokens("s1", 300);
+        session.record_delivery(
+            &crate::types::ContentId::from("s1".to_string()),
+            crate::types::Resolution::Section,
+            300,
+            1,
+            "h1".into(),
+        );
+
+        // 300/1000 = 0.3 -> Normal pressure
+        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+        let candidates = tracker.eviction_candidates(&session, 5);
+        assert!(
+            candidates.is_empty(),
+            "no eviction candidates under normal pressure"
+        );
+    }
+
+    #[test]
+    fn eviction_candidates_returned_under_elevated_pressure() {
+        let mut tracker = tracker_with_capacity(1000);
+        let mut session = crate::session::Session::new(
+            crate::session::SessionId::from("test".to_string()),
+            1000,
+            EvictionPolicy::Fifo,
+        );
+
+        tracker.record_tokens("s1", 300);
+        session.record_delivery(
+            &crate::types::ContentId::from("s1".to_string()),
+            crate::types::Resolution::Section,
+            300,
+            1,
+            "h1".into(),
+        );
+
+        tracker.record_tokens("s2", 600);
+        session.record_delivery(
+            &crate::types::ContentId::from("s2".to_string()),
+            crate::types::Resolution::Section,
+            600,
+            2,
+            "h2".into(),
+        );
+
+        // 900/1000 = 0.9 -> Elevated
+        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        let candidates = tracker.eviction_candidates(&session, 5);
+        assert!(
+            !candidates.is_empty(),
+            "should return candidates under elevated pressure"
+        );
+    }
+
+    #[test]
+    fn eviction_candidates_returned_under_critical_pressure() {
+        let mut tracker = tracker_with_capacity(1000);
+        let mut session = crate::session::Session::new(
+            crate::session::SessionId::from("test".to_string()),
+            1000,
+            EvictionPolicy::Fifo,
+        );
+
+        tracker.record_tokens("s1", 960);
+        session.record_delivery(
+            &crate::types::ContentId::from("s1".to_string()),
+            crate::types::Resolution::Section,
+            960,
+            1,
+            "h1".into(),
+        );
+
+        // 960/1000 = 0.96 -> Critical
+        assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
+        let candidates = tracker.eviction_candidates(&session, 5);
+        assert!(
+            !candidates.is_empty(),
+            "should return candidates under critical pressure"
+        );
     }
 }
