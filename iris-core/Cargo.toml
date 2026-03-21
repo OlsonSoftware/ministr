@@ -21,6 +21,7 @@ dirs = "6"
 comrak.workspace = true
 rusqlite.workspace = true
 rusqlite_migration.workspace = true
+tiktoken-rs.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

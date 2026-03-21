@@ -38,6 +38,9 @@ rusqlite_migration = "2"
 # Markdown parsing
 comrak = "0.36"
 
+# Token counting
+tiktoken-rs = "0.6"
+
 # MCP
 rmcp = { version = "0.1", features = ["server", "transport-sse", "transport-io"] }
 
