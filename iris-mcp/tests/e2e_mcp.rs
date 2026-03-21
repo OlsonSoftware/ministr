@@ -4,7 +4,7 @@
 //! the MCP `call_tool` interface with a real `SQLite` database and HNSW
 //! index (using a deterministic mock embedder). They verify:
 //!
-//! - Tool listing returns all three iris tools
+//! - Tool listing returns all six iris tools
 //! - Survey returns ranked, non-empty results across resolutions
 //! - Read retrieves full section content with heading paths
 //! - Extract returns atomic claims, optionally scored by relevance
@@ -281,6 +281,14 @@ async fn list_tools_returns_all_iris_tools() {
     assert!(
         tool_names.contains(&"iris_evicted"),
         "should list iris_evicted, got: {tool_names:?}"
+    );
+    assert!(
+        tool_names.contains(&"iris_budget"),
+        "should list iris_budget, got: {tool_names:?}"
+    );
+    assert!(
+        tool_names.contains(&"iris_compress"),
+        "should list iris_compress, got: {tool_names:?}"
     );
 }
 

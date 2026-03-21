@@ -12,9 +12,11 @@ use tracing::instrument;
 
 use crate::embedding::Embedder;
 use crate::error::{IndexError, StorageError};
+use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
 use crate::index::VectorIndex;
 use crate::search::{MultiResolutionSearch, SearchConfig};
 use crate::storage::{SqliteStorage, Storage};
+use crate::token::count_tokens;
 use crate::types::{Resolution, SectionId, VectorId};
 
 /// A ranked result from a corpus survey search.
@@ -60,6 +62,22 @@ pub struct ClaimResult {
     /// Relevance score when filtered by query (0.0–1.0). `None` if no query.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relevance: Option<f32>,
+}
+
+/// A compressed summary of a content item, used for eviction.
+///
+/// When an agent wants to free budget, it can compress sections into shorter
+/// summaries that preserve the gist while reducing token count.
+#[derive(Debug, Clone, Serialize)]
+pub struct CompressedItem {
+    /// The original content ID that was compressed.
+    pub original_id: String,
+    /// The compressed summary text.
+    pub summary: String,
+    /// Token count of the original content.
+    pub original_tokens: usize,
+    /// Token count of the compressed summary.
+    pub compressed_tokens: usize,
 }
 
 /// Errors from the query service layer.
@@ -256,6 +274,48 @@ impl QueryService {
                     .collect())
             }
         }
+    }
+
+    /// Compress content items into shorter summaries for eviction.
+    ///
+    /// For each content ID, looks up the section text and generates an
+    /// extractive summary (2 sentences). Returns the original and compressed
+    /// token counts so the agent knows how much budget it saves.
+    ///
+    /// Content IDs that don't match any section are silently skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] if a database operation fails.
+    #[instrument(skip(self))]
+    pub async fn compress_content(
+        &self,
+        content_ids: &[String],
+    ) -> Result<Vec<CompressedItem>, QueryError> {
+        let summarizer = ExtractiveSummaryGenerator::new();
+        let mut results = Vec::with_capacity(content_ids.len());
+
+        for id in content_ids {
+            let sid = SectionId(id.clone());
+            if let Some(section) = self.storage.get_section(&sid).await? {
+                // Use existing summary if available, otherwise generate one
+                let summary = section
+                    .summary
+                    .unwrap_or_else(|| summarizer.summarize(&section.text, 2));
+                let original_tokens = count_tokens(&section.text);
+                let compressed_tokens = count_tokens(&summary);
+
+                results.push(CompressedItem {
+                    original_id: id.clone(),
+                    summary,
+                    original_tokens,
+                    compressed_tokens,
+                });
+            }
+            // Silently skip unknown content IDs
+        }
+
+        Ok(results)
     }
 
     /// Resolve a vector ID to its content text and optional heading path.
@@ -575,6 +635,53 @@ mod tests {
             .await
             .unwrap();
         assert!(claims.is_empty());
+    }
+
+    // --- compress_content tests ---
+
+    #[tokio::test]
+    async fn compress_known_section_returns_summary() {
+        let service = setup_service().await;
+        let results = service
+            .compress_content(&["docs/auth.md#tokens".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].original_id, "docs/auth.md#tokens");
+        assert!(!results[0].summary.is_empty());
+        assert!(results[0].original_tokens > 0);
+        assert!(results[0].compressed_tokens <= results[0].original_tokens);
+    }
+
+    #[tokio::test]
+    async fn compress_unknown_section_is_skipped() {
+        let service = setup_service().await;
+        let results = service
+            .compress_content(&["nonexistent#section".to_string()])
+            .await
+            .unwrap();
+
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn compress_empty_list_returns_empty() {
+        let service = setup_service().await;
+        let results = service.compress_content(&[]).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn compress_uses_existing_summary_when_available() {
+        let service = setup_service().await;
+        let results = service
+            .compress_content(&["docs/auth.md#tokens".to_string()])
+            .await
+            .unwrap();
+
+        // The test section has a pre-generated summary "Token authentication details."
+        assert_eq!(results[0].summary, "Token authentication details.");
     }
 
     // --- cosine_similarity tests ---
