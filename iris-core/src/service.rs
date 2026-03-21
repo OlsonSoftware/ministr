@@ -124,6 +124,18 @@ impl QueryService {
         }
     }
 
+    /// Access the embedder for external use (e.g. topical prefetch).
+    #[must_use]
+    pub fn embedder(&self) -> &dyn Embedder {
+        self.embedder.as_ref()
+    }
+
+    /// Access the vector index for external use (e.g. topical prefetch).
+    #[must_use]
+    pub fn index(&self) -> &dyn VectorIndex {
+        self.index.as_ref()
+    }
+
     /// Search the corpus for content relevant to a natural language query.
     ///
     /// Performs multi-resolution vector search and enriches results with
