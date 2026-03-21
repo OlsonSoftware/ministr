@@ -73,7 +73,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Implement resolution-aware result scoring — weight results by resolution level and query specificity
 - [x] Add incremental vector index updates — insert/delete embeddings for changed sections without full rebuild
 - [ ] Write benchmarks for embedding throughput (docs/sec) and search latency (p50/p99) at 1k/10k/100k sections
-- [ ] Write tests for vector index — insert/search/delete correctness, persistence round-trip, concurrent reads
+- [x] Write tests for vector index — insert/search/delete correctness, persistence round-trip, concurrent reads
 
 ---
 
@@ -87,13 +87,13 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 - [x] Implement ServerHandler trait via rmcp with stdio transport and #[tool] macro-based tool registration
 - [x] Wire up iris-cli binary entry point — argument parsing (clap), corpus path, config loading, server startup
-- [ ] Implement iris_survey tool — vector search over section embeddings, return ranked summaries with relevance scores
-- [ ] Implement iris_read tool — full section text by hierarchical ID with heading_path and claims_available count
-- [ ] Implement iris_extract tool — claim-level retrieval within a specific section, filtered by query relevance
-- [ ] Add budget_status object to every tool response — tokens_used, tokens_remaining, pressure_level
+- [x] Implement iris_survey tool — vector search over section embeddings, return ranked summaries with relevance scores
+- [x] Implement iris_read tool — full section text by hierarchical ID with heading_path and claims_available count
+- [x] Implement iris_extract tool — claim-level retrieval within a specific section, filtered by query relevance
+- [x] Add budget_status object to every tool response — tokens_used, tokens_remaining, pressure_level
 - [ ] Expose MCP resources — iris://status (index stats) and iris://corpus/{path} (document metadata)
-- [ ] Add #[instrument] tracing spans to all MCP tool handlers with request/response logging at DEBUG level
-- [ ] Implement graceful error handling — map iris-core errors to MCP ErrorData with user-friendly messages
+- [x] Add #[instrument] tracing spans to all MCP tool handlers with request/response logging at DEBUG level
+- [x] Implement graceful error handling — map iris-core errors to MCP ErrorData with user-friendly messages
 - [ ] Write end-to-end integration test — start MCP server, send JSON-RPC tool calls, verify responses
 - [ ] Test with real MCP client (Claude Code) — verify tool discovery, survey/read/extract flow on a sample corpus
 
@@ -107,14 +107,14 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Implement Session struct — id, created_at, agent_context_budget, delivered BTreeMap, trajectory vector
-- [ ] Implement DeliveredItem tracking — content_id, resolution, token_count, turn_delivered, content_hash
-- [ ] Build window estimation model — cumulative token tracking with configurable FIFO/LRU eviction assumption
-- [ ] Implement deduplication — compare incoming results against session shadow, skip already-delivered content
+- [x] Implement Session struct — id, created_at, agent_context_budget, delivered BTreeMap, trajectory vector
+- [x] Implement DeliveredItem tracking — content_id, resolution, token_count, turn_delivered, content_hash
+- [x] Build window estimation model — cumulative token tracking with configurable FIFO/LRU eviction assumption
+- [x] Implement deduplication — compare incoming results against session shadow, skip already-delivered content
 - [ ] Implement delta updates — detect when a previously-delivered section has changed, return only the diff
 - [ ] Implement fault-based correction — detect re-requests as eviction signals, update window estimate
 - [ ] Implement iris_evicted tool — accept explicit agent feedback on dropped content_ids
-- [ ] Build budget tracker — configurable max_context_tokens, threshold-based pressure mode (default 80%)
+- [x] Build budget tracker — configurable max_context_tokens, threshold-based pressure mode (default 80%)
 - [ ] Implement pressure mode behavior — auto-compress responses to claim-level, attach eviction recommendations
 - [ ] Implement eviction ranking — score delivered content by recency, relevance decay, and dependency graph
 - [ ] Implement iris_budget tool — return total_budget, estimated_used, pressure_level, eviction_candidates
