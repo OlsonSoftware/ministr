@@ -1,0 +1,125 @@
+# Universal Workflow
+
+These rules apply to **every project** regardless of language or framework. They are NON-NEGOTIABLE.
+
+## Phase Tracking
+
+You MUST call `magistr_set_phase` at each workflow transition. This updates the magistr TUI progress indicator.
+
+- Call `magistr_set_phase(phase: "research")` when you start researching
+- Call `magistr_set_phase(phase: "plan")` when you start exploring the codebase and writing a plan
+- Call `magistr_set_phase(phase: "execute")` when you start implementing (first source file edit or test write)
+- Call `magistr_set_phase(phase: "verify")` when you start running quality gates
+- Call `magistr_set_phase(phase: "done")` when the iteration is complete (committed)
+
+Call it proactively — don't wait to be asked. The very first thing you do in each phase should be calling `magistr_set_phase`.
+
+## Plan Entry Status
+
+Keep your plan entry statuses up to date. The Magistr TUI sidebar shows your plan as a live checklist.
+
+- Mark entries as `in_progress` when you start working on them
+- Mark entries as `completed` when you finish them
+- Only one entry should be `in_progress` at a time
+- Update the plan with every phase transition — all entries from the previous phase should be `completed` before starting the next phase
+- Prefix each plan entry with its workflow phase tag: `[Research]`, `[Plan]`, `[Execute]`, `[Verify]`
+
+## Research-Plan-Execute-Verify
+
+**Every significant change** follows four strict phases. No exceptions, no shortcuts.
+
+### RESEARCH
+
+> `magistr_set_phase(phase: "research")` — call this first.
+
+1. **Web search** — use the `WebSearch` tool (NOT `WebFetch`) to research best practices, recent API changes, known pitfalls, and idiomatic patterns for what you're about to build. Formulate 2-4 targeted queries. Only use `WebFetch` to read specific URLs found via `WebSearch`.
+2. **Deep dive** — when applicable, use `WebFetch` to read official documentation pages, changelogs, or reference implementations found during web search.
+3. **Capture findings** — note API contracts, patterns to follow, anti-patterns to avoid, and version-specific behavior that will inform the plan.
+
+### PLAN
+
+> `magistr_set_phase(phase: "plan")` — call this first.
+
+1. **Explore the codebase** using the tools documented in `tools.md`. Do NOT use `Read` for exploration — it is ONLY for immediately before `Edit`.
+2. Use `magistr_roadmap_status` and `magistr_roadmap_tasks` to see what's done and what's next
+3. Write a plan to `.magistr/current-plan.md`
+
+The plan phase is enforced by magistr's orchestration layer — always write a plan before editing source files.
+
+### EXECUTE
+
+> `magistr_set_phase(phase: "execute")` — call this first.
+
+1. Use the codebase navigation tools from `tools.md` to understand code before modifying. Use `Read` only immediately before `Edit`.
+2. Implement the plan using TDD (red-green-refactor)
+3. Follow project conventions from `.claude/rules/conventions.md`
+
+### VERIFY — All four steps are MANDATORY
+
+> `magistr_set_phase(phase: "verify")` — call this first.
+
+1. **Run quality gates** — all must pass before anything else:
+   - Use `magistr_gate(gate: "all")` to run all gates (check, test, lint, plus custom gates)
+   - Or run individual gates: `magistr_gate(gate: "check")`, `magistr_gate(gate: "test")`, `magistr_gate(gate: "lint")`
+   - Use `magistr_format` to run the project formatter before gates
+
+2. **Update the roadmap** — this is NOT optional:
+   - Use `magistr_roadmap_check` to check off completed items
+   - Use `magistr_roadmap_add_task` to add new items discovered during implementation
+   - The roadmap YAML (`.magistr-roadmap.yml`) is auto-saved by these MCP tools
+
+3. **Commit** — every successful change ends with a full git commit:
+   - Stage all changed files including `.magistr-roadmap.yml`
+   - Use conventional commit format: `<type>: <description>`
+   - The commit MUST include the roadmap update — code and spec travel together
+   - Do NOT leave uncommitted work. Do NOT defer the commit.
+
+4. **Clean up** — use `magistr_delete` to remove `.magistr/current-plan.md` and `.magistr/current-task.md`
+
+**Workflow enforcement:** When running through magistr, these rules are enforced by the orchestration layer's lifecycle guards. When running standalone, follow them as discipline — they are non-negotiable.
+
+## Non-Negotiable Rules
+
+These apply to ALL work — `/next`, manual tasks, bug fixes, refactors, everything:
+
+1. **ALWAYS update the roadmap** — Every piece of work gets tracked via `magistr_roadmap_check` and `magistr_roadmap_add_task`. If you implemented it, check it off. If it wasn't in the roadmap, add it and check it off. The roadmap (`.magistr-roadmap.yml`) is the single source of truth for project progress.
+
+2. **ALWAYS commit at the end** — No work is done until it's committed. The commit includes ALL changed files plus the roadmap update. One atomic commit per unit of work.
+
+3. **ALWAYS run quality gates before committing** — No exceptions. All three gates (check, test, lint) must pass. If they fail, fix the failures first.
+
+4. **ALWAYS plan before executing** — Read the codebase first. Write a plan. Then implement.
+
+5. **ALWAYS use TDD** — Write a failing test, make it pass, refactor. Every significant type/function gets tests.
+
+## TDD Protocol
+
+All new features, bug fixes, and refactors follow Red-Green-Refactor:
+
+1. **RED**: Write a failing test first
+2. **GREEN**: Write minimal code to pass
+3. **REFACTOR**: Clean up with tests green
+
+All tests must pass before committing.
+
+## Conventional Commits
+
+Format: `<type>: <description>`
+
+- `feat:` — new features or capabilities
+- `fix:` — bug fixes
+- `refactor:` — structural changes without behavior change
+- `test:` — test-only additions
+- `docs:` — documentation changes
+- `chore:` — maintenance, dependencies, tooling
+
+## Iteration Pattern
+
+Each `/next` iteration:
+1. Use `magistr_roadmap_tasks(unchecked_only: true)` — find the next coherent group of unchecked items
+2. Plan the implementation (3-6 files per iteration)
+3. Implement with TDD
+4. Run quality gates — all must pass
+5. Update roadmap — use `magistr_roadmap_check` to check off completed items
+6. Commit — one atomic commit with code + `.magistr-roadmap.yml`
+7. Clean up state files

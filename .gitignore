@@ -1,0 +1,16 @@
+# ── magistr managed ── DO NOT EDIT between markers ──
+.magistr/scope/
+.magistr/current-plan.md
+.magistr/current-task.md
+.magistr/loop-state.json
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+# ── end magistr ──
+
+# Rust / Cargo
+/target
+**/*.rs.bk
+Cargo.lock

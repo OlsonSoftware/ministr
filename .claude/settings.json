@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "AskUserQuestion",
+      "Agent",
+      "Task",
+      "TaskCreate",
+      "TaskUpdate",
+      "TaskList",
+      "TaskGet",
+      "TaskOutput",
+      "TaskStop",
+      "mcp__magistr",
+      "mcp__magistr-scope",
+      "mcp__context7",
+      "mcp__brave-search",
+      "mcp__sequential-thinking",
+      "mcp__jig-scope",
+      "mcp__mcp-server-fetch"
+    ],
+    "deny": [
+      "Glob",
+      "Grep",
+      "TeamCreate",
+      "TeamDelete",
+      "SendMessage",
+      "Bash(git stash:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout -- :*)",
+      "Bash(git clean:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git rebase:*)",
+      "Bash(git merge:*)"
+    ]
+  }
+}

@@ -1,0 +1,86 @@
+---
+description: Unknown coding conventions
+globs: ["**/*"]
+alwaysApply: true
+---
+# Project Conventions
+
+## Clean Code
+
+- Single responsibility: one function does one thing.
+- Functions stay short (under 30 lines). If longer, extract.
+- Guard clauses over nested conditionals. Return early.
+- Names describe intent: `getUserById` not `getData`, `isValid` not `check`.
+- No magic numbers or strings. Use named constants.
+- Delete dead code. Do not comment it out.
+
+## Naming Consistency
+
+- Pick one naming convention per category and apply it uniformly:
+  - Functions and variables: `camelCase` or `snake_case` (match language idiom).
+  - Types and classes: `PascalCase`.
+  - Constants: `SCREAMING_SNAKE_CASE`.
+- File names match the primary export or class they contain.
+- Test files are co-located with source or in a parallel test directory.
+
+## Error Handling
+
+- Handle errors explicitly. Never silently swallow exceptions or error codes.
+- Use the language's idiomatic error mechanism (exceptions, Result types, error codes).
+- Add context when propagating errors — what operation failed and why.
+- Validate inputs at system boundaries. Do not trust external data.
+
+## Testing
+
+- Write tests alongside implementation. At minimum: happy path, error path, edge cases.
+- One assertion concept per test. Clear test names describe the scenario.
+- Use the project's test framework. Follow its conventions for file naming and structure.
+- Test error paths, not just success paths.
+- Use temporary directories for filesystem tests. Never write to fixed paths.
+
+## Dependencies
+
+- Minimize dependency count. Prefer standard library solutions when reasonable.
+- Pin dependency versions. Update deliberately, not automatically.
+- Audit new dependencies for maintenance status and security.
+
+## Security
+
+- No secrets in code. Use environment variables or secret managers.
+- Validate and sanitize all external input.
+- Use parameterized queries for database access. No string concatenation.
+- Follow the principle of least privilege for file access and API permissions.
+
+## Code Organization
+
+- Separate concerns: data access, business logic, and presentation in distinct layers.
+- Keep modules focused. If a file exceeds 300 lines, consider splitting.
+- Group related functionality together. Alphabetical ordering within groups.
+- Public API surface should be minimal. Hide implementation details.
+
+
+## Project-Specific Conventions
+
+- Use clippy::pedantic with #![deny(warnings)] and #![deny(unsafe_code)] in all crates
+- Format all code with rustfmt (cargo fmt) — no custom rustfmt.toml overrides unless agreed upon
+- Use thiserror for typed error enums in iris-core (one error enum per module). Use miette for diagnostic error reports in iris-cli
+- Follow layered architecture: transport (MCP JSON-RPC) → service (business logic) → storage (SQLite, HNSW). No layer may skip a level
+- All async code uses tokio runtime. Use #[tokio::test] for async tests. Never block the async runtime with synchronous I/O
+- Every public function and type must have a /// doc comment. Module-level docs use //! comments. Include doc tests for non-trivial APIs
+- Use tracing for all instrumentation. Add #[instrument] to public functions. Use spans for MCP tool calls, prefetch operations, and index queries
+- Prefer community-standard crates for solved problems (rmcp, fastembed, rusqlite, comrak, serde, tokio). Build custom only for novel mechanisms (session shadow, prefetch engine, budget manager)
+- Error types must be matchable in library crates. Use #[from] for automatic conversions. Add .context() with miette for CLI-facing errors
+- Integration tests go in tests/ and test against real SQLite databases and HNSW indexes — no mocking storage layers
+- All dependencies must pass cargo-audit and cargo-deny checks. Run these in CI as blocking gates
+- Use just as the task runner. All CI commands must be runnable locally via just (e.g., just test, just lint, just coverage)
+- Naming: snake_case for functions/modules, CamelCase for types, SCREAMING_SNAKE for constants. Follow Rust API Guidelines (RFC 430)
+- Keep iris-core free of transport concerns. It must not depend on rmcp or any MCP types directly — only iris-mcp bridges the protocol
+- Session shadow, prefetch cache, and budget manager are the three novel subsystems. These get the most thorough testing and documentation
+
+## AI Agent Tips
+
+- Run just validate before every commit — it chains fmt check, clippy, test, and audit in one command
+- Use RUST_LOG=iris=debug,rmcp=info for development logging. The tracing-subscriber EnvFilter respects this
+- fastembed downloads models on first use (~90MB for all-MiniLM-L6-v2). Set FASTEMBED_CACHE_PATH to share across dev machines
+- The DESIGN.md [VALIDATE] markers are invitations to web-search before implementing — use brave-search MCP to verify claims
+- cargo-llvm-cov generates HTML coverage reports — open target/llvm-cov/html/index.html after running just coverage
