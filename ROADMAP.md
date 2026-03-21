@@ -111,9 +111,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Implement DeliveredItem tracking — content_id, resolution, token_count, turn_delivered, content_hash
 - [x] Build window estimation model — cumulative token tracking with configurable FIFO/LRU eviction assumption
 - [x] Implement deduplication — compare incoming results against session shadow, skip already-delivered content
-- [ ] Implement delta updates — detect when a previously-delivered section has changed, return only the diff
-- [ ] Implement fault-based correction — detect re-requests as eviction signals, update window estimate
-- [ ] Implement iris_evicted tool — accept explicit agent feedback on dropped content_ids
+- [x] Implement delta updates — detect when a previously-delivered section has changed, return only the diff
+- [x] Implement fault-based correction — detect re-requests as eviction signals, update window estimate
+- [x] Implement iris_evicted tool — accept explicit agent feedback on dropped content_ids
 - [x] Build budget tracker — configurable max_context_tokens, threshold-based pressure mode (default 80%)
 - [ ] Implement pressure mode behavior — auto-compress responses to claim-level, attach eviction recommendations
 - [ ] Implement eviction ranking — score delivered content by recency, relevance decay, and dependency graph

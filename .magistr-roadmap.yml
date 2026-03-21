@@ -152,11 +152,11 @@ phases:
   - text: Implement deduplication — compare incoming results against session shadow, skip already-delivered content
     checked: true
   - text: Implement delta updates — detect when a previously-delivered section has changed, return only the diff
-    checked: false
+    checked: true
   - text: Implement fault-based correction — detect re-requests as eviction signals, update window estimate
-    checked: false
+    checked: true
   - text: Implement iris_evicted tool — accept explicit agent feedback on dropped content_ids
-    checked: false
+    checked: true
   - text: Build budget tracker — configurable max_context_tokens, threshold-based pressure mode (default 80%)
     checked: true
   - text: Implement pressure mode behavior — auto-compress responses to claim-level, attach eviction recommendations
