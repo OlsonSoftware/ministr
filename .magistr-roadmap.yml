@@ -79,16 +79,16 @@ phases:
     checked: true
 - id: P3
   name: Polish & Release
-  status: pending
+  status: in_progress
   tasks:
   - text: Define Embedder trait in iris-core — embed(texts) -> Result<Vec<Vec<f32>>> with batch support
-    checked: false
+    checked: true
   - text: Implement FastEmbedder using fastembed crate with all-MiniLM-L6-v2 (384d) via ONNX Runtime
-    checked: false
+    checked: true
   - text: Add model download and caching — first-run model fetch with progress, cached in ~/.iris/models/
-    checked: false
+    checked: true
   - text: Implement configurable model selection — support swapping embedding models via corpus meta.toml
-    checked: false
+    checked: true
   - text: Define VectorIndex trait — insert, search_knn, delete, persist, load operations
     checked: false
   - text: Implement HnswIndex using hnswlib-rs — decoupled graph/storage, cosine similarity, configurable M and ef

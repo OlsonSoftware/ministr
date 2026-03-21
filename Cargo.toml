@@ -41,6 +41,9 @@ comrak = "0.36"
 # Token counting
 tiktoken-rs = "0.6"
 
+# Embeddings
+fastembed = "5"
+
 # Hashing
 sha2 = "0.10"
 

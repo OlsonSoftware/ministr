@@ -61,10 +61,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Define Embedder trait in iris-core — embed(texts) -> Result<Vec<Vec<f32>>> with batch support
-- [ ] Implement FastEmbedder using fastembed crate with all-MiniLM-L6-v2 (384d) via ONNX Runtime
-- [ ] Add model download and caching — first-run model fetch with progress, cached in ~/.iris/models/
-- [ ] Implement configurable model selection — support swapping embedding models via corpus meta.toml
+- [x] Define Embedder trait in iris-core — embed(texts) -> Result<Vec<Vec<f32>>> with batch support
+- [x] Implement FastEmbedder using fastembed crate with all-MiniLM-L6-v2 (384d) via ONNX Runtime
+- [x] Add model download and caching — first-run model fetch with progress, cached in ~/.iris/models/
+- [x] Implement configurable model selection — support swapping embedding models via corpus meta.toml
 - [ ] Define VectorIndex trait — insert, search_knn, delete, persist, load operations
 - [ ] Implement HnswIndex using hnswlib-rs — decoupled graph/storage, cosine similarity, configurable M and ef
 - [ ] Add memory-mapped persistence for the HNSW index (vectors.hnsw + vectors.meta) via memmap2
