@@ -9,6 +9,10 @@
 //!
 //! - **Sequential**: When the agent reads section N, pre-warm section N+1 and
 //!   the parent document summary.
+//! - **Topical**: Maintain a running topic vector (EMA of recent section
+//!   embeddings) and pre-warm sections nearest to the current topic.
+//! - **Structural**: Pre-warm sibling sections from the same document
+//!   (adjacent by position in the document tree).
 //!
 //! # Architecture
 //!
@@ -16,6 +20,8 @@
 //!   heading path. Default capacity 50 items.
 //! - [`PrefetchEngine`] — orchestrates prefetch strategies, triggers pre-warming
 //!   after tool calls, and serves warm cache hits.
+//! - [`TopicTracker`] — maintains an EMA-weighted running topic vector from
+//!   the last K section embeddings for topical prefetch prediction.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -26,6 +32,30 @@ use crate::types::Resolution;
 
 /// Default number of items the prefetch cache can hold.
 const DEFAULT_CACHE_CAPACITY: usize = 50;
+
+/// Default number of recent section embeddings to track for topical prefetch.
+const DEFAULT_TOPIC_HISTORY: usize = 5;
+
+/// Default EMA decay factor for the topic vector (higher = more weight on recent).
+const DEFAULT_TOPIC_ALPHA: f32 = 0.3;
+
+/// Maximum number of sibling sections to pre-warm per structural prefetch.
+const MAX_STRUCTURAL_PREFETCH: usize = 3;
+
+/// The strategy that warmed a cache entry.
+///
+/// Tracked per entry so that hit rate metrics can be broken down by strategy,
+/// revealing which prediction method is most effective for a given session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrefetchStrategy {
+    /// Sequential locality: section N+1 after reading section N.
+    Sequential,
+    /// Topical similarity: sections nearest to the running topic vector.
+    Topical,
+    /// Structural proximity: sibling sections from the same document.
+    Structural,
+}
 
 /// A pre-computed cache entry ready for immediate delivery.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,19 +74,27 @@ pub struct CacheEntry {
     pub resolution: Resolution,
     /// Number of claims available in the section (for warm read responses).
     pub claims_available: usize,
+    /// Which prefetch strategy warmed this entry.
+    pub strategy: PrefetchStrategy,
 }
 
-/// Hit/miss metrics for the prefetch cache.
+/// Hit/miss metrics for the prefetch cache, broken down by strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub struct PrefetchMetrics {
-    /// Number of cache hits (warm responses).
+    /// Total number of cache hits (warm responses).
     pub hits: u64,
-    /// Number of cache misses (cold retrievals).
+    /// Total number of cache misses (cold retrievals).
     pub misses: u64,
+    /// Hits from sequential prefetch entries.
+    pub sequential_hits: u64,
+    /// Hits from topical prefetch entries.
+    pub topical_hits: u64,
+    /// Hits from structural prefetch entries.
+    pub structural_hits: u64,
 }
 
 impl PrefetchMetrics {
-    /// Cache hit rate as a fraction (0.0–1.0).
+    /// Overall cache hit rate as a fraction (0.0–1.0).
     ///
     /// Returns 0.0 if no lookups have been performed.
     #[must_use]
@@ -68,6 +106,24 @@ impl PrefetchMetrics {
         }
         self.hits as f64 / total as f64
     }
+
+    /// Hit rate for a specific strategy as a fraction (0.0–1.0).
+    ///
+    /// Returns 0.0 if no lookups have been performed.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn strategy_hit_rate(&self, strategy: PrefetchStrategy) -> f64 {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            return 0.0;
+        }
+        let strategy_hits = match strategy {
+            PrefetchStrategy::Sequential => self.sequential_hits,
+            PrefetchStrategy::Topical => self.topical_hits,
+            PrefetchStrategy::Structural => self.structural_hits,
+        };
+        strategy_hits as f64 / total as f64
+    }
 }
 
 /// LRU cache for pre-computed prefetch entries.
@@ -78,7 +134,7 @@ impl PrefetchMetrics {
 /// # Examples
 ///
 /// ```
-/// use iris_core::session::prefetch::{PrefetchCache, CacheEntry};
+/// use iris_core::session::prefetch::{PrefetchCache, CacheEntry, PrefetchStrategy};
 /// use iris_core::types::Resolution;
 ///
 /// let mut cache = PrefetchCache::new(2);
@@ -91,6 +147,7 @@ impl PrefetchMetrics {
 ///     summary: None,
 ///     resolution: Resolution::Section,
 ///     claims_available: 0,
+///     strategy: PrefetchStrategy::Sequential,
 /// });
 ///
 /// assert!(cache.get("s1").is_some());
@@ -127,10 +184,19 @@ impl PrefetchCache {
 
     /// Look up an entry, moving it to the most-recently-used position.
     ///
-    /// Records a hit or miss in the metrics.
+    /// Records a hit or miss in the metrics. Hits are also attributed to
+    /// the strategy that warmed the entry.
     pub fn get(&mut self, key: &str) -> Option<&CacheEntry> {
         if self.entries.contains_key(key) {
             self.metrics.hits += 1;
+            // Attribute hit to the strategy that warmed this entry
+            if let Some(entry) = self.entries.get(key) {
+                match entry.strategy {
+                    PrefetchStrategy::Sequential => self.metrics.sequential_hits += 1,
+                    PrefetchStrategy::Topical => self.metrics.topical_hits += 1,
+                    PrefetchStrategy::Structural => self.metrics.structural_hits += 1,
+                }
+            }
             self.touch(key);
             self.entries.get(key)
         } else {
@@ -221,6 +287,119 @@ impl PrefetchCache {
     }
 }
 
+/// Tracks a running topic vector using exponential moving average (EMA)
+/// of recent section embeddings.
+///
+/// After each `iris_read`, the section's embedding is recorded. The topic
+/// vector is the EMA-weighted average of the last K embeddings, giving
+/// higher weight to recently accessed content. This vector can be used to
+/// query the HNSW index for topically similar sections to pre-warm.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::session::prefetch::TopicTracker;
+///
+/// let mut tracker = TopicTracker::new(3, 0.3);
+/// assert!(tracker.topic_vector().is_none());
+///
+/// tracker.record_access(vec![1.0, 0.0, 0.0]);
+/// assert!(tracker.topic_vector().is_some());
+/// ```
+pub struct TopicTracker {
+    /// Recent section embeddings (newest at back).
+    recent_vectors: VecDeque<Vec<f32>>,
+    /// Maximum number of embeddings to retain.
+    max_history: usize,
+    /// EMA decay factor (0.0–1.0). Higher means more weight on recent vectors.
+    alpha: f32,
+}
+
+impl TopicTracker {
+    /// Create a new topic tracker with the given history window and decay factor.
+    #[must_use]
+    pub fn new(max_history: usize, alpha: f32) -> Self {
+        Self {
+            recent_vectors: VecDeque::with_capacity(max_history),
+            max_history,
+            alpha,
+        }
+    }
+
+    /// Create a topic tracker with default parameters (K=5, α=0.3).
+    #[must_use]
+    pub fn with_defaults() -> Self {
+        Self::new(DEFAULT_TOPIC_HISTORY, DEFAULT_TOPIC_ALPHA)
+    }
+
+    /// Record a section embedding after an access.
+    ///
+    /// Maintains the sliding window at `max_history` size.
+    pub fn record_access(&mut self, embedding: Vec<f32>) {
+        if self.recent_vectors.len() >= self.max_history {
+            self.recent_vectors.pop_front();
+        }
+        self.recent_vectors.push_back(embedding);
+    }
+
+    /// Compute the EMA-weighted topic vector from recent embeddings.
+    ///
+    /// Returns `None` if no embeddings have been recorded. The most recent
+    /// embedding has the highest weight, decaying exponentially by `alpha`
+    /// for older entries.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn topic_vector(&self) -> Option<Vec<f32>> {
+        if self.recent_vectors.is_empty() {
+            return None;
+        }
+
+        let dim = self.recent_vectors[0].len();
+        let mut result = vec![0.0f32; dim];
+        let mut weight_sum = 0.0f32;
+
+        // Iterate oldest to newest; newest gets highest weight
+        for (i, vec) in self.recent_vectors.iter().enumerate() {
+            // Weight: (1 - alpha)^(n - 1 - i) where n = len
+            let age = (self.recent_vectors.len() - 1 - i) as f32;
+            let weight = (1.0 - self.alpha).powf(age);
+            weight_sum += weight;
+            for (j, &v) in vec.iter().enumerate() {
+                if j < dim {
+                    result[j] += v * weight;
+                }
+            }
+        }
+
+        // Normalize by total weight
+        if weight_sum > 0.0 {
+            for v in &mut result {
+                *v /= weight_sum;
+            }
+        }
+
+        Some(result)
+    }
+
+    /// Number of embeddings currently tracked.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.recent_vectors.len()
+    }
+
+    /// Whether no embeddings have been recorded yet.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.recent_vectors.is_empty()
+    }
+
+    /// The maximum history window size.
+    #[must_use]
+    pub fn max_history(&self) -> usize {
+        self.max_history
+    }
+}
+
 /// Prefetch engine that orchestrates speculative pre-warming strategies.
 ///
 /// After each `iris_read` call, the engine predicts what the agent will
@@ -238,6 +417,8 @@ impl PrefetchCache {
 pub struct PrefetchEngine {
     /// The LRU prefetch cache.
     cache: PrefetchCache,
+    /// Running topic vector tracker for topical prefetch.
+    topic_tracker: TopicTracker,
 }
 
 impl PrefetchEngine {
@@ -246,6 +427,7 @@ impl PrefetchEngine {
     pub fn new(cache_capacity: usize) -> Self {
         Self {
             cache: PrefetchCache::new(cache_capacity),
+            topic_tracker: TopicTracker::with_defaults(),
         }
     }
 
@@ -254,6 +436,7 @@ impl PrefetchEngine {
     pub fn with_default_capacity() -> Self {
         Self {
             cache: PrefetchCache::with_default_capacity(),
+            topic_tracker: TopicTracker::with_defaults(),
         }
     }
 
@@ -293,6 +476,7 @@ impl PrefetchEngine {
                     summary: section.summary,
                     resolution: Resolution::Section,
                     claims_available: claims_count.unwrap_or(0),
+                    strategy: PrefetchStrategy::Sequential,
                 },
             );
         }
@@ -311,9 +495,93 @@ impl PrefetchEngine {
                     summary: Some(summary),
                     resolution: Resolution::Summary,
                     claims_available: 0,
+                    strategy: PrefetchStrategy::Sequential,
                 },
             );
         }
+    }
+
+    /// Pre-warm the cache with sibling sections from the same document.
+    ///
+    /// Takes all sections from the parent document and inserts up to
+    /// [`MAX_STRUCTURAL_PREFETCH`] siblings that are not already cached.
+    /// Siblings are sections adjacent to the current read position.
+    pub fn prefetch_structural(
+        &mut self,
+        siblings: Vec<crate::storage::SectionRecord>,
+        claims_counts: &HashMap<String, usize>,
+    ) {
+        let mut inserted = 0;
+        for section in siblings {
+            if inserted >= MAX_STRUCTURAL_PREFETCH {
+                break;
+            }
+            // Skip sections already in cache
+            if self.cache.peek(&section.id.0).is_some() {
+                continue;
+            }
+            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
+            let token_count = count_tokens(&section.text);
+            self.cache.insert(
+                section.id.0.clone(),
+                CacheEntry {
+                    content_id: section.id.0,
+                    text: section.text,
+                    token_count,
+                    heading_path: Some(section.heading_path),
+                    summary: section.summary,
+                    resolution: Resolution::Section,
+                    claims_available: claims,
+                    strategy: PrefetchStrategy::Structural,
+                },
+            );
+            inserted += 1;
+        }
+    }
+
+    /// Pre-warm the cache with topically similar sections.
+    ///
+    /// Takes candidate sections scored by similarity to the running topic
+    /// vector (from vector index search) and inserts those not already cached.
+    pub fn prefetch_topical(
+        &mut self,
+        candidates: Vec<crate::storage::SectionRecord>,
+        claims_counts: &HashMap<String, usize>,
+    ) {
+        for section in candidates {
+            // Skip sections already in cache
+            if self.cache.peek(&section.id.0).is_some() {
+                continue;
+            }
+            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
+            let token_count = count_tokens(&section.text);
+            self.cache.insert(
+                section.id.0.clone(),
+                CacheEntry {
+                    content_id: section.id.0,
+                    text: section.text,
+                    token_count,
+                    heading_path: Some(section.heading_path),
+                    summary: section.summary,
+                    resolution: Resolution::Section,
+                    claims_available: claims,
+                    strategy: PrefetchStrategy::Topical,
+                },
+            );
+        }
+    }
+
+    /// Record a section embedding for topical prefetch tracking.
+    pub fn record_topic_access(&mut self, embedding: Vec<f32>) {
+        self.topic_tracker.record_access(embedding);
+    }
+
+    /// Get the current topic vector for index queries.
+    ///
+    /// Returns `None` if no section embeddings have been recorded yet.
+    #[must_use]
+    pub fn topic_vector(&self) -> Option<Vec<f32>> {
+        self.topic_tracker.topic_vector()
     }
 
     /// Read-only access to the underlying cache.
@@ -325,6 +593,12 @@ impl PrefetchEngine {
     /// Mutable access to the underlying cache.
     pub fn cache_mut(&mut self) -> &mut PrefetchCache {
         &mut self.cache
+    }
+
+    /// Read-only access to the topic tracker.
+    #[must_use]
+    pub fn topic_tracker(&self) -> &TopicTracker {
+        &self.topic_tracker
     }
 
     /// Current prefetch metrics.
@@ -347,6 +621,20 @@ mod tests {
             summary: None,
             resolution: Resolution::Section,
             claims_available: 0,
+            strategy: PrefetchStrategy::Sequential,
+        }
+    }
+
+    fn make_entry_with_strategy(id: &str, text: &str, strategy: PrefetchStrategy) -> CacheEntry {
+        CacheEntry {
+            content_id: id.to_string(),
+            text: text.to_string(),
+            token_count: count_tokens(text),
+            heading_path: None,
+            summary: None,
+            resolution: Resolution::Section,
+            claims_available: 0,
+            strategy,
         }
     }
 
@@ -646,5 +934,274 @@ mod tests {
     fn default_capacity_is_50() {
         let engine = PrefetchEngine::with_default_capacity();
         assert_eq!(engine.cache().capacity(), 50);
+    }
+
+    // --- TopicTracker tests ---
+
+    #[test]
+    fn topic_tracker_empty_returns_none() {
+        let tracker = TopicTracker::new(5, 0.3);
+        assert!(tracker.topic_vector().is_none());
+        assert!(tracker.is_empty());
+        assert_eq!(tracker.len(), 0);
+    }
+
+    #[test]
+    fn topic_tracker_single_vector_returns_it() {
+        let mut tracker = TopicTracker::new(5, 0.3);
+        tracker.record_access(vec![1.0, 0.0, 0.0]);
+
+        let topic = tracker.topic_vector().unwrap();
+        assert_eq!(topic.len(), 3);
+        assert!((topic[0] - 1.0).abs() < 1e-5);
+        assert!((topic[1]).abs() < 1e-5);
+        assert!((topic[2]).abs() < 1e-5);
+    }
+
+    #[test]
+    fn topic_tracker_ema_weights_recent_higher() {
+        let mut tracker = TopicTracker::new(5, 0.5);
+
+        // First access: [1, 0, 0] (older, lower weight)
+        tracker.record_access(vec![1.0, 0.0, 0.0]);
+        // Second access: [0, 1, 0] (newer, higher weight)
+        tracker.record_access(vec![0.0, 1.0, 0.0]);
+
+        let topic = tracker.topic_vector().unwrap();
+        // With alpha=0.5, weights are:
+        //   older (i=0): (1-0.5)^1 = 0.5
+        //   newer (i=1): (1-0.5)^0 = 1.0
+        // Weighted sum: [0.5, 1.0, 0] / 1.5 = [0.333, 0.667, 0]
+        assert!(
+            topic[1] > topic[0],
+            "newer vector should have higher weight"
+        );
+    }
+
+    #[test]
+    fn topic_tracker_respects_max_history() {
+        let mut tracker = TopicTracker::new(2, 0.3);
+
+        tracker.record_access(vec![1.0, 0.0]);
+        tracker.record_access(vec![0.0, 1.0]);
+        tracker.record_access(vec![0.5, 0.5]);
+
+        assert_eq!(tracker.len(), 2);
+        // The first vector [1.0, 0.0] should be evicted
+    }
+
+    #[test]
+    fn topic_tracker_with_defaults() {
+        let tracker = TopicTracker::with_defaults();
+        assert_eq!(tracker.max_history(), DEFAULT_TOPIC_HISTORY);
+        assert!(tracker.is_empty());
+    }
+
+    // --- Per-strategy metrics tests ---
+
+    #[test]
+    fn metrics_track_strategy_hits() {
+        let mut cache = PrefetchCache::new(10);
+        cache.insert(
+            "seq".to_string(),
+            make_entry_with_strategy("seq", "sequential", PrefetchStrategy::Sequential),
+        );
+        cache.insert(
+            "top".to_string(),
+            make_entry_with_strategy("top", "topical", PrefetchStrategy::Topical),
+        );
+        cache.insert(
+            "str".to_string(),
+            make_entry_with_strategy("str", "structural", PrefetchStrategy::Structural),
+        );
+
+        let _ = cache.get("seq"); // sequential hit
+        let _ = cache.get("top"); // topical hit
+        let _ = cache.get("str"); // structural hit
+        let _ = cache.get("top"); // another topical hit
+        let _ = cache.get("miss"); // miss
+
+        let m = cache.metrics();
+        assert_eq!(m.hits, 4);
+        assert_eq!(m.misses, 1);
+        assert_eq!(m.sequential_hits, 1);
+        assert_eq!(m.topical_hits, 2);
+        assert_eq!(m.structural_hits, 1);
+    }
+
+    #[test]
+    fn strategy_hit_rate() {
+        let metrics = PrefetchMetrics {
+            hits: 4,
+            misses: 1,
+            sequential_hits: 1,
+            topical_hits: 2,
+            structural_hits: 1,
+        };
+
+        assert!((metrics.strategy_hit_rate(PrefetchStrategy::Sequential) - 0.2).abs() < 1e-5);
+        assert!((metrics.strategy_hit_rate(PrefetchStrategy::Topical) - 0.4).abs() < 1e-5);
+        assert!((metrics.strategy_hit_rate(PrefetchStrategy::Structural) - 0.2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn strategy_hit_rate_empty() {
+        let metrics = PrefetchMetrics::default();
+        assert!((metrics.strategy_hit_rate(PrefetchStrategy::Sequential)).abs() < f64::EPSILON);
+    }
+
+    // --- Structural prefetch tests ---
+
+    #[test]
+    fn prefetch_structural_inserts_siblings() {
+        let mut engine = PrefetchEngine::new(10);
+        let siblings = vec![
+            make_section_record("doc#s1", "doc", "Sibling one", 0),
+            make_section_record("doc#s2", "doc", "Sibling two", 1),
+            make_section_record("doc#s3", "doc", "Sibling three", 2),
+        ];
+
+        engine.prefetch_structural(siblings, &HashMap::new());
+
+        assert!(engine.cache().peek("doc#s1").is_some());
+        assert!(engine.cache().peek("doc#s2").is_some());
+        assert!(engine.cache().peek("doc#s3").is_some());
+    }
+
+    #[test]
+    fn prefetch_structural_respects_max_limit() {
+        let mut engine = PrefetchEngine::new(10);
+        let siblings: Vec<_> = (0..10)
+            .map(|i| {
+                make_section_record(&format!("s{i}"), "doc", &format!("text {i}"), i64::from(i))
+            })
+            .collect();
+
+        engine.prefetch_structural(siblings, &HashMap::new());
+
+        // Only MAX_STRUCTURAL_PREFETCH (3) should be inserted
+        assert_eq!(engine.cache().len(), MAX_STRUCTURAL_PREFETCH);
+    }
+
+    #[test]
+    fn prefetch_structural_skips_cached() {
+        let mut engine = PrefetchEngine::new(10);
+
+        // Pre-warm s1 via sequential
+        let s1 = make_section_record("doc#s1", "doc", "Section one", 0);
+        engine.prefetch_sequential(Some(s1), None, None);
+
+        // Now structural prefetch with s1 and s2
+        let siblings = vec![
+            make_section_record("doc#s1", "doc", "Section one", 0),
+            make_section_record("doc#s2", "doc", "Section two", 1),
+        ];
+        engine.prefetch_structural(siblings, &HashMap::new());
+
+        // s1 should remain sequential strategy (not overwritten)
+        assert_eq!(
+            engine.cache().peek("doc#s1").unwrap().strategy,
+            PrefetchStrategy::Sequential
+        );
+        // s2 should be structural
+        assert_eq!(
+            engine.cache().peek("doc#s2").unwrap().strategy,
+            PrefetchStrategy::Structural
+        );
+    }
+
+    #[test]
+    fn prefetch_structural_uses_claims_counts() {
+        let mut engine = PrefetchEngine::new(10);
+        let siblings = vec![make_section_record("doc#s1", "doc", "Section", 0)];
+        let mut counts = HashMap::new();
+        counts.insert("doc#s1".to_string(), 5);
+
+        engine.prefetch_structural(siblings, &counts);
+
+        assert_eq!(engine.cache().peek("doc#s1").unwrap().claims_available, 5);
+    }
+
+    // --- Topical prefetch tests ---
+
+    #[test]
+    fn prefetch_topical_inserts_candidates() {
+        let mut engine = PrefetchEngine::new(10);
+        let candidates = vec![
+            make_section_record("topic#s1", "doc", "Similar section", 0),
+            make_section_record("topic#s2", "doc", "Another similar", 1),
+        ];
+
+        engine.prefetch_topical(candidates, &HashMap::new());
+
+        assert!(engine.cache().peek("topic#s1").is_some());
+        assert!(engine.cache().peek("topic#s2").is_some());
+        assert_eq!(
+            engine.cache().peek("topic#s1").unwrap().strategy,
+            PrefetchStrategy::Topical
+        );
+    }
+
+    #[test]
+    fn prefetch_topical_skips_cached() {
+        let mut engine = PrefetchEngine::new(10);
+
+        // Pre-warm via sequential
+        let s1 = make_section_record("s1", "doc", "Text", 0);
+        engine.prefetch_sequential(Some(s1), None, None);
+
+        // Topical should skip s1
+        let candidates = vec![make_section_record("s1", "doc", "Text", 0)];
+        engine.prefetch_topical(candidates, &HashMap::new());
+
+        assert_eq!(
+            engine.cache().peek("s1").unwrap().strategy,
+            PrefetchStrategy::Sequential
+        );
+    }
+
+    // --- Engine topic tracking integration ---
+
+    #[test]
+    fn engine_records_topic_and_produces_vector() {
+        let mut engine = PrefetchEngine::new(10);
+        assert!(engine.topic_vector().is_none());
+
+        engine.record_topic_access(vec![1.0, 0.0, 0.0, 0.0]);
+        assert!(engine.topic_vector().is_some());
+
+        engine.record_topic_access(vec![0.0, 1.0, 0.0, 0.0]);
+        let topic = engine.topic_vector().unwrap();
+        assert_eq!(topic.len(), 4);
+    }
+
+    #[test]
+    fn prefetch_strategy_serde() {
+        let json = serde_json::to_string(&PrefetchStrategy::Sequential).unwrap();
+        assert_eq!(json, r#""sequential""#);
+
+        let json = serde_json::to_string(&PrefetchStrategy::Topical).unwrap();
+        assert_eq!(json, r#""topical""#);
+
+        let json = serde_json::to_string(&PrefetchStrategy::Structural).unwrap();
+        assert_eq!(json, r#""structural""#);
+    }
+
+    #[test]
+    fn warm_hit_from_structural_records_strategy_metric() {
+        let mut engine = PrefetchEngine::new(10);
+        let siblings = vec![make_section_record("s1", "doc", "Text", 0)];
+        engine.prefetch_structural(siblings, &HashMap::new());
+
+        // Serve the structural entry
+        let entry = engine.try_serve("s1");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().strategy, PrefetchStrategy::Structural);
+
+        let m = engine.metrics();
+        assert_eq!(m.hits, 1);
+        assert_eq!(m.structural_hits, 1);
+        assert_eq!(m.sequential_hits, 0);
+        assert_eq!(m.topical_hits, 0);
     }
 }

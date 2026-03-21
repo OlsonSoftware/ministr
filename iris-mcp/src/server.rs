@@ -172,6 +172,8 @@ struct BudgetResponse {
     pressure_level: String,
     /// Recommended eviction candidates (empty under normal pressure).
     eviction_candidates: Vec<EvictionCandidate>,
+    /// Prefetch cache hit/miss metrics by strategy.
+    prefetch_metrics: iris_core::session::PrefetchMetrics,
 }
 
 /// Response from the `iris_compress` tool.
@@ -536,10 +538,13 @@ impl IrisServer {
 
             let session = self.session.lock().await;
             let budget = self.budget.lock().await;
+            let prefetch = self.prefetch.lock().await;
 
             let status = budget.budget_status();
             let candidates = budget.eviction_candidates(&session, 5);
+            let prefetch_metrics = prefetch.metrics();
 
+            drop(prefetch);
             drop(budget);
             drop(session);
 
@@ -563,6 +568,7 @@ impl IrisServer {
                 estimated_remaining: status.tokens_remaining,
                 pressure_level: pressure_str.to_string(),
                 eviction_candidates: candidates,
+                prefetch_metrics,
             };
             let json = serde_json::to_string_pretty(&response)
                 .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
@@ -717,30 +723,103 @@ impl IrisServer {
         status
     }
 
-    /// Trigger sequential prefetch after a read operation.
+    /// Trigger all prefetch strategies after a read operation.
     ///
-    /// Fetches the next section and parent document summary from storage
-    /// and inserts them into the prefetch cache for warm serving.
+    /// Runs three strategies in sequence:
+    /// 1. **Sequential** — next section + parent document summary
+    /// 2. **Structural** — sibling sections from the same document
+    /// 3. **Topical** — sections nearest to the running topic vector
     async fn trigger_prefetch(&self, section_id: &str) {
         if let Some(ref storage) = self.storage {
             let sid = SectionId(section_id.to_string());
 
+            // --- Sequential prefetch ---
             let next_section = storage.get_next_section(&sid).await.unwrap_or(None);
 
-            // Count claims for the next section so warm hits include the count
             let claims_count = if let Some(ref next) = next_section {
                 storage.list_claims(&next.id).await.map(|c| c.len()).ok()
             } else {
                 None
             };
 
-            let doc_summary = match storage.get_document_for_section(&sid).await {
-                Ok(Some(doc)) => doc.summary.map(|s| (doc.id.0, s)),
-                _ => None,
-            };
+            let doc_record = storage.get_document_for_section(&sid).await.ok().flatten();
+            let doc_summary = doc_record
+                .as_ref()
+                .and_then(|doc| doc.summary.as_ref().map(|s| (doc.id.0.clone(), s.clone())));
 
             let mut prefetch = self.prefetch.lock().await;
             prefetch.prefetch_sequential(next_section, doc_summary, claims_count);
+
+            // --- Structural prefetch (sibling sections) ---
+            if let Some(ref doc) = doc_record {
+                if let Ok(all_sections) = storage.list_sections(&doc.id).await {
+                    // Find current section's position to get nearby siblings
+                    let current_pos = all_sections.iter().position(|s| s.id.0 == section_id);
+                    if let Some(pos) = current_pos {
+                        // Collect siblings: up to 2 before and 2 after, excluding current
+                        let start = pos.saturating_sub(2);
+                        let end = (pos + 3).min(all_sections.len());
+                        let siblings: Vec<_> = all_sections[start..end]
+                            .iter()
+                            .filter(|s| s.id.0 != section_id)
+                            .cloned()
+                            .collect();
+
+                        // Build claims counts for siblings
+                        let mut claims_counts = std::collections::HashMap::new();
+                        for s in &siblings {
+                            if let Ok(claims) = storage.list_claims(&s.id).await {
+                                claims_counts.insert(s.id.0.clone(), claims.len());
+                            }
+                        }
+
+                        prefetch.prefetch_structural(siblings, &claims_counts);
+                    }
+                }
+            }
+
+            // --- Topical prefetch (similarity to running topic) ---
+            // Embed the current section text and record it for topic tracking
+            if let Ok(Some(section)) = storage.get_section(&sid).await {
+                if let Ok(embeddings) = self.service.embedder().embed(&[&section.text]) {
+                    if let Some(embedding) = embeddings.into_iter().next() {
+                        prefetch.record_topic_access(embedding);
+                    }
+                }
+
+                // Query index with topic vector for nearest un-cached sections
+                if let Some(topic_vec) = prefetch.topic_vector() {
+                    if let Ok(results) = self.service.index().search_knn(&topic_vec, 5) {
+                        let mut candidates = Vec::new();
+                        for result in results {
+                            // Only prefetch section-level results
+                            let vid = iris_core::types::VectorId::parse(&result.id);
+                            if let Some(vid) = vid {
+                                if vid.resolution() == iris_core::types::Resolution::Section {
+                                    let cid = vid.content_id();
+                                    // Skip if it's the current section
+                                    if cid == section_id {
+                                        continue;
+                                    }
+                                    let candidate_sid = SectionId(cid.to_string());
+                                    if let Ok(Some(s)) = storage.get_section(&candidate_sid).await {
+                                        candidates.push(s);
+                                    }
+                                }
+                            }
+                        }
+
+                        let mut claims_counts = std::collections::HashMap::new();
+                        for s in &candidates {
+                            if let Ok(claims) = storage.list_claims(&s.id).await {
+                                claims_counts.insert(s.id.0.clone(), claims.len());
+                            }
+                        }
+
+                        prefetch.prefetch_topical(candidates, &claims_counts);
+                    }
+                }
+            }
         }
     }
 
