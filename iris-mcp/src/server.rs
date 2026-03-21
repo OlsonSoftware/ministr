@@ -13,8 +13,9 @@ use rmcp::model::{
 use rmcp::schemars;
 use rmcp::tool;
 use serde::Deserialize;
+use tracing::{Instrument, debug, info_span, warn};
 
-use iris_core::service::QueryService;
+use iris_core::service::{QueryError, QueryService};
 
 /// MCP server that exposes iris context-cache tools to LLM agents.
 ///
@@ -92,15 +93,29 @@ impl IrisServer {
         #[tool(aggr)] params: SurveyParams,
     ) -> Result<CallToolResult, rmcp::Error> {
         let top_k = params.top_k.unwrap_or(10);
+        let span = info_span!("iris_survey", query_len = params.query.len(), top_k);
 
-        match self.service.survey(&params.query, top_k).await {
-            Ok(results) => {
-                let json = serde_json::to_string_pretty(&results)
-                    .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
-                Ok(CallToolResult::success(vec![Content::text(json)]))
+        async {
+            debug!(query = %params.query, top_k, "iris_survey request");
+
+            match self.service.survey(&params.query, top_k).await {
+                Ok(results) => {
+                    debug!(result_count = results.len(), "iris_survey success");
+                    let json = serde_json::to_string_pretty(&results).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, "iris_survey failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_query_error(&e),
+                    )]))
+                }
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
         }
+        .instrument(span)
+        .await
     }
 
     /// Read the full text of a section by its hierarchical ID.
@@ -112,14 +127,33 @@ impl IrisServer {
         description = "Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count."
     )]
     async fn read(&self, #[tool(aggr)] params: ReadParams) -> Result<CallToolResult, rmcp::Error> {
-        match self.service.read_section(&params.section_id).await {
-            Ok(detail) => {
-                let json = serde_json::to_string_pretty(&detail)
-                    .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
-                Ok(CallToolResult::success(vec![Content::text(json)]))
+        let span = info_span!("iris_read", section_id = %params.section_id);
+
+        async {
+            debug!(section_id = %params.section_id, "iris_read request");
+
+            match self.service.read_section(&params.section_id).await {
+                Ok(detail) => {
+                    debug!(
+                        section_id = %params.section_id,
+                        claims_available = detail.claims_available,
+                        "iris_read success"
+                    );
+                    let json = serde_json::to_string_pretty(&detail).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, section_id = %params.section_id, "iris_read failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_query_error(&e),
+                    )]))
+                }
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
         }
+        .instrument(span)
+        .await
     }
 
     /// Extract atomic claims from a specific section.
@@ -134,18 +168,45 @@ impl IrisServer {
         &self,
         #[tool(aggr)] params: ExtractParams,
     ) -> Result<CallToolResult, rmcp::Error> {
-        match self
-            .service
-            .extract_claims(&params.section_id, params.query.as_deref())
-            .await
-        {
-            Ok(claims) => {
-                let json = serde_json::to_string_pretty(&claims)
-                    .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
-                Ok(CallToolResult::success(vec![Content::text(json)]))
+        let span = info_span!(
+            "iris_extract",
+            section_id = %params.section_id,
+            has_query = params.query.is_some()
+        );
+
+        async {
+            debug!(
+                section_id = %params.section_id,
+                query = params.query.as_deref().unwrap_or("<none>"),
+                "iris_extract request"
+            );
+
+            match self
+                .service
+                .extract_claims(&params.section_id, params.query.as_deref())
+                .await
+            {
+                Ok(claims) => {
+                    debug!(
+                        section_id = %params.section_id,
+                        claim_count = claims.len(),
+                        "iris_extract success"
+                    );
+                    let json = serde_json::to_string_pretty(&claims).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, section_id = %params.section_id, "iris_extract failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_query_error(&e),
+                    )]))
+                }
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
         }
+        .instrument(span)
+        .await
     }
 }
 
@@ -154,6 +215,33 @@ impl IrisServer {
     #[must_use]
     pub fn new(service: Arc<QueryService>) -> Self {
         Self { service }
+    }
+}
+
+/// Format a [`QueryError`] into a user-friendly error message for MCP tool responses.
+///
+/// Produces structured messages that help the agent understand what went wrong
+/// and how to recover, rather than exposing raw internal error strings.
+fn format_query_error(err: &QueryError) -> String {
+    match err {
+        QueryError::SectionNotFound { id } => {
+            format!(
+                "Section not found: '{id}'. Check the section ID format \
+                 (e.g. 'docs/auth.md#tokens') and use iris_survey to discover valid IDs."
+            )
+        }
+        QueryError::Index(index_err) => {
+            format!(
+                "Search index error: {index_err}. The index may need to be rebuilt. \
+                 Try a different query or check server logs for details."
+            )
+        }
+        QueryError::Storage(storage_err) => {
+            format!(
+                "Storage error: {storage_err}. The corpus database may be unavailable. \
+                 Check server logs for details."
+            )
+        }
     }
 }
 
@@ -394,5 +482,84 @@ mod tests {
         let result = server.extract(params).await.unwrap();
 
         assert_eq!(result.is_error, Some(true));
+    }
+
+    // --- Error formatting tests ---
+
+    #[test]
+    fn format_section_not_found_includes_id_and_hint() {
+        let err = QueryError::SectionNotFound {
+            id: "docs/missing.md#intro".into(),
+        };
+        let msg = format_query_error(&err);
+        assert!(
+            msg.contains("docs/missing.md#intro"),
+            "should include section ID"
+        );
+        assert!(
+            msg.contains("iris_survey"),
+            "should suggest using iris_survey"
+        );
+    }
+
+    #[test]
+    fn format_index_error_includes_details() {
+        let err = QueryError::Index(iris_core::error::IndexError::EmbeddingFailed {
+            reason: "model not loaded".into(),
+        });
+        let msg = format_query_error(&err);
+        assert!(
+            msg.contains("model not loaded"),
+            "should include original reason"
+        );
+        assert!(msg.contains("index"), "should mention index");
+    }
+
+    #[test]
+    fn format_storage_error_includes_details() {
+        let err = QueryError::Storage(iris_core::error::StorageError::NotFound {
+            entity: "section".into(),
+            id: "test-id".into(),
+        });
+        let msg = format_query_error(&err);
+        assert!(msg.contains("test-id"), "should include original details");
+        assert!(msg.contains("Storage error"), "should mention storage");
+    }
+
+    #[tokio::test]
+    async fn read_not_found_error_message_is_user_friendly() {
+        let server = setup_server().await;
+        let params = ReadParams {
+            section_id: "nonexistent#section".to_string(),
+        };
+        let result = server.read(params).await.unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result.content);
+        assert!(
+            text.contains("Section not found"),
+            "error should start with 'Section not found', got: {text}"
+        );
+        assert!(
+            text.contains("iris_survey"),
+            "error should suggest iris_survey, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_not_found_error_message_is_user_friendly() {
+        let server = setup_server().await;
+        let params = ExtractParams {
+            section_id: "nonexistent#section".to_string(),
+            query: None,
+        };
+        let result = server.extract(params).await.unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result.content);
+        assert!(
+            text.contains("Section not found"),
+            "error should be user-friendly, got: {text}"
+        );
     }
 }
