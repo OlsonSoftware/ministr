@@ -119,11 +119,11 @@ phases:
   - text: Wire up iris-cli binary entry point — argument parsing (clap), corpus path, config loading, server startup
     checked: true
   - text: Implement iris_survey tool — vector search over section embeddings, return ranked summaries with relevance scores
-    checked: false
+    checked: true
   - text: Implement iris_read tool — full section text by hierarchical ID with heading_path and claims_available count
-    checked: false
+    checked: true
   - text: Implement iris_extract tool — claim-level retrieval within a specific section, filtered by query relevance
-    checked: false
+    checked: true
   - text: Add budget_status object to every tool response — tokens_used, tokens_remaining, pressure_level
     checked: false
   - text: Expose MCP resources — iris://status (index stats) and iris://corpus/{path} (document metadata)
