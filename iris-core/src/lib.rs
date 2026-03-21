@@ -11,6 +11,7 @@ pub mod index;
 pub mod ingestion;
 pub mod parser;
 pub mod search;
+pub mod service;
 pub mod storage;
 pub mod token;
 pub mod tracing;
