@@ -316,6 +316,84 @@ impl Storage for SqliteStorage {
         .await
     }
 
+    async fn get_next_section(
+        &self,
+        section_id: &SectionId,
+    ) -> Result<Option<SectionRecord>, StorageError> {
+        let section_id = section_id.clone();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT s2.id, s2.document_id, s2.heading_path, s2.depth, s2.text, s2.summary, s2.position
+                     FROM sections s1
+                     JOIN sections s2 ON s2.document_id = s1.document_id AND s2.position > s1.position
+                     WHERE s1.id = ?1
+                     ORDER BY s2.position ASC
+                     LIMIT 1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let result = stmt
+                .query_row(rusqlite::params![section_id.as_ref()], |row| {
+                    let heading_json: String = row.get(2)?;
+                    Ok(SectionRecord {
+                        id: SectionId(row.get(0)?),
+                        document_id: ContentId(row.get(1)?),
+                        heading_path: serde_json::from_str(&heading_json).unwrap_or_default(),
+                        depth: row.get(3)?,
+                        text: row.get(4)?,
+                        summary: row.get(5)?,
+                        position: row.get(6)?,
+                    })
+                })
+                .optional()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            Ok(result)
+        })
+        .await
+    }
+
+    async fn get_document_for_section(
+        &self,
+        section_id: &SectionId,
+    ) -> Result<Option<DocumentRecord>, StorageError> {
+        let section_id = section_id.clone();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT d.id, d.title, d.source_path, d.summary
+                     FROM documents d
+                     JOIN sections s ON s.document_id = d.id
+                     WHERE s.id = ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let result = stmt
+                .query_row(rusqlite::params![section_id.as_ref()], |row| {
+                    Ok(DocumentRecord {
+                        id: ContentId(row.get(0)?),
+                        title: row.get(1)?,
+                        source_path: row.get(2)?,
+                        summary: row.get(3)?,
+                    })
+                })
+                .optional()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            Ok(result)
+        })
+        .await
+    }
+
     async fn get_claim(&self, id: &ClaimId) -> Result<Option<ClaimRecord>, StorageError> {
         let id = id.clone();
         self.with_conn(move |conn| {

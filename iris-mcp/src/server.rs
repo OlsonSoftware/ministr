@@ -31,12 +31,13 @@ use tracing::{Instrument, debug, info_span, warn};
 use iris_core::service::{CompressedItem, QueryError, QueryService, SurveyResult};
 use iris_core::session::delta::ContentDelta;
 use iris_core::session::eviction::EvictionCandidate;
+use iris_core::session::prefetch::PrefetchEngine;
 use iris_core::session::{
     BudgetConfig, BudgetStatus, BudgetTracker, EvictionPolicy, Session, SessionId,
 };
 use iris_core::storage::{SqliteStorage, Storage};
 use iris_core::token::count_tokens;
-use iris_core::types::{ContentId, Resolution};
+use iris_core::types::{ContentId, Resolution, SectionId};
 
 /// MCP server that exposes iris context-cache tools to LLM agents.
 ///
@@ -48,6 +49,7 @@ pub struct IrisServer {
     service: Arc<QueryService>,
     session: Arc<Mutex<Session>>,
     budget: Arc<Mutex<BudgetTracker>>,
+    prefetch: Arc<Mutex<PrefetchEngine>>,
     storage: Option<Arc<SqliteStorage>>,
 }
 
@@ -309,7 +311,28 @@ impl IrisServer {
         async {
             debug!(section_id = %params.section_id, "iris_read request");
 
-            match self.service.read_section(&params.section_id).await {
+            // Check prefetch cache for a warm hit
+            let warm_detail = {
+                let mut prefetch = self.prefetch.lock().await;
+                prefetch.try_serve(&params.section_id).map(|entry| {
+                    iris_core::service::SectionDetail {
+                        section_id: entry.content_id.clone(),
+                        heading_path: entry.heading_path.clone().unwrap_or_default(),
+                        text: entry.text.clone(),
+                        summary: entry.summary.clone(),
+                        claims_available: entry.claims_available,
+                    }
+                })
+            };
+
+            let read_result = if let Some(detail) = warm_detail {
+                debug!(section_id = %params.section_id, "iris_read: warm cache hit");
+                Ok(detail)
+            } else {
+                self.service.read_section(&params.section_id).await
+            };
+
+            match read_result {
                 Ok(detail) => {
                     let current_hash = content_hash(&detail.text);
                     let content_id = ContentId(params.section_id.clone());
@@ -321,85 +344,21 @@ impl IrisServer {
                     let is_re_request = session.is_re_request(&content_id, &current_hash);
                     drop(session);
 
-                    // Case 2: Already delivered and unchanged
-                    if already_delivered && !has_changed {
-                        // Fault-based correction (P5.5): if the agent re-requests
-                        // content we thought was still in its window, the window
-                        // estimator's model is wrong. Force-evict to correct it.
-                        if is_re_request {
-                            debug!(
-                                section_id = %params.section_id,
-                                "iris_read fault correction: re-request detected, \
-                                 forcing eviction from window estimate"
-                            );
-                            let mut budget = self.budget.lock().await;
-                            budget.force_evict(&params.section_id);
-                        }
-
-                        // Re-deliver the full content since the agent lost it
-                        let token_count = count_tokens(&detail.text);
-                        let mut session = self.session.lock().await;
-                        let mut budget = self.budget.lock().await;
-                        let turn = session.current_turn() + 1;
-                        session.record_delivery(
-                            &content_id,
-                            Resolution::Section,
-                            token_count,
-                            turn,
-                            current_hash,
-                        );
-                        budget.record_tokens(&params.section_id, token_count);
-                        let budget_status = budget.budget_status();
-                        drop(budget);
-                        drop(session);
-
-                        self.persist_session().await;
-
+                    // Case 2: Already delivered and unchanged — fault correction
+                    if already_delivered && !has_changed && is_re_request {
                         debug!(
                             section_id = %params.section_id,
-                            "iris_read: re-delivering unchanged content after re-request"
+                            "iris_read fault correction: re-request detected"
                         );
-
-                        let response = ToolResponse {
-                            data: detail,
-                            budget_status,
-                        };
-                        let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                            format!("{{\"error\": \"serialization failed: {e}\"}}")
-                        });
-                        return Ok(CallToolResult::success(vec![Content::text(json)]));
+                        let mut budget = self.budget.lock().await;
+                        budget.force_evict(&params.section_id);
                     }
 
-                    // Case 3: Already delivered but content has changed — re-deliver
-                    // full text (delta computation requires stored old text, which
-                    // will be added with the prefetch cache in P6). The delta module
-                    // in iris_core::session::delta is ready for this upgrade.
-                    // Falls through to full delivery below.
-
-                    // Case 1 & 3: New content or changed content — deliver in full
-                    debug!(
-                        section_id = %params.section_id,
-                        claims_available = detail.claims_available,
-                        "iris_read success: new content"
-                    );
-
-                    let token_count = count_tokens(&detail.text);
-                    let mut session = self.session.lock().await;
-                    let mut budget = self.budget.lock().await;
-                    let turn = session.current_turn() + 1;
-                    session.record_delivery(
-                        &content_id,
-                        Resolution::Section,
-                        token_count,
-                        turn,
-                        current_hash,
-                    );
-                    budget.record_tokens(&params.section_id, token_count);
-                    let budget_status = budget.budget_status();
-                    drop(budget);
-                    drop(session);
-
-                    self.persist_session().await;
+                    // Record delivery and trigger prefetch for all cases
+                    let budget_status = self
+                        .record_section_delivery(&params.section_id, &detail.text, current_hash)
+                        .await;
+                    self.trigger_prefetch(&params.section_id).await;
 
                     let response = ToolResponse {
                         data: detail,
@@ -684,6 +643,7 @@ impl IrisServer {
             service,
             session: Arc::new(Mutex::new(session)),
             budget: Arc::new(Mutex::new(budget)),
+            prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
             storage: None,
         }
     }
@@ -723,7 +683,64 @@ impl IrisServer {
             service,
             session: Arc::new(Mutex::new(session)),
             budget: Arc::new(Mutex::new(budget)),
+            prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
             storage: Some(storage),
+        }
+    }
+
+    /// Record a section delivery in the session shadow and budget tracker.
+    ///
+    /// Returns the budget status snapshot after recording.
+    async fn record_section_delivery(
+        &self,
+        section_id: &str,
+        text: &str,
+        content_hash: String,
+    ) -> BudgetStatus {
+        let token_count = count_tokens(text);
+        let content_id = ContentId(section_id.to_string());
+        let mut session = self.session.lock().await;
+        let mut budget = self.budget.lock().await;
+        let turn = session.current_turn() + 1;
+        session.record_delivery(
+            &content_id,
+            Resolution::Section,
+            token_count,
+            turn,
+            content_hash,
+        );
+        budget.record_tokens(section_id, token_count);
+        let status = budget.budget_status();
+        drop(budget);
+        drop(session);
+        self.persist_session().await;
+        status
+    }
+
+    /// Trigger sequential prefetch after a read operation.
+    ///
+    /// Fetches the next section and parent document summary from storage
+    /// and inserts them into the prefetch cache for warm serving.
+    async fn trigger_prefetch(&self, section_id: &str) {
+        if let Some(ref storage) = self.storage {
+            let sid = SectionId(section_id.to_string());
+
+            let next_section = storage.get_next_section(&sid).await.unwrap_or(None);
+
+            // Count claims for the next section so warm hits include the count
+            let claims_count = if let Some(ref next) = next_section {
+                storage.list_claims(&next.id).await.map(|c| c.len()).ok()
+            } else {
+                None
+            };
+
+            let doc_summary = match storage.get_document_for_section(&sid).await {
+                Ok(Some(doc)) => doc.summary.map(|s| (doc.id.0, s)),
+                _ => None,
+            };
+
+            let mut prefetch = self.prefetch.lock().await;
+            prefetch.prefetch_sequential(next_section, doc_summary, claims_count);
         }
     }
 

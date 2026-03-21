@@ -106,6 +106,24 @@ pub trait Storage: Send + Sync {
         document_id: &ContentId,
     ) -> impl Future<Output = Result<Vec<SectionRecord>, StorageError>> + Send;
 
+    /// Get the next section after the given section within the same document.
+    ///
+    /// Returns the section with the next higher position value, or `None`
+    /// if this is the last section in the document.
+    fn get_next_section(
+        &self,
+        section_id: &SectionId,
+    ) -> impl Future<Output = Result<Option<SectionRecord>, StorageError>> + Send;
+
+    /// Get the parent document for a given section.
+    ///
+    /// Returns the document record that contains the given section, or `None`
+    /// if the section does not exist.
+    fn get_document_for_section(
+        &self,
+        section_id: &SectionId,
+    ) -> impl Future<Output = Result<Option<DocumentRecord>, StorageError>> + Send;
+
     // -- Claims --
 
     /// Get a claim by ID.
