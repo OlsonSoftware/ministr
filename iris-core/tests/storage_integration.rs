@@ -575,3 +575,117 @@ async fn session_has_changed_works_after_restore() {
     assert!(!loaded.has_changed(&ContentId::from("s1".to_string()), "hash1"));
     assert!(loaded.has_changed(&ContentId::from("s1".to_string()), "different"));
 }
+
+// --- get_next_section tests ---
+
+#[tokio::test]
+async fn get_next_section_returns_next_by_position() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let doc = sample_document();
+    storage.insert_document(&doc).await.unwrap();
+
+    // s1 is position 0, s2 is position 1
+    let next = storage
+        .get_next_section(&SectionId("s1".into()))
+        .await
+        .unwrap();
+    assert!(next.is_some());
+    let next = next.unwrap();
+    assert_eq!(next.id, SectionId("s2".into()));
+    assert_eq!(
+        next.text,
+        "Rate limits are 100 requests per minute per API key."
+    );
+}
+
+#[tokio::test]
+async fn get_next_section_returns_none_for_last_section() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let doc = sample_document();
+    storage.insert_document(&doc).await.unwrap();
+
+    // s2 is the last section — no next
+    let next = storage
+        .get_next_section(&SectionId("s2".into()))
+        .await
+        .unwrap();
+    assert!(next.is_none());
+}
+
+#[tokio::test]
+async fn get_next_section_returns_none_for_nonexistent() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let next = storage
+        .get_next_section(&SectionId("nonexistent".into()))
+        .await
+        .unwrap();
+    assert!(next.is_none());
+}
+
+#[tokio::test]
+async fn get_next_section_scoped_to_document() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Insert two documents with sections
+    let doc1 = sample_document();
+    let doc2 = DocumentTree {
+        id: ContentId("doc-2".into()),
+        title: "Other Doc".into(),
+        source_path: "other.md".into(),
+        sections: vec![Section {
+            id: SectionId("other-s1".into()),
+            heading_path: vec!["Other".into()],
+            depth: 1,
+            text: "Other document section.".into(),
+            structural_nodes: vec![],
+            children: vec![],
+            claims: vec![],
+            summary: None,
+        }],
+        summary: None,
+    };
+
+    storage.insert_document(&doc1).await.unwrap();
+    storage.insert_document(&doc2).await.unwrap();
+
+    // s2 is the last section in doc-1, should not return other-s1 from doc-2
+    let next = storage
+        .get_next_section(&SectionId("s2".into()))
+        .await
+        .unwrap();
+    assert!(next.is_none());
+}
+
+// --- get_document_for_section tests ---
+
+#[tokio::test]
+async fn get_document_for_section_returns_parent_doc() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let doc = sample_document();
+    storage.insert_document(&doc).await.unwrap();
+
+    let parent = storage
+        .get_document_for_section(&SectionId("s1".into()))
+        .await
+        .unwrap();
+    assert!(parent.is_some());
+    let parent = parent.unwrap();
+    assert_eq!(parent.id, ContentId("doc-1".into()));
+    assert_eq!(parent.title, "API Reference");
+    assert_eq!(
+        parent.summary.as_deref(),
+        Some("Full API reference documentation.")
+    );
+}
+
+#[tokio::test]
+async fn get_document_for_section_returns_none_for_nonexistent() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let parent = storage
+        .get_document_for_section(&SectionId("nonexistent".into()))
+        .await
+        .unwrap();
+    assert!(parent.is_none());
+}

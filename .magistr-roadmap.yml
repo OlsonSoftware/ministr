@@ -176,20 +176,20 @@ phases:
 - id: P6
   name: Prefetch Engine & Coherence
   tagline: Predict what the agent needs next and notify when source documents change
-  status: pending
+  status: in_progress
   problem: Every cold retrieval costs 50-200ms and a tool-call round-trip. Without prefetching, agents make 3x more tool calls than necessary. Without coherence, stale context causes hallucinations
   solution: Build three prefetch heuristics (sequential, topical, structural locality) with an LRU warm cache, file watching via notify crate for coherence alerts, and the iris_related tool for claim dependency traversal
   tasks:
   - text: Implement sequential prefetch — when agent reads section N, pre-warm section N+1 and parent summary
-    checked: false
+    checked: true
   - text: Implement topical prefetch — maintain running topic vector from last K sections, pre-warm nearest un-accessed sections
     checked: false
   - text: Implement structural prefetch — pre-warm sibling sections and cross-referenced sections from document tree
     checked: false
   - text: Build LRU prefetch cache (default 50 items) with pre-computed text, token count, and relevance score
-    checked: false
+    checked: true
   - text: Wire prefetch into tool response path — serve from warm cache (<1ms) or fall through to cold retrieval
-    checked: false
+    checked: true
   - text: Add prefetch hit rate metrics — track warm/cold responses per session, expose via iris://status resource
     checked: false
   - text: Implement iris_related tool — claim dependency traversal (references, contradicts, depends_on, updates)

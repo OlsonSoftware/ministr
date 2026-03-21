@@ -14,10 +14,12 @@
 mod budget;
 pub mod delta;
 pub mod eviction;
+pub mod prefetch;
 mod types;
 mod window;
 
 pub use budget::{BudgetConfig, BudgetStatus, BudgetTracker, PressureLevel};
 pub use eviction::{EvictionCandidate, EvictionRanker};
+pub use prefetch::{CacheEntry, PrefetchCache, PrefetchEngine, PrefetchMetrics};
 pub use types::{DeliveredItem, EvictionPolicy, Session, SessionId};
 pub use window::{WindowEstimator, WindowStatus};
