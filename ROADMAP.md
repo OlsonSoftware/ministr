@@ -145,7 +145,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [ ] Build coherence protocol — on file change, re-index affected sections, generate coherence_alert notifications
 - [ ] Send MCP notifications for stale content — push changed_sections and stale_content_ids to connected agents
 - [ ] Invalidate session shadow entries when underlying content changes — mark stale, offer delta on next access
-- [ ] Write tests for prefetch engine — hit rate measurement, sequential/topical/structural prediction accuracy
+- [x] Write tests for prefetch engine — hit rate measurement, sequential/topical/structural prediction accuracy
 - [ ] Write tests for coherence — file change detection, re-indexing correctness, notification delivery, shadow invalidation
 
 ---

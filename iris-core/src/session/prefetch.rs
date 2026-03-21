@@ -1204,4 +1204,476 @@ mod tests {
         assert_eq!(m.sequential_hits, 0);
         assert_eq!(m.topical_hits, 0);
     }
+
+    // --- Integration: sequential prediction accuracy ---
+
+    #[test]
+    fn sequential_linear_read_achieves_high_hit_rate() {
+        // Simulate an agent reading sections 0..9 linearly through a document.
+        // After reading section N, we prefetch section N+1.
+        // The first read is always cold; subsequent reads should be warm.
+        let mut engine = PrefetchEngine::new(20);
+        let num_sections = 10;
+
+        // Build all section records up front
+        let sections: Vec<_> = (0..num_sections)
+            .map(|i| {
+                make_section_record(
+                    &format!("doc#s{i}"),
+                    "doc",
+                    &format!("Content of section {i}"),
+                    i64::from(i),
+                )
+            })
+            .collect();
+
+        for i in 0..num_sections {
+            // Agent requests section i
+            let _served = engine.try_serve(&format!("doc#s{i}"));
+
+            // After reading, prefetch the next section (sequential strategy)
+            let next = if i + 1 < num_sections {
+                Some(sections[usize::try_from(i + 1).unwrap()].clone())
+            } else {
+                None
+            };
+            engine.prefetch_sequential(next, None, None);
+        }
+
+        let m = engine.metrics();
+        // First read is cold (miss), reads 1..9 should all be warm hits
+        assert_eq!(m.hits, 9, "expected 9 warm hits for linear sequential read");
+        assert_eq!(m.misses, 1, "expected 1 cold miss (first read)");
+        assert_eq!(m.sequential_hits, 9, "all hits should be sequential");
+        assert!(
+            m.hit_rate() > 0.85,
+            "sequential hit rate should be >85%, got {:.2}",
+            m.hit_rate()
+        );
+    }
+
+    #[test]
+    fn sequential_skip_pattern_has_lower_hit_rate() {
+        // Simulate an agent that reads every other section (0, 2, 4, 6, 8).
+        // Sequential prefetch warms N+1, so reading N+2 misses.
+        let mut engine = PrefetchEngine::new(20);
+        let num_sections = 10;
+
+        let sections: Vec<_> = (0..num_sections)
+            .map(|i| {
+                make_section_record(
+                    &format!("doc#s{i}"),
+                    "doc",
+                    &format!("Content {i}"),
+                    i64::from(i),
+                )
+            })
+            .collect();
+
+        for i in (0..num_sections).step_by(2) {
+            let _served = engine.try_serve(&format!("doc#s{i}"));
+            let next = if i + 1 < num_sections {
+                Some(sections[usize::try_from(i + 1).unwrap()].clone())
+            } else {
+                None
+            };
+            engine.prefetch_sequential(next, None, None);
+        }
+
+        let m = engine.metrics();
+        // All 5 reads should be misses (we skip the prefetched sections)
+        assert_eq!(
+            m.misses, 5,
+            "skip-reading should miss all prefetched sections"
+        );
+        assert_eq!(m.hits, 0, "no hits expected for skip pattern");
+        assert!(
+            (m.hit_rate()).abs() < f64::EPSILON,
+            "hit rate should be 0% for skip pattern"
+        );
+    }
+
+    // --- Integration: structural prediction accuracy ---
+
+    #[test]
+    fn structural_sibling_exploration_achieves_high_hit_rate() {
+        // Simulate: agent reads section 0, then we prefetch siblings 1,2,3.
+        // Agent then reads sections 1,2,3 (exploring siblings).
+        let mut engine = PrefetchEngine::new(20);
+
+        // Read section 0 (cold)
+        let _ = engine.try_serve("doc#s0");
+
+        // Prefetch siblings 1,2,3 via structural strategy
+        let siblings = vec![
+            make_section_record("doc#s1", "doc", "Sibling 1", 1),
+            make_section_record("doc#s2", "doc", "Sibling 2", 2),
+            make_section_record("doc#s3", "doc", "Sibling 3", 3),
+        ];
+        engine.prefetch_structural(siblings, &HashMap::new());
+
+        // Agent reads the siblings
+        let s1 = engine.try_serve("doc#s1");
+        let s2 = engine.try_serve("doc#s2");
+        let s3 = engine.try_serve("doc#s3");
+
+        assert!(s1.is_some(), "sibling s1 should be warm");
+        assert!(s2.is_some(), "sibling s2 should be warm");
+        assert!(s3.is_some(), "sibling s3 should be warm");
+
+        let m = engine.metrics();
+        assert_eq!(m.hits, 3, "3 sibling reads should be warm hits");
+        assert_eq!(m.misses, 1, "only first read is cold");
+        assert_eq!(m.structural_hits, 3, "all hits from structural strategy");
+        assert!(
+            m.hit_rate() >= 0.75,
+            "structural hit rate should be >=75%, got {:.2}",
+            m.hit_rate()
+        );
+    }
+
+    #[test]
+    fn structural_only_warms_max_siblings() {
+        // With 6 siblings available but MAX_STRUCTURAL_PREFETCH=3,
+        // only 3 should be warm. Reads beyond that are misses.
+        let mut engine = PrefetchEngine::new(20);
+
+        let siblings: Vec<_> = (0..6)
+            .map(|i| {
+                make_section_record(
+                    &format!("doc#s{i}"),
+                    "doc",
+                    &format!("Sib {i}"),
+                    i64::from(i),
+                )
+            })
+            .collect();
+        engine.prefetch_structural(siblings, &HashMap::new());
+
+        let mut warm_count = 0;
+        for i in 0..6 {
+            if engine.try_serve(&format!("doc#s{i}")).is_some() {
+                warm_count += 1;
+            }
+        }
+
+        assert_eq!(
+            warm_count, MAX_STRUCTURAL_PREFETCH,
+            "only {MAX_STRUCTURAL_PREFETCH} siblings should be pre-warmed"
+        );
+    }
+
+    // --- Integration: topical prediction accuracy ---
+
+    #[test]
+    fn topical_browsing_warms_related_sections() {
+        // Simulate: agent reads sections on a topic, topical prefetch warms
+        // semantically similar sections. Agent then reads those sections.
+        let mut engine = PrefetchEngine::new(20);
+
+        // Agent reads a section and we record its embedding
+        let _ = engine.try_serve("doc#intro"); // cold miss
+        engine.record_topic_access(vec![1.0, 0.0, 0.0]);
+
+        // Topical prefetch finds related sections
+        let candidates = vec![
+            make_section_record("doc#related1", "doc", "Related topic 1", 5),
+            make_section_record("doc#related2", "doc", "Related topic 2", 6),
+        ];
+        engine.prefetch_topical(candidates, &HashMap::new());
+
+        // Agent follows the topic and reads related sections
+        let r1 = engine.try_serve("doc#related1");
+        let r2 = engine.try_serve("doc#related2");
+
+        assert!(r1.is_some(), "topically related s1 should be warm");
+        assert!(r2.is_some(), "topically related s2 should be warm");
+
+        let m = engine.metrics();
+        assert_eq!(m.topical_hits, 2, "both hits from topical strategy");
+        assert_eq!(m.hits, 2);
+        assert_eq!(m.misses, 1);
+    }
+
+    #[test]
+    fn topical_off_topic_reads_miss() {
+        // Simulate: topical prefetch warms sections on topic A, but the agent
+        // switches to a completely different topic B. All reads miss.
+        let mut engine = PrefetchEngine::new(20);
+
+        // Warm sections about topic A
+        let candidates = vec![
+            make_section_record("topicA#s1", "docA", "Topic A content", 0),
+            make_section_record("topicA#s2", "docA", "More A content", 1),
+        ];
+        engine.prefetch_topical(candidates, &HashMap::new());
+
+        // Agent reads topic B sections instead (not prefetched)
+        let b1 = engine.try_serve("topicB#s1");
+        let b2 = engine.try_serve("topicB#s2");
+
+        assert!(b1.is_none(), "off-topic read should miss");
+        assert!(b2.is_none(), "off-topic read should miss");
+
+        let m = engine.metrics();
+        assert_eq!(m.hits, 0);
+        assert_eq!(m.misses, 2);
+        assert!((m.hit_rate()).abs() < f64::EPSILON);
+    }
+
+    // --- Integration: mixed strategy hit rate ---
+
+    #[test]
+    fn mixed_strategy_session_tracks_per_strategy_rates() {
+        // Simulate a realistic mixed session: sequential reading, then
+        // structural exploration, then topical browsing.
+        let mut engine = PrefetchEngine::new(30);
+
+        // Phase 1: Sequential reading (sections 0→1→2)
+        // Read s0 (cold)
+        let _ = engine.try_serve("doc#s0");
+        engine.prefetch_sequential(
+            Some(make_section_record("doc#s1", "doc", "Section 1", 1)),
+            None,
+            None,
+        );
+
+        // Read s1 (warm, sequential)
+        let _ = engine.try_serve("doc#s1");
+        engine.prefetch_sequential(
+            Some(make_section_record("doc#s2", "doc", "Section 2", 2)),
+            None,
+            None,
+        );
+
+        // Read s2 (warm, sequential)
+        let _ = engine.try_serve("doc#s2");
+
+        // Phase 2: Structural exploration from s2's document
+        let siblings = vec![
+            make_section_record("doc#s3", "doc", "Sibling 3", 3),
+            make_section_record("doc#s4", "doc", "Sibling 4", 4),
+        ];
+        engine.prefetch_structural(siblings, &HashMap::new());
+
+        // Read s3 (warm, structural)
+        let _ = engine.try_serve("doc#s3");
+
+        // Phase 3: Topical jump to a different document
+        engine.record_topic_access(vec![0.0, 1.0, 0.0]);
+        let topical = vec![make_section_record("other#t1", "other", "Topical match", 0)];
+        engine.prefetch_topical(topical, &HashMap::new());
+
+        // Read t1 (warm, topical)
+        let _ = engine.try_serve("other#t1");
+
+        // Read something completely unexpected (cold)
+        let _ = engine.try_serve("random#unknown");
+
+        let m = engine.metrics();
+        // Total: 6 lookups — s0(miss), s1(seq hit), s2(seq hit), s3(struct hit),
+        //        t1(topical hit), random(miss)
+        assert_eq!(m.hits, 4, "4 warm hits across strategies");
+        assert_eq!(m.misses, 2, "2 cold misses");
+        assert_eq!(m.sequential_hits, 2, "2 sequential hits");
+        assert_eq!(m.structural_hits, 1, "1 structural hit");
+        assert_eq!(m.topical_hits, 1, "1 topical hit");
+
+        // Overall hit rate: 4/6 ≈ 0.667
+        let rate = m.hit_rate();
+        assert!(
+            (rate - 4.0 / 6.0).abs() < 1e-5,
+            "expected ~66.7% overall hit rate, got {rate:.3}"
+        );
+
+        // Per-strategy rates
+        assert!(
+            (m.strategy_hit_rate(PrefetchStrategy::Sequential) - 2.0 / 6.0).abs() < 1e-5,
+            "sequential strategy rate should be ~33.3%"
+        );
+        assert!(
+            (m.strategy_hit_rate(PrefetchStrategy::Structural) - 1.0 / 6.0).abs() < 1e-5,
+            "structural strategy rate should be ~16.7%"
+        );
+        assert!(
+            (m.strategy_hit_rate(PrefetchStrategy::Topical) - 1.0 / 6.0).abs() < 1e-5,
+            "topical strategy rate should be ~16.7%"
+        );
+    }
+
+    // --- Integration: cache pressure under mixed workload ---
+
+    #[test]
+    fn cache_pressure_preserves_recent_strategy_entries() {
+        // With a small cache (capacity=5), simulate filling with sequential
+        // prefetches then doing structural prefetches. Verify that LRU eviction
+        // removes oldest entries but active entries remain accessible.
+        let mut engine = PrefetchEngine::new(5);
+
+        // Fill cache with sequential entries s0..s4
+        for i in 0..5 {
+            let section = make_section_record(
+                &format!("doc#s{i}"),
+                "doc",
+                &format!("Seq content {i}"),
+                i64::from(i),
+            );
+            engine.prefetch_sequential(Some(section), None, None);
+        }
+        assert_eq!(engine.cache().len(), 5);
+
+        // Now add structural entries — should evict oldest sequential entries
+        let siblings = vec![
+            make_section_record("doc#str0", "doc", "Structural 0", 10),
+            make_section_record("doc#str1", "doc", "Structural 1", 11),
+            make_section_record("doc#str2", "doc", "Structural 2", 12),
+        ];
+        engine.prefetch_structural(siblings, &HashMap::new());
+
+        // Cache still at capacity
+        assert_eq!(engine.cache().len(), 5);
+
+        // Oldest sequential entries (s0, s1, s2) should be evicted
+        assert!(
+            engine.cache().peek("doc#s0").is_none(),
+            "s0 should be evicted"
+        );
+        assert!(
+            engine.cache().peek("doc#s1").is_none(),
+            "s1 should be evicted"
+        );
+        assert!(
+            engine.cache().peek("doc#s2").is_none(),
+            "s2 should be evicted"
+        );
+
+        // Newest sequential entries and structural entries remain
+        assert!(engine.cache().peek("doc#s3").is_some(), "s3 should survive");
+        assert!(engine.cache().peek("doc#s4").is_some(), "s4 should survive");
+        assert!(
+            engine.cache().peek("doc#str0").is_some(),
+            "str0 should be present"
+        );
+        assert!(
+            engine.cache().peek("doc#str1").is_some(),
+            "str1 should be present"
+        );
+        assert!(
+            engine.cache().peek("doc#str2").is_some(),
+            "str2 should be present"
+        );
+
+        // Serving structural entries records correct strategy
+        let entry = engine.try_serve("doc#str0");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().strategy, PrefetchStrategy::Structural);
+    }
+
+    #[test]
+    fn cache_pressure_high_throughput_maintains_metrics() {
+        // Simulate 100 sequential prefetches with a small cache (10).
+        // Only the most recent entries survive, but metrics accumulate all hits/misses.
+        let mut engine = PrefetchEngine::new(10);
+
+        // Prefetch sections 0..99
+        for i in 0..100_i32 {
+            let section = make_section_record(
+                &format!("doc#s{i}"),
+                "doc",
+                &format!("Content {i}"),
+                i64::from(i),
+            );
+            engine.prefetch_sequential(Some(section), None, None);
+        }
+
+        // Try to serve all 100 — only last 10 should be warm
+        for i in 0..100_i32 {
+            let _ = engine.try_serve(&format!("doc#s{i}"));
+        }
+
+        let m = engine.metrics();
+        assert_eq!(m.hits, 10, "only 10 entries fit in cache");
+        assert_eq!(m.misses, 90, "90 evicted entries are misses");
+        assert!(
+            (m.hit_rate() - 0.1).abs() < 1e-5,
+            "hit rate should be 10% with 10/100 capacity ratio"
+        );
+    }
+
+    // --- Integration: topic vector evolution ---
+
+    #[test]
+    fn topic_vector_evolves_with_access_pattern() {
+        // Verify that the topic vector shifts as the agent changes topics,
+        // which is essential for topical prefetch accuracy.
+        let mut engine = PrefetchEngine::new(20);
+
+        // Phase 1: Agent reads "Rust" content (embedding dimension 0)
+        for _ in 0..3 {
+            engine.record_topic_access(vec![1.0, 0.0, 0.0]);
+        }
+        let topic_rust = engine.topic_vector().unwrap();
+        assert!(
+            topic_rust[0] > 0.9,
+            "topic should be dominated by dim 0 (Rust)"
+        );
+
+        // Phase 2: Agent switches to "Python" content (embedding dimension 1)
+        for _ in 0..5 {
+            engine.record_topic_access(vec![0.0, 1.0, 0.0]);
+        }
+        let topic_python = engine.topic_vector().unwrap();
+        assert!(
+            topic_python[1] > topic_python[0],
+            "after topic shift, dim 1 (Python) should dominate over dim 0 (Rust)"
+        );
+
+        // The shift happened because EMA weights recent accesses higher
+        assert!(
+            topic_python[1] > 0.5,
+            "Python dimension should be >50%, got {:.3}",
+            topic_python[1]
+        );
+    }
+
+    #[test]
+    fn metrics_reset_allows_per_phase_measurement() {
+        // Verify that resetting metrics mid-session allows measuring
+        // hit rate for different phases independently.
+        let mut engine = PrefetchEngine::new(20);
+
+        // Phase 1: Sequential reading
+        let _ = engine.try_serve("s0"); // miss
+        engine.prefetch_sequential(
+            Some(make_section_record("s1", "doc", "Next", 1)),
+            None,
+            None,
+        );
+        let _ = engine.try_serve("s1"); // hit
+
+        let phase1 = engine.metrics();
+        assert_eq!(phase1.hits, 1);
+        assert_eq!(phase1.misses, 1);
+        assert!((phase1.hit_rate() - 0.5).abs() < 1e-5);
+
+        // Reset for phase 2 measurement
+        engine.cache_mut().reset_metrics();
+
+        // Phase 2: Structural exploration (all warm)
+        let siblings = vec![
+            make_section_record("s2", "doc", "Sib 2", 2),
+            make_section_record("s3", "doc", "Sib 3", 3),
+        ];
+        engine.prefetch_structural(siblings, &HashMap::new());
+        let _ = engine.try_serve("s2"); // hit
+        let _ = engine.try_serve("s3"); // hit
+
+        let phase2 = engine.metrics();
+        assert_eq!(phase2.hits, 2);
+        assert_eq!(phase2.misses, 0);
+        assert!(
+            (phase2.hit_rate() - 1.0).abs() < 1e-5,
+            "phase 2 should be 100% hit rate"
+        );
+    }
 }
