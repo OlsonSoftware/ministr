@@ -66,11 +66,11 @@ phases:
   - text: Implement extractive summary generation — TF-IDF top-k sentence selection per section and per document
     checked: true
   - text: Build ingestion pipeline orchestrator — parse, section, extract claims, summarize, store to SQLite
-    checked: false
+    checked: true
   - text: 'Handle edge cases: documents without headings (paragraph-boundary splitting), empty sections, nested lists'
-    checked: false
+    checked: true
   - text: Implement incremental re-indexing — compare file hashes, re-parse only changed files, update only changed sections
-    checked: false
+    checked: true
   - text: Add token counting utility (cl100k_base compatible) for accurate budget tracking on all content units
     checked: true
   - text: Write tests for Markdown parsing — heading hierarchy, code blocks, tables, GFM extensions, frontmatter

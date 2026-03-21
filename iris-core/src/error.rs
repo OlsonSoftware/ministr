@@ -103,6 +103,36 @@ pub enum ParseError {
     EncodingError { path: PathBuf, reason: String },
 }
 
+/// Errors from the ingestion pipeline.
+#[derive(Debug, thiserror::Error)]
+pub enum IngestionError {
+    /// File I/O error during ingestion.
+    #[error("I/O error for {path}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Document parsing failed.
+    #[error("parse error: {source}")]
+    Parse {
+        #[from]
+        source: ParseError,
+    },
+
+    /// Storage operation failed.
+    #[error("storage error: {source}")]
+    Storage {
+        #[from]
+        source: StorageError,
+    },
+
+    /// File encoding is not valid UTF-8.
+    #[error("encoding error in {path}: file is not valid UTF-8")]
+    Encoding { path: PathBuf },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
