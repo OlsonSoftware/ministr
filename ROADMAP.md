@@ -53,7 +53,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Implement incremental re-indexing — compare file hashes, re-parse only changed files, update only changed sections
 - [x] Add token counting utility (cl100k_base compatible) for accurate budget tracking on all content units
 - [x] Write tests for Markdown parsing — heading hierarchy, code blocks, tables, GFM extensions, frontmatter
-- [ ] Write tests for claim extraction quality — precision/recall on a hand-labeled test corpus
+- [x] Write tests for claim extraction quality — precision/recall on a hand-labeled test corpus
 
 ---
 

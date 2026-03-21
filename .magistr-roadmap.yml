@@ -51,7 +51,7 @@ phases:
     checked: true
 - id: P2
   name: Session Intelligence
-  status: in_progress
+  status: done
   tasks:
   - text: Define DocumentParser trait — parse(path) -> Result<DocumentTree> with format-agnostic interface
     checked: true
@@ -76,7 +76,7 @@ phases:
   - text: Write tests for Markdown parsing — heading hierarchy, code blocks, tables, GFM extensions, frontmatter
     checked: true
   - text: Write tests for claim extraction quality — precision/recall on a hand-labeled test corpus
-    checked: false
+    checked: true
 - id: P3
   name: Polish & Release
   status: pending
