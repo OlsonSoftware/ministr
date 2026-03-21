@@ -18,6 +18,7 @@ fn sample_document() -> DocumentTree {
                 heading_path: vec!["API Reference".into(), "Authentication".into()],
                 depth: 2,
                 text: "Authentication uses JWT tokens with RS256 signing.".into(),
+                structural_nodes: vec![],
                 children: vec![],
                 claims: vec![
                     Claim {
@@ -38,6 +39,7 @@ fn sample_document() -> DocumentTree {
                 heading_path: vec!["API Reference".into(), "Rate Limits".into()],
                 depth: 2,
                 text: "Rate limits are 100 requests per minute per API key.".into(),
+                structural_nodes: vec![],
                 children: vec![],
                 claims: vec![Claim {
                     id: ClaimId("c3".into()),
@@ -320,11 +322,13 @@ async fn nested_sections_are_stored() {
             heading_path: vec!["Parent".into()],
             depth: 1,
             text: "Parent section.".into(),
+            structural_nodes: vec![],
             children: vec![Section {
                 id: SectionId("child".into()),
                 heading_path: vec!["Parent".into(), "Child".into()],
                 depth: 2,
                 text: "Child section.".into(),
+                structural_nodes: vec![],
                 children: vec![],
                 claims: vec![],
                 summary: None,

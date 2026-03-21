@@ -95,6 +95,35 @@ impl fmt::Display for Resolution {
     }
 }
 
+/// A typed structural element within a section.
+///
+/// Structural nodes preserve the semantic type of content blocks (code, tables,
+/// lists) so downstream processing can handle them differently from plain text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StructuralNode {
+    /// A fenced or indented code block.
+    CodeBlock {
+        /// Language annotation (e.g. `"rust"`, `"python"`). Empty if unspecified.
+        language: String,
+        /// The code content.
+        code: String,
+    },
+    /// A table with headers and data rows.
+    Table {
+        /// Column header texts.
+        headers: Vec<String>,
+        /// Data rows, each row is a vec of cell texts.
+        rows: Vec<Vec<String>>,
+    },
+    /// An ordered or unordered list.
+    ListBlock {
+        /// `true` for ordered (numbered) lists.
+        ordered: bool,
+        /// List item texts.
+        items: Vec<String>,
+    },
+}
+
 /// A parsed document represented as a tree of sections.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentTree {
@@ -121,6 +150,8 @@ pub struct Section {
     pub depth: u32,
     /// Full text content of the section.
     pub text: String,
+    /// Typed structural elements (code blocks, tables, lists) in document order.
+    pub structural_nodes: Vec<StructuralNode>,
     /// Child sections nested under this one.
     pub children: Vec<Section>,
     /// Atomic claims extracted from this section.
@@ -184,6 +215,7 @@ mod tests {
             heading_path: vec!["API Reference".into(), "Rate Limits".into()],
             depth: 2,
             text: "Rate limits are 100/min per API key.".into(),
+            structural_nodes: vec![],
             children: vec![],
             claims: vec![claim],
             summary: Some("Rate limiting details.".into()),

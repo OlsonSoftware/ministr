@@ -51,16 +51,16 @@ phases:
     checked: true
 - id: P2
   name: Session Intelligence
-  status: pending
+  status: in_progress
   tasks:
   - text: Define DocumentParser trait — parse(path) -> Result<DocumentTree> with format-agnostic interface
-    checked: false
+    checked: true
   - text: Implement MarkdownParser using comrak AST — walk nodes to build structural section tree
-    checked: false
+    checked: true
   - text: Generate stable hierarchical section IDs from heading paths (e.g., docs/auth.md#3-2-error-handling)
-    checked: false
+    checked: true
   - text: Preserve code blocks, tables, and lists as typed structural nodes within sections
-    checked: false
+    checked: true
   - text: Implement heuristic claim extraction — sentence splitting, named entity filtering, assertion detection
     checked: false
   - text: Implement extractive summary generation — TF-IDF top-k sentence selection per section and per document
@@ -74,7 +74,7 @@ phases:
   - text: Add token counting utility (cl100k_base compatible) for accurate budget tracking on all content units
     checked: false
   - text: Write tests for Markdown parsing — heading hierarchy, code blocks, tables, GFM extensions, frontmatter
-    checked: false
+    checked: true
   - text: Write tests for claim extraction quality — precision/recall on a hand-labeled test corpus
     checked: false
 - id: P3

@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod error;
+pub mod parser;
 pub mod storage;
 pub mod tracing;
 pub mod types;

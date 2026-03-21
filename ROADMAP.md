@@ -42,17 +42,17 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Define DocumentParser trait — parse(path) -> Result<DocumentTree> with format-agnostic interface
-- [ ] Implement MarkdownParser using comrak AST — walk nodes to build structural section tree
-- [ ] Generate stable hierarchical section IDs from heading paths (e.g., docs/auth.md#3-2-error-handling)
-- [ ] Preserve code blocks, tables, and lists as typed structural nodes within sections
+- [x] Define DocumentParser trait — parse(path) -> Result<DocumentTree> with format-agnostic interface
+- [x] Implement MarkdownParser using comrak AST — walk nodes to build structural section tree
+- [x] Generate stable hierarchical section IDs from heading paths (e.g., docs/auth.md#3-2-error-handling)
+- [x] Preserve code blocks, tables, and lists as typed structural nodes within sections
 - [ ] Implement heuristic claim extraction — sentence splitting, named entity filtering, assertion detection
 - [ ] Implement extractive summary generation — TF-IDF top-k sentence selection per section and per document
 - [ ] Build ingestion pipeline orchestrator — parse, section, extract claims, summarize, store to SQLite
 - [ ] Handle edge cases: documents without headings (paragraph-boundary splitting), empty sections, nested lists
 - [ ] Implement incremental re-indexing — compare file hashes, re-parse only changed files, update only changed sections
 - [ ] Add token counting utility (cl100k_base compatible) for accurate budget tracking on all content units
-- [ ] Write tests for Markdown parsing — heading hierarchy, code blocks, tables, GFM extensions, frontmatter
+- [x] Write tests for Markdown parsing — heading hierarchy, code blocks, tables, GFM extensions, frontmatter
 - [ ] Write tests for claim extraction quality — precision/recall on a hand-labeled test corpus
 
 ---
