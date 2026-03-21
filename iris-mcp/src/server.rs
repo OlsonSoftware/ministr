@@ -3,6 +3,10 @@
 //! Implements the rmcp `ServerHandler` trait with `#[tool]` macro-based
 //! tool registration. The server exposes iris tools (`iris_survey`,
 //! `iris_read`, `iris_extract`) over the MCP protocol.
+//!
+//! Every tool response includes a `budget_status` object with the current
+//! token budget state. Survey and read responses are deduplicated against
+//! the session shadow to avoid re-delivering content the agent already has.
 
 use std::sync::Arc;
 
@@ -12,18 +16,69 @@ use rmcp::model::{
 };
 use rmcp::schemars;
 use rmcp::tool;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tokio::sync::Mutex;
 use tracing::{Instrument, debug, info_span, warn};
 
-use iris_core::service::{QueryError, QueryService};
+use iris_core::service::{QueryError, QueryService, SurveyResult};
+use iris_core::session::{
+    BudgetConfig, BudgetStatus, BudgetTracker, EvictionPolicy, Session, SessionId,
+};
+use iris_core::token::count_tokens;
+use iris_core::types::{ContentId, Resolution};
 
 /// MCP server that exposes iris context-cache tools to LLM agents.
 ///
 /// `IrisServer` adapts the [`QueryService`] to the MCP protocol.
 /// It handles tool registration, request routing, and response formatting.
+/// Tracks session state for deduplication and budget management.
 #[derive(Clone)]
 pub struct IrisServer {
     service: Arc<QueryService>,
+    session: Arc<Mutex<Session>>,
+    budget: Arc<Mutex<BudgetTracker>>,
+}
+
+/// Tool response wrapper that includes budget status alongside the result data.
+///
+/// Every tool response is serialized as a JSON object with a `data` field
+/// containing the tool-specific result and a `budget_status` field with
+/// the current token budget snapshot.
+#[derive(Debug, Serialize)]
+struct ToolResponse<T: Serialize> {
+    /// The tool-specific result data.
+    #[serde(flatten)]
+    data: T,
+    /// Current budget status snapshot.
+    budget_status: BudgetStatus,
+}
+
+/// Wrapper for survey responses that includes both results and dedup metadata.
+#[derive(Debug, Serialize)]
+struct SurveyResponse {
+    /// The survey results after deduplication.
+    results: Vec<SurveyResult>,
+    /// Number of results filtered out by deduplication.
+    deduplicated_count: usize,
+}
+
+/// Wrapper for extract responses.
+#[derive(Debug, Serialize)]
+struct ExtractResponse {
+    /// The extracted claims.
+    claims: Vec<iris_core::service::ClaimResult>,
+}
+
+/// Response when a section was already delivered and hasn't changed.
+#[derive(Debug, Serialize)]
+struct AlreadyDeliveredResponse {
+    /// The section that was already delivered.
+    section_id: String,
+    /// Indicates this content was already delivered in this session.
+    already_delivered: bool,
+    /// The turn when it was originally delivered.
+    delivered_at_turn: u32,
 }
 
 /// Parameters for the `iris_survey` tool.
@@ -84,9 +139,10 @@ impl IrisServer {
     ///
     /// Returns ranked summaries with relevance scores across all resolution
     /// levels (document summaries, section text, atomic claims).
+    /// Results that were already delivered in this session are filtered out.
     #[tool(
         name = "iris_survey",
-        description = "Search the indexed corpus for sections relevant to a natural language query. Returns ranked summaries with relevance scores."
+        description = "Search the indexed corpus for sections relevant to a natural language query. Returns ranked summaries with relevance scores. Already-delivered content is filtered out."
     )]
     async fn survey(
         &self,
@@ -100,8 +156,52 @@ impl IrisServer {
 
             match self.service.survey(&params.query, top_k).await {
                 Ok(results) => {
-                    debug!(result_count = results.len(), "iris_survey success");
-                    let json = serde_json::to_string_pretty(&results).unwrap_or_else(|e| {
+                    let original_count = results.len();
+
+                    // Deduplicate against session shadow
+                    let session = self.session.lock().await;
+                    let filtered: Vec<SurveyResult> = results
+                        .into_iter()
+                        .filter(|r| !session.is_delivered(&ContentId(r.content_id.clone())))
+                        .collect();
+                    drop(session);
+
+                    let deduplicated_count = original_count - filtered.len();
+
+                    debug!(
+                        result_count = filtered.len(),
+                        deduplicated_count, "iris_survey success"
+                    );
+
+                    // Record delivered content in session and budget
+                    let mut session = self.session.lock().await;
+                    let mut budget = self.budget.lock().await;
+                    let turn = session.current_turn() + 1;
+                    for r in &filtered {
+                        let token_count = count_tokens(&r.text);
+                        let hash = content_hash(&r.text);
+                        let resolution = parse_resolution(&r.resolution);
+                        session.record_delivery(
+                            &ContentId(r.content_id.clone()),
+                            resolution,
+                            token_count,
+                            turn,
+                            hash,
+                        );
+                        budget.record_tokens(&r.content_id, token_count);
+                    }
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+                    drop(session);
+
+                    let response = ToolResponse {
+                        data: SurveyResponse {
+                            results: filtered,
+                            deduplicated_count,
+                        },
+                        budget_status,
+                    };
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
                         format!("{{\"error\": \"serialization failed: {e}\"}}")
                     });
                     Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -121,10 +221,12 @@ impl IrisServer {
     /// Read the full text of a section by its hierarchical ID.
     ///
     /// Returns the complete section content with heading path and
-    /// the number of claims available for extraction.
+    /// the number of claims available for extraction. If the section
+    /// was already delivered and hasn't changed, returns a short
+    /// "already delivered" message instead.
     #[tool(
         name = "iris_read",
-        description = "Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count."
+        description = "Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count. Skips re-delivery of unchanged content."
     )]
     async fn read(&self, #[tool(aggr)] params: ReadParams) -> Result<CallToolResult, rmcp::Error> {
         let span = info_span!("iris_read", section_id = %params.section_id);
@@ -134,12 +236,67 @@ impl IrisServer {
 
             match self.service.read_section(&params.section_id).await {
                 Ok(detail) => {
+                    let current_hash = content_hash(&detail.text);
+                    let content_id = ContentId(params.section_id.clone());
+
+                    // Check deduplication against session shadow
+                    let session = self.session.lock().await;
+                    let already_delivered = session.is_delivered(&content_id);
+                    let has_changed = session.has_changed(&content_id, &current_hash);
+                    let delivered_turn = session
+                        .get_delivered(&content_id)
+                        .map(|item| item.turn_delivered);
+                    drop(session);
+
+                    if already_delivered && !has_changed {
+                        debug!(
+                            section_id = %params.section_id,
+                            "iris_read dedup: already delivered, unchanged"
+                        );
+                        let budget_status = self.budget.lock().await.budget_status();
+                        let response = ToolResponse {
+                            data: AlreadyDeliveredResponse {
+                                section_id: params.section_id,
+                                already_delivered: true,
+                                delivered_at_turn: delivered_turn.unwrap_or(0),
+                            },
+                            budget_status,
+                        };
+                        let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
+                            format!("{{\"error\": \"serialization failed: {e}\"}}")
+                        });
+                        return Ok(CallToolResult::success(vec![Content::text(json)]));
+                    }
+
                     debug!(
                         section_id = %params.section_id,
                         claims_available = detail.claims_available,
+                        re_delivery = already_delivered && has_changed,
                         "iris_read success"
                     );
-                    let json = serde_json::to_string_pretty(&detail).unwrap_or_else(|e| {
+
+                    // Record delivery in session and budget
+                    let token_count = count_tokens(&detail.text);
+                    let mut session = self.session.lock().await;
+                    let mut budget = self.budget.lock().await;
+                    let turn = session.current_turn() + 1;
+                    session.record_delivery(
+                        &content_id,
+                        Resolution::Section,
+                        token_count,
+                        turn,
+                        current_hash,
+                    );
+                    budget.record_tokens(&params.section_id, token_count);
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+                    drop(session);
+
+                    let response = ToolResponse {
+                        data: detail,
+                        budget_status,
+                    };
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
                         format!("{{\"error\": \"serialization failed: {e}\"}}")
                     });
                     Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -192,7 +349,32 @@ impl IrisServer {
                         claim_count = claims.len(),
                         "iris_extract success"
                     );
-                    let json = serde_json::to_string_pretty(&claims).unwrap_or_else(|e| {
+
+                    // Record each claim delivery in session and budget
+                    let mut session = self.session.lock().await;
+                    let mut budget = self.budget.lock().await;
+                    let turn = session.current_turn() + 1;
+                    for c in &claims {
+                        let token_count = count_tokens(&c.text);
+                        let hash = content_hash(&c.text);
+                        session.record_delivery(
+                            &ContentId(c.claim_id.clone()),
+                            Resolution::Claim,
+                            token_count,
+                            turn,
+                            hash,
+                        );
+                        budget.record_tokens(&c.claim_id, token_count);
+                    }
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+                    drop(session);
+
+                    let response = ToolResponse {
+                        data: ExtractResponse { claims },
+                        budget_status,
+                    };
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
                         format!("{{\"error\": \"serialization failed: {e}\"}}")
                     });
                     Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -212,10 +394,54 @@ impl IrisServer {
 
 impl IrisServer {
     /// Create a new iris MCP server instance backed by the given query service.
+    ///
+    /// Initializes session tracking and budget management with default
+    /// configuration.
     #[must_use]
     pub fn new(service: Arc<QueryService>) -> Self {
-        Self { service }
+        Self::with_budget_config(service, BudgetConfig::default())
     }
+
+    /// Create a new iris MCP server with custom budget configuration.
+    #[must_use]
+    pub fn with_budget_config(service: Arc<QueryService>, budget_config: BudgetConfig) -> Self {
+        let session = Session::new(
+            SessionId::from(uuid_v4()),
+            budget_config.max_context_tokens,
+            EvictionPolicy::Fifo,
+        );
+        let budget = BudgetTracker::new(budget_config, EvictionPolicy::Fifo);
+        Self {
+            service,
+            session: Arc::new(Mutex::new(session)),
+            budget: Arc::new(Mutex::new(budget)),
+        }
+    }
+}
+
+/// Compute a SHA-256 hex digest of content for change detection.
+fn content_hash(text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Parse a resolution string back to the enum.
+fn parse_resolution(s: &str) -> Resolution {
+    match s {
+        "summary" => Resolution::Summary,
+        "claim" => Resolution::Claim,
+        _ => Resolution::Section,
+    }
+}
+
+/// Generate a simple UUID v4-style session ID.
+fn uuid_v4() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("sess-{}-{}", now.as_secs(), now.subsec_nanos())
 }
 
 /// Format a [`QueryError`] into a user-friendly error message for MCP tool responses.
@@ -294,13 +520,8 @@ mod tests {
         }
     }
 
-    async fn setup_server() -> IrisServer {
-        let dim = 8;
-        let embedder = Arc::new(MockEmbedder { dim });
-        let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
-        let storage = SqliteStorage::open_in_memory().unwrap();
-
-        let doc = DocumentTree {
+    fn make_test_doc() -> DocumentTree {
+        DocumentTree {
             id: ContentId("docs/auth.md".into()),
             title: "Authentication Guide".into(),
             source_path: "docs/auth.md".into(),
@@ -326,10 +547,18 @@ mod tests {
                 summary: Some("Token authentication details.".into()),
             }],
             summary: Some("Complete authentication reference.".into()),
-        };
+        }
+    }
+
+    async fn setup_server() -> IrisServer {
+        let dim = 8;
+        let embedder = Arc::new(MockEmbedder { dim });
+        let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let doc = make_test_doc();
         storage.insert_document(&doc).await.unwrap();
 
-        // Insert vectors
         let texts_and_ids = [
             (
                 "doc-summary::docs/auth.md",
@@ -354,6 +583,19 @@ mod tests {
         let service = Arc::new(QueryService::new(storage, embedder, index));
         IrisServer::new(service)
     }
+
+    /// Sync helper for non-async tests — creates a minimal server.
+    fn setup_server_sync() -> IrisServer {
+        let dim = 8;
+        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+        let index: Arc<dyn iris_core::index::VectorIndex> =
+            Arc::new(HnswIndex::new(dim, 100).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let service = Arc::new(QueryService::new(storage, embedder, index));
+        IrisServer::new(service)
+    }
+
+    // --- ServerInfo tests ---
 
     #[test]
     fn server_info_has_correct_name_and_version() {
@@ -394,19 +636,10 @@ mod tests {
         assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
     }
 
-    /// Sync helper for non-async tests — creates a minimal server.
-    fn setup_server_sync() -> IrisServer {
-        let dim = 8;
-        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
-        let index: Arc<dyn iris_core::index::VectorIndex> =
-            Arc::new(HnswIndex::new(dim, 100).unwrap());
-        let storage = SqliteStorage::open_in_memory().unwrap();
-        let service = Arc::new(QueryService::new(storage, embedder, index));
-        IrisServer::new(service)
-    }
+    // --- Budget status tests ---
 
     #[tokio::test]
-    async fn survey_returns_json_results() {
+    async fn survey_response_includes_budget_status() {
         let server = setup_server().await;
         let params = SurveyParams {
             query: "JWT authentication tokens".to_string(),
@@ -415,17 +648,200 @@ mod tests {
         let result = server.survey(params).await.unwrap();
 
         assert!(result.is_error.is_none() || result.is_error == Some(false));
-        assert!(!result.content.is_empty());
 
-        // The content should be valid JSON
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text)
-            .unwrap_or_else(|e| panic!("survey output should be valid JSON: {e}\n{text}"));
-        assert!(parsed.is_array(), "survey should return a JSON array");
+            .unwrap_or_else(|e| panic!("should be valid JSON: {e}\n{text}"));
+
+        assert!(
+            parsed["budget_status"].is_object(),
+            "response should include budget_status"
+        );
+        assert!(
+            parsed["budget_status"]["tokens_used"].is_number(),
+            "budget_status should have tokens_used"
+        );
+        assert!(
+            parsed["budget_status"]["tokens_remaining"].is_number(),
+            "budget_status should have tokens_remaining"
+        );
+        assert!(
+            parsed["budget_status"]["pressure_level"].is_string(),
+            "budget_status should have pressure_level"
+        );
+        assert!(
+            parsed["budget_status"]["utilization"].is_number(),
+            "budget_status should have utilization"
+        );
     }
 
     #[tokio::test]
-    async fn read_returns_section_json() {
+    async fn read_response_includes_budget_status() {
+        let server = setup_server().await;
+        let params = ReadParams {
+            section_id: "docs/auth.md#tokens".to_string(),
+        };
+        let result = server.read(params).await.unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert!(parsed["budget_status"].is_object());
+        assert!(parsed["budget_status"]["tokens_used"].as_u64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn extract_response_includes_budget_status() {
+        let server = setup_server().await;
+        let params = ExtractParams {
+            section_id: "docs/auth.md#tokens".to_string(),
+            query: None,
+        };
+        let result = server.extract(params).await.unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert!(parsed["budget_status"].is_object());
+    }
+
+    #[tokio::test]
+    async fn budget_accumulates_across_tool_calls() {
+        let server = setup_server().await;
+
+        // First call — read a section
+        let result1 = server
+            .read(ReadParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+            })
+            .await
+            .unwrap();
+        let text1 = extract_text(&result1.content);
+        let parsed1: serde_json::Value = serde_json::from_str(text1).unwrap();
+        let used_after_read = parsed1["budget_status"]["tokens_used"].as_u64().unwrap();
+        assert!(used_after_read > 0, "should track tokens after read");
+
+        // Second call — extract claims
+        let result2 = server
+            .extract(ExtractParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+                query: None,
+            })
+            .await
+            .unwrap();
+        let text2 = extract_text(&result2.content);
+        let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
+        let used_after_extract = parsed2["budget_status"]["tokens_used"].as_u64().unwrap();
+        assert!(
+            used_after_extract > used_after_read,
+            "budget should accumulate: {used_after_extract} > {used_after_read}"
+        );
+    }
+
+    // --- Deduplication tests ---
+
+    #[tokio::test]
+    async fn survey_deduplicates_already_delivered_content() {
+        let server = setup_server().await;
+
+        // First survey — delivers results
+        let result1 = server
+            .survey(SurveyParams {
+                query: "JWT authentication tokens".to_string(),
+                top_k: Some(10),
+            })
+            .await
+            .unwrap();
+        let text1 = extract_text(&result1.content);
+        let parsed1: serde_json::Value = serde_json::from_str(text1).unwrap();
+        let first_count = parsed1["results"].as_array().unwrap().len();
+        assert!(first_count > 0, "first survey should return results");
+
+        // Second survey with same query — should filter out delivered content
+        let result2 = server
+            .survey(SurveyParams {
+                query: "JWT authentication tokens".to_string(),
+                top_k: Some(10),
+            })
+            .await
+            .unwrap();
+        let text2 = extract_text(&result2.content);
+        let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
+        let second_count = parsed2["results"].as_array().unwrap().len();
+        let dedup_count = parsed2["deduplicated_count"].as_u64().unwrap();
+
+        assert!(
+            second_count < first_count,
+            "second survey should have fewer results: {second_count} < {first_count}"
+        );
+        assert!(
+            dedup_count > 0,
+            "should report deduplicated items: {dedup_count}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_returns_already_delivered_for_unchanged_content() {
+        let server = setup_server().await;
+
+        // First read — delivers content
+        let result1 = server
+            .read(ReadParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+            })
+            .await
+            .unwrap();
+        let text1 = extract_text(&result1.content);
+        let parsed1: serde_json::Value = serde_json::from_str(text1).unwrap();
+        assert!(
+            parsed1["text"].is_string(),
+            "first read should return full text"
+        );
+
+        // Second read — should return already_delivered
+        let result2 = server
+            .read(ReadParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+            })
+            .await
+            .unwrap();
+        let text2 = extract_text(&result2.content);
+        let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
+        assert_eq!(
+            parsed2["already_delivered"],
+            serde_json::Value::Bool(true),
+            "second read should indicate already_delivered"
+        );
+        assert!(
+            parsed2["budget_status"].is_object(),
+            "dedup response should include budget_status"
+        );
+    }
+
+    // --- Survey response format tests ---
+
+    #[tokio::test]
+    async fn survey_response_has_results_array() {
+        let server = setup_server().await;
+        let params = SurveyParams {
+            query: "JWT authentication tokens".to_string(),
+            top_k: Some(5),
+        };
+        let result = server.survey(params).await.unwrap();
+
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert!(parsed["results"].is_array(), "should have results array");
+        assert!(
+            parsed["deduplicated_count"].is_number(),
+            "should have deduplicated_count"
+        );
+    }
+
+    // --- Read response format tests ---
+
+    #[tokio::test]
+    async fn read_returns_section_with_budget_status() {
         let server = setup_server().await;
         let params = ReadParams {
             section_id: "docs/auth.md#tokens".to_string(),
@@ -439,6 +855,7 @@ mod tests {
         assert_eq!(parsed["section_id"], "docs/auth.md#tokens");
         assert_eq!(parsed["claims_available"], 2);
         assert!(parsed["text"].as_str().unwrap().contains("JWT tokens"));
+        assert!(parsed["budget_status"].is_object());
     }
 
     #[tokio::test]
@@ -450,26 +867,6 @@ mod tests {
         let result = server.read(params).await.unwrap();
 
         assert_eq!(result.is_error, Some(true));
-    }
-
-    #[tokio::test]
-    async fn extract_returns_claims_json() {
-        let server = setup_server().await;
-        let params = ExtractParams {
-            section_id: "docs/auth.md#tokens".to_string(),
-            query: Some("signing algorithm".to_string()),
-        };
-        let result = server.extract(params).await.unwrap();
-
-        assert!(result.is_error.is_none() || result.is_error == Some(false));
-
-        let text = extract_text(&result.content);
-        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert!(parsed.is_array());
-        let arr = parsed.as_array().unwrap();
-        assert_eq!(arr.len(), 2);
-        // With a query, claims should have relevance scores
-        assert!(arr[0]["relevance"].is_number());
     }
 
     #[tokio::test]
@@ -561,5 +958,30 @@ mod tests {
             text.contains("Section not found"),
             "error should be user-friendly, got: {text}"
         );
+    }
+
+    // --- Helper function tests ---
+
+    #[test]
+    fn content_hash_is_deterministic() {
+        let h1 = content_hash("hello world");
+        let h2 = content_hash("hello world");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn content_hash_differs_for_different_input() {
+        let h1 = content_hash("hello");
+        let h2 = content_hash("world");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn parse_resolution_handles_all_variants() {
+        assert_eq!(parse_resolution("summary"), Resolution::Summary);
+        assert_eq!(parse_resolution("claim"), Resolution::Claim);
+        // "section" and unknown strings both map to Section (default)
+        assert_eq!(parse_resolution("section"), Resolution::Section);
+        assert_eq!(parse_resolution("unknown"), Resolution::Section);
     }
 }

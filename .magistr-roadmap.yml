@@ -125,7 +125,7 @@ phases:
   - text: Implement iris_extract tool — claim-level retrieval within a specific section, filtered by query relevance
     checked: true
   - text: Add budget_status object to every tool response — tokens_used, tokens_remaining, pressure_level
-    checked: false
+    checked: true
   - text: Expose MCP resources — iris://status (index stats) and iris://corpus/{path} (document metadata)
     checked: false
   - text: 'Add #[instrument] tracing spans to all MCP tool handlers with request/response logging at DEBUG level'
@@ -150,7 +150,7 @@ phases:
   - text: Build window estimation model — cumulative token tracking with configurable FIFO/LRU eviction assumption
     checked: true
   - text: Implement deduplication — compare incoming results against session shadow, skip already-delivered content
-    checked: false
+    checked: true
   - text: Implement delta updates — detect when a previously-delivered section has changed, return only the diff
     checked: false
   - text: Implement fault-based correction — detect re-requests as eviction signals, update window estimate
