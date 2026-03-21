@@ -41,6 +41,9 @@ comrak = "0.36"
 # Token counting
 tiktoken-rs = "0.6"
 
+# Hashing
+sha2 = "0.10"
+
 # MCP
 rmcp = { version = "0.1", features = ["server", "transport-sse", "transport-io"] }
 

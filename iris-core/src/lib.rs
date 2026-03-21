@@ -6,6 +6,7 @@
 pub mod config;
 pub mod error;
 pub mod extraction;
+pub mod ingestion;
 pub mod parser;
 pub mod storage;
 pub mod token;
