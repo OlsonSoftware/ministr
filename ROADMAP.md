@@ -1,0 +1,175 @@
+# iris — Roadmap
+
+Context cache controller for LLM agents, implemented as a Rust MCP server.
+
+---
+
+## Phase P0: Foundation
+
+### Tasks
+
+- [ ] Initialize Cargo workspace with iris-core, iris-mcp, iris-cli crates and edition = "2024"
+- [ ] Add #![deny(unsafe_code)] to all crate roots and configure workspace-level dependencies
+- [ ] Configure clippy (pedantic + deny warnings), rustfmt, cargo-deny, and cargo-audit
+- [ ] Create justfile with build, test, lint, fmt, coverage, audit, deny, and validate recipes
+- [ ] Set up GitHub Actions CI workflow calling just validate on push/PR
+- [ ] Define core error types with thiserror — IndexError, SessionError, StorageError, ParseError in iris-core
+- [ ] Set up tracing infrastructure with tracing-subscriber, EnvFilter, and structured JSON output
+- [ ] Define core domain types: ContentId, SectionId, ClaimId, Resolution enum, DocumentTree, Section, Claim
+- [ ] Add miette integration to iris-cli and iris-mcp for user-facing diagnostic errors
+- [ ] Create config.toml schema and loader for global iris configuration (~/.iris/config.toml)
+- [ ] Write unit tests for error types, config loading, and domain type construction
+
+---
+
+## Phase P1: Multi-Resolution Index
+
+### Tasks
+
+- [ ] Create ~/.iris/corpora/<name>/ on-disk layout with meta.toml, content.db, sessions/
+- [ ] Implement SQLite schema — documents, sections, claims, summaries tables with parent-child relationships
+- [ ] Add file_hashes table for tracking source file content hashes (incremental re-indexing)
+- [ ] Configure WAL journal mode, NORMAL synchronous, and busy timeout for concurrent reads
+- [ ] Implement Storage trait in iris-core with CRUD operations for documents, sections, claims
+- [ ] Wrap rusqlite Connection with tokio::spawn_blocking for async-safe database access
+- [ ] Add schema migration system (versioned migrations, forward-only) for future upgrades
+- [ ] Implement corpus configuration (meta.toml) — source directories, embedding model choice, parser settings
+- [ ] Write integration tests against real SQLite — CRUD, concurrent reads, WAL behavior, migration rollforward
+
+---
+
+## Phase P2: Session Intelligence
+
+### Tasks
+
+- [ ] Define DocumentParser trait — parse(path) -> Result<DocumentTree> with format-agnostic interface
+- [ ] Implement MarkdownParser using comrak AST — walk nodes to build structural section tree
+- [ ] Generate stable hierarchical section IDs from heading paths (e.g., docs/auth.md#3-2-error-handling)
+- [ ] Preserve code blocks, tables, and lists as typed structural nodes within sections
+- [ ] Implement heuristic claim extraction — sentence splitting, named entity filtering, assertion detection
+- [ ] Implement extractive summary generation — TF-IDF top-k sentence selection per section and per document
+- [ ] Build ingestion pipeline orchestrator — parse, section, extract claims, summarize, store to SQLite
+- [ ] Handle edge cases: documents without headings (paragraph-boundary splitting), empty sections, nested lists
+- [ ] Implement incremental re-indexing — compare file hashes, re-parse only changed files, update only changed sections
+- [ ] Add token counting utility (cl100k_base compatible) for accurate budget tracking on all content units
+- [ ] Write tests for Markdown parsing — heading hierarchy, code blocks, tables, GFM extensions, frontmatter
+- [ ] Write tests for claim extraction quality — precision/recall on a hand-labeled test corpus
+
+---
+
+## Phase P3: Polish & Release
+
+### Tasks
+
+- [ ] Define Embedder trait in iris-core — embed(texts) -> Result<Vec<Vec<f32>>> with batch support
+- [ ] Implement FastEmbedder using fastembed crate with all-MiniLM-L6-v2 (384d) via ONNX Runtime
+- [ ] Add model download and caching — first-run model fetch with progress, cached in ~/.iris/models/
+- [ ] Implement configurable model selection — support swapping embedding models via corpus meta.toml
+- [ ] Define VectorIndex trait — insert, search_knn, delete, persist, load operations
+- [ ] Implement HnswIndex using hnswlib-rs — decoupled graph/storage, cosine similarity, configurable M and ef
+- [ ] Add memory-mapped persistence for the HNSW index (vectors.hnsw + vectors.meta) via memmap2
+- [ ] Embed all three resolution levels at ingestion — summaries, sections, and claims get separate vectors
+- [ ] Build multi-resolution query pipeline — search across summary/section/claim levels, merge and rank results
+- [ ] Implement resolution-aware result scoring — weight results by resolution level and query specificity
+- [ ] Add incremental vector index updates — insert/delete embeddings for changed sections without full rebuild
+- [ ] Write benchmarks for embedding throughput (docs/sec) and search latency (p50/p99) at 1k/10k/100k sections
+- [ ] Write tests for vector index — insert/search/delete correctness, persistence round-trip, concurrent reads
+
+---
+
+## Phase P4: MCP Server & Core Tools ✦ "Wire up rmcp and expose iris_survey, iris_read, iris_extract as MCP tools"
+
+**Problem:** The agent needs a standards-compliant MCP interface to discover, survey, read, and extract context from the index — the progressive disclosure model that replaces one-shot RAG
+
+**Solution:** Implement ServerHandler via rmcp with stdio transport, exposing the three core tools (iris_survey, iris_read, iris_extract) plus iris://status and iris://corpus resources. Include budget_status in every response
+
+### Tasks
+
+- [ ] Implement ServerHandler trait via rmcp with stdio transport and #[tool] macro-based tool registration
+- [ ] Wire up iris-cli binary entry point — argument parsing (clap), corpus path, config loading, server startup
+- [ ] Implement iris_survey tool — vector search over section embeddings, return ranked summaries with relevance scores
+- [ ] Implement iris_read tool — full section text by hierarchical ID with heading_path and claims_available count
+- [ ] Implement iris_extract tool — claim-level retrieval within a specific section, filtered by query relevance
+- [ ] Add budget_status object to every tool response — tokens_used, tokens_remaining, pressure_level
+- [ ] Expose MCP resources — iris://status (index stats) and iris://corpus/{path} (document metadata)
+- [ ] Add #[instrument] tracing spans to all MCP tool handlers with request/response logging at DEBUG level
+- [ ] Implement graceful error handling — map iris-core errors to MCP ErrorData with user-friendly messages
+- [ ] Write end-to-end integration test — start MCP server, send JSON-RPC tool calls, verify responses
+- [ ] Test with real MCP client (Claude Code) — verify tool discovery, survey/read/extract flow on a sample corpus
+
+---
+
+## Phase P5: Session Shadow & Budget Management ✦ "Track what the agent has, estimate what it lost, manage the budget"
+
+**Problem:** No existing retrieval system knows what context the agent already has. Without session state, iris would re-deliver identical content every turn — the worst possible use of scarce context window tokens
+
+**Solution:** Implement the session shadow (delivered items + window estimation), deduplication, fault-based eviction correction, budget tracking with pressure mode, and the iris_budget/iris_compress/iris_evicted tools
+
+### Tasks
+
+- [ ] Implement Session struct — id, created_at, agent_context_budget, delivered BTreeMap, trajectory vector
+- [ ] Implement DeliveredItem tracking — content_id, resolution, token_count, turn_delivered, content_hash
+- [ ] Build window estimation model — cumulative token tracking with configurable FIFO/LRU eviction assumption
+- [ ] Implement deduplication — compare incoming results against session shadow, skip already-delivered content
+- [ ] Implement delta updates — detect when a previously-delivered section has changed, return only the diff
+- [ ] Implement fault-based correction — detect re-requests as eviction signals, update window estimate
+- [ ] Implement iris_evicted tool — accept explicit agent feedback on dropped content_ids
+- [ ] Build budget tracker — configurable max_context_tokens, threshold-based pressure mode (default 80%)
+- [ ] Implement pressure mode behavior — auto-compress responses to claim-level, attach eviction recommendations
+- [ ] Implement eviction ranking — score delivered content by recency, relevance decay, and dependency graph
+- [ ] Implement iris_budget tool — return total_budget, estimated_used, pressure_level, eviction_candidates
+- [ ] Implement iris_compress tool — generate compressed summaries for content the agent wants to evict
+- [ ] Add session persistence to SQLite — save/restore session shadows for crash recovery
+- [ ] Write exhaustive tests for session shadow — deduplication, fault correction, window estimation accuracy
+- [ ] Write tests for budget manager — pressure mode transitions, eviction ranking, compression token savings
+
+---
+
+## Phase P6: Prefetch Engine & Coherence ✦ "Predict what the agent needs next and notify when source documents change"
+
+**Problem:** Every cold retrieval costs 50-200ms and a tool-call round-trip. Without prefetching, agents make 3x more tool calls than necessary. Without coherence, stale context causes hallucinations
+
+**Solution:** Build three prefetch heuristics (sequential, topical, structural locality) with an LRU warm cache, file watching via notify crate for coherence alerts, and the iris_related tool for claim dependency traversal
+
+### Tasks
+
+- [ ] Implement sequential prefetch — when agent reads section N, pre-warm section N+1 and parent summary
+- [ ] Implement topical prefetch — maintain running topic vector from last K sections, pre-warm nearest un-accessed sections
+- [ ] Implement structural prefetch — pre-warm sibling sections and cross-referenced sections from document tree
+- [ ] Build LRU prefetch cache (default 50 items) with pre-computed text, token count, and relevance score
+- [ ] Wire prefetch into tool response path — serve from warm cache (<1ms) or fall through to cold retrieval
+- [ ] Add prefetch hit rate metrics — track warm/cold responses per session, expose via iris://status resource
+- [ ] Implement iris_related tool — claim dependency traversal (references, contradicts, depends_on, updates)
+- [ ] Build claim relationship index — detect cross-references and co-occurring entities between claims at ingestion
+- [ ] Implement file watcher using notify crate — watch corpus source directories for changes
+- [ ] Build coherence protocol — on file change, re-index affected sections, generate coherence_alert notifications
+- [ ] Send MCP notifications for stale content — push changed_sections and stale_content_ids to connected agents
+- [ ] Invalidate session shadow entries when underlying content changes — mark stale, offer delta on next access
+- [ ] Write tests for prefetch engine — hit rate measurement, sequential/topical/structural prediction accuracy
+- [ ] Write tests for coherence — file change detection, re-indexing correctness, notification delivery, shadow invalidation
+
+---
+
+## Phase P7: Polish, Parsers & Release ✦ "Additional format support, cross-session analytics, docs, benchmarks, and v0.1.0"
+
+**Problem:** Markdown-only limits usefulness. Without benchmarks and documentation, adoption is blocked. Without cross-session learning, prefetch never improves beyond session-local heuristics
+
+**Solution:** Add HTML and PDF parsers, cross-session analytics for prefetch tuning, comprehensive mdBook documentation, a reproducible benchmark suite, pre-built binaries for all platforms, and cut the v0.1.0 release
+
+### Tasks
+
+- [ ] Implement HtmlParser using scraper + html2text — extract sections from semantic HTML (h1-h6, article, section tags)
+- [ ] Implement PdfParser using pdf-extract or lopdf — page-boundary splitting, heading detection from font size
+- [ ] Add parser auto-detection — select parser based on file extension, with manual override in corpus config
+- [ ] Implement cross-session analytics — track frequently-accessed sections, co-access patterns, per-corpus statistics
+- [ ] Feed cross-session data into prefetch — prioritize frequently-accessed and co-accessed sections for pre-warming
+- [ ] Build mdBook documentation site — architecture overview, getting started guide, tool reference, configuration
+- [ ] Write doc tests for all public APIs in iris-core — non-trivial examples with # Examples sections
+- [ ] Create reproducible benchmark suite — ingestion throughput, search latency, prefetch hit rate across corpus sizes
+- [ ] Build sample evaluation corpus — curated set of Markdown/HTML/PDF docs with ground-truth retrieval annotations
+- [ ] Set up cross-compilation CI — pre-built binaries for Linux x86_64, Linux aarch64, macOS Apple Silicon, Windows
+- [ ] Add installation methods — cargo install, homebrew tap, GitHub release binaries with checksums
+- [ ] Write MCP client configuration examples — Claude Code, Cursor, and generic JSON-RPC client setup guides
+- [ ] Final audit — cargo audit, cargo deny check, full test suite, clippy clean, benchmark baselines recorded
+- [ ] Tag and publish v0.1.0 release — changelog, GitHub release with binaries, crates.io publish
+

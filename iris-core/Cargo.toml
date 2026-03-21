@@ -1,0 +1,16 @@
+[package]
+name = "iris-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Core domain logic for iris — a context cache controller for LLM agents"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+serde.workspace = true

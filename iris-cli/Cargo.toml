@@ -1,0 +1,17 @@
+[package]
+name = "iris-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "CLI entry point for the iris MCP server"
+
+[lints]
+workspace = true
+
+[dependencies]
+iris-mcp.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+miette.workspace = true
