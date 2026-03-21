@@ -3,8 +3,9 @@
 //! These tests run against real `SQLite` databases (not mocks) to verify
 //! CRUD operations, concurrent access, WAL behavior, and migrations.
 
+use iris_core::session::{EvictionPolicy, Session, SessionId};
 use iris_core::storage::{SqliteStorage, Storage};
-use iris_core::types::{Claim, ClaimId, ContentId, DocumentTree, Section, SectionId};
+use iris_core::types::{Claim, ClaimId, ContentId, DocumentTree, Resolution, Section, SectionId};
 
 /// Build a sample document tree for testing.
 fn sample_document() -> DocumentTree {
@@ -306,7 +307,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 1);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 2);
 }
 
 #[tokio::test]
@@ -345,4 +346,232 @@ async fn nested_sections_are_stored() {
     assert_eq!(sections.len(), 2);
     assert_eq!(sections[0].id, SectionId("parent".into()));
     assert_eq!(sections[1].id, SectionId("child".into()));
+}
+
+// --- Session persistence tests ---
+
+fn make_test_session() -> Session {
+    let mut session = Session::new(
+        SessionId::from("test-session".to_string()),
+        100_000,
+        EvictionPolicy::Fifo,
+    );
+
+    session.record_delivery(
+        &ContentId::from("s1".to_string()),
+        Resolution::Section,
+        200,
+        1,
+        "hash1".to_string(),
+    );
+    session.record_delivery(
+        &ContentId::from("s2".to_string()),
+        Resolution::Summary,
+        100,
+        1,
+        "hash2".to_string(),
+    );
+    session.record_delivery(
+        &ContentId::from("c1".to_string()),
+        Resolution::Claim,
+        30,
+        2,
+        "hash3".to_string(),
+    );
+
+    session
+}
+
+#[tokio::test]
+async fn save_and_load_session_roundtrip() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let session = make_test_session();
+
+    storage.save_session(&session).await.unwrap();
+
+    let loaded = storage
+        .load_session(&SessionId::from("test-session".to_string()))
+        .await
+        .unwrap();
+    assert!(loaded.is_some());
+
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded.id.0, "test-session");
+    assert_eq!(loaded.agent_context_budget, 100_000);
+    assert_eq!(loaded.current_turn(), 2);
+    assert_eq!(loaded.delivered_count(), 3);
+    assert_eq!(loaded.total_delivered_tokens(), 330);
+
+    // Verify individual items
+    assert!(loaded.is_delivered(&ContentId::from("s1".to_string())));
+    assert!(loaded.is_delivered(&ContentId::from("s2".to_string())));
+    assert!(loaded.is_delivered(&ContentId::from("c1".to_string())));
+
+    let item = loaded
+        .get_delivered(&ContentId::from("s1".to_string()))
+        .unwrap();
+    assert_eq!(item.resolution, Resolution::Section);
+    assert_eq!(item.token_count, 200);
+    assert_eq!(item.turn_delivered, 1);
+    assert_eq!(item.content_hash, "hash1");
+}
+
+#[tokio::test]
+async fn save_session_overwrites_on_re_save() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let mut session = make_test_session();
+
+    storage.save_session(&session).await.unwrap();
+
+    // Add another delivery and re-save
+    session.record_delivery(
+        &ContentId::from("s3".to_string()),
+        Resolution::Section,
+        150,
+        3,
+        "hash4".to_string(),
+    );
+    storage.save_session(&session).await.unwrap();
+
+    let loaded = storage
+        .load_session(&SessionId::from("test-session".to_string()))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(loaded.delivered_count(), 4);
+    assert_eq!(loaded.current_turn(), 3);
+    assert!(loaded.is_delivered(&ContentId::from("s3".to_string())));
+}
+
+#[tokio::test]
+async fn load_nonexistent_session_returns_none() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let loaded = storage
+        .load_session(&SessionId::from("nonexistent".to_string()))
+        .await
+        .unwrap();
+    assert!(loaded.is_none());
+}
+
+#[tokio::test]
+async fn delete_session_removes_all_data() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let session = make_test_session();
+
+    storage.save_session(&session).await.unwrap();
+
+    let deleted = storage
+        .delete_session(&SessionId::from("test-session".to_string()))
+        .await
+        .unwrap();
+    assert!(deleted);
+
+    let loaded = storage
+        .load_session(&SessionId::from("test-session".to_string()))
+        .await
+        .unwrap();
+    assert!(loaded.is_none());
+}
+
+#[tokio::test]
+async fn delete_nonexistent_session_returns_false() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let deleted = storage
+        .delete_session(&SessionId::from("nonexistent".to_string()))
+        .await
+        .unwrap();
+    assert!(!deleted);
+}
+
+#[tokio::test]
+async fn session_trajectory_ordering_preserved() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let mut session = Session::new(
+        SessionId::from("traj-test".to_string()),
+        50_000,
+        EvictionPolicy::Fifo,
+    );
+
+    // Deliver in specific order
+    session.record_delivery(
+        &ContentId::from("alpha".to_string()),
+        Resolution::Section,
+        100,
+        1,
+        "h1".to_string(),
+    );
+    session.record_delivery(
+        &ContentId::from("beta".to_string()),
+        Resolution::Section,
+        100,
+        1,
+        "h2".to_string(),
+    );
+    session.record_delivery(
+        &ContentId::from("gamma".to_string()),
+        Resolution::Section,
+        100,
+        2,
+        "h3".to_string(),
+    );
+
+    storage.save_session(&session).await.unwrap();
+
+    let loaded = storage
+        .load_session(&SessionId::from("traj-test".to_string()))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let trajectory = loaded.trajectory();
+    assert_eq!(trajectory.len(), 3);
+    assert_eq!(trajectory[0], ContentId::from("alpha".to_string()));
+    assert_eq!(trajectory[1], ContentId::from("beta".to_string()));
+    assert_eq!(trajectory[2], ContentId::from("gamma".to_string()));
+}
+
+#[tokio::test]
+async fn session_persists_across_db_reopens() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let db_path = tmp.path().to_path_buf();
+
+    // Save session
+    {
+        let storage = SqliteStorage::open(&db_path).unwrap();
+        let session = make_test_session();
+        storage.save_session(&session).await.unwrap();
+    }
+
+    // Reopen and verify
+    {
+        let storage = SqliteStorage::open(&db_path).unwrap();
+        let loaded = storage
+            .load_session(&SessionId::from("test-session".to_string()))
+            .await
+            .unwrap();
+        assert!(loaded.is_some());
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.delivered_count(), 3);
+        assert_eq!(loaded.agent_context_budget, 100_000);
+    }
+}
+
+#[tokio::test]
+async fn session_has_changed_works_after_restore() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let session = make_test_session();
+    storage.save_session(&session).await.unwrap();
+
+    let loaded = storage
+        .load_session(&SessionId::from("test-session".to_string()))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Content hash should be preserved
+    assert!(!loaded.has_changed(&ContentId::from("s1".to_string()), "hash1"));
+    assert!(loaded.has_changed(&ContentId::from("s1".to_string()), "different"));
 }

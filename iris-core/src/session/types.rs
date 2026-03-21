@@ -124,6 +124,29 @@ impl Session {
         }
     }
 
+    /// Restore a session from persisted state.
+    ///
+    /// Used for crash recovery — reconstructs a `Session` from data loaded
+    /// from `SQLite`. The `created_at` timestamp is reset to `Instant::now()`
+    /// since `Instant` is not serializable.
+    #[must_use]
+    pub fn restore(
+        id: SessionId,
+        agent_context_budget: usize,
+        delivered: BTreeMap<String, DeliveredItem>,
+        trajectory: Vec<ContentId>,
+        current_turn: u32,
+    ) -> Self {
+        Self {
+            id,
+            created_at: Instant::now(),
+            agent_context_budget,
+            delivered,
+            trajectory,
+            current_turn,
+        }
+    }
+
     /// Record that content was delivered to the agent.
     ///
     /// Updates the delivered map, appends to the trajectory, and advances

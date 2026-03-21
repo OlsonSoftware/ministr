@@ -34,6 +34,7 @@ use iris_core::session::eviction::EvictionCandidate;
 use iris_core::session::{
     BudgetConfig, BudgetStatus, BudgetTracker, EvictionPolicy, Session, SessionId,
 };
+use iris_core::storage::{SqliteStorage, Storage};
 use iris_core::token::count_tokens;
 use iris_core::types::{ContentId, Resolution};
 
@@ -47,6 +48,7 @@ pub struct IrisServer {
     service: Arc<QueryService>,
     session: Arc<Mutex<Session>>,
     budget: Arc<Mutex<BudgetTracker>>,
+    storage: Option<Arc<SqliteStorage>>,
 }
 
 /// Tool response wrapper that includes budget status alongside the result data.
@@ -261,6 +263,8 @@ impl IrisServer {
                     drop(budget);
                     drop(session);
 
+                    self.persist_session().await;
+
                     let response = ToolResponse {
                         data: SurveyResponse {
                             results: filtered,
@@ -349,6 +353,8 @@ impl IrisServer {
                         drop(budget);
                         drop(session);
 
+                        self.persist_session().await;
+
                         debug!(
                             section_id = %params.section_id,
                             "iris_read: re-delivering unchanged content after re-request"
@@ -392,6 +398,8 @@ impl IrisServer {
                     let budget_status = budget.budget_status();
                     drop(budget);
                     drop(session);
+
+                    self.persist_session().await;
 
                     let response = ToolResponse {
                         data: detail,
@@ -471,6 +479,8 @@ impl IrisServer {
                     drop(budget);
                     drop(session);
 
+                    self.persist_session().await;
+
                     let response = ToolResponse {
                         data: ExtractResponse { claims },
                         budget_status,
@@ -529,6 +539,8 @@ impl IrisServer {
             let budget_status = budget.budget_status();
             drop(budget);
             drop(session);
+
+            self.persist_session().await;
 
             debug!(
                 evicted_count = evicted.len(),
@@ -672,6 +684,56 @@ impl IrisServer {
             service,
             session: Arc::new(Mutex::new(session)),
             budget: Arc::new(Mutex::new(budget)),
+            storage: None,
+        }
+    }
+
+    /// Create a server with session persistence backed by the given storage.
+    ///
+    /// If a session with the given ID exists in storage, it is restored.
+    /// Otherwise a new session is created. Session state is persisted after
+    /// each tool call that modifies session state.
+    pub async fn with_persistence(
+        service: Arc<QueryService>,
+        budget_config: BudgetConfig,
+        storage: Arc<SqliteStorage>,
+        session_id: Option<String>,
+    ) -> Self {
+        let sid = session_id.unwrap_or_else(uuid_v4);
+        let session_id = SessionId::from(sid);
+
+        let session = match storage.load_session(&session_id).await {
+            Ok(Some(restored)) => {
+                debug!(
+                    session_id = %session_id,
+                    delivered_count = restored.delivered_count(),
+                    "restored session from storage"
+                );
+                restored
+            }
+            _ => Session::new(
+                session_id,
+                budget_config.max_context_tokens,
+                EvictionPolicy::Fifo,
+            ),
+        };
+
+        let budget = BudgetTracker::new(budget_config, EvictionPolicy::Fifo);
+        Self {
+            service,
+            session: Arc::new(Mutex::new(session)),
+            budget: Arc::new(Mutex::new(budget)),
+            storage: Some(storage),
+        }
+    }
+
+    /// Persist the current session state to storage, if persistence is enabled.
+    async fn persist_session(&self) {
+        if let Some(ref storage) = self.storage {
+            let session = self.session.lock().await;
+            if let Err(e) = storage.save_session(&session).await {
+                warn!(error = %e, "failed to persist session");
+            }
         }
     }
 }

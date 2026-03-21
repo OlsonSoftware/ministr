@@ -13,7 +13,8 @@ use tracing::instrument;
 use super::schema::{configure_connection, run_migrations};
 use super::traits::{ClaimRecord, DocumentRecord, FileHashRecord, SectionRecord, Storage};
 use crate::error::StorageError;
-use crate::types::{ClaimId, ContentId, DocumentTree, Section, SectionId};
+use crate::session::{DeliveredItem, Session, SessionId};
+use crate::types::{ClaimId, ContentId, DocumentTree, Resolution, Section, SectionId};
 
 /// SQLite-backed storage for a single corpus.
 ///
@@ -435,6 +436,195 @@ impl Storage for SqliteStorage {
             Ok(affected > 0)
         })
         .await
+    }
+
+    async fn save_session(&self, session: &Session) -> Result<(), StorageError> {
+        let id = session.id.0.clone();
+        let budget = session.agent_context_budget;
+        let turn = session.current_turn();
+        let items: Vec<DeliveredItem> = session.delivered_items().cloned().collect();
+        let trajectory: Vec<ContentId> = session.trajectory().to_vec();
+
+        self.with_conn(move |conn| {
+            conn.execute("BEGIN", [])
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to begin transaction: {e}"),
+                })?;
+
+            // Upsert session row
+            conn.execute(
+                "INSERT INTO sessions (id, context_budget, current_turn, updated_at)
+                 VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                 ON CONFLICT(id) DO UPDATE SET
+                    context_budget = excluded.context_budget,
+                    current_turn = excluded.current_turn,
+                    updated_at = excluded.updated_at",
+                rusqlite::params![id, budget, turn],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: format!("failed to upsert session: {e}"),
+            })?;
+
+            // Clear existing deliveries and re-insert
+            conn.execute(
+                "DELETE FROM session_deliveries WHERE session_id = ?1",
+                rusqlite::params![id],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: format!("failed to clear session deliveries: {e}"),
+            })?;
+
+            // Build a position map from trajectory for ordering
+            let mut position_map: std::collections::HashMap<String, i64> =
+                std::collections::HashMap::new();
+            for (pos, cid) in trajectory.iter().enumerate() {
+                // Last occurrence wins — gives the most recent position
+                position_map.insert(
+                    cid.0.clone(),
+                    i64::try_from(pos).unwrap_or(i64::MAX),
+                );
+            }
+
+            for item in &items {
+                let position = position_map
+                    .get(&item.content_id.0)
+                    .copied()
+                    .unwrap_or(0);
+                conn.execute(
+                    "INSERT INTO session_deliveries
+                     (session_id, content_id, resolution, token_count, turn_delivered, content_hash, position)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    rusqlite::params![
+                        id,
+                        item.content_id.0,
+                        item.resolution.to_string(),
+                        item.token_count,
+                        item.turn_delivered,
+                        item.content_hash,
+                        position,
+                    ],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to insert session delivery: {e}"),
+                })?;
+            }
+
+            conn.execute("COMMIT", [])
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to commit: {e}"),
+                })?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn load_session(&self, id: &SessionId) -> Result<Option<Session>, StorageError> {
+        let id = id.0.clone();
+        self.with_conn(move |conn| {
+            // Load session metadata
+            let mut stmt = conn
+                .prepare("SELECT id, context_budget, current_turn FROM sessions WHERE id = ?1")
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let session_row = stmt
+                .query_row(rusqlite::params![id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, usize>(1)?,
+                        row.get::<_, u32>(2)?,
+                    ))
+                })
+                .optional()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let Some((session_id, budget, turn)) = session_row else {
+                return Ok(None);
+            };
+
+            // Load delivered items ordered by position (for trajectory reconstruction)
+            let mut stmt = conn
+                .prepare(
+                    "SELECT content_id, resolution, token_count, turn_delivered, content_hash, position
+                     FROM session_deliveries WHERE session_id = ?1 ORDER BY position",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let rows = stmt
+                .query_map(rusqlite::params![session_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, usize>(2)?,
+                        row.get::<_, u32>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let mut delivered = std::collections::BTreeMap::new();
+            let mut trajectory = Vec::new();
+
+            for row in rows {
+                let (content_id_str, resolution_str, token_count, turn_delivered, content_hash) =
+                    row.map_err(|e| StorageError::Database {
+                        reason: e.to_string(),
+                    })?;
+
+                let content_id = ContentId(content_id_str.clone());
+                let resolution = parse_resolution(&resolution_str);
+
+                let item = DeliveredItem {
+                    content_id: content_id.clone(),
+                    resolution,
+                    token_count,
+                    turn_delivered,
+                    content_hash,
+                };
+
+                delivered.insert(content_id_str.clone(), item);
+                trajectory.push(content_id);
+            }
+
+            Ok(Some(Session::restore(
+                SessionId(session_id),
+                budget,
+                delivered,
+                trajectory,
+                turn,
+            )))
+        })
+        .await
+    }
+
+    async fn delete_session(&self, id: &SessionId) -> Result<bool, StorageError> {
+        let id = id.0.clone();
+        self.with_conn(move |conn| {
+            let affected = conn
+                .execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            Ok(affected > 0)
+        })
+        .await
+    }
+}
+
+/// Parse a resolution string back to the [`Resolution`] enum.
+fn parse_resolution(s: &str) -> Resolution {
+    match s {
+        "summary" => Resolution::Summary,
+        "claim" => Resolution::Claim,
+        // "section" and any unknown value fall back to Section
+        _ => Resolution::Section,
     }
 }
 

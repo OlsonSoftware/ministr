@@ -6,6 +6,7 @@
 use std::future::Future;
 
 use crate::error::StorageError;
+use crate::session::{Session, SessionId};
 use crate::types::{ClaimId, ContentId, DocumentTree, SectionId};
 
 /// Stored document metadata (without the full section tree).
@@ -137,5 +138,30 @@ pub trait Storage: Send + Sync {
     fn delete_file_hash(
         &self,
         path: &str,
+    ) -> impl Future<Output = Result<bool, StorageError>> + Send;
+
+    // -- Sessions --
+
+    /// Save a session to persistent storage for crash recovery.
+    ///
+    /// Uses upsert semantics — creates the session if it doesn't exist,
+    /// or replaces all delivered items if it does.
+    fn save_session(
+        &self,
+        session: &Session,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Load a previously persisted session by ID.
+    ///
+    /// Returns `None` if no session with the given ID exists.
+    fn load_session(
+        &self,
+        id: &SessionId,
+    ) -> impl Future<Output = Result<Option<Session>, StorageError>> + Send;
+
+    /// Delete a persisted session and all its delivery records.
+    fn delete_session(
+        &self,
+        id: &SessionId,
     ) -> impl Future<Output = Result<bool, StorageError>> + Send;
 }
