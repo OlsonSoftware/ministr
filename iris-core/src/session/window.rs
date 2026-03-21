@@ -377,4 +377,176 @@ mod tests {
         let back: WindowStatus = serde_json::from_str(&json).unwrap();
         assert_eq!(back, status);
     }
+
+    // --- Additional exhaustive tests ---
+
+    #[test]
+    fn lru_multiple_touches_reorder() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Lru);
+
+        est.record("s1", 150);
+        est.record("s2", 150);
+        est.record("s3", 150);
+        // At 450/500, queue order: s1, s2, s3
+
+        // Touch s1, then s2 — order becomes s3, s1, s2
+        est.touch("s1");
+        est.touch("s2");
+
+        // Adding s4 should evict s3 (now the LRU front)
+        est.record("s4", 200);
+        // Would be 650 > 500, evict s3 (150) -> 500
+
+        assert!(!est.is_in_window("s3"), "s3 should be evicted as LRU");
+        assert!(est.is_in_window("s1"));
+        assert!(est.is_in_window("s2"));
+        assert!(est.is_in_window("s4"));
+    }
+
+    #[test]
+    fn re_recording_moves_to_back() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+
+        est.record("s1", 150);
+        est.record("s2", 150);
+        // Queue: s1, s2
+
+        // Re-record s1 — removes old entry and appends new one
+        est.record("s1", 100);
+        // Queue: s2, s1 (new)
+
+        // Add large entry to trigger eviction
+        est.record("s3", 400);
+        // Would be 100 + 150 + 400 = 650 > 500
+        // Evict s2 (front) -> 500
+
+        assert!(!est.is_in_window("s2"), "s2 should be evicted first (FIFO)");
+        assert!(
+            est.is_in_window("s1"),
+            "s1 was re-recorded, should be at back"
+        );
+        assert!(est.is_in_window("s3"));
+    }
+
+    #[test]
+    fn exact_capacity_no_eviction() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+
+        est.record("s1", 200);
+        est.record("s2", 300);
+        // Exactly 500 == capacity, no eviction needed
+
+        assert!(est.is_in_window("s1"));
+        assert!(est.is_in_window("s2"));
+        assert_eq!(est.estimated_used(), 500);
+        assert!(est.is_full());
+        assert!(est.evicted_ids().is_empty());
+    }
+
+    #[test]
+    fn one_over_capacity_triggers_eviction() {
+        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+
+        est.record("s1", 200);
+        est.record("s2", 301);
+        // 501 > 500, evict s1 (200) -> 301
+
+        assert!(!est.is_in_window("s1"));
+        assert!(est.is_in_window("s2"));
+        assert_eq!(est.estimated_used(), 301);
+    }
+
+    #[test]
+    fn zero_capacity_evicts_everything() {
+        let mut est = WindowEstimator::new(0, EvictionPolicy::Fifo);
+
+        est.record("s1", 10);
+        // 10 > 0, evict s1 -> 0
+
+        assert!(!est.is_in_window("s1"));
+        assert_eq!(est.estimated_used(), 0);
+        assert_eq!(est.evicted_ids(), &["s1"]);
+    }
+
+    #[test]
+    fn many_small_entries_then_one_large() {
+        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+
+        for i in 0..10 {
+            est.record(&format!("s{i}"), 10);
+        }
+        assert_eq!(est.estimated_used(), 100);
+        assert!(est.evicted_ids().is_empty());
+
+        // One large entry evicts many small ones
+        est.record("big", 80);
+        // Would be 180 > 100, evict s0..s7 (80 tokens) -> 100
+
+        assert_eq!(est.estimated_used(), 100);
+        // s0 through s7 evicted (8 * 10 = 80 tokens freed)
+        let evicted = est.evicted_ids();
+        assert!(
+            evicted.len() >= 8,
+            "should evict at least 8 entries: {}",
+            evicted.len()
+        );
+    }
+
+    #[test]
+    fn window_status_consistency_after_many_operations() {
+        let mut est = WindowEstimator::new(200, EvictionPolicy::Fifo);
+
+        // Series of records and re-records
+        est.record("a", 50);
+        est.record("b", 50);
+        est.record("c", 50);
+        est.record("a", 30); // re-record
+        est.record("d", 80);
+        // After re-record of a: b=50, c=50, a=30, then d=80
+        // Total = 50+50+30+80 = 210 > 200, evict b -> 160
+
+        let status = est.status();
+        assert_eq!(status.used + status.remaining, status.capacity);
+        assert_eq!(status.used, est.estimated_used());
+        assert_eq!(status.remaining, est.estimated_remaining());
+        assert_eq!(status.evicted_count, est.evicted_ids().len());
+    }
+
+    #[test]
+    fn lru_touch_then_fifo_eviction_order() {
+        // Touch should be no-op for FIFO
+        let mut est = WindowEstimator::new(300, EvictionPolicy::Fifo);
+
+        est.record("s1", 100);
+        est.record("s2", 100);
+        est.touch("s1"); // no-op for FIFO
+
+        est.record("s3", 200);
+        // 400 > 300, evict s1 (FIFO front) -> 300
+
+        assert!(!est.is_in_window("s1"), "FIFO ignores touch");
+        assert!(est.is_in_window("s2"));
+        assert!(est.is_in_window("s3"));
+    }
+
+    #[test]
+    fn zero_token_record() {
+        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+
+        est.record("empty", 0);
+        assert!(est.is_in_window("empty"));
+        assert_eq!(est.estimated_used(), 0);
+        assert_eq!(est.status().entry_count, 1);
+    }
+
+    #[test]
+    fn estimated_remaining_saturates_at_zero() {
+        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+
+        est.record("s1", 100);
+        assert_eq!(est.estimated_remaining(), 0);
+
+        // Even after capacity is exactly met, remaining should be 0 not negative
+        assert_eq!(est.estimated_remaining(), 0);
+    }
 }
