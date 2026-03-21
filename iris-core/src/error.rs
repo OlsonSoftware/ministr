@@ -131,6 +131,10 @@ pub enum IngestionError {
     /// File encoding is not valid UTF-8.
     #[error("encoding error in {path}: file is not valid UTF-8")]
     Encoding { path: PathBuf },
+
+    /// Embedding or vector index operation failed.
+    #[error("embedding error: {reason}")]
+    Embedding { reason: String },
 }
 
 #[cfg(test)]

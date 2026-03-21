@@ -96,13 +96,13 @@ phases:
   - text: Add memory-mapped persistence for the HNSW index (vectors.hnsw + vectors.meta) via memmap2
     checked: true
   - text: Embed all three resolution levels at ingestion — summaries, sections, and claims get separate vectors
-    checked: false
+    checked: true
   - text: Build multi-resolution query pipeline — search across summary/section/claim levels, merge and rank results
-    checked: false
+    checked: true
   - text: Implement resolution-aware result scoring — weight results by resolution level and query specificity
-    checked: false
+    checked: true
   - text: Add incremental vector index updates — insert/delete embeddings for changed sections without full rebuild
-    checked: false
+    checked: true
   - text: Write benchmarks for embedding throughput (docs/sec) and search latency (p50/p99) at 1k/10k/100k sections
     checked: false
   - text: Write tests for vector index — insert/search/delete correctness, persistence round-trip, concurrent reads

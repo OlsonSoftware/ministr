@@ -68,10 +68,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Define VectorIndex trait — insert, search_knn, delete, persist, load operations
 - [x] Implement HnswIndex using hnswlib-rs — decoupled graph/storage, cosine similarity, configurable M and ef
 - [x] Add memory-mapped persistence for the HNSW index (vectors.hnsw + vectors.meta) via memmap2
-- [ ] Embed all three resolution levels at ingestion — summaries, sections, and claims get separate vectors
-- [ ] Build multi-resolution query pipeline — search across summary/section/claim levels, merge and rank results
-- [ ] Implement resolution-aware result scoring — weight results by resolution level and query specificity
-- [ ] Add incremental vector index updates — insert/delete embeddings for changed sections without full rebuild
+- [x] Embed all three resolution levels at ingestion — summaries, sections, and claims get separate vectors
+- [x] Build multi-resolution query pipeline — search across summary/section/claim levels, merge and rank results
+- [x] Implement resolution-aware result scoring — weight results by resolution level and query specificity
+- [x] Add incremental vector index updates — insert/delete embeddings for changed sections without full rebuild
 - [ ] Write benchmarks for embedding throughput (docs/sec) and search latency (p50/p99) at 1k/10k/100k sections
 - [ ] Write tests for vector index — insert/search/delete correctness, persistence round-trip, concurrent reads
 

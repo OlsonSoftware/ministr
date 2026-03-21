@@ -95,6 +95,100 @@ impl fmt::Display for Resolution {
     }
 }
 
+/// A vector ID that encodes both resolution level and content identifier.
+///
+/// Format: `{resolution}::{content_id}` where resolution is one of
+/// `doc-summary`, `sec-summary`, `section`, or `claim`.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::{VectorId, Resolution};
+///
+/// let vid = VectorId::doc_summary("doc-api");
+/// assert_eq!(vid.as_str(), "doc-summary::doc-api");
+/// assert_eq!(vid.resolution(), Resolution::Summary);
+/// assert_eq!(vid.content_id(), "doc-api");
+///
+/// let parsed = VectorId::parse("claim::c42").unwrap();
+/// assert_eq!(parsed.resolution(), Resolution::Claim);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VectorId(String);
+
+impl VectorId {
+    /// Create a vector ID for a document-level summary.
+    #[must_use]
+    pub fn doc_summary(doc_id: &str) -> Self {
+        Self(format!("doc-summary::{doc_id}"))
+    }
+
+    /// Create a vector ID for a section-level summary.
+    #[must_use]
+    pub fn sec_summary(section_id: &str) -> Self {
+        Self(format!("sec-summary::{section_id}"))
+    }
+
+    /// Create a vector ID for a full section embedding.
+    #[must_use]
+    pub fn section(section_id: &str) -> Self {
+        Self(format!("section::{section_id}"))
+    }
+
+    /// Create a vector ID for a claim embedding.
+    #[must_use]
+    pub fn claim(claim_id: &str) -> Self {
+        Self(format!("claim::{claim_id}"))
+    }
+
+    /// Parse a vector ID string into a `VectorId`.
+    ///
+    /// Returns `None` if the string does not match the expected format.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        let (prefix, _content) = s.split_once("::")?;
+        match prefix {
+            "doc-summary" | "sec-summary" | "section" | "claim" => Some(Self(s.to_string())),
+            _ => None,
+        }
+    }
+
+    /// The resolution level encoded in this vector ID.
+    #[must_use]
+    pub fn resolution(&self) -> Resolution {
+        match self.0.split_once("::").map(|(p, _)| p) {
+            Some("doc-summary" | "sec-summary") => Resolution::Summary,
+            Some("section") => Resolution::Section,
+            Some("claim") => Resolution::Claim,
+            _ => unreachable!("VectorId always has a valid prefix"),
+        }
+    }
+
+    /// Whether this is a document-level summary (as opposed to section-level).
+    #[must_use]
+    pub fn is_doc_summary(&self) -> bool {
+        self.0.starts_with("doc-summary::")
+    }
+
+    /// The content ID portion (after the `::` separator).
+    #[must_use]
+    pub fn content_id(&self) -> &str {
+        self.0.split_once("::").map_or("", |(_, id)| id)
+    }
+
+    /// The full vector ID string.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for VectorId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// A typed structural element within a section.
 ///
 /// Structural nodes preserve the semantic type of content blocks (code, tables,
@@ -245,5 +339,64 @@ mod tests {
         let json = serde_json::to_string(&id).unwrap();
         let back: ContentId = serde_json::from_str(&json).unwrap();
         assert_eq!(back, id);
+    }
+
+    // --- VectorId ---
+
+    #[test]
+    fn vector_id_doc_summary() {
+        let vid = VectorId::doc_summary("doc-api");
+        assert_eq!(vid.as_str(), "doc-summary::doc-api");
+        assert_eq!(vid.resolution(), Resolution::Summary);
+        assert!(vid.is_doc_summary());
+        assert_eq!(vid.content_id(), "doc-api");
+    }
+
+    #[test]
+    fn vector_id_sec_summary() {
+        let vid = VectorId::sec_summary("docs/api.md#auth");
+        assert_eq!(vid.as_str(), "sec-summary::docs/api.md#auth");
+        assert_eq!(vid.resolution(), Resolution::Summary);
+        assert!(!vid.is_doc_summary());
+        assert_eq!(vid.content_id(), "docs/api.md#auth");
+    }
+
+    #[test]
+    fn vector_id_section() {
+        let vid = VectorId::section("docs/api.md#auth");
+        assert_eq!(vid.as_str(), "section::docs/api.md#auth");
+        assert_eq!(vid.resolution(), Resolution::Section);
+        assert_eq!(vid.content_id(), "docs/api.md#auth");
+    }
+
+    #[test]
+    fn vector_id_claim() {
+        let vid = VectorId::claim("c42");
+        assert_eq!(vid.as_str(), "claim::c42");
+        assert_eq!(vid.resolution(), Resolution::Claim);
+        assert_eq!(vid.content_id(), "c42");
+    }
+
+    #[test]
+    fn vector_id_parse_valid() {
+        let vid = VectorId::parse("claim::c42").unwrap();
+        assert_eq!(vid.resolution(), Resolution::Claim);
+        assert_eq!(vid.content_id(), "c42");
+
+        let vid = VectorId::parse("doc-summary::d1").unwrap();
+        assert!(vid.is_doc_summary());
+    }
+
+    #[test]
+    fn vector_id_parse_invalid() {
+        assert!(VectorId::parse("unknown::id").is_none());
+        assert!(VectorId::parse("no-separator").is_none());
+        assert!(VectorId::parse("").is_none());
+    }
+
+    #[test]
+    fn vector_id_display() {
+        let vid = VectorId::section("s1");
+        assert_eq!(vid.to_string(), "section::s1");
     }
 }
