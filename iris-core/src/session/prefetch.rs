@@ -59,6 +59,8 @@ pub enum PrefetchStrategy {
     Structural,
     /// Cross-session analytics: frequently accessed or co-accessed sections.
     CrossSession,
+    /// Survey expansion: parent sections of claim-level survey hits.
+    SurveyExpand,
 }
 
 /// A pre-computed cache entry ready for immediate delivery.
@@ -97,6 +99,8 @@ pub struct PrefetchMetrics {
     pub structural_hits: u64,
     /// Hits from cross-session prefetch entries.
     pub cross_session_hits: u64,
+    /// Hits from survey-expand prefetch entries.
+    pub survey_expand_hits: u64,
 }
 
 impl PrefetchMetrics {
@@ -140,6 +144,7 @@ impl PrefetchMetrics {
             PrefetchStrategy::Topical => self.topical_hits,
             PrefetchStrategy::Structural => self.structural_hits,
             PrefetchStrategy::CrossSession => self.cross_session_hits,
+            PrefetchStrategy::SurveyExpand => self.survey_expand_hits,
         };
         strategy_hits as f64 / total as f64
     }
@@ -215,6 +220,7 @@ impl PrefetchCache {
                     PrefetchStrategy::Topical => self.metrics.topical_hits += 1,
                     PrefetchStrategy::Structural => self.metrics.structural_hits += 1,
                     PrefetchStrategy::CrossSession => self.metrics.cross_session_hits += 1,
+                    PrefetchStrategy::SurveyExpand => self.metrics.survey_expand_hits += 1,
                 }
             }
             self.touch(key);
@@ -618,6 +624,39 @@ impl PrefetchEngine {
                     resolution: Resolution::Section,
                     claims_available: claims,
                     strategy: PrefetchStrategy::CrossSession,
+                },
+            );
+        }
+    }
+
+    /// Pre-warm the cache with parent sections of claim-level survey hits.
+    ///
+    /// After a survey returns claim-level results, the parent sections are
+    /// pre-warmed so that subsequent `iris_read` calls can be served from
+    /// the warm cache. Sections already in the cache or already delivered
+    /// are skipped.
+    pub fn prefetch_survey_expand(
+        &mut self,
+        sections: Vec<crate::storage::SectionRecord>,
+        claims_counts: &HashMap<String, usize>,
+    ) {
+        for section in sections {
+            if self.cache.peek(&section.id.0).is_some() {
+                continue;
+            }
+            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
+            let token_count = count_tokens(&section.text);
+            self.cache.insert(
+                section.id.0.clone(),
+                CacheEntry {
+                    content_id: section.id.0,
+                    text: section.text,
+                    token_count,
+                    heading_path: Some(section.heading_path),
+                    summary: section.summary,
+                    resolution: Resolution::Section,
+                    claims_available: claims,
+                    strategy: PrefetchStrategy::SurveyExpand,
                 },
             );
         }
@@ -1090,6 +1129,7 @@ mod tests {
             topical_hits: 2,
             structural_hits: 1,
             cross_session_hits: 0,
+            survey_expand_hits: 0,
         };
 
         assert!((metrics.strategy_hit_rate(PrefetchStrategy::Sequential) - 0.2).abs() < 1e-5);
@@ -1812,5 +1852,90 @@ mod tests {
 
         let entry = engine.cache().peek("s1").unwrap();
         assert_eq!(entry.claims_available, 7);
+    }
+
+    // --- Survey-expand prefetch tests ---
+
+    #[test]
+    fn survey_expand_prewarms_parent_sections() {
+        let mut engine = PrefetchEngine::new(10);
+
+        // Simulate 3 claim hits from 2 different parent sections
+        let sections = vec![
+            make_section_record("docs/auth.md#tokens", "docs/auth.md", "Token text", 0),
+            make_section_record(
+                "docs/api.md#rate-limits",
+                "docs/api.md",
+                "Rate limit text",
+                0,
+            ),
+        ];
+        let claims_counts = std::collections::HashMap::new();
+
+        engine.prefetch_survey_expand(sections, &claims_counts);
+
+        // Both parent sections should be in the cache
+        assert!(engine.cache().peek("docs/auth.md#tokens").is_some());
+        assert!(engine.cache().peek("docs/api.md#rate-limits").is_some());
+        assert_eq!(engine.cache().len(), 2);
+
+        // Strategy should be SurveyExpand
+        let entry = engine.cache().peek("docs/auth.md#tokens").unwrap();
+        assert_eq!(entry.strategy, PrefetchStrategy::SurveyExpand);
+    }
+
+    #[test]
+    fn survey_expand_skips_already_cached() {
+        let mut engine = PrefetchEngine::new(10);
+
+        // Pre-warm one section via structural prefetch
+        let pre_existing = vec![make_section_record(
+            "docs/auth.md#tokens",
+            "docs/auth.md",
+            "Already cached",
+            0,
+        )];
+        engine.prefetch_structural(pre_existing, &HashMap::new());
+        assert_eq!(engine.cache().len(), 1);
+
+        // Now survey-expand tries to pre-warm same section + a new one
+        let sections = vec![
+            make_section_record("docs/auth.md#tokens", "docs/auth.md", "Token text", 0),
+            make_section_record(
+                "docs/api.md#rate-limits",
+                "docs/api.md",
+                "Rate limit text",
+                0,
+            ),
+        ];
+        engine.prefetch_survey_expand(sections, &HashMap::new());
+
+        // Should have 2 total (old one kept, new one added)
+        assert_eq!(engine.cache().len(), 2);
+        // The pre-existing entry should keep its original strategy
+        let existing = engine.cache().peek("docs/auth.md#tokens").unwrap();
+        assert_eq!(existing.strategy, PrefetchStrategy::Structural);
+    }
+
+    #[test]
+    fn survey_expand_hit_tracked_separately() {
+        let mut engine = PrefetchEngine::new(10);
+
+        let sections = vec![make_section_record(
+            "docs/auth.md#tokens",
+            "docs/auth.md",
+            "Token text",
+            0,
+        )];
+        engine.prefetch_survey_expand(sections, &HashMap::new());
+
+        // Serve from cache (records a hit)
+        let served = engine.try_serve("docs/auth.md#tokens");
+        assert!(served.is_some());
+
+        let m = engine.metrics();
+        assert_eq!(m.hits, 1);
+        assert_eq!(m.survey_expand_hits, 1);
+        assert_eq!(m.structural_hits, 0);
     }
 }

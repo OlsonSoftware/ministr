@@ -46,7 +46,7 @@ use iris_core::session::{
 };
 use iris_core::storage::{SqliteStorage, Storage};
 use iris_core::token::count_tokens;
-use iris_core::types::{ContentId, RelationType, Resolution, SectionId};
+use iris_core::types::{ContentId, RelationType, Resolution, SectionId, parent_section_id};
 
 /// MCP server that exposes iris context-cache tools to LLM agents.
 ///
@@ -415,7 +415,45 @@ impl IrisServer {
                     }
                     let budget_status = budget.budget_status();
                     drop(budget);
+
+                    // Survey-triggered prefetch: pre-warm parent sections of claim hits
+                    let claim_section_ids: Vec<String> = filtered
+                        .iter()
+                        .filter(|r| r.resolution == "claim")
+                        .filter_map(|r| parent_section_id(&r.content_id).map(String::from))
+                        .collect::<std::collections::HashSet<_>>()
+                        .into_iter()
+                        .filter(|sid| !session.is_delivered(&ContentId(sid.clone())))
+                        .collect();
                     drop(session);
+
+                    if !claim_section_ids.is_empty() {
+                        let mut prefetch = self.prefetch.lock().await;
+                        // Filter out sections already in the prefetch cache
+                        let ids_to_fetch: Vec<String> = claim_section_ids
+                            .into_iter()
+                            .filter(|sid| prefetch.cache().peek(sid).is_none())
+                            .collect();
+
+                        if !ids_to_fetch.is_empty() {
+                            let mut sections = Vec::new();
+                            let mut claims_counts = std::collections::HashMap::new();
+                            for sid in &ids_to_fetch {
+                                let section_id = SectionId(sid.clone());
+                                if let Ok(Some(record)) =
+                                    self.service.storage().get_section(&section_id).await
+                                {
+                                    if let Ok(claims) =
+                                        self.service.storage().list_claims(&section_id).await
+                                    {
+                                        claims_counts.insert(sid.clone(), claims.len());
+                                    }
+                                    sections.push(record);
+                                }
+                            }
+                            prefetch.prefetch_survey_expand(sections, &claims_counts);
+                        }
+                    }
 
                     self.persist_session().await;
 
