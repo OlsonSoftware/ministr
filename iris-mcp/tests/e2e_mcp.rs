@@ -312,6 +312,10 @@ async fn list_tools_returns_all_iris_tools() {
         tool_names.contains(&"iris_compress"),
         "should list iris_compress, got: {tool_names:?}"
     );
+    assert!(
+        tool_names.contains(&"iris_toc"),
+        "should list iris_toc, got: {tool_names:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1348,12 +1352,7 @@ async fn e2e_read_returns_heading_paths_and_content_hash() {
 
     // Read a section directly (before any survey, so it's a fresh delivery)
     let section_id = "api.md#api-reference/rate-limits";
-    let read = call_tool(
-        &server,
-        "iris_read",
-        json!({"section_id": section_id}),
-    )
-    .await;
+    let read = call_tool(&server, "iris_read", json!({"section_id": section_id})).await;
 
     assert!(
         read.is_error.is_none() || read.is_error == Some(false),
@@ -1864,4 +1863,93 @@ JWT tokens use RS256 signing. Tokens now expire after 12 hours for improved secu
             "alert should list stale content IDs"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// iris_toc — table of contents
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn iris_toc_returns_all_documents_and_sections() {
+    let server = setup_server().await;
+
+    // Full corpus TOC (no filter)
+    let result = call_tool(&server, "iris_toc", json!({})).await;
+    assert!(
+        result.is_error.is_none() || result.is_error == Some(false),
+        "iris_toc should succeed"
+    );
+
+    let body: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+
+    // Corpus stats header
+    let stats = &body["corpus_stats"];
+    assert_eq!(
+        stats["documents"].as_u64().unwrap(),
+        2,
+        "should have 2 docs"
+    );
+    assert_eq!(
+        stats["sections"].as_u64().unwrap(),
+        3,
+        "should have 3 sections"
+    );
+    assert!(
+        stats["claims"].as_u64().unwrap() >= 4,
+        "should have at least 4 claims"
+    );
+
+    // Entries
+    let entries = body["entries"]
+        .as_array()
+        .expect("entries should be an array");
+    assert_eq!(entries.len(), 3, "should have 3 TOC entries");
+
+    // Check that entries have the expected fields and no text content
+    for entry in entries {
+        assert!(entry["document_id"].is_string());
+        assert!(entry["section_id"].is_string());
+        assert!(entry["heading_path"].is_array());
+        assert!(entry["depth"].is_u64());
+        assert!(entry["claims_available"].is_u64());
+        assert!(entry["token_count"].is_u64());
+        // No text field — metadata only
+        assert!(
+            entry.get("text").is_none(),
+            "TOC entries should not contain text"
+        );
+    }
+
+    // Budget status should be present
+    assert!(
+        body["budget_status"].is_object(),
+        "should include budget_status"
+    );
+}
+
+#[tokio::test]
+async fn iris_toc_filters_by_document_id() {
+    let server = setup_server().await;
+
+    let result = call_tool(&server, "iris_toc", json!({"document_id": "docs/api.md"})).await;
+    assert!(
+        result.is_error.is_none() || result.is_error == Some(false),
+        "filtered iris_toc should succeed"
+    );
+
+    let body: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+
+    let entries = body["entries"]
+        .as_array()
+        .expect("entries should be an array");
+    assert_eq!(entries.len(), 1, "should have 1 section for docs/api.md");
+    assert_eq!(entries[0]["document_id"].as_str().unwrap(), "docs/api.md");
+    assert_eq!(
+        entries[0]["section_id"].as_str().unwrap(),
+        "docs/api.md#rate-limits"
+    );
+
+    let stats = &body["corpus_stats"];
+    assert_eq!(stats["documents"].as_u64().unwrap(), 1);
+    assert_eq!(stats["sections"].as_u64().unwrap(), 1);
 }
