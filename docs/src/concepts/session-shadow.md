@@ -1,0 +1,41 @@
+# Session Shadow
+
+The session shadow is iris's equivalent of a CPU cache directory. It tracks exactly what context has been delivered to the agent, enabling three capabilities that no existing retrieval system provides.
+
+## What It Tracks
+
+For every piece of content delivered, the shadow records:
+
+- **Content ID** — which summary, section, or claim was sent
+- **Resolution** — at what level (summary, section, or claim)
+- **Token count** — how many tokens it consumed
+- **Turn number** — when in the conversation it was delivered
+- **Content hash** — for detecting changes to the underlying document
+
+## Capabilities
+
+### Deduplication
+
+When the agent searches for a topic that iris already provided context for, the shadow filters out previously-delivered content. The agent receives only new information, not duplicates of what it already has.
+
+### Delta Updates
+
+If a section was delivered earlier but the underlying document has changed, iris detects the hash mismatch and returns a line-level delta instead of re-delivering the full text. The agent sees exactly what changed.
+
+### Eviction Estimation
+
+Based on the agent's declared context budget and cumulative token delivery, iris estimates what the agent has likely dropped from its window. This allows iris to re-deliver critical context that may have been evicted.
+
+## Window Estimation
+
+iris does not have direct access to the agent's actual context window (MCP does not expose this). Instead, it maintains an estimate based on:
+
+1. **Cumulative token count** — when delivery exceeds the budget, older items are assumed evicted (FIFO by default, configurable to LRU)
+2. **Fault-based correction** — if the agent re-requests content iris already delivered, this is treated as an eviction signal. The window estimate is corrected and the content is re-delivered.
+3. **Explicit signals** — the agent can call `iris_evicted` to tell iris what it dropped, improving accuracy
+
+The estimate does not need to be perfect. Even a rough approximation prevents the most wasteful failure mode (re-delivering identical context every turn) while fault-based correction converges on accuracy over time.
+
+## Persistence
+
+Session shadows are persisted to SQLite so sessions can survive process restarts. When iris starts with an existing session ID, the shadow is restored from storage.

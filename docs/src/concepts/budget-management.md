@@ -1,0 +1,79 @@
+# Budget Management
+
+Context budget management is iris's equivalent of a CPU cache replacement policy. It tracks cumulative token usage and provides active guidance to prevent context thrashing.
+
+## The Problem
+
+The most pernicious issue in multi-turn agent workflows is invisible context eviction. As the agent accumulates context, older content silently falls out of the window. The agent may hallucinate "remembered" facts, ask for repeated information, or produce contradictory outputs because it lost earlier constraints.
+
+This is the AI equivalent of cache thrashing.
+
+## How It Works
+
+iris accepts a `default_context_budget` configuration parameter representing the agent's total context window budget in tokens. As the session progresses, iris tracks cumulative delivery and provides:
+
+### Budget-Aware Responses
+
+Every tool response includes a `budget_status` object:
+
+```json
+{
+  "budget_status": {
+    "total_budget": 100000,
+    "estimated_used": 34500,
+    "estimated_remaining": 65500,
+    "pressure_level": "normal"
+  }
+}
+```
+
+The agent can use this to make informed decisions about what to read next.
+
+### Pressure Mode
+
+When estimated usage exceeds a threshold (default: 80% of budget), iris enters pressure mode:
+
+- **Responses are automatically compressed** — claim-level extracts instead of full sections, reducing tokens by 60-80%
+- **Eviction recommendations are attached** — ranked by recency, relevance decay, and dependency analysis
+- **Replacement summaries are provided** — compressed summaries (10-20% of original) that can substitute for evicted content
+
+### Eviction Recommendations
+
+Call `iris_budget` to get current status and eviction candidates:
+
+```json
+{
+  "eviction_candidates": [
+    {
+      "content_id": "docs/setup.md#prerequisites",
+      "reason": "low relevance, delivered 8 turns ago",
+      "tokens_recoverable": 450,
+      "replacement_summary": "Prerequisites: Rust 1.85+, SQLite 3.35+"
+    }
+  ]
+}
+```
+
+### Compression on Demand
+
+Call `iris_compress` with content IDs to get compressed summaries before evicting:
+
+```json
+{
+  "summaries": [
+    {
+      "original_id": "docs/auth.md#jwt-validation",
+      "summary": "JWT validation uses RS256 signing with 1-hour expiry...",
+      "original_tokens": 847,
+      "compressed_tokens": 95
+    }
+  ]
+}
+```
+
+## Eviction Policies
+
+The window estimator supports two policies:
+
+- **FIFO** (default) — oldest delivered content is assumed evicted first
+- **LRU** — least recently accessed content is assumed evicted first
