@@ -69,6 +69,10 @@ notify = "7"
 # Glob pattern matching
 glob = "0.3"
 
+# Tree-sitter parsing
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 

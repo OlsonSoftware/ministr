@@ -32,6 +32,8 @@ fastembed.workspace = true
 hnsw_rs.workspace = true
 notify.workspace = true
 glob.workspace = true
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

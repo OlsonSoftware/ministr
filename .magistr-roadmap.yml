@@ -562,18 +562,18 @@ phases:
 - id: C1
   name: Tree-sitter Foundation
   tagline: AST parsing infrastructure for structural code understanding
-  status: pending
+  status: done
   problem: iris treats code as plain text — it cannot understand function boundaries, type hierarchies, or module structure
   solution: Integrate tree-sitter with Rust grammar support to parse source code into ASTs, enabling structural code analysis
   tasks:
   - text: Add `tree-sitter` (0.25+) and `tree-sitter-rust` to workspace dependencies and iris-core Cargo.toml
-    checked: false
+    checked: true
   - text: Create `code` module in iris-core with `AstParser` struct — initializes tree-sitter parser with Rust language grammar, parses source bytes into a tree
-    checked: false
+    checked: true
   - text: 'Implement AST tree walker that visits top-level nodes and identifies item kinds: function_item, struct_item, enum_item, trait_item, impl_item, mod_item, type_item, const_item, static_item'
-    checked: false
+    checked: true
   - text: 'Unit test: parse iris-core''s own `config.rs` and `ingestion.rs`, verify correct AST node types are identified for structs, functions, and impls'
-    checked: false
+    checked: true
 - id: C2
   name: Symbol Extraction
   tagline: Extract functions, structs, traits, and their metadata from ASTs
