@@ -495,6 +495,9 @@ struct CorpusStatsHeader {
     sections: usize,
     /// Number of claims across all sections.
     claims: usize,
+    /// Ingestion state: `"pending"`, `"running"`, or `"complete"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ingestion_status: Option<String>,
 }
 
 /// Response from the `iris_toc` tool.
@@ -1197,6 +1200,17 @@ impl IrisServer {
                     let budget_status = budget.budget_status();
                     drop(budget);
 
+                    // Report ingestion status when corpus is empty to help
+                    // diagnose "0 documents" scenarios.
+                    let ingestion_status = match self
+                        .ingestion_status
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        0 if total_documents == 0 => Some("pending".to_string()),
+                        1 => Some("running".to_string()),
+                        _ => None, // Don't clutter the response when complete
+                    };
+
                     let response = self
                         .build_response(
                             TocResponse {
@@ -1204,6 +1218,7 @@ impl IrisServer {
                                     documents: total_documents,
                                     sections: total_sections,
                                     claims: total_claims,
+                                    ingestion_status,
                                 },
                                 entries,
                             },
