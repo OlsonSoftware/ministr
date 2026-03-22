@@ -360,10 +360,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Build `WebFetcher` orchestrator that auto-selects strategy: try llms-full.txt → llms.txt link list → sitemap.xml → direct page fetch, returning clean markdown for each discovered page
-- [ ] Pipe WebFetcher output into existing IngestionPipeline — fetched markdown goes through section extraction, claim extraction, summarization, and embedding generation unchanged
-- [ ] Store fetched web content in `~/.iris/web/<url-hash>/` with metadata file (source URL, fetch timestamp, ETag, content hash, page count)
-- [ ] Integration test: fetch a URL via WebFetcher, verify sections and claims appear in storage and are searchable via QueryService
+- [x] Build `WebFetcher` orchestrator that auto-selects strategy: try llms-full.txt → llms.txt link list → sitemap.xml → direct page fetch, returning clean markdown for each discovered page
+- [x] Pipe WebFetcher output into existing IngestionPipeline — fetched markdown goes through section extraction, claim extraction, summarization, and embedding generation unchanged
+- [x] Store fetched web content in `~/.iris/web/<url-hash>/` with metadata file (source URL, fetch timestamp, ETag, content hash, page count)
+- [x] Integration test: fetch a URL via WebFetcher, verify sections and claims appear in storage and are searchable via QueryService
 
 ---
 

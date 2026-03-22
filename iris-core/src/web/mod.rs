@@ -1,8 +1,12 @@
-//! HTTP client and URL utilities for fetching web content.
+//! HTTP client, URL utilities, and web fetching pipeline.
 //!
 //! Provides an async [`HttpClient`] with configurable timeout, retry logic,
 //! and a User-Agent header identifying iris. Also includes URL normalization
-//! and resolution helpers.
+//! and resolution helpers, a [`cache::WebCache`] for persisting fetched content,
+//! and a [`fetcher::WebFetcher`] orchestrator for auto-selecting fetch strategies.
+
+pub mod cache;
+pub mod fetcher;
 
 use std::collections::HashMap;
 use std::time::Duration;
