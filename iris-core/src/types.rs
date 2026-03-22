@@ -9,6 +9,16 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 /// Unique identifier for any content node in the index.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::ContentId;
+///
+/// let id = ContentId::from("doc-api".to_string());
+/// assert_eq!(id.to_string(), "doc-api");
+/// assert_eq!(id.as_ref(), "doc-api");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ContentId(pub String);
 
@@ -31,6 +41,15 @@ impl AsRef<str> for ContentId {
 }
 
 /// Hierarchical section identifier (e.g. `docs/auth.md#error-handling`).
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::SectionId;
+///
+/// let id = SectionId::from("docs/auth.md#error-handling".to_string());
+/// assert_eq!(id.to_string(), "docs/auth.md#error-handling");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SectionId(pub String);
 
@@ -75,6 +94,16 @@ impl AsRef<str> for ClaimId {
 }
 
 /// The resolution level at which content was indexed or delivered.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::Resolution;
+///
+/// assert_eq!(Resolution::Summary.to_string(), "summary");
+/// assert_eq!(Resolution::Section.to_string(), "section");
+/// assert_eq!(Resolution::Claim.to_string(), "claim");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Resolution {
     /// Compressed summary of a document or section (~50–400 tokens).
@@ -193,6 +222,24 @@ impl fmt::Display for VectorId {
 ///
 /// Structural nodes preserve the semantic type of content blocks (code, tables,
 /// lists) so downstream processing can handle them differently from plain text.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::StructuralNode;
+///
+/// let code = StructuralNode::CodeBlock {
+///     language: "rust".into(),
+///     code: "fn main() {}".into(),
+/// };
+/// assert!(matches!(code, StructuralNode::CodeBlock { .. }));
+///
+/// let list = StructuralNode::ListBlock {
+///     ordered: true,
+///     items: vec!["First".into(), "Second".into()],
+/// };
+/// assert!(matches!(list, StructuralNode::ListBlock { ordered: true, .. }));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StructuralNode {
     /// A fenced or indented code block.
@@ -219,6 +266,32 @@ pub enum StructuralNode {
 }
 
 /// A parsed document represented as a tree of sections.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::{DocumentTree, Section, ContentId, SectionId};
+///
+/// let tree = DocumentTree {
+///     id: ContentId("doc-api".into()),
+///     title: "API Reference".into(),
+///     source_path: "docs/api.md".into(),
+///     sections: vec![Section {
+///         id: SectionId("docs/api.md#intro".into()),
+///         heading_path: vec!["Introduction".into()],
+///         depth: 1,
+///         text: "Welcome to the API.".into(),
+///         structural_nodes: vec![],
+///         children: vec![],
+///         claims: vec![],
+///         summary: None,
+///     }],
+///     summary: Some("Full API reference.".into()),
+/// };
+///
+/// assert_eq!(tree.sections.len(), 1);
+/// assert_eq!(tree.title, "API Reference");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentTree {
     /// Unique content ID for the whole document.

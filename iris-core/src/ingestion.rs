@@ -22,6 +22,25 @@ use crate::storage::traits::{FileHashRecord, Storage};
 use crate::types::{Claim, DocumentTree, Section, VectorId};
 
 /// Result of ingesting a corpus directory.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::ingestion::IngestionStats;
+///
+/// let stats = IngestionStats {
+///     files_discovered: 10,
+///     files_skipped: 5,
+///     files_indexed: 4,
+///     files_removed: 0,
+///     files_failed: 1,
+///     total_sections: 20,
+///     total_claims: 45,
+///     total_embeddings: 65,
+/// };
+///
+/// assert_eq!(stats.files_indexed + stats.files_skipped + stats.files_failed, 10);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IngestionStats {
     /// Number of files discovered.

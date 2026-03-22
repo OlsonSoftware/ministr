@@ -69,6 +69,25 @@ impl IrisConfig {
 
     /// Parse configuration from a TOML string.
     ///
+    /// Missing fields fall back to their default values, so partial TOML
+    /// is accepted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use iris_core::config::IrisConfig;
+    ///
+    /// let config = IrisConfig::from_toml(r#"
+    ///     default_model = "bge-small-en-v1.5"
+    ///     default_context_budget = 50000
+    /// "#).unwrap();
+    ///
+    /// assert_eq!(config.default_model, "bge-small-en-v1.5");
+    /// assert_eq!(config.default_context_budget, 50_000);
+    /// // Unset fields use defaults
+    /// assert_eq!(config.log_format, "pretty");
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns [`StorageError::Serialization`] if the TOML cannot be parsed.

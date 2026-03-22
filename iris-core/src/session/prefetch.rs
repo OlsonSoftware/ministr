@@ -103,6 +103,18 @@ impl PrefetchMetrics {
     /// Overall cache hit rate as a fraction (0.0–1.0).
     ///
     /// Returns 0.0 if no lookups have been performed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use iris_core::session::PrefetchMetrics;
+    ///
+    /// let metrics = PrefetchMetrics { hits: 3, misses: 7, ..Default::default() };
+    /// assert!((metrics.hit_rate() - 0.3).abs() < f64::EPSILON);
+    ///
+    /// let empty = PrefetchMetrics::default();
+    /// assert!((empty.hit_rate() - 0.0).abs() < f64::EPSILON);
+    /// ```
     #[must_use]
     #[allow(clippy::cast_precision_loss)]
     pub fn hit_rate(&self) -> f64 {
