@@ -5,6 +5,7 @@
 //! tables, and lists as structural nodes.
 
 use std::path::Path;
+use std::sync::OnceLock;
 
 use scraper::{ElementRef, Html, Selector};
 
@@ -12,6 +13,27 @@ use super::DocumentParser;
 use super::common::{RawSection, build_section_tree};
 use crate::error::ParseError;
 use crate::types::{ContentId, DocumentTree, StructuralNode};
+
+/// Parse a static CSS selector string, caching the result in a `OnceLock`.
+///
+/// All selectors used in this module are compile-time-constant strings that
+/// are guaranteed to parse successfully. Using `OnceLock` avoids both the
+/// repeated parse cost and the need for `.expect()` on infallible operations.
+macro_rules! static_selector {
+    ($name:ident, $sel:expr) => {
+        fn $name() -> &'static Selector {
+            static SEL: OnceLock<Selector> = OnceLock::new();
+            SEL.get_or_init(|| Selector::parse($sel).expect($sel))
+        }
+    };
+}
+
+static_selector!(sel_body, "body");
+static_selector!(sel_code, "code");
+static_selector!(sel_tr, "tr");
+static_selector!(sel_th, "th");
+static_selector!(sel_td, "td");
+static_selector!(sel_li, "li");
 
 /// HTML document parser backed by the `scraper` crate.
 ///
@@ -109,9 +131,8 @@ impl HtmlSectionCollector {
     /// Walk the body of the HTML document, processing top-level elements.
     fn walk(&mut self, document: &Html) {
         // Try to find <body>, fall back to root element
-        let body_selector = Selector::parse("body").expect("valid selector");
         let root_elements: Vec<ElementRef<'_>> =
-            if let Some(body) = document.select(&body_selector).next() {
+            if let Some(body) = document.select(sel_body()).next() {
                 body.children().filter_map(ElementRef::wrap).collect()
             } else {
                 document
@@ -132,7 +153,8 @@ impl HtmlSectionCollector {
 
         match tag {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-                let level = tag[1..].parse::<u32>().expect("valid heading level");
+                // SAFETY: tag is matched against "h1"-"h6", so tag[1..] is always "1"-"6".
+                let level = tag[1..].parse::<u32>().expect("h1-h6 digit");
                 let text = element.text().collect::<String>().trim().to_string();
 
                 if self.title.is_none() && !text.is_empty() {
@@ -163,12 +185,11 @@ impl HtmlSectionCollector {
             }
             "pre" => {
                 self.ensure_current_section();
+                // SAFETY: ensure_current_section() guarantees non-empty.
                 let current = self.sections.last_mut().expect("section ensured");
 
                 // Look for <code> inside <pre>
-                let code_selector = Selector::parse("code").expect("valid selector");
-                let (language, code) = if let Some(code_el) = element.select(&code_selector).next()
-                {
+                let (language, code) = if let Some(code_el) = element.select(sel_code()).next() {
                     let lang = code_el
                         .value()
                         .attr("class")
@@ -192,6 +213,7 @@ impl HtmlSectionCollector {
             }
             "table" => {
                 self.ensure_current_section();
+                // SAFETY: ensure_current_section() guarantees non-empty.
                 let current = self.sections.last_mut().expect("section ensured");
 
                 let (headers, rows) = extract_table(element);
@@ -209,6 +231,7 @@ impl HtmlSectionCollector {
             }
             "ul" => {
                 self.ensure_current_section();
+                // SAFETY: ensure_current_section() guarantees non-empty.
                 let current = self.sections.last_mut().expect("section ensured");
                 let items = extract_list_items(element);
                 current.structural_nodes.push(StructuralNode::ListBlock {
@@ -219,6 +242,7 @@ impl HtmlSectionCollector {
             }
             "ol" => {
                 self.ensure_current_section();
+                // SAFETY: ensure_current_section() guarantees non-empty.
                 let current = self.sections.last_mut().expect("section ensured");
                 let items = extract_list_items(element);
                 current.structural_nodes.push(StructuralNode::ListBlock {
@@ -234,6 +258,7 @@ impl HtmlSectionCollector {
                 let text: String = element.text().collect::<String>().trim().to_string();
                 if !text.is_empty() {
                     self.ensure_current_section();
+                    // SAFETY: ensure_current_section() guarantees non-empty.
                     let current = self.sections.last_mut().expect("section ensured");
                     current.text_parts.push(text);
                 }
@@ -270,13 +295,9 @@ fn extract_table(table: ElementRef<'_>) -> (Vec<String>, Vec<Vec<String>>) {
     let mut headers = Vec::new();
     let mut rows = Vec::new();
 
-    let row_sel = Selector::parse("tr").expect("valid selector");
-    let header_sel = Selector::parse("th").expect("valid selector");
-    let cell_sel = Selector::parse("td").expect("valid selector");
-
-    for row in table.select(&row_sel) {
+    for row in table.select(sel_tr()) {
         let ths: Vec<String> = row
-            .select(&header_sel)
+            .select(sel_th())
             .map(|th| th.text().collect::<String>().trim().to_string())
             .collect();
 
@@ -286,7 +307,7 @@ fn extract_table(table: ElementRef<'_>) -> (Vec<String>, Vec<Vec<String>>) {
         }
 
         let tds: Vec<String> = row
-            .select(&cell_sel)
+            .select(sel_td())
             .map(|td| td.text().collect::<String>().trim().to_string())
             .collect();
 
@@ -300,8 +321,7 @@ fn extract_table(table: ElementRef<'_>) -> (Vec<String>, Vec<Vec<String>>) {
 
 /// Extract list item texts from a `<ul>` or `<ol>` element.
 fn extract_list_items(list: ElementRef<'_>) -> Vec<String> {
-    let li_selector = Selector::parse("li").expect("valid selector");
-    list.select(&li_selector)
+    list.select(sel_li())
         .map(|li| li.text().collect::<String>().trim().to_string())
         .collect()
 }

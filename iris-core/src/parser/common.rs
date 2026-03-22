@@ -56,6 +56,8 @@ fn nest_sections(flat: Vec<Section>) -> Vec<Section> {
     for section in flat {
         // Pop sections from the stack that are at the same or deeper level
         while stack.last().is_some_and(|top| top.depth >= section.depth) {
+            // SAFETY: the while condition checks stack.last().is_some_and(...),
+            // guaranteeing the stack is non-empty when we reach this pop.
             let popped = stack.pop().expect("stack non-empty");
             if let Some(parent) = stack.last_mut() {
                 parent.children.push(popped);
