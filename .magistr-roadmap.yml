@@ -671,7 +671,7 @@ phases:
 - id: PR1
   name: Fix Code Indexing Bug
   tagline: Dogfood iris on its own Rust source code
-  status: in_progress
+  status: done
   problem: iris can't index its own source code — corpus paths show 0 documents despite correct architecture
   solution: Add diagnostic logging, write integration tests, reproduce and fix the root cause
   tasks:
@@ -682,9 +682,9 @@ phases:
   - text: Add debug log of canonical path in collect_path_entry for relative path resolution verification
     checked: true
   - text: Enhance iris_toc to report ingestion state (running/completed/failed + stats) when 0 results
-    checked: false
+    checked: true
   - text: 'Write integration test: multi-path code ingestion with .rs files, assert non-zero indexed count'
-    checked: false
+    checked: true
   - text: Reproduce with iris --corpus ./iris-core/src, examine stderr, fix root cause
     checked: true
   - text: Add iris index and iris serve subcommands with backwards-compatible default to serve

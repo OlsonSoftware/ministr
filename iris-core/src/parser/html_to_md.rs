@@ -19,8 +19,27 @@
 //! ```
 
 use std::fmt::Write as _;
+use std::sync::OnceLock;
 
 use scraper::{ElementRef, Html, Node, Selector};
+
+/// Parse a static CSS selector string, caching the result in a `OnceLock`.
+macro_rules! static_selector {
+    ($name:ident, $sel:expr) => {
+        fn $name() -> &'static Selector {
+            static SEL: OnceLock<Selector> = OnceLock::new();
+            SEL.get_or_init(|| Selector::parse($sel).expect($sel))
+        }
+    };
+}
+
+static_selector!(sel_body, "body");
+static_selector!(sel_p, "p");
+static_selector!(sel_a, "a");
+static_selector!(sel_code, "code");
+static_selector!(sel_tr, "tr");
+static_selector!(sel_th, "th");
+static_selector!(sel_td, "td");
 
 /// Readability-style main content extractor.
 ///
@@ -54,8 +73,7 @@ impl ContentExtractor {
         }
 
         // Fall back to text-density scoring on the body
-        let body_selector = Selector::parse("body").expect("valid selector");
-        let Some(body) = document.select(&body_selector).next() else {
+        let Some(body) = document.select(sel_body()).next() else {
             return String::new();
         };
 
@@ -105,12 +123,10 @@ fn score_element(element: ElementRef<'_>) -> f64 {
         return 0.0;
     }
 
-    let p_selector = Selector::parse("p").expect("valid selector");
-    let p_count = element.select(&p_selector).count() as f64;
+    let p_count = element.select(sel_p()).count() as f64;
 
-    let a_selector = Selector::parse("a").expect("valid selector");
     let link_text_len: f64 = element
-        .select(&a_selector)
+        .select(sel_a())
         .map(|a| a.text().collect::<String>().len() as f64)
         .sum();
     let link_density = if text_len > 0.0 {
@@ -230,7 +246,8 @@ impl HtmlToMarkdown {
 
     /// Emit a markdown heading (`# `, `## `, etc.).
     fn emit_heading(&mut self, element: ElementRef<'_>, tag: &str) {
-        let level: usize = tag[1..].parse().expect("heading tags h1-h6 are valid");
+        // SAFETY: tag is matched against "h1"-"h6", so tag[1..] is always "1"-"6".
+        let level: usize = tag[1..].parse().expect("h1-h6 digit");
         let hashes = "#".repeat(level);
         let text = collect_inline_text(element);
         self.ensure_block_boundary();
@@ -261,8 +278,7 @@ impl HtmlToMarkdown {
     /// Emit a fenced code block with optional language annotation.
     fn emit_code_block(&mut self, element: ElementRef<'_>) {
         self.ensure_block_boundary();
-        let code_selector = Selector::parse("code").expect("valid selector");
-        let (language, code) = if let Some(code_el) = element.select(&code_selector).next() {
+        let (language, code) = if let Some(code_el) = element.select(sel_code()).next() {
             let lang = code_el
                 .value()
                 .attr("class")
@@ -375,16 +391,12 @@ impl HtmlToMarkdown {
 
     /// Process a `<table>` element into a GFM pipe table.
     fn process_table(&mut self, table: ElementRef<'_>) {
-        let row_sel = Selector::parse("tr").expect("valid selector");
-        let header_sel = Selector::parse("th").expect("valid selector");
-        let cell_sel = Selector::parse("td").expect("valid selector");
-
         let mut headers: Vec<String> = Vec::new();
         let mut rows: Vec<Vec<String>> = Vec::new();
 
-        for row in table.select(&row_sel) {
+        for row in table.select(sel_tr()) {
             let ths: Vec<String> = row
-                .select(&header_sel)
+                .select(sel_th())
                 .map(|th| collect_inline_text(th).trim().to_string())
                 .collect();
 
@@ -394,7 +406,7 @@ impl HtmlToMarkdown {
             }
 
             let tds: Vec<String> = row
-                .select(&cell_sel)
+                .select(sel_td())
                 .map(|td| collect_inline_text(td).trim().to_string())
                 .collect();
 

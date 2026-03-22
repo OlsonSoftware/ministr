@@ -332,7 +332,8 @@ pub fn filter_entries(entries: &[SitemapEntry], config: &SitemapConfig) -> Vec<S
 ///
 /// # Panics
 ///
-/// Panics if the internal semaphore is unexpectedly closed (should never happen).
+/// Panics if the internal semaphore is unexpectedly closed. This cannot happen
+/// because the semaphore is created locally and never closed.
 #[instrument(skip(client, entries, config), fields(entries = entries.len()))]
 pub async fn fetch_sitemap_pages(
     client: &HttpClient,
@@ -351,11 +352,13 @@ pub async fn fetch_sitemap_pages(
             tokio::time::sleep(rate_limit).await;
         }
 
+        // SAFETY: the semaphore is created locally in this function and never
+        // closed, so acquire_owned() cannot return Err(AcquireError).
         let permit = semaphore
             .clone()
             .acquire_owned()
             .await
-            .expect("semaphore should not be closed");
+            .expect("locally-owned semaphore is never closed");
 
         let client = client.clone();
         let url = entry.url.clone();
