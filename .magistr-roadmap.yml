@@ -127,7 +127,7 @@ phases:
   - text: Add budget_status object to every tool response — tokens_used, tokens_remaining, pressure_level
     checked: true
   - text: Expose MCP resources — iris://status (index stats) and iris://corpus/{path} (document metadata)
-    checked: false
+    checked: true
   - text: 'Add #[instrument] tracing spans to all MCP tool handlers with request/response logging at DEBUG level'
     checked: true
   - text: Implement graceful error handling — map iris-core errors to MCP ErrorData with user-friendly messages
