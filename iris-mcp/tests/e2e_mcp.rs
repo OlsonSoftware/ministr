@@ -19,6 +19,7 @@ use iris_core::embedding::Embedder;
 use iris_core::error::IndexError;
 use iris_core::index::{HnswIndex, VectorIndex};
 use iris_core::service::QueryService;
+use iris_core::session::BudgetConfig;
 use iris_core::storage::{SqliteStorage, Storage};
 use iris_core::types::{
     Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, Section, SectionId,
@@ -949,5 +950,249 @@ async fn list_tools_returns_seven_tools_including_related() {
         result.tools.len() >= 7,
         "should have at least 7 tools, got: {}",
         result.tools.len()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// I2.2 + I2.3: Coherence alerts surface in MCP tool responses
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn coherence_alerts_surface_in_iris_read_response() {
+    let server = setup_server().await;
+
+    // Read a section to populate the session shadow
+    let result = call_tool(
+        &server,
+        "iris_read",
+        json!({"section_id": "docs/auth.md#tokens"}),
+    )
+    .await;
+    assert!(!result.is_error.unwrap_or(false));
+
+    // Manually invalidate a section via the session to simulate coherence
+    {
+        let session = server.session_arc();
+        let mut session = session.lock().await;
+        session.invalidate_sections(&["docs/auth.md#tokens".to_string()]);
+    }
+
+    // Next tool call should surface the coherence alert
+    let result = call_tool(
+        &server,
+        "iris_read",
+        json!({"section_id": "docs/auth.md#tokens"}),
+    )
+    .await;
+    let text = extract_text(&result.content);
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    assert!(
+        json["coherence_alerts"].is_array(),
+        "response should include coherence_alerts, got: {json}"
+    );
+    let alerts = json["coherence_alerts"].as_array().unwrap();
+    assert!(
+        !alerts.is_empty(),
+        "should have at least one coherence alert"
+    );
+    assert!(
+        alerts[0]["stale_content_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str() == Some("docs/auth.md#tokens")),
+        "alert should reference the invalidated section"
+    );
+}
+
+#[tokio::test]
+async fn coherence_alerts_surface_in_iris_budget_response() {
+    let server = setup_server().await;
+
+    // Deliver a section
+    call_tool(
+        &server,
+        "iris_read",
+        json!({"section_id": "docs/auth.md#tokens"}),
+    )
+    .await;
+
+    // Invalidate it
+    {
+        let session = server.session_arc();
+        let mut session = session.lock().await;
+        session.invalidate_sections(&["docs/auth.md#tokens".to_string()]);
+    }
+
+    // Budget tool should surface the alert
+    let result = call_tool(&server, "iris_budget", json!({})).await;
+    let text = extract_text(&result.content);
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    assert!(
+        json["coherence_alerts"].is_array(),
+        "iris_budget should include coherence_alerts, got: {json}"
+    );
+    let alerts = json["coherence_alerts"].as_array().unwrap();
+    assert!(
+        !alerts.is_empty(),
+        "budget response should include pending coherence alerts"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// I1.3: Analytics co-access patterns are recorded and served via prefetch_metrics
+// ---------------------------------------------------------------------------
+
+/// Set up a server with persistence enabled for analytics testing.
+async fn setup_server_with_persistence() -> IrisServer {
+    let dim = 16;
+    let embedder = Arc::new(MockEmbedder { dim });
+    let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let corpus = build_corpus();
+    for doc in &corpus {
+        storage.insert_document(doc).await.unwrap();
+    }
+
+    let texts_and_ids = [
+        (
+            "doc-summary::docs/auth.md",
+            "Complete authentication reference.",
+        ),
+        (
+            "doc-summary::docs/api.md",
+            "Full API reference documentation.",
+        ),
+        (
+            "sec-summary::docs/auth.md#tokens",
+            "Token authentication details.",
+        ),
+        (
+            "sec-summary::docs/auth.md#oauth",
+            "OAuth 2.0 integration details.",
+        ),
+        (
+            "sec-summary::docs/api.md#rate-limits",
+            "Rate limiting policy.",
+        ),
+        (
+            "section::docs/auth.md#tokens",
+            "JWT tokens use RS256 signing. Tokens expire after 24 hours.",
+        ),
+        (
+            "section::docs/auth.md#oauth",
+            "OAuth 2.0 authorization code flow with PKCE is required for public clients.",
+        ),
+        (
+            "section::docs/api.md#rate-limits",
+            "Rate limits are 100 requests per minute per API key. Exceeding the limit returns HTTP 429.",
+        ),
+        ("claim::auth-c1", "JWT tokens use RS256 signing algorithm."),
+        ("claim::auth-c2", "Tokens expire after 24 hours by default."),
+        (
+            "claim::auth-c3",
+            "OAuth 2.0 authorization code flow is supported.",
+        ),
+        (
+            "claim::api-c1",
+            "Rate limit is 100 requests per minute per API key.",
+        ),
+        (
+            "claim::api-c2",
+            "Exceeding the rate limit returns HTTP 429.",
+        ),
+    ];
+    for (id, text) in &texts_and_ids {
+        let vecs = embedder.embed(&[*text]).unwrap();
+        index.insert(id, &vecs[0]).unwrap();
+    }
+
+    let storage = Arc::new(storage);
+    let service = Arc::new(QueryService::new((*storage).clone(), embedder, index));
+    let budget_config = BudgetConfig::default();
+    IrisServer::with_persistence(
+        service,
+        budget_config,
+        storage,
+        Some("test-analytics".into()),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn analytics_co_access_patterns_recorded_and_served_via_prefetch_metrics() {
+    let server = setup_server_with_persistence().await;
+
+    // Read multiple sections to build a co-access trajectory
+    call_tool(
+        &server,
+        "iris_read",
+        json!({"section_id": "docs/auth.md#tokens"}),
+    )
+    .await;
+    call_tool(
+        &server,
+        "iris_read",
+        json!({"section_id": "docs/auth.md#oauth"}),
+    )
+    .await;
+    call_tool(
+        &server,
+        "iris_read",
+        json!({"section_id": "docs/api.md#rate-limits"}),
+    )
+    .await;
+
+    // Re-read a section to trigger cross-session prefetch via co-access data
+    call_tool(
+        &server,
+        "iris_read",
+        json!({"section_id": "docs/auth.md#tokens"}),
+    )
+    .await;
+
+    // Check budget response includes prefetch_metrics
+    let result = call_tool(&server, "iris_budget", json!({})).await;
+    let text = extract_text(&result.content);
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    assert!(
+        json["prefetch_metrics"].is_object(),
+        "iris_budget should include prefetch_metrics, got: {json}"
+    );
+
+    let metrics = &json["prefetch_metrics"];
+    // Verify the metrics structure is present with strategy breakdowns
+    assert!(
+        metrics["hits"].is_number(),
+        "prefetch_metrics should have hits"
+    );
+    assert!(
+        metrics["misses"].is_number(),
+        "prefetch_metrics should have misses"
+    );
+
+    // Verify co-access data was recorded in storage by checking analytics
+    let storage = server.storage_arc().unwrap();
+    let analytics = iris_core::analytics::Analytics::new((*storage).clone());
+    let co = analytics
+        .co_accessed_with(
+            &iris_core::types::SectionId("docs/auth.md#tokens".into()),
+            10,
+        )
+        .await
+        .unwrap();
+    assert!(
+        !co.is_empty(),
+        "co-access patterns should be recorded for docs/auth.md#tokens"
+    );
+    // Both oauth and rate-limits should be co-accessed with tokens
+    let partners: Vec<&str> = co.iter().map(|c| c.section_id.0.as_str()).collect();
+    assert!(
+        partners.contains(&"docs/auth.md#oauth") || partners.contains(&"docs/api.md#rate-limits"),
+        "co-access should include sibling sections, got: {partners:?}"
     );
 }

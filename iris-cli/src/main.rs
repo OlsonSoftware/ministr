@@ -12,6 +12,7 @@ use miette::{IntoDiagnostic, Result, WrapErr};
 use rmcp::ServiceExt;
 use sha2::{Digest, Sha256};
 
+use iris_core::coherence::{CoherenceEngine, FileWatcher};
 use iris_core::index::VectorIndexLoad as _;
 use iris_core::session::BudgetConfig;
 
@@ -118,8 +119,8 @@ async fn main() -> Result<()> {
     let storage = Arc::new(storage);
     let service = Arc::new(iris_core::service::QueryService::new(
         (*storage).clone(),
-        embedder,
-        index,
+        Arc::clone(&embedder),
+        Arc::clone(&index),
     ));
 
     let session_id = corpus_session_id(cli.corpus.as_deref());
@@ -128,9 +129,21 @@ async fn main() -> Result<()> {
         ..BudgetConfig::default()
     };
 
-    let server =
-        iris_mcp::server::IrisServer::with_persistence(service, budget_config, storage, session_id)
-            .await;
+    let server = iris_mcp::server::IrisServer::with_persistence(
+        service,
+        budget_config,
+        Arc::clone(&storage),
+        session_id,
+    )
+    .await;
+
+    // Spawn coherence file watcher if a corpus path was provided.
+    let _coherence_handle = if let Some(ref corpus_path) = cli.corpus {
+        spawn_coherence(corpus_path, &server, &storage, &embedder, &index)?
+    } else {
+        None
+    };
+
     let mcp_service = server
         .serve(rmcp::transport::stdio())
         .await
@@ -145,6 +158,41 @@ async fn main() -> Result<()> {
 
     tracing::info!("iris shutting down");
     Ok(())
+}
+
+/// Spawn the coherence file watcher and background processing task.
+///
+/// Watches the corpus directory for file changes, re-indexes affected files
+/// (including embeddings and vector index), and propagates coherence alerts
+/// to the active session.
+fn spawn_coherence(
+    corpus_path: &std::path::Path,
+    server: &iris_mcp::server::IrisServer,
+    storage: &Arc<iris_core::storage::SqliteStorage>,
+    embedder: &Arc<dyn iris_core::embedding::Embedder>,
+    index: &Arc<dyn iris_core::index::VectorIndex>,
+) -> Result<Option<tokio::task::JoinHandle<()>>> {
+    let watcher = FileWatcher::new(&[corpus_path.to_path_buf()])
+        .into_diagnostic()
+        .wrap_err("failed to start file watcher for coherence")?;
+
+    let engine = Arc::new(CoherenceEngine::with_embeddings(
+        corpus_path.to_path_buf(),
+        Arc::clone(embedder),
+        Arc::clone(index),
+    ));
+
+    let session = server.session_arc();
+
+    let handle =
+        iris_core::coherence::spawn_coherence_task(watcher, engine, Arc::clone(storage), session);
+
+    tracing::info!(
+        corpus = %corpus_path.display(),
+        "coherence file watcher started"
+    );
+
+    Ok(Some(handle))
 }
 
 /// Run the ingestion pipeline against the corpus directory, then persist the index.

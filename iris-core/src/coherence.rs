@@ -20,7 +20,9 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, warn};
 
+use crate::embedding::Embedder;
 use crate::error::CoherenceError;
+use crate::index::VectorIndex;
 use crate::ingestion::IngestionPipeline;
 use crate::session::Session;
 use crate::storage::traits::Storage;
@@ -162,18 +164,46 @@ fn is_supported_file(path: &Path) -> bool {
 ///
 /// It bridges the file watcher to the ingestion pipeline and session shadow,
 /// re-indexing changed files and marking stale content in active sessions.
+///
+/// When constructed with [`with_embeddings`](Self::with_embeddings), the engine
+/// also updates the vector index with new embeddings for changed content.
 pub struct CoherenceEngine {
     pipeline: IngestionPipeline,
     corpus_dir: PathBuf,
+    embedder: Option<Arc<dyn Embedder>>,
+    index: Option<Arc<dyn VectorIndex>>,
 }
 
 impl CoherenceEngine {
     /// Create a new coherence engine for the given corpus directory.
+    ///
+    /// This variant only updates storage (no embeddings or vector index).
+    /// Use [`with_embeddings`](Self::with_embeddings) for full re-indexing.
     #[must_use]
     pub fn new(corpus_dir: PathBuf) -> Self {
         Self {
             pipeline: IngestionPipeline::new(),
             corpus_dir,
+            embedder: None,
+            index: None,
+        }
+    }
+
+    /// Create a coherence engine that also updates embeddings and the vector index.
+    ///
+    /// When files change, the engine re-ingests them with full embedding generation
+    /// so the vector index stays in sync with the corpus.
+    #[must_use]
+    pub fn with_embeddings(
+        corpus_dir: PathBuf,
+        embedder: Arc<dyn Embedder>,
+        index: Arc<dyn VectorIndex>,
+    ) -> Self {
+        Self {
+            pipeline: IngestionPipeline::new(),
+            corpus_dir,
+            embedder: Some(embedder),
+            index: Some(index),
         }
     }
 
@@ -268,14 +298,30 @@ impl CoherenceEngine {
 
         let old_section_ids: Vec<String> = old_sections.iter().map(|s| s.id.0.clone()).collect();
 
-        // Re-ingest the file (the pipeline handles hash checking and upsert)
-        self.pipeline
-            .ingest_directory(&self.corpus_dir, storage)
-            .await
-            .map_err(|e| CoherenceError::ReindexFailed {
-                path: path.to_path_buf(),
-                source: Box::new(e),
-            })?;
+        // Re-ingest the file (the pipeline handles hash checking and upsert).
+        // When embedder+index are available, also update the vector index.
+        if let (Some(embedder), Some(index)) = (&self.embedder, &self.index) {
+            self.pipeline
+                .ingest_directory_with_embeddings(
+                    &self.corpus_dir,
+                    storage,
+                    embedder.as_ref(),
+                    index.as_ref(),
+                )
+                .await
+                .map_err(|e| CoherenceError::ReindexFailed {
+                    path: path.to_path_buf(),
+                    source: Box::new(e),
+                })?;
+        } else {
+            self.pipeline
+                .ingest_directory(&self.corpus_dir, storage)
+                .await
+                .map_err(|e| CoherenceError::ReindexFailed {
+                    path: path.to_path_buf(),
+                    source: Box::new(e),
+                })?;
+        }
 
         // Get new sections after re-indexing
         let new_sections = storage.list_sections(&doc_id).await.unwrap_or_default();

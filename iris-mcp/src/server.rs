@@ -882,6 +882,18 @@ impl IrisServer {
         }
     }
 
+    /// Access the session `Arc` for external use (e.g. coherence task).
+    #[must_use]
+    pub fn session_arc(&self) -> Arc<Mutex<Session>> {
+        Arc::clone(&self.session)
+    }
+
+    /// Access the storage `Arc`, if persistence is enabled.
+    #[must_use]
+    pub fn storage_arc(&self) -> Option<Arc<SqliteStorage>> {
+        self.storage.clone()
+    }
+
     /// Record a section delivery in the session shadow and budget tracker.
     ///
     /// Returns the budget status snapshot after recording.
