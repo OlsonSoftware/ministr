@@ -35,6 +35,9 @@ use tokio::sync::Mutex;
 use tracing::{Instrument, debug, info_span, warn};
 
 use iris_core::analytics::Analytics;
+use iris_core::embedding::Embedder;
+use iris_core::index::VectorIndex;
+use iris_core::ingestion::IngestionPipeline;
 use iris_core::service::{
     CompressedItem, QueryError, QueryService, RelatedClaimResult, SurveyResult,
 };
@@ -47,6 +50,7 @@ use iris_core::session::{
 use iris_core::storage::{SqliteStorage, Storage};
 use iris_core::token::count_tokens;
 use iris_core::types::{ContentId, RelationType, Resolution, SectionId, parent_section_id};
+use iris_core::web::fetcher::WebFetcher;
 
 /// MCP server that exposes iris context-cache tools to LLM agents.
 ///
@@ -61,6 +65,10 @@ pub struct IrisServer {
     prefetch: Arc<Mutex<PrefetchEngine>>,
     storage: Option<Arc<SqliteStorage>>,
     analytics: Option<Arc<Analytics>>,
+    web_fetcher: Option<Arc<WebFetcher>>,
+    ingestion_pipeline: Arc<IngestionPipeline>,
+    embedder: Option<Arc<dyn Embedder>>,
+    index: Option<Arc<dyn VectorIndex>>,
 }
 
 /// Tool response wrapper that includes budget status alongside the result data.
@@ -244,6 +252,42 @@ pub struct TocParams {
     pub document_id: Option<String>,
 }
 
+/// Parameters for the `iris_fetch` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct FetchParams {
+    /// URL to fetch content from.
+    #[schemars(description = "URL to fetch content from (e.g. 'https://docs.example.com/')")]
+    pub url: String,
+
+    /// Crawl depth for following links (default: 0 = single page).
+    /// Depth 1+ follows same-domain links up to this depth.
+    #[schemars(description = "Crawl depth for following links (default: 0 = single page only)")]
+    pub depth: Option<u32>,
+
+    /// Maximum number of pages to fetch when crawling (default: 50).
+    #[schemars(description = "Maximum number of pages to fetch when crawling (default: 50)")]
+    pub max_pages: Option<usize>,
+
+    /// Only fetch URLs whose path starts with this prefix (e.g. '/docs/').
+    #[schemars(description = "Only fetch URLs whose path starts with this prefix (e.g. '/docs/')")]
+    pub path_filter: Option<String>,
+}
+
+/// Response from the `iris_fetch` tool.
+#[derive(Debug, Serialize)]
+struct FetchResponse {
+    /// Number of pages successfully fetched.
+    pages_fetched: usize,
+    /// Total sections indexed across all fetched pages.
+    sections_indexed: usize,
+    /// Total claims extracted across all fetched pages.
+    claims_extracted: usize,
+    /// Total tokens added to the corpus.
+    tokens_added: usize,
+    /// The fetch strategy that was used.
+    strategy_used: String,
+}
+
 /// Corpus-level statistics returned in the `iris_toc` response header.
 #[derive(Debug, Serialize)]
 struct CorpusStatsHeader {
@@ -284,8 +328,9 @@ impl ServerHandler for IrisServer {
                  to get atomic claims from a section, iris_related to follow dependency \
                  chains between claims, iris_budget to check context budget status and \
                  get eviction recommendations, iris_compress to generate compressed \
-                 summaries of content you want to evict, and iris_evicted to signal when \
-                 content has been dropped from your context window."
+                 summaries of content you want to evict, iris_evicted to signal when \
+                 content has been dropped from your context window, and iris_fetch to \
+                 fetch web content by URL and add it to the corpus."
                     .to_string(),
             ),
         }
@@ -978,6 +1023,111 @@ impl IrisServer {
         .instrument(span)
         .await
     }
+
+    /// Fetch web content by URL and add it to the indexed corpus.
+    ///
+    /// Automatically selects the best strategy: tries `llms-full.txt` and
+    /// `llms.txt` first, then falls back to direct page fetch. Fetched
+    /// content is parsed, indexed with embeddings, and immediately
+    /// searchable via `iris_survey`.
+    #[tool(
+        name = "iris_fetch",
+        description = "Fetch web content by URL and add it to the indexed corpus. Tries llms.txt strategies first, then falls back to direct page fetch. Content is immediately searchable after fetching."
+    )]
+    async fn fetch(
+        &self,
+        #[tool(aggr)] params: FetchParams,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_fetch", url = %params.url);
+
+        async {
+            debug!(
+                url = %params.url,
+                depth = params.depth,
+                max_pages = params.max_pages,
+                path_filter = ?params.path_filter,
+                "iris_fetch request"
+            );
+
+            let Some(ref web_fetcher) = self.web_fetcher else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_fetch is not available: web fetcher not configured. \
+                     Start iris with a data directory to enable web fetching."
+                        .to_string(),
+                )]));
+            };
+
+            let Some(ref embedder) = self.embedder else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_fetch is not available: embedder not configured.".to_string(),
+                )]));
+            };
+
+            let Some(ref index) = self.index else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_fetch is not available: vector index not configured.".to_string(),
+                )]));
+            };
+
+            let Some(ref storage) = self.storage else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_fetch is not available: storage not configured.".to_string(),
+                )]));
+            };
+
+            match web_fetcher
+                .fetch_and_ingest_with_embeddings(
+                    &params.url,
+                    &self.ingestion_pipeline,
+                    storage.as_ref(),
+                    embedder.as_ref(),
+                    index.as_ref(),
+                )
+                .await
+            {
+                Ok(result) => {
+                    debug!(
+                        url = %params.url,
+                        pages = result.pages_fetched(),
+                        sections = result.sections_indexed,
+                        claims = result.claims_extracted,
+                        tokens = result.tokens_added,
+                        strategy = %result.strategy,
+                        "iris_fetch success"
+                    );
+
+                    let budget = self.budget.lock().await;
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+
+                    let response = self
+                        .build_response(
+                            FetchResponse {
+                                pages_fetched: result.pages_fetched(),
+                                sections_indexed: result.sections_indexed,
+                                claims_extracted: result.claims_extracted,
+                                tokens_added: result.tokens_added,
+                                strategy_used: result.strategy.to_string(),
+                            },
+                            budget_status,
+                        )
+                        .await;
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, url = %params.url, "iris_fetch failed");
+                    Ok(CallToolResult::error(vec![Content::text(format!(
+                        "fetch failed: {e}"
+                    ))]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
 }
 
 impl IrisServer {
@@ -1006,6 +1156,10 @@ impl IrisServer {
             prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
             storage: None,
             analytics: None,
+            web_fetcher: None,
+            ingestion_pipeline: Arc::new(IngestionPipeline::new()),
+            embedder: None,
+            index: None,
         }
     }
 
@@ -1048,7 +1202,28 @@ impl IrisServer {
             prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
             storage: Some(storage),
             analytics: Some(analytics),
+            web_fetcher: None,
+            ingestion_pipeline: Arc::new(IngestionPipeline::new()),
+            embedder: None,
+            index: None,
         }
+    }
+
+    /// Enable web fetching on this server.
+    ///
+    /// Sets up the `WebFetcher`, embedder, and vector index needed for the
+    /// `iris_fetch` tool. Without calling this, `iris_fetch` returns an error.
+    #[must_use]
+    pub fn with_web_fetcher(
+        mut self,
+        web_fetcher: WebFetcher,
+        embedder: Arc<dyn Embedder>,
+        index: Arc<dyn VectorIndex>,
+    ) -> Self {
+        self.web_fetcher = Some(Arc::new(web_fetcher));
+        self.embedder = Some(embedder);
+        self.index = Some(index);
+        self
     }
 
     /// Access the session `Arc` for external use (e.g. coherence task).

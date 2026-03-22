@@ -146,6 +146,9 @@ async fn main() -> Result<()> {
     )
     .await;
 
+    // Enable web fetching for iris_fetch tool.
+    let server = enable_web_fetcher(server, &corpus_dir, &embedder, &index)?;
+
     // Spawn coherence file watcher if corpus paths were provided.
     let _coherence_handle = if corpus_paths.is_empty() {
         None
@@ -306,4 +309,23 @@ fn corpus_data_dir_name(corpus_paths: &[PathBuf]) -> String {
 /// Convert elapsed duration to milliseconds, saturating at `u64::MAX`.
 fn elapsed_millis(start: std::time::Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Enable web fetching on the server by constructing an `HttpClient` and `WebFetcher`.
+fn enable_web_fetcher(
+    server: iris_mcp::server::IrisServer,
+    corpus_dir: &Path,
+    embedder: &Arc<dyn iris_core::embedding::Embedder>,
+    index: &Arc<dyn iris_core::index::VectorIndex>,
+) -> Result<iris_mcp::server::IrisServer> {
+    let web_cache_dir = corpus_dir.join("web");
+    let http_client = iris_core::web::HttpClient::with_defaults()
+        .into_diagnostic()
+        .wrap_err("failed to create HTTP client for web fetcher")?;
+    let web_fetcher = iris_core::web::fetcher::WebFetcher::new(
+        http_client,
+        &web_cache_dir,
+        iris_core::web::fetcher::WebFetcherConfig::default(),
+    );
+    Ok(server.with_web_fetcher(web_fetcher, Arc::clone(embedder), Arc::clone(index)))
 }
