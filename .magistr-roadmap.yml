@@ -435,18 +435,18 @@ phases:
 - id: W4
   name: Web Fetch Pipeline
   tagline: 'Smart orchestration: llms.txt → sitemap → single page fetch'
-  status: pending
+  status: done
   problem: Different documentation sites require different fetching strategies — agents shouldn't need to know which one to use
   solution: Build WebFetcher that auto-selects the best strategy (llms.txt first, then sitemap, then direct fetch), converts to markdown, and feeds into the existing ingestion pipeline
   tasks:
   - text: 'Build `WebFetcher` orchestrator that auto-selects strategy: try llms-full.txt → llms.txt link list → sitemap.xml → direct page fetch, returning clean markdown for each discovered page'
-    checked: false
+    checked: true
   - text: Pipe WebFetcher output into existing IngestionPipeline — fetched markdown goes through section extraction, claim extraction, summarization, and embedding generation unchanged
-    checked: false
+    checked: true
   - text: Store fetched web content in `~/.iris/web/<url-hash>/` with metadata file (source URL, fetch timestamp, ETag, content hash, page count)
-    checked: false
+    checked: true
   - text: 'Integration test: fetch a URL via WebFetcher, verify sections and claims appear in storage and are searchable via QueryService'
-    checked: false
+    checked: true
 - id: W5
   name: iris_fetch MCP Tool
   tagline: One tool to fetch any web documentation into the corpus

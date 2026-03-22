@@ -193,6 +193,17 @@ pub enum WebError {
     /// Neither `llms-full.txt` nor `llms.txt` was found for the domain.
     #[error("llms.txt not found for {domain}")]
     LlmsTxtNotFound { domain: String },
+
+    /// Cache I/O error when reading or writing cached web content.
+    #[error("cache I/O error for {path}: {reason}")]
+    CacheIo {
+        path: std::path::PathBuf,
+        reason: String,
+    },
+
+    /// Ingestion of fetched web content failed.
+    #[error("web ingestion failed: {reason}")]
+    IngestionFailed { reason: String },
 }
 
 #[cfg(test)]

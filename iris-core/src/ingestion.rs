@@ -352,6 +352,268 @@ impl IngestionPipeline {
             claims: claim_count,
         })
     }
+
+    /// Ingest raw content directly (without file I/O).
+    ///
+    /// Useful for web-fetched content that already exists as a string. The
+    /// `source_path` is a virtual path used as the document ID and for section
+    /// ID generation (e.g. `"web://example.com/docs/guide"`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IngestionError`] if parsing or storage fails.
+    #[instrument(skip(self, content, storage), fields(source = %source_path))]
+    pub async fn ingest_content<S: Storage>(
+        &self,
+        source_path: &str,
+        content: &str,
+        parser_kind: ParserKind,
+        storage: &S,
+    ) -> Result<ContentIngestionStats, IngestionError> {
+        let hash = compute_sha256(content);
+
+        // Check if content is unchanged
+        let existing_hash = storage
+            .get_file_hash(source_path)
+            .await
+            .map_err(IngestionError::from)?;
+
+        if let Some(ref existing) = existing_hash {
+            if existing.content_hash == hash {
+                return Ok(ContentIngestionStats {
+                    sections: 0,
+                    claims: 0,
+                    skipped: true,
+                });
+            }
+        }
+
+        // Parse the content
+        let parser = create_parser(parser_kind);
+        let mut doc = parser.parse(Path::new(source_path), content)?;
+
+        // Handle paragraph-boundary splitting for large headingless sections
+        doc.sections = doc
+            .sections
+            .into_iter()
+            .flat_map(|s| split_large_headingless_section(s, source_path))
+            .collect();
+
+        // Coalesce small adjacent sibling sections
+        doc.sections = coalesce_small_sections(doc.sections, self.min_section_tokens);
+
+        // Enrich sections with claims and summaries
+        let (section_count, claim_count) = enrich_sections(
+            &mut doc.sections,
+            &self.claim_extractor,
+            &self.summary_generator,
+        );
+
+        // Generate document-level summary
+        let all_text = collect_all_text(&doc.sections);
+        if !all_text.is_empty() {
+            doc.summary = Some(
+                self.summary_generator
+                    .summarize(&all_text, DOC_SUMMARY_MAX_SENTENCES),
+            );
+        }
+
+        // Delete existing document if re-indexing
+        if existing_hash.is_some() {
+            storage
+                .delete_document(&doc.id)
+                .await
+                .map_err(IngestionError::from)?;
+        }
+
+        // Store the enriched document
+        storage
+            .insert_document(&doc)
+            .await
+            .map_err(IngestionError::from)?;
+
+        // Detect and store claim relationships
+        let all_claims = collect_all_claims(&doc.sections);
+        if all_claims.len() >= 2 {
+            let relationships = self.relationship_detector.detect(&all_claims);
+            if !relationships.is_empty() {
+                debug!(
+                    source = %source_path,
+                    count = relationships.len(),
+                    "detected claim relationships"
+                );
+                storage
+                    .insert_claim_relationships(&relationships)
+                    .await
+                    .map_err(IngestionError::from)?;
+            }
+        }
+
+        // Update file hash
+        storage
+            .upsert_file_hash(&FileHashRecord {
+                path: source_path.to_string(),
+                content_hash: hash,
+            })
+            .await
+            .map_err(IngestionError::from)?;
+
+        info!(source = %source_path, section_count, claim_count, "ingested content");
+
+        Ok(ContentIngestionStats {
+            sections: section_count,
+            claims: claim_count,
+            skipped: false,
+        })
+    }
+
+    /// Ingest raw content with multi-resolution embedding.
+    ///
+    /// Like [`ingest_content`](Self::ingest_content) but also embeds summaries,
+    /// sections, and claims into the vector index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IngestionError`] if parsing, storage, or embedding fails.
+    #[instrument(skip(self, content, storage, embedder, index), fields(source = %source_path))]
+    pub async fn ingest_content_with_embeddings<S, E, I>(
+        &self,
+        source_path: &str,
+        content: &str,
+        parser_kind: ParserKind,
+        storage: &S,
+        embedder: &E,
+        index: &I,
+    ) -> Result<ContentIngestionStats, IngestionError>
+    where
+        S: Storage + ?Sized,
+        E: Embedder + ?Sized,
+        I: VectorIndex + ?Sized,
+    {
+        let hash = compute_sha256(content);
+
+        // Check if content is unchanged
+        let existing_hash = storage
+            .get_file_hash(source_path)
+            .await
+            .map_err(IngestionError::from)?;
+
+        if let Some(ref existing) = existing_hash {
+            if existing.content_hash == hash {
+                return Ok(ContentIngestionStats {
+                    sections: 0,
+                    claims: 0,
+                    skipped: true,
+                });
+            }
+        }
+
+        // Parse the content
+        let parser = create_parser(parser_kind);
+        let mut doc = parser.parse(Path::new(source_path), content)?;
+
+        // Handle paragraph-boundary splitting
+        doc.sections = doc
+            .sections
+            .into_iter()
+            .flat_map(|s| split_large_headingless_section(s, source_path))
+            .collect();
+
+        // Coalesce small adjacent sibling sections
+        doc.sections = coalesce_small_sections(doc.sections, self.min_section_tokens);
+
+        // Enrich sections with claims and summaries
+        let (section_count, claim_count) = enrich_sections(
+            &mut doc.sections,
+            &self.claim_extractor,
+            &self.summary_generator,
+        );
+
+        // Generate document-level summary
+        let all_text = collect_all_text(&doc.sections);
+        if !all_text.is_empty() {
+            doc.summary = Some(
+                self.summary_generator
+                    .summarize(&all_text, DOC_SUMMARY_MAX_SENTENCES),
+            );
+        }
+
+        // Delete old document + embeddings if re-indexing
+        if existing_hash.is_some() {
+            delete_document_vectors(&doc.id, storage, index).await?;
+            storage
+                .delete_document(&doc.id)
+                .await
+                .map_err(IngestionError::from)?;
+        }
+
+        // Store the enriched document
+        storage
+            .insert_document(&doc)
+            .await
+            .map_err(IngestionError::from)?;
+
+        // Embed all resolution levels
+        embed_document(&doc, embedder, index)?;
+
+        // Detect and store claim relationships
+        let all_claims = collect_all_claims(&doc.sections);
+        if all_claims.len() >= 2 {
+            let relationships = self.relationship_detector.detect(&all_claims);
+            if !relationships.is_empty() {
+                debug!(
+                    source = %source_path,
+                    count = relationships.len(),
+                    "detected claim relationships"
+                );
+                storage
+                    .insert_claim_relationships(&relationships)
+                    .await
+                    .map_err(IngestionError::from)?;
+            }
+        }
+
+        // Update file hash
+        storage
+            .upsert_file_hash(&FileHashRecord {
+                path: source_path.to_string(),
+                content_hash: hash,
+            })
+            .await
+            .map_err(IngestionError::from)?;
+
+        info!(source = %source_path, section_count, claim_count, "ingested content with embeddings");
+
+        Ok(ContentIngestionStats {
+            sections: section_count,
+            claims: claim_count,
+            skipped: false,
+        })
+    }
+}
+
+/// Result of ingesting raw content via [`IngestionPipeline::ingest_content`].
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::ingestion::ContentIngestionStats;
+///
+/// let stats = ContentIngestionStats {
+///     sections: 5,
+///     claims: 12,
+///     skipped: false,
+/// };
+/// assert!(!stats.skipped);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentIngestionStats {
+    /// Number of sections extracted.
+    pub sections: usize,
+    /// Number of claims extracted.
+    pub claims: usize,
+    /// Whether the content was unchanged and skipped.
+    pub skipped: bool,
 }
 
 impl IngestionPipeline {
