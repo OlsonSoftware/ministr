@@ -1,0 +1,112 @@
+{
+  "description": "Ground-truth retrieval annotations for the iris evaluation corpus. Each query maps to a list of expected results with relevance grades (3=highly relevant, 2=relevant, 1=marginally relevant).",
+  "queries": [
+    {
+      "query": "How does JWT token authentication work?",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/token-management", "relevance": 3 },
+        { "section_id": "authentication.md#authentication-system/overview", "relevance": 2 },
+        { "section_id": "api-reference.html#rest-api-reference/authentication-endpoints", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "What happens after too many failed login attempts?",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/rate-limiting", "relevance": 3 },
+        { "section_id": "api-reference.html#rest-api-reference/authentication-endpoints", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "How are database migrations managed?",
+      "expected": [
+        { "section_id": "database-design.md#database-design/migration-strategy", "relevance": 3 },
+        { "section_id": "database-design.md#database-design/schema-conventions", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "SQL injection prevention",
+      "expected": [
+        { "section_id": "database-design.md#database-design/query-patterns", "relevance": 3 },
+        { "section_id": "error-handling.md#error-handling-guide/error-types/application-errors", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "How does the connection pool work?",
+      "expected": [
+        { "section_id": "database-design.md#database-design/connection-pooling", "relevance": 3 },
+        { "section_id": "deployment.md#deployment-guide/monitoring", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "What error codes does the API return?",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/error-types/application-errors", "relevance": 3 },
+        { "section_id": "error-handling.md#error-handling-guide/error-types", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "How do retries work for transient failures?",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/retry-policy", "relevance": 3 },
+        { "section_id": "error-handling.md#error-handling-guide/error-types/infrastructure-errors", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "Kubernetes pod resource limits and probes",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/kubernetes-deployment/pod-configuration", "relevance": 3 },
+        { "section_id": "api-reference.html#rest-api-reference/health-endpoints", "relevance": 2 },
+        { "section_id": "deployment.md#deployment-guide/kubernetes-deployment/horizontal-pod-autoscaler", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "How does rolling deployment and canary work?",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/rolling-updates", "relevance": 3 },
+        { "section_id": "deployment.md#deployment-guide/kubernetes-deployment/horizontal-pod-autoscaler", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "What testing approaches are used?",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/test-pyramid", "relevance": 3 },
+        { "section_id": "testing-strategy.md#testing-strategy/test-pyramid/unit-tests", "relevance": 2 },
+        { "section_id": "testing-strategy.md#testing-strategy/test-pyramid/integration-tests", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "How are benchmarks and performance tests run?",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/performance-testing", "relevance": 3 },
+        { "section_id": "testing-strategy.md#testing-strategy/continuous-integration", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "CRUD operations on resources",
+      "expected": [
+        { "section_id": "api-reference.html#rest-api-reference/resource-endpoints", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "How are application secrets and configuration loaded?",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/configuration-management", "relevance": 3 },
+        { "section_id": "deployment.md#deployment-guide/container-build", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "audit logging and observability for errors",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/audit-logging", "relevance": 3 },
+        { "section_id": "error-handling.md#error-handling-guide/observability", "relevance": 3 },
+        { "section_id": "deployment.md#deployment-guide/monitoring", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "property based testing and proptest",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/property-based-testing", "relevance": 3 }
+      ]
+    }
+  ]
+}

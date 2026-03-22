@@ -165,8 +165,8 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Feed cross-session data into prefetch — prioritize frequently-accessed and co-accessed sections for pre-warming
 - [x] Build mdBook documentation site — architecture overview, getting started guide, tool reference, configuration
 - [x] Write doc tests for all public APIs in iris-core — non-trivial examples with # Examples sections
-- [ ] Create reproducible benchmark suite — ingestion throughput, search latency, prefetch hit rate across corpus sizes
-- [ ] Build sample evaluation corpus — curated set of Markdown/HTML/PDF docs with ground-truth retrieval annotations
+- [x] Create reproducible benchmark suite — ingestion throughput, search latency, prefetch hit rate across corpus sizes
+- [x] Build sample evaluation corpus — curated set of Markdown/HTML/PDF docs with ground-truth retrieval annotations
 - [ ] Set up cross-compilation CI — pre-built binaries for Linux x86_64, Linux aarch64, macOS Apple Silicon, Windows
 - [ ] Add installation methods — cargo install, homebrew tap, GitHub release binaries with checksums
 - [x] Write MCP client configuration examples — Claude Code, Cursor, and generic JSON-RPC client setup guides

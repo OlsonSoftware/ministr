@@ -42,3 +42,11 @@ harness = false
 [[bench]]
 name = "embedding"
 harness = false
+
+[[bench]]
+name = "ingestion"
+harness = false
+
+[[bench]]
+name = "prefetch"
+harness = false

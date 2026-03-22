@@ -40,6 +40,18 @@ bench:
 bench-embedding:
     cargo bench --bench embedding -p iris-core
 
+# Run ingestion pipeline benchmarks (no model download required)
+bench-ingestion:
+    cargo bench --bench ingestion -p iris-core
+
+# Run prefetch cache benchmarks (no model download required)
+bench-prefetch:
+    cargo bench --bench prefetch -p iris-core
+
+# Run evaluation retrieval test with metrics output
+bench-eval:
+    cargo test --test eval_retrieval -p iris-core -- --nocapture
+
 # Run all benchmarks
 bench-all:
     cargo bench -p iris-core
