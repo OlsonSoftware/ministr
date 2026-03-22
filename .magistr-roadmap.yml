@@ -820,12 +820,12 @@ phases:
 - id: M1
   name: MCP Protocol Evolution
   tagline: Adopt MCP 2025 spec features for richer agent interaction
-  status: pending
+  status: in_progress
   problem: iris uses stdio-only transport with no push notifications, resource subscriptions, or async task support
   solution: Add progress notifications, Streamable HTTP transport, resource subscriptions for coherence, async tasks for long ops
   tasks:
   - text: Send progress notifications during background ingestion (notifications/progress with file count)
-    checked: false
+    checked: true
   - text: Add Streamable HTTP (SSE) transport alongside stdio via rmcp for remote/multi-client deployments
     checked: false
   - text: Implement resource subscriptions for iris://status — push coherence alerts when files change
