@@ -38,6 +38,10 @@ rusqlite_migration = "2"
 # Markdown parsing
 comrak = "0.36"
 
+# HTTP client
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2"] }
+url = "2"
+
 # HTML parsing
 scraper = "0.26"
 
