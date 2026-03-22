@@ -375,9 +375,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] New MCP tool `iris_fetch(url, depth?, max_pages?, path_filter?)` in iris-mcp — single page mode (default) fetches one URL; crawl mode follows same-domain links up to depth/max_pages limits
-- [ ] iris_fetch returns structured response: pages_fetched, sections_indexed, claims_extracted, tokens_added, strategy_used (llms_txt/sitemap/crawl/single), plus budget_status
-- [ ] E2E test: call iris_fetch on a documentation URL, then verify iris_survey finds the fetched content and iris_toc lists the new documents
+- [x] New MCP tool `iris_fetch(url, depth?, max_pages?, path_filter?)` in iris-mcp — single page mode (default) fetches one URL; crawl mode follows same-domain links up to depth/max_pages limits
+- [x] iris_fetch returns structured response: pages_fetched, sections_indexed, claims_extracted, tokens_added, strategy_used (llms_txt/sitemap/crawl/single), plus budget_status
+- [x] E2E test: call iris_fetch on a documentation URL, then verify iris_survey finds the fetched content and iris_toc lists the new documents
 
 ---
 

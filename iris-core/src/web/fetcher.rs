@@ -16,6 +16,7 @@ use crate::llms_txt::{LlmsTxtContent, fetch_llms_txt};
 use crate::parser::ParserKind;
 use crate::parser::html_to_md::html_to_markdown;
 use crate::storage::traits::Storage;
+use crate::token::count_tokens;
 use crate::web::cache::{WebCache, WebPageMeta, url_hash};
 use crate::web::{HttpClient, normalize_url};
 
@@ -70,6 +71,7 @@ pub struct FetchedPage {
 ///     strategy: FetchStrategy::DirectFetch,
 ///     sections_indexed: 0,
 ///     claims_extracted: 0,
+///     tokens_added: 0,
 /// };
 /// assert_eq!(result.pages_fetched(), 0);
 /// ```
@@ -83,6 +85,8 @@ pub struct FetchResult {
     pub sections_indexed: usize,
     /// Total claims extracted across all pages.
     pub claims_extracted: usize,
+    /// Total tokens added to the corpus from fetched content.
+    pub tokens_added: usize,
 }
 
 impl FetchResult {
@@ -228,6 +232,7 @@ impl WebFetcher {
             strategy: FetchStrategy::DirectFetch,
             sections_indexed: 0,
             claims_extracted: 0,
+            tokens_added: 0,
         })
     }
 
@@ -255,6 +260,7 @@ impl WebFetcher {
                     strategy: FetchStrategy::LlmsFullTxt,
                     sections_indexed: 0,
                     claims_extracted: 0,
+                    tokens_added: 0,
                 })
             }
             LlmsTxtContent::Parsed(llms_txt) => {
@@ -299,6 +305,7 @@ impl WebFetcher {
                     strategy: FetchStrategy::LlmsTxtLinks,
                     sections_indexed: 0,
                     claims_extracted: 0,
+                    tokens_added: 0,
                 })
             }
         }
@@ -359,9 +366,11 @@ impl WebFetcher {
 
         let mut total_sections = 0;
         let mut total_claims = 0;
+        let mut total_tokens = 0;
 
         for page in &result.pages {
             let source_path = web_source_path(&page.url);
+            total_tokens += count_tokens(&page.markdown);
             let stats = pipeline
                 .ingest_content(&source_path, &page.markdown, ParserKind::Markdown, storage)
                 .await
@@ -377,6 +386,7 @@ impl WebFetcher {
 
         result.sections_indexed = total_sections;
         result.claims_extracted = total_claims;
+        result.tokens_added = total_tokens;
 
         info!(
             url = %url,
@@ -385,6 +395,75 @@ impl WebFetcher {
             claims = total_claims,
             strategy = %result.strategy,
             "fetch and ingest complete"
+        );
+
+        Ok(result)
+    }
+
+    /// Fetch content and ingest it into storage with embeddings.
+    ///
+    /// Like [`fetch_and_ingest`](Self::fetch_and_ingest), but also generates
+    /// embeddings and inserts them into the vector index so the content is
+    /// immediately searchable via `iris_survey`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WebError`] if fetching fails, or [`WebError::IngestionFailed`]
+    /// if ingestion or embedding fails.
+    #[instrument(skip(self, pipeline, storage, embedder, index), fields(url = %url))]
+    pub async fn fetch_and_ingest_with_embeddings<S, E, I>(
+        &self,
+        url: &str,
+        pipeline: &IngestionPipeline,
+        storage: &S,
+        embedder: &E,
+        index: &I,
+    ) -> Result<FetchResult, WebError>
+    where
+        S: Storage + ?Sized,
+        E: crate::embedding::Embedder + ?Sized,
+        I: crate::index::VectorIndex + ?Sized,
+    {
+        let mut result = self.fetch(url).await?;
+
+        let mut total_sections = 0;
+        let mut total_claims = 0;
+        let mut total_tokens = 0;
+
+        for page in &result.pages {
+            let source_path = web_source_path(&page.url);
+            total_tokens += count_tokens(&page.markdown);
+            let stats = pipeline
+                .ingest_content_with_embeddings(
+                    &source_path,
+                    &page.markdown,
+                    ParserKind::Markdown,
+                    storage,
+                    embedder,
+                    index,
+                )
+                .await
+                .map_err(|e| WebError::IngestionFailed {
+                    reason: e.to_string(),
+                })?;
+
+            if !stats.skipped {
+                total_sections += stats.sections;
+                total_claims += stats.claims;
+            }
+        }
+
+        result.sections_indexed = total_sections;
+        result.claims_extracted = total_claims;
+        result.tokens_added = total_tokens;
+
+        info!(
+            url = %url,
+            pages = result.pages_fetched(),
+            sections = total_sections,
+            claims = total_claims,
+            strategy = %result.strategy,
+            "fetch and ingest with embeddings complete"
         );
 
         Ok(result)
@@ -489,6 +568,7 @@ mod tests {
             strategy: FetchStrategy::LlmsTxtLinks,
             sections_indexed: 0,
             claims_extracted: 0,
+            tokens_added: 0,
         };
         assert_eq!(result.pages_fetched(), 2);
     }

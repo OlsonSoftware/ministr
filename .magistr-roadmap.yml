@@ -450,16 +450,16 @@ phases:
 - id: W5
   name: iris_fetch MCP Tool
   tagline: One tool to fetch any web documentation into the corpus
-  status: pending
+  status: done
   problem: Agents need a simple, single-command way to say 'index this documentation site' without managing fetch strategies or ingestion details
   solution: New iris_fetch MCP tool that accepts a URL and optional crawl parameters, fetches and indexes content, and returns ingestion stats — content becomes immediately searchable via iris_survey
   tasks:
   - text: New MCP tool `iris_fetch(url, depth?, max_pages?, path_filter?)` in iris-mcp — single page mode (default) fetches one URL; crawl mode follows same-domain links up to depth/max_pages limits
-    checked: false
+    checked: true
   - text: 'iris_fetch returns structured response: pages_fetched, sections_indexed, claims_extracted, tokens_added, strategy_used (llms_txt/sitemap/crawl/single), plus budget_status'
-    checked: false
+    checked: true
   - text: 'E2E test: call iris_fetch on a documentation URL, then verify iris_survey finds the fetched content and iris_toc lists the new documents'
-    checked: false
+    checked: true
 - id: W6
   name: Sitemap Crawling
   tagline: Structured URL discovery via sitemap.xml

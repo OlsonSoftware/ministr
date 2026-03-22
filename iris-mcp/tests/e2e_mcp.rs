@@ -4,13 +4,14 @@
 //! the MCP `call_tool` interface with a real `SQLite` database and HNSW
 //! index (using a deterministic mock embedder). They verify:
 //!
-//! - Tool listing returns all six iris tools
+//! - Tool listing returns all iris tools including `iris_fetch`
 //! - Survey returns ranked, non-empty results across resolutions
 //! - Read retrieves full section content with heading paths
 //! - Extract returns atomic claims, optionally scored by relevance
 //! - Session deduplication filters already-delivered content
 //! - Budget accumulates across tool calls
 //! - Error responses are user-friendly for nonexistent sections
+//! - `iris_fetch` fetches web content and makes it searchable
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -315,6 +316,10 @@ async fn list_tools_returns_all_iris_tools() {
     assert!(
         tool_names.contains(&"iris_toc"),
         "should list iris_toc, got: {tool_names:?}"
+    );
+    assert!(
+        tool_names.contains(&"iris_fetch"),
+        "should list iris_fetch, got: {tool_names:?}"
     );
 }
 
@@ -2264,4 +2269,231 @@ async fn e2e_multi_path_survey_finds_content_from_directory() {
         text.contains("guide.md") || text.contains("Getting Started") || text.contains("cargo"),
         "survey should find content from docs/guide.md, got:\n{text}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// iris_fetch tests
+// ---------------------------------------------------------------------------
+
+/// Start a minimal HTTP server that serves test HTML content.
+/// Returns the server address (e.g. "127.0.0.1:12345") and a handle to shut it down.
+async fn start_test_http_server(html: &str) -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let addr_str = addr.to_string();
+
+    let response_body = html.to_string();
+    let handle = tokio::spawn(async move {
+        // Accept connections until the handle is dropped
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let body = response_body.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 4096];
+                // Read the request (we don't parse it, just consume it)
+                let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            });
+        }
+    });
+
+    (addr_str, handle)
+}
+
+/// Set up an `IrisServer` with web fetcher enabled for testing `iris_fetch`.
+async fn setup_server_with_web_fetcher(
+    web_cache_dir: &std::path::Path,
+) -> (IrisServer, Arc<dyn Embedder>, Arc<dyn VectorIndex>) {
+    let dim = 16;
+    let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+    let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage = Arc::new(storage);
+
+    let service = Arc::new(QueryService::new(
+        (*storage).clone(),
+        Arc::clone(&embedder),
+        Arc::clone(&index),
+    ));
+
+    let budget_config = BudgetConfig::default();
+    let server = IrisServer::with_persistence(
+        service,
+        budget_config,
+        Arc::clone(&storage),
+        Some("test-fetch-session".to_string()),
+    )
+    .await;
+
+    let http_client = iris_core::web::HttpClient::with_defaults().unwrap();
+    let web_fetcher = iris_core::web::fetcher::WebFetcher::new(
+        http_client,
+        web_cache_dir,
+        iris_core::web::fetcher::WebFetcherConfig::default(),
+    );
+
+    let server = server.with_web_fetcher(web_fetcher, Arc::clone(&embedder), Arc::clone(&index));
+
+    (server, embedder, index)
+}
+
+#[tokio::test]
+async fn iris_fetch_not_configured_returns_error() {
+    let server = setup_server().await;
+    let result = call_tool(
+        &server,
+        "iris_fetch",
+        json!({"url": "https://example.com/docs/"}),
+    )
+    .await;
+
+    assert!(
+        result.is_error == Some(true),
+        "iris_fetch should return error when not configured"
+    );
+
+    let text = extract_text(&result.content);
+    assert!(
+        text.contains("not available"),
+        "error should mention not available, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn iris_fetch_lists_in_tools() {
+    let server = setup_server().await;
+    let result = server
+        .list_tools(PaginatedRequestParam::default(), test_context())
+        .await
+        .unwrap();
+
+    let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        tool_names.contains(&"iris_fetch"),
+        "should list iris_fetch, got: {tool_names:?}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_iris_fetch_then_survey_and_toc() {
+    let test_html = r"
+    <html><head><title>Widget API Reference</title></head>
+    <body>
+    <h1>Widget API Reference</h1>
+    <p>The Widget API provides endpoints for managing widgets in your application.</p>
+    <h2>Creating Widgets</h2>
+    <p>POST /api/widgets creates a new widget. The request body must include a name field and an optional description field. The maximum name length is 255 characters.</p>
+    <h2>Listing Widgets</h2>
+    <p>GET /api/widgets returns a paginated list of widgets. Use the page and per_page query parameters to control pagination. The default page size is 20 items.</p>
+    <h2>Deleting Widgets</h2>
+    <p>DELETE /api/widgets/:id removes a widget permanently. This operation cannot be undone. Returns 204 No Content on success.</p>
+    </body></html>
+    ";
+
+    let (addr, server_handle) = start_test_http_server(test_html).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (server, _embedder, _index) = setup_server_with_web_fetcher(tmp.path()).await;
+
+    // Step 1: Call iris_fetch to fetch the test page
+    let fetch_result = call_tool(
+        &server,
+        "iris_fetch",
+        json!({"url": format!("http://{addr}/")}),
+    )
+    .await;
+
+    assert!(
+        fetch_result.is_error.is_none() || fetch_result.is_error == Some(false),
+        "iris_fetch should succeed, got: {}",
+        extract_text(&fetch_result.content)
+    );
+
+    let fetch_json: serde_json::Value =
+        serde_json::from_str(extract_text(&fetch_result.content)).unwrap();
+
+    assert_eq!(
+        fetch_json["pages_fetched"].as_u64().unwrap(),
+        1,
+        "should fetch exactly 1 page"
+    );
+    assert!(
+        fetch_json["sections_indexed"].as_u64().unwrap() > 0,
+        "should index sections"
+    );
+    assert_eq!(
+        fetch_json["strategy_used"].as_str().unwrap(),
+        "direct_fetch",
+        "should use direct fetch strategy for plain URL"
+    );
+    assert!(
+        fetch_json["tokens_added"].as_u64().unwrap() > 0,
+        "should report tokens added"
+    );
+    assert!(
+        fetch_json["budget_status"].is_object(),
+        "should include budget_status"
+    );
+
+    // Step 2: Verify iris_survey finds the fetched content
+    let survey_result = call_tool(
+        &server,
+        "iris_survey",
+        json!({"query": "widget API creating widgets endpoints", "top_k": 10}),
+    )
+    .await;
+
+    assert!(
+        survey_result.is_error.is_none() || survey_result.is_error == Some(false),
+        "iris_survey should succeed after fetch"
+    );
+
+    let survey_json: serde_json::Value =
+        serde_json::from_str(extract_text(&survey_result.content)).unwrap();
+    let results = survey_json["results"].as_array().unwrap();
+    assert!(!results.is_empty(), "survey should find fetched content");
+
+    // Verify at least one result references web content
+    let has_web_content = results
+        .iter()
+        .any(|r| r["content_id"].as_str().unwrap_or("").contains("web://"));
+    assert!(
+        has_web_content,
+        "survey results should include web-fetched content, got: {results:?}"
+    );
+
+    // Step 3: Verify iris_toc lists the fetched document
+    let toc_result = call_tool(&server, "iris_toc", json!({})).await;
+
+    assert!(
+        toc_result.is_error.is_none() || toc_result.is_error == Some(false),
+        "iris_toc should succeed"
+    );
+
+    let toc_json: serde_json::Value =
+        serde_json::from_str(extract_text(&toc_result.content)).unwrap();
+    let entries = toc_json["entries"].as_array().unwrap();
+    assert!(!entries.is_empty(), "toc should list fetched documents");
+
+    // Verify the web-fetched document appears in the ToC
+    let has_web_doc = entries
+        .iter()
+        .any(|e| e["document_id"].as_str().unwrap_or("").contains("web://"));
+    assert!(
+        has_web_doc,
+        "toc should include web-fetched document, got: {entries:?}"
+    );
+
+    // Cleanup
+    server_handle.abort();
 }
