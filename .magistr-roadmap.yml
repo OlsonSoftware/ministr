@@ -409,16 +409,16 @@ phases:
 - id: W2
   name: HTML to Markdown
   tagline: Clean markdown extraction from web pages
-  status: pending
+  status: done
   problem: Raw HTML is noisy and token-wasteful — nav bars, footers, ads, and scripts pollute the content
   solution: Build readability-style content extraction that identifies main content and converts to clean markdown, reusing the existing scraper crate
   tasks:
   - text: Build HTML-to-markdown converter using existing `scraper` crate — handle headings (h1-h6), paragraphs, code blocks (pre/code), ordered/unordered lists, tables, links, and images (as alt text)
-    checked: false
+    checked: true
   - text: 'Implement readability-style main content extraction: score DOM nodes by text density, strip nav/header/footer/sidebar/script/style elements, identify the `<main>` or `<article>` content container'
-    checked: false
+    checked: true
   - text: 'Unit tests for HTML→markdown: convert sample documentation pages (with nav bars, sidebars, code samples) to markdown, verify clean output preserves headings, code blocks, and content structure'
-    checked: false
+    checked: true
 - id: W3
   name: llms.txt Support
   tagline: First-class support for the llms.txt documentation standard
