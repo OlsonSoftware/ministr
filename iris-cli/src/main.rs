@@ -23,12 +23,12 @@ use iris_core::session::BudgetConfig;
 #[derive(Parser, Debug)]
 #[command(name = "iris", version, about)]
 struct Cli {
-    /// Paths to corpus directories, individual files, or glob patterns.
+    /// Corpus sources: local paths, `https://` URLs, or `github://` URLs.
     ///
     /// Accepts multiple values via repeated flags:
-    /// `iris --corpus ./docs --corpus ./DESIGN.md --corpus ./CHANGELOG.md`
+    /// `iris --corpus ./docs --corpus https://docs.rs/serde --corpus github://serde-rs/serde`
     #[arg(short, long)]
-    corpus: Vec<PathBuf>,
+    corpus: Vec<String>,
 
     /// Path to config file (default: ~/.iris/config.toml).
     #[arg(short = 'C', long)]
@@ -36,6 +36,7 @@ struct Cli {
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> Result<()> {
     // Parse CLI arguments before initializing anything else.
     let cli = Cli::parse();
@@ -58,7 +59,7 @@ async fn main() -> Result<()> {
         .wrap_err_with(|| format!("failed to load config from {}", config_path.display()))?;
 
     // Merge CLI corpus paths with config corpus_paths (CLI takes precedence).
-    let corpus_paths = if cli.corpus.is_empty() {
+    let corpus_paths: Vec<String> = if cli.corpus.is_empty() {
         config.corpus_paths.clone()
     } else {
         cli.corpus.clone()
@@ -119,9 +120,17 @@ async fn main() -> Result<()> {
         )
     };
 
-    // Run ingestion if corpus paths were provided.
+    // Classify and ingest corpus sources.
     if !corpus_paths.is_empty() {
-        run_ingestion(&corpus_paths, &storage, &*embedder, &*index, &index_dir).await?;
+        run_corpus_ingestion(
+            &corpus_paths,
+            &corpus_dir,
+            &storage,
+            &*embedder,
+            &*index,
+            &index_dir,
+        )
+        .await?;
     }
 
     // Build the query service and start the MCP server.
@@ -152,11 +161,23 @@ async fn main() -> Result<()> {
     // Enable git cloning for iris_clone tool.
     let server = enable_git_fetcher(server, &embedder, &index);
 
-    // Spawn coherence file watcher if corpus paths were provided.
-    let _coherence_handle = if corpus_paths.is_empty() {
+    // Spawn coherence file watcher for local corpus paths only.
+    let local_paths: Vec<PathBuf> = corpus_paths
+        .iter()
+        .filter_map(|p| {
+            if let iris_core::config::CorpusSource::Local(path) =
+                iris_core::config::classify_corpus_path(p)
+            {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let _coherence_handle = if local_paths.is_empty() {
         None
     } else {
-        spawn_coherence(&corpus_paths, &server, &storage, &embedder, &index)?
+        spawn_coherence(&local_paths, &server, &storage, &embedder, &index)?
     };
 
     let mcp_service = server
@@ -234,21 +255,66 @@ fn spawn_coherence(
     Ok(Some(handle))
 }
 
-/// Run the ingestion pipeline against all corpus paths, then persist the index.
-async fn run_ingestion(
-    corpus_paths: &[PathBuf],
+/// Classify corpus paths and run the appropriate ingestion pipeline for each source type.
+///
+/// - Local paths are ingested via the standard file ingestion pipeline.
+/// - Web URLs are fetched and ingested via `WebFetcher`.
+/// - Git URLs are cloned and their content is ingested as local files.
+async fn run_corpus_ingestion(
+    corpus_paths: &[String],
+    corpus_dir: &Path,
     storage: &iris_core::storage::SqliteStorage,
     embedder: &dyn iris_core::embedding::Embedder,
     index: &dyn iris_core::index::VectorIndex,
     index_dir: &std::path::Path,
 ) -> Result<()> {
+    use iris_core::config::{CorpusSource, classify_corpus_path};
+
+    let mut local_paths = Vec::new();
+    let mut web_urls = Vec::new();
+    let mut git_urls = Vec::new();
+
+    for raw in corpus_paths {
+        match classify_corpus_path(raw) {
+            CorpusSource::Local(path) => local_paths.push(path),
+            CorpusSource::Web(url) => web_urls.push(url),
+            CorpusSource::Git(url) => git_urls.push(url),
+        }
+    }
+
     let start = std::time::Instant::now();
     let pipeline = iris_core::ingestion::IngestionPipeline::new();
-    let stats = pipeline
-        .ingest_paths_with_embeddings(corpus_paths, storage, embedder, index)
-        .await
-        .into_diagnostic()
-        .wrap_err("ingestion failed")?;
+
+    // Ingest local paths.
+    if !local_paths.is_empty() {
+        let stats = pipeline
+            .ingest_paths_with_embeddings(&local_paths, storage, embedder, index)
+            .await
+            .into_diagnostic()
+            .wrap_err("local ingestion failed")?;
+
+        tracing::info!(
+            files_discovered = stats.files_discovered,
+            files_indexed = stats.files_indexed,
+            files_skipped = stats.files_skipped,
+            files_removed = stats.files_removed,
+            files_failed = stats.files_failed,
+            sections = stats.total_sections,
+            claims = stats.total_claims,
+            embeddings = stats.total_embeddings,
+            "local ingestion complete"
+        );
+    }
+
+    // Fetch and ingest web URLs.
+    if !web_urls.is_empty() {
+        ingest_web_sources(&web_urls, corpus_dir, &pipeline, storage, embedder, index).await?;
+    }
+
+    // Clone and ingest git repositories.
+    if !git_urls.is_empty() {
+        ingest_git_sources(&git_urls, &pipeline, storage, embedder, index).await;
+    }
 
     index
         .persist(index_dir)
@@ -257,28 +323,108 @@ async fn run_ingestion(
 
     let elapsed_ms = elapsed_millis(start);
     tracing::info!(
-        files_discovered = stats.files_discovered,
-        files_indexed = stats.files_indexed,
-        files_skipped = stats.files_skipped,
-        files_removed = stats.files_removed,
-        files_failed = stats.files_failed,
-        sections = stats.total_sections,
-        claims = stats.total_claims,
-        embeddings = stats.total_embeddings,
+        local = local_paths.len(),
+        web = web_urls.len(),
+        git = git_urls.len(),
         elapsed_ms,
-        "ingestion complete"
+        "corpus ingestion complete"
     );
+
     Ok(())
 }
 
+/// Fetch and ingest web URLs via `WebFetcher`.
+async fn ingest_web_sources(
+    urls: &[String],
+    corpus_dir: &Path,
+    pipeline: &iris_core::ingestion::IngestionPipeline,
+    storage: &iris_core::storage::SqliteStorage,
+    embedder: &dyn iris_core::embedding::Embedder,
+    index: &dyn iris_core::index::VectorIndex,
+) -> Result<()> {
+    let web_cache_dir = corpus_dir.join("web");
+    let http_client = iris_core::web::HttpClient::with_defaults()
+        .into_diagnostic()
+        .wrap_err("failed to create HTTP client for corpus web fetch")?;
+    let web_fetcher = iris_core::web::fetcher::WebFetcher::new(
+        http_client,
+        &web_cache_dir,
+        iris_core::web::fetcher::WebFetcherConfig::default(),
+    );
+
+    for url in urls {
+        match web_fetcher
+            .fetch_and_ingest_with_embeddings(url, pipeline, storage, embedder, index)
+            .await
+        {
+            Ok(result) => {
+                tracing::info!(
+                    url = %url,
+                    pages = result.pages_fetched(),
+                    sections = result.sections_indexed,
+                    strategy = %result.strategy,
+                    "web corpus ingestion complete"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(url = %url, error = %e, "web corpus ingestion failed");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Clone and ingest git repositories via `GitFetcher`.
+async fn ingest_git_sources(
+    urls: &[String],
+    pipeline: &iris_core::ingestion::IngestionPipeline,
+    storage: &iris_core::storage::SqliteStorage,
+    embedder: &dyn iris_core::embedding::Embedder,
+    index: &dyn iris_core::index::VectorIndex,
+) {
+    let git_fetcher = iris_core::git::GitFetcher::with_defaults();
+
+    for url in urls {
+        match git_fetcher.clone(url, None, None).await {
+            Ok(clone_result) => {
+                let clone_paths = vec![clone_result.clone_dir.clone()];
+                match pipeline
+                    .ingest_paths_with_embeddings(&clone_paths, storage, embedder, index)
+                    .await
+                {
+                    Ok(stats) => {
+                        tracing::info!(
+                            url = %url,
+                            clone_dir = %clone_result.clone_dir.display(),
+                            files_indexed = stats.files_indexed,
+                            sections = stats.total_sections,
+                            "git corpus ingestion complete"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            url = %url,
+                            error = %e,
+                            "git corpus file ingestion failed"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(url = %url, error = %e, "git corpus clone failed");
+            }
+        }
+    }
+}
+
 /// Derive a stable session ID from the corpus paths so sessions persist across restarts.
-fn corpus_session_id(corpus_paths: &[PathBuf]) -> Option<String> {
+fn corpus_session_id(corpus_paths: &[String]) -> Option<String> {
     if corpus_paths.is_empty() {
         return None;
     }
     let mut hasher = Sha256::new();
     for p in corpus_paths {
-        hasher.update(p.to_string_lossy().as_bytes());
+        hasher.update(p.as_bytes());
         hasher.update(b"\0");
     }
     let hash = hasher.finalize();
@@ -289,17 +435,20 @@ fn corpus_session_id(corpus_paths: &[PathBuf]) -> Option<String> {
 }
 
 /// Derive a stable data directory name from corpus paths.
-fn corpus_data_dir_name(corpus_paths: &[PathBuf]) -> String {
+fn corpus_data_dir_name(corpus_paths: &[String]) -> String {
     if corpus_paths.len() == 1 {
-        // Single path: use the file/directory name for human readability.
-        if let Some(name) = corpus_paths[0].file_name().and_then(|n| n.to_str()) {
+        // Single path: use the last component for human readability.
+        let p = &corpus_paths[0];
+        let name = p.rsplit('/').find(|s| !s.is_empty()).unwrap_or(p);
+        // Only use the name if it looks like a simple path component (no scheme).
+        if !name.contains("://") && !name.contains(':') {
             return name.to_owned();
         }
     }
-    // Multiple paths or no filename: hash all paths.
+    // Multiple paths or URL: hash all paths.
     let mut hasher = Sha256::new();
     for p in corpus_paths {
-        hasher.update(p.to_string_lossy().as_bytes());
+        hasher.update(p.as_bytes());
         hasher.update(b"\0");
     }
     let hash = hasher.finalize();

@@ -27,11 +27,13 @@ pub struct IrisConfig {
     /// Default context budget in tokens for new sessions.
     pub default_context_budget: usize,
 
-    /// Corpus paths to index (directories, individual files, or glob patterns).
+    /// Corpus paths to index — local paths, `https://` URLs, or `github://` URLs.
     ///
     /// When empty, falls back to the CLI `--corpus` flag. Accepts a mix of
-    /// directory paths, individual file paths, and glob patterns (e.g. `"*.md"`).
-    pub corpus_paths: Vec<PathBuf>,
+    /// directory paths, individual file paths, glob patterns (e.g. `"*.md"`),
+    /// `https://` URLs (routed to `WebFetcher`), and `github://owner/repo`
+    /// or bare git URLs (routed to `GitFetcher`).
+    pub corpus_paths: Vec<String>,
 
     /// Prefetch configuration.
     pub prefetch: PrefetchConfig,
@@ -212,6 +214,90 @@ pub enum ClaimExtractionMode {
     ModelAssisted,
 }
 
+/// A classified corpus source after parsing a raw corpus path string.
+///
+/// Used to dispatch ingestion to the appropriate fetcher at startup.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::config::classify_corpus_path;
+/// use iris_core::config::CorpusSource;
+///
+/// assert!(matches!(classify_corpus_path("./docs"), CorpusSource::Local(_)));
+/// assert!(matches!(classify_corpus_path("https://example.com/docs"), CorpusSource::Web(_)));
+/// assert!(matches!(classify_corpus_path("github://owner/repo"), CorpusSource::Git(_)));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CorpusSource {
+    /// A local filesystem path (directory, file, or glob pattern).
+    Local(PathBuf),
+    /// An `https://` URL to fetch via `WebFetcher`.
+    Web(String),
+    /// A git repository URL to clone via `GitFetcher`.
+    Git(String),
+}
+
+/// Classify a raw corpus path string into a [`CorpusSource`].
+///
+/// Recognition rules:
+/// - `https://` or `http://` → [`CorpusSource::Web`]
+/// - `github://owner/repo` → [`CorpusSource::Git`] (normalized to `https://github.com/owner/repo.git`)
+/// - URLs ending in `.git` → [`CorpusSource::Git`]
+/// - `git@` SSH URLs → [`CorpusSource::Git`]
+/// - Everything else → [`CorpusSource::Local`]
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::config::{classify_corpus_path, CorpusSource};
+///
+/// // HTTPS web URL
+/// let src = classify_corpus_path("https://docs.rs/tokio/latest/tokio/");
+/// assert!(matches!(src, CorpusSource::Web(_)));
+///
+/// // GitHub shorthand
+/// let src = classify_corpus_path("github://tokio-rs/tokio");
+/// assert_eq!(src, CorpusSource::Git("https://github.com/tokio-rs/tokio.git".into()));
+///
+/// // Bare git URL
+/// let src = classify_corpus_path("https://github.com/user/repo.git");
+/// assert!(matches!(src, CorpusSource::Git(_)));
+///
+/// // SSH git URL
+/// let src = classify_corpus_path("git@github.com:user/repo.git");
+/// assert!(matches!(src, CorpusSource::Git(_)));
+///
+/// // Local path
+/// let src = classify_corpus_path("/home/user/docs");
+/// assert!(matches!(src, CorpusSource::Local(_)));
+/// ```
+#[must_use]
+pub fn classify_corpus_path(raw: &str) -> CorpusSource {
+    // github:// shorthand → normalize to HTTPS .git URL
+    if let Some(rest) = raw.strip_prefix("github://") {
+        let rest = rest.trim_end_matches('/');
+        return CorpusSource::Git(format!("https://github.com/{rest}.git"));
+    }
+
+    // SSH git URLs (git@host:owner/repo.git)
+    if raw.starts_with("git@") {
+        return CorpusSource::Git(raw.to_owned());
+    }
+
+    // HTTPS/HTTP URLs
+    if raw.starts_with("https://") || raw.starts_with("http://") {
+        // URLs ending in .git are git repos
+        if raw.to_ascii_lowercase().ends_with(".git") {
+            return CorpusSource::Git(raw.to_owned());
+        }
+        return CorpusSource::Web(raw.to_owned());
+    }
+
+    // Everything else is a local path
+    CorpusSource::Local(PathBuf::from(raw))
+}
+
 /// Returns the default iris data directory (`~/.iris`).
 fn default_data_dir() -> PathBuf {
     dirs::home_dir()
@@ -337,5 +423,100 @@ mod tests {
     fn corpus_config_load_missing_file() {
         let result = CorpusConfig::load(Path::new("/nonexistent/meta.toml"));
         assert!(result.is_err());
+    }
+
+    // -- classify_corpus_path tests --
+
+    #[test]
+    fn classify_local_absolute_path() {
+        let src = classify_corpus_path("/home/user/docs");
+        assert_eq!(src, CorpusSource::Local(PathBuf::from("/home/user/docs")));
+    }
+
+    #[test]
+    fn classify_local_relative_path() {
+        let src = classify_corpus_path("./docs");
+        assert_eq!(src, CorpusSource::Local(PathBuf::from("./docs")));
+    }
+
+    #[test]
+    fn classify_local_glob_pattern() {
+        let src = classify_corpus_path("*.md");
+        assert_eq!(src, CorpusSource::Local(PathBuf::from("*.md")));
+    }
+
+    #[test]
+    fn classify_https_web_url() {
+        let src = classify_corpus_path("https://docs.rs/tokio/latest/tokio/");
+        assert_eq!(
+            src,
+            CorpusSource::Web("https://docs.rs/tokio/latest/tokio/".into())
+        );
+    }
+
+    #[test]
+    fn classify_http_web_url() {
+        let src = classify_corpus_path("http://example.com/api");
+        assert_eq!(src, CorpusSource::Web("http://example.com/api".into()));
+    }
+
+    #[test]
+    fn classify_https_git_url() {
+        let src = classify_corpus_path("https://github.com/user/repo.git");
+        assert_eq!(
+            src,
+            CorpusSource::Git("https://github.com/user/repo.git".into())
+        );
+    }
+
+    #[test]
+    fn classify_ssh_git_url() {
+        let src = classify_corpus_path("git@github.com:user/repo.git");
+        assert_eq!(
+            src,
+            CorpusSource::Git("git@github.com:user/repo.git".into())
+        );
+    }
+
+    #[test]
+    fn classify_github_shorthand() {
+        let src = classify_corpus_path("github://tokio-rs/tokio");
+        assert_eq!(
+            src,
+            CorpusSource::Git("https://github.com/tokio-rs/tokio.git".into())
+        );
+    }
+
+    #[test]
+    fn classify_github_shorthand_trailing_slash() {
+        let src = classify_corpus_path("github://owner/repo/");
+        assert_eq!(
+            src,
+            CorpusSource::Git("https://github.com/owner/repo.git".into())
+        );
+    }
+
+    #[test]
+    fn classify_mixed_corpus_paths_from_toml() {
+        let toml = r#"
+            corpus_paths = [
+                "/home/user/docs",
+                "https://docs.rs/serde",
+                "github://serde-rs/serde",
+                "git@github.com:user/repo.git"
+            ]
+        "#;
+        let config = IrisConfig::from_toml(toml).unwrap();
+        assert_eq!(config.corpus_paths.len(), 4);
+
+        let classified: Vec<CorpusSource> = config
+            .corpus_paths
+            .iter()
+            .map(|p| classify_corpus_path(p))
+            .collect();
+        assert!(matches!(classified[0], CorpusSource::Local(_)));
+        assert!(matches!(classified[1], CorpusSource::Web(_)));
+        assert!(matches!(classified[2], CorpusSource::Git(_)));
+        assert!(matches!(classified[3], CorpusSource::Git(_)));
     }
 }

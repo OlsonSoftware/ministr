@@ -434,10 +434,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] New MCP tool `iris_clone(repo, paths?, branch?)` in iris-mcp — clone via GitFetcher, then run ingestion pipeline on checked-out content
-- [ ] iris_clone returns structured response: files_discovered, files_indexed, sections_extracted, clone_time_ms, index_time_ms, plus budget_status
-- [ ] Skip re-clone if repo is already cached and commit SHA matches remote HEAD — reuse existing index
-- [ ] E2E test: iris_clone a public repo, verify iris_toc shows its documents and iris_survey finds content from the cloned repo
+- [x] New MCP tool `iris_clone(repo, paths?, branch?)` in iris-mcp — clone via GitFetcher, then run ingestion pipeline on checked-out content
+- [x] iris_clone returns structured response: files_discovered, files_indexed, sections_extracted, clone_time_ms, index_time_ms, plus budget_status
+- [x] Skip re-clone if repo is already cached and commit SHA matches remote HEAD — reuse existing index
+- [x] E2E test: iris_clone a public repo, verify iris_toc shows its documents and iris_survey finds content from the cloned repo
 
 ---
 
@@ -449,9 +449,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Extend corpus_paths URL parsing to recognize schemes: `https://` routes to WebFetcher, `github://owner/repo` or bare git URLs route to GitFetcher, plain paths stay as local filesystem
-- [ ] Update startup ingestion in main.rs to iterate corpus_paths, dispatch each to the appropriate fetcher, and merge all results into a unified corpus
-- [ ] Unit test: URL scheme parsing correctly classifies local paths, https URLs, and github:// URLs; integration test with mixed corpus_paths config
+- [x] Extend corpus_paths URL parsing to recognize schemes: `https://` routes to WebFetcher, `github://owner/repo` or bare git URLs route to GitFetcher, plain paths stay as local filesystem
+- [x] Update startup ingestion in main.rs to iterate corpus_paths, dispatch each to the appropriate fetcher, and merge all results into a unified corpus
+- [x] Unit test: URL scheme parsing correctly classifies local paths, https URLs, and github:// URLs; integration test with mixed corpus_paths config
 
 ---
 

@@ -523,16 +523,16 @@ phases:
 - id: R3
   name: Unified Corpus URL Schemes
   tagline: Mix local paths, web URLs, and repo URLs in corpus_paths
-  status: pending
+  status: done
   problem: Currently corpus_paths only accepts local filesystem paths — agents cannot declaratively configure remote sources
   solution: Extend corpus_paths to recognize https:// (web docs) and github:// (repos) schemes, routing each to the appropriate fetcher automatically
   tasks:
   - text: 'Extend corpus_paths URL parsing to recognize schemes: `https://` routes to WebFetcher, `github://owner/repo` or bare git URLs route to GitFetcher, plain paths stay as local filesystem'
-    checked: false
+    checked: true
   - text: Update startup ingestion in main.rs to iterate corpus_paths, dispatch each to the appropriate fetcher, and merge all results into a unified corpus
-    checked: false
+    checked: true
   - text: 'Unit test: URL scheme parsing correctly classifies local paths, https URLs, and github:// URLs; integration test with mixed corpus_paths config'
-    checked: false
+    checked: true
 - id: R4
   name: Remote Source Staleness
   tagline: Detect and refresh stale remote sources automatically
