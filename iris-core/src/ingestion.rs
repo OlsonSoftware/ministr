@@ -1535,13 +1535,16 @@ mod tests {
         assert!(is_supported_file(Path::new("page.htm")));
         assert!(is_supported_file(Path::new("page.xhtml")));
         assert!(is_supported_file(Path::new("manual.pdf")));
+        assert!(is_supported_file(Path::new("code.rs")));
+        assert!(is_supported_file(Path::new("app.ts")));
+        assert!(is_supported_file(Path::new("main.py")));
     }
 
     #[test]
     fn is_supported_file_rejects_others() {
-        assert!(!is_supported_file(Path::new("code.rs")));
         assert!(!is_supported_file(Path::new("data.json")));
         assert!(!is_supported_file(Path::new("readme.txt")));
+        assert!(!is_supported_file(Path::new("image.png")));
     }
 
     #[test]

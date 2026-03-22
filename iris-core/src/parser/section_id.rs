@@ -66,6 +66,35 @@ fn slugify(text: &str) -> String {
     slug
 }
 
+/// Generate a section ID for a code symbol.
+///
+/// Code section IDs use the pattern `{source_path}#{module_path::SymbolName}`,
+/// preserving the original Rust naming (no slugification).
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::parser::generate_code_section_id;
+///
+/// let id = generate_code_section_id("src/config.rs", &["config"], "IrisConfig");
+/// assert_eq!(id, "src/config.rs#config::IrisConfig");
+///
+/// let id = generate_code_section_id("src/lib.rs", &[], "main");
+/// assert_eq!(id, "src/lib.rs#main");
+/// ```
+#[must_use]
+pub fn generate_code_section_id(
+    source_path: &str,
+    module_path: &[&str],
+    symbol_name: &str,
+) -> String {
+    if module_path.is_empty() {
+        return format!("{source_path}#{symbol_name}");
+    }
+    let module = module_path.join("::");
+    format!("{source_path}#{module}::{symbol_name}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +157,29 @@ mod tests {
     #[test]
     fn slugify_numbers() {
         assert_eq!(slugify("Section 3.2"), "section-3-2");
+    }
+
+    #[test]
+    fn code_section_id_with_module() {
+        let id = generate_code_section_id("src/config.rs", &["config"], "IrisConfig");
+        assert_eq!(id, "src/config.rs#config::IrisConfig");
+    }
+
+    #[test]
+    fn code_section_id_nested_module() {
+        let id = generate_code_section_id("src/ingestion.rs", &["ingestion"], "IngestionPipeline");
+        assert_eq!(id, "src/ingestion.rs#ingestion::IngestionPipeline");
+    }
+
+    #[test]
+    fn code_section_id_no_module() {
+        let id = generate_code_section_id("src/lib.rs", &[], "main");
+        assert_eq!(id, "src/lib.rs#main");
+    }
+
+    #[test]
+    fn code_section_id_deep_module_path() {
+        let id = generate_code_section_id("src/a.rs", &["a", "b", "c"], "Foo");
+        assert_eq!(id, "src/a.rs#a::b::c::Foo");
     }
 }
