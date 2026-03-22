@@ -234,9 +234,9 @@ phases:
   - text: Build sample evaluation corpus — curated set of Markdown/HTML/PDF docs with ground-truth retrieval annotations
     checked: true
   - text: Set up cross-compilation CI — pre-built binaries for Linux x86_64, Linux aarch64, macOS Apple Silicon, Windows
-    checked: false
+    checked: true
   - text: Add installation methods — cargo install, homebrew tap, GitHub release binaries with checksums
-    checked: false
+    checked: true
   - text: Write MCP client configuration examples — Claude Code, Cursor, and generic JSON-RPC client setup guides
     checked: true
   - text: Final audit — cargo audit, cargo deny check, full test suite, clippy clean, benchmark baselines recorded

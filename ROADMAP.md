@@ -167,8 +167,8 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Write doc tests for all public APIs in iris-core — non-trivial examples with # Examples sections
 - [x] Create reproducible benchmark suite — ingestion throughput, search latency, prefetch hit rate across corpus sizes
 - [x] Build sample evaluation corpus — curated set of Markdown/HTML/PDF docs with ground-truth retrieval annotations
-- [ ] Set up cross-compilation CI — pre-built binaries for Linux x86_64, Linux aarch64, macOS Apple Silicon, Windows
-- [ ] Add installation methods — cargo install, homebrew tap, GitHub release binaries with checksums
+- [x] Set up cross-compilation CI — pre-built binaries for Linux x86_64, Linux aarch64, macOS Apple Silicon, Windows
+- [x] Add installation methods — cargo install, homebrew tap, GitHub release binaries with checksums
 - [x] Write MCP client configuration examples — Claude Code, Cursor, and generic JSON-RPC client setup guides
 - [x] Final audit — cargo audit, cargo deny check, full test suite, clippy clean, benchmark baselines recorded
 - [ ] Tag and publish v0.1.0 release — changelog, GitHub release with binaries, crates.io publish
