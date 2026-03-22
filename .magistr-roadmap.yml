@@ -211,16 +211,16 @@ phases:
 - id: P7
   name: Polish, Parsers & Release
   tagline: Additional format support, cross-session analytics, docs, benchmarks, and v0.1.0
-  status: pending
+  status: in_progress
   problem: Markdown-only limits usefulness. Without benchmarks and documentation, adoption is blocked. Without cross-session learning, prefetch never improves beyond session-local heuristics
   solution: Add HTML and PDF parsers, cross-session analytics for prefetch tuning, comprehensive mdBook documentation, a reproducible benchmark suite, pre-built binaries for all platforms, and cut the v0.1.0 release
   tasks:
   - text: Implement HtmlParser using scraper + html2text — extract sections from semantic HTML (h1-h6, article, section tags)
-    checked: false
+    checked: true
   - text: Implement PdfParser using pdf-extract or lopdf — page-boundary splitting, heading detection from font size
-    checked: false
+    checked: true
   - text: Add parser auto-detection — select parser based on file extension, with manual override in corpus config
-    checked: false
+    checked: true
   - text: Implement cross-session analytics — track frequently-accessed sections, co-access patterns, per-corpus statistics
     checked: false
   - text: Feed cross-session data into prefetch — prioritize frequently-accessed and co-accessed sections for pre-warming

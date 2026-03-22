@@ -15,7 +15,9 @@ use crate::extraction::claims::{ClaimExtractor, HeuristicClaimExtractor};
 use crate::extraction::relationships::{HeuristicRelationshipDetector, RelationshipDetector};
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
 use crate::index::VectorIndex;
-use crate::parser::{DocumentParser, MarkdownParser};
+use crate::parser::{
+    DocumentParser, MarkdownParser, ParserKind, create_parser, detect_parser_kind,
+};
 use crate::storage::traits::{FileHashRecord, Storage};
 use crate::types::{Claim, DocumentTree, Section, VectorId};
 
@@ -70,7 +72,9 @@ const PARAGRAPH_SPLIT_THRESHOLD: usize = 500;
 /// # }
 /// ```
 pub struct IngestionPipeline {
-    parser: MarkdownParser,
+    /// Optional parser override — when set, all files use this parser.
+    /// When `None`, the parser is auto-detected per file from the extension.
+    parser_override: Option<ParserKind>,
     claim_extractor: HeuristicClaimExtractor,
     summary_generator: ExtractiveSummaryGenerator,
     relationship_detector: HeuristicRelationshipDetector,
@@ -78,14 +82,41 @@ pub struct IngestionPipeline {
 
 impl IngestionPipeline {
     /// Create a new ingestion pipeline with default components.
+    ///
+    /// Uses auto-detection to select the parser based on file extension.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            parser: MarkdownParser::new(),
+            parser_override: None,
             claim_extractor: HeuristicClaimExtractor::new(),
             summary_generator: ExtractiveSummaryGenerator::new(),
             relationship_detector: HeuristicRelationshipDetector::new(),
         }
+    }
+
+    /// Create a new ingestion pipeline with a specific parser override.
+    ///
+    /// When set, all files are parsed with this parser regardless of extension.
+    #[must_use]
+    pub fn with_parser(kind: ParserKind) -> Self {
+        Self {
+            parser_override: Some(kind),
+            claim_extractor: HeuristicClaimExtractor::new(),
+            summary_generator: ExtractiveSummaryGenerator::new(),
+            relationship_detector: HeuristicRelationshipDetector::new(),
+        }
+    }
+
+    /// Select the parser for a given file path.
+    fn parser_for(&self, path: &Path) -> Box<dyn DocumentParser> {
+        if let Some(kind) = self.parser_override {
+            return create_parser(kind);
+        }
+        if let Some(kind) = detect_parser_kind(path) {
+            return create_parser(kind);
+        }
+        // Fallback: use markdown parser (backward compatibility)
+        Box::new(MarkdownParser::new())
     }
 
     /// Ingest all supported files from a directory into storage.
@@ -210,8 +241,9 @@ impl IngestionPipeline {
             }
         }
 
-        // Parse the document
-        let mut doc = self.parser.parse(Path::new(relative_path), &content_str)?;
+        // Parse the document (auto-detect parser from extension or use override)
+        let parser = self.parser_for(Path::new(relative_path));
+        let mut doc = parser.parse(Path::new(relative_path), &content_str)?;
 
         // Handle paragraph-boundary splitting for large headingless sections
         doc.sections = doc
@@ -427,8 +459,9 @@ impl IngestionPipeline {
             }
         }
 
-        // Parse the document
-        let mut doc = self.parser.parse(Path::new(relative_path), &content_str)?;
+        // Parse the document (auto-detect parser from extension or use override)
+        let parser = self.parser_for(Path::new(relative_path));
+        let mut doc = parser.parse(Path::new(relative_path), &content_str)?;
 
         // Handle paragraph-boundary splitting
         doc.sections = doc
@@ -686,7 +719,7 @@ enum FileResult {
     Indexed { sections: usize, claims: usize },
 }
 
-/// Discover all supported files (`.md`) in a directory recursively.
+/// Discover all supported files (`.md`, `.html`, `.htm`, `.pdf`, etc.) in a directory recursively.
 fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
     let mut files = Vec::new();
     collect_files_recursive(dir, &mut files)?;
@@ -720,10 +753,7 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), I
 
 /// Check if a file has a supported extension.
 fn is_supported_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("md" | "markdown" | "mkd" | "mdx")
-    )
+    detect_parser_kind(path).is_some()
 }
 
 /// Compute the SHA-256 hex digest of a string.
@@ -861,11 +891,15 @@ mod tests {
     // --- File discovery ---
 
     #[test]
-    fn is_supported_file_md() {
+    fn is_supported_file_accepts_all_formats() {
         assert!(is_supported_file(Path::new("docs/readme.md")));
         assert!(is_supported_file(Path::new("notes.markdown")));
         assert!(is_supported_file(Path::new("test.mkd")));
         assert!(is_supported_file(Path::new("test.mdx")));
+        assert!(is_supported_file(Path::new("page.html")));
+        assert!(is_supported_file(Path::new("page.htm")));
+        assert!(is_supported_file(Path::new("page.xhtml")));
+        assert!(is_supported_file(Path::new("manual.pdf")));
     }
 
     #[test]

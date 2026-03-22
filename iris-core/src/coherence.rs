@@ -155,9 +155,7 @@ fn normalize_event(event: &Event) -> Option<CoherenceEvent> {
 
 /// Check if a file path is a supported document type for indexing.
 fn is_supported_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| matches!(ext, "md" | "markdown"))
+    crate::parser::detect_parser_kind(path).is_some()
 }
 
 /// The coherence engine processes file change events and updates the index.
@@ -475,18 +473,19 @@ mod tests {
     // --- is_supported_file tests ---
 
     #[test]
-    fn supported_markdown_extensions() {
+    fn supported_extensions() {
         assert!(is_supported_file(Path::new("doc.md")));
         assert!(is_supported_file(Path::new("doc.markdown")));
         assert!(is_supported_file(Path::new("/path/to/file.md")));
+        assert!(is_supported_file(Path::new("page.html")));
+        assert!(is_supported_file(Path::new("page.htm")));
+        assert!(is_supported_file(Path::new("manual.pdf")));
     }
 
     #[test]
     fn unsupported_extensions() {
         assert!(!is_supported_file(Path::new("file.txt")));
         assert!(!is_supported_file(Path::new("file.rs")));
-        assert!(!is_supported_file(Path::new("file.html")));
-        assert!(!is_supported_file(Path::new("file.pdf")));
         assert!(!is_supported_file(Path::new("no_extension")));
     }
 

@@ -10,9 +10,9 @@ use comrak::nodes::NodeValue;
 use comrak::{Arena, Options, parse_document};
 
 use super::DocumentParser;
-use super::section_id::generate_section_id;
+use super::common::{RawSection, build_section_tree};
 use crate::error::ParseError;
-use crate::types::{ContentId, DocumentTree, Section, SectionId, StructuralNode};
+use crate::types::{ContentId, DocumentTree, StructuralNode};
 
 /// Markdown document parser backed by comrak.
 ///
@@ -64,7 +64,7 @@ impl DocumentParser for MarkdownParser {
         let arena = Arena::new();
         let root = parse_document(&arena, content, &self.options);
 
-        let mut collector = SectionCollector::new(&source_path);
+        let mut collector = SectionCollector::new();
         collector.walk(root);
         collector.finalize();
 
@@ -75,7 +75,7 @@ impl DocumentParser for MarkdownParser {
         });
 
         let doc_id = ContentId(source_path.clone());
-        let sections = collector.into_section_tree();
+        let sections = build_section_tree(&source_path, collector.into_raw_sections());
 
         Ok(DocumentTree {
             id: doc_id,
@@ -87,27 +87,17 @@ impl DocumentParser for MarkdownParser {
     }
 }
 
-/// Intermediate representation of a section being built.
-struct RawSection {
-    heading_path: Vec<String>,
-    depth: u32,
-    text_parts: Vec<String>,
-    structural_nodes: Vec<StructuralNode>,
-}
-
 /// Collects sections from a comrak AST walk.
-struct SectionCollector<'a> {
-    source_path: &'a str,
+struct SectionCollector {
     title: Option<String>,
     sections: Vec<RawSection>,
     /// Current heading stack for building heading paths.
     heading_stack: Vec<(u32, String)>,
 }
 
-impl<'a> SectionCollector<'a> {
-    fn new(source_path: &'a str) -> Self {
+impl SectionCollector {
+    fn new() -> Self {
         Self {
-            source_path,
             title: None,
             sections: Vec::new(),
             heading_stack: Vec::new(),
@@ -220,65 +210,10 @@ impl<'a> SectionCollector<'a> {
             .retain(|s| !s.text_parts.is_empty() || !s.structural_nodes.is_empty());
     }
 
-    /// Convert flat raw sections into a nested section tree based on heading depth.
-    fn into_section_tree(self) -> Vec<Section> {
-        let source_path = self.source_path;
-        let raw_sections: Vec<Section> = self
-            .sections
-            .into_iter()
-            .map(|raw| {
-                let heading_path_refs: Vec<&str> =
-                    raw.heading_path.iter().map(String::as_str).collect();
-                let id = SectionId(generate_section_id(source_path, &heading_path_refs));
-
-                Section {
-                    id,
-                    heading_path: raw.heading_path,
-                    depth: raw.depth,
-                    text: raw.text_parts.join("\n\n"),
-                    structural_nodes: raw.structural_nodes,
-                    children: Vec::new(),
-                    claims: Vec::new(),
-                    summary: None,
-                }
-            })
-            .collect();
-
-        nest_sections(raw_sections)
+    /// Consume the collector and return the accumulated raw sections.
+    fn into_raw_sections(self) -> Vec<RawSection> {
+        self.sections
     }
-}
-
-/// Build a nested section tree from a flat depth-ordered list.
-///
-/// Sections with greater depth are nested as children of the preceding
-/// section with lesser depth.
-fn nest_sections(flat: Vec<Section>) -> Vec<Section> {
-    let mut result: Vec<Section> = Vec::new();
-    let mut stack: Vec<Section> = Vec::new();
-
-    for section in flat {
-        // Pop sections from the stack that are at the same or deeper level
-        while stack.last().is_some_and(|top| top.depth >= section.depth) {
-            let popped = stack.pop().expect("stack non-empty");
-            if let Some(parent) = stack.last_mut() {
-                parent.children.push(popped);
-            } else {
-                result.push(popped);
-            }
-        }
-        stack.push(section);
-    }
-
-    // Drain remaining stack
-    while let Some(popped) = stack.pop() {
-        if let Some(parent) = stack.last_mut() {
-            parent.children.push(popped);
-        } else {
-            result.push(popped);
-        }
-    }
-
-    result
 }
 
 /// Recursively collect all inline text content from a node and its descendants.

@@ -38,6 +38,12 @@ rusqlite_migration = "2"
 # Markdown parsing
 comrak = "0.36"
 
+# HTML parsing
+scraper = "0.26"
+
+# PDF text extraction
+pdf-extract = "0.10"
+
 # Token counting
 tiktoken-rs = "0.6"
 

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::StorageError;
+use crate::parser::ParserKind;
 
 /// Top-level iris configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -120,6 +121,10 @@ pub struct CorpusConfig {
 
     /// Claim extraction mode.
     pub claim_extraction: ClaimExtractionMode,
+
+    /// Override the parser for all files in this corpus.
+    /// When `None`, the parser is auto-detected from the file extension.
+    pub parser: Option<ParserKind>,
 }
 
 impl CorpusConfig {
@@ -159,6 +164,7 @@ impl Default for CorpusConfig {
             model: None,
             watch: true,
             claim_extraction: ClaimExtractionMode::Heuristic,
+            parser: None,
         }
     }
 }
@@ -286,6 +292,7 @@ mod tests {
             model: Some("bge-small".into()),
             watch: false,
             claim_extraction: ClaimExtractionMode::ModelAssisted,
+            parser: None,
         };
         config.save(tmp.path()).unwrap();
         let loaded = CorpusConfig::load(tmp.path()).unwrap();
