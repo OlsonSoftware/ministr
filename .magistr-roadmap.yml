@@ -671,24 +671,24 @@ phases:
 - id: PR1
   name: Fix Code Indexing Bug
   tagline: Dogfood iris on its own Rust source code
-  status: pending
+  status: in_progress
   problem: iris can't index its own source code — corpus paths show 0 documents despite correct architecture
   solution: Add diagnostic logging, write integration tests, reproduce and fix the root cause
   tasks:
   - text: Add warn-level log when discover_paths finds 0 files for a corpus path
-    checked: false
+    checked: true
   - text: 'Add diagnostic logging to background ingestion: resolved absolute paths, data dir, completion status'
-    checked: false
+    checked: true
   - text: Add debug log of canonical path in collect_path_entry for relative path resolution verification
-    checked: false
+    checked: true
   - text: Enhance iris_toc to report ingestion state (running/completed/failed + stats) when 0 results
     checked: false
   - text: 'Write integration test: multi-path code ingestion with .rs files, assert non-zero indexed count'
     checked: false
   - text: Reproduce with iris --corpus ./iris-core/src, examine stderr, fix root cause
-    checked: false
+    checked: true
   - text: Add iris index and iris serve subcommands with backwards-compatible default to serve
-    checked: false
+    checked: true
 - id: PR2
   name: Eliminate .expect() from Library Code
   tagline: No panics in library code
