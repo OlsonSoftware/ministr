@@ -577,18 +577,18 @@ phases:
 - id: C2
   name: Symbol Extraction
   tagline: Extract functions, structs, traits, and their metadata from ASTs
-  status: pending
+  status: done
   problem: Agents need to find specific code symbols by name, kind, or visibility — text search is imprecise and noisy
   solution: 'Walk tree-sitter ASTs to extract typed symbols with metadata: name, kind, visibility, signature, doc comments, byte range, parent scope'
   tasks:
   - text: 'Define `Symbol` type with fields: name, kind (Function/Struct/Enum/Trait/Impl/Module/Const/TypeAlias), visibility (Public/PubCrate/Private), signature (first line), doc_comment, file_path, byte_range, module_path'
-    checked: false
+    checked: true
   - text: 'Extract symbol metadata from Rust AST nodes: parse visibility modifiers, capture `///` doc comments from preceding comment nodes, build signature from the declaration line (without body)'
-    checked: false
+    checked: true
   - text: 'Build `SymbolTable` collection type with query methods: find_by_name(pattern), filter_by_kind(kind), filter_by_visibility(vis), filter_by_module(path)'
-    checked: false
+    checked: true
   - text: 'Unit test: extract symbols from iris-core source files, verify struct names, function signatures, visibility, and doc comments are captured correctly'
-    checked: false
+    checked: true
 - id: C3
   name: AST-Aware Code Chunking
   tagline: Chunk code at function/struct boundaries, not arbitrary line counts
