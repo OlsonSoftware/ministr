@@ -537,10 +537,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] New SQLite table `symbols`: id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end — with migration
-- [ ] New SQLite table `symbol_refs`: from_symbol_id, to_symbol_id, ref_kind (Calls/Implements/Imports/Uses) — with migration
-- [ ] Extend Storage trait with symbol CRUD: insert_symbols, list_symbols(filters), get_symbol(id), insert_symbol_refs, query_refs(symbol_id, ref_kind?)
-- [ ] Unit test: insert and query symbols and relationships, verify filtering by kind/visibility/module works correctly
+- [x] New SQLite table `symbols`: id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end — with migration
+- [x] New SQLite table `symbol_refs`: from_symbol_id, to_symbol_id, ref_kind (Calls/Implements/Imports/Uses) — with migration
+- [x] Extend Storage trait with symbol CRUD: insert_symbols, list_symbols(filters), get_symbol(id), insert_symbol_refs, query_refs(symbol_id, ref_kind?)
+- [x] Unit test: insert and query symbols and relationships, verify filtering by kind/visibility/module works correctly
 
 ---
 
@@ -552,10 +552,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] New MCP tool `iris_symbols(query?, kind?, module?, visibility?)` — search the symbol index with fuzzy name matching and exact kind/module/visibility filters, returns symbol list with file, line, signature, doc preview
-- [ ] New MCP tool `iris_definition(symbol_id)` — returns full source code of the symbol with 3 lines of surrounding context, heading path showing module hierarchy, and budget tracking
-- [ ] New MCP tool `iris_references(symbol_id, ref_kind?)` — returns all references: callers (Calls), implementors (Implements), importers (Imports), with source locations
-- [ ] E2E test: index a codebase with code intelligence, verify iris_symbols finds expected functions/structs, iris_definition returns correct source, iris_references finds callers
+- [x] New MCP tool `iris_symbols(query?, kind?, module?, visibility?)` — search the symbol index with fuzzy name matching and exact kind/module/visibility filters, returns symbol list with file, line, signature, doc preview
+- [x] New MCP tool `iris_definition(symbol_id)` — returns full source code of the symbol with 3 lines of surrounding context, heading path showing module hierarchy, and budget tracking
+- [x] New MCP tool `iris_references(symbol_id, ref_kind?)` — returns all references: callers (Calls), implementors (Implements), importers (Imports), with source locations
+- [x] E2E test: index a codebase with code intelligence, verify iris_symbols finds expected functions/structs, iris_definition returns correct source, iris_references finds callers
 
 ---
 

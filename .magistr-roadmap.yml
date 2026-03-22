@@ -624,18 +624,18 @@ phases:
 - id: C5
   name: Code Intelligence MCP Tools
   tagline: iris_symbols, iris_definition, iris_references — structural code navigation
-  status: pending
+  status: done
   problem: 'Agents need to navigate code structurally: find a function by name, jump to its definition, find all callers'
   solution: 'Three new MCP tools: iris_symbols (search/browse symbol index), iris_definition (jump to source), iris_references (find callers/implementors/importers)'
   tasks:
   - text: New MCP tool `iris_symbols(query?, kind?, module?, visibility?)` — search the symbol index with fuzzy name matching and exact kind/module/visibility filters, returns symbol list with file, line, signature, doc preview
-    checked: false
+    checked: true
   - text: New MCP tool `iris_definition(symbol_id)` — returns full source code of the symbol with 3 lines of surrounding context, heading path showing module hierarchy, and budget tracking
-    checked: false
+    checked: true
   - text: 'New MCP tool `iris_references(symbol_id, ref_kind?)` — returns all references: callers (Calls), implementors (Implements), importers (Imports), with source locations'
-    checked: false
+    checked: true
   - text: 'E2E test: index a codebase with code intelligence, verify iris_symbols finds expected functions/structs, iris_definition returns correct source, iris_references finds callers'
-    checked: false
+    checked: true
 - id: C6
   name: Unified Code + Doc Search
   tagline: iris_survey searches code symbols alongside documentation
