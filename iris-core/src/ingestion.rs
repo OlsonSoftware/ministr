@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, instrument, warn};
 
+use crate::code::{AstParser, extract_symbols};
 use crate::embedding::Embedder;
 use crate::error::IngestionError;
 use crate::extraction::claims::{ClaimExtractor, HeuristicClaimExtractor};
@@ -18,9 +19,9 @@ use crate::index::VectorIndex;
 use crate::parser::{
     DocumentParser, MarkdownParser, ParserKind, create_parser, detect_parser_kind,
 };
-use crate::storage::traits::{FileHashRecord, Storage};
+use crate::storage::traits::{FileHashRecord, Storage, SymbolRecord};
 use crate::token::count_tokens;
-use crate::types::{Claim, DocumentTree, Section, VectorId};
+use crate::types::{Claim, DocumentTree, Section, SymbolId, VectorId};
 
 /// Result of ingesting a corpus directory.
 ///
@@ -556,6 +557,11 @@ impl IngestionPipeline {
         // Embed all resolution levels
         embed_document(&doc, embedder, index)?;
 
+        // For code files: extract symbols, store in SQLite, and embed into vector index
+        if parser_kind == ParserKind::Code {
+            embed_code_symbols(source_path, content, storage, embedder, index).await?;
+        }
+
         // Detect and store claim relationships
         let all_claims = collect_all_claims(&doc.sections);
         if all_claims.len() >= 2 {
@@ -909,6 +915,14 @@ impl IngestionPipeline {
         // Embed all resolution levels
         embed_document(&doc, embedder, index)?;
 
+        // For code files: extract symbols, store in SQLite, and embed into vector index
+        let parser_kind = self
+            .parser_override
+            .or_else(|| detect_parser_kind(Path::new(relative_path)));
+        if parser_kind == Some(ParserKind::Code) {
+            embed_code_symbols(relative_path, &content_str, storage, embedder, index).await?;
+        }
+
         // Detect and store claim relationships
         let all_claims = collect_all_claims(&doc.sections);
         if all_claims.len() >= 2 {
@@ -1037,6 +1051,145 @@ fn collect_all_claims(sections: &[Section]) -> Vec<Claim> {
     claims
 }
 
+/// Extract code symbols from a source file, store them in `SQLite`, and embed
+/// into the HNSW vector index as `symbol-stub` and `symbol-full` vectors.
+///
+/// Symbol stubs embed `"signature\ndoc_comment"` for high-precision search.
+/// Symbol full embeds the complete symbol source for broader matching.
+async fn embed_code_symbols<S, E, I>(
+    relative_path: &str,
+    content: &str,
+    storage: &S,
+    embedder: &E,
+    index: &I,
+) -> Result<usize, IngestionError>
+where
+    S: Storage + ?Sized,
+    E: Embedder + ?Sized,
+    I: VectorIndex + ?Sized,
+{
+    let source = content.as_bytes();
+
+    let mut ast_parser = AstParser::new();
+    let Ok(tree) = ast_parser.parse(source) else {
+        return Ok(0); // Unparseable code — skip symbol embedding
+    };
+
+    let file_stem = Path::new(relative_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    let module_path: Vec<&str> = if file_stem == "lib" || file_stem == "main" || file_stem == "mod"
+    {
+        vec![]
+    } else {
+        vec![file_stem]
+    };
+
+    let symbols = extract_symbols(&tree, source, relative_path, &module_path);
+
+    if symbols.is_empty() {
+        return Ok(0);
+    }
+
+    // Delete old symbols for this file (re-index safety)
+    let _ = storage.delete_symbols_for_file(relative_path).await;
+
+    // Convert to SymbolRecords and store in SQLite
+    let symbol_records: Vec<SymbolRecord> = symbols
+        .iter()
+        .map(|sym| {
+            let module_str = sym.module_path.join("::");
+            // Disambiguate impl blocks to avoid ID collision with the type they implement
+            let qualified_name = if sym.kind == crate::code::ItemKind::Impl {
+                format!("impl-{}", sym.name)
+            } else {
+                sym.name.clone()
+            };
+            let symbol_id = if module_str.is_empty() {
+                format!("sym-{relative_path}::{qualified_name}")
+            } else {
+                format!("sym-{relative_path}::{module_str}::{qualified_name}")
+            };
+
+            // Compute line numbers from byte range
+            #[allow(clippy::cast_possible_truncation)]
+            let line_start = content[..sym.byte_range.start].matches('\n').count() as u32 + 1;
+            #[allow(clippy::cast_possible_truncation)]
+            let line_end = content[..sym.byte_range.end].matches('\n').count() as u32 + 1;
+
+            SymbolRecord {
+                id: SymbolId(symbol_id),
+                file_path: relative_path.to_string(),
+                name: sym.name.clone(),
+                kind: sym.kind.as_str().to_string(),
+                visibility: sym.visibility.as_str().to_string(),
+                signature: sym.signature.clone(),
+                doc_comment: sym.doc_comment.clone(),
+                module_path: module_str,
+                line_start,
+                line_end,
+            }
+        })
+        .collect();
+
+    storage
+        .insert_symbols(&symbol_records)
+        .await
+        .map_err(IngestionError::from)?;
+
+    // Build embeddable texts for symbol-stub and symbol-full
+    let mut ids: Vec<VectorId> = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
+
+    for (sym, record) in symbols.iter().zip(symbol_records.iter()) {
+        // Symbol stub: signature + doc comment
+        let stub_text = match &sym.doc_comment {
+            Some(doc) => format!("{}\n{doc}", sym.signature),
+            None => sym.signature.clone(),
+        };
+        if !stub_text.trim().is_empty() {
+            ids.push(VectorId::symbol_stub(record.id.as_ref()));
+            texts.push(stub_text);
+        }
+
+        // Symbol full: complete source code
+        let full_text = &content[sym.byte_range.clone()];
+        if !full_text.trim().is_empty() {
+            ids.push(VectorId::symbol_full(record.id.as_ref()));
+            texts.push(full_text.to_string());
+        }
+    }
+
+    if texts.is_empty() {
+        return Ok(0);
+    }
+
+    // Batch embed
+    let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let vectors = embedder
+        .embed(&text_refs)
+        .map_err(|e| IngestionError::Embedding {
+            reason: e.to_string(),
+        })?;
+
+    for (vid, vector) in ids.iter().zip(vectors.iter()) {
+        index
+            .insert(vid.as_str(), vector)
+            .map_err(|e| IngestionError::Embedding {
+                reason: format!("failed to insert symbol vector {vid}: {e}"),
+            })?;
+    }
+
+    let count = ids.len();
+    debug!(
+        symbols = count,
+        path = %relative_path,
+        "embedded code symbols"
+    );
+    Ok(count)
+}
+
 /// Delete all vectors associated with a document from the index.
 ///
 /// Queries storage for the document's sections and claims, derives their
@@ -1104,6 +1257,32 @@ async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex + ?Sized>(
                 deleted += 1;
             }
         }
+    }
+
+    // Delete symbol vectors for the document's source path
+    let doc_record = storage
+        .get_document(doc_id)
+        .await
+        .map_err(IngestionError::from)?;
+    if let Some(doc) = doc_record {
+        let symbols = storage
+            .list_symbols(&crate::storage::SymbolFilter {
+                file_path: Some(doc.source_path.clone()),
+                ..Default::default()
+            })
+            .await
+            .map_err(IngestionError::from)?;
+        for sym in &symbols {
+            let stub_vid = VectorId::symbol_stub(sym.id.as_ref());
+            if index.delete(stub_vid.as_str()).unwrap_or(false) {
+                deleted += 1;
+            }
+            let full_vid = VectorId::symbol_full(sym.id.as_ref());
+            if index.delete(full_vid.as_str()).unwrap_or(false) {
+                deleted += 1;
+            }
+        }
+        let _ = storage.delete_symbols_for_file(&doc.source_path).await;
     }
 
     debug!(deleted, doc_id = %doc_id, "deleted document vectors");
@@ -2464,5 +2643,150 @@ mod tests {
 
         let rel = compute_relative_path(&file, &sources);
         assert_eq!(rel, "DESIGN.md");
+    }
+
+    // --- C6.2: E2E unified code + doc search ---
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn e2e_unified_code_and_doc_search() {
+        use crate::search::{MultiResolutionSearch, SearchConfig};
+        use crate::types::Resolution;
+
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Write a markdown doc about ingestion
+        std::fs::write(
+            tmp.path().join("ingestion.md"),
+            "# Ingestion Pipeline\n\n\
+             The ingestion pipeline processes files from a directory.\n\
+             It hashes each file and skips unchanged content.\n\n\
+             ## Parsing\n\n\
+             Files are parsed into document trees with sections and claims.\n",
+        )
+        .unwrap();
+
+        // Write a Rust source file with symbols about ingestion
+        std::fs::write(
+            tmp.path().join("pipeline.rs"),
+            r"//! Ingestion pipeline orchestrator.
+
+/// Processes files and indexes their content.
+pub struct IngestionPipeline {
+    /// Minimum section token threshold.
+    pub min_tokens: usize,
+}
+
+impl IngestionPipeline {
+    /// Create a new pipeline with defaults.
+    pub fn new() -> Self {
+        Self { min_tokens: 50 }
+    }
+
+    /// Ingest all files from a directory.
+    pub fn ingest(&self, dir: &str) -> usize {
+        42
+    }
+}
+
+/// Hash the content of a file for change detection.
+pub fn compute_hash(content: &str) -> String {
+    content.len().to_string()
+}
+",
+        )
+        .unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let (embedder, index) = make_mock_embedder_and_index();
+        let pipeline = IngestionPipeline::new();
+
+        let stats = pipeline
+            .ingest_directory_with_embeddings(tmp.path(), &storage, &embedder, &index)
+            .await
+            .unwrap();
+
+        // Both files should be indexed
+        assert_eq!(stats.files_failed, 0, "no files should fail: {stats:?}");
+        assert_eq!(stats.files_indexed, 2);
+
+        // Vector index should contain both doc sections AND symbol vectors
+        let total_vectors = index.len();
+        // Doc vectors: doc-summary + sec-summary(s) + section(s) + claims
+        // Symbol vectors: symbol-stub + symbol-full for each symbol
+        assert!(
+            total_vectors >= 6,
+            "expected at least 6 vectors (doc + symbol), got {total_vectors}"
+        );
+
+        // Search for "ingestion pipeline" — should return both doc and code results
+        let searcher = MultiResolutionSearch::new(&embedder, &index);
+        let config = SearchConfig {
+            raw_k: 30,
+            top_k: 10,
+        };
+        let results = searcher.search("ingestion pipeline", config).unwrap();
+
+        assert!(
+            !results.is_empty(),
+            "search should return results for 'ingestion pipeline'"
+        );
+
+        // Verify we get both doc-level and symbol-level results
+        let has_doc_result = results.iter().any(|r| {
+            matches!(
+                r.resolution,
+                Resolution::Summary | Resolution::Section | Resolution::Claim
+            )
+        });
+        let has_symbol_result = results.iter().any(|r| {
+            matches!(
+                r.resolution,
+                Resolution::SymbolStub | Resolution::SymbolFull
+            )
+        });
+
+        assert!(
+            has_doc_result,
+            "search results should include document sections"
+        );
+        assert!(
+            has_symbol_result,
+            "search results should include code symbols"
+        );
+
+        // Verify symbols were stored in SQLite
+        let symbols = storage
+            .list_symbols(&crate::storage::SymbolFilter {
+                file_path: Some("pipeline.rs".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(
+            symbols.len() >= 2,
+            "expected at least 2 symbols (struct + impl/fn), got {}: {:?}",
+            symbols.len(),
+            symbols
+                .iter()
+                .map(|s| format!("{} {}", s.kind, s.name))
+                .collect::<Vec<_>>()
+        );
+
+        // Verify symbol stubs have correct format in vector IDs
+        let pipeline_struct = symbols
+            .iter()
+            .find(|s| s.name == "IngestionPipeline" && s.kind != "impl")
+            .unwrap_or_else(|| {
+                panic!(
+                    "should have IngestionPipeline struct, found: {:?}",
+                    symbols
+                        .iter()
+                        .map(|s| format!("{}:{}", s.kind, s.name))
+                        .collect::<Vec<_>>()
+                )
+            });
+        let stub_vid = VectorId::symbol_stub(pipeline_struct.id.as_ref());
+        assert_eq!(stub_vid.resolution(), Resolution::SymbolStub);
     }
 }

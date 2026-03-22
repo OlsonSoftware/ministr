@@ -639,16 +639,16 @@ phases:
 - id: C6
   name: Unified Code + Doc Search
   tagline: iris_survey searches code symbols alongside documentation
-  status: pending
+  status: done
   problem: Code and documentation live in separate search silos — agents must know which to search
   solution: Embed code symbols in the same HNSW index as document sections, extending iris_survey to return both code and doc results ranked together
   tasks:
   - text: Embed code symbol stubs (signature + doc comment) into the same HNSW vector index used for document sections — new VectorId variants for code symbols
-    checked: false
+    checked: true
   - text: 'Extend iris_survey to return both document sections AND code symbols in a unified ranked result list — add `resolution: "symbol_stub"` and `resolution: "symbol_full"` variants'
-    checked: false
+    checked: true
   - text: 'E2E test: index a project with both docs and code, iris_survey with a query like "how does ingestion work" returns both documentation sections and relevant code symbols'
-    checked: false
+    checked: true
 - id: C7
   name: Multi-Language Support
   tagline: Tree-sitter grammars for TypeScript, Python, Go, and more

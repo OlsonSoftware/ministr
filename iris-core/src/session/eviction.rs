@@ -143,6 +143,8 @@ impl EvictionRanker {
             Resolution::Summary => 1.0,
             Resolution::Section => 0.5,
             Resolution::Claim => 0.2,
+            Resolution::SymbolStub => 0.8,
+            Resolution::SymbolFull => 0.4,
         }
     }
 
@@ -153,6 +155,8 @@ impl EvictionRanker {
             crate::types::Resolution::Summary => "summary",
             crate::types::Resolution::Section => "section",
             crate::types::Resolution::Claim => "claim",
+            crate::types::Resolution::SymbolStub => "symbol_stub",
+            crate::types::Resolution::SymbolFull => "symbol_full",
         };
 
         if age > 5 {

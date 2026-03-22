@@ -567,9 +567,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Embed code symbol stubs (signature + doc comment) into the same HNSW vector index used for document sections — new VectorId variants for code symbols
-- [ ] Extend iris_survey to return both document sections AND code symbols in a unified ranked result list — add `resolution: "symbol_stub"` and `resolution: "symbol_full"` variants
-- [ ] E2E test: index a project with both docs and code, iris_survey with a query like "how does ingestion work" returns both documentation sections and relevant code symbols
+- [x] Embed code symbol stubs (signature + doc comment) into the same HNSW vector index used for document sections — new VectorId variants for code symbols
+- [x] Extend iris_survey to return both document sections AND code symbols in a unified ranked result list — add `resolution: "symbol_stub"` and `resolution: "symbol_full"` variants
+- [x] E2E test: index a project with both docs and code, iris_survey with a query like "how does ingestion work" returns both documentation sections and relevant code symbols
 
 ---
 

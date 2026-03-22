@@ -215,6 +215,8 @@ pub fn parent_section_id(claim_content_id: &str) -> Option<&str> {
 /// assert_eq!(Resolution::Summary.to_string(), "summary");
 /// assert_eq!(Resolution::Section.to_string(), "section");
 /// assert_eq!(Resolution::Claim.to_string(), "claim");
+/// assert_eq!(Resolution::SymbolStub.to_string(), "symbol_stub");
+/// assert_eq!(Resolution::SymbolFull.to_string(), "symbol_full");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Resolution {
@@ -224,6 +226,10 @@ pub enum Resolution {
     Section,
     /// Atomic factual statement (~10–50 tokens).
     Claim,
+    /// Code symbol stub: signature + doc comment (~20–100 tokens).
+    SymbolStub,
+    /// Code symbol full source (~50–500 tokens).
+    SymbolFull,
 }
 
 impl fmt::Display for Resolution {
@@ -232,6 +238,8 @@ impl fmt::Display for Resolution {
             Self::Summary => f.write_str("summary"),
             Self::Section => f.write_str("section"),
             Self::Claim => f.write_str("claim"),
+            Self::SymbolStub => f.write_str("symbol_stub"),
+            Self::SymbolFull => f.write_str("symbol_full"),
         }
     }
 }
@@ -239,7 +247,7 @@ impl fmt::Display for Resolution {
 /// A vector ID that encodes both resolution level and content identifier.
 ///
 /// Format: `{resolution}::{content_id}` where resolution is one of
-/// `doc-summary`, `sec-summary`, `section`, or `claim`.
+/// `doc-summary`, `sec-summary`, `section`, `claim`, `symbol-stub`, or `symbol-full`.
 ///
 /// # Examples
 ///
@@ -253,6 +261,9 @@ impl fmt::Display for Resolution {
 ///
 /// let parsed = VectorId::parse("claim::c42").unwrap();
 /// assert_eq!(parsed.resolution(), Resolution::Claim);
+///
+/// let sym = VectorId::symbol_stub("sym-config::IrisConfig");
+/// assert_eq!(sym.resolution(), Resolution::SymbolStub);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VectorId(String);
@@ -282,6 +293,18 @@ impl VectorId {
         Self(format!("claim::{claim_id}"))
     }
 
+    /// Create a vector ID for a code symbol stub (signature + doc comment).
+    #[must_use]
+    pub fn symbol_stub(symbol_id: &str) -> Self {
+        Self(format!("symbol-stub::{symbol_id}"))
+    }
+
+    /// Create a vector ID for a code symbol's full source.
+    #[must_use]
+    pub fn symbol_full(symbol_id: &str) -> Self {
+        Self(format!("symbol-full::{symbol_id}"))
+    }
+
     /// Parse a vector ID string into a `VectorId`.
     ///
     /// Returns `None` if the string does not match the expected format.
@@ -289,7 +312,9 @@ impl VectorId {
     pub fn parse(s: &str) -> Option<Self> {
         let (prefix, _content) = s.split_once("::")?;
         match prefix {
-            "doc-summary" | "sec-summary" | "section" | "claim" => Some(Self(s.to_string())),
+            "doc-summary" | "sec-summary" | "section" | "claim" | "symbol-stub" | "symbol-full" => {
+                Some(Self(s.to_string()))
+            }
             _ => None,
         }
     }
@@ -301,6 +326,8 @@ impl VectorId {
             Some("doc-summary" | "sec-summary") => Resolution::Summary,
             Some("section") => Resolution::Section,
             Some("claim") => Resolution::Claim,
+            Some("symbol-stub") => Resolution::SymbolStub,
+            Some("symbol-full") => Resolution::SymbolFull,
             _ => unreachable!("VectorId always has a valid prefix"),
         }
     }
@@ -577,6 +604,8 @@ mod tests {
         assert_eq!(Resolution::Summary.to_string(), "summary");
         assert_eq!(Resolution::Section.to_string(), "section");
         assert_eq!(Resolution::Claim.to_string(), "claim");
+        assert_eq!(Resolution::SymbolStub.to_string(), "symbol_stub");
+        assert_eq!(Resolution::SymbolFull.to_string(), "symbol_full");
     }
 
     #[test]
@@ -715,6 +744,31 @@ mod tests {
         assert!(VectorId::parse("unknown::id").is_none());
         assert!(VectorId::parse("no-separator").is_none());
         assert!(VectorId::parse("").is_none());
+    }
+
+    #[test]
+    fn vector_id_symbol_stub() {
+        let vid = VectorId::symbol_stub("sym-config::IrisConfig");
+        assert_eq!(vid.as_str(), "symbol-stub::sym-config::IrisConfig");
+        assert_eq!(vid.resolution(), Resolution::SymbolStub);
+        assert_eq!(vid.content_id(), "sym-config::IrisConfig");
+    }
+
+    #[test]
+    fn vector_id_symbol_full() {
+        let vid = VectorId::symbol_full("sym-config::IrisConfig");
+        assert_eq!(vid.as_str(), "symbol-full::sym-config::IrisConfig");
+        assert_eq!(vid.resolution(), Resolution::SymbolFull);
+        assert_eq!(vid.content_id(), "sym-config::IrisConfig");
+    }
+
+    #[test]
+    fn vector_id_parse_symbol_variants() {
+        let stub = VectorId::parse("symbol-stub::sym-foo").unwrap();
+        assert_eq!(stub.resolution(), Resolution::SymbolStub);
+
+        let full = VectorId::parse("symbol-full::sym-bar").unwrap();
+        assert_eq!(full.resolution(), Resolution::SymbolFull);
     }
 
     #[test]
