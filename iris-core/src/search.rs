@@ -23,6 +23,12 @@ const SECTION_WEIGHT: f32 = 0.85;
 /// Resolution weight for summary-level results (broadest).
 const SUMMARY_WEIGHT: f32 = 0.7;
 
+/// Resolution weight for code symbol stubs (signature + doc, high precision).
+const SYMBOL_STUB_WEIGHT: f32 = 0.95;
+
+/// Resolution weight for code symbol full source.
+const SYMBOL_FULL_WEIGHT: f32 = 0.9;
+
 /// Word count threshold: queries with fewer words than this are considered
 /// "broad" and get a summary boost.
 const BROAD_QUERY_WORD_THRESHOLD: usize = 4;
@@ -159,6 +165,8 @@ fn score_result(raw: &RawSearchResult, is_broad_query: bool) -> Option<ScoredRes
                 SUMMARY_WEIGHT
             }
         }
+        Resolution::SymbolStub => SYMBOL_STUB_WEIGHT,
+        Resolution::SymbolFull => SYMBOL_FULL_WEIGHT,
     };
 
     let score = similarity * resolution_weight;
@@ -342,5 +350,47 @@ mod tests {
         assert_eq!(make("sec-summary::s1").resolution, Resolution::Summary);
         assert_eq!(make("section::s1").resolution, Resolution::Section);
         assert_eq!(make("claim::c1").resolution, Resolution::Claim);
+        assert_eq!(
+            make("symbol-stub::sym-foo").resolution,
+            Resolution::SymbolStub
+        );
+        assert_eq!(
+            make("symbol-full::sym-bar").resolution,
+            Resolution::SymbolFull
+        );
+    }
+
+    #[test]
+    fn symbol_stub_weighted_higher_than_section() {
+        let stub_raw = RawSearchResult {
+            id: "symbol-stub::sym-foo".to_string(),
+            distance: 0.3,
+        };
+        let stub_result = score_result(&stub_raw, false).unwrap();
+
+        let section_raw = RawSearchResult {
+            id: "section::s1".to_string(),
+            distance: 0.3,
+        };
+        let section_result = score_result(&section_raw, false).unwrap();
+
+        assert!(stub_result.score > section_result.score);
+    }
+
+    #[test]
+    fn symbol_full_weighted_higher_than_section() {
+        let full_raw = RawSearchResult {
+            id: "symbol-full::sym-bar".to_string(),
+            distance: 0.3,
+        };
+        let full_result = score_result(&full_raw, false).unwrap();
+
+        let section_raw = RawSearchResult {
+            id: "section::s1".to_string(),
+            distance: 0.3,
+        };
+        let section_result = score_result(&section_raw, false).unwrap();
+
+        assert!(full_result.score > section_result.score);
     }
 }

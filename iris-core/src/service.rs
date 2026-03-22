@@ -686,6 +686,33 @@ impl QueryService {
                     Ok((format!("[claim not found: {content_id}]"), None))
                 }
             }
+            Resolution::SymbolStub => {
+                let sid = SymbolId(content_id.to_string());
+                if let Some(sym) = self.storage.get_symbol(&sid).await? {
+                    let text = match &sym.doc_comment {
+                        Some(doc) => format!("{}\n{doc}", sym.signature),
+                        None => sym.signature.clone(),
+                    };
+                    let heading = vec![sym.file_path.clone(), format!("{} {}", sym.kind, sym.name)];
+                    Ok((text, Some(heading)))
+                } else {
+                    Ok((format!("[symbol not found: {content_id}]"), None))
+                }
+            }
+            Resolution::SymbolFull => {
+                let sid = SymbolId(content_id.to_string());
+                if let Some(sym) = self.storage.get_symbol(&sid).await? {
+                    // Read source context around the symbol
+                    let text = format!(
+                        "// {}:{}-{}\n{}",
+                        sym.file_path, sym.line_start, sym.line_end, sym.signature
+                    );
+                    let heading = vec![sym.file_path.clone(), format!("{} {}", sym.kind, sym.name)];
+                    Ok((text, Some(heading)))
+                } else {
+                    Ok((format!("[symbol not found: {content_id}]"), None))
+                }
+            }
         }
     }
 }

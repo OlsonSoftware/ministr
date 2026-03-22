@@ -153,7 +153,13 @@ fn build_file_overview(
 /// The section text contains the full source code of the symbol.
 fn build_symbol_section(source_path: &str, content: &str, symbol: &Symbol) -> Section {
     let module_refs: Vec<&str> = symbol.module_path.iter().map(String::as_str).collect();
-    let section_id = generate_code_section_id(source_path, &module_refs, &symbol.name);
+    // Include item kind in the section ID to disambiguate (e.g. struct Foo vs impl Foo)
+    let qualified_name = if symbol.kind == crate::code::ItemKind::Impl {
+        format!("impl-{}", symbol.name)
+    } else {
+        symbol.name.clone()
+    };
+    let section_id = generate_code_section_id(source_path, &module_refs, &qualified_name);
 
     // Full source text of the symbol (including doc comments, attributes, body)
     let full_source = &content[symbol.byte_range.clone()];
