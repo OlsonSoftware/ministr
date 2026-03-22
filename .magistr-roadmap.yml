@@ -293,21 +293,21 @@ phases:
 - id: I3
   name: End-to-End Validation
   tagline: Prove it actually works from CLI to MCP response
-  status: pending
+  status: done
   problem: All 99 roadmap tasks were marked done but the system doesn't work end-to-end — need integration tests that prove the full pipeline.
   solution: Write E2E tests that start iris against a real corpus, verify ingestion populates the DB, and validate each MCP tool returns real results.
   tasks:
   - text: 'E2E test: start iris against a temp corpus dir, verify iris_survey returns ranked results'
-    checked: false
+    checked: true
   - text: 'E2E test: verify iris_read returns full section text with correct heading paths and content hashes'
-    checked: false
+    checked: true
   - text: 'E2E test: verify iris_extract returns claims from ingested content'
-    checked: false
+    checked: true
   - text: 'E2E test: verify iris_related follows claim dependency chains'
-    checked: false
+    checked: true
   - text: 'E2E test: verify session deduplication — iris_read same section twice returns skip/delta, not full content'
-    checked: false
+    checked: true
   - text: 'E2E test: verify iris_compress + iris_evicted cycle works and budget updates accordingly'
-    checked: false
+    checked: true
   - text: 'E2E test: modify a corpus file, verify coherence detects the change and iris_read returns updated content'
-    checked: false
+    checked: true

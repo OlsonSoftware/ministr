@@ -229,11 +229,11 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] E2E test: start iris against a temp corpus dir, verify iris_survey returns ranked results
-- [ ] E2E test: verify iris_read returns full section text with correct heading paths and content hashes
-- [ ] E2E test: verify iris_extract returns claims from ingested content
-- [ ] E2E test: verify iris_related follows claim dependency chains
-- [ ] E2E test: verify session deduplication — iris_read same section twice returns skip/delta, not full content
-- [ ] E2E test: verify iris_compress + iris_evicted cycle works and budget updates accordingly
-- [ ] E2E test: modify a corpus file, verify coherence detects the change and iris_read returns updated content
+- [x] E2E test: start iris against a temp corpus dir, verify iris_survey returns ranked results
+- [x] E2E test: verify iris_read returns full section text with correct heading paths and content hashes
+- [x] E2E test: verify iris_extract returns claims from ingested content
+- [x] E2E test: verify iris_related follows claim dependency chains
+- [x] E2E test: verify session deduplication — iris_read same section twice returns skip/delta, not full content
+- [x] E2E test: verify iris_compress + iris_evicted cycle works and budget updates accordingly
+- [x] E2E test: modify a corpus file, verify coherence detects the change and iris_read returns updated content
 
