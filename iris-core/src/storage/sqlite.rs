@@ -13,7 +13,7 @@ use tracing::instrument;
 use super::schema::{configure_connection, run_migrations};
 use super::traits::{
     ClaimRecord, CoAccessRecord, CorpusStats, DocumentRecord, FileHashRecord, RelatedClaimRecord,
-    SectionAccessStat, SectionRecord, Storage,
+    SectionAccessStat, SectionRecord, Storage, WebCacheRecord,
 };
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
@@ -1005,6 +1005,120 @@ impl Storage for SqliteStorage {
                 unique_sections_accessed,
                 co_access_pairs,
             })
+        })
+        .await
+    }
+
+    // -- Web cache --
+
+    async fn upsert_web_cache(&self, record: &WebCacheRecord) -> Result<(), StorageError> {
+        let record = record.clone();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO web_cache (source_url, fetch_timestamp, etag, last_modified, content_hash, content_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(source_url) DO UPDATE SET
+                    fetch_timestamp = excluded.fetch_timestamp,
+                    etag = excluded.etag,
+                    last_modified = excluded.last_modified,
+                    content_hash = excluded.content_hash,
+                    content_type = excluded.content_type",
+                rusqlite::params![
+                    record.source_url,
+                    record.fetch_timestamp,
+                    record.etag,
+                    record.last_modified,
+                    record.content_hash,
+                    record.content_type,
+                ],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: format!("failed to upsert web cache: {e}"),
+            })?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_web_cache(&self, url: &str) -> Result<Option<WebCacheRecord>, StorageError> {
+        let url = url.to_owned();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT source_url, fetch_timestamp, etag, last_modified, content_hash, content_type
+                     FROM web_cache WHERE source_url = ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let result = stmt
+                .query_row(rusqlite::params![url], |row| {
+                    Ok(WebCacheRecord {
+                        source_url: row.get(0)?,
+                        fetch_timestamp: row.get(1)?,
+                        etag: row.get(2)?,
+                        last_modified: row.get(3)?,
+                        content_hash: row.get(4)?,
+                        content_type: row.get(5)?,
+                    })
+                })
+                .optional()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            Ok(result)
+        })
+        .await
+    }
+
+    async fn list_web_cache(&self) -> Result<Vec<WebCacheRecord>, StorageError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT source_url, fetch_timestamp, etag, last_modified, content_hash, content_type
+                     FROM web_cache ORDER BY fetch_timestamp DESC",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(WebCacheRecord {
+                        source_url: row.get(0)?,
+                        fetch_timestamp: row.get(1)?,
+                        etag: row.get(2)?,
+                        last_modified: row.get(3)?,
+                        content_hash: row.get(4)?,
+                        content_type: row.get(5)?,
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })
+        })
+        .await
+    }
+
+    async fn delete_web_cache(&self, url: &str) -> Result<bool, StorageError> {
+        let url = url.to_owned();
+        self.with_conn(move |conn| {
+            let affected = conn
+                .execute(
+                    "DELETE FROM web_cache WHERE source_url = ?1",
+                    rusqlite::params![url],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            Ok(affected > 0)
         })
         .await
     }

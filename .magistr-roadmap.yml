@@ -478,18 +478,18 @@ phases:
 - id: W7
   name: Web Cache and Refresh
   tagline: Persistent caching with staleness detection for web docs
-  status: pending
+  status: done
   problem: Re-fetching unchanged documentation wastes time and bandwidth — but stale cached docs are worse than no docs
   solution: Cache fetched web content with ETags and timestamps, detect staleness via HTTP HEAD, and provide iris_refresh tool for on-demand or automatic updates
   tasks:
   - text: 'Track fetch metadata per URL in SQLite: source_url, fetch_timestamp, etag, last_modified, content_hash — new `web_cache` table with migration'
-    checked: false
+    checked: true
   - text: 'Implement staleness detection: HTTP HEAD with If-None-Match (ETag) and If-Modified-Since headers — skip re-fetch if 304 Not Modified'
-    checked: false
+    checked: true
   - text: New MCP tool `iris_refresh(url?)` — check all cached web sources (or a specific URL) for staleness, re-fetch and re-index changed content, report what was updated
-    checked: false
+    checked: true
   - text: 'Unit tests: staleness detection with mock HTTP responses (304, 200 with new ETag, timeout), cache expiry after configurable TTL'
-    checked: false
+    checked: true
 - id: R1
   name: Git Clone Integration
   tagline: Fast shallow sparse clones for remote repository fetching

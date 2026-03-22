@@ -404,10 +404,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Track fetch metadata per URL in SQLite: source_url, fetch_timestamp, etag, last_modified, content_hash — new `web_cache` table with migration
-- [ ] Implement staleness detection: HTTP HEAD with If-None-Match (ETag) and If-Modified-Since headers — skip re-fetch if 304 Not Modified
-- [ ] New MCP tool `iris_refresh(url?)` — check all cached web sources (or a specific URL) for staleness, re-fetch and re-index changed content, report what was updated
-- [ ] Unit tests: staleness detection with mock HTTP responses (304, 200 with new ETag, timeout), cache expiry after configurable TTL
+- [x] Track fetch metadata per URL in SQLite: source_url, fetch_timestamp, etag, last_modified, content_hash — new `web_cache` table with migration
+- [x] Implement staleness detection: HTTP HEAD with If-None-Match (ETag) and If-Modified-Since headers — skip re-fetch if 304 Not Modified
+- [x] New MCP tool `iris_refresh(url?)` — check all cached web sources (or a specific URL) for staleness, re-fetch and re-index changed content, report what was updated
+- [x] Unit tests: staleness detection with mock HTTP responses (304, 200 with new ETag, timeout), cache expiry after configurable TTL
 
 ---
 

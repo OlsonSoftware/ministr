@@ -14,5 +14,5 @@ pub use schema::CURRENT_SCHEMA_VERSION;
 pub use sqlite::SqliteStorage;
 pub use traits::{
     ClaimRecord, CoAccessRecord, CorpusStats, DocumentRecord, FileHashRecord, RelatedClaimRecord,
-    SectionAccessStat, SectionRecord, Storage,
+    SectionAccessStat, SectionRecord, Storage, WebCacheRecord,
 };

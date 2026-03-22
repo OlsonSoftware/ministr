@@ -143,6 +143,7 @@ async fn web_cache_store_and_retrieve() {
         source_url: url.into(),
         fetched_at: "1711036800".into(),
         etag: Some("\"v1\"".into()),
+        last_modified: None,
         content_hash: url_hash(markdown),
         content_type: Some("text/html".into()),
     };

@@ -310,7 +310,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 4);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 5);
 }
 
 #[tokio::test]
@@ -824,4 +824,131 @@ async fn no_relationships_returns_empty() {
         .await
         .unwrap();
     assert!(related.is_empty());
+}
+
+// --- Web cache tests ---
+
+#[tokio::test]
+async fn web_cache_crud() {
+    use iris_core::storage::WebCacheRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let record = WebCacheRecord {
+        source_url: "https://example.com/docs/".into(),
+        fetch_timestamp: "2026-03-21T12:00:00Z".into(),
+        etag: Some("\"abc123\"".into()),
+        last_modified: Some("Fri, 20 Mar 2026 10:00:00 GMT".into()),
+        content_hash: "deadbeef".into(),
+        content_type: Some("text/html".into()),
+    };
+
+    // Insert
+    storage.upsert_web_cache(&record).await.unwrap();
+
+    // Get
+    let retrieved = storage
+        .get_web_cache("https://example.com/docs/")
+        .await
+        .unwrap();
+    assert!(retrieved.is_some());
+    let retrieved = retrieved.unwrap();
+    assert_eq!(retrieved.source_url, "https://example.com/docs/");
+    assert_eq!(retrieved.etag.as_deref(), Some("\"abc123\""));
+    assert_eq!(
+        retrieved.last_modified.as_deref(),
+        Some("Fri, 20 Mar 2026 10:00:00 GMT")
+    );
+    assert_eq!(retrieved.content_hash, "deadbeef");
+
+    // Update (upsert with new ETag)
+    let updated = WebCacheRecord {
+        source_url: "https://example.com/docs/".into(),
+        fetch_timestamp: "2026-03-21T13:00:00Z".into(),
+        etag: Some("\"def456\"".into()),
+        last_modified: Some("Fri, 21 Mar 2026 13:00:00 GMT".into()),
+        content_hash: "newcafe".into(),
+        content_type: Some("text/html".into()),
+    };
+    storage.upsert_web_cache(&updated).await.unwrap();
+    let retrieved = storage
+        .get_web_cache("https://example.com/docs/")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retrieved.etag.as_deref(), Some("\"def456\""));
+    assert_eq!(retrieved.content_hash, "newcafe");
+
+    // List
+    let all = storage.list_web_cache().await.unwrap();
+    assert_eq!(all.len(), 1);
+
+    // Delete
+    let deleted = storage
+        .delete_web_cache("https://example.com/docs/")
+        .await
+        .unwrap();
+    assert!(deleted);
+    assert!(
+        storage
+            .get_web_cache("https://example.com/docs/")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Delete nonexistent
+    let deleted = storage
+        .delete_web_cache("https://example.com/missing/")
+        .await
+        .unwrap();
+    assert!(!deleted);
+}
+
+#[tokio::test]
+async fn web_cache_list_multiple() {
+    use iris_core::storage::WebCacheRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    for i in 0..3 {
+        let record = WebCacheRecord {
+            source_url: format!("https://example.com/page-{i}/"),
+            fetch_timestamp: format!("2026-03-21T1{i}:00:00Z"),
+            etag: None,
+            last_modified: None,
+            content_hash: format!("hash{i}"),
+            content_type: None,
+        };
+        storage.upsert_web_cache(&record).await.unwrap();
+    }
+
+    let all = storage.list_web_cache().await.unwrap();
+    assert_eq!(all.len(), 3);
+}
+
+#[tokio::test]
+async fn web_cache_optional_fields_are_nullable() {
+    use iris_core::storage::WebCacheRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let record = WebCacheRecord {
+        source_url: "https://example.com/".into(),
+        fetch_timestamp: "2026-03-21T12:00:00Z".into(),
+        etag: None,
+        last_modified: None,
+        content_hash: "abcdef".into(),
+        content_type: None,
+    };
+    storage.upsert_web_cache(&record).await.unwrap();
+
+    let retrieved = storage
+        .get_web_cache("https://example.com/")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(retrieved.etag.is_none());
+    assert!(retrieved.last_modified.is_none());
+    assert!(retrieved.content_type.is_none());
 }
