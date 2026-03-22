@@ -164,6 +164,33 @@ pub enum IngestionError {
     Embedding { reason: String },
 }
 
+/// Errors from HTTP fetching and URL handling.
+#[derive(Debug, thiserror::Error)]
+pub enum WebError {
+    /// The URL is invalid or uses an unsupported scheme.
+    #[error("invalid URL {url}: {reason}")]
+    InvalidUrl { url: String, reason: String },
+
+    /// HTTP request failed after exhausting all retries.
+    #[error("HTTP request failed for {url} after {attempts} attempts: {reason}")]
+    TooManyRetries {
+        url: String,
+        attempts: u32,
+        reason: String,
+    },
+
+    /// HTTP request returned a non-success status code (not retryable).
+    #[error("HTTP {status} for {url}")]
+    HttpStatus { url: String, status: u16 },
+
+    /// Underlying transport error (DNS, connection refused, etc.).
+    #[error("request error: {source}")]
+    Request {
+        #[from]
+        source: reqwest::Error,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

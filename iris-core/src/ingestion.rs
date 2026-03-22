@@ -988,8 +988,10 @@ fn compute_relative_path(file: &Path, sources: &[PathBuf]) -> String {
     }
 
     // For individual files (not under any directory source), use the file name
-    file.file_name()
-        .map_or_else(|| file.to_string_lossy().to_string(), |n| n.to_string_lossy().to_string())
+    file.file_name().map_or_else(
+        || file.to_string_lossy().to_string(),
+        |n| n.to_string_lossy().to_string(),
+    )
 }
 
 /// Recursively collect supported files from a directory.

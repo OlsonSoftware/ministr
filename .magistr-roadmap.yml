@@ -391,3 +391,280 @@ phases:
     checked: true
   - text: 'E2E test: start iris with multi-path corpus, verify iris_toc shows documents from all paths and iris_survey finds content across sources'
     checked: true
+- id: W1
+  name: HTTP Foundation
+  tagline: Async HTTP client for fetching web documentation
+  status: done
+  problem: iris cannot access documentation hosted on the web — agents must leave iris to fetch external docs, losing context continuity
+  solution: Add reqwest-based async HTTP client with timeout, retries, and User-Agent handling as the foundation for all web fetching
+  tasks:
+  - text: Add `reqwest` (with rustls-tls feature) to workspace dependencies and iris-core Cargo.toml
+    checked: true
+  - text: Create `web` module in iris-core with async `HttpClient` wrapper — configurable timeout (default 30s), retry count (default 2), and User-Agent header identifying iris
+    checked: true
+  - text: 'Implement URL normalization: resolve relative URLs, strip fragments, normalize trailing slashes, validate scheme (http/https only)'
+    checked: true
+  - text: 'Unit tests for HttpClient: successful fetch, timeout handling, retry on 5xx, URL normalization edge cases'
+    checked: true
+- id: W2
+  name: HTML to Markdown
+  tagline: Clean markdown extraction from web pages
+  status: pending
+  problem: Raw HTML is noisy and token-wasteful — nav bars, footers, ads, and scripts pollute the content
+  solution: Build readability-style content extraction that identifies main content and converts to clean markdown, reusing the existing scraper crate
+  tasks:
+  - text: Build HTML-to-markdown converter using existing `scraper` crate — handle headings (h1-h6), paragraphs, code blocks (pre/code), ordered/unordered lists, tables, links, and images (as alt text)
+    checked: false
+  - text: 'Implement readability-style main content extraction: score DOM nodes by text density, strip nav/header/footer/sidebar/script/style elements, identify the `<main>` or `<article>` content container'
+    checked: false
+  - text: 'Unit tests for HTML→markdown: convert sample documentation pages (with nav bars, sidebars, code samples) to markdown, verify clean output preserves headings, code blocks, and content structure'
+    checked: false
+- id: W3
+  name: llms.txt Support
+  tagline: First-class support for the llms.txt documentation standard
+  status: pending
+  problem: Many documentation sites (844K+) now publish llms.txt/llms-full.txt — pre-processed, curated content optimized for LLMs that iris should prefer over raw HTML crawling
+  solution: Auto-detect and fetch llms.txt/llms-full.txt from domain roots, parse the markdown link list format, and use pre-processed content when available
+  tasks:
+  - text: 'Implement llms.txt fetcher: given a domain, try GET `https://{domain}/llms-full.txt` then `https://{domain}/llms.txt` — return content if found (200 OK with text/plain or text/markdown)'
+    checked: false
+  - text: 'Parse llms.txt markdown format: extract the H1 title, description blockquote, and categorized link lists (## sections with `- [title](url): description` entries)'
+    checked: false
+  - text: 'Unit tests: parse sample llms.txt files (Anthropic, Cursor style), verify title/description/link extraction; verify llms-full.txt is returned as raw markdown content'
+    checked: false
+- id: W4
+  name: Web Fetch Pipeline
+  tagline: 'Smart orchestration: llms.txt → sitemap → single page fetch'
+  status: pending
+  problem: Different documentation sites require different fetching strategies — agents shouldn't need to know which one to use
+  solution: Build WebFetcher that auto-selects the best strategy (llms.txt first, then sitemap, then direct fetch), converts to markdown, and feeds into the existing ingestion pipeline
+  tasks:
+  - text: 'Build `WebFetcher` orchestrator that auto-selects strategy: try llms-full.txt → llms.txt link list → sitemap.xml → direct page fetch, returning clean markdown for each discovered page'
+    checked: false
+  - text: Pipe WebFetcher output into existing IngestionPipeline — fetched markdown goes through section extraction, claim extraction, summarization, and embedding generation unchanged
+    checked: false
+  - text: Store fetched web content in `~/.iris/web/<url-hash>/` with metadata file (source URL, fetch timestamp, ETag, content hash, page count)
+    checked: false
+  - text: 'Integration test: fetch a URL via WebFetcher, verify sections and claims appear in storage and are searchable via QueryService'
+    checked: false
+- id: W5
+  name: iris_fetch MCP Tool
+  tagline: One tool to fetch any web documentation into the corpus
+  status: pending
+  problem: Agents need a simple, single-command way to say 'index this documentation site' without managing fetch strategies or ingestion details
+  solution: New iris_fetch MCP tool that accepts a URL and optional crawl parameters, fetches and indexes content, and returns ingestion stats — content becomes immediately searchable via iris_survey
+  tasks:
+  - text: New MCP tool `iris_fetch(url, depth?, max_pages?, path_filter?)` in iris-mcp — single page mode (default) fetches one URL; crawl mode follows same-domain links up to depth/max_pages limits
+    checked: false
+  - text: 'iris_fetch returns structured response: pages_fetched, sections_indexed, claims_extracted, tokens_added, strategy_used (llms_txt/sitemap/crawl/single), plus budget_status'
+    checked: false
+  - text: 'E2E test: call iris_fetch on a documentation URL, then verify iris_survey finds the fetched content and iris_toc lists the new documents'
+    checked: false
+- id: W6
+  name: Sitemap Crawling
+  tagline: Structured URL discovery via sitemap.xml
+  status: pending
+  problem: Documentation sites with hundreds of pages need structured discovery — blindly following links is slow and may miss content
+  solution: Parse sitemap.xml and sitemap index files for URL discovery, filter by path prefix, and fetch in parallel with rate limiting
+  tasks:
+  - text: 'Implement sitemap.xml parser: handle both `<urlset>` (flat) and `<sitemapindex>` (nested sitemap files), extract `<loc>` URLs with optional `<lastmod>` timestamps'
+    checked: false
+  - text: Add path prefix filtering for sitemap URLs (e.g. only fetch URLs under `/docs/`) and configurable max page limit
+    checked: false
+  - text: Parallel page fetching with configurable concurrency (default 4 concurrent requests) and polite rate limiting (default 200ms between requests to same domain)
+    checked: false
+  - text: 'Unit tests: parse sample sitemap.xml and sitemap index files, verify URL extraction, path filtering, and lastmod parsing'
+    checked: false
+- id: W7
+  name: Web Cache and Refresh
+  tagline: Persistent caching with staleness detection for web docs
+  status: pending
+  problem: Re-fetching unchanged documentation wastes time and bandwidth — but stale cached docs are worse than no docs
+  solution: Cache fetched web content with ETags and timestamps, detect staleness via HTTP HEAD, and provide iris_refresh tool for on-demand or automatic updates
+  tasks:
+  - text: 'Track fetch metadata per URL in SQLite: source_url, fetch_timestamp, etag, last_modified, content_hash — new `web_cache` table with migration'
+    checked: false
+  - text: 'Implement staleness detection: HTTP HEAD with If-None-Match (ETag) and If-Modified-Since headers — skip re-fetch if 304 Not Modified'
+    checked: false
+  - text: New MCP tool `iris_refresh(url?)` — check all cached web sources (or a specific URL) for staleness, re-fetch and re-index changed content, report what was updated
+    checked: false
+  - text: 'Unit tests: staleness detection with mock HTTP responses (304, 200 with new ETag, timeout), cache expiry after configurable TTL'
+    checked: false
+- id: R1
+  name: Git Clone Integration
+  tagline: Fast shallow sparse clones for remote repository fetching
+  status: pending
+  problem: Agents cannot access external codebases without manual cloning — and full clones are slow and wasteful
+  solution: Use git's shallow sparse clone (--depth 1 --filter=blob:none --sparse) for 98% faster clones, targeting only needed directories
+  tasks:
+  - text: Build `GitFetcher` that shells out to git via `tokio::process::Command` — `git clone --depth 1 --filter=blob:none --sparse` into `~/.iris/remote/<repo-hash>/`
+    checked: false
+  - text: 'Implement sparse checkout support: after clone, run `git sparse-checkout set <paths>` to check out only requested directories/files'
+    checked: false
+  - text: 'Track clone metadata: repo URL, branch, commit SHA, clone timestamp, checked-out paths — stored as TOML in the clone directory'
+    checked: false
+  - text: 'Unit test: clone a small public repo (e.g. a test fixture repo), verify expected files are present and metadata is written'
+    checked: false
+- id: R2
+  name: iris_clone MCP Tool
+  tagline: One command to clone, index, and search any repository
+  status: pending
+  problem: Agents need to quickly pull down reference implementations, library source code, or upstream dependencies and make them searchable
+  solution: New iris_clone tool that accepts a repo URL with optional path/branch filters, clones via shallow sparse checkout, runs the ingestion pipeline, and caches results
+  tasks:
+  - text: New MCP tool `iris_clone(repo, paths?, branch?)` in iris-mcp — clone via GitFetcher, then run ingestion pipeline on checked-out content
+    checked: false
+  - text: 'iris_clone returns structured response: files_discovered, files_indexed, sections_extracted, clone_time_ms, index_time_ms, plus budget_status'
+    checked: false
+  - text: Skip re-clone if repo is already cached and commit SHA matches remote HEAD — reuse existing index
+    checked: false
+  - text: 'E2E test: iris_clone a public repo, verify iris_toc shows its documents and iris_survey finds content from the cloned repo'
+    checked: false
+- id: R3
+  name: Unified Corpus URL Schemes
+  tagline: Mix local paths, web URLs, and repo URLs in corpus_paths
+  status: pending
+  problem: Currently corpus_paths only accepts local filesystem paths — agents cannot declaratively configure remote sources
+  solution: Extend corpus_paths to recognize https:// (web docs) and github:// (repos) schemes, routing each to the appropriate fetcher automatically
+  tasks:
+  - text: 'Extend corpus_paths URL parsing to recognize schemes: `https://` routes to WebFetcher, `github://owner/repo` or bare git URLs route to GitFetcher, plain paths stay as local filesystem'
+    checked: false
+  - text: Update startup ingestion in main.rs to iterate corpus_paths, dispatch each to the appropriate fetcher, and merge all results into a unified corpus
+    checked: false
+  - text: 'Unit test: URL scheme parsing correctly classifies local paths, https URLs, and github:// URLs; integration test with mixed corpus_paths config'
+    checked: false
+- id: R4
+  name: Remote Source Staleness
+  tagline: Detect and refresh stale remote sources automatically
+  status: pending
+  problem: Cloned repos go stale as upstream commits — agents need to know when their cached source is outdated
+  solution: Track git remote HEAD SHA per clone, compare via git ls-remote on refresh, and unify with web staleness into a single iris_refresh mechanism
+  tasks:
+  - text: 'Implement git remote staleness check: `git ls-remote <repo> HEAD` to get current remote SHA, compare with cached clone SHA'
+    checked: false
+  - text: Unify web and git staleness into `iris_refresh` — single tool checks both web cache ETags and git remote HEADs, re-fetches/re-clones as needed
+    checked: false
+  - text: 'Unit test: detect remote HEAD change via mock git ls-remote output; integration test: modify a cloned repo''s remote, verify refresh detects the change'
+    checked: false
+- id: R5
+  name: Remote Pipeline Tests
+  tagline: End-to-end validation of the remote fetching pipeline
+  status: pending
+  problem: Remote fetching involves network I/O, git subprocesses, and cross-pipeline integration — needs thorough testing
+  solution: Integration and E2E tests covering clone+ingest+survey flow, unified search across local and remote sources, and error handling for auth failures and missing repos
+  tasks:
+  - text: 'Integration test: clone a repo, ingest its docs, verify iris_survey returns relevant content from the cloned source'
+    checked: false
+  - text: 'E2E test: iris_clone + iris_fetch in the same session, verify iris_survey returns unified results from both local, web, and cloned sources'
+    checked: false
+  - text: 'Error handling tests: nonexistent repo URL returns user-friendly error, private repo without auth returns clear auth failure message, empty repo is handled gracefully'
+    checked: false
+- id: C1
+  name: Tree-sitter Foundation
+  tagline: AST parsing infrastructure for structural code understanding
+  status: pending
+  problem: iris treats code as plain text — it cannot understand function boundaries, type hierarchies, or module structure
+  solution: Integrate tree-sitter with Rust grammar support to parse source code into ASTs, enabling structural code analysis
+  tasks:
+  - text: Add `tree-sitter` (0.25+) and `tree-sitter-rust` to workspace dependencies and iris-core Cargo.toml
+    checked: false
+  - text: Create `code` module in iris-core with `AstParser` struct — initializes tree-sitter parser with Rust language grammar, parses source bytes into a tree
+    checked: false
+  - text: 'Implement AST tree walker that visits top-level nodes and identifies item kinds: function_item, struct_item, enum_item, trait_item, impl_item, mod_item, type_item, const_item, static_item'
+    checked: false
+  - text: 'Unit test: parse iris-core''s own `config.rs` and `ingestion.rs`, verify correct AST node types are identified for structs, functions, and impls'
+    checked: false
+- id: C2
+  name: Symbol Extraction
+  tagline: Extract functions, structs, traits, and their metadata from ASTs
+  status: pending
+  problem: Agents need to find specific code symbols by name, kind, or visibility — text search is imprecise and noisy
+  solution: 'Walk tree-sitter ASTs to extract typed symbols with metadata: name, kind, visibility, signature, doc comments, byte range, parent scope'
+  tasks:
+  - text: 'Define `Symbol` type with fields: name, kind (Function/Struct/Enum/Trait/Impl/Module/Const/TypeAlias), visibility (Public/PubCrate/Private), signature (first line), doc_comment, file_path, byte_range, module_path'
+    checked: false
+  - text: 'Extract symbol metadata from Rust AST nodes: parse visibility modifiers, capture `///` doc comments from preceding comment nodes, build signature from the declaration line (without body)'
+    checked: false
+  - text: 'Build `SymbolTable` collection type with query methods: find_by_name(pattern), filter_by_kind(kind), filter_by_visibility(vis), filter_by_module(path)'
+    checked: false
+  - text: 'Unit test: extract symbols from iris-core source files, verify struct names, function signatures, visibility, and doc comments are captured correctly'
+    checked: false
+- id: C3
+  name: AST-Aware Code Chunking
+  tagline: Chunk code at function/struct boundaries, not arbitrary line counts
+  status: pending
+  problem: Naive text chunking splits functions mid-body and merges unrelated code — destroying semantic coherence for embeddings
+  solution: 'New ParserKind::Code that uses tree-sitter to split at AST boundaries, producing multi-resolution chunks: file summaries, symbol stubs (signature + doc), and full implementations'
+  tasks:
+  - text: Add `ParserKind::Code` variant — detected for `.rs`, `.ts`, `.js`, `.py`, `.go`, `.java`, `.c`, `.cpp`, `.h` extensions
+    checked: false
+  - text: 'Implement AST-aware code chunker: split source files at function/struct/enum/trait/impl boundaries, producing one Section per top-level symbol with correct byte ranges'
+    checked: false
+  - text: 'Multi-resolution code chunks: file-level section (module doc + public symbol list as summary), symbol stubs (signature + doc comment, no body), full symbol (complete source including body)'
+    checked: false
+  - text: 'Section IDs for code follow pattern: `file.rs#module_path::SymbolName` (e.g. `config.rs#config::IrisConfig`, `ingestion.rs#ingestion::IngestionPipeline::ingest_directory`)'
+    checked: false
+  - text: 'Unit test: chunk a Rust source file, verify chunk boundaries align with AST node boundaries — no function split mid-body, no struct split from its impl block'
+    checked: false
+- id: C4
+  name: Symbol Storage Schema
+  tagline: SQLite-backed symbol index with relationship tracking
+  status: pending
+  problem: Symbol metadata and relationships (caller→callee, trait→impl, imports) need persistent, queryable storage
+  solution: New SQLite tables for symbols and symbol_refs, with storage trait extensions for CRUD operations and relationship queries
+  tasks:
+  - text: 'New SQLite table `symbols`: id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end — with migration'
+    checked: false
+  - text: 'New SQLite table `symbol_refs`: from_symbol_id, to_symbol_id, ref_kind (Calls/Implements/Imports/Uses) — with migration'
+    checked: false
+  - text: 'Extend Storage trait with symbol CRUD: insert_symbols, list_symbols(filters), get_symbol(id), insert_symbol_refs, query_refs(symbol_id, ref_kind?)'
+    checked: false
+  - text: 'Unit test: insert and query symbols and relationships, verify filtering by kind/visibility/module works correctly'
+    checked: false
+- id: C5
+  name: Code Intelligence MCP Tools
+  tagline: iris_symbols, iris_definition, iris_references — structural code navigation
+  status: pending
+  problem: 'Agents need to navigate code structurally: find a function by name, jump to its definition, find all callers'
+  solution: 'Three new MCP tools: iris_symbols (search/browse symbol index), iris_definition (jump to source), iris_references (find callers/implementors/importers)'
+  tasks:
+  - text: New MCP tool `iris_symbols(query?, kind?, module?, visibility?)` — search the symbol index with fuzzy name matching and exact kind/module/visibility filters, returns symbol list with file, line, signature, doc preview
+    checked: false
+  - text: New MCP tool `iris_definition(symbol_id)` — returns full source code of the symbol with 3 lines of surrounding context, heading path showing module hierarchy, and budget tracking
+    checked: false
+  - text: 'New MCP tool `iris_references(symbol_id, ref_kind?)` — returns all references: callers (Calls), implementors (Implements), importers (Imports), with source locations'
+    checked: false
+  - text: 'E2E test: index a codebase with code intelligence, verify iris_symbols finds expected functions/structs, iris_definition returns correct source, iris_references finds callers'
+    checked: false
+- id: C6
+  name: Unified Code + Doc Search
+  tagline: iris_survey searches code symbols alongside documentation
+  status: pending
+  problem: Code and documentation live in separate search silos — agents must know which to search
+  solution: Embed code symbols in the same HNSW index as document sections, extending iris_survey to return both code and doc results ranked together
+  tasks:
+  - text: Embed code symbol stubs (signature + doc comment) into the same HNSW vector index used for document sections — new VectorId variants for code symbols
+    checked: false
+  - text: 'Extend iris_survey to return both document sections AND code symbols in a unified ranked result list — add `resolution: "symbol_stub"` and `resolution: "symbol_full"` variants'
+    checked: false
+  - text: 'E2E test: index a project with both docs and code, iris_survey with a query like "how does ingestion work" returns both documentation sections and relevant code symbols'
+    checked: false
+- id: C7
+  name: Multi-Language Support
+  tagline: Tree-sitter grammars for TypeScript, Python, Go, and more
+  status: pending
+  problem: Code intelligence limited to Rust misses the majority of codebases agents work with
+  solution: Add tree-sitter grammars for TypeScript/JavaScript, Python, and Go with unified symbol extraction interface and language-specific AST walkers
+  tasks:
+  - text: Build a dynamic grammar loader that downloads and caches tree-sitter grammar `.so`/`.dylib` files on demand — when iris encounters a new file extension, it fetches the matching grammar from the tree-sitter grammar registry automatically
+    checked: false
+  - text: Maintain a language registry mapping file extensions to tree-sitter grammar crate names — cover all 30+ mainstream languages (Rust, TypeScript, JavaScript, Python, Go, Java, C, C++, C#, Ruby, Swift, Kotlin, Scala, PHP, Elixir, Haskell, Lua, Zig, OCaml, Dart, R, Shell/Bash, SQL, HTML, CSS, YAML, TOML, JSON, Terraform/HCL, Dockerfile, Protobuf, etc.)
+    checked: false
+  - text: 'Implement a generic AST symbol extractor with language-agnostic heuristics: identify nodes with names (functions, classes, types) by tree-sitter node kind patterns common across grammars (e.g. `*_definition`, `*_declaration`, `function_*`, `class_*`)'
+    checked: false
+  - text: 'Add language-specific AST walker refinements for high-value languages: Rust (traits, impls, derive macros), TypeScript (interfaces, type aliases, decorators), Python (classes, decorators, type hints), Go (interfaces, methods, receivers)'
+    checked: false
+  - text: Automatic language detection from file extension in `detect_parser_kind` — route to tree-sitter grammar if available, fall back to text-based parsing for unknown extensions, never fail on an unsupported language
+    checked: false
+  - text: 'Unit tests: parse and extract symbols from at least 5 languages (Rust, TypeScript, Python, Go, Java), verify the generic extractor produces reasonable symbols even for languages without a specific refinement'
+    checked: false
