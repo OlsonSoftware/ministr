@@ -294,9 +294,10 @@ struct FetchResponse {
 /// Parameters for the `iris_refresh` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RefreshParams {
-    /// Optional URL to refresh. If omitted, checks all cached web sources.
+    /// Optional URL or repo URL to refresh. If omitted, checks all cached web
+    /// and git sources.
     #[schemars(
-        description = "Optional URL to check for staleness. If omitted, checks all cached web sources."
+        description = "Optional URL (web) or repo URL (git) to check for staleness. If omitted, checks all cached sources."
     )]
     pub url: Option<String>,
 }
@@ -310,19 +311,52 @@ struct RefreshUrlDetailResponse {
     status: String,
 }
 
+/// Per-repo refresh detail for the response.
+#[derive(Debug, Serialize)]
+struct RefreshGitDetailResponse {
+    /// The repository URL that was checked.
+    repo_url: String,
+    /// The outcome: "unchanged", "updated", or "failed: <reason>".
+    status: String,
+}
+
 /// Response from the `iris_refresh` tool.
 #[derive(Debug, Serialize)]
 struct RefreshResponse {
-    /// Number of URLs checked.
+    /// Number of web URLs checked.
     urls_checked: usize,
-    /// Number of URLs that had new content and were re-indexed.
+    /// Number of web URLs that had new content and were re-indexed.
     urls_refreshed: usize,
-    /// Number of URLs that were unchanged.
+    /// Number of web URLs that were unchanged.
     urls_unchanged: usize,
-    /// Number of URLs where the check failed.
+    /// Number of web URLs where the check failed.
     urls_failed: usize,
-    /// Per-URL details.
+    /// Per-URL details for web sources.
     details: Vec<RefreshUrlDetailResponse>,
+    /// Number of git repos checked.
+    #[serde(skip_serializing_if = "is_zero")]
+    git_repos_checked: usize,
+    /// Number of git repos that had new commits and were re-indexed.
+    #[serde(skip_serializing_if = "is_zero")]
+    git_repos_refreshed: usize,
+    /// Number of git repos that were unchanged.
+    #[serde(skip_serializing_if = "is_zero")]
+    git_repos_unchanged: usize,
+    /// Number of git repos where the check failed.
+    #[serde(skip_serializing_if = "is_zero")]
+    git_repos_failed: usize,
+    /// Per-repo details for git sources.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    git_details: Vec<RefreshGitDetailResponse>,
+}
+
+/// Helper for `skip_serializing_if` on zero counts.
+///
+/// Must take `&usize` (not `usize`) because serde's `skip_serializing_if`
+/// passes a reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(val: &usize) -> bool {
+    *val == 0
 }
 
 /// Parameters for the `iris_clone` tool.
@@ -1213,7 +1247,7 @@ impl IrisServer {
     /// re-indexes it with embeddings, and reports what was updated.
     #[tool(
         name = "iris_refresh",
-        description = "Check cached web sources for staleness and re-fetch changed content. If url is provided, checks only that URL. If omitted, checks all cached sources. Reports what was updated."
+        description = "Check cached web and git sources for staleness. Re-fetches changed web content and re-clones stale git repos. If url is provided, checks only that source. If omitted, checks all cached sources. Reports what was updated."
     )]
     async fn refresh(
         &self,
@@ -1223,12 +1257,6 @@ impl IrisServer {
 
         async {
             debug!(url = ?params.url, "iris_refresh request");
-
-            let Some(ref web_fetcher) = self.web_fetcher else {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "iris_refresh is not available: web fetcher not configured.".to_string(),
-                )]));
-            };
 
             let Some(ref embedder) = self.embedder else {
                 return Ok(CallToolResult::error(vec![Content::text(
@@ -1248,62 +1276,8 @@ impl IrisServer {
                 )]));
             };
 
-            match web_fetcher
-                .refresh_all(
-                    params.url.as_deref(),
-                    &self.ingestion_pipeline,
-                    storage.as_ref(),
-                    embedder.as_ref(),
-                    index.as_ref(),
-                )
+            self.refresh_all_sources(&params, storage, embedder.as_ref(), index.as_ref())
                 .await
-            {
-                Ok(result) => {
-                    debug!(
-                        checked = result.urls_checked,
-                        refreshed = result.urls_refreshed,
-                        unchanged = result.urls_unchanged,
-                        failed = result.urls_failed,
-                        "iris_refresh success"
-                    );
-
-                    let budget = self.budget.lock().await;
-                    let budget_status = budget.budget_status();
-                    drop(budget);
-
-                    let details: Vec<RefreshUrlDetailResponse> = result
-                        .details
-                        .iter()
-                        .map(|d| RefreshUrlDetailResponse {
-                            url: d.url.clone(),
-                            status: d.status.to_string(),
-                        })
-                        .collect();
-
-                    let response = self
-                        .build_response(
-                            RefreshResponse {
-                                urls_checked: result.urls_checked,
-                                urls_refreshed: result.urls_refreshed,
-                                urls_unchanged: result.urls_unchanged,
-                                urls_failed: result.urls_failed,
-                                details,
-                            },
-                            budget_status,
-                        )
-                        .await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
-                }
-                Err(e) => {
-                    warn!(error = %e, "iris_refresh failed");
-                    Ok(CallToolResult::error(vec![Content::text(format!(
-                        "refresh failed: {e}"
-                    ))]))
-                }
-            }
         }
         .instrument(span)
         .await
@@ -1593,6 +1567,19 @@ impl IrisServer {
 
         match ingest_result {
             Ok(stats) => {
+                // Record the clone in the git cache for staleness tracking.
+                let git_cache_record = iris_core::storage::GitCacheRecord {
+                    repo_url: params.repo.clone(),
+                    branch: params.branch.clone(),
+                    commit_sha: clone_result.metadata.commit_sha.clone(),
+                    clone_timestamp: clone_result.metadata.clone_timestamp.clone(),
+                    clone_dir: clone_result.clone_dir.to_string_lossy().to_string(),
+                    checked_out_paths: clone_result.metadata.checked_out_paths.clone(),
+                };
+                if let Err(e) = storage.upsert_git_cache(&git_cache_record).await {
+                    warn!(error = %e, repo = %params.repo, "failed to record git cache");
+                }
+
                 debug!(
                     repo = %params.repo,
                     files_discovered = clone_result.files.len(),
@@ -1632,6 +1619,215 @@ impl IrisServer {
                 ))]))
             }
         }
+    }
+
+    /// Execute the refresh pipeline for both web and git sources.
+    ///
+    /// Separated from the tool handler to satisfy the `too_many_lines` lint.
+    async fn refresh_all_sources(
+        &self,
+        params: &RefreshParams,
+        storage: &Arc<SqliteStorage>,
+        embedder: &dyn Embedder,
+        index: &dyn VectorIndex,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        // --- Web refresh ---
+        let (urls_checked, urls_refreshed, urls_unchanged, urls_failed, web_details) =
+            if let Some(ref web_fetcher) = self.web_fetcher {
+                match web_fetcher
+                    .refresh_all(
+                        params.url.as_deref(),
+                        &self.ingestion_pipeline,
+                        storage.as_ref(),
+                        embedder,
+                        index,
+                    )
+                    .await
+                {
+                    Ok(result) => {
+                        let details: Vec<RefreshUrlDetailResponse> = result
+                            .details
+                            .iter()
+                            .map(|d| RefreshUrlDetailResponse {
+                                url: d.url.clone(),
+                                status: d.status.to_string(),
+                            })
+                            .collect();
+                        (
+                            result.urls_checked,
+                            result.urls_refreshed,
+                            result.urls_unchanged,
+                            result.urls_failed,
+                            details,
+                        )
+                    }
+                    Err(e) => {
+                        if params.url.is_some() {
+                            debug!(error = %e, "web refresh skipped (URL may be git)");
+                            (0, 0, 0, 0, Vec::new())
+                        } else {
+                            warn!(error = %e, "iris_refresh web failed");
+                            return Ok(CallToolResult::error(vec![Content::text(format!(
+                                "refresh failed: {e}"
+                            ))]));
+                        }
+                    }
+                }
+            } else {
+                (0, 0, 0, 0, Vec::new())
+            };
+
+        // --- Git refresh ---
+        let (git_checked, git_refreshed, git_unchanged, git_failed, git_details) = self
+            .refresh_git_sources(params.url.as_deref(), storage, embedder, index)
+            .await;
+
+        debug!(
+            urls_checked,
+            urls_refreshed,
+            urls_unchanged,
+            urls_failed,
+            git_checked,
+            git_refreshed,
+            git_unchanged,
+            git_failed,
+            "iris_refresh success"
+        );
+
+        let budget = self.budget.lock().await;
+        let budget_status = budget.budget_status();
+        drop(budget);
+
+        let response = self
+            .build_response(
+                RefreshResponse {
+                    urls_checked,
+                    urls_refreshed,
+                    urls_unchanged,
+                    urls_failed,
+                    details: web_details,
+                    git_repos_checked: git_checked,
+                    git_repos_refreshed: git_refreshed,
+                    git_repos_unchanged: git_unchanged,
+                    git_repos_failed: git_failed,
+                    git_details,
+                },
+                budget_status,
+            )
+            .await;
+        let json = serde_json::to_string_pretty(&response)
+            .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    /// Refresh all cached git clones, or a single repo if `url_filter` matches.
+    ///
+    /// Returns `(checked, refreshed, unchanged, failed, details)`.
+    async fn refresh_git_sources(
+        &self,
+        url_filter: Option<&str>,
+        storage: &Arc<SqliteStorage>,
+        embedder: &dyn Embedder,
+        index: &dyn VectorIndex,
+    ) -> (usize, usize, usize, usize, Vec<RefreshGitDetailResponse>) {
+        let Some(ref git_fetcher) = self.git_fetcher else {
+            return (0, 0, 0, 0, Vec::new());
+        };
+
+        let records = if let Some(url) = url_filter {
+            match storage.get_git_cache(url).await {
+                Ok(Some(record)) => vec![record],
+                Ok(None) => return (0, 0, 0, 0, Vec::new()),
+                Err(e) => {
+                    warn!(error = %e, "failed to query git cache");
+                    return (0, 0, 0, 0, Vec::new());
+                }
+            }
+        } else {
+            match storage.list_git_cache().await {
+                Ok(records) => records,
+                Err(e) => {
+                    warn!(error = %e, "failed to list git cache");
+                    return (0, 0, 0, 0, Vec::new());
+                }
+            }
+        };
+
+        let mut checked = 0;
+        let mut refreshed = 0;
+        let mut unchanged = 0;
+        let mut failed = 0;
+        let mut details = Vec::with_capacity(records.len());
+
+        for record in &records {
+            checked += 1;
+            let paths_opt: Option<Vec<String>> = if record.checked_out_paths.is_empty() {
+                None
+            } else {
+                Some(record.checked_out_paths.clone())
+            };
+
+            match git_fetcher
+                .refresh(
+                    &record.repo_url,
+                    paths_opt.as_deref(),
+                    record.branch.as_deref(),
+                    &record.commit_sha,
+                )
+                .await
+            {
+                Ok(None) => {
+                    unchanged += 1;
+                    details.push(RefreshGitDetailResponse {
+                        repo_url: record.repo_url.clone(),
+                        status: "unchanged".to_string(),
+                    });
+                }
+                Ok(Some(clone_result)) => {
+                    // Re-ingest the refreshed clone.
+                    let params = CloneParams {
+                        repo: record.repo_url.clone(),
+                        paths: paths_opt,
+                        branch: record.branch.clone(),
+                    };
+                    match self
+                        .clone_and_ingest(&params, git_fetcher, embedder, index, storage.as_ref())
+                        .await
+                    {
+                        Ok(_) => {
+                            refreshed += 1;
+                            details.push(RefreshGitDetailResponse {
+                                repo_url: record.repo_url.clone(),
+                                status: format!(
+                                    "updated: {} -> {}",
+                                    &record.commit_sha[..7.min(record.commit_sha.len())],
+                                    &clone_result.metadata.commit_sha
+                                        [..7.min(clone_result.metadata.commit_sha.len())]
+                                ),
+                            });
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            warn!(error = ?e, repo = %record.repo_url, "git refresh re-ingest failed");
+                            details.push(RefreshGitDetailResponse {
+                                repo_url: record.repo_url.clone(),
+                                status: "failed: re-ingest error".to_string(),
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    failed += 1;
+                    warn!(error = %e, repo = %record.repo_url, "git staleness check failed");
+                    details.push(RefreshGitDetailResponse {
+                        repo_url: record.repo_url.clone(),
+                        status: format!("failed: {e}"),
+                    });
+                }
+            }
+        }
+
+        (checked, refreshed, unchanged, failed, details)
     }
 
     /// Trigger all prefetch strategies after a read operation.

@@ -7,4 +7,4 @@
 
 pub mod fetcher;
 
-pub use fetcher::{CloneMetadata, CloneResult, GitFetcher, GitFetcherConfig};
+pub use fetcher::{CloneMetadata, CloneResult, GitFetcher, GitFetcherConfig, GitStalenessResult};

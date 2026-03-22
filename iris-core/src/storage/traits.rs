@@ -141,6 +141,23 @@ pub struct WebCacheRecord {
     pub content_type: Option<String>,
 }
 
+/// A git cache record tracking clone metadata for staleness detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitCacheRecord {
+    /// The remote repository URL (primary key).
+    pub repo_url: String,
+    /// The branch that was cloned (None for default branch).
+    pub branch: Option<String>,
+    /// The commit SHA at clone time.
+    pub commit_sha: String,
+    /// Epoch seconds timestamp of the clone.
+    pub clone_timestamp: String,
+    /// Path to the clone directory on disk.
+    pub clone_dir: String,
+    /// Paths that were checked out via sparse checkout (empty = full checkout).
+    pub checked_out_paths: Vec<String>,
+}
+
 /// Async storage interface for the iris content database.
 ///
 /// Implementations must be `Send + Sync` to work across async tasks.
@@ -339,5 +356,30 @@ pub trait Storage: Send + Sync {
     fn delete_web_cache(
         &self,
         url: &str,
+    ) -> impl Future<Output = Result<bool, StorageError>> + Send;
+
+    // -- Git cache --
+
+    /// Upsert a git cache record (insert or update on conflict).
+    fn upsert_git_cache(
+        &self,
+        record: &GitCacheRecord,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Get the cached metadata for a repository URL.
+    fn get_git_cache(
+        &self,
+        repo_url: &str,
+    ) -> impl Future<Output = Result<Option<GitCacheRecord>, StorageError>> + Send;
+
+    /// List all cached git clones.
+    fn list_git_cache(
+        &self,
+    ) -> impl Future<Output = Result<Vec<GitCacheRecord>, StorageError>> + Send;
+
+    /// Delete a git cache record.
+    fn delete_git_cache(
+        &self,
+        repo_url: &str,
     ) -> impl Future<Output = Result<bool, StorageError>> + Send;
 }

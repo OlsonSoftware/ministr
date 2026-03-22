@@ -463,9 +463,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Implement git remote staleness check: `git ls-remote <repo> HEAD` to get current remote SHA, compare with cached clone SHA
-- [ ] Unify web and git staleness into `iris_refresh` — single tool checks both web cache ETags and git remote HEADs, re-fetches/re-clones as needed
-- [ ] Unit test: detect remote HEAD change via mock git ls-remote output; integration test: modify a cloned repo's remote, verify refresh detects the change
+- [x] Implement git remote staleness check: `git ls-remote <repo> HEAD` to get current remote SHA, compare with cached clone SHA
+- [x] Unify web and git staleness into `iris_refresh` — single tool checks both web cache ETags and git remote HEADs, re-fetches/re-clones as needed
+- [x] Unit test: detect remote HEAD change via mock git ls-remote output; integration test: modify a cloned repo's remote, verify refresh detects the change
 
 ---
 
