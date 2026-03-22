@@ -32,8 +32,8 @@ Keep your plan entry statuses up to date. The Magistr TUI sidebar shows your pla
 
 > `magistr_set_phase(phase: "research")` — call this first.
 
-1. **Web search** — use the `WebSearch` tool (NOT `WebFetch`) to research best practices, recent API changes, known pitfalls, and idiomatic patterns for what you're about to build. Formulate 2-4 targeted queries. Only use `WebFetch` to read specific URLs found via `WebSearch`.
-2. **Deep dive** — when applicable, use `WebFetch` to read official documentation pages, changelogs, or reference implementations found during web search.
+1. **Web search** — use `brave_web_search` liberally to research best practices, recent API changes, known pitfalls, and idiomatic patterns for what you're about to build. Formulate 2-4 targeted queries.
+2. **Codebase search** — use iris tools (`iris_survey`, `iris_symbols`, `iris_definition`) to understand the existing code around your changes. Do NOT use Glob/Grep/Read for exploration.
 3. **Capture findings** — note API contracts, patterns to follow, anti-patterns to avoid, and version-specific behavior that will inform the plan.
 
 ### PLAN

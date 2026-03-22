@@ -31,7 +31,7 @@ This skill reads the auto-detected configuration from `.magistr/project.json`, c
       If existing file, update `spec.file` in project.json.
 
    d. **Reference codebases** — "Any reference codebases the agent should consult?"
-      If yes, add paths to `reference_repos` in project.json and suggest magistr-scope indexing.
+      If yes, add paths to `reference_repos` in project.json and suggest iris indexing via `--corpus`.
 
    e. **Conventions** — "Any project-specific conventions beyond standard [language] style?"
       E.g., naming patterns, architectural rules, forbidden patterns.
@@ -39,7 +39,7 @@ This skill reads the auto-detected configuration from `.magistr/project.json`, c
    f. **Never do** — "Anything the agent should NEVER do in this project?"
       E.g., "never modify the database schema directly", "never use class components"
 
-5. **Research** — Use WebSearch to find current best practices for the detected stack:
+5. **Research** — Use `brave_web_search` to find current best practices for the detected stack:
    - Idiomatic patterns for the language/framework
    - Recommended project structure
    - Common testing patterns

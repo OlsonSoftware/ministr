@@ -17,11 +17,9 @@
       "TaskOutput",
       "TaskStop",
       "mcp__magistr",
-      "mcp__magistr-scope",
-      "mcp__context7",
+      "mcp__iris",
       "mcp__brave-search",
       "mcp__sequential-thinking",
-      "mcp__jig-scope",
       "mcp__mcp-server-fetch"
     ],
     "deny": [
