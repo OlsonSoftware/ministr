@@ -29,3 +29,13 @@ hnsw_rs.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 tempfile.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+
+[[bench]]
+name = "search"
+harness = false
+
+[[bench]]
+name = "embedding"
+harness = false

@@ -32,5 +32,17 @@ audit:
 deny:
     cargo deny check
 
+# Run HNSW search benchmarks (no model download required)
+bench:
+    cargo bench --bench search -p iris-core
+
+# Run embedding throughput benchmarks (requires ~80MB model download)
+bench-embedding:
+    cargo bench --bench embedding -p iris-core
+
+# Run all benchmarks
+bench-all:
+    cargo bench -p iris-core
+
 # Run all quality gates: format check + build + test + lint
 validate: fmt-check lint test
