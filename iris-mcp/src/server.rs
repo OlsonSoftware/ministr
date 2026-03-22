@@ -41,7 +41,7 @@ use iris_core::session::delta::ContentDelta;
 use iris_core::session::eviction::EvictionCandidate;
 use iris_core::session::prefetch::PrefetchEngine;
 use iris_core::session::{
-    BudgetConfig, BudgetStatus, BudgetTracker, EvictionPolicy, Session, SessionId,
+    BudgetConfig, BudgetStatus, BudgetTracker, CoherenceAlert, EvictionPolicy, Session, SessionId,
 };
 use iris_core::storage::{SqliteStorage, Storage};
 use iris_core::token::count_tokens;
@@ -73,6 +73,9 @@ struct ToolResponse<T: Serialize> {
     data: T,
     /// Current budget status snapshot.
     budget_status: BudgetStatus,
+    /// Pending coherence alerts (present when underlying content has changed).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    coherence_alerts: Vec<CoherenceAlert>,
 }
 
 /// Wrapper for survey responses that includes both results and dedup metadata.
@@ -182,6 +185,9 @@ struct BudgetResponse {
     eviction_candidates: Vec<EvictionCandidate>,
     /// Prefetch cache hit/miss metrics by strategy.
     prefetch_metrics: iris_core::session::PrefetchMetrics,
+    /// Pending coherence alerts (present when underlying content has changed).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    coherence_alerts: Vec<CoherenceAlert>,
 }
 
 /// Parameters for the `iris_related` tool.
@@ -366,13 +372,15 @@ impl IrisServer {
 
                     self.persist_session().await;
 
-                    let response = ToolResponse {
-                        data: SurveyResponse {
-                            results: filtered,
-                            deduplicated_count,
-                        },
-                        budget_status,
-                    };
+                    let response = self
+                        .build_response(
+                            SurveyResponse {
+                                results: filtered,
+                                deduplicated_count,
+                            },
+                            budget_status,
+                        )
+                        .await;
                     let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
                         format!("{{\"error\": \"serialization failed: {e}\"}}")
                     });
@@ -459,10 +467,7 @@ impl IrisServer {
                         .await;
                     self.trigger_prefetch(&params.section_id).await;
 
-                    let response = ToolResponse {
-                        data: detail,
-                        budget_status,
-                    };
+                    let response = self.build_response(detail, budget_status).await;
                     let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
                         format!("{{\"error\": \"serialization failed: {e}\"}}")
                     });
@@ -539,10 +544,9 @@ impl IrisServer {
 
                     self.persist_session().await;
 
-                    let response = ToolResponse {
-                        data: ExtractResponse { claims },
-                        budget_status,
-                    };
+                    let response = self
+                        .build_response(ExtractResponse { claims }, budget_status)
+                        .await;
                     let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
                         format!("{{\"error\": \"serialization failed: {e}\"}}")
                     });
@@ -621,10 +625,9 @@ impl IrisServer {
 
                     self.persist_session().await;
 
-                    let response = ToolResponse {
-                        data: RelatedResponse { related },
-                        budget_status,
-                    };
+                    let response = self
+                        .build_response(RelatedResponse { related }, budget_status)
+                        .await;
                     let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
                         format!("{{\"error\": \"serialization failed: {e}\"}}")
                     });
@@ -688,10 +691,9 @@ impl IrisServer {
                 "iris_evicted complete"
             );
 
-            let response = ToolResponse {
-                data: EvictedResponse { evicted, not_found },
-                budget_status,
-            };
+            let response = self
+                .build_response(EvictedResponse { evicted, not_found }, budget_status)
+                .await;
             let json = serde_json::to_string_pretty(&response)
                 .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
             Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -715,13 +717,14 @@ impl IrisServer {
         async {
             debug!("iris_budget request");
 
-            let session = self.session.lock().await;
+            let mut session = self.session.lock().await;
             let budget = self.budget.lock().await;
             let prefetch = self.prefetch.lock().await;
 
             let status = budget.budget_status();
             let candidates = budget.eviction_candidates(&session, 5);
             let prefetch_metrics = prefetch.metrics();
+            let alerts = session.drain_alerts();
 
             drop(prefetch);
             drop(budget);
@@ -748,6 +751,7 @@ impl IrisServer {
                 pressure_level: pressure_str.to_string(),
                 eviction_candidates: candidates,
                 prefetch_metrics,
+                coherence_alerts: alerts,
             };
             let json = serde_json::to_string_pretty(&response)
                 .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
@@ -783,10 +787,9 @@ impl IrisServer {
                     let budget_status = budget.budget_status();
                     drop(budget);
 
-                    let response = ToolResponse {
-                        data: CompressResponse { summaries },
-                        budget_status,
-                    };
+                    let response = self
+                        .build_response(CompressResponse { summaries }, budget_status)
+                        .await;
                     let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
                         format!("{{\"error\": \"serialization failed: {e}\"}}")
                     });
@@ -900,6 +903,23 @@ impl IrisServer {
         drop(session);
         self.persist_session().await;
         status
+    }
+
+    /// Build a tool response with budget status and any pending coherence alerts.
+    async fn build_response<T: Serialize>(
+        &self,
+        data: T,
+        budget_status: BudgetStatus,
+    ) -> ToolResponse<T> {
+        let mut session = self.session.lock().await;
+        let alerts = session.drain_alerts();
+        drop(session);
+
+        ToolResponse {
+            data,
+            budget_status,
+            coherence_alerts: alerts,
+        }
     }
 
     /// Trigger all prefetch strategies after a read operation.

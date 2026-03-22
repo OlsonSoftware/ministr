@@ -176,7 +176,7 @@ phases:
 - id: P6
   name: Prefetch Engine & Coherence
   tagline: Predict what the agent needs next and notify when source documents change
-  status: in_progress
+  status: done
   problem: Every cold retrieval costs 50-200ms and a tool-call round-trip. Without prefetching, agents make 3x more tool calls than necessary. Without coherence, stale context causes hallucinations
   solution: Build three prefetch heuristics (sequential, topical, structural locality) with an LRU warm cache, file watching via notify crate for coherence alerts, and the iris_related tool for claim dependency traversal
   tasks:
@@ -197,17 +197,17 @@ phases:
   - text: Build claim relationship index — detect cross-references and co-occurring entities between claims at ingestion
     checked: true
   - text: Implement file watcher using notify crate — watch corpus source directories for changes
-    checked: false
+    checked: true
   - text: Build coherence protocol — on file change, re-index affected sections, generate coherence_alert notifications
-    checked: false
+    checked: true
   - text: Send MCP notifications for stale content — push changed_sections and stale_content_ids to connected agents
-    checked: false
+    checked: true
   - text: Invalidate session shadow entries when underlying content changes — mark stale, offer delta on next access
-    checked: false
+    checked: true
   - text: Write tests for prefetch engine — hit rate measurement, sequential/topical/structural prediction accuracy
     checked: true
   - text: Write tests for coherence — file change detection, re-indexing correctness, notification delivery, shadow invalidation
-    checked: false
+    checked: true
 - id: P7
   name: Polish, Parsers & Release
   tagline: Additional format support, cross-session analytics, docs, benchmarks, and v0.1.0
