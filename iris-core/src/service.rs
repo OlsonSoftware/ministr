@@ -17,7 +17,7 @@ use crate::index::VectorIndex;
 use crate::search::{MultiResolutionSearch, SearchConfig};
 use crate::storage::{SqliteStorage, Storage};
 use crate::token::count_tokens;
-use crate::types::{Resolution, SectionId, VectorId};
+use crate::types::{ClaimId, RelationType, Resolution, SectionId, VectorId};
 
 /// A ranked result from a corpus survey search.
 #[derive(Debug, Clone, Serialize)]
@@ -80,6 +80,21 @@ pub struct CompressedItem {
     pub compressed_tokens: usize,
 }
 
+/// A related claim returned by `related_claims`.
+#[derive(Debug, Clone, Serialize)]
+pub struct RelatedClaimResult {
+    /// The related claim's ID.
+    pub claim_id: String,
+    /// The related claim's text.
+    pub text: String,
+    /// The type of relationship.
+    pub relation_type: String,
+    /// The section containing the related claim.
+    pub source_section: String,
+    /// Confidence score (0.0–1.0).
+    pub confidence: f32,
+}
+
 /// Errors from the query service layer.
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
@@ -94,6 +109,10 @@ pub enum QueryError {
     /// The requested section was not found.
     #[error("section not found: {id}")]
     SectionNotFound { id: String },
+
+    /// The requested claim was not found.
+    #[error("claim not found: {id}")]
+    ClaimNotFound { id: String },
 }
 
 /// High-level query service that composes storage, embedding, and vector index.
@@ -336,6 +355,48 @@ impl QueryService {
         Ok(results)
     }
 
+    /// Find claims related to the given claim via the relationship index.
+    ///
+    /// Returns claims that reference, contradict, depend on, or update the
+    /// given claim. Optionally filtered by relation type.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::ClaimNotFound`] if the claim does not exist,
+    /// or [`QueryError::Storage`] on database errors.
+    #[instrument(skip(self))]
+    pub async fn related_claims(
+        &self,
+        claim_id: &str,
+        relation_types: Option<&[RelationType]>,
+    ) -> Result<Vec<RelatedClaimResult>, QueryError> {
+        let cid = ClaimId(claim_id.to_string());
+
+        // Verify claim exists
+        self.storage
+            .get_claim(&cid)
+            .await?
+            .ok_or_else(|| QueryError::ClaimNotFound {
+                id: claim_id.to_string(),
+            })?;
+
+        let related = self
+            .storage
+            .get_related_claims(&cid, relation_types)
+            .await?;
+
+        Ok(related
+            .into_iter()
+            .map(|r| RelatedClaimResult {
+                claim_id: r.claim_id.0,
+                text: r.text,
+                relation_type: r.relation_type.to_string(),
+                source_section: r.section_id.0,
+                confidence: r.confidence,
+            })
+            .collect())
+    }
+
     /// Resolve a vector ID to its content text and optional heading path.
     async fn resolve_content(
         &self,
@@ -406,7 +467,9 @@ mod tests {
     use super::*;
     use crate::index::HnswIndex;
     use crate::storage::SqliteStorage;
-    use crate::types::{Claim, ClaimId, ContentId, DocumentTree, Section, SectionId};
+    use crate::types::{
+        Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, Section, SectionId,
+    };
 
     /// Deterministic mock embedder for testing.
     struct MockEmbedder {
@@ -725,5 +788,70 @@ mod tests {
         let b = vec![0.0, 0.0, 0.0];
         let sim = cosine_similarity(&a, &b);
         assert!(sim.abs() < f32::EPSILON);
+    }
+
+    // --- related_claims tests ---
+
+    #[tokio::test]
+    async fn related_claims_returns_related() {
+        let service = setup_service().await;
+
+        // Insert relationships
+        let relationships = vec![ClaimRelationship {
+            source_claim_id: ClaimId("c1".into()),
+            target_claim_id: ClaimId("c2".into()),
+            relation_type: RelationType::References,
+            confidence: 0.8,
+        }];
+        service
+            .storage
+            .insert_claim_relationships(&relationships)
+            .await
+            .unwrap();
+
+        let related = service.related_claims("c1", None).await.unwrap();
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].claim_id, "c2");
+        assert_eq!(related[0].relation_type, "references");
+        assert_eq!(related[0].source_section, "docs/auth.md#tokens");
+    }
+
+    #[tokio::test]
+    async fn related_claims_filters_by_type() {
+        let service = setup_service().await;
+
+        let relationships = vec![
+            ClaimRelationship {
+                source_claim_id: ClaimId("c1".into()),
+                target_claim_id: ClaimId("c2".into()),
+                relation_type: RelationType::References,
+                confidence: 0.8,
+            },
+            ClaimRelationship {
+                source_claim_id: ClaimId("c1".into()),
+                target_claim_id: ClaimId("c2".into()),
+                relation_type: RelationType::Updates,
+                confidence: 0.6,
+            },
+        ];
+        service
+            .storage
+            .insert_claim_relationships(&relationships)
+            .await
+            .unwrap();
+
+        let related = service
+            .related_claims("c1", Some(&[RelationType::Updates]))
+            .await
+            .unwrap();
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].relation_type, "updates");
+    }
+
+    #[tokio::test]
+    async fn related_claims_not_found() {
+        let service = setup_service().await;
+        let result = service.related_claims("nonexistent", None).await;
+        assert!(matches!(result, Err(QueryError::ClaimNotFound { .. })));
     }
 }

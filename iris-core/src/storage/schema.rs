@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 2;
+pub const CURRENT_SCHEMA_VERSION: usize = 3;
 
 /// Returns the migration set for the content database.
 ///
@@ -81,6 +81,21 @@ fn migrations() -> Migrations<'static> {
             );
 
             CREATE INDEX idx_session_deliveries_session ON session_deliveries(session_id);
+            ",
+        ),
+        // V3: Claim relationships — cross-references and co-occurring entities
+        M::up(
+            "
+            CREATE TABLE claim_relationships (
+                source_claim_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+                target_claim_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+                relation_type   TEXT NOT NULL,
+                confidence      REAL NOT NULL DEFAULT 0.0,
+                PRIMARY KEY (source_claim_id, target_claim_id, relation_type)
+            );
+
+            CREATE INDEX idx_claim_rel_source ON claim_relationships(source_claim_id);
+            CREATE INDEX idx_claim_rel_target ON claim_relationships(target_claim_id);
             ",
         ),
     ])

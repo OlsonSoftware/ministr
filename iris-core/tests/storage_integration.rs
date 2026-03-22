@@ -5,7 +5,10 @@
 
 use iris_core::session::{EvictionPolicy, Session, SessionId};
 use iris_core::storage::{SqliteStorage, Storage};
-use iris_core::types::{Claim, ClaimId, ContentId, DocumentTree, Resolution, Section, SectionId};
+use iris_core::types::{
+    Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, Resolution, Section,
+    SectionId,
+};
 
 /// Build a sample document tree for testing.
 fn sample_document() -> DocumentTree {
@@ -307,7 +310,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 2);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 3);
 }
 
 #[tokio::test]
@@ -688,4 +691,137 @@ async fn get_document_for_section_returns_none_for_nonexistent() {
         .await
         .unwrap();
     assert!(parent.is_none());
+}
+
+// --- Claim relationship tests ---
+
+#[tokio::test]
+async fn insert_and_query_claim_relationships() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let doc = sample_document();
+    storage.insert_document(&doc).await.unwrap();
+
+    let relationships = vec![ClaimRelationship {
+        source_claim_id: ClaimId("c1".into()),
+        target_claim_id: ClaimId("c3".into()),
+        relation_type: RelationType::References,
+        confidence: 0.85,
+    }];
+
+    storage
+        .insert_claim_relationships(&relationships)
+        .await
+        .unwrap();
+
+    // Query from source side
+    let related = storage
+        .get_related_claims(&ClaimId("c1".into()), None)
+        .await
+        .unwrap();
+    assert_eq!(related.len(), 1);
+    assert_eq!(related[0].claim_id, ClaimId("c3".into()));
+    assert_eq!(related[0].relation_type, RelationType::References);
+    assert!((related[0].confidence - 0.85).abs() < f32::EPSILON);
+
+    // Query from target side (bidirectional)
+    let related = storage
+        .get_related_claims(&ClaimId("c3".into()), None)
+        .await
+        .unwrap();
+    assert_eq!(related.len(), 1);
+    assert_eq!(related[0].claim_id, ClaimId("c1".into()));
+}
+
+#[tokio::test]
+async fn query_relationships_with_type_filter() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let doc = sample_document();
+    storage.insert_document(&doc).await.unwrap();
+
+    let relationships = vec![
+        ClaimRelationship {
+            source_claim_id: ClaimId("c1".into()),
+            target_claim_id: ClaimId("c3".into()),
+            relation_type: RelationType::References,
+            confidence: 0.8,
+        },
+        ClaimRelationship {
+            source_claim_id: ClaimId("c1".into()),
+            target_claim_id: ClaimId("c2".into()),
+            relation_type: RelationType::Updates,
+            confidence: 0.7,
+        },
+    ];
+
+    storage
+        .insert_claim_relationships(&relationships)
+        .await
+        .unwrap();
+
+    // Filter to only References
+    let related = storage
+        .get_related_claims(&ClaimId("c1".into()), Some(&[RelationType::References]))
+        .await
+        .unwrap();
+    assert_eq!(related.len(), 1);
+    assert_eq!(related[0].relation_type, RelationType::References);
+
+    // Filter to only Updates
+    let related = storage
+        .get_related_claims(&ClaimId("c1".into()), Some(&[RelationType::Updates]))
+        .await
+        .unwrap();
+    assert_eq!(related.len(), 1);
+    assert_eq!(related[0].relation_type, RelationType::Updates);
+}
+
+#[tokio::test]
+async fn delete_relationships_for_section_cleans_up() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let doc = sample_document();
+    storage.insert_document(&doc).await.unwrap();
+
+    let relationships = vec![ClaimRelationship {
+        source_claim_id: ClaimId("c1".into()),
+        target_claim_id: ClaimId("c3".into()),
+        relation_type: RelationType::References,
+        confidence: 0.9,
+    }];
+
+    storage
+        .insert_claim_relationships(&relationships)
+        .await
+        .unwrap();
+
+    // Delete relationships for section s1 (contains c1 and c2)
+    storage
+        .delete_relationships_for_section(&SectionId("s1".into()))
+        .await
+        .unwrap();
+
+    // Relationship should be gone
+    let related = storage
+        .get_related_claims(&ClaimId("c1".into()), None)
+        .await
+        .unwrap();
+    assert!(related.is_empty());
+
+    let related = storage
+        .get_related_claims(&ClaimId("c3".into()), None)
+        .await
+        .unwrap();
+    assert!(related.is_empty());
+}
+
+#[tokio::test]
+async fn no_relationships_returns_empty() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let doc = sample_document();
+    storage.insert_document(&doc).await.unwrap();
+
+    let related = storage
+        .get_related_claims(&ClaimId("c1".into()), None)
+        .await
+        .unwrap();
+    assert!(related.is_empty());
 }

@@ -12,11 +12,12 @@ use tracing::{debug, info, instrument, warn};
 use crate::embedding::Embedder;
 use crate::error::IngestionError;
 use crate::extraction::claims::{ClaimExtractor, HeuristicClaimExtractor};
+use crate::extraction::relationships::{HeuristicRelationshipDetector, RelationshipDetector};
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
 use crate::index::VectorIndex;
 use crate::parser::{DocumentParser, MarkdownParser};
 use crate::storage::traits::{FileHashRecord, Storage};
-use crate::types::{DocumentTree, Section, VectorId};
+use crate::types::{Claim, DocumentTree, Section, VectorId};
 
 /// Result of ingesting a corpus directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +73,7 @@ pub struct IngestionPipeline {
     parser: MarkdownParser,
     claim_extractor: HeuristicClaimExtractor,
     summary_generator: ExtractiveSummaryGenerator,
+    relationship_detector: HeuristicRelationshipDetector,
 }
 
 impl IngestionPipeline {
@@ -82,6 +84,7 @@ impl IngestionPipeline {
             parser: MarkdownParser::new(),
             claim_extractor: HeuristicClaimExtractor::new(),
             summary_generator: ExtractiveSummaryGenerator::new(),
+            relationship_detector: HeuristicRelationshipDetector::new(),
         }
     }
 
@@ -246,6 +249,23 @@ impl IngestionPipeline {
             .insert_document(&doc)
             .await
             .map_err(IngestionError::from)?;
+
+        // Detect and store claim relationships
+        let all_claims = collect_all_claims(&doc.sections);
+        if all_claims.len() >= 2 {
+            let relationships = self.relationship_detector.detect(&all_claims);
+            if !relationships.is_empty() {
+                debug!(
+                    path = %relative_path,
+                    count = relationships.len(),
+                    "detected claim relationships"
+                );
+                storage
+                    .insert_claim_relationships(&relationships)
+                    .await
+                    .map_err(IngestionError::from)?;
+            }
+        }
 
         // Update file hash
         storage
@@ -451,6 +471,23 @@ impl IngestionPipeline {
         // Embed all resolution levels
         embed_document(&doc, embedder, index)?;
 
+        // Detect and store claim relationships
+        let all_claims = collect_all_claims(&doc.sections);
+        if all_claims.len() >= 2 {
+            let relationships = self.relationship_detector.detect(&all_claims);
+            if !relationships.is_empty() {
+                debug!(
+                    path = %relative_path,
+                    count = relationships.len(),
+                    "detected claim relationships"
+                );
+                storage
+                    .insert_claim_relationships(&relationships)
+                    .await
+                    .map_err(IngestionError::from)?;
+            }
+        }
+
         // Update file hash
         storage
             .upsert_file_hash(&FileHashRecord {
@@ -550,6 +587,16 @@ fn collect_embeddable_items(
         // Recurse into children
         collect_embeddable_items(&section.children, ids, texts);
     }
+}
+
+/// Recursively collect all claims from a section tree.
+fn collect_all_claims(sections: &[Section]) -> Vec<Claim> {
+    let mut claims = Vec::new();
+    for section in sections {
+        claims.extend(section.claims.iter().cloned());
+        claims.extend(collect_all_claims(&section.children));
+    }
+    claims
 }
 
 /// Delete all vectors associated with a document from the index.
