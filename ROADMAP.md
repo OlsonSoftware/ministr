@@ -72,7 +72,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Build multi-resolution query pipeline — search across summary/section/claim levels, merge and rank results
 - [x] Implement resolution-aware result scoring — weight results by resolution level and query specificity
 - [x] Add incremental vector index updates — insert/delete embeddings for changed sections without full rebuild
-- [ ] Write benchmarks for embedding throughput (docs/sec) and search latency (p50/p99) at 1k/10k/100k sections
+- [x] Write benchmarks for embedding throughput (docs/sec) and search latency (p50/p99) at 1k/10k/100k sections
 - [x] Write tests for vector index — insert/search/delete correctness, persistence round-trip, concurrent reads
 
 ---

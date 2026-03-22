@@ -79,7 +79,7 @@ phases:
     checked: true
 - id: P3
   name: Polish & Release
-  status: in_progress
+  status: done
   tasks:
   - text: Define Embedder trait in iris-core — embed(texts) -> Result<Vec<Vec<f32>>> with batch support
     checked: true
@@ -104,7 +104,7 @@ phases:
   - text: Add incremental vector index updates — insert/delete embeddings for changed sections without full rebuild
     checked: true
   - text: Write benchmarks for embedding throughput (docs/sec) and search latency (p50/p99) at 1k/10k/100k sections
-    checked: false
+    checked: true
   - text: Write tests for vector index — insert/search/delete correctness, persistence round-trip, concurrent reads
     checked: true
 - id: P4
