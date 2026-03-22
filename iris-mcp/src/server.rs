@@ -34,6 +34,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use tracing::{Instrument, debug, info_span, warn};
 
+use iris_core::analytics::Analytics;
 use iris_core::service::{
     CompressedItem, QueryError, QueryService, RelatedClaimResult, SurveyResult,
 };
@@ -59,6 +60,7 @@ pub struct IrisServer {
     budget: Arc<Mutex<BudgetTracker>>,
     prefetch: Arc<Mutex<PrefetchEngine>>,
     storage: Option<Arc<SqliteStorage>>,
+    analytics: Option<Arc<Analytics>>,
 }
 
 /// Tool response wrapper that includes budget status alongside the result data.
@@ -461,10 +463,11 @@ impl IrisServer {
                         budget.force_evict(&params.section_id);
                     }
 
-                    // Record delivery and trigger prefetch for all cases
+                    // Record delivery, analytics, and trigger prefetch
                     let budget_status = self
                         .record_section_delivery(&params.section_id, &detail.text, current_hash)
                         .await;
+                    self.record_analytics_access(&params.section_id).await;
                     self.trigger_prefetch(&params.section_id).await;
 
                     let response = self.build_response(detail, budget_status).await;
@@ -833,6 +836,7 @@ impl IrisServer {
             budget: Arc::new(Mutex::new(budget)),
             prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
             storage: None,
+            analytics: None,
         }
     }
 
@@ -867,12 +871,14 @@ impl IrisServer {
         };
 
         let budget = BudgetTracker::new(budget_config, EvictionPolicy::Fifo);
+        let analytics = Arc::new(Analytics::new((*storage).clone()));
         Self {
             service,
             session: Arc::new(Mutex::new(session)),
             budget: Arc::new(Mutex::new(budget)),
             prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
             storage: Some(storage),
+            analytics: Some(analytics),
         }
     }
 
@@ -1019,15 +1025,68 @@ impl IrisServer {
                     }
                 }
             }
+
+            // --- Cross-session prefetch (frequently co-accessed sections) ---
+            if let Some(ref analytics) = self.analytics {
+                let sid_ref = SectionId(section_id.to_string());
+                if let Ok(co_accessed) = analytics
+                    .co_accessed_with(&sid_ref, Analytics::default_co_access_limit())
+                    .await
+                {
+                    let mut candidates = Vec::new();
+                    for co in co_accessed {
+                        // Skip if already in cache
+                        if prefetch.cache().peek(&co.section_id.0).is_some() {
+                            continue;
+                        }
+                        if let Ok(Some(s)) = storage.get_section(&co.section_id).await {
+                            candidates.push(s);
+                        }
+                    }
+
+                    if !candidates.is_empty() {
+                        let mut claims_counts = std::collections::HashMap::new();
+                        for s in &candidates {
+                            if let Ok(claims) = storage.list_claims(&s.id).await {
+                                claims_counts.insert(s.id.0.clone(), claims.len());
+                            }
+                        }
+                        prefetch.prefetch_cross_session(candidates, &claims_counts);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Record a section access in cross-session analytics.
+    async fn record_analytics_access(&self, section_id: &str) {
+        if let Some(ref analytics) = self.analytics {
+            let sid = SectionId(section_id.to_string());
+            if let Err(e) = analytics.record_access(&sid).await {
+                warn!(error = %e, "failed to record analytics access");
+            }
         }
     }
 
     /// Persist the current session state to storage, if persistence is enabled.
+    /// Also flushes co-access patterns from the session trajectory.
     async fn persist_session(&self) {
         if let Some(ref storage) = self.storage {
             let session = self.session.lock().await;
             if let Err(e) = storage.save_session(&session).await {
                 warn!(error = %e, "failed to persist session");
+            }
+            // Flush co-access patterns from trajectory
+            if let Some(ref analytics) = self.analytics {
+                let trajectory = session.trajectory();
+                let section_ids: Vec<SectionId> = trajectory
+                    .iter()
+                    .map(|cid| SectionId(cid.0.clone()))
+                    .collect();
+                drop(session);
+                if let Err(e) = analytics.record_co_accesses(&section_ids).await {
+                    warn!(error = %e, "failed to record co-access patterns");
+                }
             }
         }
     }
@@ -1038,7 +1097,13 @@ impl IrisServer {
         let session = self.session.lock().await;
         let budget = self.budget.lock().await;
 
-        let status = serde_json::json!({
+        let analytics_stats = if let Some(ref analytics) = self.analytics {
+            analytics.corpus_stats().await.ok()
+        } else {
+            None
+        };
+
+        let mut status = serde_json::json!({
             "index": {
                 "vector_count": index.len(),
                 "dimension": index.dimension(),
@@ -1049,6 +1114,14 @@ impl IrisServer {
             },
             "budget": budget.budget_status(),
         });
+
+        if let Some(stats) = analytics_stats {
+            status["analytics"] = serde_json::json!({
+                "total_accesses": stats.total_accesses,
+                "unique_sections_accessed": stats.unique_sections_accessed,
+                "co_access_pairs": stats.co_access_pairs,
+            });
+        }
 
         let text = serde_json::to_string_pretty(&status).unwrap_or_default();
         Ok(ReadResourceResult {

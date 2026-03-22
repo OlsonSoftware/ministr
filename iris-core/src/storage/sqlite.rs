@@ -12,7 +12,8 @@ use tracing::instrument;
 
 use super::schema::{configure_connection, run_migrations};
 use super::traits::{
-    ClaimRecord, DocumentRecord, FileHashRecord, RelatedClaimRecord, SectionRecord, Storage,
+    ClaimRecord, CoAccessRecord, CorpusStats, DocumentRecord, FileHashRecord, RelatedClaimRecord,
+    SectionAccessStat, SectionRecord, Storage,
 };
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
@@ -824,6 +825,186 @@ impl Storage for SqliteStorage {
                     reason: e.to_string(),
                 })?;
             Ok(affected > 0)
+        })
+        .await
+    }
+
+    // -- Cross-session analytics --
+
+    async fn record_section_access(&self, section_id: &SectionId) -> Result<(), StorageError> {
+        let id = section_id.0.clone();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO section_access_stats (section_id, access_count, last_accessed)
+                 VALUES (?1, 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                 ON CONFLICT(section_id) DO UPDATE SET
+                   access_count = access_count + 1,
+                   last_accessed = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+                rusqlite::params![id],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn record_co_accesses(&self, section_ids: &[SectionId]) -> Result<(), StorageError> {
+        let ids: Vec<String> = section_ids.iter().map(|s| s.0.clone()).collect();
+        self.with_conn(move |conn| {
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            // Generate all unique pairs (a, b) where a < b to avoid duplicates
+            for i in 0..ids.len() {
+                for j in (i + 1)..ids.len() {
+                    let (a, b) = if ids[i] < ids[j] {
+                        (&ids[i], &ids[j])
+                    } else {
+                        (&ids[j], &ids[i])
+                    };
+                    tx.execute(
+                        "INSERT INTO co_access_patterns (section_a, section_b, co_count)
+                         VALUES (?1, ?2, 1)
+                         ON CONFLICT(section_a, section_b) DO UPDATE SET
+                           co_count = co_count + 1",
+                        rusqlite::params![a, b],
+                    )
+                    .map_err(|e| StorageError::Database {
+                        reason: e.to_string(),
+                    })?;
+                }
+            }
+            tx.commit().map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_top_sections(&self, limit: usize) -> Result<Vec<SectionAccessStat>, StorageError> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT section_id, access_count, last_accessed
+                     FROM section_access_stats
+                     ORDER BY access_count DESC
+                     LIMIT ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let rows = stmt
+                .query_map(rusqlite::params![limit], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, u64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let mut results = Vec::new();
+            for row in rows {
+                let (section_id, access_count, last_accessed) =
+                    row.map_err(|e| StorageError::Database {
+                        reason: e.to_string(),
+                    })?;
+                results.push(SectionAccessStat {
+                    section_id: SectionId(section_id),
+                    access_count,
+                    last_accessed,
+                });
+            }
+            Ok(results)
+        })
+        .await
+    }
+
+    async fn get_co_accessed(
+        &self,
+        section_id: &SectionId,
+        limit: usize,
+    ) -> Result<Vec<CoAccessRecord>, StorageError> {
+        let id = section_id.0.clone();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT
+                       CASE WHEN section_a = ?1 THEN section_b ELSE section_a END AS partner,
+                       co_count
+                     FROM co_access_patterns
+                     WHERE section_a = ?1 OR section_b = ?1
+                     ORDER BY co_count DESC
+                     LIMIT ?2",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let rows = stmt
+                .query_map(rusqlite::params![id, limit], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let mut results = Vec::new();
+            for row in rows {
+                let (partner, co_count) = row.map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+                results.push(CoAccessRecord {
+                    section_id: SectionId(partner),
+                    co_count,
+                });
+            }
+            Ok(results)
+        })
+        .await
+    }
+
+    async fn get_corpus_stats(&self) -> Result<CorpusStats, StorageError> {
+        self.with_conn(move |conn| {
+            let total_accesses: u64 = conn
+                .query_row(
+                    "SELECT COALESCE(SUM(access_count), 0) FROM section_access_stats",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let unique_sections_accessed: u64 = conn
+                .query_row("SELECT COUNT(*) FROM section_access_stats", [], |row| {
+                    row.get(0)
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let co_access_pairs: u64 = conn
+                .query_row("SELECT COUNT(*) FROM co_access_patterns", [], |row| {
+                    row.get(0)
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            Ok(CorpusStats {
+                total_accesses,
+                unique_sections_accessed,
+                co_access_pairs,
+            })
         })
         .await
     }

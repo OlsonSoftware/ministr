@@ -69,6 +69,37 @@ pub struct RelatedClaimRecord {
     pub confidence: f32,
 }
 
+/// A section access statistics record for cross-session analytics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectionAccessStat {
+    /// Section ID.
+    pub section_id: SectionId,
+    /// Total number of times this section was accessed across all sessions.
+    pub access_count: u64,
+    /// Timestamp of the most recent access.
+    pub last_accessed: String,
+}
+
+/// A co-access pattern record: two sections frequently accessed together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoAccessRecord {
+    /// The partner section ID (the one co-accessed with the queried section).
+    pub section_id: SectionId,
+    /// Number of sessions in which both sections were accessed.
+    pub co_count: u64,
+}
+
+/// Aggregate corpus statistics derived from cross-session analytics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorpusStats {
+    /// Total number of section accesses across all sessions.
+    pub total_accesses: u64,
+    /// Number of unique sections ever accessed.
+    pub unique_sections_accessed: u64,
+    /// Number of co-access pairs recorded.
+    pub co_access_pairs: u64,
+}
+
 /// A file hash record for incremental re-indexing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileHashRecord {
@@ -220,4 +251,36 @@ pub trait Storage: Send + Sync {
         &self,
         id: &SessionId,
     ) -> impl Future<Output = Result<bool, StorageError>> + Send;
+
+    // -- Cross-session analytics --
+
+    /// Record a section access, incrementing its access count.
+    fn record_section_access(
+        &self,
+        section_id: &SectionId,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Record co-access patterns for sections accessed in the same session.
+    ///
+    /// For each unique pair in the provided list, increments the co-access count.
+    fn record_co_accesses(
+        &self,
+        section_ids: &[SectionId],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Get the most frequently accessed sections.
+    fn get_top_sections(
+        &self,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<SectionAccessStat>, StorageError>> + Send;
+
+    /// Get sections most frequently co-accessed with the given section.
+    fn get_co_accessed(
+        &self,
+        section_id: &SectionId,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<CoAccessRecord>, StorageError>> + Send;
+
+    /// Get aggregate corpus analytics statistics.
+    fn get_corpus_stats(&self) -> impl Future<Output = Result<CorpusStats, StorageError>> + Send;
 }

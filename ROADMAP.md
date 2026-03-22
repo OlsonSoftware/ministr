@@ -158,11 +158,11 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Implement HtmlParser using scraper + html2text — extract sections from semantic HTML (h1-h6, article, section tags)
-- [ ] Implement PdfParser using pdf-extract or lopdf — page-boundary splitting, heading detection from font size
-- [ ] Add parser auto-detection — select parser based on file extension, with manual override in corpus config
-- [ ] Implement cross-session analytics — track frequently-accessed sections, co-access patterns, per-corpus statistics
-- [ ] Feed cross-session data into prefetch — prioritize frequently-accessed and co-accessed sections for pre-warming
+- [x] Implement HtmlParser using scraper + html2text — extract sections from semantic HTML (h1-h6, article, section tags)
+- [x] Implement PdfParser using pdf-extract or lopdf — page-boundary splitting, heading detection from font size
+- [x] Add parser auto-detection — select parser based on file extension, with manual override in corpus config
+- [x] Implement cross-session analytics — track frequently-accessed sections, co-access patterns, per-corpus statistics
+- [x] Feed cross-session data into prefetch — prioritize frequently-accessed and co-accessed sections for pre-warming
 - [ ] Build mdBook documentation site — architecture overview, getting started guide, tool reference, configuration
 - [ ] Write doc tests for all public APIs in iris-core — non-trivial examples with # Examples sections
 - [ ] Create reproducible benchmark suite — ingestion throughput, search latency, prefetch hit rate across corpus sizes

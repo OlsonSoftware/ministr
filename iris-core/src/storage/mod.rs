@@ -13,5 +13,6 @@ pub use corpus::ensure_corpus_layout;
 pub use schema::CURRENT_SCHEMA_VERSION;
 pub use sqlite::SqliteStorage;
 pub use traits::{
-    ClaimRecord, DocumentRecord, FileHashRecord, RelatedClaimRecord, SectionRecord, Storage,
+    ClaimRecord, CoAccessRecord, CorpusStats, DocumentRecord, FileHashRecord, RelatedClaimRecord,
+    SectionAccessStat, SectionRecord, Storage,
 };
