@@ -10,6 +10,9 @@ Thumbs.db
 *~
 # ── end magistr ──
 
+# mdBook output
+docs/book/
+
 # Rust / Cargo
 /target
 **/*.rs.bk

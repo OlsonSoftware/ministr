@@ -1,0 +1,19 @@
+[book]
+title = "iris"
+authors = ["Alrik"]
+description = "A context cache controller for LLM agents"
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/alrik/iris-rs"
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+
+[output.html.search]
+enable = true
+limit-results = 20

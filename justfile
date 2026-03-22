@@ -44,5 +44,13 @@ bench-embedding:
 bench-all:
     cargo bench -p iris-core
 
+# Build mdBook documentation site
+docs:
+    mdbook build docs
+
+# Serve documentation locally with live reload
+docs-serve:
+    mdbook serve docs --open
+
 # Run all quality gates: format check + build + test + lint
 validate: fmt-check lint test
