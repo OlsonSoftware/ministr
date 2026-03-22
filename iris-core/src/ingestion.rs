@@ -19,6 +19,7 @@ use crate::parser::{
     DocumentParser, MarkdownParser, ParserKind, create_parser, detect_parser_kind,
 };
 use crate::storage::traits::{FileHashRecord, Storage};
+use crate::token::count_tokens;
 use crate::types::{Claim, DocumentTree, Section, VectorId};
 
 /// Result of ingesting a corpus directory.
@@ -94,6 +95,9 @@ pub struct IngestionPipeline {
     /// Optional parser override — when set, all files use this parser.
     /// When `None`, the parser is auto-detected per file from the extension.
     parser_override: Option<ParserKind>,
+    /// Minimum token count for a section to remain standalone.
+    /// Sections below this threshold are merged with adjacent siblings.
+    min_section_tokens: usize,
     claim_extractor: HeuristicClaimExtractor,
     summary_generator: ExtractiveSummaryGenerator,
     relationship_detector: HeuristicRelationshipDetector,
@@ -103,10 +107,12 @@ impl IngestionPipeline {
     /// Create a new ingestion pipeline with default components.
     ///
     /// Uses auto-detection to select the parser based on file extension.
+    /// Section merging uses the default threshold of 50 tokens.
     #[must_use]
     pub fn new() -> Self {
         Self {
             parser_override: None,
+            min_section_tokens: 50,
             claim_extractor: HeuristicClaimExtractor::new(),
             summary_generator: ExtractiveSummaryGenerator::new(),
             relationship_detector: HeuristicRelationshipDetector::new(),
@@ -120,10 +126,21 @@ impl IngestionPipeline {
     pub fn with_parser(kind: ParserKind) -> Self {
         Self {
             parser_override: Some(kind),
+            min_section_tokens: 50,
             claim_extractor: HeuristicClaimExtractor::new(),
             summary_generator: ExtractiveSummaryGenerator::new(),
             relationship_detector: HeuristicRelationshipDetector::new(),
         }
+    }
+
+    /// Set the minimum section token threshold for section coalescing.
+    ///
+    /// Sections below this threshold are merged with adjacent siblings
+    /// of the same depth. Set to `0` to disable merging.
+    #[must_use]
+    pub fn with_min_section_tokens(mut self, min_tokens: usize) -> Self {
+        self.min_section_tokens = min_tokens;
+        self
     }
 
     /// Select the parser for a given file path.
@@ -270,6 +287,9 @@ impl IngestionPipeline {
             .into_iter()
             .flat_map(|s| split_large_headingless_section(s, relative_path))
             .collect();
+
+        // Coalesce small adjacent sibling sections
+        doc.sections = coalesce_small_sections(doc.sections, self.min_section_tokens);
 
         // Enrich sections with claims and summaries
         let (section_count, claim_count) = enrich_sections(
@@ -488,6 +508,9 @@ impl IngestionPipeline {
             .into_iter()
             .flat_map(|s| split_large_headingless_section(s, relative_path))
             .collect();
+
+        // Coalesce small adjacent sibling sections
+        doc.sections = coalesce_small_sections(doc.sections, self.min_section_tokens);
 
         // Enrich sections with claims and summaries
         let (section_count, claim_count) = enrich_sections(
@@ -877,6 +900,112 @@ fn split_large_headingless_section(section: Section, source_path: &str) -> Vec<S
         .collect()
 }
 
+/// Coalesce adjacent sibling sections below a minimum token threshold.
+///
+/// Walks the section tree and merges runs of consecutive siblings at the same
+/// depth whose text is below `min_tokens`. Merged sections use the first
+/// sibling's section ID and concatenate text with heading markers so child
+/// headings remain searchable.
+///
+/// Set `min_tokens` to `0` to disable merging.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::ingestion::coalesce_small_sections;
+/// use iris_core::types::{Section, SectionId};
+///
+/// let sections = vec![
+///     Section {
+///         id: SectionId("s1".into()),
+///         heading_path: vec!["Small A".into()],
+///         depth: 2,
+///         text: "Tiny.".into(),
+///         structural_nodes: vec![],
+///         children: vec![],
+///         claims: vec![],
+///         summary: None,
+///     },
+///     Section {
+///         id: SectionId("s2".into()),
+///         heading_path: vec!["Small B".into()],
+///         depth: 2,
+///         text: "Also tiny.".into(),
+///         structural_nodes: vec![],
+///         children: vec![],
+///         claims: vec![],
+///         summary: None,
+///     },
+/// ];
+///
+/// let merged = coalesce_small_sections(sections, 50);
+/// assert_eq!(merged.len(), 1);
+/// assert!(merged[0].text.contains("Small B"));
+/// ```
+#[must_use]
+pub fn coalesce_small_sections(sections: Vec<Section>, min_tokens: usize) -> Vec<Section> {
+    if min_tokens == 0 {
+        return sections;
+    }
+
+    let mut result: Vec<Section> = Vec::new();
+
+    for section in sections {
+        let token_count = count_tokens(&section.text);
+
+        if token_count >= min_tokens {
+            // Large enough — keep standalone, but recurse into children
+            let mut section = section;
+            section.children =
+                coalesce_small_sections(std::mem::take(&mut section.children), min_tokens);
+            result.push(section);
+        } else if let Some(prev) = result.last_mut() {
+            // Check if previous section is a small sibling at the same depth
+            if prev.depth == section.depth && count_tokens(&prev.text) < min_tokens {
+                merge_into(prev, section);
+            } else {
+                // Previous is large or different depth — start potential new run
+                let mut section = section;
+                section.children =
+                    coalesce_small_sections(std::mem::take(&mut section.children), min_tokens);
+                result.push(section);
+            }
+        } else {
+            // First section in the list — just push it
+            let mut section = section;
+            section.children =
+                coalesce_small_sections(std::mem::take(&mut section.children), min_tokens);
+            result.push(section);
+        }
+    }
+
+    result
+}
+
+/// Merge a small section into an existing accumulator section.
+///
+/// Appends the source section's text with a heading marker, and merges
+/// structural nodes and children.
+fn merge_into(target: &mut Section, source: Section) {
+    use std::fmt::Write;
+
+    // Add heading marker for the merged section so its heading remains searchable
+    let heading = source.heading_path.last().cloned().unwrap_or_default();
+
+    if heading.is_empty() {
+        target.text.push_str("\n\n");
+    } else {
+        let _ = write!(target.text, "\n\n### {heading}\n\n");
+    }
+    target.text.push_str(&source.text);
+
+    // Merge structural nodes
+    target.structural_nodes.extend(source.structural_nodes);
+
+    // Merge children (recurse coalescing is handled by the caller for the target)
+    target.children.extend(source.children);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1004,6 +1133,145 @@ mod tests {
 
         let result = split_large_headingless_section(section, "test.md");
         assert_eq!(result.len(), 1); // depth != 0, not split
+    }
+
+    // --- Section coalescing ---
+
+    fn make_section(id: &str, heading: &str, depth: u32, text: &str) -> Section {
+        Section {
+            id: SectionId(id.into()),
+            heading_path: if heading.is_empty() {
+                Vec::new()
+            } else {
+                vec![heading.into()]
+            },
+            depth,
+            text: text.into(),
+            structural_nodes: Vec::new(),
+            children: Vec::new(),
+            claims: Vec::new(),
+            summary: None,
+        }
+    }
+
+    #[test]
+    fn coalesce_three_small_siblings_into_one() {
+        // 3 sibling sections each well below 50 tokens
+        let sections = vec![
+            make_section("s1", "Alpha", 2, "Short text A."),
+            make_section("s2", "Beta", 2, "Short text B."),
+            make_section("s3", "Gamma", 2, "Short text C."),
+        ];
+
+        let result = coalesce_small_sections(sections, 50);
+        assert_eq!(result.len(), 1, "3 small siblings should merge into 1");
+        assert_eq!(
+            result[0].id.0, "s1",
+            "merged section uses first sibling's ID"
+        );
+        assert!(result[0].text.contains("Short text A."));
+        assert!(result[0].text.contains("### Beta"));
+        assert!(result[0].text.contains("Short text B."));
+        assert!(result[0].text.contains("### Gamma"));
+        assert!(result[0].text.contains("Short text C."));
+    }
+
+    #[test]
+    fn coalesce_large_section_stays_untouched() {
+        // Generate a section with ~200 tokens worth of text
+        let big_text = "The quick brown fox jumps over the lazy dog. ".repeat(30);
+        let sections = vec![make_section("s1", "Big", 2, &big_text)];
+
+        let result = coalesce_small_sections(sections, 50);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id.0, "s1");
+    }
+
+    #[test]
+    fn coalesce_mixed_depths_merge_at_each_level() {
+        let sections = vec![
+            make_section("d1-a", "D1 A", 1, "Small."),
+            make_section("d1-b", "D1 B", 1, "Also small."),
+            make_section("d2-a", "D2 A", 2, "Tiny."),
+            make_section("d2-b", "D2 B", 2, "Also tiny."),
+        ];
+
+        let result = coalesce_small_sections(sections, 50);
+        // d1-a and d1-b merge; then d2-a and d2-b are separate (different depth from merged d1)
+        // d2-a starts as standalone, d2-b merges into d2-a
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].depth, 1);
+        assert_eq!(result[1].depth, 2);
+    }
+
+    #[test]
+    fn coalesce_disabled_with_zero_threshold() {
+        let sections = vec![
+            make_section("s1", "A", 1, "Tiny."),
+            make_section("s2", "B", 1, "Also tiny."),
+        ];
+
+        let result = coalesce_small_sections(sections, 0);
+        assert_eq!(result.len(), 2, "zero threshold disables merging");
+    }
+
+    #[test]
+    fn coalesce_preserves_document_order() {
+        let sections = vec![
+            make_section("s1", "First", 1, "First section."),
+            make_section("s2", "Second", 1, "Second section."),
+            make_section("s3", "Third", 1, "Third section."),
+        ];
+
+        let result = coalesce_small_sections(sections, 50);
+        assert_eq!(result.len(), 1);
+        // Text should appear in document order
+        let first_pos = result[0].text.find("First section.").unwrap();
+        let second_pos = result[0].text.find("Second section.").unwrap();
+        let third_pos = result[0].text.find("Third section.").unwrap();
+        assert!(first_pos < second_pos);
+        assert!(second_pos < third_pos);
+    }
+
+    #[test]
+    fn coalesce_small_between_large_stays_separate() {
+        let big_text = "The quick brown fox jumps over the lazy dog. ".repeat(30);
+        let sections = vec![
+            make_section("big1", "Big 1", 1, &big_text),
+            make_section("small", "Small", 1, "Tiny."),
+            make_section("big2", "Big 2", 1, &big_text),
+        ];
+
+        let result = coalesce_small_sections(sections, 50);
+        // big1 stays, small can't merge with big1 (big1 is large), small stays alone,
+        // big2 is large so stays alone
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn coalesce_recurses_into_children() {
+        let parent = Section {
+            id: SectionId("parent".into()),
+            heading_path: vec!["Parent".into()],
+            depth: 1,
+            text: "The quick brown fox jumps over the lazy dog. ".repeat(30),
+            structural_nodes: Vec::new(),
+            children: vec![
+                make_section("child1", "Child A", 2, "Small child A."),
+                make_section("child2", "Child B", 2, "Small child B."),
+            ],
+            claims: Vec::new(),
+            summary: None,
+        };
+
+        let result = coalesce_small_sections(vec![parent], 50);
+        assert_eq!(result.len(), 1);
+        // Children should have been coalesced
+        assert_eq!(
+            result[0].children.len(),
+            1,
+            "two small children should merge into one"
+        );
     }
 
     // --- Section enrichment ---
@@ -1564,5 +1832,50 @@ mod tests {
         assert!(result_ids.contains(&"sec-summary::test.md#s1"));
         assert!(result_ids.contains(&"section::test.md#s1"));
         assert!(result_ids.contains(&"claim::c1"));
+    }
+
+    // --- Integration test: coalescing reduces section count ---
+
+    #[tokio::test]
+    async fn coalescing_reduces_section_count_in_ingestion() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Document with many small sections that should be coalesced
+        std::fs::write(
+            tmp.path().join("fragmented.md"),
+            "# Guide\n\n\
+             ## A\n\nTiny.\n\n\
+             ## B\n\nAlso tiny.\n\n\
+             ## C\n\nStill tiny.\n\n\
+             ## Big Section\n\n\
+             This section has much more content that should keep it standalone. \
+             It contains detailed information about the system architecture, \
+             including multiple paragraphs of explanation covering authentication, \
+             authorization, rate limiting, caching strategies, database design, \
+             and deployment considerations for the production environment.\n",
+        )
+        .unwrap();
+
+        let storage_merged = SqliteStorage::open_in_memory().unwrap();
+        let pipeline_merged = IngestionPipeline::new(); // default: 50 tokens
+
+        let stats_merged = pipeline_merged
+            .ingest_directory(tmp.path(), &storage_merged)
+            .await
+            .unwrap();
+
+        let storage_unmerged = SqliteStorage::open_in_memory().unwrap();
+        let pipeline_unmerged = IngestionPipeline::new().with_min_section_tokens(0);
+
+        let stats_unmerged = pipeline_unmerged
+            .ingest_directory(tmp.path(), &storage_unmerged)
+            .await
+            .unwrap();
+
+        assert!(
+            stats_merged.total_sections < stats_unmerged.total_sections,
+            "merged section count ({}) should be less than unmerged ({})",
+            stats_merged.total_sections,
+            stats_unmerged.total_sections,
+        );
     }
 }
