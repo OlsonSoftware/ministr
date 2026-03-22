@@ -43,7 +43,6 @@ use iris_core::ingestion::IngestionPipeline;
 use iris_core::service::{
     CompressedItem, QueryError, QueryService, RelatedClaimResult, SurveyResult, SymbolRefResult,
 };
-use iris_core::session::delta::ContentDelta;
 use iris_core::session::eviction::EvictionCandidate;
 use iris_core::session::prefetch::PrefetchEngine;
 use iris_core::session::{
@@ -126,23 +125,6 @@ struct AlreadyDeliveredResponse {
     status: &'static str,
     /// Number of claims available for extraction.
     claims_available: usize,
-}
-
-/// Response when a previously-delivered section has changed.
-///
-/// Will be used when full delta delivery is enabled (requires storing
-/// delivered text in the session, planned for P6 prefetch cache).
-#[derive(Debug, Serialize)]
-#[allow(dead_code)]
-struct DeltaResponse {
-    /// The section that changed.
-    section_id: String,
-    /// Indicates this is a delta update.
-    delta_update: bool,
-    /// The content delta (added/removed/context lines).
-    delta: ContentDelta,
-    /// Token count of the new full text.
-    new_token_count: usize,
 }
 
 /// Response from the `iris_evicted` tool.

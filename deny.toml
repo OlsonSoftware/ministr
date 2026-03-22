@@ -10,11 +10,7 @@ targets = [
 [advisories]
 unmaintained = "workspace"
 unsound = "all"
-ignore = [
-    # time 0.3.45 DoS via stack exhaustion — transitive dep via comrak>syntect>plist
-    # Upstream fix: time >=0.3.47, waiting on plist/syntect update
-    "RUSTSEC-2026-0009",
-]
+ignore = []
 
 [bans]
 multiple-versions = "warn"
