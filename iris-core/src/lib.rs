@@ -11,6 +11,7 @@ pub mod error;
 pub mod extraction;
 pub mod index;
 pub mod ingestion;
+pub mod llms_txt;
 pub mod parser;
 pub mod search;
 pub mod service;

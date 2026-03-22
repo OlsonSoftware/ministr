@@ -189,6 +189,10 @@ pub enum WebError {
         #[from]
         source: reqwest::Error,
     },
+
+    /// Neither `llms-full.txt` nor `llms.txt` was found for the domain.
+    #[error("llms.txt not found for {domain}")]
+    LlmsTxtNotFound { domain: String },
 }
 
 #[cfg(test)]

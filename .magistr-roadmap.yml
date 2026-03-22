@@ -422,16 +422,16 @@ phases:
 - id: W3
   name: llms.txt Support
   tagline: First-class support for the llms.txt documentation standard
-  status: pending
+  status: done
   problem: Many documentation sites (844K+) now publish llms.txt/llms-full.txt — pre-processed, curated content optimized for LLMs that iris should prefer over raw HTML crawling
   solution: Auto-detect and fetch llms.txt/llms-full.txt from domain roots, parse the markdown link list format, and use pre-processed content when available
   tasks:
   - text: 'Implement llms.txt fetcher: given a domain, try GET `https://{domain}/llms-full.txt` then `https://{domain}/llms.txt` — return content if found (200 OK with text/plain or text/markdown)'
-    checked: false
+    checked: true
   - text: 'Parse llms.txt markdown format: extract the H1 title, description blockquote, and categorized link lists (## sections with `- [title](url): description` entries)'
-    checked: false
+    checked: true
   - text: 'Unit tests: parse sample llms.txt files (Anthropic, Cursor style), verify title/description/link extraction; verify llms-full.txt is returned as raw markdown content'
-    checked: false
+    checked: true
 - id: W4
   name: Web Fetch Pipeline
   tagline: 'Smart orchestration: llms.txt → sitemap → single page fetch'
