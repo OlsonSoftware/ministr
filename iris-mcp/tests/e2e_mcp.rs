@@ -2100,3 +2100,168 @@ async fn survey_prewarms_parent_sections_of_claim_hits() {
         "survey-expand prefetch should have hits, got metrics: {prefetch_metrics}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// I7: Multi-path corpus ingestion
+// ---------------------------------------------------------------------------
+
+/// Set up a multi-path corpus with a directory and individual files, ingest via
+/// `ingest_paths_with_embeddings`, and return an `IrisServer`.
+async fn setup_server_from_multi_path_corpus() -> (IrisServer, tempfile::TempDir) {
+    let dir = tempfile::TempDir::new().unwrap();
+
+    // Create a subdirectory with docs
+    let docs_dir = dir.path().join("docs");
+    std::fs::create_dir(&docs_dir).unwrap();
+    std::fs::write(
+        docs_dir.join("guide.md"),
+        "\
+# User Guide
+
+## Getting Started
+
+Install the CLI with `cargo install iris`. Run `iris --help` for usage info.
+
+## Configuration
+
+Edit `~/.iris/config.toml` to set your preferred model and context budget.
+",
+    )
+    .unwrap();
+
+    // Create an individual file at the root level
+    std::fs::write(
+        dir.path().join("DESIGN.md"),
+        "\
+# Design Document
+
+## Architecture
+
+iris uses a layered architecture: transport, service, and storage.
+The MCP server handles JSON-RPC routing and delegates to the query service.
+",
+    )
+    .unwrap();
+
+    // Create another individual file
+    std::fs::write(
+        dir.path().join("CHANGELOG.md"),
+        "\
+# Changelog
+
+## v0.2.0
+
+Added multi-path corpus support. Users can now index multiple directories
+and individual files in a single iris session.
+",
+    )
+    .unwrap();
+
+    let dim = 16;
+    let embedder = Arc::new(MockEmbedder { dim });
+    let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Ingest via multi-path pipeline
+    let pipeline = iris_core::ingestion::IngestionPipeline::new();
+    let corpus_paths = vec![
+        docs_dir,
+        dir.path().join("DESIGN.md"),
+        dir.path().join("CHANGELOG.md"),
+    ];
+    let stats = pipeline
+        .ingest_paths_with_embeddings(&corpus_paths, &storage, embedder.as_ref(), index.as_ref())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        stats.files_indexed, 3,
+        "should ingest 3 files (1 from dir + 2 individual), got: {stats:?}"
+    );
+    assert!(stats.total_sections > 0, "should extract sections");
+
+    let storage = Arc::new(storage);
+    let service = Arc::new(QueryService::new((*storage).clone(), embedder, index));
+    let budget_config = BudgetConfig::default();
+    let server = IrisServer::with_persistence(
+        service,
+        budget_config,
+        storage,
+        Some("e2e-multi-path-test".into()),
+    )
+    .await;
+
+    (server, dir)
+}
+
+#[tokio::test]
+async fn e2e_multi_path_toc_shows_all_sources() {
+    let (server, _dir) = setup_server_from_multi_path_corpus().await;
+
+    let result = call_tool(&server, "iris_toc", json!({})).await;
+    assert!(!result.is_error.unwrap_or(false), "iris_toc should succeed");
+
+    let text = extract_text(&result.content);
+
+    // Documents from the directory
+    assert!(
+        text.contains("guide.md"),
+        "toc should include guide.md from docs/, got:\n{text}"
+    );
+
+    // Individual files
+    assert!(
+        text.contains("DESIGN.md"),
+        "toc should include individual file DESIGN.md, got:\n{text}"
+    );
+    assert!(
+        text.contains("CHANGELOG.md"),
+        "toc should include individual file CHANGELOG.md, got:\n{text}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_multi_path_survey_finds_content_from_individual_file() {
+    let (server, _dir) = setup_server_from_multi_path_corpus().await;
+
+    // Search for content that exists in the individual DESIGN.md file
+    let result = call_tool(
+        &server,
+        "iris_survey",
+        json!({"query": "layered architecture transport service storage"}),
+    )
+    .await;
+    assert!(
+        !result.is_error.unwrap_or(false),
+        "iris_survey should succeed"
+    );
+
+    let text = extract_text(&result.content);
+    assert!(
+        text.contains("DESIGN.md") || text.contains("Architecture") || text.contains("layered"),
+        "survey should find content from DESIGN.md, got:\n{text}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_multi_path_survey_finds_content_from_directory() {
+    let (server, _dir) = setup_server_from_multi_path_corpus().await;
+
+    // Search for content from the docs directory
+    let result = call_tool(
+        &server,
+        "iris_survey",
+        json!({"query": "install CLI cargo configuration"}),
+    )
+    .await;
+    assert!(
+        !result.is_error.unwrap_or(false),
+        "iris_survey should succeed"
+    );
+
+    let text = extract_text(&result.content);
+    assert!(
+        text.contains("guide.md") || text.contains("Getting Started") || text.contains("cargo"),
+        "survey should find content from docs/guide.md, got:\n{text}"
+    );
+}

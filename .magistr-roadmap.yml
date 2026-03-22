@@ -373,21 +373,21 @@ phases:
 - id: I7
   name: Expanded Corpus Support
   tagline: Index the docs that actually help agents reason
-  status: pending
+  status: done
   problem: Iris currently only indexes the mdBook docs — the DESIGN.md (633 lines of architecture rationale) and CHANGELOG.md are not included. The most useful content for an agent is *why* decisions were made, not the code itself.
   solution: Accept multiple corpus paths or a list of glob patterns in config. Index DESIGN.md, CHANGELOG.md, and any additional markdown alongside the docs/ tree. Reuse the existing recursive discover_files + incremental ingestion pipeline.
   tasks:
   - text: 'Extend IrisConfig with a corpus_paths: Vec&lt;PathBuf&gt; field alongside the existing single corpus path — backwards compatible, single path becomes a vec of one'
-    checked: false
+    checked: true
   - text: Support glob patterns in corpus_paths (e.g. "*.md", "docs/**") — resolve globs at startup using the existing discover_files recursive walker, deduplicate results
-    checked: false
+    checked: true
   - text: 'Update CLI --corpus flag to accept comma-separated paths or repeated flags: iris --corpus ./docs --corpus ./DESIGN.md --corpus ./CHANGELOG.md'
-    checked: false
+    checked: true
   - text: 'Wire multi-path ingestion in main.rs: iterate corpus_paths, call ingest_directory_with_embeddings for directories and ingest_file_with_embeddings for individual files'
-    checked: false
+    checked: true
   - text: Update .mcp.json default config to index ["./docs", "./DESIGN.md", "./CHANGELOG.md"] for the iris-rs project
-    checked: false
+    checked: true
   - text: 'Unit test: discover_files with mixed dirs and individual files returns correct combined list without duplicates'
-    checked: false
+    checked: true
   - text: 'E2E test: start iris with multi-path corpus, verify iris_toc shows documents from all paths and iris_survey finds content across sources'
-    checked: false
+    checked: true
