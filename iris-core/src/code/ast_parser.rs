@@ -202,7 +202,7 @@ pub fn walk_top_level_items(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<AstI
 ///
 /// For most items this is the `name` child node's text. For `impl` blocks,
 /// it's the `type` child (the type being implemented).
-fn extract_item_name(node: &tree_sitter::Node, source: &[u8], kind: ItemKind) -> String {
+pub(crate) fn extract_item_name(node: &tree_sitter::Node, source: &[u8], kind: ItemKind) -> String {
     if kind == ItemKind::Impl {
         // impl blocks: look for the `type` field (the Self type)
         return node
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn walk_identifies_all_item_kinds() {
         let mut parser = AstParser::new();
-        let source = br#"
+        let source = b"
 const MAX: usize = 42;
 static GLOBAL: i32 = 0;
 type Alias = Vec<u8>;
@@ -270,7 +270,7 @@ trait Baz { fn do_thing(&self); }
 impl Foo { fn new() -> Self { Self { x: 0 } } }
 mod inner {}
 fn free_fn() {}
-"#;
+";
         let tree = parser.parse(source).unwrap();
         let items = walk_top_level_items(&tree, source);
 
@@ -290,11 +290,11 @@ fn free_fn() {}
     #[test]
     fn walk_extracts_correct_names() {
         let mut parser = AstParser::new();
-        let source = br#"
+        let source = b"
 struct MyStruct;
 fn my_function() {}
 impl MyStruct { fn method(&self) {} }
-"#;
+";
         let tree = parser.parse(source).unwrap();
         let items = walk_top_level_items(&tree, source);
 
@@ -311,12 +311,12 @@ impl MyStruct { fn method(&self) {} }
     #[test]
     fn walk_skips_use_declarations_and_comments() {
         let mut parser = AstParser::new();
-        let source = br#"
+        let source = b"
 // A comment
 use std::path::Path;
 use std::io;
 fn only_fn() {}
-"#;
+";
         let tree = parser.parse(source).unwrap();
         let items = walk_top_level_items(&tree, source);
 
