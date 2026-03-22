@@ -779,18 +779,18 @@ phases:
 - id: S1
   name: Hybrid Search
   tagline: Catch what dense embeddings miss with hybrid dense+sparse search
-  status: pending
+  status: done
   problem: Dense-only vector search misses keyword-heavy queries and exact term matches
   solution: Add SPLADE sparse embeddings and BM25, fuse with Reciprocal Rank Fusion for hybrid dense+sparse retrieval
   tasks:
   - text: Add SPLADE sparse embedding via fastembed-rs SparseTextEmbedding
-    checked: false
+    checked: true
   - text: Build sparse inverted index alongside HNSW dense index for keyword-level matching
-    checked: false
+    checked: true
   - text: Implement Reciprocal Rank Fusion (RRF) to merge dense + sparse retrieval results
-    checked: false
+    checked: true
   - text: Update survey pipeline to use hybrid search with configurable dense/sparse weights
-    checked: false
+    checked: true
 - id: S2
   name: Reranking
   tagline: Precision-refine search results with cross-encoder reranking

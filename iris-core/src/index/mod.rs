@@ -1,12 +1,17 @@
 //! Vector index subsystem for approximate nearest-neighbor search.
 //!
-//! The [`VectorIndex`] trait defines the interface for vector storage and
+//! The [`VectorIndex`] trait defines the interface for dense vector storage and
 //! retrieval. The [`HnswIndex`] implementation uses the `hnswlib-rs` crate
 //! for HNSW-based ANN search with memory-mapped persistence.
+//!
+//! The [`SparseIndex`] trait and [`InvertedIndex`] implementation provide
+//! sparse vector storage for keyword-level matching via SPLADE embeddings.
 
 mod hnsw;
+mod inverted;
 
 pub use hnsw::HnswIndex;
+pub use inverted::InvertedIndex;
 
 use std::path::Path;
 
@@ -106,6 +111,75 @@ pub trait VectorIndexLoad: VectorIndex + Sized {
     ///
     /// Returns [`IndexError::LoadFailed`] if the index files are missing or corrupted.
     fn load(dir: &Path) -> Result<Self, IndexError>;
+}
+
+/// A single result from a sparse index search.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SparseSearchResult {
+    /// The string ID of the matched document.
+    pub id: String,
+    /// Dot-product score (higher is more relevant).
+    pub score: f32,
+}
+
+/// Interface for sparse vector index implementations.
+///
+/// Stores sparse vectors (index/value pairs) keyed by string IDs,
+/// and supports dot-product search for retrieval.
+pub trait SparseIndex: Send + Sync {
+    /// Insert a sparse vector with the given string ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::EmbeddingFailed`] if insertion fails.
+    fn insert_sparse(&self, id: &str, indices: &[u32], values: &[f32]) -> Result<(), IndexError>;
+
+    /// Search for documents most similar to the query sparse vector.
+    ///
+    /// Results are sorted by dot-product score descending (highest first).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::QueryFailed`] if search fails.
+    fn search_sparse(
+        &self,
+        query_indices: &[u32],
+        query_values: &[f32],
+        k: usize,
+    ) -> Result<Vec<SparseSearchResult>, IndexError>;
+
+    /// Delete a document by its string ID.
+    ///
+    /// Returns `true` if the document was found and deleted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::QueryFailed`] if the delete operation fails.
+    fn delete_sparse(&self, id: &str) -> Result<bool, IndexError>;
+
+    /// Persist the sparse index to the given directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::LoadFailed`] if persistence fails.
+    fn persist_sparse(&self, dir: &Path) -> Result<(), IndexError>;
+
+    /// Load a sparse index from a persisted directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::LoadFailed`] if loading fails.
+    fn load_sparse(dir: &Path) -> Result<Self, IndexError>
+    where
+        Self: Sized;
+
+    /// The number of documents in the sparse index.
+    fn len_sparse(&self) -> usize;
+
+    /// Whether the sparse index is empty.
+    fn is_empty_sparse(&self) -> bool {
+        self.len_sparse() == 0
+    }
 }
 
 #[cfg(test)]

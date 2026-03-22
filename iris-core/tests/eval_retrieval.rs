@@ -139,6 +139,7 @@ async fn eval_corpus_retrieval_quality() {
     let config = SearchConfig {
         raw_k: 30,
         top_k: 10,
+        sparse_weight: 0.0,
     };
 
     let k = 5;

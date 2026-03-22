@@ -11,10 +11,10 @@ use std::sync::Arc;
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::embedding::Embedder;
+use crate::embedding::{Embedder, SparseEmbedder};
 use crate::error::{IndexError, StorageError};
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
-use crate::index::VectorIndex;
+use crate::index::{SparseIndex, VectorIndex};
 use crate::search::{MultiResolutionSearch, SearchConfig};
 use crate::storage::{SqliteStorage, Storage, SymbolFilter, SymbolRecord};
 use crate::token::count_tokens;
@@ -184,6 +184,8 @@ pub struct QueryService {
     storage: SqliteStorage,
     embedder: Arc<dyn Embedder>,
     index: Arc<dyn VectorIndex>,
+    sparse_embedder: Option<Arc<dyn SparseEmbedder>>,
+    sparse_index: Option<Arc<dyn SparseIndex>>,
 }
 
 impl QueryService {
@@ -198,7 +200,21 @@ impl QueryService {
             storage,
             embedder,
             index,
+            sparse_embedder: None,
+            sparse_index: None,
         }
+    }
+
+    /// Add sparse search components for hybrid retrieval.
+    #[must_use]
+    pub fn with_sparse(
+        mut self,
+        sparse_embedder: Arc<dyn SparseEmbedder>,
+        sparse_index: Arc<dyn SparseIndex>,
+    ) -> Self {
+        self.sparse_embedder = Some(sparse_embedder);
+        self.sparse_index = Some(sparse_index);
+        self
     }
 
     /// Access the embedder for external use (e.g. topical prefetch).
@@ -269,10 +285,19 @@ impl QueryService {
     /// Returns [`QueryError`] if embedding, search, or storage operations fail.
     #[instrument(skip(self), fields(query_len = query.len(), top_k))]
     pub async fn survey(&self, query: &str, top_k: usize) -> Result<Vec<SurveyResult>, QueryError> {
-        let searcher = MultiResolutionSearch::new(self.embedder.as_ref(), self.index.as_ref());
+        let mut searcher = MultiResolutionSearch::new(self.embedder.as_ref(), self.index.as_ref());
+        if let (Some(se), Some(si)) = (&self.sparse_embedder, &self.sparse_index) {
+            searcher = searcher.with_sparse(se.as_ref(), si.as_ref());
+        }
+        let sparse_weight = if self.sparse_embedder.is_some() {
+            0.3
+        } else {
+            0.0
+        };
         let config = SearchConfig {
             raw_k: top_k.max(10) * 3,
             top_k,
+            sparse_weight,
         };
 
         let scored = searcher.search(query, config)?;
@@ -318,13 +343,22 @@ impl QueryService {
         top_k: usize,
         exclude_ids: &HashSet<String>,
     ) -> Result<(Vec<SurveyResult>, usize), QueryError> {
-        let searcher = MultiResolutionSearch::new(self.embedder.as_ref(), self.index.as_ref());
+        let mut searcher = MultiResolutionSearch::new(self.embedder.as_ref(), self.index.as_ref());
+        if let (Some(se), Some(si)) = (&self.sparse_embedder, &self.sparse_index) {
+            searcher = searcher.with_sparse(se.as_ref(), si.as_ref());
+        }
+        let sparse_weight = if self.sparse_embedder.is_some() {
+            0.3
+        } else {
+            0.0
+        };
         // Fetch the full raw_k candidates without truncation so we can
         // filter out excluded IDs before selecting the final top_k.
         let fetch_k = top_k.max(10) * 3;
         let config = SearchConfig {
             raw_k: fetch_k,
             top_k: fetch_k,
+            sparse_weight,
         };
 
         let scored = searcher.search(query, config)?;
