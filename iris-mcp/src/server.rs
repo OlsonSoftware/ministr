@@ -23,12 +23,12 @@ use rmcp::ServerHandler;
 use rmcp::model::ErrorData as McpError;
 use rmcp::model::{
     CallToolResult, Content, Implementation, ListResourceTemplatesResult, ListResourcesResult,
-    PaginatedRequestParam, ProtocolVersion, RawResource, RawResourceTemplate,
-    ReadResourceRequestParam, ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
-    ServerCapabilities, ServerInfo,
+    NumberOrString, PaginatedRequestParam, ProgressNotificationParam, ProtocolVersion, RawResource,
+    RawResourceTemplate, ReadResourceRequestParam, ReadResourceResult, Resource, ResourceContents,
+    ResourceTemplate, ServerCapabilities, ServerInfo,
 };
 use rmcp::schemars;
-use rmcp::service::RequestContext;
+use rmcp::service::{Peer, RequestContext};
 use rmcp::tool;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -75,6 +75,8 @@ pub struct IrisServer {
     index: Option<Arc<dyn VectorIndex>>,
     /// Shared ingestion progress tracker.
     ingestion_progress: Arc<IngestionProgress>,
+    /// MCP peer for sending server-initiated notifications.
+    peer: Arc<Mutex<Option<Peer<RoleServer>>>>,
 }
 
 /// Tool response wrapper that includes budget status alongside the result data.
@@ -589,6 +591,28 @@ impl ServerHandler for IrisServer {
                 None,
             ))
         }
+    }
+
+    fn get_peer(&self) -> Option<Peer<RoleServer>> {
+        // Use try_lock to avoid blocking the async runtime.
+        // If the lock is contended (unlikely), return None.
+        self.peer.try_lock().ok().and_then(|guard| guard.clone())
+    }
+
+    fn set_peer(&mut self, peer: Peer<RoleServer>) {
+        // Store synchronously — set_peer is called once during init.
+        if let Ok(mut guard) = self.peer.try_lock() {
+            *guard = Some(peer);
+        }
+    }
+
+    async fn on_initialized(&self) {
+        tracing::info!("client initialized, starting ingestion progress notifier");
+        let progress = Arc::clone(&self.ingestion_progress);
+        let peer_lock = Arc::clone(&self.peer);
+        tokio::spawn(async move {
+            run_ingestion_progress_notifier(progress, peer_lock).await;
+        });
     }
 }
 
@@ -1644,6 +1668,7 @@ impl IrisServer {
             embedder: None,
             index: None,
             ingestion_progress: Arc::new(IngestionProgress::new()),
+            peer: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1692,6 +1717,7 @@ impl IrisServer {
             embedder: None,
             index: None,
             ingestion_progress: Arc::new(IngestionProgress::new()),
+            peer: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -2433,6 +2459,79 @@ fn format_query_error(err: &QueryError) -> String {
         QueryError::SymbolNotFound { id } => {
             format!("Symbol not found: '{id}'. Use iris_symbols to search for valid symbol IDs.")
         }
+    }
+}
+
+/// Well-known progress token for iris ingestion notifications.
+const INGESTION_PROGRESS_TOKEN: &str = "iris/ingestion";
+
+/// Poll `IngestionProgress` and push MCP `notifications/progress` to the client.
+///
+/// Runs until ingestion completes or the peer channel closes. Polls every 2
+/// seconds to avoid flooding the client with messages.
+async fn run_ingestion_progress_notifier(
+    progress: Arc<IngestionProgress>,
+    peer_lock: Arc<Mutex<Option<Peer<RoleServer>>>>,
+) {
+    // Wait briefly for ingestion to start (it may not have begun yet).
+    let mut wait_count = 0;
+    while progress.status() == 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        wait_count += 1;
+        // Give up after 30 seconds if ingestion never starts.
+        if wait_count > 60 {
+            tracing::debug!("ingestion never started, progress notifier exiting");
+            return;
+        }
+    }
+
+    let token = NumberOrString::String(INGESTION_PROGRESS_TOKEN.into());
+    let mut last_done = 0;
+
+    loop {
+        if !progress.is_running() {
+            // Send one final notification with done == total.
+            let total = progress.files_total();
+            let peer = peer_lock.lock().await;
+            if let Some(ref p) = *peer {
+                let _ = p
+                    .notify_progress(ProgressNotificationParam {
+                        progress_token: token.clone(),
+                        progress: u32::try_from(total).unwrap_or(u32::MAX),
+                        total: Some(u32::try_from(total).unwrap_or(u32::MAX)),
+                    })
+                    .await;
+            }
+            tracing::info!("ingestion complete, progress notifier exiting");
+            break;
+        }
+
+        let done = progress.files_done();
+        let total = progress.files_total();
+
+        // Only send if progress actually changed.
+        if done != last_done {
+            last_done = done;
+            let peer = peer_lock.lock().await;
+            if let Some(ref p) = *peer {
+                if p.notify_progress(ProgressNotificationParam {
+                    progress_token: token.clone(),
+                    progress: u32::try_from(done).unwrap_or(u32::MAX),
+                    total: Some(u32::try_from(total).unwrap_or(u32::MAX)),
+                })
+                .await
+                .is_err()
+                {
+                    tracing::debug!("peer channel closed, progress notifier exiting");
+                    break;
+                }
+            } else {
+                tracing::debug!("no peer available, progress notifier exiting");
+                break;
+            }
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 }
 
@@ -3572,5 +3671,108 @@ mod tests {
             id: RequestId::Number(1),
             peer,
         }
+    }
+
+    // --- Progress notification tests ---
+
+    #[tokio::test]
+    async fn progress_notifier_sends_notifications_during_ingestion() {
+        use rmcp::model::ClientInfo;
+        use rmcp::service::AtomicU32RequestIdProvider;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let progress = Arc::new(IngestionProgress::new());
+        let id_provider = Arc::new(AtomicU32RequestIdProvider::default());
+        let (peer, mut rx) = Peer::<RoleServer>::new(id_provider, ClientInfo::default());
+
+        let peer_lock = Arc::new(Mutex::new(Some(peer)));
+
+        // Start ingestion with 5 files.
+        progress.start(5);
+
+        // Drain the peer channel in a background task to prevent backpressure
+        // from blocking notify_progress(). Count notifications received.
+        let msg_count = Arc::new(AtomicUsize::new(0));
+        let msg_count_bg = Arc::clone(&msg_count);
+        let drain_handle = tokio::spawn(async move {
+            while rx.recv().await.is_some() {
+                msg_count_bg.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        let handle = tokio::spawn(run_ingestion_progress_notifier(
+            Arc::clone(&progress),
+            Arc::clone(&peer_lock),
+        ));
+
+        // Simulate completing files with small delays so the notifier can poll.
+        for _ in 0..5 {
+            progress.increment_done();
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        progress.complete();
+
+        // Wait for the notifier to finish.
+        tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+            .await
+            .expect("notifier should exit within timeout")
+            .expect("notifier task should not panic");
+
+        // Drop the peer so the drain task's rx channel closes.
+        *peer_lock.lock().await = None;
+        let _ = drain_handle.await;
+
+        // We should have at least the final notification.
+        let count = msg_count.load(Ordering::Relaxed);
+        assert!(
+            count >= 1,
+            "expected at least 1 progress notification, got {count}"
+        );
+    }
+
+    #[tokio::test]
+    async fn progress_notifier_exits_when_ingestion_never_starts() {
+        use rmcp::model::ClientInfo;
+        use rmcp::service::AtomicU32RequestIdProvider;
+
+        let progress = Arc::new(IngestionProgress::new());
+        let id_provider = Arc::new(AtomicU32RequestIdProvider::default());
+        let (peer, mut rx) = Peer::<RoleServer>::new(id_provider, ClientInfo::default());
+        let peer_lock = Arc::new(Mutex::new(Some(peer)));
+
+        // Drain channel to prevent backpressure.
+        let drain_handle = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+
+        // Mark as complete immediately (skip running state).
+        progress.complete();
+
+        let handle = tokio::spawn(run_ingestion_progress_notifier(
+            Arc::clone(&progress),
+            Arc::clone(&peer_lock),
+        ));
+
+        // Should exit promptly since status goes 0 -> 2 (never 1).
+        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("notifier should exit within timeout")
+            .expect("notifier task should not panic");
+
+        *peer_lock.lock().await = None;
+        let _ = drain_handle.await;
+    }
+
+    #[test]
+    fn set_peer_stores_peer() {
+        use rmcp::model::ClientInfo;
+        use rmcp::service::AtomicU32RequestIdProvider;
+
+        let mut server = setup_server_sync();
+        assert!(server.get_peer().is_none());
+
+        let id_provider = Arc::new(AtomicU32RequestIdProvider::default());
+        let (peer, _rx) = Peer::<RoleServer>::new(id_provider, ClientInfo::default());
+        server.set_peer(peer);
+
+        assert!(server.get_peer().is_some());
     }
 }
