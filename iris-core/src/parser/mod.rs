@@ -9,11 +9,13 @@
 
 mod common;
 mod html;
+pub mod html_to_md;
 mod markdown;
 mod pdf;
 mod section_id;
 
 pub use html::HtmlParser;
+pub use html_to_md::{ContentExtractor, HtmlToMarkdown, html_to_markdown};
 pub use markdown::MarkdownParser;
 pub use pdf::PdfParser;
 pub use section_id::generate_section_id;

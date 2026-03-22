@@ -332,9 +332,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Build HTML-to-markdown converter using existing `scraper` crate — handle headings (h1-h6), paragraphs, code blocks (pre/code), ordered/unordered lists, tables, links, and images (as alt text)
-- [ ] Implement readability-style main content extraction: score DOM nodes by text density, strip nav/header/footer/sidebar/script/style elements, identify the `<main>` or `<article>` content container
-- [ ] Unit tests for HTML→markdown: convert sample documentation pages (with nav bars, sidebars, code samples) to markdown, verify clean output preserves headings, code blocks, and content structure
+- [x] Build HTML-to-markdown converter using existing `scraper` crate — handle headings (h1-h6), paragraphs, code blocks (pre/code), ordered/unordered lists, tables, links, and images (as alt text)
+- [x] Implement readability-style main content extraction: score DOM nodes by text density, strip nav/header/footer/sidebar/script/style elements, identify the `<main>` or `<article>` content container
+- [x] Unit tests for HTML→markdown: convert sample documentation pages (with nav bars, sidebars, code samples) to markdown, verify clean output preserves headings, code blocks, and content structure
 
 ---
 
