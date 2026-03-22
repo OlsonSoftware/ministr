@@ -508,18 +508,18 @@ phases:
 - id: R2
   name: iris_clone MCP Tool
   tagline: One command to clone, index, and search any repository
-  status: pending
+  status: done
   problem: Agents need to quickly pull down reference implementations, library source code, or upstream dependencies and make them searchable
   solution: New iris_clone tool that accepts a repo URL with optional path/branch filters, clones via shallow sparse checkout, runs the ingestion pipeline, and caches results
   tasks:
   - text: New MCP tool `iris_clone(repo, paths?, branch?)` in iris-mcp — clone via GitFetcher, then run ingestion pipeline on checked-out content
-    checked: false
+    checked: true
   - text: 'iris_clone returns structured response: files_discovered, files_indexed, sections_extracted, clone_time_ms, index_time_ms, plus budget_status'
-    checked: false
+    checked: true
   - text: Skip re-clone if repo is already cached and commit SHA matches remote HEAD — reuse existing index
-    checked: false
+    checked: true
   - text: 'E2E test: iris_clone a public repo, verify iris_toc shows its documents and iris_survey finds content from the cloned repo'
-    checked: false
+    checked: true
 - id: R3
   name: Unified Corpus URL Schemes
   tagline: Mix local paths, web URLs, and repo URLs in corpus_paths

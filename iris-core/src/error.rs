@@ -314,9 +314,7 @@ mod tests {
         let err = GitError::NotInstalled;
         assert!(err.to_string().contains("not installed"));
 
-        let err = GitError::InvalidRepo {
-            url: String::new(),
-        };
+        let err = GitError::InvalidRepo { url: String::new() };
         assert!(err.to_string().contains("invalid repository URL"));
     }
 }

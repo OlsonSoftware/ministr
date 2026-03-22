@@ -149,6 +149,9 @@ async fn main() -> Result<()> {
     // Enable web fetching for iris_fetch tool.
     let server = enable_web_fetcher(server, &corpus_dir, &embedder, &index)?;
 
+    // Enable git cloning for iris_clone tool.
+    let server = enable_git_fetcher(server, &embedder, &index);
+
     // Spawn coherence file watcher if corpus paths were provided.
     let _coherence_handle = if corpus_paths.is_empty() {
         None
@@ -328,4 +331,14 @@ fn enable_web_fetcher(
         iris_core::web::fetcher::WebFetcherConfig::default(),
     );
     Ok(server.with_web_fetcher(web_fetcher, Arc::clone(embedder), Arc::clone(index)))
+}
+
+/// Enable git cloning on the server by constructing a `GitFetcher`.
+fn enable_git_fetcher(
+    server: iris_mcp::server::IrisServer,
+    embedder: &Arc<dyn iris_core::embedding::Embedder>,
+    index: &Arc<dyn iris_core::index::VectorIndex>,
+) -> iris_mcp::server::IrisServer {
+    let git_fetcher = iris_core::git::GitFetcher::with_defaults();
+    server.with_git_fetcher(git_fetcher, Arc::clone(embedder), Arc::clone(index))
 }
