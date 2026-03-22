@@ -346,9 +346,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Implement llms.txt fetcher: given a domain, try GET `https://{domain}/llms-full.txt` then `https://{domain}/llms.txt` — return content if found (200 OK with text/plain or text/markdown)
-- [ ] Parse llms.txt markdown format: extract the H1 title, description blockquote, and categorized link lists (## sections with `- [title](url): description` entries)
-- [ ] Unit tests: parse sample llms.txt files (Anthropic, Cursor style), verify title/description/link extraction; verify llms-full.txt is returned as raw markdown content
+- [x] Implement llms.txt fetcher: given a domain, try GET `https://{domain}/llms-full.txt` then `https://{domain}/llms.txt` — return content if found (200 OK with text/plain or text/markdown)
+- [x] Parse llms.txt markdown format: extract the H1 title, description blockquote, and categorized link lists (## sections with `- [title](url): description` entries)
+- [x] Unit tests: parse sample llms.txt files (Anthropic, Cursor style), verify title/description/link extraction; verify llms-full.txt is returned as raw markdown content
 
 ---
 
