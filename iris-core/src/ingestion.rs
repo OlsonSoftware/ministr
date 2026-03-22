@@ -353,9 +353,9 @@ impl IngestionPipeline {
         index: &I,
     ) -> Result<IngestionStats, IngestionError>
     where
-        S: Storage,
-        E: Embedder,
-        I: VectorIndex,
+        S: Storage + ?Sized,
+        E: Embedder + ?Sized,
+        I: VectorIndex + ?Sized,
     {
         let files = discover_files(dir)?;
         let mut stats = IngestionStats {
@@ -447,9 +447,9 @@ impl IngestionPipeline {
         index: &I,
     ) -> Result<FileResult, IngestionError>
     where
-        S: Storage,
-        E: Embedder,
-        I: VectorIndex,
+        S: Storage + ?Sized,
+        E: Embedder + ?Sized,
+        I: VectorIndex + ?Sized,
     {
         // Read file content
         let content = tokio::fs::read(file_path)
@@ -562,7 +562,7 @@ impl IngestionPipeline {
 /// - Document-level summary (if present)
 /// - Each section's summary (if present) and full text
 /// - Each claim
-fn embed_document<E: Embedder, I: VectorIndex>(
+fn embed_document<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
     doc: &DocumentTree,
     embedder: &E,
     index: &I,
@@ -655,7 +655,7 @@ fn collect_all_claims(sections: &[Section]) -> Vec<Claim> {
 ///
 /// Queries storage for the document's sections and claims, derives their
 /// vector IDs, and deletes them from the index.
-async fn delete_document_vectors<S: Storage, I: VectorIndex>(
+async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex + ?Sized>(
     doc_id: &crate::types::ContentId,
     storage: &S,
     index: &I,

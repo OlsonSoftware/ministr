@@ -173,3 +173,67 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Final audit — cargo audit, cargo deny check, full test suite, clippy clean, benchmark baselines recorded
 - [x] Tag and publish v0.1.0 release — changelog, GitHub release with binaries, crates.io publish
 
+---
+
+## Phase I0: Ingestion Pipeline Integration ✦ "Make iris actually read the corpus on startup"
+
+**Problem:** iris starts with an empty database — corpus files are never parsed or indexed on startup, making all tools return empty results.
+
+**Solution:** Wire ingest_directory_with_embeddings into the CLI startup path, persist the vector index after ingestion, and implement incremental re-indexing via file hashes.
+
+### Tasks
+
+- [x] Call ingest_directory_with_embeddings in CLI main.rs after initializing storage/embedder/index
+- [x] Pass the user-provided --corpus path through to the ingestion pipeline (currently only used for corpus_name hashing)
+- [x] Persist the HNSW vector index to disk after ingestion completes (call index.persist(&index_dir))
+- [x] Implement incremental ingestion — skip files whose SHA-256 hash matches the stored hash, only re-index changed files
+- [x] Log ingestion stats on startup (files scanned, sections created, embeddings generated, time elapsed)
+
+---
+
+## Phase I1: Server Lifecycle & Persistence ✦ "Sessions and analytics survive restarts"
+
+**Problem:** CLI uses IrisServer::new() which creates ephemeral sessions with no analytics — session state and cross-session learning are lost on restart.
+
+**Solution:** Switch CLI to IrisServer::with_persistence(), pass corpus path and storage through, enable session restore and analytics.
+
+### Tasks
+
+- [x] Switch CLI from IrisServer::new() to IrisServer::with_persistence(), passing Arc&lt;SqliteStorage&gt; and budget config
+- [x] Generate or restore a stable session ID per corpus (derive from corpus path hash) so sessions persist across restarts
+- [x] Load budget config from IrisConfig (config.toml) instead of using BudgetConfig::default()
+- [ ] Verify analytics co-access patterns are recorded and served back via iris_budget prefetch_metrics
+
+---
+
+## Phase I2: Coherence & File Watching ✦ "Detect file changes and keep the index fresh"
+
+**Problem:** When corpus files change on disk, iris doesn't notice — stale content is served without alerts, and the index drifts from reality.
+
+**Solution:** Spawn the FileWatcher and CoherenceEngine on startup, wire coherence events into session invalidation and re-ingestion.
+
+### Tasks
+
+- [ ] Spawn FileWatcher on the corpus directory at CLI startup and feed events to CoherenceEngine
+- [ ] Wire CoherenceEngine.process_events to trigger re-ingestion of changed files and update the vector index
+- [ ] Propagate coherence alerts to active sessions via Session::invalidate_sections so stale content is flagged
+- [ ] Surface coherence_alerts in iris_read and iris_budget MCP tool responses when content has changed
+
+---
+
+## Phase I3: End-to-End Validation ✦ "Prove it actually works from CLI to MCP response"
+
+**Problem:** All 99 roadmap tasks were marked done but the system doesn't work end-to-end — need integration tests that prove the full pipeline.
+
+**Solution:** Write E2E tests that start iris against a real corpus, verify ingestion populates the DB, and validate each MCP tool returns real results.
+
+### Tasks
+
+- [ ] E2E test: start iris against a temp corpus dir, verify iris_survey returns ranked results
+- [ ] E2E test: verify iris_read returns full section text with correct heading paths and content hashes
+- [ ] E2E test: verify iris_extract returns claims from ingested content
+- [ ] E2E test: verify iris_related follows claim dependency chains
+- [ ] E2E test: verify session deduplication — iris_read same section twice returns skip/delta, not full content
+- [ ] E2E test: verify iris_compress + iris_evicted cycle works and budget updates accordingly
+- [ ] E2E test: modify a corpus file, verify coherence detects the change and iris_read returns updated content
+
