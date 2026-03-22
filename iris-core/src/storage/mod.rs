@@ -12,4 +12,6 @@ pub mod traits;
 pub use corpus::ensure_corpus_layout;
 pub use schema::CURRENT_SCHEMA_VERSION;
 pub use sqlite::SqliteStorage;
-pub use traits::{ClaimRecord, DocumentRecord, FileHashRecord, SectionRecord, Storage};
+pub use traits::{
+    ClaimRecord, DocumentRecord, FileHashRecord, RelatedClaimRecord, SectionRecord, Storage,
+};

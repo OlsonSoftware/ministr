@@ -139,8 +139,8 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Build LRU prefetch cache (default 50 items) with pre-computed text, token count, and relevance score
 - [x] Wire prefetch into tool response path — serve from warm cache (<1ms) or fall through to cold retrieval
 - [x] Add prefetch hit rate metrics — track warm/cold responses per session, expose via iris://status resource
-- [ ] Implement iris_related tool — claim dependency traversal (references, contradicts, depends_on, updates)
-- [ ] Build claim relationship index — detect cross-references and co-occurring entities between claims at ingestion
+- [x] Implement iris_related tool — claim dependency traversal (references, contradicts, depends_on, updates)
+- [x] Build claim relationship index — detect cross-references and co-occurring entities between claims at ingestion
 - [ ] Implement file watcher using notify crate — watch corpus source directories for changes
 - [ ] Build coherence protocol — on file change, re-index affected sections, generate coherence_alert notifications
 - [ ] Send MCP notifications for stale content — push changed_sections and stale_content_ids to connected agents

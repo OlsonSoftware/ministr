@@ -7,7 +7,7 @@ use std::future::Future;
 
 use crate::error::StorageError;
 use crate::session::{Session, SessionId};
-use crate::types::{ClaimId, ContentId, DocumentTree, SectionId};
+use crate::types::{ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, SectionId};
 
 /// Stored document metadata (without the full section tree).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +52,21 @@ pub struct ClaimRecord {
     pub text: String,
     /// Ordering position within the section.
     pub position: i64,
+}
+
+/// A related claim record returned by relationship queries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelatedClaimRecord {
+    /// The related claim's ID.
+    pub claim_id: ClaimId,
+    /// The related claim's text.
+    pub text: String,
+    /// The type of relationship.
+    pub relation_type: RelationType,
+    /// The section containing the related claim.
+    pub section_id: SectionId,
+    /// Confidence score (0.0–1.0).
+    pub confidence: f32,
 }
 
 /// A file hash record for incremental re-indexing.
@@ -137,6 +152,29 @@ pub trait Storage: Send + Sync {
         &self,
         section_id: &SectionId,
     ) -> impl Future<Output = Result<Vec<ClaimRecord>, StorageError>> + Send;
+
+    // -- Claim relationships --
+
+    /// Insert a batch of claim relationships.
+    fn insert_claim_relationships(
+        &self,
+        relationships: &[ClaimRelationship],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Get claims related to the given claim, optionally filtered by relation type.
+    fn get_related_claims(
+        &self,
+        claim_id: &ClaimId,
+        relation_types: Option<&[RelationType]>,
+    ) -> impl Future<Output = Result<Vec<RelatedClaimRecord>, StorageError>> + Send;
+
+    /// Delete all relationships involving claims in the given section.
+    ///
+    /// Used during re-indexing to clean up stale relationships.
+    fn delete_relationships_for_section(
+        &self,
+        section_id: &SectionId,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
 
     // -- File hashes --
 

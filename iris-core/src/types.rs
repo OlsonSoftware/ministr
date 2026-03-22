@@ -265,6 +265,68 @@ pub struct Claim {
     pub section_id: SectionId,
 }
 
+/// The type of relationship between two claims.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationType {
+    /// Claim A mentions a concept that claim B defines or elaborates.
+    References,
+    /// Claims assert opposing things about the same subject.
+    Contradicts,
+    /// Claim A requires knowledge from claim B to be understood.
+    DependsOn,
+    /// Claim A supersedes or modifies the information in claim B.
+    Updates,
+}
+
+impl fmt::Display for RelationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::References => f.write_str("references"),
+            Self::Contradicts => f.write_str("contradicts"),
+            Self::DependsOn => f.write_str("depends_on"),
+            Self::Updates => f.write_str("updates"),
+        }
+    }
+}
+
+impl RelationType {
+    /// Parse a relation type from a string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use iris_core::types::RelationType;
+    ///
+    /// assert_eq!(RelationType::parse("references"), Some(RelationType::References));
+    /// assert_eq!(RelationType::parse("depends_on"), Some(RelationType::DependsOn));
+    /// assert_eq!(RelationType::parse("unknown"), None);
+    /// ```
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "references" => Some(Self::References),
+            "contradicts" => Some(Self::Contradicts),
+            "depends_on" => Some(Self::DependsOn),
+            "updates" => Some(Self::Updates),
+            _ => None,
+        }
+    }
+}
+
+/// A directed relationship between two claims.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClaimRelationship {
+    /// The source claim.
+    pub source_claim_id: ClaimId,
+    /// The target claim.
+    pub target_claim_id: ClaimId,
+    /// The type of relationship.
+    pub relation_type: RelationType,
+    /// Confidence score (0.0–1.0) from the relationship detector.
+    pub confidence: f32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,6 +388,46 @@ mod tests {
         assert_eq!(tree.sections.len(), 1);
         assert_eq!(tree.sections[0].claims.len(), 1);
         assert_eq!(tree.sections[0].depth, 2);
+    }
+
+    #[test]
+    fn relation_type_display_and_parse() {
+        assert_eq!(RelationType::References.to_string(), "references");
+        assert_eq!(RelationType::Contradicts.to_string(), "contradicts");
+        assert_eq!(RelationType::DependsOn.to_string(), "depends_on");
+        assert_eq!(RelationType::Updates.to_string(), "updates");
+
+        assert_eq!(
+            RelationType::parse("references"),
+            Some(RelationType::References)
+        );
+        assert_eq!(
+            RelationType::parse("depends_on"),
+            Some(RelationType::DependsOn)
+        );
+        assert_eq!(RelationType::parse("unknown"), None);
+    }
+
+    #[test]
+    fn relation_type_serialize_roundtrip() {
+        let rt = RelationType::References;
+        let json = serde_json::to_string(&rt).unwrap();
+        assert_eq!(json, "\"references\"");
+        let back: RelationType = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, rt);
+    }
+
+    #[test]
+    fn claim_relationship_construction() {
+        let rel = ClaimRelationship {
+            source_claim_id: ClaimId("c1".into()),
+            target_claim_id: ClaimId("c2".into()),
+            relation_type: RelationType::References,
+            confidence: 0.85,
+        };
+        assert_eq!(rel.source_claim_id.0, "c1");
+        assert_eq!(rel.target_claim_id.0, "c2");
+        assert_eq!(rel.relation_type, RelationType::References);
     }
 
     #[test]

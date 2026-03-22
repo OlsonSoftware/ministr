@@ -11,10 +11,15 @@ use rusqlite::Connection;
 use tracing::instrument;
 
 use super::schema::{configure_connection, run_migrations};
-use super::traits::{ClaimRecord, DocumentRecord, FileHashRecord, SectionRecord, Storage};
+use super::traits::{
+    ClaimRecord, DocumentRecord, FileHashRecord, RelatedClaimRecord, SectionRecord, Storage,
+};
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
-use crate::types::{ClaimId, ContentId, DocumentTree, Resolution, Section, SectionId};
+use crate::types::{
+    ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, Resolution, Section,
+    SectionId,
+};
 
 /// SQLite-backed storage for a single corpus.
 ///
@@ -451,6 +456,134 @@ impl Storage for SqliteStorage {
                 .map_err(|e| StorageError::Database {
                     reason: e.to_string(),
                 })
+        })
+        .await
+    }
+
+    async fn insert_claim_relationships(
+        &self,
+        relationships: &[ClaimRelationship],
+    ) -> Result<(), StorageError> {
+        let relationships = relationships.to_vec();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "INSERT OR REPLACE INTO claim_relationships
+                     (source_claim_id, target_claim_id, relation_type, confidence)
+                     VALUES (?1, ?2, ?3, ?4)",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to prepare relationship insert: {e}"),
+                })?;
+
+            for rel in &relationships {
+                stmt.execute(rusqlite::params![
+                    rel.source_claim_id.as_ref(),
+                    rel.target_claim_id.as_ref(),
+                    rel.relation_type.to_string(),
+                    rel.confidence,
+                ])
+                .map_err(|e| StorageError::Database {
+                    reason: format!(
+                        "failed to insert relationship {} -> {}: {e}",
+                        rel.source_claim_id, rel.target_claim_id
+                    ),
+                })?;
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_related_claims(
+        &self,
+        claim_id: &ClaimId,
+        relation_types: Option<&[RelationType]>,
+    ) -> Result<Vec<RelatedClaimRecord>, StorageError> {
+        let claim_id = claim_id.clone();
+        let relation_types = relation_types.map(<[RelationType]>::to_vec);
+        self.with_conn(move |conn| {
+            // Query both directions: source→target and target→source
+            let sql = "
+                SELECT c.id, c.text, cr.relation_type, c.section_id, cr.confidence
+                FROM claim_relationships cr
+                JOIN claims c ON c.id = cr.target_claim_id
+                WHERE cr.source_claim_id = ?1
+                UNION ALL
+                SELECT c.id, c.text, cr.relation_type, c.section_id, cr.confidence
+                FROM claim_relationships cr
+                JOIN claims c ON c.id = cr.source_claim_id
+                WHERE cr.target_claim_id = ?1
+                ORDER BY confidence DESC
+            ";
+
+            let mut stmt = conn.prepare(sql).map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+
+            let rows = stmt
+                .query_map(rusqlite::params![claim_id.as_ref()], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, f32>(4)?,
+                    ))
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let mut results = Vec::new();
+            for row in rows {
+                let (cid, text, rel_type_str, sid, confidence) =
+                    row.map_err(|e| StorageError::Database {
+                        reason: e.to_string(),
+                    })?;
+
+                let Some(rel_type) = RelationType::parse(&rel_type_str) else {
+                    continue;
+                };
+
+                // Filter by relation types if specified
+                if let Some(ref types) = relation_types {
+                    if !types.contains(&rel_type) {
+                        continue;
+                    }
+                }
+
+                results.push(RelatedClaimRecord {
+                    claim_id: ClaimId(cid),
+                    text,
+                    relation_type: rel_type,
+                    section_id: SectionId(sid),
+                    confidence,
+                });
+            }
+
+            Ok(results)
+        })
+        .await
+    }
+
+    async fn delete_relationships_for_section(
+        &self,
+        section_id: &SectionId,
+    ) -> Result<(), StorageError> {
+        let section_id = section_id.clone();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "DELETE FROM claim_relationships
+                 WHERE source_claim_id IN (SELECT id FROM claims WHERE section_id = ?1)
+                    OR target_claim_id IN (SELECT id FROM claims WHERE section_id = ?1)",
+                rusqlite::params![section_id.as_ref()],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: format!("failed to delete relationships for section {section_id}: {e}"),
+            })?;
+            Ok(())
         })
         .await
     }

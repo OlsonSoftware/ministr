@@ -2,8 +2,8 @@
 //!
 //! Implements the rmcp `ServerHandler` trait with `#[tool]` macro-based
 //! tool registration. The server exposes iris tools (`iris_survey`,
-//! `iris_read`, `iris_extract`, `iris_evicted`, `iris_budget`,
-//! `iris_compress`) over the MCP protocol.
+//! `iris_read`, `iris_extract`, `iris_related`, `iris_evicted`,
+//! `iris_budget`, `iris_compress`) over the MCP protocol.
 //!
 //! Every tool response includes a `budget_status` object with the current
 //! token budget state. Survey and read responses are deduplicated against
@@ -34,7 +34,9 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use tracing::{Instrument, debug, info_span, warn};
 
-use iris_core::service::{CompressedItem, QueryError, QueryService, SurveyResult};
+use iris_core::service::{
+    CompressedItem, QueryError, QueryService, RelatedClaimResult, SurveyResult,
+};
 use iris_core::session::delta::ContentDelta;
 use iris_core::session::eviction::EvictionCandidate;
 use iris_core::session::prefetch::PrefetchEngine;
@@ -43,7 +45,7 @@ use iris_core::session::{
 };
 use iris_core::storage::{SqliteStorage, Storage};
 use iris_core::token::count_tokens;
-use iris_core::types::{ContentId, Resolution, SectionId};
+use iris_core::types::{ContentId, RelationType, Resolution, SectionId};
 
 /// MCP server that exposes iris context-cache tools to LLM agents.
 ///
@@ -182,6 +184,27 @@ struct BudgetResponse {
     prefetch_metrics: iris_core::session::PrefetchMetrics,
 }
 
+/// Parameters for the `iris_related` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RelatedParams {
+    /// Claim ID to find related claims for.
+    #[schemars(description = "Claim ID to find related claims for")]
+    pub claim_id: String,
+
+    /// Optional filter for specific relation types.
+    #[schemars(
+        description = "Optional filter: 'references', 'contradicts', 'depends_on', 'updates'"
+    )]
+    pub relation_types: Option<Vec<String>>,
+}
+
+/// Response from the `iris_related` tool.
+#[derive(Debug, Serialize)]
+struct RelatedResponse {
+    /// Related claims with relationship metadata.
+    related: Vec<RelatedClaimResult>,
+}
+
 /// Response from the `iris_compress` tool.
 #[derive(Debug, Serialize)]
 struct CompressResponse {
@@ -205,10 +228,11 @@ impl ServerHandler for IrisServer {
             instructions: Some(
                 "iris is a context cache controller for LLM agents. Use iris_survey to \
                  search for relevant content, iris_read to retrieve full section text, \
-                 iris_extract to get atomic claims from a section, iris_budget to check \
-                 context budget status and get eviction recommendations, iris_compress \
-                 to generate compressed summaries of content you want to evict, and \
-                 iris_evicted to signal when content has been dropped from your context window."
+                 iris_extract to get atomic claims from a section, iris_related to follow \
+                 dependency chains between claims, iris_budget to check context budget \
+                 status and get eviction recommendations, iris_compress to generate \
+                 compressed summaries of content you want to evict, and iris_evicted to \
+                 signal when content has been dropped from your context window."
                     .to_string(),
             ),
         }
@@ -526,6 +550,88 @@ impl IrisServer {
                 }
                 Err(e) => {
                     warn!(error = %e, section_id = %params.section_id, "iris_extract failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_query_error(&e),
+                    )]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Follow dependency chains between claims.
+    ///
+    /// Given a claim ID, returns other claims that reference, depend on,
+    /// contradict, or update it. Enables the agent to trace reasoning chains
+    /// across documents.
+    #[tool(
+        name = "iris_related",
+        description = "Follow dependency chains between claims. Given a claim ID, returns related claims with relationship type (references, contradicts, depends_on, updates) and source section."
+    )]
+    async fn related(
+        &self,
+        #[tool(aggr)] params: RelatedParams,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_related", claim_id = %params.claim_id);
+
+        async {
+            debug!(claim_id = %params.claim_id, "iris_related request");
+
+            // Parse relation type filters
+            let relation_types: Option<Vec<RelationType>> =
+                params.relation_types.as_ref().map(|types| {
+                    types
+                        .iter()
+                        .filter_map(|t| RelationType::parse(t))
+                        .collect()
+                });
+
+            match self
+                .service
+                .related_claims(&params.claim_id, relation_types.as_deref())
+                .await
+            {
+                Ok(related) => {
+                    debug!(
+                        claim_id = %params.claim_id,
+                        related_count = related.len(),
+                        "iris_related success"
+                    );
+
+                    // Record each related claim delivery in session and budget
+                    let mut session = self.session.lock().await;
+                    let mut budget = self.budget.lock().await;
+                    let turn = session.current_turn() + 1;
+                    for r in &related {
+                        let token_count = count_tokens(&r.text);
+                        let hash = content_hash(&r.text);
+                        session.record_delivery(
+                            &ContentId(r.claim_id.clone()),
+                            Resolution::Claim,
+                            token_count,
+                            turn,
+                            hash,
+                        );
+                        budget.record_tokens(&r.claim_id, token_count);
+                    }
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+                    drop(session);
+
+                    self.persist_session().await;
+
+                    let response = ToolResponse {
+                        data: RelatedResponse { related },
+                        budget_status,
+                    };
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, claim_id = %params.claim_id, "iris_related failed");
                     Ok(CallToolResult::error(vec![Content::text(
                         format_query_error(&e),
                     )]))
@@ -1031,6 +1137,12 @@ fn format_query_error(err: &QueryError) -> String {
             format!(
                 "Storage error: {storage_err}. The corpus database may be unavailable. \
                  Check server logs for details."
+            )
+        }
+        QueryError::ClaimNotFound { id } => {
+            format!(
+                "Claim not found: '{id}'. Use iris_extract to discover valid claim IDs \
+                 within a section."
             )
         }
     }
