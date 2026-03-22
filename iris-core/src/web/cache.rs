@@ -22,6 +22,7 @@ use crate::error::WebError;
 ///     source_url: "https://example.com/docs/".into(),
 ///     fetched_at: "2026-03-21T12:00:00Z".into(),
 ///     etag: Some("\"abc123\"".into()),
+///     last_modified: Some("Fri, 20 Mar 2026 10:00:00 GMT".into()),
 ///     content_hash: "deadbeef".into(),
 ///     content_type: Some("text/html".into()),
 /// };
@@ -35,6 +36,9 @@ pub struct WebPageMeta {
     pub fetched_at: String,
     /// HTTP `ETag` header for conditional re-fetching.
     pub etag: Option<String>,
+    /// HTTP `Last-Modified` header for conditional re-fetching.
+    #[serde(default)]
+    pub last_modified: Option<String>,
     /// SHA-256 hex digest of the markdown content.
     pub content_hash: String,
     /// Content-Type from the HTTP response.
@@ -223,6 +227,7 @@ mod tests {
             source_url: "https://example.com/".into(),
             fetched_at: "2026-03-21T12:00:00Z".into(),
             etag: Some("\"abc\"".into()),
+            last_modified: None,
             content_hash: "deadbeef".into(),
             content_type: Some("text/html".into()),
         };
@@ -242,6 +247,7 @@ mod tests {
             source_url: url.into(),
             fetched_at: "2026-03-21T12:00:00Z".into(),
             etag: None,
+            last_modified: None,
             content_hash: "abc123".into(),
             content_type: None,
         };

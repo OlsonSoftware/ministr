@@ -124,6 +124,23 @@ pub struct FileHashRecord {
     pub content_hash: String,
 }
 
+/// A web cache record tracking fetch metadata for staleness detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebCacheRecord {
+    /// The source URL (primary key).
+    pub source_url: String,
+    /// ISO 8601 timestamp of the last fetch.
+    pub fetch_timestamp: String,
+    /// HTTP `ETag` header from the last response.
+    pub etag: Option<String>,
+    /// HTTP `Last-Modified` header from the last response.
+    pub last_modified: Option<String>,
+    /// SHA-256 hex digest of the fetched content.
+    pub content_hash: String,
+    /// Content-Type from the HTTP response.
+    pub content_type: Option<String>,
+}
+
 /// Async storage interface for the iris content database.
 ///
 /// Implementations must be `Send + Sync` to work across async tasks.
@@ -298,4 +315,29 @@ pub trait Storage: Send + Sync {
 
     /// Get aggregate corpus analytics statistics.
     fn get_corpus_stats(&self) -> impl Future<Output = Result<CorpusStats, StorageError>> + Send;
+
+    // -- Web cache --
+
+    /// Upsert a web cache record (insert or update on conflict).
+    fn upsert_web_cache(
+        &self,
+        record: &WebCacheRecord,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Get the cached metadata for a URL.
+    fn get_web_cache(
+        &self,
+        url: &str,
+    ) -> impl Future<Output = Result<Option<WebCacheRecord>, StorageError>> + Send;
+
+    /// List all cached web URLs.
+    fn list_web_cache(
+        &self,
+    ) -> impl Future<Output = Result<Vec<WebCacheRecord>, StorageError>> + Send;
+
+    /// Delete a web cache record.
+    fn delete_web_cache(
+        &self,
+        url: &str,
+    ) -> impl Future<Output = Result<bool, StorageError>> + Send;
 }

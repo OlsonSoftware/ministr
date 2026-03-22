@@ -52,6 +52,20 @@ pub struct HttpResponse {
     pub headers: HashMap<String, String>,
 }
 
+/// Result of a conditional HTTP staleness check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StalenessResult {
+    /// The resource has not been modified (HTTP 304).
+    Fresh,
+    /// The resource has been modified — includes the new `ETag` and `Last-Modified` if present.
+    Stale {
+        /// New `ETag` value, if the server returned one.
+        new_etag: Option<String>,
+        /// New `Last-Modified` value, if the server returned one.
+        new_last_modified: Option<String>,
+    },
+}
+
 /// Async HTTP client with retry logic and configurable timeouts.
 #[derive(Debug, Clone)]
 pub struct HttpClient {
@@ -144,6 +158,54 @@ impl HttpClient {
             url: url_str.to_owned(),
             attempts: max_attempts,
             reason: last_error,
+        })
+    }
+
+    /// Send a conditional HTTP HEAD request to check for staleness.
+    ///
+    /// Includes `If-None-Match` (from `etag`) and/or `If-Modified-Since`
+    /// (from `last_modified`) headers when available. Returns [`StalenessResult::Fresh`]
+    /// on HTTP 304, or [`StalenessResult::Stale`] on HTTP 200.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WebError`] if the request fails or the URL is invalid.
+    #[tracing::instrument(skip(self), fields(url = %url))]
+    pub async fn head_conditional(
+        &self,
+        url: &str,
+        etag: Option<&str>,
+        last_modified: Option<&str>,
+    ) -> Result<StalenessResult, WebError> {
+        let parsed = normalize_url(url)?;
+        let url_str = parsed.as_str();
+
+        let mut request = self.inner.head(url_str);
+        if let Some(etag_val) = etag {
+            request = request.header("If-None-Match", etag_val);
+        }
+        if let Some(lm_val) = last_modified {
+            request = request.header("If-Modified-Since", lm_val);
+        }
+
+        let response = request.send().await?;
+        let status = response.status().as_u16();
+
+        if status == 304 {
+            return Ok(StalenessResult::Fresh);
+        }
+
+        if response.status().is_success() {
+            let headers = extract_headers(&response);
+            return Ok(StalenessResult::Stale {
+                new_etag: headers.get("etag").cloned(),
+                new_last_modified: headers.get("last-modified").cloned(),
+            });
+        }
+
+        Err(WebError::HttpStatus {
+            url: url_str.to_owned(),
+            status,
         })
     }
 
@@ -367,5 +429,29 @@ mod tests {
     fn client_with_defaults_builds() {
         let client = HttpClient::with_defaults();
         assert!(client.is_ok());
+    }
+
+    // -- StalenessResult tests --
+
+    #[test]
+    fn staleness_result_fresh_eq() {
+        assert_eq!(StalenessResult::Fresh, StalenessResult::Fresh);
+    }
+
+    #[test]
+    fn staleness_result_stale_with_etag() {
+        let result = StalenessResult::Stale {
+            new_etag: Some("\"v2\"".into()),
+            new_last_modified: None,
+        };
+        assert_ne!(result, StalenessResult::Fresh);
+        if let StalenessResult::Stale {
+            new_etag,
+            new_last_modified,
+        } = result
+        {
+            assert_eq!(new_etag.as_deref(), Some("\"v2\""));
+            assert!(new_last_modified.is_none());
+        }
     }
 }

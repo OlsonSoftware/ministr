@@ -15,13 +15,13 @@ use crate::ingestion::IngestionPipeline;
 use crate::llms_txt::{LlmsTxtContent, fetch_llms_txt};
 use crate::parser::ParserKind;
 use crate::parser::html_to_md::html_to_markdown;
-use crate::storage::traits::Storage;
+use crate::storage::traits::{Storage, WebCacheRecord};
 use crate::token::count_tokens;
 use crate::web::cache::{WebCache, WebPageMeta, url_hash};
 use crate::web::sitemap::{
     SitemapConfig, fetch_sitemap_pages, filter_entries, is_sitemap_url, parse_sitemap,
 };
-use crate::web::{HttpClient, normalize_url};
+use crate::web::{HttpClient, StalenessResult, normalize_url};
 
 /// The strategy used to fetch content from a URL.
 ///
@@ -119,6 +119,8 @@ pub struct WebFetcherConfig {
     pub max_pages: usize,
     /// Optional path prefix filter — only fetch URLs whose path starts with this.
     pub path_filter: Option<String>,
+    /// Time-to-live in seconds before a cached URL is considered stale (default: 3600 = 1 hour).
+    pub staleness_ttl_secs: u64,
 }
 
 impl Default for WebFetcherConfig {
@@ -126,8 +128,54 @@ impl Default for WebFetcherConfig {
         Self {
             max_pages: 50,
             path_filter: None,
+            staleness_ttl_secs: 3600,
         }
     }
+}
+
+/// Status of a single URL after a refresh check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshUrlStatus {
+    /// The URL content has not changed.
+    Unchanged,
+    /// The URL content was updated and re-indexed.
+    Updated,
+    /// The staleness check or re-fetch failed.
+    Failed(String),
+}
+
+impl std::fmt::Display for RefreshUrlStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unchanged => f.write_str("unchanged"),
+            Self::Updated => f.write_str("updated"),
+            Self::Failed(reason) => write!(f, "failed: {reason}"),
+        }
+    }
+}
+
+/// Result of a single URL refresh operation.
+#[derive(Debug, Clone)]
+pub struct RefreshUrlDetail {
+    /// The URL that was checked.
+    pub url: String,
+    /// The outcome of the check.
+    pub status: RefreshUrlStatus,
+}
+
+/// Aggregate result of a refresh operation across multiple URLs.
+#[derive(Debug, Clone)]
+pub struct RefreshResult {
+    /// Number of URLs checked.
+    pub urls_checked: usize,
+    /// Number of URLs that had new content and were re-indexed.
+    pub urls_refreshed: usize,
+    /// Number of URLs that were unchanged (304 or content hash match).
+    pub urls_unchanged: usize,
+    /// Number of URLs where the check failed.
+    pub urls_failed: usize,
+    /// Per-URL details.
+    pub details: Vec<RefreshUrlDetail>,
 }
 
 /// Web content fetcher with automatic strategy selection.
@@ -228,6 +276,7 @@ impl WebFetcher {
             source_url: url_str.to_owned(),
             fetched_at: now,
             etag: response.headers.get("etag").cloned(),
+            last_modified: response.headers.get("last-modified").cloned(),
             content_hash: url_hash(&markdown),
             content_type: Some(content_type),
         };
@@ -295,6 +344,7 @@ impl WebFetcher {
                 source_url: page.url.clone(),
                 fetched_at: now,
                 etag: None,
+                last_modified: None,
                 content_hash: url_hash(&page.markdown),
                 content_type: Some("text/html".into()),
             };
@@ -336,6 +386,7 @@ impl WebFetcher {
                     source_url: url.clone(),
                     fetched_at: now,
                     etag: None,
+                    last_modified: None,
                     content_hash: url_hash(&markdown),
                     content_type: Some("text/plain".into()),
                 };
@@ -420,6 +471,7 @@ impl WebFetcher {
             source_url: url.to_owned(),
             fetched_at: now,
             etag: response.headers.get("etag").cloned(),
+            last_modified: response.headers.get("last-modified").cloned(),
             content_hash: url_hash(&markdown),
             content_type: Some(content_type),
         };
@@ -469,6 +521,23 @@ impl WebFetcher {
             if !stats.skipped {
                 total_sections += stats.sections;
                 total_claims += stats.claims;
+            }
+
+            // Upsert web_cache record for staleness tracking
+            let disk_meta = self.cache.get_page(&page.url).await.ok().flatten();
+            let now = chrono_now();
+            let web_cache_record = WebCacheRecord {
+                source_url: page.url.clone(),
+                fetch_timestamp: now,
+                etag: disk_meta.as_ref().and_then(|(_, m)| m.etag.clone()),
+                last_modified: disk_meta
+                    .as_ref()
+                    .and_then(|(_, m)| m.last_modified.clone()),
+                content_hash: url_hash(&page.markdown),
+                content_type: disk_meta.as_ref().and_then(|(_, m)| m.content_type.clone()),
+            };
+            if let Err(e) = storage.upsert_web_cache(&web_cache_record).await {
+                warn!(url = %page.url, error = %e, "failed to upsert web cache record");
             }
         }
 
@@ -539,6 +608,23 @@ impl WebFetcher {
                 total_sections += stats.sections;
                 total_claims += stats.claims;
             }
+
+            // Upsert web_cache record for staleness tracking
+            let disk_meta = self.cache.get_page(&page.url).await.ok().flatten();
+            let now = chrono_now();
+            let web_cache_record = WebCacheRecord {
+                source_url: page.url.clone(),
+                fetch_timestamp: now,
+                etag: disk_meta.as_ref().and_then(|(_, m)| m.etag.clone()),
+                last_modified: disk_meta
+                    .as_ref()
+                    .and_then(|(_, m)| m.last_modified.clone()),
+                content_hash: url_hash(&page.markdown),
+                content_type: disk_meta.as_ref().and_then(|(_, m)| m.content_type.clone()),
+            };
+            if let Err(e) = storage.upsert_web_cache(&web_cache_record).await {
+                warn!(url = %page.url, error = %e, "failed to upsert web cache record");
+            }
         }
 
         result.sections_indexed = total_sections;
@@ -568,6 +654,218 @@ impl WebFetcher {
     pub fn cache(&self) -> &WebCache {
         &self.cache
     }
+
+    /// Returns the fetcher configuration.
+    #[must_use]
+    pub fn config(&self) -> &WebFetcherConfig {
+        &self.config
+    }
+
+    /// Check whether a cached URL is stale using conditional HTTP requests.
+    ///
+    /// Sends an HTTP HEAD with `If-None-Match` and/or `If-Modified-Since`
+    /// headers based on cached metadata. Returns whether the URL needs
+    /// re-fetching.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WebError`] if the HTTP request fails.
+    #[instrument(skip(self), fields(url = %url))]
+    pub async fn check_staleness(
+        &self,
+        url: &str,
+        cached: &WebCacheRecord,
+    ) -> Result<StalenessResult, WebError> {
+        // Check TTL first — if within TTL, skip the HTTP check
+        if let Ok(fetch_time) = parse_timestamp(&cached.fetch_timestamp) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let age_secs = now.saturating_sub(fetch_time);
+            if age_secs < self.config.staleness_ttl_secs {
+                debug!(url = %url, age_secs, ttl = self.config.staleness_ttl_secs, "within TTL, skipping HTTP check");
+                return Ok(StalenessResult::Fresh);
+            }
+        }
+
+        self.client
+            .head_conditional(url, cached.etag.as_deref(), cached.last_modified.as_deref())
+            .await
+    }
+
+    /// Refresh a single URL: check staleness, re-fetch if stale, re-ingest with embeddings.
+    ///
+    /// Returns the refresh status for this URL.
+    #[instrument(skip(self, pipeline, storage, embedder, index), fields(url = %url))]
+    pub async fn refresh_url<S, E, I>(
+        &self,
+        url: &str,
+        cached: &WebCacheRecord,
+        pipeline: &IngestionPipeline,
+        storage: &S,
+        embedder: &E,
+        index: &I,
+    ) -> RefreshUrlDetail
+    where
+        S: Storage + ?Sized,
+        E: crate::embedding::Embedder + ?Sized,
+        I: crate::index::VectorIndex + ?Sized,
+    {
+        match self.check_staleness(url, cached).await {
+            Ok(StalenessResult::Fresh) => {
+                debug!(url = %url, "URL is fresh, skipping re-fetch");
+                RefreshUrlDetail {
+                    url: url.to_owned(),
+                    status: RefreshUrlStatus::Unchanged,
+                }
+            }
+            Ok(StalenessResult::Stale { .. }) => {
+                // Re-fetch and re-ingest
+                match self
+                    .fetch_and_ingest_with_embeddings(url, pipeline, storage, embedder, index)
+                    .await
+                {
+                    Ok(result) => {
+                        // Update the web_cache record
+                        let now = chrono_now();
+                        let new_hash = result
+                            .pages
+                            .first()
+                            .map(|p| url_hash(&p.markdown))
+                            .unwrap_or_default();
+
+                        if new_hash == cached.content_hash {
+                            debug!(url = %url, "content unchanged despite 200 response");
+                            // Still update the timestamp so TTL resets
+                            let updated = WebCacheRecord {
+                                source_url: url.to_owned(),
+                                fetch_timestamp: now,
+                                etag: cached.etag.clone(),
+                                last_modified: cached.last_modified.clone(),
+                                content_hash: cached.content_hash.clone(),
+                                content_type: cached.content_type.clone(),
+                            };
+                            if let Err(e) = storage.upsert_web_cache(&updated).await {
+                                warn!(url = %url, error = %e, "failed to update web cache timestamp");
+                            }
+                            RefreshUrlDetail {
+                                url: url.to_owned(),
+                                status: RefreshUrlStatus::Unchanged,
+                            }
+                        } else {
+                            info!(url = %url, sections = result.sections_indexed, "refreshed stale URL");
+                            RefreshUrlDetail {
+                                url: url.to_owned(),
+                                status: RefreshUrlStatus::Updated,
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(url = %url, error = %e, "failed to re-fetch stale URL");
+                        RefreshUrlDetail {
+                            url: url.to_owned(),
+                            status: RefreshUrlStatus::Failed(e.to_string()),
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(url = %url, error = %e, "staleness check failed");
+                RefreshUrlDetail {
+                    url: url.to_owned(),
+                    status: RefreshUrlStatus::Failed(e.to_string()),
+                }
+            }
+        }
+    }
+
+    /// Refresh all cached web URLs, or a single URL if specified.
+    ///
+    /// Checks each cached URL for staleness and re-fetches/re-indexes any
+    /// that have changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WebError`] if the URL is not found in the cache or the
+    /// storage layer fails to list cached URLs.
+    #[instrument(skip(self, pipeline, storage, embedder, index))]
+    pub async fn refresh_all<S, E, I>(
+        &self,
+        url_filter: Option<&str>,
+        pipeline: &IngestionPipeline,
+        storage: &S,
+        embedder: &E,
+        index: &I,
+    ) -> Result<RefreshResult, WebError>
+    where
+        S: Storage + ?Sized,
+        E: crate::embedding::Embedder + ?Sized,
+        I: crate::index::VectorIndex + ?Sized,
+    {
+        let records = if let Some(url) = url_filter {
+            match storage.get_web_cache(url).await {
+                Ok(Some(record)) => vec![record],
+                Ok(None) => {
+                    return Err(WebError::InvalidUrl {
+                        url: url.to_owned(),
+                        reason: "URL not found in web cache".into(),
+                    });
+                }
+                Err(e) => {
+                    return Err(WebError::CacheIo {
+                        path: std::path::PathBuf::from("web_cache"),
+                        reason: e.to_string(),
+                    });
+                }
+            }
+        } else {
+            storage
+                .list_web_cache()
+                .await
+                .map_err(|e| WebError::CacheIo {
+                    path: std::path::PathBuf::from("web_cache"),
+                    reason: e.to_string(),
+                })?
+        };
+
+        let mut details = Vec::with_capacity(records.len());
+        let mut refreshed = 0;
+        let mut unchanged = 0;
+        let mut failed = 0;
+
+        for record in &records {
+            let detail = self
+                .refresh_url(
+                    &record.source_url,
+                    record,
+                    pipeline,
+                    storage,
+                    embedder,
+                    index,
+                )
+                .await;
+            match &detail.status {
+                RefreshUrlStatus::Updated => refreshed += 1,
+                RefreshUrlStatus::Unchanged => unchanged += 1,
+                RefreshUrlStatus::Failed(_) => failed += 1,
+            }
+            details.push(detail);
+        }
+
+        info!(
+            checked = records.len(),
+            refreshed, unchanged, failed, "refresh complete"
+        );
+
+        Ok(RefreshResult {
+            urls_checked: records.len(),
+            urls_refreshed: refreshed,
+            urls_unchanged: unchanged,
+            urls_failed: failed,
+            details,
+        })
+    }
 }
 
 /// Compute the virtual source path for a web-fetched document.
@@ -593,16 +891,21 @@ pub fn web_source_path(url: &str) -> String {
     }
 }
 
-/// Get the current UTC timestamp as ISO 8601.
+/// Get the current UTC timestamp as epoch seconds string.
 fn chrono_now() -> String {
-    // Use a simple approach without pulling in the chrono crate
     let now = std::time::SystemTime::now();
     let duration = now
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = duration.as_secs();
-    // Format as a simple ISO-ish timestamp
     format!("{secs}")
+}
+
+/// Parse a timestamp string (epoch seconds or ISO 8601) to epoch seconds.
+///
+/// Returns `Err` if the string is not a valid number.
+fn parse_timestamp(ts: &str) -> Result<u64, std::num::ParseIntError> {
+    ts.parse::<u64>()
 }
 
 #[cfg(test)]
@@ -667,5 +970,54 @@ mod tests {
         let config = WebFetcherConfig::default();
         assert_eq!(config.max_pages, 50);
         assert!(config.path_filter.is_none());
+        assert_eq!(config.staleness_ttl_secs, 3600);
+    }
+
+    #[test]
+    fn refresh_url_status_display() {
+        assert_eq!(RefreshUrlStatus::Unchanged.to_string(), "unchanged");
+        assert_eq!(RefreshUrlStatus::Updated.to_string(), "updated");
+        assert_eq!(
+            RefreshUrlStatus::Failed("timeout".into()).to_string(),
+            "failed: timeout"
+        );
+    }
+
+    #[test]
+    fn parse_timestamp_valid() {
+        assert_eq!(parse_timestamp("1711036800").unwrap(), 1_711_036_800);
+    }
+
+    #[test]
+    fn parse_timestamp_invalid() {
+        assert!(parse_timestamp("not-a-number").is_err());
+    }
+
+    #[test]
+    fn refresh_result_counts() {
+        let result = RefreshResult {
+            urls_checked: 3,
+            urls_refreshed: 1,
+            urls_unchanged: 1,
+            urls_failed: 1,
+            details: vec![
+                RefreshUrlDetail {
+                    url: "https://a.com".into(),
+                    status: RefreshUrlStatus::Updated,
+                },
+                RefreshUrlDetail {
+                    url: "https://b.com".into(),
+                    status: RefreshUrlStatus::Unchanged,
+                },
+                RefreshUrlDetail {
+                    url: "https://c.com".into(),
+                    status: RefreshUrlStatus::Failed("404".into()),
+                },
+            ],
+        };
+        assert_eq!(result.urls_checked, 3);
+        assert_eq!(result.urls_refreshed, 1);
+        assert_eq!(result.urls_unchanged, 1);
+        assert_eq!(result.urls_failed, 1);
     }
 }

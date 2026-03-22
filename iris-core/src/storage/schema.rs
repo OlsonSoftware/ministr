@@ -9,11 +9,12 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 4;
+pub const CURRENT_SCHEMA_VERSION: usize = 5;
 
 /// Returns the migration set for the content database.
 ///
 /// Each migration corresponds to one `user_version` increment.
+#[allow(clippy::too_many_lines)]
 fn migrations() -> Migrations<'static> {
     Migrations::new(vec![
         // V1: Initial schema — documents, sections, claims, summaries, file_hashes
@@ -118,6 +119,19 @@ fn migrations() -> Migrations<'static> {
             CREATE INDEX idx_co_access_b ON co_access_patterns(section_b);
             ",
         ),
+        // V5: Web cache — fetch metadata per URL for staleness detection
+        M::up(
+            "
+            CREATE TABLE web_cache (
+                source_url     TEXT PRIMARY KEY NOT NULL,
+                fetch_timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                etag           TEXT,
+                last_modified  TEXT,
+                content_hash   TEXT NOT NULL,
+                content_type   TEXT
+            );
+            ",
+        ),
     ])
 }
 
@@ -216,6 +230,7 @@ mod tests {
         assert!(tables.contains(&"session_deliveries".to_string()));
         assert!(tables.contains(&"section_access_stats".to_string()));
         assert!(tables.contains(&"co_access_patterns".to_string()));
+        assert!(tables.contains(&"web_cache".to_string()));
     }
 
     #[test]

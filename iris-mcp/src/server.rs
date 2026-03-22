@@ -3,7 +3,8 @@
 //! Implements the rmcp `ServerHandler` trait with `#[tool]` macro-based
 //! tool registration. The server exposes iris tools (`iris_survey`,
 //! `iris_read`, `iris_extract`, `iris_related`, `iris_evicted`,
-//! `iris_budget`, `iris_compress`, `iris_toc`) over the MCP protocol.
+//! `iris_budget`, `iris_compress`, `iris_toc`, `iris_fetch`,
+//! `iris_refresh`) over the MCP protocol.
 //!
 //! Every tool response includes a `budget_status` object with the current
 //! token budget state. Survey and read responses are deduplicated against
@@ -288,6 +289,40 @@ struct FetchResponse {
     strategy_used: String,
 }
 
+/// Parameters for the `iris_refresh` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RefreshParams {
+    /// Optional URL to refresh. If omitted, checks all cached web sources.
+    #[schemars(
+        description = "Optional URL to check for staleness. If omitted, checks all cached web sources."
+    )]
+    pub url: Option<String>,
+}
+
+/// Per-URL refresh detail for the response.
+#[derive(Debug, Serialize)]
+struct RefreshUrlDetailResponse {
+    /// The URL that was checked.
+    url: String,
+    /// The outcome: "unchanged", "updated", or "failed: <reason>".
+    status: String,
+}
+
+/// Response from the `iris_refresh` tool.
+#[derive(Debug, Serialize)]
+struct RefreshResponse {
+    /// Number of URLs checked.
+    urls_checked: usize,
+    /// Number of URLs that had new content and were re-indexed.
+    urls_refreshed: usize,
+    /// Number of URLs that were unchanged.
+    urls_unchanged: usize,
+    /// Number of URLs where the check failed.
+    urls_failed: usize,
+    /// Per-URL details.
+    details: Vec<RefreshUrlDetailResponse>,
+}
+
 /// Corpus-level statistics returned in the `iris_toc` response header.
 #[derive(Debug, Serialize)]
 struct CorpusStatsHeader {
@@ -329,8 +364,9 @@ impl ServerHandler for IrisServer {
                  chains between claims, iris_budget to check context budget status and \
                  get eviction recommendations, iris_compress to generate compressed \
                  summaries of content you want to evict, iris_evicted to signal when \
-                 content has been dropped from your context window, and iris_fetch to \
-                 fetch web content by URL and add it to the corpus."
+                 content has been dropped from your context window, iris_fetch to \
+                 fetch web content by URL and add it to the corpus, and iris_refresh \
+                 to check cached web sources for staleness and re-fetch changed content."
                     .to_string(),
             ),
         }
@@ -1121,6 +1157,109 @@ impl IrisServer {
                     warn!(error = %e, url = %params.url, "iris_fetch failed");
                     Ok(CallToolResult::error(vec![Content::text(format!(
                         "fetch failed: {e}"
+                    ))]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Check cached web sources for staleness and re-fetch changed content.
+    ///
+    /// If a URL is provided, checks only that URL. If omitted, checks all
+    /// cached web sources. For each stale URL, re-fetches the content,
+    /// re-indexes it with embeddings, and reports what was updated.
+    #[tool(
+        name = "iris_refresh",
+        description = "Check cached web sources for staleness and re-fetch changed content. If url is provided, checks only that URL. If omitted, checks all cached sources. Reports what was updated."
+    )]
+    async fn refresh(
+        &self,
+        #[tool(aggr)] params: RefreshParams,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_refresh", url = ?params.url);
+
+        async {
+            debug!(url = ?params.url, "iris_refresh request");
+
+            let Some(ref web_fetcher) = self.web_fetcher else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_refresh is not available: web fetcher not configured.".to_string(),
+                )]));
+            };
+
+            let Some(ref embedder) = self.embedder else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_refresh is not available: embedder not configured.".to_string(),
+                )]));
+            };
+
+            let Some(ref index) = self.index else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_refresh is not available: vector index not configured.".to_string(),
+                )]));
+            };
+
+            let Some(ref storage) = self.storage else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_refresh is not available: storage not configured.".to_string(),
+                )]));
+            };
+
+            match web_fetcher
+                .refresh_all(
+                    params.url.as_deref(),
+                    &self.ingestion_pipeline,
+                    storage.as_ref(),
+                    embedder.as_ref(),
+                    index.as_ref(),
+                )
+                .await
+            {
+                Ok(result) => {
+                    debug!(
+                        checked = result.urls_checked,
+                        refreshed = result.urls_refreshed,
+                        unchanged = result.urls_unchanged,
+                        failed = result.urls_failed,
+                        "iris_refresh success"
+                    );
+
+                    let budget = self.budget.lock().await;
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+
+                    let details: Vec<RefreshUrlDetailResponse> = result
+                        .details
+                        .iter()
+                        .map(|d| RefreshUrlDetailResponse {
+                            url: d.url.clone(),
+                            status: d.status.to_string(),
+                        })
+                        .collect();
+
+                    let response = self
+                        .build_response(
+                            RefreshResponse {
+                                urls_checked: result.urls_checked,
+                                urls_refreshed: result.urls_refreshed,
+                                urls_unchanged: result.urls_unchanged,
+                                urls_failed: result.urls_failed,
+                                details,
+                            },
+                            budget_status,
+                        )
+                        .await;
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, "iris_refresh failed");
+                    Ok(CallToolResult::error(vec![Content::text(format!(
+                        "refresh failed: {e}"
                     ))]))
                 }
             }
