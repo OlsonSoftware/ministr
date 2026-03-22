@@ -17,7 +17,7 @@ use crate::index::VectorIndex;
 use crate::search::{MultiResolutionSearch, SearchConfig};
 use crate::storage::{SqliteStorage, Storage};
 use crate::token::count_tokens;
-use crate::types::{ClaimId, RelationType, Resolution, SectionId, VectorId};
+use crate::types::{ClaimId, ContentId, RelationType, Resolution, SectionId, TocEntry, VectorId};
 
 /// A ranked result from a corpus survey search.
 #[derive(Debug, Clone, Serialize)]
@@ -159,6 +159,46 @@ impl QueryService {
     #[must_use]
     pub fn storage(&self) -> &SqliteStorage {
         &self.storage
+    }
+
+    /// Return a table of contents for the corpus.
+    ///
+    /// Lists all documents and their sections as metadata-only entries.
+    /// When `document_id` is provided, returns only sections from that document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] if a database operation fails.
+    #[instrument(skip(self))]
+    pub async fn toc(&self, document_id: Option<&str>) -> Result<Vec<TocEntry>, QueryError> {
+        let docs = match document_id {
+            Some(id) => {
+                let cid = ContentId(id.to_string());
+                match self.storage.get_document(&cid).await? {
+                    Some(doc) => vec![doc],
+                    None => vec![],
+                }
+            }
+            None => self.storage.list_documents().await?,
+        };
+
+        let mut entries = Vec::new();
+        for doc in &docs {
+            let sections = self.storage.list_sections(&doc.id).await?;
+            for section in sections {
+                let claims = self.storage.list_claims(&section.id).await?;
+                entries.push(TocEntry {
+                    document_id: doc.id.clone(),
+                    section_id: section.id,
+                    heading_path: section.heading_path,
+                    depth: section.depth,
+                    claims_available: claims.len(),
+                    token_count: count_tokens(&section.text),
+                });
+            }
+        }
+
+        Ok(entries)
     }
 
     /// Search the corpus for content relevant to a natural language query.
@@ -409,7 +449,7 @@ impl QueryService {
             Resolution::Summary => {
                 if vector_id.is_doc_summary() {
                     // Document summary — look up document record
-                    let doc_id = crate::types::ContentId(content_id.to_string());
+                    let doc_id = ContentId(content_id.to_string());
                     if let Some(doc) = self.storage.get_document(&doc_id).await? {
                         let text = doc
                             .summary
@@ -440,7 +480,7 @@ impl QueryService {
                 }
             }
             Resolution::Claim => {
-                let cid = crate::types::ClaimId(content_id.to_string());
+                let cid = ClaimId(content_id.to_string());
                 if let Some(claim) = self.storage.get_claim(&cid).await? {
                     Ok((claim.text, None))
                 } else {
@@ -853,5 +893,138 @@ mod tests {
         let service = setup_service().await;
         let result = service.related_claims("nonexistent", None).await;
         assert!(matches!(result, Err(QueryError::ClaimNotFound { .. })));
+    }
+
+    // --- toc tests ---
+
+    /// Build a multi-doc corpus with nested headings for toc testing.
+    async fn setup_multi_doc_service() -> QueryService {
+        let dim = 8;
+        let embedder = Arc::new(MockEmbedder { dim });
+        let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let docs = vec![
+            DocumentTree {
+                id: ContentId("docs/auth.md".into()),
+                title: "Authentication Guide".into(),
+                source_path: "docs/auth.md".into(),
+                sections: vec![
+                    Section {
+                        id: SectionId("docs/auth.md#tokens".into()),
+                        heading_path: vec!["Authentication".into(), "Tokens".into()],
+                        depth: 2,
+                        text: "JWT tokens use RS256 signing.".into(),
+                        structural_nodes: vec![],
+                        children: vec![],
+                        claims: vec![
+                            Claim {
+                                id: ClaimId("auth-c1".into()),
+                                text: "JWT tokens use RS256.".into(),
+                                section_id: SectionId("docs/auth.md#tokens".into()),
+                            },
+                            Claim {
+                                id: ClaimId("auth-c2".into()),
+                                text: "Tokens expire after 24h.".into(),
+                                section_id: SectionId("docs/auth.md#tokens".into()),
+                            },
+                        ],
+                        summary: None,
+                    },
+                    Section {
+                        id: SectionId("docs/auth.md#oauth".into()),
+                        heading_path: vec!["Authentication".into(), "OAuth".into()],
+                        depth: 2,
+                        text: "OAuth 2.0 with PKCE.".into(),
+                        structural_nodes: vec![],
+                        children: vec![],
+                        claims: vec![Claim {
+                            id: ClaimId("auth-c3".into()),
+                            text: "OAuth 2.0 is supported.".into(),
+                            section_id: SectionId("docs/auth.md#oauth".into()),
+                        }],
+                        summary: None,
+                    },
+                ],
+                summary: Some("Auth reference.".into()),
+            },
+            DocumentTree {
+                id: ContentId("docs/api.md".into()),
+                title: "API Reference".into(),
+                source_path: "docs/api.md".into(),
+                sections: vec![Section {
+                    id: SectionId("docs/api.md#rate-limits".into()),
+                    heading_path: vec!["API Reference".into(), "Rate Limits".into()],
+                    depth: 2,
+                    text: "100 requests per minute.".into(),
+                    structural_nodes: vec![],
+                    children: vec![],
+                    claims: vec![Claim {
+                        id: ClaimId("api-c1".into()),
+                        text: "Rate limit is 100/min.".into(),
+                        section_id: SectionId("docs/api.md#rate-limits".into()),
+                    }],
+                    summary: None,
+                }],
+                summary: Some("API docs.".into()),
+            },
+        ];
+
+        for doc in &docs {
+            storage.insert_document(doc).await.unwrap();
+        }
+
+        QueryService::new(storage, embedder, index)
+    }
+
+    #[tokio::test]
+    async fn toc_returns_correct_tree_for_multi_doc_corpus() {
+        let service = setup_multi_doc_service().await;
+        let entries = service.toc(None).await.unwrap();
+
+        // Should have 3 sections total across 2 documents
+        assert_eq!(entries.len(), 3, "expected 3 sections total");
+
+        // Verify auth doc sections
+        let auth_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.document_id.as_ref() == "docs/auth.md")
+            .collect();
+        assert_eq!(auth_entries.len(), 2, "auth doc should have 2 sections");
+
+        let tokens_entry = auth_entries
+            .iter()
+            .find(|e| e.section_id.as_ref() == "docs/auth.md#tokens")
+            .expect("should find tokens section");
+        assert_eq!(tokens_entry.heading_path, vec!["Authentication", "Tokens"]);
+        assert_eq!(tokens_entry.depth, 2);
+        assert_eq!(tokens_entry.claims_available, 2);
+        assert!(tokens_entry.token_count > 0);
+
+        // Verify api doc section
+        let api_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.document_id.as_ref() == "docs/api.md")
+            .collect();
+        assert_eq!(api_entries.len(), 1, "api doc should have 1 section");
+        assert_eq!(api_entries[0].claims_available, 1);
+    }
+
+    #[tokio::test]
+    async fn toc_filters_by_document_id() {
+        let service = setup_multi_doc_service().await;
+        let entries = service.toc(Some("docs/api.md")).await.unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].document_id.as_ref(), "docs/api.md");
+        assert_eq!(entries[0].section_id.as_ref(), "docs/api.md#rate-limits");
+    }
+
+    #[tokio::test]
+    async fn toc_returns_empty_for_unknown_document() {
+        let service = setup_multi_doc_service().await;
+        let entries = service.toc(Some("nonexistent.md")).await.unwrap();
+
+        assert!(entries.is_empty());
     }
 }

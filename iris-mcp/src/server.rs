@@ -3,7 +3,7 @@
 //! Implements the rmcp `ServerHandler` trait with `#[tool]` macro-based
 //! tool registration. The server exposes iris tools (`iris_survey`,
 //! `iris_read`, `iris_extract`, `iris_related`, `iris_evicted`,
-//! `iris_budget`, `iris_compress`) over the MCP protocol.
+//! `iris_budget`, `iris_compress`, `iris_toc`) over the MCP protocol.
 //!
 //! Every tool response includes a `budget_status` object with the current
 //! token budget state. Survey and read responses are deduplicated against
@@ -234,6 +234,36 @@ struct CompressResponse {
     summaries: Vec<CompressedItem>,
 }
 
+/// Parameters for the `iris_toc` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TocParams {
+    /// Optional document ID filter — returns only sections from this document.
+    #[schemars(
+        description = "Optional document ID to filter the table of contents to a single document"
+    )]
+    pub document_id: Option<String>,
+}
+
+/// Corpus-level statistics returned in the `iris_toc` response header.
+#[derive(Debug, Serialize)]
+struct CorpusStatsHeader {
+    /// Number of documents in the corpus.
+    documents: usize,
+    /// Number of sections across all documents.
+    sections: usize,
+    /// Number of claims across all sections.
+    claims: usize,
+}
+
+/// Response from the `iris_toc` tool.
+#[derive(Debug, Serialize)]
+struct TocResponse {
+    /// Corpus-level statistics for quick orientation.
+    corpus_stats: CorpusStatsHeader,
+    /// Table of contents entries (metadata only, no text).
+    entries: Vec<iris_core::types::TocEntry>,
+}
+
 #[tool(tool_box)]
 impl ServerHandler for IrisServer {
     fn get_info(&self) -> ServerInfo {
@@ -248,13 +278,14 @@ impl ServerHandler for IrisServer {
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
             instructions: Some(
-                "iris is a context cache controller for LLM agents. Use iris_survey to \
-                 search for relevant content, iris_read to retrieve full section text, \
-                 iris_extract to get atomic claims from a section, iris_related to follow \
-                 dependency chains between claims, iris_budget to check context budget \
-                 status and get eviction recommendations, iris_compress to generate \
-                 compressed summaries of content you want to evict, and iris_evicted to \
-                 signal when content has been dropped from your context window."
+                "iris is a context cache controller for LLM agents. Use iris_toc to get \
+                 a structural overview of the indexed corpus, iris_survey to search for \
+                 relevant content, iris_read to retrieve full section text, iris_extract \
+                 to get atomic claims from a section, iris_related to follow dependency \
+                 chains between claims, iris_budget to check context budget status and \
+                 get eviction recommendations, iris_compress to generate compressed \
+                 summaries of content you want to evict, and iris_evicted to signal when \
+                 content has been dropped from your context window."
                     .to_string(),
             ),
         }
@@ -834,6 +865,72 @@ impl IrisServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "iris_compress failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_query_error(&e),
+                    )]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Return a structural table of contents for the indexed corpus.
+    ///
+    /// Lists all documents and their sections as metadata-only entries
+    /// (no text content). Includes corpus-level statistics for quick
+    /// orientation. Optionally filtered to a single document.
+    #[tool(
+        name = "iris_toc",
+        description = "Return a table of contents for the indexed corpus. Lists all documents and sections with metadata (heading path, depth, claim count, token count) but no text content. Optionally filter to a single document by ID."
+    )]
+    async fn toc(&self, #[tool(aggr)] params: TocParams) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_toc", document_id = ?params.document_id);
+
+        async {
+            debug!(document_id = ?params.document_id, "iris_toc request");
+
+            match self.service.toc(params.document_id.as_deref()).await {
+                Ok(entries) => {
+                    let total_sections = entries.len();
+                    let total_claims: usize = entries.iter().map(|e| e.claims_available).sum();
+
+                    // Count unique document IDs
+                    let mut doc_ids: Vec<&str> =
+                        entries.iter().map(|e| e.document_id.as_ref()).collect();
+                    doc_ids.sort_unstable();
+                    doc_ids.dedup();
+                    let total_documents = doc_ids.len();
+
+                    debug!(
+                        total_documents,
+                        total_sections, total_claims, "iris_toc success"
+                    );
+
+                    let budget = self.budget.lock().await;
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+
+                    let response = self
+                        .build_response(
+                            TocResponse {
+                                corpus_stats: CorpusStatsHeader {
+                                    documents: total_documents,
+                                    sections: total_sections,
+                                    claims: total_claims,
+                                },
+                                entries,
+                            },
+                            budget_status,
+                        )
+                        .await;
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, "iris_toc failed");
                     Ok(CallToolResult::error(vec![Content::text(
                         format_query_error(&e),
                     )]))

@@ -400,6 +400,42 @@ pub struct ClaimRelationship {
     pub confidence: f32,
 }
 
+/// A metadata-only entry in the corpus table of contents.
+///
+/// Contains structural information about a section without its text content,
+/// suitable for giving agents a quick overview of the indexed corpus.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::{TocEntry, ContentId, SectionId};
+///
+/// let entry = TocEntry {
+///     document_id: ContentId("docs/api.md".into()),
+///     section_id: SectionId("docs/api.md#auth".into()),
+///     heading_path: vec!["API Reference".into(), "Authentication".into()],
+///     depth: 2,
+///     claims_available: 5,
+///     token_count: 320,
+/// };
+/// assert_eq!(entry.depth, 2);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TocEntry {
+    /// Parent document ID.
+    pub document_id: ContentId,
+    /// Section identifier.
+    pub section_id: SectionId,
+    /// Heading hierarchy path.
+    pub heading_path: Vec<String>,
+    /// Heading depth (1 = top-level).
+    pub depth: u32,
+    /// Number of claims available for extraction.
+    pub claims_available: usize,
+    /// Approximate token count of the section text.
+    pub token_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -311,3 +311,83 @@ phases:
     checked: true
   - text: 'E2E test: modify a corpus file, verify coherence detects the change and iris_read returns updated content'
     checked: true
+- id: I4
+  name: Corpus Table of Contents Tool
+  tagline: Let agents see the full corpus map in one call
+  status: done
+  problem: Agents can't browse what's in the corpus — they must guess query terms for iris_survey. If the first survey misses, the agent is blind to available content.
+  solution: Add an iris_toc tool that returns the full document/section tree from storage. Reuse existing list_documents + list_sections APIs. Lightweight, no embedding needed — pure metadata query.
+  tasks:
+  - text: Add a toc() method to QueryService that calls storage.list_documents() + storage.list_sections(doc_id) for each doc, returns a Vec&lt;TocEntry&gt; tree
+    checked: true
+  - text: 'Define TocEntry struct in iris-core/types.rs: document_id, section_id, heading_path, depth, claims_available, token_count — no text content, metadata only'
+    checked: true
+  - text: Add iris_toc MCP tool handler in server.rs with optional document_id filter param — returns full tree when no filter, single doc tree when filtered
+    checked: true
+  - text: Include corpus_stats (total docs, total sections, total claims) in the iris_toc response header for quick orientation
+    checked: true
+  - text: 'Unit test: toc() returns correct tree structure for multi-doc corpus with nested headings'
+    checked: true
+  - text: 'E2E test: iris_toc via call_tool returns all documents and sections from the test fixture'
+    checked: true
+- id: I5
+  name: Adaptive Section Merging
+  tagline: Fewer, meatier chunks — fewer round trips
+  status: pending
+  problem: Heading-based chunking produces many 1-2 sentence sections for small docs. Agents need 6+ reads to understand one concept, wasting round trips and token overhead on per-response JSON framing.
+  solution: 'Add a post-parse merge pass in the ingestion pipeline: coalesce adjacent sibling sections below a configurable token threshold into their parent. Preserves heading structure for large docs, merges aggressively for small ones. NAACL 2025 research confirms fixed ~200-word chunks match semantic chunking — target that as the floor.'
+  tasks:
+  - text: 'Add a configurable min_section_tokens threshold to CorpusConfig (default: 50 tokens ~200 words) — sections below this are merge candidates'
+    checked: false
+  - text: 'Implement coalesce_small_sections(sections: Vec&lt;Section&gt;, min_tokens: usize) -> Vec&lt;Section&gt; in ingestion.rs — merges adjacent sibling sections (same depth) below threshold into their parent, concatenating text with heading markers'
+    checked: false
+  - text: 'Preserve section IDs for merged sections: use the parent''s section_id, store child heading_paths as sub-headings in the merged text so they remain searchable'
+    checked: false
+  - text: Wire coalesce_small_sections into ingest_directory_with_embeddings after parse + split_large_headingless but before enrichment and embedding — single insertion point, no duplication
+    checked: false
+  - text: 'Unit test: 3 sibling sections of 10/15/8 tokens merge into 1; a 200-token section stays untouched; mixed depths merge correctly at each level'
+    checked: false
+  - text: 'Unit test: merging preserves document order (position field) and updates claims_available counts on merged sections'
+    checked: false
+  - text: 'Integration test: ingest the iris docs corpus, verify section count decreases vs unmerged, and verify survey still returns relevant results for queries that would have matched child headings'
+    checked: false
+- id: I6
+  name: Survey-Triggered Prefetch
+  tagline: Predict the obvious next read after every survey
+  status: pending
+  problem: When survey returns claim-level hits, the agent almost always reads the parent section next. But prefetch only triggers on iris_read, so the first read after survey is always a cold miss.
+  solution: After survey, pre-warm parent sections of returned claim-level results into the prefetch cache. Reuse the existing PrefetchEngine.insert API and structural prefetch strategy. No new subsystems needed.
+  tasks:
+  - text: 'Extract parent section ID from claim content_id (strip the :cN suffix) — add a helper fn parent_section_id(claim_content_id: &str) -> Option&lt;&str&gt; in types.rs'
+    checked: false
+  - text: After survey returns results, collect unique parent section IDs from all claim-level results, fetch their SectionRecords from storage, and insert into PrefetchEngine with PrefetchStrategy::Structural
+    checked: false
+  - text: Skip pre-warming for sections already in the prefetch cache (PrefetchEngine.peek) or already delivered (session.is_delivered) — avoid redundant work
+    checked: false
+  - text: Add a new PrefetchStrategy::SurveyExpand variant to track hit rates separately from structural/sequential/topical strategies
+    checked: false
+  - text: 'Unit test: survey returning 3 claim hits from 2 different sections pre-warms exactly 2 parent sections, skips already-cached ones'
+    checked: false
+  - text: 'E2E test: survey then iris_read of a parent section hits the prefetch cache (verify via prefetch_metrics.hits increasing)'
+    checked: false
+- id: I7
+  name: Expanded Corpus Support
+  tagline: Index the docs that actually help agents reason
+  status: pending
+  problem: Iris currently only indexes the mdBook docs — the DESIGN.md (633 lines of architecture rationale) and CHANGELOG.md are not included. The most useful content for an agent is *why* decisions were made, not the code itself.
+  solution: Accept multiple corpus paths or a list of glob patterns in config. Index DESIGN.md, CHANGELOG.md, and any additional markdown alongside the docs/ tree. Reuse the existing recursive discover_files + incremental ingestion pipeline.
+  tasks:
+  - text: 'Extend IrisConfig with a corpus_paths: Vec&lt;PathBuf&gt; field alongside the existing single corpus path — backwards compatible, single path becomes a vec of one'
+    checked: false
+  - text: Support glob patterns in corpus_paths (e.g. "*.md", "docs/**") — resolve globs at startup using the existing discover_files recursive walker, deduplicate results
+    checked: false
+  - text: 'Update CLI --corpus flag to accept comma-separated paths or repeated flags: iris --corpus ./docs --corpus ./DESIGN.md --corpus ./CHANGELOG.md'
+    checked: false
+  - text: 'Wire multi-path ingestion in main.rs: iterate corpus_paths, call ingest_directory_with_embeddings for directories and ingest_file_with_embeddings for individual files'
+    checked: false
+  - text: Update .mcp.json default config to index ["./docs", "./DESIGN.md", "./CHANGELOG.md"] for the iris-rs project
+    checked: false
+  - text: 'Unit test: discover_files with mixed dirs and individual files returns correct combined list without duplicates'
+    checked: false
+  - text: 'E2E test: start iris with multi-path corpus, verify iris_toc shows documents from all paths and iris_survey finds content across sources'
+    checked: false
