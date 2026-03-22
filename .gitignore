@@ -17,3 +17,5 @@ docs/book/
 /target
 **/*.rs.bk
 Cargo.lock
+.mcp.json
+.fastembed_cache

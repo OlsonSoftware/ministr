@@ -95,7 +95,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Add #[instrument] tracing spans to all MCP tool handlers with request/response logging at DEBUG level
 - [x] Implement graceful error handling — map iris-core errors to MCP ErrorData with user-friendly messages
 - [x] Write end-to-end integration test — start MCP server, send JSON-RPC tool calls, verify responses
-- [ ] Test with real MCP client (Claude Code) — verify tool discovery, survey/read/extract flow on a sample corpus
+- [x] Test with real MCP client (Claude Code) — verify tool discovery, survey/read/extract flow on a sample corpus
 
 ---
 
@@ -171,5 +171,5 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Add installation methods — cargo install, homebrew tap, GitHub release binaries with checksums
 - [x] Write MCP client configuration examples — Claude Code, Cursor, and generic JSON-RPC client setup guides
 - [x] Final audit — cargo audit, cargo deny check, full test suite, clippy clean, benchmark baselines recorded
-- [ ] Tag and publish v0.1.0 release — changelog, GitHub release with binaries, crates.io publish
+- [x] Tag and publish v0.1.0 release — changelog, GitHub release with binaries, crates.io publish
 

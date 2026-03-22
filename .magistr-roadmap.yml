@@ -110,7 +110,7 @@ phases:
 - id: P4
   name: MCP Server & Core Tools
   tagline: Wire up rmcp and expose iris_survey, iris_read, iris_extract as MCP tools
-  status: in_progress
+  status: done
   problem: The agent needs a standards-compliant MCP interface to discover, survey, read, and extract context from the index — the progressive disclosure model that replaces one-shot RAG
   solution: Implement ServerHandler via rmcp with stdio transport, exposing the three core tools (iris_survey, iris_read, iris_extract) plus iris://status and iris://corpus resources. Include budget_status in every response
   tasks:
@@ -135,7 +135,7 @@ phases:
   - text: Write end-to-end integration test — start MCP server, send JSON-RPC tool calls, verify responses
     checked: true
   - text: Test with real MCP client (Claude Code) — verify tool discovery, survey/read/extract flow on a sample corpus
-    checked: false
+    checked: true
 - id: P5
   name: Session Shadow & Budget Management
   tagline: Track what the agent has, estimate what it lost, manage the budget
@@ -211,7 +211,7 @@ phases:
 - id: P7
   name: Polish, Parsers & Release
   tagline: Additional format support, cross-session analytics, docs, benchmarks, and v0.1.0
-  status: in_progress
+  status: done
   problem: Markdown-only limits usefulness. Without benchmarks and documentation, adoption is blocked. Without cross-session learning, prefetch never improves beyond session-local heuristics
   solution: Add HTML and PDF parsers, cross-session analytics for prefetch tuning, comprehensive mdBook documentation, a reproducible benchmark suite, pre-built binaries for all platforms, and cut the v0.1.0 release
   tasks:
@@ -242,4 +242,4 @@ phases:
   - text: Final audit — cargo audit, cargo deny check, full test suite, clippy clean, benchmark baselines recorded
     checked: true
   - text: Tag and publish v0.1.0 release — changelog, GitHub release with binaries, crates.io publish
-    checked: false
+    checked: true

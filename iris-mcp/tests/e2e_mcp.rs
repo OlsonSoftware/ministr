@@ -20,12 +20,14 @@ use iris_core::error::IndexError;
 use iris_core::index::{HnswIndex, VectorIndex};
 use iris_core::service::QueryService;
 use iris_core::storage::{SqliteStorage, Storage};
-use iris_core::types::{Claim, ClaimId, ContentId, DocumentTree, Section, SectionId};
+use iris_core::types::{
+    Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, Section, SectionId,
+};
 use iris_mcp::server::IrisServer;
 use rmcp::ServerHandler;
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, ClientInfo, Content, Implementation,
-    PaginatedRequestParam,
+    PaginatedRequestParam, ResourceContents,
 };
 use rmcp::service::{Peer, RequestContext, RoleServer};
 use serde_json::json;
@@ -214,6 +216,25 @@ async fn setup_server() -> IrisServer {
         let vecs = embedder.embed(&[*text]).unwrap();
         index.insert(id, &vecs[0]).unwrap();
     }
+
+    // Insert claim relationships for iris_related testing.
+    storage
+        .insert_claim_relationships(&[
+            ClaimRelationship {
+                source_claim_id: ClaimId("auth-c1".into()),
+                target_claim_id: ClaimId("auth-c2".into()),
+                relation_type: RelationType::References,
+                confidence: 0.9,
+            },
+            ClaimRelationship {
+                source_claim_id: ClaimId("api-c1".into()),
+                target_claim_id: ClaimId("api-c2".into()),
+                relation_type: RelationType::DependsOn,
+                confidence: 0.85,
+            },
+        ])
+        .await
+        .unwrap();
 
     let service = Arc::new(QueryService::new(storage, embedder, index));
     IrisServer::new(service)
@@ -627,5 +648,306 @@ async fn budget_monotonically_increases_across_tool_types() {
         j3["budget_status"]["pressure_level"].as_str().unwrap(),
         "normal",
         "small corpus should not trigger pressure"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// iris_evicted tool
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn evicted_removes_content_from_session_and_budget() {
+    let server = setup_server().await;
+
+    // Deliver content first via read
+    let _ = call_tool(
+        &server,
+        "iris_read",
+        json!({"section_id": "docs/auth.md#tokens"}),
+    )
+    .await;
+
+    let budget_before = call_tool(&server, "iris_budget", json!({})).await;
+    let j_before: serde_json::Value =
+        serde_json::from_str(extract_text(&budget_before.content)).unwrap();
+    let used_before = j_before["estimated_used"].as_u64().unwrap();
+    assert!(used_before > 0, "should have used tokens after read");
+
+    // Evict the delivered content
+    let evict_result = call_tool(
+        &server,
+        "iris_evicted",
+        json!({"content_ids": ["docs/auth.md#tokens"]}),
+    )
+    .await;
+
+    assert!(
+        evict_result.is_error.is_none() || evict_result.is_error == Some(false),
+        "eviction should succeed"
+    );
+
+    let evict_json: serde_json::Value =
+        serde_json::from_str(extract_text(&evict_result.content)).unwrap();
+    assert_eq!(
+        evict_json["evicted"].as_array().unwrap().len(),
+        1,
+        "should evict one item"
+    );
+    assert!(
+        evict_json["not_found"].as_array().unwrap().is_empty(),
+        "should have no not_found items"
+    );
+}
+
+#[tokio::test]
+async fn evicted_reports_not_found_for_unknown_ids() {
+    let server = setup_server().await;
+
+    let result = call_tool(
+        &server,
+        "iris_evicted",
+        json!({"content_ids": ["nonexistent-id"]}),
+    )
+    .await;
+
+    let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    assert!(json["evicted"].as_array().unwrap().is_empty());
+    assert_eq!(json["not_found"].as_array().unwrap().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// iris_budget standalone
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn budget_returns_complete_status() {
+    let server = setup_server().await;
+
+    let result = call_tool(&server, "iris_budget", json!({})).await;
+
+    assert!(
+        result.is_error.is_none() || result.is_error == Some(false),
+        "budget should succeed"
+    );
+
+    let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    assert!(json["total_budget"].is_number());
+    assert!(json["estimated_used"].is_number());
+    assert!(json["estimated_remaining"].is_number());
+    assert!(json["pressure_level"].is_string());
+    assert!(json["eviction_candidates"].is_array());
+    assert!(json["prefetch_metrics"].is_object());
+
+    // Fresh session should have zero usage
+    assert_eq!(json["estimated_used"].as_u64().unwrap(), 0);
+    assert_eq!(json["pressure_level"].as_str().unwrap(), "normal");
+}
+
+// ---------------------------------------------------------------------------
+// iris_compress tool
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn compress_returns_summaries_for_sections() {
+    let server = setup_server().await;
+
+    let result = call_tool(
+        &server,
+        "iris_compress",
+        json!({"content_ids": ["docs/auth.md#tokens", "docs/api.md#rate-limits"]}),
+    )
+    .await;
+
+    assert!(
+        result.is_error.is_none() || result.is_error == Some(false),
+        "compress should succeed"
+    );
+
+    let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    let summaries = json["summaries"].as_array().unwrap();
+    assert_eq!(summaries.len(), 2, "should return two summaries");
+
+    for s in summaries {
+        assert!(s["original_id"].is_string());
+        assert!(s["summary"].is_string());
+        assert!(s["original_tokens"].is_number());
+        assert!(s["compressed_tokens"].is_number());
+        let original = s["original_tokens"].as_u64().unwrap();
+        let compressed = s["compressed_tokens"].as_u64().unwrap();
+        assert!(
+            compressed <= original,
+            "compressed should be <= original: {compressed} <= {original}"
+        );
+    }
+
+    assert!(json["budget_status"]["tokens_used"].is_number());
+}
+
+// ---------------------------------------------------------------------------
+// iris_related tool
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn related_returns_linked_claims() {
+    let server = setup_server().await;
+
+    let result = call_tool(&server, "iris_related", json!({"claim_id": "auth-c1"})).await;
+
+    assert!(
+        result.is_error.is_none() || result.is_error == Some(false),
+        "related should succeed"
+    );
+
+    let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    let related = json["related"].as_array().unwrap();
+    assert!(
+        !related.is_empty(),
+        "auth-c1 should have related claims via inserted relationships"
+    );
+
+    for r in related {
+        assert!(r["claim_id"].is_string());
+        assert!(r["text"].is_string());
+        assert!(r["relation_type"].is_string());
+    }
+
+    assert!(json["budget_status"].is_object());
+}
+
+#[tokio::test]
+async fn related_with_type_filter() {
+    let server = setup_server().await;
+
+    let result = call_tool(
+        &server,
+        "iris_related",
+        json!({"claim_id": "auth-c1", "relation_types": ["references"]}),
+    )
+    .await;
+
+    let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    let related = json["related"].as_array().unwrap();
+
+    // All returned results should be of type "references"
+    for r in related {
+        assert_eq!(
+            r["relation_type"].as_str().unwrap(),
+            "references",
+            "should only return references relations"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MCP resource endpoints
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_resources_includes_status() {
+    let server = setup_server().await;
+
+    let result = server
+        .list_resources(PaginatedRequestParam::default(), test_context())
+        .await
+        .unwrap();
+
+    assert!(
+        !result.resources.is_empty(),
+        "should have at least one resource"
+    );
+
+    let names: Vec<&str> = result
+        .resources
+        .iter()
+        .map(|r| r.raw.name.as_str())
+        .collect();
+    assert!(
+        names.contains(&"iris status"),
+        "should include iris status resource, got: {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn list_resource_templates_includes_corpus() {
+    let server = setup_server().await;
+
+    let result = server
+        .list_resource_templates(PaginatedRequestParam::default(), test_context())
+        .await
+        .unwrap();
+
+    assert!(
+        !result.resource_templates.is_empty(),
+        "should have at least one resource template"
+    );
+
+    let names: Vec<&str> = result
+        .resource_templates
+        .iter()
+        .map(|t| t.raw.name.as_str())
+        .collect();
+    assert!(
+        names.contains(&"corpus document"),
+        "should include corpus document template, got: {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn read_status_resource() {
+    use rmcp::model::ReadResourceRequestParam;
+
+    let server = setup_server().await;
+
+    let result = server
+        .read_resource(
+            ReadResourceRequestParam {
+                uri: "iris://status".to_string(),
+            },
+            test_context(),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        !result.contents.is_empty(),
+        "status resource should return content"
+    );
+
+    // Verify it's valid JSON
+    let text = match &result.contents[0] {
+        ResourceContents::TextResourceContents { text, .. } => text.as_str(),
+        ResourceContents::BlobResourceContents { .. } => {
+            panic!("expected text resource content")
+        }
+    };
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert!(
+        json["session"]["id"].is_string() && json["index"]["vector_count"].is_number(),
+        "status should contain session and index info, got: {json}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tool listing: verify iris_related is present (7 tools total)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_tools_returns_seven_tools_including_related() {
+    let server = setup_server().await;
+    let result = server
+        .list_tools(PaginatedRequestParam::default(), test_context())
+        .await
+        .unwrap();
+
+    let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        tool_names.contains(&"iris_related"),
+        "should list iris_related, got: {tool_names:?}"
+    );
+
+    assert!(
+        result.tools.len() >= 7,
+        "should have at least 7 tools, got: {}",
+        result.tools.len()
     );
 }
