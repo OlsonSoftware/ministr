@@ -25,8 +25,11 @@ impl LanguageRefinement for TypeScriptRefinement {
             // `export_statement` wraps other declarations — we skip it and
             // let the wrapped declaration be extracted directly.
             // Also skip imports, expression statements, etc.
-            "export_statement" | "import_statement" | "import_declaration"
-            | "expression_statement" | "comment" => None,
+            "export_statement"
+            | "import_statement"
+            | "import_declaration"
+            | "expression_statement"
+            | "comment" => None,
             _ => return None, // Delegate to generic
         };
         Some(result)
