@@ -7,7 +7,9 @@ use std::future::Future;
 
 use crate::error::StorageError;
 use crate::session::{Session, SessionId};
-use crate::types::{ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, SectionId};
+use crate::types::{
+    ClaimId, ClaimRelationship, ContentId, DocumentTree, RefKind, RelationType, SectionId, SymbolId,
+};
 
 /// Stored document metadata (without the full section tree).
 ///
@@ -156,6 +158,94 @@ pub struct GitCacheRecord {
     pub clone_dir: String,
     /// Paths that were checked out via sparse checkout (empty = full checkout).
     pub checked_out_paths: Vec<String>,
+}
+
+/// A stored code symbol with its metadata.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::storage::SymbolRecord;
+/// use iris_core::types::SymbolId;
+///
+/// let record = SymbolRecord {
+///     id: SymbolId("sym-config::IrisConfig".into()),
+///     file_path: "src/config.rs".into(),
+///     name: "IrisConfig".into(),
+///     kind: "struct".into(),
+///     visibility: "pub".into(),
+///     signature: "pub struct IrisConfig".into(),
+///     doc_comment: Some("Configuration for iris.".into()),
+///     module_path: "config".into(),
+///     line_start: 10,
+///     line_end: 25,
+/// };
+/// assert_eq!(record.name, "IrisConfig");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolRecord {
+    /// Unique symbol ID.
+    pub id: SymbolId,
+    /// Source file path relative to corpus root.
+    pub file_path: String,
+    /// Symbol name.
+    pub name: String,
+    /// Symbol kind (e.g. "function", "struct", "trait").
+    pub kind: String,
+    /// Visibility (e.g. "pub", "pub(crate)", "").
+    pub visibility: String,
+    /// Declaration signature (without body).
+    pub signature: String,
+    /// Doc comment text, if present.
+    pub doc_comment: Option<String>,
+    /// Module path (e.g. `config::sub` for nested modules).
+    pub module_path: String,
+    /// Start line number (1-based).
+    pub line_start: u32,
+    /// End line number (1-based, inclusive).
+    pub line_end: u32,
+}
+
+/// A stored cross-reference between two symbols.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::storage::SymbolRefRecord;
+/// use iris_core::types::{SymbolId, RefKind};
+///
+/// let record = SymbolRefRecord {
+///     from_symbol_id: SymbolId("sym-main::run".into()),
+///     to_symbol_id: SymbolId("sym-config::IrisConfig".into()),
+///     ref_kind: RefKind::Uses,
+/// };
+/// assert_eq!(record.ref_kind, RefKind::Uses);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolRefRecord {
+    /// The symbol that references another.
+    pub from_symbol_id: SymbolId,
+    /// The symbol being referenced.
+    pub to_symbol_id: SymbolId,
+    /// The kind of reference.
+    pub ref_kind: RefKind,
+}
+
+/// Filter criteria for querying the symbol index.
+///
+/// All fields are optional — `None` means "no filter" for that field.
+#[derive(Debug, Clone, Default)]
+pub struct SymbolFilter {
+    /// Fuzzy name match (case-insensitive substring).
+    pub name: Option<String>,
+    /// Exact kind match (e.g. "function", "struct").
+    pub kind: Option<String>,
+    /// Exact visibility match (e.g. "pub").
+    pub visibility: Option<String>,
+    /// Module path prefix match (e.g. "config" matches `config::sub`).
+    pub module: Option<String>,
+    /// File path match.
+    pub file_path: Option<String>,
 }
 
 /// Async storage interface for the iris content database.
@@ -382,4 +472,53 @@ pub trait Storage: Send + Sync {
         &self,
         repo_url: &str,
     ) -> impl Future<Output = Result<bool, StorageError>> + Send;
+
+    // -- Symbols --
+
+    /// Insert a batch of symbols (upsert: replaces on ID conflict).
+    fn insert_symbols(
+        &self,
+        symbols: &[SymbolRecord],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// List symbols matching the given filter criteria.
+    fn list_symbols(
+        &self,
+        filter: &SymbolFilter,
+    ) -> impl Future<Output = Result<Vec<SymbolRecord>, StorageError>> + Send;
+
+    /// Get a single symbol by ID.
+    fn get_symbol(
+        &self,
+        id: &SymbolId,
+    ) -> impl Future<Output = Result<Option<SymbolRecord>, StorageError>> + Send;
+
+    /// Delete all symbols belonging to a given file path.
+    ///
+    /// Used during re-indexing to clean up stale symbols.
+    fn delete_symbols_for_file(
+        &self,
+        file_path: &str,
+    ) -> impl Future<Output = Result<u64, StorageError>> + Send;
+
+    // -- Symbol references --
+
+    /// Insert a batch of symbol cross-references.
+    fn insert_symbol_refs(
+        &self,
+        refs: &[SymbolRefRecord],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Query references for a symbol, optionally filtered by reference kind.
+    fn query_refs(
+        &self,
+        symbol_id: &SymbolId,
+        ref_kind: Option<RefKind>,
+    ) -> impl Future<Output = Result<Vec<SymbolRefRecord>, StorageError>> + Send;
+
+    /// Delete all references involving symbols in the given file.
+    fn delete_refs_for_file(
+        &self,
+        file_path: &str,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
 }

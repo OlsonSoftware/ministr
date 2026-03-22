@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 6;
+pub const CURRENT_SCHEMA_VERSION: usize = 7;
 
 /// Returns the migration set for the content database.
 ///
@@ -145,6 +145,38 @@ fn migrations() -> Migrations<'static> {
             );
             ",
         ),
+        // V7: Code symbols and cross-references
+        M::up(
+            "
+            CREATE TABLE symbols (
+                id          TEXT PRIMARY KEY NOT NULL,
+                file_path   TEXT NOT NULL,
+                name        TEXT NOT NULL,
+                kind        TEXT NOT NULL,
+                visibility  TEXT NOT NULL DEFAULT '',
+                signature   TEXT NOT NULL DEFAULT '',
+                doc_comment TEXT,
+                module_path TEXT NOT NULL DEFAULT '',
+                line_start  INTEGER NOT NULL,
+                line_end    INTEGER NOT NULL
+            );
+
+            CREATE INDEX idx_symbols_file_path ON symbols(file_path);
+            CREATE INDEX idx_symbols_name ON symbols(name);
+            CREATE INDEX idx_symbols_kind ON symbols(kind);
+            CREATE INDEX idx_symbols_module_path ON symbols(module_path);
+
+            CREATE TABLE symbol_refs (
+                from_symbol_id TEXT NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+                to_symbol_id   TEXT NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+                ref_kind       TEXT NOT NULL,
+                PRIMARY KEY (from_symbol_id, to_symbol_id, ref_kind)
+            );
+
+            CREATE INDEX idx_symbol_refs_from ON symbol_refs(from_symbol_id);
+            CREATE INDEX idx_symbol_refs_to ON symbol_refs(to_symbol_id);
+            ",
+        ),
     ])
 }
 
@@ -245,6 +277,8 @@ mod tests {
         assert!(tables.contains(&"git_cache".to_string()));
         assert!(tables.contains(&"co_access_patterns".to_string()));
         assert!(tables.contains(&"web_cache".to_string()));
+        assert!(tables.contains(&"symbols".to_string()));
+        assert!(tables.contains(&"symbol_refs".to_string()));
     }
 
     #[test]

@@ -13,13 +13,14 @@ use tracing::instrument;
 use super::schema::{configure_connection, run_migrations};
 use super::traits::{
     ClaimRecord, CoAccessRecord, CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord,
-    RelatedClaimRecord, SectionAccessStat, SectionRecord, Storage, WebCacheRecord,
+    RelatedClaimRecord, SectionAccessStat, SectionRecord, Storage, SymbolFilter, SymbolRecord,
+    SymbolRefRecord, WebCacheRecord,
 };
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
 use crate::types::{
-    ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, Resolution, Section,
-    SectionId,
+    ClaimId, ClaimRelationship, ContentId, DocumentTree, RefKind, RelationType, Resolution,
+    Section, SectionId, SymbolId,
 };
 
 /// SQLite-backed storage for a single corpus.
@@ -1241,6 +1242,264 @@ impl Storage for SqliteStorage {
                     reason: e.to_string(),
                 })?;
             Ok(affected > 0)
+        })
+        .await
+    }
+
+    // -- Symbols --
+
+    async fn insert_symbols(&self, symbols: &[SymbolRecord]) -> Result<(), StorageError> {
+        let symbols = symbols.to_vec();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "INSERT OR REPLACE INTO symbols
+                     (id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            for sym in &symbols {
+                stmt.execute(rusqlite::params![
+                    sym.id.as_ref(),
+                    sym.file_path,
+                    sym.name,
+                    sym.kind,
+                    sym.visibility,
+                    sym.signature,
+                    sym.doc_comment,
+                    sym.module_path,
+                    sym.line_start,
+                    sym.line_end,
+                ])
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to insert symbol {}: {e}", sym.id),
+                })?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    async fn list_symbols(&self, filter: &SymbolFilter) -> Result<Vec<SymbolRecord>, StorageError> {
+        let filter = filter.clone();
+        self.with_conn(move |conn| {
+            let mut sql = String::from(
+                "SELECT id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end
+                 FROM symbols WHERE 1=1",
+            );
+            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+            if let Some(ref name) = filter.name {
+                sql.push_str(" AND name LIKE ?");
+                params.push(Box::new(format!("%{name}%")));
+            }
+            if let Some(ref kind) = filter.kind {
+                sql.push_str(" AND kind = ?");
+                params.push(Box::new(kind.clone()));
+            }
+            if let Some(ref visibility) = filter.visibility {
+                sql.push_str(" AND visibility = ?");
+                params.push(Box::new(visibility.clone()));
+            }
+            if let Some(ref module) = filter.module {
+                // Prefix match: "config" matches "config" and "config::sub"
+                sql.push_str(" AND (module_path = ? OR module_path LIKE ?)");
+                params.push(Box::new(module.clone()));
+                params.push(Box::new(format!("{module}::%")));
+            }
+            if let Some(ref file_path) = filter.file_path {
+                sql.push_str(" AND file_path = ?");
+                params.push(Box::new(file_path.clone()));
+            }
+
+            sql.push_str(" ORDER BY file_path, line_start");
+
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params.iter().map(std::convert::AsRef::as_ref).collect();
+
+            let mut stmt = conn.prepare(&sql).map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    Ok(SymbolRecord {
+                        id: SymbolId(row.get(0)?),
+                        file_path: row.get(1)?,
+                        name: row.get(2)?,
+                        kind: row.get(3)?,
+                        visibility: row.get(4)?,
+                        signature: row.get(5)?,
+                        doc_comment: row.get(6)?,
+                        module_path: row.get(7)?,
+                        line_start: row.get(8)?,
+                        line_end: row.get(9)?,
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })
+        })
+        .await
+    }
+
+    async fn get_symbol(&self, id: &SymbolId) -> Result<Option<SymbolRecord>, StorageError> {
+        let id = id.clone();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end
+                     FROM symbols WHERE id = ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            stmt.query_row(rusqlite::params![id.as_ref()], |row| {
+                Ok(SymbolRecord {
+                    id: SymbolId(row.get(0)?),
+                    file_path: row.get(1)?,
+                    name: row.get(2)?,
+                    kind: row.get(3)?,
+                    visibility: row.get(4)?,
+                    signature: row.get(5)?,
+                    doc_comment: row.get(6)?,
+                    module_path: row.get(7)?,
+                    line_start: row.get(8)?,
+                    line_end: row.get(9)?,
+                })
+            })
+            .optional()
+            .map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })
+        })
+        .await
+    }
+
+    async fn delete_symbols_for_file(&self, file_path: &str) -> Result<u64, StorageError> {
+        let file_path = file_path.to_string();
+        self.with_conn(move |conn| {
+            let affected = conn
+                .execute(
+                    "DELETE FROM symbols WHERE file_path = ?1",
+                    rusqlite::params![file_path],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            Ok(u64::try_from(affected).unwrap_or(0))
+        })
+        .await
+    }
+
+    // -- Symbol references --
+
+    async fn insert_symbol_refs(&self, refs: &[SymbolRefRecord]) -> Result<(), StorageError> {
+        let refs = refs.to_vec();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "INSERT OR REPLACE INTO symbol_refs (from_symbol_id, to_symbol_id, ref_kind)
+                     VALUES (?1, ?2, ?3)",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            for r in &refs {
+                stmt.execute(rusqlite::params![
+                    r.from_symbol_id.as_ref(),
+                    r.to_symbol_id.as_ref(),
+                    r.ref_kind.as_str(),
+                ])
+                .map_err(|e| StorageError::Database {
+                    reason: format!(
+                        "failed to insert symbol ref {} -> {}: {e}",
+                        r.from_symbol_id, r.to_symbol_id
+                    ),
+                })?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    async fn query_refs(
+        &self,
+        symbol_id: &SymbolId,
+        ref_kind: Option<RefKind>,
+    ) -> Result<Vec<SymbolRefRecord>, StorageError> {
+        let symbol_id = symbol_id.clone();
+        self.with_conn(move |conn| {
+            let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+                if let Some(kind) = ref_kind {
+                    (
+                        "SELECT from_symbol_id, to_symbol_id, ref_kind FROM symbol_refs
+                     WHERE (from_symbol_id = ?1 OR to_symbol_id = ?1) AND ref_kind = ?2"
+                            .into(),
+                        vec![
+                            Box::new(symbol_id.0.clone()),
+                            Box::new(kind.as_str().to_string()),
+                        ],
+                    )
+                } else {
+                    (
+                        "SELECT from_symbol_id, to_symbol_id, ref_kind FROM symbol_refs
+                     WHERE from_symbol_id = ?1 OR to_symbol_id = ?1"
+                            .into(),
+                        vec![Box::new(symbol_id.0.clone())],
+                    )
+                };
+
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params.iter().map(std::convert::AsRef::as_ref).collect();
+
+            let mut stmt = conn.prepare(&sql).map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    let kind_str: String = row.get(2)?;
+                    Ok(SymbolRefRecord {
+                        from_symbol_id: SymbolId(row.get(0)?),
+                        to_symbol_id: SymbolId(row.get(1)?),
+                        ref_kind: RefKind::parse(&kind_str).unwrap_or(RefKind::Uses),
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })
+        })
+        .await
+    }
+
+    async fn delete_refs_for_file(&self, file_path: &str) -> Result<(), StorageError> {
+        let file_path = file_path.to_string();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "DELETE FROM symbol_refs WHERE from_symbol_id IN (SELECT id FROM symbols WHERE file_path = ?1)
+                 OR to_symbol_id IN (SELECT id FROM symbols WHERE file_path = ?1)",
+                rusqlite::params![file_path],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+            Ok(())
         })
         .await
     }

@@ -4,10 +4,10 @@
 //! CRUD operations, concurrent access, WAL behavior, and migrations.
 
 use iris_core::session::{EvictionPolicy, Session, SessionId};
-use iris_core::storage::{SqliteStorage, Storage};
+use iris_core::storage::{SqliteStorage, Storage, SymbolFilter, SymbolRecord, SymbolRefRecord};
 use iris_core::types::{
-    Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, Resolution, Section,
-    SectionId,
+    Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RefKind, RelationType, Resolution,
+    Section, SectionId, SymbolId,
 };
 
 /// Build a sample document tree for testing.
@@ -310,7 +310,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 6);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 7);
 }
 
 #[tokio::test]
@@ -1098,4 +1098,443 @@ async fn git_cache_no_branch_is_nullable() {
         .unwrap();
     assert!(retrieved.branch.is_none());
     assert!(retrieved.checked_out_paths.is_empty());
+}
+
+// --- Symbol storage tests ---
+
+fn sample_symbols() -> Vec<SymbolRecord> {
+    vec![
+        SymbolRecord {
+            id: SymbolId("sym-config::IrisConfig".into()),
+            file_path: "src/config.rs".into(),
+            name: "IrisConfig".into(),
+            kind: "struct".into(),
+            visibility: "pub".into(),
+            signature: "pub struct IrisConfig".into(),
+            doc_comment: Some("Configuration for iris.".into()),
+            module_path: "config".into(),
+            line_start: 10,
+            line_end: 25,
+        },
+        SymbolRecord {
+            id: SymbolId("sym-config::PrefetchConfig".into()),
+            file_path: "src/config.rs".into(),
+            name: "PrefetchConfig".into(),
+            kind: "struct".into(),
+            visibility: "pub".into(),
+            signature: "pub struct PrefetchConfig".into(),
+            doc_comment: None,
+            module_path: "config".into(),
+            line_start: 30,
+            line_end: 40,
+        },
+        SymbolRecord {
+            id: SymbolId("sym-service::run".into()),
+            file_path: "src/service.rs".into(),
+            name: "run".into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: "pub async fn run(config: &IrisConfig) -> Result<()>".into(),
+            doc_comment: Some("Starts the service.".into()),
+            module_path: "service".into(),
+            line_start: 5,
+            line_end: 50,
+        },
+        SymbolRecord {
+            id: SymbolId("sym-service::helper".into()),
+            file_path: "src/service.rs".into(),
+            name: "helper".into(),
+            kind: "function".into(),
+            visibility: String::new(),
+            signature: "fn helper()".into(),
+            doc_comment: None,
+            module_path: "service".into(),
+            line_start: 55,
+            line_end: 60,
+        },
+        SymbolRecord {
+            id: SymbolId("sym-storage::Storage".into()),
+            file_path: "src/storage/traits.rs".into(),
+            name: "Storage".into(),
+            kind: "trait".into(),
+            visibility: "pub".into(),
+            signature: "pub trait Storage: Send + Sync".into(),
+            doc_comment: Some("Async storage interface.".into()),
+            module_path: "storage::traits".into(),
+            line_start: 1,
+            line_end: 100,
+        },
+    ]
+}
+
+#[tokio::test]
+async fn insert_and_get_symbol() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let symbols = sample_symbols();
+    storage.insert_symbols(&symbols).await.unwrap();
+
+    let sym = storage
+        .get_symbol(&SymbolId("sym-config::IrisConfig".into()))
+        .await
+        .unwrap();
+    assert!(sym.is_some());
+    let sym = sym.unwrap();
+    assert_eq!(sym.name, "IrisConfig");
+    assert_eq!(sym.kind, "struct");
+    assert_eq!(sym.visibility, "pub");
+    assert_eq!(sym.file_path, "src/config.rs");
+    assert_eq!(sym.module_path, "config");
+    assert_eq!(sym.line_start, 10);
+    assert_eq!(sym.line_end, 25);
+    assert_eq!(sym.doc_comment.as_deref(), Some("Configuration for iris."));
+}
+
+#[tokio::test]
+async fn get_nonexistent_symbol_returns_none() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let result = storage
+        .get_symbol(&SymbolId("nonexistent".into()))
+        .await
+        .unwrap();
+    assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn list_symbols_no_filter_returns_all() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let symbols = sample_symbols();
+    storage.insert_symbols(&symbols).await.unwrap();
+
+    let all = storage
+        .list_symbols(&SymbolFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 5);
+}
+
+#[tokio::test]
+async fn list_symbols_filter_by_kind() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    let structs = storage
+        .list_symbols(&SymbolFilter {
+            kind: Some("struct".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(structs.len(), 2);
+
+    let functions = storage
+        .list_symbols(&SymbolFilter {
+            kind: Some("function".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(functions.len(), 2);
+
+    let traits = storage
+        .list_symbols(&SymbolFilter {
+            kind: Some("trait".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(traits.len(), 1);
+    assert_eq!(traits[0].name, "Storage");
+}
+
+#[tokio::test]
+async fn list_symbols_filter_by_visibility() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    let public = storage
+        .list_symbols(&SymbolFilter {
+            visibility: Some("pub".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(public.len(), 4);
+
+    let private = storage
+        .list_symbols(&SymbolFilter {
+            visibility: Some(String::new()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(private.len(), 1);
+    assert_eq!(private[0].name, "helper");
+}
+
+#[tokio::test]
+async fn list_symbols_filter_by_module() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    // Exact match
+    let config = storage
+        .list_symbols(&SymbolFilter {
+            module: Some("config".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(config.len(), 2);
+
+    // Prefix match: "storage" should match "storage::traits"
+    let storage_mod = storage
+        .list_symbols(&SymbolFilter {
+            module: Some("storage".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(storage_mod.len(), 1);
+    assert_eq!(storage_mod[0].name, "Storage");
+
+    // Exact match for nested module
+    let traits = storage
+        .list_symbols(&SymbolFilter {
+            module: Some("storage::traits".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(traits.len(), 1);
+}
+
+#[tokio::test]
+async fn list_symbols_filter_by_name() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    let results = storage
+        .list_symbols(&SymbolFilter {
+            name: Some("Config".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|s| s.name.contains("Config")));
+}
+
+#[tokio::test]
+async fn list_symbols_combined_filters() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    let results = storage
+        .list_symbols(&SymbolFilter {
+            kind: Some("function".into()),
+            visibility: Some("pub".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "run");
+}
+
+#[tokio::test]
+async fn delete_symbols_for_file() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    let deleted = storage
+        .delete_symbols_for_file("src/config.rs")
+        .await
+        .unwrap();
+    assert_eq!(deleted, 2);
+
+    let remaining = storage
+        .list_symbols(&SymbolFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(remaining.len(), 3);
+    assert!(remaining.iter().all(|s| s.file_path != "src/config.rs"));
+}
+
+#[tokio::test]
+async fn insert_symbols_upsert_on_conflict() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let sym = SymbolRecord {
+        id: SymbolId("sym-foo".into()),
+        file_path: "src/foo.rs".into(),
+        name: "foo".into(),
+        kind: "function".into(),
+        visibility: "pub".into(),
+        signature: "pub fn foo()".into(),
+        doc_comment: None,
+        module_path: "foo".into(),
+        line_start: 1,
+        line_end: 5,
+    };
+    storage.insert_symbols(&[sym]).await.unwrap();
+
+    // Update with new signature
+    let updated = SymbolRecord {
+        id: SymbolId("sym-foo".into()),
+        file_path: "src/foo.rs".into(),
+        name: "foo".into(),
+        kind: "function".into(),
+        visibility: "pub".into(),
+        signature: "pub fn foo() -> i32".into(),
+        doc_comment: Some("Returns an int.".into()),
+        module_path: "foo".into(),
+        line_start: 1,
+        line_end: 8,
+    };
+    storage.insert_symbols(&[updated]).await.unwrap();
+
+    let result = storage
+        .get_symbol(&SymbolId("sym-foo".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.signature, "pub fn foo() -> i32");
+    assert_eq!(result.doc_comment.as_deref(), Some("Returns an int."));
+    assert_eq!(result.line_end, 8);
+}
+
+// --- Symbol refs tests ---
+
+#[tokio::test]
+async fn insert_and_query_symbol_refs() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    let refs = vec![
+        SymbolRefRecord {
+            from_symbol_id: SymbolId("sym-service::run".into()),
+            to_symbol_id: SymbolId("sym-config::IrisConfig".into()),
+            ref_kind: RefKind::Uses,
+        },
+        SymbolRefRecord {
+            from_symbol_id: SymbolId("sym-service::run".into()),
+            to_symbol_id: SymbolId("sym-service::helper".into()),
+            ref_kind: RefKind::Calls,
+        },
+    ];
+    storage.insert_symbol_refs(&refs).await.unwrap();
+
+    // Query all refs for `run`
+    let all_refs = storage
+        .query_refs(&SymbolId("sym-service::run".into()), None)
+        .await
+        .unwrap();
+    assert_eq!(all_refs.len(), 2);
+
+    // Query only Calls refs
+    let calls = storage
+        .query_refs(&SymbolId("sym-service::run".into()), Some(RefKind::Calls))
+        .await
+        .unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0].to_symbol_id,
+        SymbolId("sym-service::helper".into())
+    );
+
+    // Query from the target side — IrisConfig should appear in Uses refs
+    let uses = storage
+        .query_refs(
+            &SymbolId("sym-config::IrisConfig".into()),
+            Some(RefKind::Uses),
+        )
+        .await
+        .unwrap();
+    assert_eq!(uses.len(), 1);
+    assert_eq!(uses[0].from_symbol_id, SymbolId("sym-service::run".into()));
+}
+
+#[tokio::test]
+async fn query_refs_empty_for_unreferenced_symbol() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    let refs = storage
+        .query_refs(&SymbolId("sym-storage::Storage".into()), None)
+        .await
+        .unwrap();
+    assert!(refs.is_empty());
+}
+
+#[tokio::test]
+async fn delete_refs_for_file_cascades() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    let refs = vec![SymbolRefRecord {
+        from_symbol_id: SymbolId("sym-service::run".into()),
+        to_symbol_id: SymbolId("sym-config::IrisConfig".into()),
+        ref_kind: RefKind::Uses,
+    }];
+    storage.insert_symbol_refs(&refs).await.unwrap();
+
+    // Delete refs for service.rs
+    storage
+        .delete_refs_for_file("src/service.rs")
+        .await
+        .unwrap();
+
+    // Ref should be gone from both sides
+    let remaining = storage
+        .query_refs(&SymbolId("sym-service::run".into()), None)
+        .await
+        .unwrap();
+    assert!(remaining.is_empty());
+
+    let remaining = storage
+        .query_refs(&SymbolId("sym-config::IrisConfig".into()), None)
+        .await
+        .unwrap();
+    assert!(remaining.is_empty());
+}
+
+#[tokio::test]
+async fn symbol_refs_cascade_on_symbol_delete() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    let refs = vec![SymbolRefRecord {
+        from_symbol_id: SymbolId("sym-service::run".into()),
+        to_symbol_id: SymbolId("sym-config::IrisConfig".into()),
+        ref_kind: RefKind::Uses,
+    }];
+    storage.insert_symbol_refs(&refs).await.unwrap();
+
+    // Delete symbols for service.rs — FK cascade should remove refs
+    storage
+        .delete_symbols_for_file("src/service.rs")
+        .await
+        .unwrap();
+
+    let remaining = storage
+        .query_refs(&SymbolId("sym-config::IrisConfig".into()), None)
+        .await
+        .unwrap();
+    assert!(remaining.is_empty());
+}
+
+#[tokio::test]
+async fn list_symbols_filter_by_file_path() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+
+    let results = storage
+        .list_symbols(&SymbolFilter {
+            file_path: Some("src/config.rs".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|s| s.file_path == "src/config.rs"));
 }
