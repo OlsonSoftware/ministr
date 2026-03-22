@@ -726,18 +726,18 @@ phases:
 - id: PR4
   name: Release Pipeline Polish
   tagline: One-command releases with cross-platform binaries
-  status: pending
+  status: done
   problem: Release pipeline needs refinement for confident public releases
   solution: Add Intel Mac target, version bump recipe, install script, MCP smoke test
   tasks:
   - text: Add x86_64-apple-darwin target to release matrix
-    checked: false
+    checked: true
   - text: 'Add just release recipe: bump versions, update CHANGELOG, commit + tag'
-    checked: false
+    checked: true
   - text: Add install.sh script for curl-based binary installation
-    checked: false
+    checked: true
   - text: 'Add MCP smoke test to CI: initialize + tools/list via stdin'
-    checked: false
+    checked: true
 - id: PR5
   name: Final Hardening
   tagline: Last sweep before v0.1.0
