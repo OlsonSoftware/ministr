@@ -144,6 +144,12 @@ pub struct CorpusConfig {
     /// Override the parser for all files in this corpus.
     /// When `None`, the parser is auto-detected from the file extension.
     pub parser: Option<ParserKind>,
+
+    /// Minimum token count for a section to remain standalone.
+    ///
+    /// Sections below this threshold are candidates for merging with adjacent
+    /// siblings of the same depth. Set to `0` to disable merging.
+    pub min_section_tokens: usize,
 }
 
 impl CorpusConfig {
@@ -184,6 +190,7 @@ impl Default for CorpusConfig {
             watch: true,
             claim_extraction: ClaimExtractionMode::Heuristic,
             parser: None,
+            min_section_tokens: 50,
         }
     }
 }
@@ -312,6 +319,7 @@ mod tests {
             watch: false,
             claim_extraction: ClaimExtractionMode::ModelAssisted,
             parser: None,
+            min_section_tokens: 100,
         };
         config.save(tmp.path()).unwrap();
         let loaded = CorpusConfig::load(tmp.path()).unwrap();

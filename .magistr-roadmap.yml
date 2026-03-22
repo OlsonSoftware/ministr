@@ -333,24 +333,24 @@ phases:
 - id: I5
   name: Adaptive Section Merging
   tagline: Fewer, meatier chunks — fewer round trips
-  status: pending
+  status: done
   problem: Heading-based chunking produces many 1-2 sentence sections for small docs. Agents need 6+ reads to understand one concept, wasting round trips and token overhead on per-response JSON framing.
   solution: 'Add a post-parse merge pass in the ingestion pipeline: coalesce adjacent sibling sections below a configurable token threshold into their parent. Preserves heading structure for large docs, merges aggressively for small ones. NAACL 2025 research confirms fixed ~200-word chunks match semantic chunking — target that as the floor.'
   tasks:
   - text: 'Add a configurable min_section_tokens threshold to CorpusConfig (default: 50 tokens ~200 words) — sections below this are merge candidates'
-    checked: false
+    checked: true
   - text: 'Implement coalesce_small_sections(sections: Vec&lt;Section&gt;, min_tokens: usize) -> Vec&lt;Section&gt; in ingestion.rs — merges adjacent sibling sections (same depth) below threshold into their parent, concatenating text with heading markers'
-    checked: false
+    checked: true
   - text: 'Preserve section IDs for merged sections: use the parent''s section_id, store child heading_paths as sub-headings in the merged text so they remain searchable'
-    checked: false
+    checked: true
   - text: Wire coalesce_small_sections into ingest_directory_with_embeddings after parse + split_large_headingless but before enrichment and embedding — single insertion point, no duplication
-    checked: false
+    checked: true
   - text: 'Unit test: 3 sibling sections of 10/15/8 tokens merge into 1; a 200-token section stays untouched; mixed depths merge correctly at each level'
-    checked: false
+    checked: true
   - text: 'Unit test: merging preserves document order (position field) and updates claims_available counts on merged sections'
-    checked: false
+    checked: true
   - text: 'Integration test: ingest the iris docs corpus, verify section count decreases vs unmerged, and verify survey still returns relevant results for queries that would have matched child headings'
-    checked: false
+    checked: true
 - id: I6
   name: Survey-Triggered Prefetch
   tagline: Predict the obvious next read after every survey
