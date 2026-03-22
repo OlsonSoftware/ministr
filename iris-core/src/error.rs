@@ -210,6 +210,34 @@ pub enum WebError {
     SitemapParse { reason: String },
 }
 
+/// Errors from git clone and repository operations.
+#[derive(Debug, thiserror::Error)]
+pub enum GitError {
+    /// A git subprocess exited with a non-zero status.
+    #[error("git {command} failed (exit {exit_code}): {stderr}")]
+    CommandFailed {
+        command: String,
+        exit_code: i32,
+        stderr: String,
+    },
+
+    /// Could not create or access the clone directory.
+    #[error("clone directory error for {path}: {reason}")]
+    CloneDirectory { path: PathBuf, reason: String },
+
+    /// Failed to read or write clone metadata.
+    #[error("metadata error for {path}: {reason}")]
+    Metadata { path: PathBuf, reason: String },
+
+    /// The `git` binary was not found on `PATH`.
+    #[error("git is not installed or not on PATH")]
+    NotInstalled,
+
+    /// The repository URL is invalid or empty.
+    #[error("invalid repository URL: {url}")]
+    InvalidRepo { url: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,5 +299,24 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
         let err: ParseError = io_err.into();
         assert!(matches!(err, ParseError::ReadError { .. }));
+    }
+
+    #[test]
+    fn git_error_display() {
+        let err = GitError::CommandFailed {
+            command: "clone".into(),
+            exit_code: 128,
+            stderr: "fatal: repository not found".into(),
+        };
+        assert!(err.to_string().contains("clone"));
+        assert!(err.to_string().contains("128"));
+
+        let err = GitError::NotInstalled;
+        assert!(err.to_string().contains("not installed"));
+
+        let err = GitError::InvalidRepo {
+            url: String::new(),
+        };
+        assert!(err.to_string().contains("invalid repository URL"));
     }
 }

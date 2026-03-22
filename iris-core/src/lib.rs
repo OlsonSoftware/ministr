@@ -9,6 +9,7 @@ pub mod config;
 pub mod embedding;
 pub mod error;
 pub mod extraction;
+pub mod git;
 pub mod index;
 pub mod ingestion;
 pub mod llms_txt;
