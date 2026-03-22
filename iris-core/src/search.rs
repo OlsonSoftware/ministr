@@ -5,10 +5,12 @@
 //! embeds the query text, searches the vector index, then enriches results
 //! with metadata from storage.
 
+use std::collections::HashMap;
+
 use tracing::instrument;
 
 use crate::error::IndexError;
-use crate::index::{SearchResult as RawSearchResult, VectorIndex};
+use crate::index::{SearchResult as RawSearchResult, SparseIndex, VectorIndex};
 use crate::types::{Resolution, VectorId};
 
 /// Default number of raw candidates to retrieve before re-ranking.
@@ -36,6 +38,10 @@ const BROAD_QUERY_WORD_THRESHOLD: usize = 4;
 /// Boost applied to summary results for broad (short) queries.
 const BROAD_QUERY_SUMMARY_BOOST: f32 = 0.15;
 
+/// RRF smoothing constant (k in the formula `1/(k + rank)`).
+/// The standard value from the original RRF paper.
+const RRF_K: f32 = 60.0;
+
 /// A scored search result from the multi-resolution pipeline.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScoredResult {
@@ -56,6 +62,15 @@ pub struct SearchConfig {
     pub raw_k: usize,
     /// Number of final results to return after re-ranking.
     pub top_k: usize,
+    /// Weight for sparse retrieval in hybrid search (0.0–1.0).
+    ///
+    /// - `0.0` — dense only (default, backward compatible)
+    /// - `0.5` — equal weight to dense and sparse
+    /// - `1.0` — sparse only
+    ///
+    /// When > 0.0, the search pipeline uses RRF fusion to merge
+    /// dense (HNSW) and sparse (inverted index) results.
+    pub sparse_weight: f32,
 }
 
 impl Default for SearchConfig {
@@ -63,6 +78,7 @@ impl Default for SearchConfig {
         Self {
             raw_k: DEFAULT_RAW_K,
             top_k: 10,
+            sparse_weight: 0.0,
         }
     }
 }
@@ -70,7 +86,8 @@ impl Default for SearchConfig {
 /// Multi-resolution search over a vector index.
 ///
 /// Embeds a query, retrieves candidates from the vector index, applies
-/// resolution-aware scoring, and returns ranked results.
+/// resolution-aware scoring, and returns ranked results. Optionally performs
+/// hybrid search by fusing dense and sparse retrieval via RRF.
 ///
 /// # Examples
 ///
@@ -87,6 +104,8 @@ impl Default for SearchConfig {
 pub struct MultiResolutionSearch<'a, E: ?Sized, I: ?Sized> {
     embedder: &'a E,
     index: &'a I,
+    sparse_embedder: Option<&'a dyn crate::embedding::SparseEmbedder>,
+    sparse_index: Option<&'a dyn SparseIndex>,
 }
 
 impl<'a, E, I> MultiResolutionSearch<'a, E, I>
@@ -94,17 +113,34 @@ where
     E: crate::embedding::Embedder + ?Sized,
     I: VectorIndex + ?Sized,
 {
-    /// Create a new multi-resolution search pipeline.
+    /// Create a new multi-resolution search pipeline (dense only).
     #[must_use]
     pub fn new(embedder: &'a E, index: &'a I) -> Self {
-        Self { embedder, index }
+        Self {
+            embedder,
+            index,
+            sparse_embedder: None,
+            sparse_index: None,
+        }
+    }
+
+    /// Add sparse search components for hybrid retrieval.
+    #[must_use]
+    pub fn with_sparse(
+        mut self,
+        sparse_embedder: &'a dyn crate::embedding::SparseEmbedder,
+        sparse_index: &'a dyn SparseIndex,
+    ) -> Self {
+        self.sparse_embedder = Some(sparse_embedder);
+        self.sparse_index = Some(sparse_index);
+        self
     }
 
     /// Search across all resolution levels and return scored, ranked results.
     ///
     /// The query is embedded, then `raw_k` candidates are retrieved from the
-    /// vector index. Each candidate is scored based on its distance and
-    /// resolution level, then the top `top_k` results are returned.
+    /// vector index. When sparse components are configured and `sparse_weight > 0`,
+    /// results from both dense and sparse retrieval are fused using RRF.
     ///
     /// # Errors
     ///
@@ -128,10 +164,44 @@ where
 
         let is_broad_query = query.split_whitespace().count() < BROAD_QUERY_WORD_THRESHOLD;
 
-        let mut scored: Vec<ScoredResult> = raw_results
-            .iter()
-            .filter_map(|r| score_result(r, is_broad_query))
-            .collect();
+        let sparse_pair = if config.sparse_weight > 0.0 {
+            self.sparse_embedder
+                .zip(self.sparse_index)
+        } else {
+            None
+        };
+
+        let mut scored = if let Some((sparse_embedder, sparse_index)) = sparse_pair {
+
+            let sparse_vecs = sparse_embedder.embed_sparse(&[query])?;
+            let sparse_vec =
+                sparse_vecs
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| IndexError::EmbeddingFailed {
+                        reason: "sparse embedder returned no vectors".to_string(),
+                    })?;
+
+            let sparse_results = sparse_index.search_sparse(
+                &sparse_vec.indices,
+                &sparse_vec.values,
+                config.raw_k,
+            )?;
+
+            // Build dense scored results
+            let dense_scored: Vec<ScoredResult> = raw_results
+                .iter()
+                .filter_map(|r| score_result(r, is_broad_query))
+                .collect();
+
+            // Fuse using RRF
+            rrf_fuse(&dense_scored, &sparse_results, config.sparse_weight)
+        } else {
+            raw_results
+                .iter()
+                .filter_map(|r| score_result(r, is_broad_query))
+                .collect()
+        };
 
         // Sort by score descending (higher is better)
         scored.sort_by(|a, b| {
@@ -143,6 +213,63 @@ where
         scored.truncate(config.top_k);
         Ok(scored)
     }
+}
+
+/// Fuse dense and sparse results using Reciprocal Rank Fusion.
+///
+/// Each result gets an RRF score of `1/(RRF_K + rank)` from each list it appears in.
+/// The dense and sparse contributions are weighted by `(1 - sparse_weight)` and
+/// `sparse_weight` respectively. Results that appear only in the sparse list
+/// (without a parseable `VectorId`) are excluded, since they can't carry
+/// resolution metadata.
+#[allow(clippy::cast_precision_loss)] // rank indices are small enough for f32
+fn rrf_fuse(
+    dense: &[ScoredResult],
+    sparse: &[crate::index::SparseSearchResult],
+    sparse_weight: f32,
+) -> Vec<ScoredResult> {
+    let dense_weight = 1.0 - sparse_weight;
+
+    // Collect RRF scores keyed by vector ID string
+    let mut rrf_scores: HashMap<String, f32> = HashMap::new();
+    let mut result_map: HashMap<String, ScoredResult> = HashMap::new();
+
+    // Dense contributions
+    for (rank, result) in dense.iter().enumerate() {
+        let id = result.vector_id.as_str().to_string();
+        let rrf_score = dense_weight / (RRF_K + rank as f32 + 1.0);
+        *rrf_scores.entry(id.clone()).or_default() += rrf_score;
+        result_map.entry(id).or_insert_with(|| result.clone());
+    }
+
+    // Sparse contributions — only for IDs that parse as VectorIds
+    for (rank, result) in sparse.iter().enumerate() {
+        if let Some(vid) = VectorId::parse(&result.id) {
+            let id = result.id.clone();
+            let rrf_score = sparse_weight / (RRF_K + rank as f32 + 1.0);
+            *rrf_scores.entry(id.clone()).or_default() += rrf_score;
+            result_map.entry(id).or_insert_with(|| {
+                let resolution = vid.resolution();
+                ScoredResult {
+                    vector_id: vid,
+                    raw_distance: 0.0, // not available from sparse search
+                    resolution,
+                    score: 0.0, // will be overwritten
+                }
+            });
+        }
+    }
+
+    // Build final results with RRF scores
+    rrf_scores
+        .into_iter()
+        .filter_map(|(id, rrf_score)| {
+            result_map.remove(&id).map(|mut r| {
+                r.score = rrf_score;
+                r
+            })
+        })
+        .collect()
 }
 
 /// Convert a raw search result into a scored result with resolution weighting.
@@ -182,8 +309,8 @@ fn score_result(raw: &RawSearchResult, is_broad_query: bool) -> Option<ScoredRes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::embedding::Embedder;
-    use crate::index::{HnswIndex, VectorIndex};
+    use crate::embedding::{Embedder, SparseEmbedder, SparseVector};
+    use crate::index::{HnswIndex, InvertedIndex, SparseIndex, VectorIndex};
 
     /// Deterministic mock embedder that produces unit vectors.
     struct MockEmbedder {
@@ -279,6 +406,7 @@ mod tests {
         let config = SearchConfig {
             raw_k: 30,
             top_k: 2,
+            sparse_weight: 0.0,
         };
         let results = searcher.search("auth", config).unwrap();
         assert!(results.len() <= 2);
@@ -392,5 +520,181 @@ mod tests {
         let section_result = score_result(&section_raw, false).unwrap();
 
         assert!(full_result.score > section_result.score);
+    }
+
+    // --- RRF fusion tests ---
+
+    #[test]
+    fn rrf_fuse_dense_only() {
+        let dense = vec![
+            ScoredResult {
+                vector_id: VectorId::parse("claim::c1").unwrap(),
+                raw_distance: 0.2,
+                resolution: Resolution::Claim,
+                score: 0.9,
+            },
+            ScoredResult {
+                vector_id: VectorId::parse("section::s1").unwrap(),
+                raw_distance: 0.3,
+                resolution: Resolution::Section,
+                score: 0.8,
+            },
+        ];
+        let sparse = vec![];
+
+        let fused = rrf_fuse(&dense, &sparse, 0.5);
+        assert_eq!(fused.len(), 2);
+        // All results should have positive scores
+        for r in &fused {
+            assert!(r.score > 0.0);
+        }
+    }
+
+    #[test]
+    fn rrf_fuse_merges_overlapping_results() {
+        let dense = vec![ScoredResult {
+            vector_id: VectorId::parse("claim::c1").unwrap(),
+            raw_distance: 0.2,
+            resolution: Resolution::Claim,
+            score: 0.9,
+        }];
+        let sparse = vec![crate::index::SparseSearchResult {
+            id: "claim::c1".to_string(),
+            score: 5.0,
+        }];
+
+        let fused = rrf_fuse(&dense, &sparse, 0.5);
+        assert_eq!(fused.len(), 1);
+        // Should have contributions from both dense and sparse
+        let score = fused[0].score;
+        let dense_only_score = 0.5 / (RRF_K + 1.0);
+        assert!(
+            score > dense_only_score,
+            "fused score should exceed dense-only"
+        );
+    }
+
+    #[test]
+    fn rrf_fuse_sparse_introduces_new_results() {
+        let dense = vec![ScoredResult {
+            vector_id: VectorId::parse("claim::c1").unwrap(),
+            raw_distance: 0.2,
+            resolution: Resolution::Claim,
+            score: 0.9,
+        }];
+        let sparse = vec![
+            crate::index::SparseSearchResult {
+                id: "claim::c1".to_string(),
+                score: 5.0,
+            },
+            crate::index::SparseSearchResult {
+                id: "section::s1".to_string(),
+                score: 3.0,
+            },
+        ];
+
+        let fused = rrf_fuse(&dense, &sparse, 0.5);
+        assert_eq!(fused.len(), 2);
+    }
+
+    #[test]
+    fn rrf_fuse_ignores_unparseable_sparse_ids() {
+        let dense = vec![];
+        let sparse = vec![crate::index::SparseSearchResult {
+            id: "not-a-vector-id".to_string(),
+            score: 5.0,
+        }];
+
+        let fused = rrf_fuse(&dense, &sparse, 0.5);
+        assert!(fused.is_empty());
+    }
+
+    // --- Hybrid search integration ---
+
+    /// Mock sparse embedder that produces deterministic sparse vectors.
+    struct MockSparseEmbedder;
+
+    impl SparseEmbedder for MockSparseEmbedder {
+        fn embed_sparse(&self, texts: &[&str]) -> Result<Vec<SparseVector>, IndexError> {
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    // Hash text bytes into sparse indices
+                    let mut indices = Vec::new();
+                    let mut values = Vec::new();
+                    for (i, b) in t.bytes().enumerate().take(10) {
+                        indices.push((u32::from(b) + u32::try_from(i).unwrap()) % 100);
+                        values.push(1.0);
+                    }
+                    SparseVector { indices, values }
+                })
+                .collect())
+        }
+    }
+
+    #[test]
+    fn hybrid_search_with_sparse_components() {
+        let dim = 8;
+        let embedder = MockEmbedder { dim };
+        let index = HnswIndex::new(dim, 1000).unwrap();
+        let sparse_embedder = MockSparseEmbedder;
+        let sparse_index = InvertedIndex::new();
+
+        // Insert into both indexes
+        let texts = [
+            ("claim::c1", "JWT tokens use RS256 signing"),
+            ("section::s1", "rate limiting configuration"),
+        ];
+
+        for (id, text) in &texts {
+            let vecs = embedder.embed(&[*text]).unwrap();
+            index.insert(id, &vecs[0]).unwrap();
+
+            let sparse_vecs = sparse_embedder.embed_sparse(&[*text]).unwrap();
+            sparse_index
+                .insert_sparse(id, &sparse_vecs[0].indices, &sparse_vecs[0].values)
+                .unwrap();
+        }
+
+        let searcher = MultiResolutionSearch::new(&embedder, &index)
+            .with_sparse(&sparse_embedder, &sparse_index);
+
+        let config = SearchConfig {
+            raw_k: 30,
+            top_k: 10,
+            sparse_weight: 0.5,
+        };
+
+        let results = searcher.search("JWT signing", config).unwrap();
+        assert!(!results.is_empty());
+        for r in &results {
+            assert!(r.score > 0.0);
+        }
+    }
+
+    #[test]
+    fn hybrid_search_zero_weight_is_dense_only() {
+        let dim = 8;
+        let embedder = MockEmbedder { dim };
+        let index = HnswIndex::new(dim, 1000).unwrap();
+
+        let vecs = embedder.embed(&["test content"]).unwrap();
+        index.insert("claim::c1", &vecs[0]).unwrap();
+
+        // Even with sparse components attached, weight=0 should skip sparse
+        let sparse_embedder = MockSparseEmbedder;
+        let sparse_index = InvertedIndex::new();
+
+        let searcher = MultiResolutionSearch::new(&embedder, &index)
+            .with_sparse(&sparse_embedder, &sparse_index);
+
+        let config = SearchConfig {
+            raw_k: 30,
+            top_k: 10,
+            sparse_weight: 0.0,
+        };
+
+        let results = searcher.search("test", config).unwrap();
+        assert!(!results.is_empty());
     }
 }

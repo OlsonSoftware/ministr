@@ -13,12 +13,12 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::code::refs::extract_refs;
 use crate::code::{AstParser, extract_symbols};
-use crate::embedding::Embedder;
+use crate::embedding::{Embedder, SparseEmbedder};
 use crate::error::IngestionError;
 use crate::extraction::claims::{ClaimExtractor, HeuristicClaimExtractor};
 use crate::extraction::relationships::{HeuristicRelationshipDetector, RelationshipDetector};
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
-use crate::index::VectorIndex;
+use crate::index::{SparseIndex, VectorIndex};
 use crate::parser::{
     DocumentParser, MarkdownParser, ParserKind, create_parser, detect_parser_kind,
 };
@@ -1144,6 +1144,56 @@ fn embed_document<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
 
     let count = ids.len();
     debug!(embeddings = count, doc_id = %doc.id, "embedded document");
+    Ok(count)
+}
+
+/// Embed a document tree into the sparse index using a SPLADE-style model.
+///
+/// Mirrors [`embed_document`] but produces sparse vectors instead of dense.
+/// Called by ingestion orchestrators when sparse search components are configured.
+///
+/// # Errors
+///
+/// Returns [`IngestionError::Embedding`] if sparse embedding or insertion fails.
+pub fn embed_document_sparse<SE: SparseEmbedder + ?Sized, SI: SparseIndex + ?Sized>(
+    doc: &DocumentTree,
+    sparse_embedder: &SE,
+    sparse_index: &SI,
+) -> Result<usize, IngestionError> {
+    let mut texts: Vec<String> = Vec::new();
+    let mut ids: Vec<VectorId> = Vec::new();
+
+    if let Some(ref summary) = doc.summary {
+        if !summary.trim().is_empty() {
+            ids.push(VectorId::doc_summary(doc.id.as_ref()));
+            texts.push(summary.clone());
+        }
+    }
+
+    collect_embeddable_items(&doc.sections, &mut ids, &mut texts);
+
+    if texts.is_empty() {
+        return Ok(0);
+    }
+
+    let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let sparse_vecs =
+        sparse_embedder
+            .embed_sparse(&text_refs)
+            .map_err(|e| IngestionError::Embedding {
+                reason: format!("sparse embedding failed: {e}"),
+            })?;
+
+    for (vid, sv) in ids.iter().zip(sparse_vecs.iter()) {
+        sparse_index
+            .insert_sparse(vid.as_str(), &sv.indices, &sv.values)
+            .map_err(|e| IngestionError::Embedding {
+                reason: format!("failed to insert sparse vector {vid}: {e}"),
+            })?;
+    }
+
+    let count = ids.len();
+    debug!(sparse_embeddings = count, doc_id = %doc.id, "sparse-embedded document");
     Ok(count)
 }
 
@@ -3077,6 +3127,7 @@ pub fn compute_hash(content: &str) -> String {
         let config = SearchConfig {
             raw_k: 30,
             top_k: 10,
+            sparse_weight: 0.0,
         };
         let results = searcher.search("ingestion pipeline", config).unwrap();
 
