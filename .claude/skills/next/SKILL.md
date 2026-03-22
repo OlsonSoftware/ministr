@@ -17,18 +17,17 @@ Before planning anything, research the items you're about to implement. This is 
 
 1. **Read the spec file** — identify the next coherent group of unchecked items (just read, don't plan yet)
 
-2. **Web search** — use `web_search` to research:
+2. **Web search** — use `brave_web_search` liberally to research:
    - Best practices and idiomatic patterns for what you're about to build
    - Recent API changes, breaking changes, or deprecations in relevant libraries/frameworks
    - Known pitfalls, edge cases, or common mistakes for this type of work
    - Performance considerations or security implications
    - Formulate 2-4 targeted search queries based on the specific items
 
-3. **Deep dive** (when applicable) — use `firecrawl` to scrape:
-   - Official documentation pages for libraries/APIs you'll use
-   - Relevant GitHub issues, discussions, or changelogs
-   - Reference implementations or examples from authoritative sources
-   - Only scrape URLs surfaced by web search or already known — don't guess URLs
+3. **Codebase search** — use iris tools (NOT Glob/Grep/Read) to understand the existing code:
+   - `iris_survey` to find related code and docs by natural language query
+   - `iris_symbols` to locate types, functions, traits involved
+   - `iris_definition` to read the full source of key symbols
 
 4. **Capture findings** — mentally note key insights that will inform the plan:
    - API signatures, type constraints, or interface contracts discovered
@@ -51,11 +50,11 @@ You MUST complete all of these before moving to Phase 2:
    - `git log --oneline -3` — recent commits
    - Read the spec file to see what's checked off
 
-2. **Explore the codebase** — use magistr-scope tools (NOT Read/Glob/Grep):
-   - `scope_search` to find relevant files and understand structure
-   - `scope_read(mode: "stubs")` for structural overview of key files
-   - `scope_imports(path: "file", transitive: true)` before modifying shared code
-   - `scope_grep` for targeted pattern searches
+2. **Explore the codebase** — use iris tools (NOT Read/Glob/Grep):
+   - `iris_survey` to search for relevant code and docs by natural language query
+   - `iris_symbols` to find types, functions, traits by name/kind/module
+   - `iris_definition` to get full source of a symbol
+   - `iris_extract` to get specific claims from a section
    - Do NOT use Read for exploration — it is ONLY for immediately before Edit
 
 3. **Identify scope** — find the next coherent group of unchecked items. Group by logical affinity:
@@ -88,7 +87,7 @@ DO NOT proceed to Phase 2 until `.magistr/current-plan.md` exists and is complet
 Now implement the plan from `.magistr/current-plan.md`:
 
 1. Follow the plan step by step — do not deviate without good reason
-2. Use `scope_read` to understand code before modifying. Use Read only immediately before Edit.
+2. Use `iris_symbols` + `iris_definition` to understand code before modifying. Use Read only immediately before Edit.
 3. For each unit of work, use TDD:
    - **RED**: Write failing tests
    - **GREEN**: Write minimal code to pass
@@ -156,7 +155,7 @@ All must pass. If any fail, fix before proceeding. Do NOT skip to step 2 with fa
 
 These are not guidelines. They are hard requirements. Violating them means the iteration FAILED.
 
-1. **ALWAYS research before planning.** Use `web_search` and/or `firecrawl` to inform every iteration. No blind coding.
+1. **ALWAYS research before planning.** Use `brave_web_search` and iris tools to inform every iteration. No blind coding.
 2. **ALWAYS update `ROADMAP.md`.** Every iteration. No exceptions. No "I'll do it next time."
 3. **ALWAYS commit at the end.** Uncommitted work is unfinished work. The iteration is not done until the commit lands.
 4. **ALWAYS pass quality gates before committing.** Broken code does not get committed.
