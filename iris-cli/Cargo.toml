@@ -4,7 +4,14 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "CLI entry point for the iris MCP server"
+repository.workspace = true
+description = "A context cache controller for LLM agents — MCP server for intelligent document retrieval"
+categories = ["command-line-utilities", "development-tools"]
+keywords = ["mcp", "llm", "context", "embeddings", "rag"]
+
+[[bin]]
+name = "iris"
+path = "src/main.rs"
 
 [lints]
 workspace = true
