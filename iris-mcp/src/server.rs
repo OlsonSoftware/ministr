@@ -4,7 +4,7 @@
 //! tool registration. The server exposes iris tools (`iris_survey`,
 //! `iris_read`, `iris_extract`, `iris_related`, `iris_evicted`,
 //! `iris_budget`, `iris_compress`, `iris_toc`, `iris_fetch`,
-//! `iris_refresh`) over the MCP protocol.
+//! `iris_refresh`, `iris_clone`) over the MCP protocol.
 //!
 //! Every tool response includes a `budget_status` object with the current
 //! token budget state. Survey and read responses are deduplicated against
@@ -37,6 +37,7 @@ use tracing::{Instrument, debug, info_span, warn};
 
 use iris_core::analytics::Analytics;
 use iris_core::embedding::Embedder;
+use iris_core::git::GitFetcher;
 use iris_core::index::VectorIndex;
 use iris_core::ingestion::IngestionPipeline;
 use iris_core::service::{
@@ -67,6 +68,7 @@ pub struct IrisServer {
     storage: Option<Arc<SqliteStorage>>,
     analytics: Option<Arc<Analytics>>,
     web_fetcher: Option<Arc<WebFetcher>>,
+    git_fetcher: Option<Arc<GitFetcher>>,
     ingestion_pipeline: Arc<IngestionPipeline>,
     embedder: Option<Arc<dyn Embedder>>,
     index: Option<Arc<dyn VectorIndex>>,
@@ -323,6 +325,44 @@ struct RefreshResponse {
     details: Vec<RefreshUrlDetailResponse>,
 }
 
+/// Parameters for the `iris_clone` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CloneParams {
+    /// Remote git repository URL (HTTPS or SSH).
+    #[schemars(
+        description = "Remote git repository URL to clone (e.g. 'https://github.com/owner/repo.git')"
+    )]
+    pub repo: String,
+
+    /// Optional list of paths for sparse checkout — only these directories/files
+    /// will be checked out and indexed.
+    #[schemars(
+        description = "Optional paths for sparse checkout (e.g. ['docs', 'src']). Omit for full checkout."
+    )]
+    pub paths: Option<Vec<String>>,
+
+    /// Optional branch to clone (defaults to the repository's default branch).
+    #[schemars(description = "Optional branch to clone (defaults to repository default)")]
+    pub branch: Option<String>,
+}
+
+/// Response from the `iris_clone` tool.
+#[derive(Debug, Serialize)]
+struct CloneResponse {
+    /// Number of files discovered in the clone checkout.
+    files_discovered: usize,
+    /// Number of files that were indexed (parsed and stored).
+    files_indexed: usize,
+    /// Total sections extracted across all indexed files.
+    sections_extracted: usize,
+    /// Time spent cloning the repository in milliseconds.
+    clone_time_ms: u64,
+    /// Time spent running the ingestion pipeline in milliseconds.
+    index_time_ms: u64,
+    /// Whether the clone was served from cache.
+    from_cache: bool,
+}
+
 /// Corpus-level statistics returned in the `iris_toc` response header.
 #[derive(Debug, Serialize)]
 struct CorpusStatsHeader {
@@ -365,8 +405,9 @@ impl ServerHandler for IrisServer {
                  get eviction recommendations, iris_compress to generate compressed \
                  summaries of content you want to evict, iris_evicted to signal when \
                  content has been dropped from your context window, iris_fetch to \
-                 fetch web content by URL and add it to the corpus, and iris_refresh \
-                 to check cached web sources for staleness and re-fetch changed content."
+                 fetch web content by URL and add it to the corpus, iris_refresh \
+                 to check cached web sources for staleness and re-fetch changed content, \
+                 and iris_clone to clone a git repository and index its content."
                     .to_string(),
             ),
         }
@@ -1267,6 +1308,69 @@ impl IrisServer {
         .instrument(span)
         .await
     }
+
+    /// Clone a git repository and index its content into the corpus.
+    ///
+    /// Uses `GitFetcher` for efficient shallow cloning with optional sparse
+    /// checkout. If the repository is already cached and the remote HEAD
+    /// matches, the cached clone is reused. Cloned content is parsed,
+    /// embedded, and immediately searchable via `iris_survey`.
+    #[tool(
+        name = "iris_clone",
+        description = "Clone a git repository and index its content. Supports sparse checkout via paths parameter. Cached clones are reused when the remote HEAD hasn't changed. Content is immediately searchable after cloning."
+    )]
+    async fn clone_repo(
+        &self,
+        #[tool(aggr)] params: CloneParams,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_clone", repo = %params.repo);
+
+        async {
+            debug!(
+                repo = %params.repo,
+                paths = ?params.paths,
+                branch = ?params.branch,
+                "iris_clone request"
+            );
+
+            let Some(ref git_fetcher) = self.git_fetcher else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_clone is not available: git fetcher not configured. \
+                     Start iris with a data directory to enable git cloning."
+                        .to_string(),
+                )]));
+            };
+
+            let Some(ref embedder) = self.embedder else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_clone is not available: embedder not configured.".to_string(),
+                )]));
+            };
+
+            let Some(ref index) = self.index else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_clone is not available: vector index not configured.".to_string(),
+                )]));
+            };
+
+            let Some(ref storage) = self.storage else {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "iris_clone is not available: storage not configured.".to_string(),
+                )]));
+            };
+
+            self.clone_and_ingest(
+                &params,
+                git_fetcher,
+                embedder.as_ref(),
+                index.as_ref(),
+                storage.as_ref(),
+            )
+            .await
+        }
+        .instrument(span)
+        .await
+    }
 }
 
 impl IrisServer {
@@ -1296,6 +1400,7 @@ impl IrisServer {
             storage: None,
             analytics: None,
             web_fetcher: None,
+            git_fetcher: None,
             ingestion_pipeline: Arc::new(IngestionPipeline::new()),
             embedder: None,
             index: None,
@@ -1342,6 +1447,7 @@ impl IrisServer {
             storage: Some(storage),
             analytics: Some(analytics),
             web_fetcher: None,
+            git_fetcher: None,
             ingestion_pipeline: Arc::new(IngestionPipeline::new()),
             embedder: None,
             index: None,
@@ -1362,6 +1468,29 @@ impl IrisServer {
         self.web_fetcher = Some(Arc::new(web_fetcher));
         self.embedder = Some(embedder);
         self.index = Some(index);
+        self
+    }
+
+    /// Enable git cloning on this server.
+    ///
+    /// Sets up the `GitFetcher` needed for the `iris_clone` tool.
+    /// Also ensures embedder and index are set (needed for ingestion).
+    /// Without calling this, `iris_clone` returns an error.
+    #[must_use]
+    pub fn with_git_fetcher(
+        mut self,
+        git_fetcher: GitFetcher,
+        embedder: Arc<dyn Embedder>,
+        index: Arc<dyn VectorIndex>,
+    ) -> Self {
+        self.git_fetcher = Some(Arc::new(git_fetcher));
+        // Set embedder/index if not already set (web_fetcher may have set them).
+        if self.embedder.is_none() {
+            self.embedder = Some(embedder);
+        }
+        if self.index.is_none() {
+            self.index = Some(index);
+        }
         self
     }
 
@@ -1420,6 +1549,88 @@ impl IrisServer {
             data,
             budget_status,
             coherence_alerts: alerts,
+        }
+    }
+
+    /// Execute the clone-and-ingest pipeline for `iris_clone`.
+    ///
+    /// Separated from the tool handler to satisfy the `too_many_lines` lint.
+    async fn clone_and_ingest(
+        &self,
+        params: &CloneParams,
+        git_fetcher: &GitFetcher,
+        embedder: &dyn Embedder,
+        index: &dyn VectorIndex,
+        storage: &SqliteStorage,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        // Phase 1: Clone the repository.
+        let clone_start = std::time::Instant::now();
+        let clone_result = match GitFetcher::clone(
+            git_fetcher,
+            &params.repo,
+            params.paths.as_deref(),
+            params.branch.as_deref(),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, repo = %params.repo, "iris_clone: git clone failed");
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "clone failed: {e}"
+                ))]));
+            }
+        };
+        let clone_time_ms = elapsed_millis(clone_start);
+
+        // Phase 2: Ingest the cloned content with embeddings.
+        let ingest_start = std::time::Instant::now();
+        let ingest_result = self
+            .ingestion_pipeline
+            .ingest_directory_with_embeddings(&clone_result.clone_dir, storage, embedder, index)
+            .await;
+        let index_time_ms = elapsed_millis(ingest_start);
+
+        match ingest_result {
+            Ok(stats) => {
+                debug!(
+                    repo = %params.repo,
+                    files_discovered = clone_result.files.len(),
+                    files_indexed = stats.files_indexed,
+                    sections = stats.total_sections,
+                    clone_ms = clone_time_ms,
+                    index_ms = index_time_ms,
+                    from_cache = clone_result.from_cache,
+                    "iris_clone success"
+                );
+
+                let budget = self.budget.lock().await;
+                let budget_status = budget.budget_status();
+                drop(budget);
+
+                let response = self
+                    .build_response(
+                        CloneResponse {
+                            files_discovered: clone_result.files.len(),
+                            files_indexed: stats.files_indexed,
+                            sections_extracted: stats.total_sections,
+                            clone_time_ms,
+                            index_time_ms,
+                            from_cache: clone_result.from_cache,
+                        },
+                        budget_status,
+                    )
+                    .await;
+                let json = serde_json::to_string_pretty(&response)
+                    .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
+                Ok(CallToolResult::success(vec![Content::text(json)]))
+            }
+            Err(e) => {
+                warn!(error = %e, repo = %params.repo, "iris_clone: ingestion failed");
+                Ok(CallToolResult::error(vec![Content::text(format!(
+                    "clone succeeded but ingestion failed: {e}"
+                ))]))
+            }
         }
     }
 
@@ -1692,6 +1903,11 @@ fn parse_resolution(s: &str) -> Resolution {
         "claim" => Resolution::Claim,
         _ => Resolution::Section,
     }
+}
+
+/// Convert elapsed duration to milliseconds, saturating at `u64::MAX`.
+fn elapsed_millis(start: std::time::Instant) -> u64 {
+    u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Generate a simple UUID v4-style session ID.
@@ -2776,6 +2992,87 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    // --- iris_clone tests ---
+
+    #[tokio::test]
+    async fn clone_without_git_fetcher_returns_error() {
+        let server = setup_server().await;
+        let result = server
+            .clone_repo(CloneParams {
+                repo: "https://github.com/octocat/Hello-World.git".to_string(),
+                paths: None,
+                branch: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(result.is_error.unwrap_or(false));
+        let text = extract_text(&result.content);
+        assert!(
+            text.contains("not available"),
+            "should say not available: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn clone_with_git_fetcher_invalid_repo_returns_error() {
+        let dim = 8;
+        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 100).unwrap());
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
+        let service = Arc::new(QueryService::new(
+            (*storage).clone(),
+            Arc::clone(&embedder),
+            Arc::clone(&index),
+        ));
+
+        let git_config = iris_core::git::GitFetcherConfig {
+            remote_dir: std::path::PathBuf::from("/tmp/iris-test-clone"),
+        };
+        let git_fetcher = GitFetcher::new(git_config);
+
+        let server = IrisServer::with_persistence(service, BudgetConfig::default(), storage, None)
+            .await
+            .with_git_fetcher(git_fetcher, embedder, index);
+
+        let result = server
+            .clone_repo(CloneParams {
+                repo: String::new(),
+                paths: None,
+                branch: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(result.is_error.unwrap_or(false));
+        let text = extract_text(&result.content);
+        assert!(
+            text.contains("clone failed"),
+            "should report clone failure: {text}"
+        );
+    }
+
+    #[test]
+    fn with_git_fetcher_sets_field() {
+        let dim = 8;
+        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 100).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let service = Arc::new(QueryService::new(
+            storage,
+            Arc::clone(&embedder),
+            Arc::clone(&index),
+        ));
+        let server = IrisServer::new(service);
+
+        assert!(server.git_fetcher.is_none());
+
+        let git_fetcher = GitFetcher::with_defaults();
+        let server = server.with_git_fetcher(git_fetcher, embedder, index);
+
+        assert!(server.git_fetcher.is_some());
     }
 
     /// Create a minimal `RequestContext` for testing resource handlers.
