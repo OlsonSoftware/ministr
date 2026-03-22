@@ -493,18 +493,18 @@ phases:
 - id: R1
   name: Git Clone Integration
   tagline: Fast shallow sparse clones for remote repository fetching
-  status: pending
+  status: done
   problem: Agents cannot access external codebases without manual cloning — and full clones are slow and wasteful
   solution: Use git's shallow sparse clone (--depth 1 --filter=blob:none --sparse) for 98% faster clones, targeting only needed directories
   tasks:
   - text: Build `GitFetcher` that shells out to git via `tokio::process::Command` — `git clone --depth 1 --filter=blob:none --sparse` into `~/.iris/remote/<repo-hash>/`
-    checked: false
+    checked: true
   - text: 'Implement sparse checkout support: after clone, run `git sparse-checkout set <paths>` to check out only requested directories/files'
-    checked: false
+    checked: true
   - text: 'Track clone metadata: repo URL, branch, commit SHA, clone timestamp, checked-out paths — stored as TOML in the clone directory'
-    checked: false
+    checked: true
   - text: 'Unit test: clone a small public repo (e.g. a test fixture repo), verify expected files are present and metadata is written'
-    checked: false
+    checked: true
 - id: R2
   name: iris_clone MCP Tool
   tagline: One command to clone, index, and search any repository

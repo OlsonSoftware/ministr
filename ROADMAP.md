@@ -419,10 +419,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Build `GitFetcher` that shells out to git via `tokio::process::Command` — `git clone --depth 1 --filter=blob:none --sparse` into `~/.iris/remote/<repo-hash>/`
-- [ ] Implement sparse checkout support: after clone, run `git sparse-checkout set <paths>` to check out only requested directories/files
-- [ ] Track clone metadata: repo URL, branch, commit SHA, clone timestamp, checked-out paths — stored as TOML in the clone directory
-- [ ] Unit test: clone a small public repo (e.g. a test fixture repo), verify expected files are present and metadata is written
+- [x] Build `GitFetcher` that shells out to git via `tokio::process::Command` — `git clone --depth 1 --filter=blob:none --sparse` into `~/.iris/remote/<repo-hash>/`
+- [x] Implement sparse checkout support: after clone, run `git sparse-checkout set <paths>` to check out only requested directories/files
+- [x] Track clone metadata: repo URL, branch, commit SHA, clone timestamp, checked-out paths — stored as TOML in the clone directory
+- [x] Unit test: clone a small public repo (e.g. a test fixture repo), verify expected files are present and metadata is written
 
 ---
 
