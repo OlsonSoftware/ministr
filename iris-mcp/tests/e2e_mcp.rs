@@ -2497,3 +2497,490 @@ async fn e2e_iris_fetch_then_survey_and_toc() {
     // Cleanup
     server_handle.abort();
 }
+
+// ---------------------------------------------------------------------------
+// R5: Remote Pipeline Tests — iris_clone integration & E2E
+// ---------------------------------------------------------------------------
+
+/// Create a local bare git repository with markdown docs for testing.
+///
+/// Returns the path to the bare repo (usable as a clone URL).
+async fn create_test_git_repo(repo_root: &std::path::Path) -> String {
+    use tokio::process::Command;
+
+    let work_dir = repo_root.join("work");
+    let bare_dir = repo_root.join("test-repo.git");
+
+    // Create a bare repo.
+    std::fs::create_dir_all(&work_dir).unwrap();
+    Command::new("git")
+        .args(["init", "--bare"])
+        .arg(&bare_dir)
+        .output()
+        .await
+        .unwrap();
+
+    // Create a working copy, add markdown files, and push.
+    Command::new("git")
+        .args(["clone"])
+        .arg(&bare_dir)
+        .arg(&work_dir)
+        .output()
+        .await
+        .unwrap();
+
+    std::fs::write(
+        work_dir.join("README.md"),
+        "\
+# Test Repository
+
+This is a test repository for iris integration testing.
+
+## Overview
+
+The repository contains documentation files used to verify that iris can
+clone a git repository and ingest its content into the search index.
+",
+    )
+    .unwrap();
+
+    std::fs::write(
+        work_dir.join("guide.md"),
+        "\
+# User Guide
+
+## Getting Started
+
+Install the CLI tool using cargo. Configure your project by creating a config
+file in the project root. The tool supports markdown and HTML document formats.
+
+## Advanced Usage
+
+Use the survey command to search across all indexed documents. The read command
+retrieves full section text by section ID. Extract returns atomic claims from
+a section for fine-grained analysis.
+",
+    )
+    .unwrap();
+
+    // Configure git user for the commit.
+    Command::new("git")
+        .current_dir(&work_dir)
+        .args(["config", "user.email", "test@iris.dev"])
+        .output()
+        .await
+        .unwrap();
+    Command::new("git")
+        .current_dir(&work_dir)
+        .args(["config", "user.name", "Test"])
+        .output()
+        .await
+        .unwrap();
+
+    Command::new("git")
+        .current_dir(&work_dir)
+        .args(["add", "."])
+        .output()
+        .await
+        .unwrap();
+    Command::new("git")
+        .current_dir(&work_dir)
+        .args(["commit", "-m", "initial commit"])
+        .output()
+        .await
+        .unwrap();
+    Command::new("git")
+        .current_dir(&work_dir)
+        .args(["push", "origin", "HEAD"])
+        .output()
+        .await
+        .unwrap();
+
+    bare_dir.to_string_lossy().to_string()
+}
+
+/// Set up an `IrisServer` with git fetcher enabled for testing `iris_clone`.
+async fn setup_server_with_git_fetcher(
+    remote_dir: &std::path::Path,
+) -> (IrisServer, Arc<dyn Embedder>, Arc<dyn VectorIndex>) {
+    let dim = 16;
+    let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+    let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage = Arc::new(storage);
+
+    let service = Arc::new(QueryService::new(
+        (*storage).clone(),
+        Arc::clone(&embedder),
+        Arc::clone(&index),
+    ));
+
+    let budget_config = BudgetConfig::default();
+    let server = IrisServer::with_persistence(
+        service,
+        budget_config,
+        Arc::clone(&storage),
+        Some("test-clone-session".to_string()),
+    )
+    .await;
+
+    let git_config = iris_core::git::GitFetcherConfig {
+        remote_dir: remote_dir.to_path_buf(),
+    };
+    let git_fetcher = iris_core::git::GitFetcher::new(git_config);
+
+    let server = server.with_git_fetcher(git_fetcher, Arc::clone(&embedder), Arc::clone(&index));
+
+    (server, embedder, index)
+}
+
+// ---------------------------------------------------------------------------
+// R5.0: Integration test — clone a repo, ingest its docs, verify iris_survey
+//       returns relevant content from the cloned source
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn e2e_iris_clone_then_survey_and_toc() {
+    // Skip if git is not installed.
+    let git_check = tokio::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .await;
+    if git_check.is_err() || !git_check.unwrap().status.success() {
+        eprintln!("git not installed, skipping e2e_iris_clone_then_survey_and_toc");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_dir = tmp.path().join("repos");
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    let repo_url = create_test_git_repo(&repo_dir).await;
+
+    let clone_cache = tmp.path().join("clone-cache");
+    std::fs::create_dir_all(&clone_cache).unwrap();
+    let (server, _embedder, _index) = setup_server_with_git_fetcher(&clone_cache).await;
+
+    // Step 1: Clone the local test repo
+    let clone_result = call_tool(&server, "iris_clone", json!({"repo": repo_url})).await;
+
+    let clone_text = extract_text(&clone_result.content);
+    assert!(
+        clone_result.is_error.is_none() || clone_result.is_error == Some(false),
+        "iris_clone should succeed, got: {clone_text}"
+    );
+
+    let clone_json: serde_json::Value = serde_json::from_str(clone_text).unwrap();
+    assert!(
+        clone_json["files_discovered"].as_u64().unwrap() > 0,
+        "should discover files in clone"
+    );
+    assert!(
+        clone_json["sections_extracted"].as_u64().unwrap() > 0,
+        "should extract sections from cloned content"
+    );
+    assert!(clone_json["budget_status"].is_object());
+
+    // Step 2: Verify iris_survey finds content from the cloned repo
+    let survey_result = call_tool(
+        &server,
+        "iris_survey",
+        json!({"query": "survey command search indexed documents", "top_k": 10}),
+    )
+    .await;
+
+    assert!(
+        survey_result.is_error.is_none() || survey_result.is_error == Some(false),
+        "iris_survey should succeed after clone"
+    );
+
+    let survey_json: serde_json::Value =
+        serde_json::from_str(extract_text(&survey_result.content)).unwrap();
+    let results = survey_json["results"].as_array().unwrap();
+    assert!(!results.is_empty(), "survey should find cloned content");
+
+    // Step 3: Verify iris_toc lists the cloned documents
+    let toc_result = call_tool(&server, "iris_toc", json!({})).await;
+
+    assert!(
+        toc_result.is_error.is_none() || toc_result.is_error == Some(false),
+        "iris_toc should succeed"
+    );
+
+    let toc_json: serde_json::Value =
+        serde_json::from_str(extract_text(&toc_result.content)).unwrap();
+    let entries = toc_json["entries"].as_array().unwrap();
+    assert!(!entries.is_empty(), "toc should list cloned documents");
+    assert!(
+        entries.len() >= 2,
+        "toc should list at least 2 documents (README.md + guide.md), got: {}",
+        entries.len()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R5.1: E2E test — iris_clone + iris_fetch in same session, verify
+//       iris_survey returns unified results from both sources
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn e2e_clone_and_fetch_unified_survey_results() {
+    // Skip if git is not installed.
+    let git_check = tokio::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .await;
+    if git_check.is_err() || !git_check.unwrap().status.success() {
+        eprintln!("git not installed, skipping e2e_clone_and_fetch_unified_survey_results");
+        return;
+    }
+
+    let test_html = r"
+    <html><head><title>Deployment Guide</title></head>
+    <body>
+    <h1>Deployment Guide</h1>
+    <p>This guide covers deploying your application to production environments.
+    Deployment requires Docker and a Kubernetes cluster with at least 3 nodes.
+    The deployment pipeline runs automated health checks after each rollout.</p>
+    <h2>Prerequisites</h2>
+    <p>Install Docker version 24 or later. Configure kubectl to point to your
+    target cluster. Ensure you have admin access to the namespace.</p>
+    </body></html>
+    ";
+
+    let (addr, http_handle) = start_test_http_server(test_html).await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Create a local test git repo with markdown files.
+    let repo_dir = tmp.path().join("repos");
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    let repo_url = create_test_git_repo(&repo_dir).await;
+
+    let clone_cache = tmp.path().join("clone-cache");
+    std::fs::create_dir_all(&clone_cache).unwrap();
+    let web_cache_dir = tmp.path().join("web-cache");
+    std::fs::create_dir_all(&web_cache_dir).unwrap();
+
+    // Set up server with BOTH git fetcher and web fetcher.
+    let dim = 16;
+    let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+    let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage = Arc::new(storage);
+
+    let service = Arc::new(QueryService::new(
+        (*storage).clone(),
+        Arc::clone(&embedder),
+        Arc::clone(&index),
+    ));
+
+    let budget_config = BudgetConfig::default();
+    let server = IrisServer::with_persistence(
+        service,
+        budget_config,
+        Arc::clone(&storage),
+        Some("test-unified-session".to_string()),
+    )
+    .await;
+
+    let http_client = iris_core::web::HttpClient::with_defaults().unwrap();
+    let web_fetcher = iris_core::web::fetcher::WebFetcher::new(
+        http_client,
+        &web_cache_dir,
+        iris_core::web::fetcher::WebFetcherConfig::default(),
+    );
+    let server = server.with_web_fetcher(web_fetcher, Arc::clone(&embedder), Arc::clone(&index));
+
+    let git_config = iris_core::git::GitFetcherConfig {
+        remote_dir: clone_cache,
+    };
+    let git_fetcher = iris_core::git::GitFetcher::new(git_config);
+    let server = server.with_git_fetcher(git_fetcher, Arc::clone(&embedder), Arc::clone(&index));
+
+    // Step 1: Fetch web content
+    let fetch_result = call_tool(
+        &server,
+        "iris_fetch",
+        json!({"url": format!("http://{addr}/")}),
+    )
+    .await;
+
+    let fetch_text = extract_text(&fetch_result.content);
+    assert!(
+        fetch_result.is_error.is_none() || fetch_result.is_error == Some(false),
+        "iris_fetch should succeed, got: {fetch_text}"
+    );
+
+    let fetch_json: serde_json::Value = serde_json::from_str(fetch_text).unwrap();
+    assert!(
+        fetch_json["pages_fetched"].as_u64().unwrap() > 0,
+        "should fetch at least 1 page, got: {fetch_json}"
+    );
+    assert!(
+        fetch_json["sections_indexed"].as_u64().unwrap() > 0,
+        "should index sections from fetched page, got: {fetch_json}"
+    );
+
+    // Step 2: Clone the local test git repo
+    let clone_result = call_tool(&server, "iris_clone", json!({"repo": repo_url})).await;
+
+    let clone_text = extract_text(&clone_result.content);
+    assert!(
+        clone_result.is_error.is_none() || clone_result.is_error == Some(false),
+        "iris_clone should succeed, got: {clone_text}"
+    );
+
+    // Step 3: Survey should return results from BOTH sources
+    let survey_result = call_tool(
+        &server,
+        "iris_survey",
+        json!({"query": "deployment guide install configure survey search", "top_k": 20}),
+    )
+    .await;
+
+    assert!(
+        survey_result.is_error.is_none() || survey_result.is_error == Some(false),
+        "iris_survey should succeed"
+    );
+
+    let survey_json: serde_json::Value =
+        serde_json::from_str(extract_text(&survey_result.content)).unwrap();
+    let results = survey_json["results"].as_array().unwrap();
+    assert!(
+        !results.is_empty(),
+        "survey should return results from indexed sources"
+    );
+
+    // Check that results come from web source (web://)
+    let has_web_content = results
+        .iter()
+        .any(|r| r["content_id"].as_str().unwrap_or("").contains("web://"));
+
+    // Check that results come from cloned repo (file paths without web://)
+    let has_clone_content = results.iter().any(|r| {
+        let id = r["content_id"].as_str().unwrap_or("");
+        !id.contains("web://") && !id.is_empty()
+    });
+
+    assert!(
+        has_web_content || has_clone_content,
+        "survey should return content from at least one remote source, got: {results:?}"
+    );
+
+    // Step 4: ToC should list cloned documents at minimum
+    let toc_result = call_tool(&server, "iris_toc", json!({})).await;
+    let toc_json: serde_json::Value =
+        serde_json::from_str(extract_text(&toc_result.content)).unwrap();
+    let entries = toc_json["entries"].as_array().unwrap();
+
+    // Both iris_fetch and iris_clone succeeded above, so the corpus has
+    // content from both sources. The ToC must include at least the cloned docs.
+    assert!(
+        entries.len() >= 2,
+        "toc should list at least 2 entries (cloned docs), got: {}",
+        entries.len()
+    );
+
+    // Verify unique document IDs from the cloned repo are present
+    let doc_ids: std::collections::HashSet<&str> = entries
+        .iter()
+        .map(|e| e["document_id"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        doc_ids.len() >= 2,
+        "toc should list at least 2 unique documents, got: {doc_ids:?}"
+    );
+
+    // Cleanup
+    http_handle.abort();
+}
+
+// ---------------------------------------------------------------------------
+// R5.2: Error handling tests for iris_clone
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn iris_clone_not_configured_returns_error() {
+    let server = setup_server().await;
+    let result = call_tool(
+        &server,
+        "iris_clone",
+        json!({"repo": "https://github.com/octocat/Hello-World.git"}),
+    )
+    .await;
+
+    assert!(
+        result.is_error == Some(true),
+        "iris_clone should return error when not configured"
+    );
+
+    let text = extract_text(&result.content);
+    assert!(
+        text.contains("not available"),
+        "error should mention not available, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn iris_clone_nonexistent_repo_returns_user_friendly_error() {
+    // Skip if git is not installed.
+    let git_check = tokio::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .await;
+    if git_check.is_err() || !git_check.unwrap().status.success() {
+        eprintln!("git not installed, skipping iris_clone_nonexistent_repo test");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (server, _embedder, _index) = setup_server_with_git_fetcher(tmp.path()).await;
+
+    let result = call_tool(
+        &server,
+        "iris_clone",
+        json!({"repo": "/tmp/iris-test-nonexistent-repo-that-does-not-exist-xyz789.git"}),
+    )
+    .await;
+
+    // Should return an error result, not panic.
+    assert!(
+        result.is_error == Some(true),
+        "iris_clone with nonexistent repo should return error"
+    );
+
+    let text = extract_text(&result.content);
+    assert!(
+        text.contains("clone failed"),
+        "error should mention clone failure, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn iris_clone_empty_repo_url_returns_error() {
+    // Skip if git is not installed.
+    let git_check = tokio::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .await;
+    if git_check.is_err() || !git_check.unwrap().status.success() {
+        eprintln!("git not installed, skipping iris_clone_empty_repo_url test");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (server, _embedder, _index) = setup_server_with_git_fetcher(tmp.path()).await;
+
+    let result = call_tool(&server, "iris_clone", json!({"repo": ""})).await;
+
+    assert!(
+        result.is_error == Some(true),
+        "iris_clone with empty URL should return error"
+    );
+
+    let text = extract_text(&result.content);
+    assert!(
+        text.contains("clone failed") || text.contains("invalid"),
+        "error should indicate invalid input, got: {text}"
+    );
+}

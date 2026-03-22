@@ -549,16 +549,16 @@ phases:
 - id: R5
   name: Remote Pipeline Tests
   tagline: End-to-end validation of the remote fetching pipeline
-  status: pending
+  status: done
   problem: Remote fetching involves network I/O, git subprocesses, and cross-pipeline integration — needs thorough testing
   solution: Integration and E2E tests covering clone+ingest+survey flow, unified search across local and remote sources, and error handling for auth failures and missing repos
   tasks:
   - text: 'Integration test: clone a repo, ingest its docs, verify iris_survey returns relevant content from the cloned source'
-    checked: false
+    checked: true
   - text: 'E2E test: iris_clone + iris_fetch in the same session, verify iris_survey returns unified results from both local, web, and cloned sources'
-    checked: false
+    checked: true
   - text: 'Error handling tests: nonexistent repo URL returns user-friendly error, private repo without auth returns clear auth failure message, empty repo is handled gracefully'
-    checked: false
+    checked: true
 - id: C1
   name: Tree-sitter Foundation
   tagline: AST parsing infrastructure for structural code understanding
