@@ -39,7 +39,7 @@ use iris_core::analytics::Analytics;
 use iris_core::embedding::Embedder;
 use iris_core::git::GitFetcher;
 use iris_core::index::VectorIndex;
-use iris_core::ingestion::IngestionPipeline;
+use iris_core::ingestion::{IngestionPipeline, IngestionProgress};
 use iris_core::service::{
     CompressedItem, QueryError, QueryService, RelatedClaimResult, SurveyResult, SymbolRefResult,
 };
@@ -73,8 +73,8 @@ pub struct IrisServer {
     ingestion_pipeline: Arc<IngestionPipeline>,
     embedder: Option<Arc<dyn Embedder>>,
     index: Option<Arc<dyn VectorIndex>>,
-    /// Shared ingestion status: 0=pending, 1=running, 2=complete.
-    ingestion_status: Arc<std::sync::atomic::AtomicU8>,
+    /// Shared ingestion progress tracker.
+    ingestion_progress: Arc<IngestionProgress>,
 }
 
 /// Tool response wrapper that includes budget status alongside the result data.
@@ -95,6 +95,9 @@ struct ToolResponse<T: Serialize> {
     /// True when background corpus ingestion is still running.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     indexing_in_progress: bool,
+    /// Human-readable ingestion status message (e.g. "Indexing 12/42 files").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    indexing_message: Option<String>,
 }
 
 /// Wrapper for survey responses that includes both results and dedup metadata.
@@ -1184,10 +1187,7 @@ impl IrisServer {
 
                     // Report ingestion status when corpus is empty to help
                     // diagnose "0 documents" scenarios.
-                    let ingestion_status = match self
-                        .ingestion_status
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                    {
+                    let ingestion_status = match self.ingestion_progress.status() {
                         0 if total_documents == 0 => Some("pending".to_string()),
                         1 => Some("running".to_string()),
                         _ => None, // Don't clutter the response when complete
@@ -1643,7 +1643,7 @@ impl IrisServer {
             ingestion_pipeline: Arc::new(IngestionPipeline::new()),
             embedder: None,
             index: None,
-            ingestion_status: Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            ingestion_progress: Arc::new(IngestionProgress::new()),
         }
     }
 
@@ -1691,14 +1691,14 @@ impl IrisServer {
             ingestion_pipeline: Arc::new(IngestionPipeline::new()),
             embedder: None,
             index: None,
-            ingestion_status: Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            ingestion_progress: Arc::new(IngestionProgress::new()),
         }
     }
 
-    /// Get a clone of the ingestion status flag for use by background tasks.
+    /// Get a clone of the ingestion progress tracker for use by background tasks.
     #[must_use]
-    pub fn ingestion_status_arc(&self) -> Arc<std::sync::atomic::AtomicU8> {
-        Arc::clone(&self.ingestion_status)
+    pub fn ingestion_progress_arc(&self) -> Arc<IngestionProgress> {
+        Arc::clone(&self.ingestion_progress)
     }
 
     /// Enable web fetching on this server.
@@ -1792,16 +1792,22 @@ impl IrisServer {
         let alerts = session.drain_alerts();
         drop(session);
 
-        let indexing = self
-            .ingestion_status
-            .load(std::sync::atomic::Ordering::Relaxed)
-            == 1;
+        let progress = &self.ingestion_progress;
+        let indexing = progress.is_running();
+        let indexing_message = if indexing {
+            let done = progress.files_done();
+            let total = progress.files_total();
+            Some(format!("Indexing {done}/{total} files"))
+        } else {
+            None
+        };
 
         ToolResponse {
             data,
             budget_status,
             coherence_alerts: alerts,
             indexing_in_progress: indexing,
+            indexing_message,
         }
     }
 

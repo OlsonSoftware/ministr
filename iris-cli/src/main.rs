@@ -248,8 +248,8 @@ async fn cmd_serve(
         )?
     };
 
-    // Grab the ingestion status arc before .serve() consumes the server.
-    let ingestion_status = server.ingestion_status_arc();
+    // Grab the ingestion progress arc before .serve() consumes the server.
+    let ingestion_progress = server.ingestion_progress_arc();
 
     // Start MCP server FIRST so Claude Code doesn't time out.
     // Ingestion runs in background — tools return partial results until done.
@@ -267,7 +267,7 @@ async fn cmd_serve(
         let bg_embedder = Arc::clone(&ctx.embedder);
         let bg_index = Arc::clone(&ctx.index);
         let bg_index_dir = ctx.index_dir.clone();
-        ingestion_status.store(1, std::sync::atomic::Ordering::Relaxed);
+        let bg_progress = Arc::clone(&ingestion_progress);
         tokio::spawn(async move {
             match run_corpus_ingestion(
                 &bg_corpus_paths,
@@ -276,13 +276,16 @@ async fn cmd_serve(
                 &*bg_embedder,
                 &*bg_index,
                 &bg_index_dir,
+                &bg_progress,
             )
             .await
             {
                 Ok(()) => tracing::info!("background corpus ingestion complete"),
-                Err(e) => tracing::error!(error = %e, "background corpus ingestion failed"),
+                Err(e) => {
+                    tracing::error!(error = %e, "background corpus ingestion failed");
+                    bg_progress.complete();
+                }
             }
-            ingestion_status.store(2, std::sync::atomic::Ordering::Relaxed);
         });
     }
 
@@ -315,6 +318,7 @@ async fn cmd_index(
 
     let ctx = init_infrastructure(corpus_paths, config).await?;
 
+    let progress = Arc::new(iris_core::ingestion::IngestionProgress::new());
     run_corpus_ingestion(
         corpus_paths,
         &ctx.corpus_dir,
@@ -322,6 +326,7 @@ async fn cmd_index(
         &*ctx.embedder,
         &*ctx.index,
         &ctx.index_dir,
+        &progress,
     )
     .await?;
 
@@ -400,6 +405,7 @@ async fn run_corpus_ingestion(
     embedder: &dyn iris_core::embedding::Embedder,
     index: &dyn iris_core::index::VectorIndex,
     index_dir: &std::path::Path,
+    progress: &Arc<iris_core::ingestion::IngestionProgress>,
 ) -> Result<()> {
     use iris_core::config::{CorpusSource, classify_corpus_path};
 
@@ -424,7 +430,8 @@ async fn run_corpus_ingestion(
     );
 
     let start = std::time::Instant::now();
-    let pipeline = iris_core::ingestion::IngestionPipeline::new();
+    let pipeline =
+        iris_core::ingestion::IngestionPipeline::new().with_progress(Arc::clone(progress));
 
     // Ingest local paths.
     if !local_paths.is_empty() {

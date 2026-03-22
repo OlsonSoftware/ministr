@@ -648,10 +648,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Add x86_64-apple-darwin target to release matrix
-- [ ] Add just release recipe: bump versions, update CHANGELOG, commit + tag
-- [ ] Add install.sh script for curl-based binary installation
-- [ ] Add MCP smoke test to CI: initialize + tools/list via stdin
+- [x] Add x86_64-apple-darwin target to release matrix
+- [x] Add just release recipe: bump versions, update CHANGELOG, commit + tag
+- [x] Add install.sh script for curl-based binary installation
+- [x] Add MCP smoke test to CI: initialize + tools/list via stdin
 
 ---
 
@@ -663,8 +663,122 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Audit tracing levels — ingestion should WARN on 0 files, not just INFO
-- [ ] Comprehensive #[must_use] audit on public Result-returning functions
-- [ ] Run cargo deny check + cargo audit, fix any findings
-- [ ] Dead code cleanup: DeltaResponse in server.rs — remove or implement
+- [x] Audit tracing levels — ingestion should WARN on 0 files, not just INFO
+- [x] Comprehensive #[must_use] audit on public Result-returning functions
+- [x] Run cargo deny check + cargo audit, fix any findings
+- [x] Dead code cleanup: DeltaResponse in server.rs — remove or implement
+
+---
+
+## Phase BF1: Bug Fixes
+
+**Problem:** Survey dedup too aggressive, symbol references never populated
+
+**Solution:** Move dedup before truncation, extract cross-references during ingestion
+
+### Tasks
+
+- [x] Fix survey dedup: move exclusion before truncation via survey_excluding()
+- [x] Fix iris_references: extract use imports and impl relationships during code ingestion
+
+---
+
+## Phase H1: Operational Hardening ✦ "Fix the rough edges surfaced by real-world stress testing"
+
+**Problem:** Stress testing revealed stale results during background indexing, FK failures in ref insertion, and no quantized model option
+
+**Solution:** Clear ingestion status in responses, robust ref insertion with graceful FK skip, configurable quantized embeddings
+
+### Tasks
+
+- [x] Surface ingestion status in tool responses: show "Indexing N/M files" message when background ingestion is in progress
+- [x] Harden ref insertion: verify both from/to symbol IDs exist before insert, use module-level anchor for imports
+- [x] Add quantized embedding model support: configurable model variant (e.g. AllMiniLML6V2Q) in config.toml
+
+---
+
+## Phase S1: Hybrid Search ✦ "Catch what dense embeddings miss with hybrid dense+sparse search"
+
+**Problem:** Dense-only vector search misses keyword-heavy queries and exact term matches
+
+**Solution:** Add SPLADE sparse embeddings and BM25, fuse with Reciprocal Rank Fusion for hybrid dense+sparse retrieval
+
+### Tasks
+
+- [ ] Add SPLADE sparse embedding via fastembed-rs SparseTextEmbedding
+- [ ] Build sparse inverted index alongside HNSW dense index for keyword-level matching
+- [ ] Implement Reciprocal Rank Fusion (RRF) to merge dense + sparse retrieval results
+- [ ] Update survey pipeline to use hybrid search with configurable dense/sparse weights
+
+---
+
+## Phase S2: Reranking ✦ "Precision-refine search results with cross-encoder reranking"
+
+**Problem:** First-stage retrieval returns noisy candidates — no precision refinement before delivery
+
+**Solution:** Add cross-encoder reranking via fastembed-rs between over-fetch and truncation in the survey pipeline
+
+### Tasks
+
+- [ ] Integrate fastembed-rs cross-encoder reranker into iris-core
+- [ ] Add reranking stage between over-fetch and truncation in MultiResolutionSearch
+- [ ] Make reranking configurable: on/off toggle, model selection, rerank_top_k parameter
+
+---
+
+## Phase S3: Retrieval Evaluation ✦ "Measure what matters — retrieval quality with automated benchmarks"
+
+**Problem:** No way to measure retrieval quality or detect regressions from search pipeline changes
+
+**Solution:** Curated benchmark with gold relevance labels, automated precision/MRR/nDCG metrics, CI regression gate
+
+### Tasks
+
+- [ ] Create curated retrieval benchmark: 50+ queries with gold-standard relevant section IDs
+- [ ] Implement automated retrieval metrics: precision@k, MRR, nDCG in eval_retrieval test
+- [ ] Add CI regression gate: fail build if retrieval quality drops below threshold
+
+---
+
+## Phase M1: MCP Protocol Evolution ✦ "Adopt MCP 2025 spec features for richer agent interaction"
+
+**Problem:** iris uses stdio-only transport with no push notifications, resource subscriptions, or async task support
+
+**Solution:** Add progress notifications, Streamable HTTP transport, resource subscriptions for coherence, async tasks for long ops
+
+### Tasks
+
+- [ ] Send progress notifications during background ingestion (notifications/progress with file count)
+- [ ] Add Streamable HTTP (SSE) transport alongside stdio via rmcp for remote/multi-client deployments
+- [ ] Implement resource subscriptions for iris://status — push coherence alerts when files change
+- [ ] Async task support for iris_fetch and iris_clone — return task handle, poll for completion
+
+---
+
+## Phase C8: Code Intelligence Depth ✦ "From import tracking to full call graph and cross-language refs"
+
+**Problem:** iris_references only extracts imports — no call graph, type usage, or multi-language support
+
+**Solution:** Extract call_expression for call graphs, type references from signatures, extend to Python/JS/TS/Go
+
+### Tasks
+
+- [ ] Extract call graph via tree-sitter call_expression nodes, resolve callee against symbol table
+- [ ] Extract type usage references from function parameter and return types in signatures
+- [ ] Multi-language ref extraction: Python imports, JS/TS imports/requires, Go imports
+- [ ] Add cyclomatic complexity metric and impact analysis (transitive caller count) to iris_symbols
+
+---
+
+## Phase B2: Budget Intelligence ✦ "Proactive budget management that anticipates context pressure"
+
+**Problem:** Budget management is reactive — agent must explicitly call iris_budget to get eviction recommendations
+
+**Solution:** Proactive eviction recommendations, LLM-assisted abstractive compression via sampling, attention-position-aware scoring
+
+### Tasks
+
+- [ ] Proactive eviction recommendations: attach suggestions to every tool response when budget pressure > elevated
+- [ ] LLM-assisted abstractive compression via MCP sampling — 90%+ compression ratios vs extractive 60-80%
+- [ ] Attention-position-aware eviction scoring: weight mid-conversation content higher for eviction candidates
 

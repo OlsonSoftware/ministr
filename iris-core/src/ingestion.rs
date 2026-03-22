@@ -5,6 +5,8 @@
 //! storage. The pipeline is generic over the parser and storage implementations.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, instrument, warn};
@@ -66,6 +68,94 @@ pub struct IngestionStats {
     pub total_embeddings: usize,
 }
 
+/// Shared progress tracker for background ingestion.
+///
+/// Uses atomics so it can be read from tool handlers while the ingestion
+/// task updates it concurrently. Status values: 0=pending, 1=running, 2=complete.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::ingestion::IngestionProgress;
+/// use std::sync::Arc;
+///
+/// let progress = Arc::new(IngestionProgress::new());
+/// progress.start(42);
+/// assert_eq!(progress.files_total(), 42);
+/// assert_eq!(progress.files_done(), 0);
+/// assert!(progress.is_running());
+///
+/// progress.increment_done();
+/// assert_eq!(progress.files_done(), 1);
+///
+/// progress.complete();
+/// assert!(!progress.is_running());
+/// ```
+pub struct IngestionProgress {
+    status: std::sync::atomic::AtomicU8,
+    files_total: AtomicUsize,
+    files_done: AtomicUsize,
+}
+
+impl IngestionProgress {
+    /// Create a new progress tracker in the pending state.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            status: std::sync::atomic::AtomicU8::new(0),
+            files_total: AtomicUsize::new(0),
+            files_done: AtomicUsize::new(0),
+        }
+    }
+
+    /// Transition to the running state with a known file count.
+    pub fn start(&self, total_files: usize) {
+        self.files_total.store(total_files, Ordering::Relaxed);
+        self.files_done.store(0, Ordering::Relaxed);
+        self.status.store(1, Ordering::Relaxed);
+    }
+
+    /// Mark one more file as processed (indexed, skipped, or failed).
+    pub fn increment_done(&self) {
+        self.files_done.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Transition to the complete state.
+    pub fn complete(&self) {
+        self.status.store(2, Ordering::Relaxed);
+    }
+
+    /// Returns `true` while ingestion is running.
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        self.status.load(Ordering::Relaxed) == 1
+    }
+
+    /// Total files discovered for ingestion.
+    #[must_use]
+    pub fn files_total(&self) -> usize {
+        self.files_total.load(Ordering::Relaxed)
+    }
+
+    /// Files processed so far.
+    #[must_use]
+    pub fn files_done(&self) -> usize {
+        self.files_done.load(Ordering::Relaxed)
+    }
+
+    /// Raw status value (0=pending, 1=running, 2=complete).
+    #[must_use]
+    pub fn status(&self) -> u8 {
+        self.status.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for IngestionProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Maximum number of sentences in a section-level summary.
 const SUMMARY_MAX_SENTENCES: usize = 3;
 
@@ -105,6 +195,8 @@ pub struct IngestionPipeline {
     claim_extractor: HeuristicClaimExtractor,
     summary_generator: ExtractiveSummaryGenerator,
     relationship_detector: HeuristicRelationshipDetector,
+    /// Optional shared progress tracker for background ingestion.
+    progress: Option<Arc<IngestionProgress>>,
 }
 
 impl IngestionPipeline {
@@ -120,6 +212,7 @@ impl IngestionPipeline {
             claim_extractor: HeuristicClaimExtractor::new(),
             summary_generator: ExtractiveSummaryGenerator::new(),
             relationship_detector: HeuristicRelationshipDetector::new(),
+            progress: None,
         }
     }
 
@@ -134,7 +227,15 @@ impl IngestionPipeline {
             claim_extractor: HeuristicClaimExtractor::new(),
             summary_generator: ExtractiveSummaryGenerator::new(),
             relationship_detector: HeuristicRelationshipDetector::new(),
+            progress: None,
         }
+    }
+
+    /// Attach a shared progress tracker for background ingestion monitoring.
+    #[must_use]
+    pub fn with_progress(mut self, progress: Arc<IngestionProgress>) -> Self {
+        self.progress = Some(progress);
+        self
     }
 
     /// Set the minimum section token threshold for section coalescing.
@@ -673,6 +774,10 @@ impl IngestionPipeline {
             );
         }
 
+        if let Some(ref progress) = self.progress {
+            progress.start(files.len());
+        }
+
         for file_path in &files {
             let relative = file_path
                 .strip_prefix(dir)
@@ -698,6 +803,10 @@ impl IngestionPipeline {
                     warn!(path = %relative, error = %e, "failed to ingest file");
                     stats.files_failed += 1;
                 }
+            }
+
+            if let Some(ref progress) = self.progress {
+                progress.increment_done();
             }
         }
 
@@ -731,6 +840,10 @@ impl IngestionPipeline {
             failed = stats.files_failed,
             "ingestion with embeddings complete"
         );
+
+        if let Some(ref progress) = self.progress {
+            progress.complete();
+        }
 
         Ok(stats)
     }
@@ -779,6 +892,10 @@ impl IngestionPipeline {
             );
         }
 
+        if let Some(ref progress) = self.progress {
+            progress.start(files.len());
+        }
+
         for file_path in &files {
             let relative = compute_relative_path(file_path, paths);
 
@@ -800,6 +917,10 @@ impl IngestionPipeline {
                     warn!(path = %relative, error = %e, "failed to ingest file");
                     stats.files_failed += 1;
                 }
+            }
+
+            if let Some(ref progress) = self.progress {
+                progress.increment_done();
             }
         }
 
@@ -836,6 +957,10 @@ impl IngestionPipeline {
             failed = stats.files_failed,
             "multi-path ingestion with embeddings complete"
         );
+
+        if let Some(ref progress) = self.progress {
+            progress.complete();
+        }
 
         Ok(stats)
     }
@@ -1217,7 +1342,8 @@ where
 ///
 /// Extracts `use` imports and `impl Trait for Type` relationships from the AST,
 /// resolves target names against known symbols, and stores the resulting
-/// `SymbolRefRecord` values.
+/// `SymbolRefRecord` values. Refs that can't be resolved (external crates,
+/// missing symbols) are silently skipped.
 async fn resolve_and_store_refs<S: Storage + ?Sized>(
     tree: &tree_sitter::Tree,
     source: &[u8],
@@ -1230,8 +1356,29 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
         return Ok(0);
     }
 
+    // Build a set of local symbol IDs for fast existence checks.
+    let local_id_set: std::collections::HashSet<&SymbolId> =
+        local_symbols.iter().map(|s| &s.id).collect();
+
     // Delete existing refs for this file before inserting new ones
     let _ = storage.delete_refs_for_file(file_path).await;
+
+    // For import refs, we need a valid "from" symbol that exists in the DB.
+    // Prefer a module-level symbol as the anchor (most meaningful for imports),
+    // then fall back to the first top-level type/function definition.
+    let file_anchor = local_symbols
+        .iter()
+        .find(|s| s.kind == "mod")
+        .or_else(|| {
+            local_symbols.iter().find(|s| {
+                matches!(
+                    s.kind.as_str(),
+                    "struct" | "enum" | "trait" | "function" | "type"
+                )
+            })
+        })
+        .or(local_symbols.first())
+        .map(|s| s.id.clone());
 
     let mut resolved = Vec::new();
 
@@ -1239,25 +1386,24 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
         // Determine the "from" symbol ID
         let from_id = match &raw.from_context {
             // For impl refs: the from_context is the implementing type name
-            Some(type_name) => {
-                // Look in local symbols first
-                local_symbols
-                    .iter()
-                    .find(|s| {
-                        s.name == *type_name
-                            && (s.kind == "struct" || s.kind == "enum" || s.kind == "type")
-                    })
-                    .map(|s| s.id.clone())
-            }
-            // For imports: use a synthetic file-level symbol ID
-            None => Some(SymbolId(format!("sym-{file_path}"))),
+            Some(type_name) => local_symbols
+                .iter()
+                .find(|s| {
+                    s.name == *type_name
+                        && (s.kind == "struct" || s.kind == "enum" || s.kind == "type")
+                })
+                .map(|s| s.id.clone()),
+            // For imports: use the file's anchor symbol
+            None => file_anchor.clone(),
         };
 
         let Some(from_id) = from_id else {
             continue;
         };
 
-        // Resolve the target symbol by name
+        // Resolve the target symbol by name — must be a primary definition,
+        // not an impl block or nested item (those have composite names that
+        // won't match simple use-path imports).
         let target_filter = SymbolFilter {
             name: Some(raw.target_name.clone()),
             ..SymbolFilter::default()
@@ -1267,19 +1413,42 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
             continue;
         };
 
-        if matches.is_empty() {
-            continue; // Target is likely from an external crate
+        // Filter to primary definitions (structs, enums, traits, functions, types)
+        // to avoid matching enum variants or impl methods whose symbol IDs
+        // contain :: separators that violate FK constraints.
+        let primary: Vec<_> = matches
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.kind.as_str(),
+                    "struct" | "enum" | "trait" | "function" | "type" | "const" | "static" | "mod"
+                )
+            })
+            .collect();
+
+        let target = match primary.len() {
+            0 => continue, // No valid target found
+            1 => primary[0],
+            _ => {
+                // Prefer a target in a different file (cross-file ref is more useful)
+                primary
+                    .iter()
+                    .find(|s| s.file_path != file_path)
+                    .copied()
+                    .unwrap_or(primary[0])
+            }
+        };
+
+        // Skip self-references
+        if from_id == target.id {
+            continue;
         }
 
-        // Pick the best match: prefer symbols in a file whose path aligns with
-        // the import path, but fall back to the first match.
-        let target = if matches.len() == 1 {
-            &matches[0]
-        } else {
-            // For implements: match the trait name exactly
-            // For imports: any symbol with that name is a valid match
-            &matches[0]
-        };
+        // Verify the from_id exists in our local symbols (it should, since
+        // it was derived from local_symbols, but guard against edge cases).
+        if !local_id_set.contains(&from_id) {
+            continue;
+        }
 
         resolved.push(SymbolRefRecord {
             from_symbol_id: from_id,
@@ -1292,19 +1461,28 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
         return Ok(0);
     }
 
-    let count = resolved.len();
-    storage
-        .insert_symbol_refs(&resolved)
-        .await
-        .map_err(IngestionError::from)?;
+    // Insert refs one at a time, skipping any that violate FK constraints
+    // (target symbol may have been deleted or renamed between resolution and insert)
+    let mut inserted = 0;
+    for r in &resolved {
+        if storage
+            .insert_symbol_refs(std::slice::from_ref(r))
+            .await
+            .is_ok()
+        {
+            inserted += 1;
+        }
+    }
 
-    debug!(
-        refs = count,
-        path = %file_path,
-        "resolved symbol cross-references"
-    );
+    if inserted > 0 {
+        debug!(
+            refs = inserted,
+            path = %file_path,
+            "resolved symbol cross-references"
+        );
+    }
 
-    Ok(count)
+    Ok(inserted)
 }
 
 /// Delete all vectors associated with a document from the index.
@@ -2963,5 +3141,110 @@ pub fn compute_hash(content: &str) -> String {
             });
         let stub_vid = VectorId::symbol_stub(pipeline_struct.id.as_ref());
         assert_eq!(stub_vid.resolution(), Resolution::SymbolStub);
+    }
+
+    // --- IngestionProgress ---
+
+    #[test]
+    fn progress_lifecycle() {
+        let progress = IngestionProgress::new();
+        assert_eq!(progress.status(), 0);
+        assert!(!progress.is_running());
+
+        progress.start(10);
+        assert!(progress.is_running());
+        assert_eq!(progress.files_total(), 10);
+        assert_eq!(progress.files_done(), 0);
+
+        for _ in 0..5 {
+            progress.increment_done();
+        }
+        assert_eq!(progress.files_done(), 5);
+        assert!(progress.is_running());
+
+        progress.complete();
+        assert!(!progress.is_running());
+        assert_eq!(progress.status(), 2);
+    }
+
+    #[test]
+    fn progress_default() {
+        let progress = IngestionProgress::default();
+        assert_eq!(progress.status(), 0);
+        assert_eq!(progress.files_total(), 0);
+        assert_eq!(progress.files_done(), 0);
+    }
+
+    // --- resolve_and_store_refs hardening ---
+
+    #[tokio::test]
+    async fn resolve_refs_prefers_mod_anchor_for_imports() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        // Insert symbols: a mod symbol and a struct symbol in the same file
+        let mod_sym = SymbolRecord {
+            id: SymbolId::from("sym-test.rs::test_mod".to_string()),
+            file_path: "test.rs".to_string(),
+            name: "test_mod".to_string(),
+            kind: "mod".to_string(),
+            visibility: "pub".to_string(),
+            module_path: String::new(),
+            line_start: 1,
+            line_end: 1,
+            signature: String::new(),
+            doc_comment: None,
+        };
+        let struct_sym = SymbolRecord {
+            id: SymbolId::from("sym-test.rs::MyStruct".to_string()),
+            file_path: "test.rs".to_string(),
+            name: "MyStruct".to_string(),
+            kind: "struct".to_string(),
+            visibility: "pub".to_string(),
+            module_path: String::new(),
+            line_start: 5,
+            line_end: 10,
+            signature: String::new(),
+            doc_comment: None,
+        };
+        // A target symbol in another file
+        let target_sym = SymbolRecord {
+            id: SymbolId::from("sym-other.rs::OtherType".to_string()),
+            file_path: "other.rs".to_string(),
+            name: "OtherType".to_string(),
+            kind: "struct".to_string(),
+            visibility: "pub".to_string(),
+            module_path: String::new(),
+            line_start: 1,
+            line_end: 5,
+            signature: String::new(),
+            doc_comment: None,
+        };
+
+        storage
+            .insert_symbols(&[mod_sym.clone(), struct_sym.clone(), target_sym])
+            .await
+            .unwrap();
+
+        // Parse a Rust file with a `use` import
+        let source = b"use crate::OtherType;\n\npub struct MyStruct {}\n";
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(source, None).unwrap();
+
+        let local_symbols = vec![mod_sym.clone(), struct_sym];
+        let inserted = resolve_and_store_refs(&tree, source, "test.rs", &local_symbols, &storage)
+            .await
+            .unwrap();
+
+        assert_eq!(inserted, 1, "should resolve one import ref");
+
+        // Verify the ref uses the mod symbol as the anchor
+        let refs = storage.query_refs(&mod_sym.id, None).await.unwrap();
+        assert!(
+            !refs.is_empty(),
+            "the mod symbol should be the from_symbol in the ref"
+        );
     }
 }

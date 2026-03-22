@@ -35,7 +35,7 @@ topic_window = 5
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `data_dir` | path | `~/.iris` | Root directory for all iris data |
-| `default_model` | string | `"all-MiniLM-L6-v2"` | Embedding model for new corpora |
+| `default_model` | string | `"all-MiniLM-L6-v2"` | Embedding model for new corpora (see [supported models](#supported-embedding-models)) |
 | `log_format` | string | `"pretty"` | Log format: `"pretty"` or `"json"` |
 | `default_context_budget` | integer | `100000` | Token budget for new sessions |
 | `prefetch.enabled` | boolean | `true` | Enable speculative prefetching |
@@ -102,6 +102,29 @@ Options:
 ```
 
 CLI arguments override config file values. If `--corpus` is provided, iris indexes that directory directly without requiring a pre-configured corpus.
+
+## Supported Embedding Models
+
+iris supports the following embedding models via `fastembed`. Quantized variants (suffix `-q`) use INT8 quantization for faster inference and smaller model files at a slight quality trade-off.
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `all-MiniLM-L6-v2` | 384 | Default — fast, general-purpose |
+| `all-MiniLM-L6-v2-q` | 384 | Quantized variant |
+| `all-MiniLM-L12-v2` | 384 | Slightly higher quality |
+| `all-MiniLM-L12-v2-q` | 384 | Quantized variant |
+| `bge-small-en-v1.5` | 384 | BAAI small English |
+| `bge-small-en-v1.5-q` | 384 | Quantized variant |
+| `bge-base-en-v1.5` | 768 | BAAI base English |
+| `bge-base-en-v1.5-q` | 768 | Quantized variant |
+| `bge-large-en-v1.5` | 1024 | BAAI large English |
+| `bge-large-en-v1.5-q` | 1024 | Quantized variant |
+
+To use a quantized model, set `default_model` in `config.toml`:
+
+```toml
+default_model = "all-MiniLM-L6-v2-q"
+```
 
 ## Environment Variables
 
