@@ -16,6 +16,41 @@ use crate::error::GitError;
 /// Name of the metadata file written into each clone directory.
 const METADATA_FILENAME: &str = "iris-clone.toml";
 
+/// Result of a git remote staleness check.
+///
+/// Indicates whether a cached clone's commit SHA matches the current
+/// remote HEAD.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::git::fetcher::GitStalenessResult;
+///
+/// let fresh = GitStalenessResult::Fresh { sha: "abc123".into() };
+/// assert!(matches!(fresh, GitStalenessResult::Fresh { .. }));
+///
+/// let stale = GitStalenessResult::Stale {
+///     cached_sha: "abc123".into(),
+///     remote_sha: "def456".into(),
+/// };
+/// assert!(matches!(stale, GitStalenessResult::Stale { .. }));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitStalenessResult {
+    /// The cached clone is up to date with the remote.
+    Fresh {
+        /// The matching SHA.
+        sha: String,
+    },
+    /// The cached clone is behind the remote.
+    Stale {
+        /// The cached commit SHA.
+        cached_sha: String,
+        /// The current remote HEAD SHA.
+        remote_sha: String,
+    },
+}
+
 /// Configuration for the git fetcher.
 ///
 /// # Examples
@@ -179,6 +214,59 @@ impl GitFetcher {
                 stderr: "no output from ls-remote".into(),
             })?;
         Ok(sha)
+    }
+
+    /// Check whether a cached git clone is stale by comparing the cached
+    /// commit SHA against the current remote HEAD.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] if the `git ls-remote` command fails.
+    #[instrument(skip(self), fields(repo = %repo_url))]
+    pub async fn check_staleness(
+        &self,
+        repo_url: &str,
+        branch: Option<&str>,
+        cached_sha: &str,
+    ) -> Result<GitStalenessResult, GitError> {
+        let remote_sha = self.remote_head_sha(repo_url, branch).await?;
+        if remote_sha == cached_sha {
+            Ok(GitStalenessResult::Fresh { sha: remote_sha })
+        } else {
+            Ok(GitStalenessResult::Stale {
+                cached_sha: cached_sha.to_owned(),
+                remote_sha,
+            })
+        }
+    }
+
+    /// Refresh a cached clone if the remote HEAD has changed.
+    ///
+    /// Checks staleness first; if stale, performs a fresh clone and returns
+    /// the new [`CloneResult`]. If fresh, returns `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] if the staleness check or re-clone fails.
+    #[instrument(skip(self), fields(repo = %repo_url))]
+    pub async fn refresh(
+        &self,
+        repo_url: &str,
+        paths: Option<&[String]>,
+        branch: Option<&str>,
+        cached_sha: &str,
+    ) -> Result<Option<CloneResult>, GitError> {
+        match self.check_staleness(repo_url, branch, cached_sha).await? {
+            GitStalenessResult::Fresh { .. } => {
+                debug!(repo = %repo_url, "clone is fresh, no refresh needed");
+                Ok(None)
+            }
+            GitStalenessResult::Stale { remote_sha, .. } => {
+                info!(repo = %repo_url, remote_sha = %remote_sha, "clone is stale, re-cloning");
+                let result = self.clone(repo_url, paths, branch).await?;
+                Ok(Some(result))
+            }
+        }
     }
 
     /// Compute the clone directory path for a given repository URL.
@@ -673,5 +761,105 @@ mod tests {
                 eprintln!("clone failed (network?): {e}, skipping assertions");
             }
         }
+    }
+
+    #[test]
+    fn git_staleness_result_fresh() {
+        let result = GitStalenessResult::Fresh {
+            sha: "abc123".into(),
+        };
+        assert!(matches!(result, GitStalenessResult::Fresh { .. }));
+        if let GitStalenessResult::Fresh { sha } = result {
+            assert_eq!(sha, "abc123");
+        }
+    }
+
+    #[test]
+    fn git_staleness_result_stale() {
+        let result = GitStalenessResult::Stale {
+            cached_sha: "abc123".into(),
+            remote_sha: "def456".into(),
+        };
+        assert!(matches!(result, GitStalenessResult::Stale { .. }));
+        assert_ne!(
+            GitStalenessResult::Fresh {
+                sha: "abc123".into()
+            },
+            result,
+        );
+    }
+
+    #[tokio::test]
+    async fn check_staleness_real_repo() {
+        // Uses a real public repo — skip if no network or git unavailable.
+        if check_git_installed().await.is_err() {
+            eprintln!("git not installed, skipping check_staleness_real_repo");
+            return;
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config = GitFetcherConfig {
+            remote_dir: tmp.path().to_path_buf(),
+        };
+        let fetcher = GitFetcher::new(config);
+        let repo_url = "https://github.com/octocat/Hello-World.git";
+
+        // Get the real remote SHA.
+        let remote_sha = match fetcher.remote_head_sha(repo_url, None).await {
+            Ok(sha) => sha,
+            Err(e) => {
+                eprintln!("ls-remote failed (network?): {e}, skipping");
+                return;
+            }
+        };
+
+        // Same SHA → Fresh.
+        let result = fetcher
+            .check_staleness(repo_url, None, &remote_sha)
+            .await
+            .unwrap();
+        assert!(
+            matches!(result, GitStalenessResult::Fresh { .. }),
+            "expected Fresh, got {result:?}"
+        );
+
+        // Fake old SHA → Stale.
+        let result = fetcher
+            .check_staleness(repo_url, None, "0000000000000000000000000000000000000000")
+            .await
+            .unwrap();
+        assert!(
+            matches!(result, GitStalenessResult::Stale { .. }),
+            "expected Stale, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_returns_none_when_fresh() {
+        if check_git_installed().await.is_err() {
+            eprintln!("git not installed, skipping refresh_returns_none_when_fresh");
+            return;
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config = GitFetcherConfig {
+            remote_dir: tmp.path().to_path_buf(),
+        };
+        let fetcher = GitFetcher::new(config);
+        let repo_url = "https://github.com/octocat/Hello-World.git";
+
+        let remote_sha = match fetcher.remote_head_sha(repo_url, None).await {
+            Ok(sha) => sha,
+            Err(e) => {
+                eprintln!("ls-remote failed (network?): {e}, skipping");
+                return;
+            }
+        };
+
+        let result = fetcher
+            .refresh(repo_url, None, None, &remote_sha)
+            .await
+            .unwrap();
+        assert!(result.is_none(), "expected None for fresh repo");
     }
 }

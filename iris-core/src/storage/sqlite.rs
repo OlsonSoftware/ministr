@@ -12,8 +12,8 @@ use tracing::instrument;
 
 use super::schema::{configure_connection, run_migrations};
 use super::traits::{
-    ClaimRecord, CoAccessRecord, CorpusStats, DocumentRecord, FileHashRecord, RelatedClaimRecord,
-    SectionAccessStat, SectionRecord, Storage, WebCacheRecord,
+    ClaimRecord, CoAccessRecord, CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord,
+    RelatedClaimRecord, SectionAccessStat, SectionRecord, Storage, WebCacheRecord,
 };
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
@@ -1114,6 +1114,128 @@ impl Storage for SqliteStorage {
                 .execute(
                     "DELETE FROM web_cache WHERE source_url = ?1",
                     rusqlite::params![url],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            Ok(affected > 0)
+        })
+        .await
+    }
+
+    // -- Git cache --
+
+    async fn upsert_git_cache(&self, record: &GitCacheRecord) -> Result<(), StorageError> {
+        let record = record.clone();
+        let paths_json =
+            serde_json::to_string(&record.checked_out_paths).unwrap_or_else(|_| "[]".to_string());
+        self.with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO git_cache (repo_url, branch, commit_sha, clone_timestamp, clone_dir, checked_out_paths)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(repo_url) DO UPDATE SET
+                    branch = excluded.branch,
+                    commit_sha = excluded.commit_sha,
+                    clone_timestamp = excluded.clone_timestamp,
+                    clone_dir = excluded.clone_dir,
+                    checked_out_paths = excluded.checked_out_paths",
+                rusqlite::params![
+                    record.repo_url,
+                    record.branch,
+                    record.commit_sha,
+                    record.clone_timestamp,
+                    record.clone_dir,
+                    paths_json,
+                ],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: format!("failed to upsert git cache: {e}"),
+            })?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_git_cache(&self, repo_url: &str) -> Result<Option<GitCacheRecord>, StorageError> {
+        let repo_url = repo_url.to_owned();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT repo_url, branch, commit_sha, clone_timestamp, clone_dir, checked_out_paths
+                     FROM git_cache WHERE repo_url = ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let result = stmt
+                .query_row(rusqlite::params![repo_url], |row| {
+                    let paths_json: String = row.get(5)?;
+                    let checked_out_paths: Vec<String> =
+                        serde_json::from_str(&paths_json).unwrap_or_default();
+                    Ok(GitCacheRecord {
+                        repo_url: row.get(0)?,
+                        branch: row.get(1)?,
+                        commit_sha: row.get(2)?,
+                        clone_timestamp: row.get(3)?,
+                        clone_dir: row.get(4)?,
+                        checked_out_paths,
+                    })
+                })
+                .optional()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            Ok(result)
+        })
+        .await
+    }
+
+    async fn list_git_cache(&self) -> Result<Vec<GitCacheRecord>, StorageError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT repo_url, branch, commit_sha, clone_timestamp, clone_dir, checked_out_paths
+                     FROM git_cache ORDER BY clone_timestamp DESC",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let rows = stmt
+                .query_map([], |row| {
+                    let paths_json: String = row.get(5)?;
+                    let checked_out_paths: Vec<String> =
+                        serde_json::from_str(&paths_json).unwrap_or_default();
+                    Ok(GitCacheRecord {
+                        repo_url: row.get(0)?,
+                        branch: row.get(1)?,
+                        commit_sha: row.get(2)?,
+                        clone_timestamp: row.get(3)?,
+                        clone_dir: row.get(4)?,
+                        checked_out_paths,
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })
+        })
+        .await
+    }
+
+    async fn delete_git_cache(&self, repo_url: &str) -> Result<bool, StorageError> {
+        let repo_url = repo_url.to_owned();
+        self.with_conn(move |conn| {
+            let affected = conn
+                .execute(
+                    "DELETE FROM git_cache WHERE repo_url = ?1",
+                    rusqlite::params![repo_url],
                 )
                 .map_err(|e| StorageError::Database {
                     reason: e.to_string(),

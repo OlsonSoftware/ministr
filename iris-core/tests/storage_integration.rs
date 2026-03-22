@@ -310,7 +310,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 5);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 6);
 }
 
 #[tokio::test]
@@ -951,4 +951,151 @@ async fn web_cache_optional_fields_are_nullable() {
     assert!(retrieved.etag.is_none());
     assert!(retrieved.last_modified.is_none());
     assert!(retrieved.content_type.is_none());
+}
+
+// --- Git cache CRUD tests ---
+
+#[tokio::test]
+async fn git_cache_upsert_and_get() {
+    use iris_core::storage::GitCacheRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let record = GitCacheRecord {
+        repo_url: "https://github.com/user/repo.git".into(),
+        branch: Some("main".into()),
+        commit_sha: "abc123def456".into(),
+        clone_timestamp: "1711036800".into(),
+        clone_dir: "/tmp/iris/remote/abcdef1234567890".into(),
+        checked_out_paths: vec!["docs".into(), "src".into()],
+    };
+    storage.upsert_git_cache(&record).await.unwrap();
+
+    let retrieved = storage
+        .get_git_cache("https://github.com/user/repo.git")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retrieved.repo_url, record.repo_url);
+    assert_eq!(retrieved.branch, record.branch);
+    assert_eq!(retrieved.commit_sha, record.commit_sha);
+    assert_eq!(retrieved.clone_dir, record.clone_dir);
+    assert_eq!(retrieved.checked_out_paths, record.checked_out_paths);
+}
+
+#[tokio::test]
+async fn git_cache_upsert_updates_on_conflict() {
+    use iris_core::storage::GitCacheRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let repo_url = "https://github.com/user/repo.git";
+
+    let record_v1 = GitCacheRecord {
+        repo_url: repo_url.into(),
+        branch: Some("main".into()),
+        commit_sha: "sha_v1".into(),
+        clone_timestamp: "1000".into(),
+        clone_dir: "/tmp/clone-v1".into(),
+        checked_out_paths: vec![],
+    };
+    storage.upsert_git_cache(&record_v1).await.unwrap();
+
+    let record_v2 = GitCacheRecord {
+        repo_url: repo_url.into(),
+        branch: Some("main".into()),
+        commit_sha: "sha_v2".into(),
+        clone_timestamp: "2000".into(),
+        clone_dir: "/tmp/clone-v2".into(),
+        checked_out_paths: vec!["docs".into()],
+    };
+    storage.upsert_git_cache(&record_v2).await.unwrap();
+
+    let retrieved = storage.get_git_cache(repo_url).await.unwrap().unwrap();
+    assert_eq!(retrieved.commit_sha, "sha_v2");
+    assert_eq!(retrieved.clone_dir, "/tmp/clone-v2");
+    assert_eq!(retrieved.checked_out_paths, vec!["docs".to_string()]);
+}
+
+#[tokio::test]
+async fn git_cache_list_returns_all() {
+    use iris_core::storage::GitCacheRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    for i in 0..3 {
+        let record = GitCacheRecord {
+            repo_url: format!("https://github.com/user/repo-{i}.git"),
+            branch: None,
+            commit_sha: format!("sha_{i}"),
+            clone_timestamp: format!("{}", 1000 + i),
+            clone_dir: format!("/tmp/clone-{i}"),
+            checked_out_paths: vec![],
+        };
+        storage.upsert_git_cache(&record).await.unwrap();
+    }
+
+    let all = storage.list_git_cache().await.unwrap();
+    assert_eq!(all.len(), 3);
+}
+
+#[tokio::test]
+async fn git_cache_delete() {
+    use iris_core::storage::GitCacheRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let repo_url = "https://github.com/user/repo.git";
+
+    let record = GitCacheRecord {
+        repo_url: repo_url.into(),
+        branch: None,
+        commit_sha: "sha".into(),
+        clone_timestamp: "1000".into(),
+        clone_dir: "/tmp/clone".into(),
+        checked_out_paths: vec![],
+    };
+    storage.upsert_git_cache(&record).await.unwrap();
+
+    let deleted = storage.delete_git_cache(repo_url).await.unwrap();
+    assert!(deleted);
+
+    let retrieved = storage.get_git_cache(repo_url).await.unwrap();
+    assert!(retrieved.is_none());
+
+    let deleted_again = storage.delete_git_cache(repo_url).await.unwrap();
+    assert!(!deleted_again);
+}
+
+#[tokio::test]
+async fn git_cache_get_nonexistent_returns_none() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let result = storage
+        .get_git_cache("https://github.com/user/nope.git")
+        .await
+        .unwrap();
+    assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn git_cache_no_branch_is_nullable() {
+    use iris_core::storage::GitCacheRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let record = GitCacheRecord {
+        repo_url: "https://github.com/user/repo.git".into(),
+        branch: None,
+        commit_sha: "sha".into(),
+        clone_timestamp: "1000".into(),
+        clone_dir: "/tmp/clone".into(),
+        checked_out_paths: vec![],
+    };
+    storage.upsert_git_cache(&record).await.unwrap();
+
+    let retrieved = storage
+        .get_git_cache("https://github.com/user/repo.git")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(retrieved.branch.is_none());
+    assert!(retrieved.checked_out_paths.is_empty());
 }

@@ -536,16 +536,16 @@ phases:
 - id: R4
   name: Remote Source Staleness
   tagline: Detect and refresh stale remote sources automatically
-  status: pending
+  status: done
   problem: Cloned repos go stale as upstream commits — agents need to know when their cached source is outdated
   solution: Track git remote HEAD SHA per clone, compare via git ls-remote on refresh, and unify with web staleness into a single iris_refresh mechanism
   tasks:
   - text: 'Implement git remote staleness check: `git ls-remote <repo> HEAD` to get current remote SHA, compare with cached clone SHA'
-    checked: false
+    checked: true
   - text: Unify web and git staleness into `iris_refresh` — single tool checks both web cache ETags and git remote HEADs, re-fetches/re-clones as needed
-    checked: false
+    checked: true
   - text: 'Unit test: detect remote HEAD change via mock git ls-remote output; integration test: modify a cloned repo''s remote, verify refresh detects the change'
-    checked: false
+    checked: true
 - id: R5
   name: Remote Pipeline Tests
   tagline: End-to-end validation of the remote fetching pipeline

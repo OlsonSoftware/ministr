@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 5;
+pub const CURRENT_SCHEMA_VERSION: usize = 6;
 
 /// Returns the migration set for the content database.
 ///
@@ -132,6 +132,19 @@ fn migrations() -> Migrations<'static> {
             );
             ",
         ),
+        // V6: Git cache — clone metadata per repo URL for staleness detection
+        M::up(
+            "
+            CREATE TABLE git_cache (
+                repo_url          TEXT PRIMARY KEY NOT NULL,
+                branch            TEXT,
+                commit_sha        TEXT NOT NULL,
+                clone_timestamp   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                clone_dir         TEXT NOT NULL,
+                checked_out_paths TEXT NOT NULL DEFAULT '[]'
+            );
+            ",
+        ),
     ])
 }
 
@@ -229,6 +242,7 @@ mod tests {
         assert!(tables.contains(&"sessions".to_string()));
         assert!(tables.contains(&"session_deliveries".to_string()));
         assert!(tables.contains(&"section_access_stats".to_string()));
+        assert!(tables.contains(&"git_cache".to_string()));
         assert!(tables.contains(&"co_access_patterns".to_string()));
         assert!(tables.contains(&"web_cache".to_string()));
     }
