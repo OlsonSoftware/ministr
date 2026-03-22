@@ -456,6 +456,107 @@ impl IngestionPipeline {
         Ok(stats)
     }
 
+    /// Ingest files from multiple paths (directories, individual files, or globs) with embeddings.
+    ///
+    /// Uses [`discover_paths`] to resolve the input paths into a deduplicated file list,
+    /// then ingests each file. Relative paths for storage are computed by stripping
+    /// the common base directory for directory entries, or using the filename for
+    /// individual files.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IngestionError`] if path resolution, storage, or embedding fails.
+    #[instrument(skip(self, storage, embedder, index), fields(path_count = paths.len()))]
+    pub async fn ingest_paths_with_embeddings<S, E, I>(
+        &self,
+        paths: &[PathBuf],
+        storage: &S,
+        embedder: &E,
+        index: &I,
+    ) -> Result<IngestionStats, IngestionError>
+    where
+        S: Storage + ?Sized,
+        E: Embedder + ?Sized,
+        I: VectorIndex + ?Sized,
+    {
+        let files = discover_paths(paths)?;
+        let mut stats = IngestionStats {
+            files_discovered: files.len(),
+            files_skipped: 0,
+            files_indexed: 0,
+            files_removed: 0,
+            files_failed: 0,
+            total_sections: 0,
+            total_claims: 0,
+            total_embeddings: 0,
+        };
+
+        info!(
+            count = files.len(),
+            "discovered files from multiple paths (with embeddings)"
+        );
+
+        for file_path in &files {
+            let relative = compute_relative_path(file_path, paths);
+
+            match self
+                .ingest_file_with_embeddings(file_path, &relative, storage, embedder, index)
+                .await
+            {
+                Ok(FileResult::Skipped) => {
+                    debug!(path = %relative, "unchanged, skipping");
+                    stats.files_skipped += 1;
+                }
+                Ok(FileResult::Indexed { sections, claims }) => {
+                    debug!(path = %relative, sections, claims, "indexed with embeddings");
+                    stats.files_indexed += 1;
+                    stats.total_sections += sections;
+                    stats.total_claims += claims;
+                }
+                Err(e) => {
+                    warn!(path = %relative, error = %e, "failed to ingest file");
+                    stats.files_failed += 1;
+                }
+            }
+        }
+
+        // Remove documents for files that no longer exist in any of the resolved paths
+        let existing_docs = storage
+            .list_documents()
+            .await
+            .map_err(IngestionError::from)?;
+        for doc in &existing_docs {
+            // Check if the source path still maps to an existing file
+            let still_exists = files.iter().any(|f| {
+                let rel = compute_relative_path(f, paths);
+                rel == doc.source_path
+            });
+            if !still_exists {
+                debug!(path = %doc.source_path, "file removed, deleting from index");
+                delete_document_vectors(&doc.id, storage, index).await?;
+                storage
+                    .delete_document(&doc.id)
+                    .await
+                    .map_err(IngestionError::from)?;
+                storage
+                    .delete_file_hash(&doc.source_path)
+                    .await
+                    .map_err(IngestionError::from)?;
+                stats.files_removed += 1;
+            }
+        }
+
+        info!(
+            indexed = stats.files_indexed,
+            skipped = stats.files_skipped,
+            removed = stats.files_removed,
+            failed = stats.files_failed,
+            "multi-path ingestion with embeddings complete"
+        );
+
+        Ok(stats)
+    }
+
     /// Ingest a single file with multi-resolution embedding.
     #[instrument(skip(self, storage, embedder, index), fields(path = %relative_path))]
     async fn ingest_file_with_embeddings<S, E, I>(
@@ -762,11 +863,133 @@ enum FileResult {
 }
 
 /// Discover all supported files (`.md`, `.html`, `.htm`, `.pdf`, etc.) in a directory recursively.
-fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
+///
+/// # Errors
+///
+/// Returns [`IngestionError::Io`] if the directory cannot be read.
+pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
     let mut files = Vec::new();
     collect_files_recursive(dir, &mut files)?;
     files.sort();
     Ok(files)
+}
+
+/// Discover supported files from a mix of directories, individual files, and glob patterns.
+///
+/// Each entry in `paths` is classified as:
+/// - **Directory** — recursively walked via [`discover_files`].
+/// - **Glob pattern** (contains `*`, `?`, or `[`) — expanded via the `glob` crate,
+///   then each match is classified as a directory or individual file.
+/// - **Individual file** — included directly if it has a supported extension.
+///
+/// Results are deduplicated by canonical path and returned sorted.
+///
+/// # Errors
+///
+/// Returns [`IngestionError`] if directory traversal fails or a glob pattern is invalid.
+///
+/// # Examples
+///
+/// ```no_run
+/// use iris_core::ingestion::discover_paths;
+/// use std::path::PathBuf;
+///
+/// let paths = vec![
+///     PathBuf::from("docs/"),
+///     PathBuf::from("DESIGN.md"),
+///     PathBuf::from("*.md"),
+/// ];
+/// let files = discover_paths(&paths).unwrap();
+/// ```
+pub fn discover_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>, IngestionError> {
+    use std::collections::HashSet;
+
+    let mut all_files = Vec::new();
+    let mut seen = HashSet::new();
+
+    for path in paths {
+        let path_str = path.to_string_lossy();
+
+        if path_str.contains('*') || path_str.contains('?') || path_str.contains('[') {
+            // Glob pattern — expand and classify each match
+            let entries = glob::glob(&path_str).map_err(|e| IngestionError::Io {
+                path: path.clone(),
+                source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()),
+            })?;
+
+            for entry in entries {
+                let entry_path = entry.map_err(|e| IngestionError::Io {
+                    path: path.clone(),
+                    source: std::io::Error::other(e.to_string()),
+                })?;
+                collect_path_entry(&entry_path, &mut all_files, &mut seen)?;
+            }
+        } else {
+            collect_path_entry(path, &mut all_files, &mut seen)?;
+        }
+    }
+
+    all_files.sort();
+    Ok(all_files)
+}
+
+/// Classify a single path as a directory or file and add its discovered files.
+fn collect_path_entry(
+    path: &Path,
+    files: &mut Vec<PathBuf>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+) -> Result<(), IngestionError> {
+    if path.is_dir() {
+        let dir_files = discover_files(path)?;
+        for f in dir_files {
+            let canonical = f.canonicalize().unwrap_or_else(|_| f.clone());
+            if seen.insert(canonical) {
+                files.push(f);
+            }
+        }
+    } else if path.is_file() && is_supported_file(path) {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        if seen.insert(canonical) {
+            files.push(path.to_path_buf());
+        }
+    }
+    Ok(())
+}
+
+/// Compute a relative path for a file based on which source path it came from.
+///
+/// For files discovered under a directory source, strips the directory prefix.
+/// For individual file sources, uses just the file name.
+fn compute_relative_path(file: &Path, sources: &[PathBuf]) -> String {
+    // Try to strip a directory prefix from the source paths (longest match first)
+    let mut best_match: Option<&Path> = None;
+    for source in sources {
+        if source.is_dir() {
+            if let Ok(_rel) = file.strip_prefix(source) {
+                if best_match.is_none()
+                    || source.components().count()
+                        > best_match
+                            .expect("best_match should be Some")
+                            .components()
+                            .count()
+                {
+                    best_match = Some(source);
+                }
+            }
+        }
+    }
+
+    if let Some(base) = best_match {
+        return file
+            .strip_prefix(base)
+            .unwrap_or(file)
+            .to_string_lossy()
+            .to_string();
+    }
+
+    // For individual files (not under any directory source), use the file name
+    file.file_name()
+        .map_or_else(|| file.to_string_lossy().to_string(), |n| n.to_string_lossy().to_string())
 }
 
 /// Recursively collect supported files from a directory.
@@ -1877,5 +2100,102 @@ mod tests {
             stats_merged.total_sections,
             stats_unmerged.total_sections,
         );
+    }
+
+    // --- Multi-path discovery ---
+
+    #[test]
+    fn discover_paths_with_mixed_dirs_and_files() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create a directory with files
+        let docs_dir = tmp.path().join("docs");
+        std::fs::create_dir(&docs_dir).unwrap();
+        std::fs::write(docs_dir.join("guide.md"), "# Guide").unwrap();
+        std::fs::write(docs_dir.join("api.md"), "# API").unwrap();
+        std::fs::write(docs_dir.join("ignore.txt"), "not supported").unwrap();
+
+        // Create an individual file outside the directory
+        std::fs::write(tmp.path().join("DESIGN.md"), "# Design").unwrap();
+
+        let paths = vec![docs_dir.clone(), tmp.path().join("DESIGN.md")];
+
+        let files = discover_paths(&paths).unwrap();
+
+        assert_eq!(
+            files.len(),
+            3,
+            "should discover 2 from docs/ + 1 individual file, got: {files:?}"
+        );
+
+        // Verify no .txt files included
+        for f in &files {
+            assert!(is_supported_file(f), "unsupported file included: {f:?}");
+        }
+    }
+
+    #[test]
+    fn discover_paths_deduplicates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let docs_dir = tmp.path().join("docs");
+        std::fs::create_dir(&docs_dir).unwrap();
+        std::fs::write(docs_dir.join("guide.md"), "# Guide").unwrap();
+
+        // Pass the same directory twice
+        let paths = vec![docs_dir.clone(), docs_dir];
+
+        let files = discover_paths(&paths).unwrap();
+        assert_eq!(files.len(), 1, "duplicates should be removed");
+    }
+
+    #[test]
+    fn discover_paths_with_glob_patterns() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("readme.md"), "# Readme").unwrap();
+        std::fs::write(tmp.path().join("design.md"), "# Design").unwrap();
+        std::fs::write(tmp.path().join("code.rs"), "fn main() {}").unwrap();
+
+        let glob_pattern = tmp.path().join("*.md");
+        let paths = vec![glob_pattern];
+
+        let files = discover_paths(&paths).unwrap();
+        assert_eq!(
+            files.len(),
+            2,
+            "glob should match 2 .md files, got: {files:?}"
+        );
+    }
+
+    #[test]
+    fn discover_paths_empty_input() {
+        let files = discover_paths(&[]).unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn compute_relative_path_from_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir(&docs).unwrap();
+        std::fs::write(docs.join("guide.md"), "# Guide").unwrap();
+
+        let real_file = docs.join("guide.md");
+        let real_sources = vec![docs];
+
+        let rel = compute_relative_path(&real_file, &real_sources);
+        assert_eq!(rel, "guide.md");
+    }
+
+    #[test]
+    fn compute_relative_path_individual_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("DESIGN.md");
+        std::fs::write(&file, "# Design").unwrap();
+
+        // Source is the file itself (not a directory)
+        let sources = vec![file.clone()];
+
+        let rel = compute_relative_path(&file, &sources);
+        assert_eq!(rel, "DESIGN.md");
     }
 }

@@ -28,6 +28,7 @@ sha2.workspace = true
 fastembed.workspace = true
 hnsw_rs.workspace = true
 notify.workspace = true
+glob.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

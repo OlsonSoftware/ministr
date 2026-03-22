@@ -4,7 +4,7 @@
 //! constructs the query service with real storage/embedding/index backends,
 //! and starts the MCP server over stdio transport.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Parser;
@@ -23,9 +23,12 @@ use iris_core::session::BudgetConfig;
 #[derive(Parser, Debug)]
 #[command(name = "iris", version, about)]
 struct Cli {
-    /// Path to the corpus directory to serve.
+    /// Paths to corpus directories, individual files, or glob patterns.
+    ///
+    /// Accepts multiple values via repeated flags:
+    /// `iris --corpus ./docs --corpus ./DESIGN.md --corpus ./CHANGELOG.md`
     #[arg(short, long)]
-    corpus: Option<PathBuf>,
+    corpus: Vec<PathBuf>,
 
     /// Path to config file (default: ~/.iris/config.toml).
     #[arg(short = 'C', long)]
@@ -54,21 +57,27 @@ async fn main() -> Result<()> {
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to load config from {}", config_path.display()))?;
 
+    // Merge CLI corpus paths with config corpus_paths (CLI takes precedence).
+    let corpus_paths = if cli.corpus.is_empty() {
+        config.corpus_paths.clone()
+    } else {
+        cli.corpus.clone()
+    };
+
     tracing::info!(
-        corpus = ?cli.corpus,
+        corpus = ?corpus_paths,
         config = %config_path.display(),
         "iris starting"
     );
 
-    // Determine corpus data directory.
-    let corpus_name = cli
-        .corpus
-        .as_ref()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("default");
+    // Determine corpus data directory from a hash of all paths.
+    let corpus_name = if corpus_paths.is_empty() {
+        "default".to_owned()
+    } else {
+        corpus_data_dir_name(&corpus_paths)
+    };
 
-    let corpus_dir = config.data_dir.join("corpora").join(corpus_name);
+    let corpus_dir = config.data_dir.join("corpora").join(&corpus_name);
     let db_path = corpus_dir.join("content.db");
 
     // Create corpus directory if it doesn't exist.
@@ -110,9 +119,9 @@ async fn main() -> Result<()> {
         )
     };
 
-    // Run ingestion if a corpus path was provided.
-    if let Some(ref corpus_path) = cli.corpus {
-        run_ingestion(corpus_path, &storage, &*embedder, &*index, &index_dir).await?;
+    // Run ingestion if corpus paths were provided.
+    if !corpus_paths.is_empty() {
+        run_ingestion(&corpus_paths, &storage, &*embedder, &*index, &index_dir).await?;
     }
 
     // Build the query service and start the MCP server.
@@ -123,7 +132,7 @@ async fn main() -> Result<()> {
         Arc::clone(&index),
     ));
 
-    let session_id = corpus_session_id(cli.corpus.as_deref());
+    let session_id = corpus_session_id(&corpus_paths);
     let budget_config = BudgetConfig {
         max_context_tokens: config.default_context_budget,
         ..BudgetConfig::default()
@@ -137,11 +146,11 @@ async fn main() -> Result<()> {
     )
     .await;
 
-    // Spawn coherence file watcher if a corpus path was provided.
-    let _coherence_handle = if let Some(ref corpus_path) = cli.corpus {
-        spawn_coherence(corpus_path, &server, &storage, &embedder, &index)?
-    } else {
+    // Spawn coherence file watcher if corpus paths were provided.
+    let _coherence_handle = if corpus_paths.is_empty() {
         None
+    } else {
+        spawn_coherence(&corpus_paths, &server, &storage, &embedder, &index)?
     };
 
     let mcp_service = server
@@ -162,22 +171,46 @@ async fn main() -> Result<()> {
 
 /// Spawn the coherence file watcher and background processing task.
 ///
-/// Watches the corpus directory for file changes, re-indexes affected files
+/// Watches all corpus paths for file changes, re-indexes affected files
 /// (including embeddings and vector index), and propagates coherence alerts
 /// to the active session.
 fn spawn_coherence(
-    corpus_path: &std::path::Path,
+    corpus_paths: &[PathBuf],
     server: &iris_mcp::server::IrisServer,
     storage: &Arc<iris_core::storage::SqliteStorage>,
     embedder: &Arc<dyn iris_core::embedding::Embedder>,
     index: &Arc<dyn iris_core::index::VectorIndex>,
 ) -> Result<Option<tokio::task::JoinHandle<()>>> {
-    let watcher = FileWatcher::new(&[corpus_path.to_path_buf()])
+    // Collect watch paths: directories directly, individual files via their parent.
+    let watch_paths: Vec<PathBuf> = corpus_paths
+        .iter()
+        .map(|p| {
+            if p.is_dir() {
+                p.clone()
+            } else {
+                p.parent().unwrap_or(p).to_path_buf()
+            }
+        })
+        .collect();
+
+    let watcher = FileWatcher::new(&watch_paths)
         .into_diagnostic()
         .wrap_err("failed to start file watcher for coherence")?;
 
+    // Use the first directory path as the primary corpus_dir for the coherence engine.
+    let primary_dir = corpus_paths
+        .iter()
+        .find(|p| p.is_dir())
+        .cloned()
+        .or_else(|| {
+            corpus_paths
+                .first()
+                .and_then(|p| p.parent().map(Path::to_path_buf))
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+
     let engine = Arc::new(CoherenceEngine::with_embeddings(
-        corpus_path.to_path_buf(),
+        primary_dir,
         Arc::clone(embedder),
         Arc::clone(index),
     ));
@@ -188,16 +221,16 @@ fn spawn_coherence(
         iris_core::coherence::spawn_coherence_task(watcher, engine, Arc::clone(storage), session);
 
     tracing::info!(
-        corpus = %corpus_path.display(),
+        corpus = ?corpus_paths,
         "coherence file watcher started"
     );
 
     Ok(Some(handle))
 }
 
-/// Run the ingestion pipeline against the corpus directory, then persist the index.
+/// Run the ingestion pipeline against all corpus paths, then persist the index.
 async fn run_ingestion(
-    corpus_path: &std::path::Path,
+    corpus_paths: &[PathBuf],
     storage: &iris_core::storage::SqliteStorage,
     embedder: &dyn iris_core::embedding::Embedder,
     index: &dyn iris_core::index::VectorIndex,
@@ -206,7 +239,7 @@ async fn run_ingestion(
     let start = std::time::Instant::now();
     let pipeline = iris_core::ingestion::IngestionPipeline::new();
     let stats = pipeline
-        .ingest_directory_with_embeddings(corpus_path, storage, embedder, index)
+        .ingest_paths_with_embeddings(corpus_paths, storage, embedder, index)
         .await
         .into_diagnostic()
         .wrap_err("ingestion failed")?;
@@ -232,17 +265,42 @@ async fn run_ingestion(
     Ok(())
 }
 
-/// Derive a stable session ID from the corpus path so sessions persist across restarts.
-fn corpus_session_id(corpus: Option<&std::path::Path>) -> Option<String> {
-    corpus.map(|p| {
-        let mut hasher = Sha256::new();
+/// Derive a stable session ID from the corpus paths so sessions persist across restarts.
+fn corpus_session_id(corpus_paths: &[PathBuf]) -> Option<String> {
+    if corpus_paths.is_empty() {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    for p in corpus_paths {
         hasher.update(p.to_string_lossy().as_bytes());
-        let hash = hasher.finalize();
-        format!(
-            "iris-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7]
-        )
-    })
+        hasher.update(b"\0");
+    }
+    let hash = hasher.finalize();
+    Some(format!(
+        "iris-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7]
+    ))
+}
+
+/// Derive a stable data directory name from corpus paths.
+fn corpus_data_dir_name(corpus_paths: &[PathBuf]) -> String {
+    if corpus_paths.len() == 1 {
+        // Single path: use the file/directory name for human readability.
+        if let Some(name) = corpus_paths[0].file_name().and_then(|n| n.to_str()) {
+            return name.to_owned();
+        }
+    }
+    // Multiple paths or no filename: hash all paths.
+    let mut hasher = Sha256::new();
+    for p in corpus_paths {
+        hasher.update(p.to_string_lossy().as_bytes());
+        hasher.update(b"\0");
+    }
+    let hash = hasher.finalize();
+    format!(
+        "multi-{:02x}{:02x}{:02x}{:02x}",
+        hash[0], hash[1], hash[2], hash[3]
+    )
 }
 
 /// Convert elapsed duration to milliseconds, saturating at `u64::MAX`.

@@ -27,6 +27,12 @@ pub struct IrisConfig {
     /// Default context budget in tokens for new sessions.
     pub default_context_budget: usize,
 
+    /// Corpus paths to index (directories, individual files, or glob patterns).
+    ///
+    /// When empty, falls back to the CLI `--corpus` flag. Accepts a mix of
+    /// directory paths, individual file paths, and glob patterns (e.g. `"*.md"`).
+    pub corpus_paths: Vec<PathBuf>,
+
     /// Prefetch configuration.
     pub prefetch: PrefetchConfig,
 }
@@ -38,6 +44,7 @@ impl Default for IrisConfig {
             default_model: String::from("all-MiniLM-L6-v2"),
             log_format: String::from("pretty"),
             default_context_budget: 100_000,
+            corpus_paths: Vec::new(),
             prefetch: PrefetchConfig::default(),
         }
     }
