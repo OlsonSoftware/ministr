@@ -1303,14 +1303,99 @@ enum FileResult {
     Indexed { sections: usize, claims: usize },
 }
 
-/// Discover all supported files (`.md`, `.html`, `.htm`, `.pdf`, etc.) in a directory recursively.
+/// Directories that are always skipped during file discovery, regardless of
+/// `.gitignore` settings. These are build artifacts, dependency caches, and
+/// IDE/editor directories that never contain useful content to index.
+const ALWAYS_IGNORE_DIRS: &[&str] = &[
+    // Rust / Cargo
+    "target",
+    // JavaScript / Node
+    "node_modules", ".next", ".nuxt", ".output",
+    // Python
+    "__pycache__", ".venv", "venv", "env", ".tox", ".mypy_cache", ".pytest_cache",
+    // Java / Gradle
+    ".gradle",
+    // General build output
+    "dist", "build", "out",
+    // VCS
+    ".git",
+    // IDE / Editor
+    ".idea", ".vs", ".vscode",
+    // Caches
+    ".cache",
+    // Vendor / deps
+    "vendor",
+];
+
+/// File patterns that are always skipped during file discovery.
+/// Minified bundles, source maps, and lockfiles add noise without value.
+const ALWAYS_IGNORE_PATTERNS: &[&str] = &[
+    "*.min.js",
+    "*.min.css",
+    "*.map",
+    "*.lock",
+    "package-lock.json",
+    "Cargo.lock",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "*.chunk.js",
+    "*.bundle.js",
+];
+
+/// Discover all supported files in a directory recursively.
+///
+/// Respects `.gitignore` rules and skips well-known junk directories
+/// (`node_modules`, `target`, `.git`, `dist`, `build`, etc.) and file
+/// patterns (`*.min.js`, `*.lock`, etc.).
 ///
 /// # Errors
 ///
 /// Returns [`IngestionError::Io`] if the directory cannot be read.
 pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
+    use ignore::overrides::OverrideBuilder;
+    use ignore::WalkBuilder;
+
+    let mut overrides = OverrideBuilder::new(dir);
+    for pattern in ALWAYS_IGNORE_PATTERNS {
+        // Prefix with `!` to negate (exclude) the pattern
+        let _ = overrides.add(&format!("!{pattern}"));
+    }
+    let overrides = overrides.build().map_err(|e| IngestionError::Io {
+        path: dir.to_path_buf(),
+        source: std::io::Error::other(format!("invalid ignore pattern: {e}")),
+    })?;
+
+    let mut walker = WalkBuilder::new(dir);
+    walker
+        .hidden(false) // don't skip dotfiles by default (we handle .git via ALWAYS_IGNORE_DIRS)
+        .git_ignore(true) // respect .gitignore
+        .git_global(true) // respect global gitignore
+        .git_exclude(true) // respect .git/info/exclude
+        .overrides(overrides)
+        .filter_entry(|entry| {
+            // Skip well-known junk directories
+            if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                if let Some(name) = entry.file_name().to_str() {
+                    if ALWAYS_IGNORE_DIRS.contains(&name) {
+                        return false;
+                    }
+                }
+            }
+            true
+        });
+
     let mut files = Vec::new();
-    collect_files_recursive(dir, &mut files)?;
+    for result in walker.build() {
+        let entry = result.map_err(|e| IngestionError::Io {
+            path: dir.to_path_buf(),
+            source: std::io::Error::other(format!("walk error: {e}")),
+        })?;
+        let path = entry.into_path();
+        if path.is_file() && is_supported_file(&path) {
+            files.push(path);
+        }
+    }
+
     files.sort();
     Ok(files)
 }
@@ -1407,29 +1492,6 @@ fn compute_relative_path(file: &Path, _sources: &[PathBuf]) -> String {
     s.strip_prefix("./").unwrap_or(&s).to_string()
 }
 
-/// Recursively collect supported files from a directory.
-fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), IngestionError> {
-    let entries = std::fs::read_dir(dir).map_err(|e| IngestionError::Io {
-        path: dir.to_path_buf(),
-        source: e,
-    })?;
-
-    for entry in entries {
-        let entry = entry.map_err(|e| IngestionError::Io {
-            path: dir.to_path_buf(),
-            source: e,
-        })?;
-        let path = entry.path();
-
-        if path.is_dir() {
-            collect_files_recursive(&path, files)?;
-        } else if is_supported_file(&path) {
-            files.push(path);
-        }
-    }
-
-    Ok(())
-}
 
 /// Check if a file has a supported extension.
 fn is_supported_file(path: &Path) -> bool {

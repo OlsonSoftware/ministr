@@ -361,11 +361,11 @@ fn internal_helper() {}
             .unwrap();
         let root = &tree.sections[0];
 
-        // Should have children: Config (struct), Config (impl), start (fn), internal_helper (fn)
+        // Should have children: Config (struct), Config (impl), new (method), start (fn), internal_helper (fn)
         assert_eq!(
             root.children.len(),
-            4,
-            "expected 4 symbol sections, got {}: {:?}",
+            5,
+            "expected 5 symbol sections, got {}: {:?}",
             root.children.len(),
             root.children
                 .iter()

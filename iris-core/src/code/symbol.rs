@@ -159,6 +159,7 @@ pub fn extract_symbols(
         // Extend byte range to include preceding doc comments
         let byte_start = doc_comment_start_byte(&child, source).unwrap_or(child.start_byte());
 
+        let sym_name = name.clone();
         symbols.push(Symbol {
             name,
             kind,
@@ -169,6 +170,41 @@ pub fn extract_symbols(
             byte_range: byte_start..child.end_byte(),
             module_path: module_path.iter().map(|s| (*s).to_string()).collect(),
         });
+
+        // Recurse into impl/trait bodies to extract methods
+        if kind == ItemKind::Impl || kind == ItemKind::Trait {
+            if let Some(body) = child.child_by_field_name("body") {
+                let mut method_path: Vec<String> =
+                    module_path.iter().map(|s| (*s).to_string()).collect();
+                method_path.push(sym_name);
+
+                let method_module: Vec<&str> = method_path.iter().map(String::as_str).collect();
+                let mut body_cursor = body.walk();
+                for body_child in body.children(&mut body_cursor) {
+                    let Some(child_kind) = ItemKind::from_node_kind(body_child.kind()) else {
+                        continue;
+                    };
+                    let method_name =
+                        super::ast_parser::extract_item_name(&body_child, source, child_kind);
+                    let method_vis = extract_visibility(&body_child, source);
+                    let method_doc = extract_doc_comment(&body_child, source);
+                    let method_sig = extract_signature(&body_child, source);
+                    let method_start = doc_comment_start_byte(&body_child, source)
+                        .unwrap_or(body_child.start_byte());
+
+                    symbols.push(Symbol {
+                        name: method_name,
+                        kind: child_kind,
+                        visibility: method_vis,
+                        signature: method_sig,
+                        doc_comment: method_doc,
+                        file_path: file_path.to_string(),
+                        byte_range: method_start..body_child.end_byte(),
+                        module_path: method_module.iter().map(|s| (*s).to_string()).collect(),
+                    });
+                }
+            }
+        }
     }
 
     symbols
@@ -410,9 +446,12 @@ mod tests {
         let tree = parser.parse(source).unwrap();
         let symbols = extract_symbols(&tree, source, "lib.rs", &[]);
 
-        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols.len(), 2, "expected impl + 1 method");
         assert_eq!(symbols[0].name, "Foo");
         assert_eq!(symbols[0].kind, ItemKind::Impl);
+        assert_eq!(symbols[1].name, "new");
+        assert_eq!(symbols[1].kind, ItemKind::Function);
+        assert_eq!(symbols[1].module_path, vec!["Foo"]);
     }
 
     #[test]
@@ -525,9 +564,14 @@ mod tests {
             .find(|s| s.name == "SUMMARY_MAX_SENTENCES" && s.kind == ItemKind::Const);
         assert!(constant.is_some(), "expected SUMMARY_MAX_SENTENCES const");
 
-        // All symbols should have module_path = ["ingestion"]
+        // All top-level symbols have module_path ["ingestion"],
+        // methods inside impl blocks have ["ingestion", "TypeName"]
         for sym in &symbols {
-            assert_eq!(sym.module_path, vec!["ingestion"]);
+            assert_eq!(
+                sym.module_path[0], "ingestion",
+                "first module path segment should be 'ingestion' for symbol {}",
+                sym.name
+            );
         }
     }
 }
