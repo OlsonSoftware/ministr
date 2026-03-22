@@ -264,13 +264,13 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Add a configurable min_section_tokens threshold to CorpusConfig (default: 50 tokens ~200 words) — sections below this are merge candidates
-- [ ] Implement coalesce_small_sections(sections: Vec&lt;Section&gt;, min_tokens: usize) -> Vec&lt;Section&gt; in ingestion.rs — merges adjacent sibling sections (same depth) below threshold into their parent, concatenating text with heading markers
-- [ ] Preserve section IDs for merged sections: use the parent's section_id, store child heading_paths as sub-headings in the merged text so they remain searchable
-- [ ] Wire coalesce_small_sections into ingest_directory_with_embeddings after parse + split_large_headingless but before enrichment and embedding — single insertion point, no duplication
-- [ ] Unit test: 3 sibling sections of 10/15/8 tokens merge into 1; a 200-token section stays untouched; mixed depths merge correctly at each level
-- [ ] Unit test: merging preserves document order (position field) and updates claims_available counts on merged sections
-- [ ] Integration test: ingest the iris docs corpus, verify section count decreases vs unmerged, and verify survey still returns relevant results for queries that would have matched child headings
+- [x] Add a configurable min_section_tokens threshold to CorpusConfig (default: 50 tokens ~200 words) — sections below this are merge candidates
+- [x] Implement coalesce_small_sections(sections: Vec&lt;Section&gt;, min_tokens: usize) -> Vec&lt;Section&gt; in ingestion.rs — merges adjacent sibling sections (same depth) below threshold into their parent, concatenating text with heading markers
+- [x] Preserve section IDs for merged sections: use the parent's section_id, store child heading_paths as sub-headings in the merged text so they remain searchable
+- [x] Wire coalesce_small_sections into ingest_directory_with_embeddings after parse + split_large_headingless but before enrichment and embedding — single insertion point, no duplication
+- [x] Unit test: 3 sibling sections of 10/15/8 tokens merge into 1; a 200-token section stays untouched; mixed depths merge correctly at each level
+- [x] Unit test: merging preserves document order (position field) and updates claims_available counts on merged sections
+- [x] Integration test: ingest the iris docs corpus, verify section count decreases vs unmerged, and verify survey still returns relevant results for queries that would have matched child headings
 
 ---
 
@@ -282,12 +282,12 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Extract parent section ID from claim content_id (strip the :cN suffix) — add a helper fn parent_section_id(claim_content_id: &str) -> Option&lt;&str&gt; in types.rs
-- [ ] After survey returns results, collect unique parent section IDs from all claim-level results, fetch their SectionRecords from storage, and insert into PrefetchEngine with PrefetchStrategy::Structural
-- [ ] Skip pre-warming for sections already in the prefetch cache (PrefetchEngine.peek) or already delivered (session.is_delivered) — avoid redundant work
-- [ ] Add a new PrefetchStrategy::SurveyExpand variant to track hit rates separately from structural/sequential/topical strategies
-- [ ] Unit test: survey returning 3 claim hits from 2 different sections pre-warms exactly 2 parent sections, skips already-cached ones
-- [ ] E2E test: survey then iris_read of a parent section hits the prefetch cache (verify via prefetch_metrics.hits increasing)
+- [x] Extract parent section ID from claim content_id (strip the :cN suffix) — add a helper fn parent_section_id(claim_content_id: &str) -> Option&lt;&str&gt; in types.rs
+- [x] After survey returns results, collect unique parent section IDs from all claim-level results, fetch their SectionRecords from storage, and insert into PrefetchEngine with PrefetchStrategy::Structural
+- [x] Skip pre-warming for sections already in the prefetch cache (PrefetchEngine.peek) or already delivered (session.is_delivered) — avoid redundant work
+- [x] Add a new PrefetchStrategy::SurveyExpand variant to track hit rates separately from structural/sequential/topical strategies
+- [x] Unit test: survey returning 3 claim hits from 2 different sections pre-warms exactly 2 parent sections, skips already-cached ones
+- [x] E2E test: survey then iris_read of a parent section hits the prefetch cache (verify via prefetch_metrics.hits increasing)
 
 ---
 

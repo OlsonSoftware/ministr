@@ -1953,3 +1953,150 @@ async fn iris_toc_filters_by_document_id() {
     assert_eq!(stats["documents"].as_u64().unwrap(), 1);
     assert_eq!(stats["sections"].as_u64().unwrap(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Survey-triggered prefetch
+// ---------------------------------------------------------------------------
+
+/// Build a corpus with claim IDs in the `{section_id}:c{N}` format
+/// (as produced by the real claim extractor).
+fn build_survey_prefetch_corpus() -> Vec<DocumentTree> {
+    vec![DocumentTree {
+        id: ContentId("docs/auth.md".into()),
+        title: "Authentication Guide".into(),
+        source_path: "docs/auth.md".into(),
+        sections: vec![
+            Section {
+                id: SectionId("docs/auth.md#tokens".into()),
+                heading_path: vec!["Authentication".into(), "Tokens".into()],
+                depth: 2,
+                text: "JWT tokens use RS256 signing. Tokens expire after 24 hours.".into(),
+                structural_nodes: vec![],
+                children: vec![],
+                claims: vec![
+                    Claim {
+                        id: ClaimId("docs/auth.md#tokens:c0".into()),
+                        text: "JWT tokens use RS256 signing algorithm.".into(),
+                        section_id: SectionId("docs/auth.md#tokens".into()),
+                    },
+                    Claim {
+                        id: ClaimId("docs/auth.md#tokens:c1".into()),
+                        text: "Tokens expire after 24 hours by default.".into(),
+                        section_id: SectionId("docs/auth.md#tokens".into()),
+                    },
+                ],
+                summary: Some("Token authentication details.".into()),
+            },
+            Section {
+                id: SectionId("docs/auth.md#oauth".into()),
+                heading_path: vec!["Authentication".into(), "OAuth".into()],
+                depth: 2,
+                text: "OAuth 2.0 authorization code flow with PKCE.".into(),
+                structural_nodes: vec![],
+                children: vec![],
+                claims: vec![Claim {
+                    id: ClaimId("docs/auth.md#oauth:c0".into()),
+                    text: "OAuth 2.0 authorization code flow is supported.".into(),
+                    section_id: SectionId("docs/auth.md#oauth".into()),
+                }],
+                summary: Some("OAuth 2.0 integration details.".into()),
+            },
+        ],
+        summary: Some("Complete authentication reference.".into()),
+    }]
+}
+
+async fn setup_survey_prefetch_server() -> IrisServer {
+    let dim = 16;
+    let embedder = Arc::new(MockEmbedder { dim });
+    let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let corpus = build_survey_prefetch_corpus();
+    for doc in &corpus {
+        storage.insert_document(doc).await.unwrap();
+    }
+
+    // Index only claims (no section-level vectors) so survey returns
+    // claim-level hits whose parent sections get pre-warmed by survey-expand.
+    let texts_and_ids = [
+        (
+            "doc-summary::docs/auth.md",
+            "Complete authentication reference.",
+        ),
+        (
+            "claim::docs/auth.md#tokens:c0",
+            "JWT tokens use RS256 signing algorithm.",
+        ),
+        (
+            "claim::docs/auth.md#tokens:c1",
+            "Tokens expire after 24 hours by default.",
+        ),
+        (
+            "claim::docs/auth.md#oauth:c0",
+            "OAuth 2.0 authorization code flow is supported.",
+        ),
+    ];
+
+    for (id, text) in &texts_and_ids {
+        let vecs = embedder.embed(&[*text]).unwrap();
+        index.insert(id, &vecs[0]).unwrap();
+    }
+
+    let service = Arc::new(QueryService::new(storage, embedder, index));
+    IrisServer::new(service)
+}
+
+#[tokio::test]
+async fn survey_prewarms_parent_sections_of_claim_hits() {
+    let server = setup_survey_prefetch_server().await;
+
+    // Survey for a query that should return claim-level hits
+    let survey_result = call_tool(
+        &server,
+        "iris_survey",
+        json!({"query": "JWT RS256 signing tokens", "top_k": 10}),
+    )
+    .await;
+    assert!(
+        survey_result.is_error.is_none() || survey_result.is_error == Some(false),
+        "survey should succeed"
+    );
+
+    let survey_body: serde_json::Value =
+        serde_json::from_str(extract_text(&survey_result.content)).unwrap();
+    let results = survey_body["results"]
+        .as_array()
+        .expect("should have results");
+
+    // Verify we got at least one claim-level result
+    let has_claim = results.iter().any(|r| r["resolution"] == "claim");
+    assert!(has_claim, "survey should include claim-level results");
+
+    // Now read a parent section — should hit the prefetch cache
+    let read_result = call_tool(
+        &server,
+        "iris_read",
+        json!({"section_id": "docs/auth.md#tokens"}),
+    )
+    .await;
+    assert!(
+        read_result.is_error.is_none() || read_result.is_error == Some(false),
+        "read should succeed"
+    );
+
+    // Check prefetch metrics via iris_budget
+    let budget_result = call_tool(&server, "iris_budget", json!({})).await;
+    let budget_body: serde_json::Value =
+        serde_json::from_str(extract_text(&budget_result.content)).unwrap();
+
+    let prefetch_metrics = &budget_body["prefetch_metrics"];
+    let survey_expand_hits = prefetch_metrics["survey_expand_hits"].as_u64().unwrap_or(0);
+
+    // The read of docs/auth.md#tokens should have been a prefetch cache hit
+    // (pre-warmed by the survey's claim results)
+    assert!(
+        survey_expand_hits > 0,
+        "survey-expand prefetch should have hits, got metrics: {prefetch_metrics}"
+    );
+}

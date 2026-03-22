@@ -93,6 +93,32 @@ impl AsRef<str> for ClaimId {
     }
 }
 
+/// Extract the parent section ID from a claim content ID.
+///
+/// Claim IDs are formatted as `{section_id}:c{N}` (e.g. `docs/auth.md#tokens:c0`).
+/// This strips the `:cN` suffix to recover the section ID.
+///
+/// Returns `None` if the string does not end with a `:c{digits}` suffix.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::parent_section_id;
+///
+/// assert_eq!(parent_section_id("docs/auth.md#tokens:c0"), Some("docs/auth.md#tokens"));
+/// assert_eq!(parent_section_id("docs/api.md#rate-limits:c12"), Some("docs/api.md#rate-limits"));
+/// assert_eq!(parent_section_id("docs/auth.md#tokens"), None);
+/// assert_eq!(parent_section_id("no-colon"), None);
+/// ```
+#[must_use]
+pub fn parent_section_id(claim_content_id: &str) -> Option<&str> {
+    let (prefix, suffix) = claim_content_id.rsplit_once(":c")?;
+    if suffix.is_empty() || !suffix.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(prefix)
+}
+
 /// The resolution level at which content was indexed or delivered.
 ///
 /// # Examples
@@ -609,5 +635,32 @@ mod tests {
     fn vector_id_display() {
         let vid = VectorId::section("s1");
         assert_eq!(vid.to_string(), "section::s1");
+    }
+
+    // --- parent_section_id ---
+
+    #[test]
+    fn parent_section_id_strips_claim_suffix() {
+        assert_eq!(
+            parent_section_id("docs/auth.md#tokens:c0"),
+            Some("docs/auth.md#tokens")
+        );
+        assert_eq!(
+            parent_section_id("docs/api.md#rate-limits:c12"),
+            Some("docs/api.md#rate-limits")
+        );
+    }
+
+    #[test]
+    fn parent_section_id_returns_none_without_suffix() {
+        assert_eq!(parent_section_id("docs/auth.md#tokens"), None);
+        assert_eq!(parent_section_id("no-colon"), None);
+        assert_eq!(parent_section_id(""), None);
+    }
+
+    #[test]
+    fn parent_section_id_rejects_non_numeric_suffix() {
+        assert_eq!(parent_section_id("section:cabc"), None);
+        assert_eq!(parent_section_id("section:c"), None);
     }
 }

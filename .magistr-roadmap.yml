@@ -354,22 +354,22 @@ phases:
 - id: I6
   name: Survey-Triggered Prefetch
   tagline: Predict the obvious next read after every survey
-  status: pending
+  status: done
   problem: When survey returns claim-level hits, the agent almost always reads the parent section next. But prefetch only triggers on iris_read, so the first read after survey is always a cold miss.
   solution: After survey, pre-warm parent sections of returned claim-level results into the prefetch cache. Reuse the existing PrefetchEngine.insert API and structural prefetch strategy. No new subsystems needed.
   tasks:
   - text: 'Extract parent section ID from claim content_id (strip the :cN suffix) — add a helper fn parent_section_id(claim_content_id: &str) -> Option&lt;&str&gt; in types.rs'
-    checked: false
+    checked: true
   - text: After survey returns results, collect unique parent section IDs from all claim-level results, fetch their SectionRecords from storage, and insert into PrefetchEngine with PrefetchStrategy::Structural
-    checked: false
+    checked: true
   - text: Skip pre-warming for sections already in the prefetch cache (PrefetchEngine.peek) or already delivered (session.is_delivered) — avoid redundant work
-    checked: false
+    checked: true
   - text: Add a new PrefetchStrategy::SurveyExpand variant to track hit rates separately from structural/sequential/topical strategies
-    checked: false
+    checked: true
   - text: 'Unit test: survey returning 3 claim hits from 2 different sections pre-warms exactly 2 parent sections, skips already-cached ones'
-    checked: false
+    checked: true
   - text: 'E2E test: survey then iris_read of a parent section hits the prefetch cache (verify via prefetch_metrics.hits increasing)'
-    checked: false
+    checked: true
 - id: I7
   name: Expanded Corpus Support
   tagline: Index the docs that actually help agents reason
