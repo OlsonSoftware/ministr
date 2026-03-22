@@ -609,18 +609,18 @@ phases:
 - id: C4
   name: Symbol Storage Schema
   tagline: SQLite-backed symbol index with relationship tracking
-  status: pending
+  status: done
   problem: Symbol metadata and relationships (caller→callee, trait→impl, imports) need persistent, queryable storage
   solution: New SQLite tables for symbols and symbol_refs, with storage trait extensions for CRUD operations and relationship queries
   tasks:
   - text: 'New SQLite table `symbols`: id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end — with migration'
-    checked: false
+    checked: true
   - text: 'New SQLite table `symbol_refs`: from_symbol_id, to_symbol_id, ref_kind (Calls/Implements/Imports/Uses) — with migration'
-    checked: false
+    checked: true
   - text: 'Extend Storage trait with symbol CRUD: insert_symbols, list_symbols(filters), get_symbol(id), insert_symbol_refs, query_refs(symbol_id, ref_kind?)'
-    checked: false
+    checked: true
   - text: 'Unit test: insert and query symbols and relationships, verify filtering by kind/visibility/module works correctly'
-    checked: false
+    checked: true
 - id: C5
   name: Code Intelligence MCP Tools
   tagline: iris_symbols, iris_definition, iris_references — structural code navigation

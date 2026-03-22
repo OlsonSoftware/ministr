@@ -71,6 +71,92 @@ impl AsRef<str> for SectionId {
     }
 }
 
+/// Unique identifier for a code symbol in the symbol index.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::SymbolId;
+///
+/// let id = SymbolId::from("sym-config::IrisConfig".to_string());
+/// assert_eq!(id.to_string(), "sym-config::IrisConfig");
+/// assert_eq!(id.as_ref(), "sym-config::IrisConfig");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SymbolId(pub String);
+
+impl fmt::Display for SymbolId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for SymbolId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl AsRef<str> for SymbolId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The kind of reference between two code symbols.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::RefKind;
+///
+/// assert_eq!(RefKind::Calls.as_str(), "calls");
+/// assert_eq!(RefKind::parse("implements"), Some(RefKind::Implements));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefKind {
+    /// Symbol A calls symbol B (function/method invocation).
+    Calls,
+    /// Symbol A implements symbol B (trait impl, interface).
+    Implements,
+    /// Symbol A imports symbol B (use declaration).
+    Imports,
+    /// Symbol A uses symbol B (type reference, field access).
+    Uses,
+}
+
+impl RefKind {
+    /// Returns the string representation of this reference kind.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Calls => "calls",
+            Self::Implements => "implements",
+            Self::Imports => "imports",
+            Self::Uses => "uses",
+        }
+    }
+
+    /// Parse a reference kind from a string.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "calls" => Some(Self::Calls),
+            "implements" => Some(Self::Implements),
+            "imports" => Some(Self::Imports),
+            "uses" => Some(Self::Uses),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for RefKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Unique identifier for an atomic claim within a section.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ClaimId(pub String);
