@@ -668,3 +668,88 @@ phases:
     checked: true
   - text: 'Unit tests: parse and extract symbols from at least 5 languages (Rust, TypeScript, Python, Go, Java), verify the generic extractor produces reasonable symbols even for languages without a specific refinement'
     checked: true
+- id: PR1
+  name: Fix Code Indexing Bug
+  tagline: Dogfood iris on its own Rust source code
+  status: pending
+  problem: iris can't index its own source code — corpus paths show 0 documents despite correct architecture
+  solution: Add diagnostic logging, write integration tests, reproduce and fix the root cause
+  tasks:
+  - text: Add warn-level log when discover_paths finds 0 files for a corpus path
+    checked: false
+  - text: 'Add diagnostic logging to background ingestion: resolved absolute paths, data dir, completion status'
+    checked: false
+  - text: Add debug log of canonical path in collect_path_entry for relative path resolution verification
+    checked: false
+  - text: Enhance iris_toc to report ingestion state (running/completed/failed + stats) when 0 results
+    checked: false
+  - text: 'Write integration test: multi-path code ingestion with .rs files, assert non-zero indexed count'
+    checked: false
+  - text: Reproduce with iris --corpus ./iris-core/src, examine stderr, fix root cause
+    checked: false
+  - text: Add iris index and iris serve subcommands with backwards-compatible default to serve
+    checked: false
+- id: PR2
+  name: Eliminate .expect() from Library Code
+  tagline: No panics in library code
+  status: pending
+  problem: ~24 .expect() calls in non-test library code violate project conventions and can panic in production
+  solution: Replace CSS selector expects with OnceLock statics, map errors properly, document invariants
+  tasks:
+  - text: Replace 12 Selector::parse().expect() with OnceLock statics in html.rs
+    checked: false
+  - text: Replace 8 Selector::parse().expect() with OnceLock statics in html_to_md.rs
+    checked: false
+  - text: Document invariant-based expects with SAFETY comments (common.rs:59, html.rs:135)
+    checked: false
+  - text: Replace semaphore.acquire().await.expect() with ? + mapped error in sitemap.rs
+    checked: false
+  - text: Replace service.rs:1224 expect with proper error return
+    checked: false
+  - text: Remove println! at parser/code.rs:313, replace with tracing::debug!
+    checked: false
+- id: PR3
+  name: License, README, Metadata
+  tagline: Credible open-source packaging
+  status: pending
+  problem: No LICENSE files despite declaring MIT OR Apache-2.0, no README.md for GitHub/crates.io
+  solution: Add LICENSE-MIT, LICENSE-APACHE, README.md, fix Cargo.toml metadata
+  tasks:
+  - text: Add LICENSE-MIT with correct copyright
+    checked: false
+  - text: Add LICENSE-APACHE
+    checked: false
+  - text: Create README.md with project overview, install, usage, MCP integration, license badge
+    checked: false
+  - text: Add repository.workspace = true to iris-core and iris-mcp Cargo.toml
+    checked: false
+- id: PR4
+  name: Release Pipeline Polish
+  tagline: One-command releases with cross-platform binaries
+  status: pending
+  problem: Release pipeline needs refinement for confident public releases
+  solution: Add Intel Mac target, version bump recipe, install script, MCP smoke test
+  tasks:
+  - text: Add x86_64-apple-darwin target to release matrix
+    checked: false
+  - text: 'Add just release recipe: bump versions, update CHANGELOG, commit + tag'
+    checked: false
+  - text: Add install.sh script for curl-based binary installation
+    checked: false
+  - text: 'Add MCP smoke test to CI: initialize + tools/list via stdin'
+    checked: false
+- id: PR5
+  name: Final Hardening
+  tagline: Last sweep before v0.1.0
+  status: pending
+  problem: Miscellaneous polish items before tagging v0.1.0
+  solution: 'Audit tracing levels, #[must_use], cargo audit, dead code cleanup'
+  tasks:
+  - text: Audit tracing levels — ingestion should WARN on 0 files, not just INFO
+    checked: false
+  - text: 'Comprehensive #[must_use] audit on public Result-returning functions'
+    checked: false
+  - text: Run cargo deny check + cargo audit, fix any findings
+    checked: false
+  - text: 'Dead code cleanup: DeltaResponse in server.rs — remove or implement'
+    checked: false

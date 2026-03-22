@@ -1,21 +1,24 @@
 //! iris-cli — binary entry point for the iris MCP server.
 //!
-//! Parses command-line arguments, loads configuration, initializes tracing,
-//! constructs the query service with real storage/embedding/index backends,
-//! and starts the MCP server over stdio transport.
+//! Provides two subcommands:
+//!
+//! - `iris serve` (default) — starts the MCP server over stdio with background ingestion.
+//! - `iris index` — runs ingestion synchronously and exits (no MCP server).
+//!
+//! When invoked without a subcommand (`iris --corpus ./docs`), defaults to `serve`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use rmcp::ServiceExt;
 use sha2::{Digest, Sha256};
 
 use iris_core::coherence::{CoherenceEngine, FileWatcher};
-use iris_core::storage::Storage as _;
 use iris_core::index::VectorIndexLoad as _;
 use iris_core::session::BudgetConfig;
+use iris_core::storage::Storage as _;
 
 /// iris — a context cache controller for LLM agents.
 ///
@@ -27,13 +30,28 @@ struct Cli {
     /// Corpus sources: local paths, `https://` URLs, or `github://` URLs.
     ///
     /// Accepts multiple values via repeated flags:
-    /// `iris --corpus ./docs --corpus https://docs.rs/serde --corpus github://serde-rs/serde`
-    #[arg(short, long)]
+    /// `iris --corpus ./docs --corpus https://docs.rs/serde`
+    #[arg(short, long, global = true)]
     corpus: Vec<String>,
 
     /// Path to config file (default: ~/.iris/config.toml).
-    #[arg(short = 'C', long)]
+    #[arg(short = 'C', long, global = true)]
     config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Start the MCP server over stdio (default when no subcommand is given).
+    Serve,
+
+    /// Run corpus ingestion synchronously and exit (no MCP server).
+    ///
+    /// Useful for pre-warming the index, debugging ingestion issues,
+    /// or running in CI pipelines.
+    Index,
 }
 
 #[tokio::main]
@@ -66,17 +84,25 @@ async fn main() -> Result<()> {
         cli.corpus.clone()
     };
 
-    tracing::info!(
-        corpus = ?corpus_paths,
-        config = %config_path.display(),
-        "iris starting"
-    );
+    // Dispatch to the appropriate subcommand (default: serve).
+    match cli.command.unwrap_or(Command::Serve) {
+        Command::Serve => cmd_serve(&corpus_paths, &config_path, &config).await,
+        Command::Index => cmd_index(&corpus_paths, &config_path, &config).await,
+    }
+}
 
+/// Initialize shared infrastructure: storage, embedder, and vector index.
+///
+/// Returns the corpus data directory, index directory, and Arc-wrapped components.
+async fn init_infrastructure(
+    corpus_paths: &[String],
+    config: &iris_core::config::IrisConfig,
+) -> Result<InfrastructureContext> {
     // Determine corpus data directory from a hash of all paths.
     let corpus_name = if corpus_paths.is_empty() {
         "default".to_owned()
     } else {
-        corpus_data_dir_name(&corpus_paths)
+        corpus_data_dir_name(corpus_paths)
     };
 
     let corpus_dir = config.data_dir.join("corpora").join(&corpus_name);
@@ -135,17 +161,49 @@ async fn main() -> Result<()> {
         )
     };
 
+    Ok(InfrastructureContext {
+        corpus_dir,
+        index_dir,
+        storage: Arc::new(storage),
+        embedder,
+        index,
+    })
+}
+
+/// Shared infrastructure components initialized at startup.
+struct InfrastructureContext {
+    corpus_dir: PathBuf,
+    index_dir: PathBuf,
+    storage: Arc<iris_core::storage::SqliteStorage>,
+    embedder: Arc<dyn iris_core::embedding::Embedder>,
+    index: Arc<dyn iris_core::index::VectorIndex>,
+}
+
+/// `iris serve` — start the MCP server with background ingestion.
+#[allow(clippy::too_many_lines)]
+async fn cmd_serve(
+    corpus_paths: &[String],
+    config_path: &Path,
+    config: &iris_core::config::IrisConfig,
+) -> Result<()> {
+    tracing::info!(
+        corpus = ?corpus_paths,
+        config = %config_path.display(),
+        "iris starting (serve mode)"
+    );
+
+    let ctx = init_infrastructure(corpus_paths, config).await?;
+
     // Build the query service and start the MCP server FIRST, before ingestion.
     // This ensures the MCP handshake completes immediately so Claude Code
     // doesn't time out waiting for the server to start.
-    let storage = Arc::new(storage);
     let service = Arc::new(iris_core::service::QueryService::new(
-        (*storage).clone(),
-        Arc::clone(&embedder),
-        Arc::clone(&index),
+        (*ctx.storage).clone(),
+        Arc::clone(&ctx.embedder),
+        Arc::clone(&ctx.index),
     ));
 
-    let session_id = corpus_session_id(&corpus_paths);
+    let session_id = corpus_session_id(corpus_paths);
     let budget_config = BudgetConfig {
         max_context_tokens: config.default_context_budget,
         ..BudgetConfig::default()
@@ -154,16 +212,16 @@ async fn main() -> Result<()> {
     let server = iris_mcp::server::IrisServer::with_persistence(
         service,
         budget_config,
-        Arc::clone(&storage),
+        Arc::clone(&ctx.storage),
         session_id,
     )
     .await;
 
     // Enable web fetching for iris_fetch tool.
-    let server = enable_web_fetcher(server, &corpus_dir, &embedder, &index)?;
+    let server = enable_web_fetcher(server, &ctx.corpus_dir, &ctx.embedder, &ctx.index)?;
 
     // Enable git cloning for iris_clone tool.
-    let server = enable_git_fetcher(server, &embedder, &index);
+    let server = enable_git_fetcher(server, &ctx.embedder, &ctx.index);
 
     // Spawn coherence file watcher BEFORE serving (needs server reference).
     let local_paths: Vec<PathBuf> = corpus_paths
@@ -181,7 +239,13 @@ async fn main() -> Result<()> {
     let _coherence_handle = if local_paths.is_empty() {
         None
     } else {
-        spawn_coherence(&local_paths, &server, &storage, &embedder, &index)?
+        spawn_coherence(
+            &local_paths,
+            &server,
+            &ctx.storage,
+            &ctx.embedder,
+            &ctx.index,
+        )?
     };
 
     // Grab the ingestion status arc before .serve() consumes the server.
@@ -197,12 +261,12 @@ async fn main() -> Result<()> {
 
     // Ingest corpus sources in background AFTER the MCP server is running.
     if !corpus_paths.is_empty() {
-        let bg_corpus_paths = corpus_paths.clone();
-        let bg_corpus_dir = corpus_dir.clone();
-        let bg_storage = Arc::clone(&storage);
-        let bg_embedder = Arc::clone(&embedder);
-        let bg_index = Arc::clone(&index);
-        let bg_index_dir = index_dir.clone();
+        let bg_corpus_paths = corpus_paths.to_vec();
+        let bg_corpus_dir = ctx.corpus_dir.clone();
+        let bg_storage = Arc::clone(&ctx.storage);
+        let bg_embedder = Arc::clone(&ctx.embedder);
+        let bg_index = Arc::clone(&ctx.index);
+        let bg_index_dir = ctx.index_dir.clone();
         ingestion_status.store(1, std::sync::atomic::Ordering::Relaxed);
         tokio::spawn(async move {
             match run_corpus_ingestion(
@@ -229,6 +293,39 @@ async fn main() -> Result<()> {
         .wrap_err("MCP server exited with error")?;
 
     tracing::info!("iris shutting down");
+    Ok(())
+}
+
+/// `iris index` — run ingestion synchronously and exit.
+async fn cmd_index(
+    corpus_paths: &[String],
+    config_path: &Path,
+    config: &iris_core::config::IrisConfig,
+) -> Result<()> {
+    tracing::info!(
+        corpus = ?corpus_paths,
+        config = %config_path.display(),
+        "iris starting (index mode)"
+    );
+
+    if corpus_paths.is_empty() {
+        tracing::warn!("no corpus paths specified, nothing to index");
+        return Ok(());
+    }
+
+    let ctx = init_infrastructure(corpus_paths, config).await?;
+
+    run_corpus_ingestion(
+        corpus_paths,
+        &ctx.corpus_dir,
+        &ctx.storage,
+        &*ctx.embedder,
+        &*ctx.index,
+        &ctx.index_dir,
+    )
+    .await?;
+
+    tracing::info!("indexing complete");
     Ok(())
 }
 
@@ -318,6 +415,14 @@ async fn run_corpus_ingestion(
         }
     }
 
+    tracing::info!(
+        local = local_paths.len(),
+        web = web_urls.len(),
+        git = git_urls.len(),
+        local_paths = ?local_paths,
+        "classified corpus sources"
+    );
+
     let start = std::time::Instant::now();
     let pipeline = iris_core::ingestion::IngestionPipeline::new();
 
@@ -340,6 +445,13 @@ async fn run_corpus_ingestion(
             embeddings = stats.total_embeddings,
             "local ingestion complete"
         );
+
+        if stats.files_discovered == 0 {
+            tracing::warn!(
+                paths = ?local_paths,
+                "no files discovered from local corpus paths — check that paths exist and contain supported files"
+            );
+        }
     }
 
     // Fetch and ingest web URLs.

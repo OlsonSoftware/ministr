@@ -157,7 +157,13 @@ fn insert_sections_recursive(
         }
 
         // Recurse into children
-        insert_sections_recursive(conn, document_id, &section.children, position_offset, seen_ids)?;
+        insert_sections_recursive(
+            conn,
+            document_id,
+            &section.children,
+            position_offset,
+            seen_ids,
+        )?;
     }
     Ok(())
 }
