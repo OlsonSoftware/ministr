@@ -610,22 +610,22 @@ impl IrisServer {
         async {
             debug!(query = %params.query, top_k, "iris_survey request");
 
-            match self.service.survey(&params.query, top_k).await {
-                Ok(results) => {
-                    let original_count = results.len();
+            // Collect delivered IDs so the service can exclude them
+            // before truncating to top_k (prevents the over-fetch buffer
+            // from being wasted by premature truncation).
+            let exclude_ids = {
+                let session = self.session.lock().await;
+                session.delivered_ids()
+            };
 
-                    // Deduplicate against session shadow
-                    let session = self.session.lock().await;
-                    let filtered: Vec<SurveyResult> = results
-                        .into_iter()
-                        .filter(|r| !session.is_delivered(&ContentId(r.content_id.clone())))
-                        .collect();
-                    drop(session);
-
-                    let deduplicated_count = original_count - filtered.len();
-
+            match self
+                .service
+                .survey_excluding(&params.query, top_k, &exclude_ids)
+                .await
+            {
+                Ok((results, deduplicated_count)) => {
                     debug!(
-                        result_count = filtered.len(),
+                        result_count = results.len(),
                         deduplicated_count, "iris_survey success"
                     );
 
@@ -633,7 +633,7 @@ impl IrisServer {
                     let mut session = self.session.lock().await;
                     let mut budget = self.budget.lock().await;
                     let turn = session.current_turn() + 1;
-                    for r in &filtered {
+                    for r in &results {
                         let token_count = count_tokens(&r.text);
                         let hash = content_hash(&r.text);
                         let resolution = parse_resolution(&r.resolution);
@@ -650,7 +650,7 @@ impl IrisServer {
                     drop(budget);
 
                     // Survey-triggered prefetch: pre-warm parent sections of claim hits
-                    let claim_section_ids: Vec<String> = filtered
+                    let claim_section_ids: Vec<String> = results
                         .iter()
                         .filter(|r| r.resolution == "claim")
                         .filter_map(|r| parent_section_id(&r.content_id).map(String::from))
@@ -693,7 +693,7 @@ impl IrisServer {
                     let response = self
                         .build_response(
                             SurveyResponse {
-                                results: filtered,
+                                results,
                                 deduplicated_count,
                             },
                             budget_status,
