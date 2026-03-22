@@ -97,8 +97,24 @@ fn insert_sections_recursive(
     document_id: &str,
     sections: &[Section],
     position_offset: &mut i64,
+    seen_ids: &mut std::collections::HashSet<String>,
 ) -> Result<(), StorageError> {
     for section in sections {
+        // Deduplicate section IDs — if a heading appears twice in one document
+        // (e.g. mdBook sidebar + content both have `<h1>iris</h1>`), skip the duplicate.
+        let section_id = if seen_ids.contains(section.id.as_ref()) {
+            // Append position to disambiguate
+            let deduped = format!("{}-{}", section.id.as_ref(), *position_offset);
+            if seen_ids.contains(&deduped) {
+                *position_offset += 1;
+                continue; // extremely unlikely third collision — just skip
+            }
+            deduped
+        } else {
+            section.id.as_ref().to_string()
+        };
+        seen_ids.insert(section_id.clone());
+
         let heading_json = serde_json::to_string(&section.heading_path).map_err(|e| {
             StorageError::Serialization {
                 reason: e.to_string(),
@@ -109,7 +125,7 @@ fn insert_sections_recursive(
             "INSERT INTO sections (id, document_id, heading_path, depth, text, summary, position)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
-                section.id.as_ref(),
+                section_id,
                 document_id,
                 heading_json,
                 section.depth,
@@ -119,7 +135,7 @@ fn insert_sections_recursive(
             ],
         )
         .map_err(|e| StorageError::Database {
-            reason: format!("failed to insert section {}: {e}", section.id),
+            reason: format!("failed to insert section {section_id}: {e}"),
         })?;
 
         *position_offset += 1;
@@ -130,7 +146,7 @@ fn insert_sections_recursive(
                 "INSERT INTO claims (id, section_id, text, position) VALUES (?1, ?2, ?3, ?4)",
                 rusqlite::params![
                     claim.id.as_ref(),
-                    section.id.as_ref(),
+                    section_id,
                     claim.text,
                     i64::try_from(claim_pos).unwrap_or(i64::MAX),
                 ],
@@ -141,7 +157,7 @@ fn insert_sections_recursive(
         }
 
         // Recurse into children
-        insert_sections_recursive(conn, document_id, &section.children, position_offset)?;
+        insert_sections_recursive(conn, document_id, &section.children, position_offset, seen_ids)?;
     }
     Ok(())
 }
@@ -150,27 +166,41 @@ impl Storage for SqliteStorage {
     async fn insert_document(&self, doc: &DocumentTree) -> Result<(), StorageError> {
         let doc = doc.clone();
         self.with_conn(move |conn| {
-            conn.execute("BEGIN", [])
+            conn.execute("SAVEPOINT insert_doc", [])
                 .map_err(|e| StorageError::Database {
-                    reason: format!("failed to begin transaction: {e}"),
+                    reason: format!("failed to begin savepoint: {e}"),
                 })?;
 
-            conn.execute(
-                "INSERT INTO documents (id, title, source_path, summary) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![doc.id.as_ref(), doc.title, doc.source_path, doc.summary,],
-            )
-            .map_err(|e| StorageError::Database {
-                reason: format!("failed to insert document {}: {e}", doc.id),
-            })?;
-
-            let mut pos = 0i64;
-            insert_sections_recursive(conn, doc.id.as_ref(), &doc.sections, &mut pos)?;
-
-            conn.execute("COMMIT", [])
+            let result = (|| {
+                conn.execute(
+                    "INSERT INTO documents (id, title, source_path, summary) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![doc.id.as_ref(), doc.title, doc.source_path, doc.summary,],
+                )
                 .map_err(|e| StorageError::Database {
-                    reason: format!("failed to commit: {e}"),
+                    reason: format!("failed to insert document {}: {e}", doc.id),
                 })?;
-            Ok(())
+
+                let mut pos = 0i64;
+                let mut seen_ids = std::collections::HashSet::new();
+                insert_sections_recursive(conn, doc.id.as_ref(), &doc.sections, &mut pos, &mut seen_ids)?;
+                Ok(())
+            })();
+
+            match result {
+                Ok(()) => {
+                    conn.execute("RELEASE insert_doc", [])
+                        .map_err(|e| StorageError::Database {
+                            reason: format!("failed to commit: {e}"),
+                        })?;
+                    Ok(())
+                }
+                Err(e) => {
+                    // Rollback on any error so the connection stays clean
+                    let _ = conn.execute("ROLLBACK TO insert_doc", []);
+                    let _ = conn.execute("RELEASE insert_doc", []);
+                    Err(e)
+                }
+            }
         })
         .await
     }
@@ -659,74 +689,85 @@ impl Storage for SqliteStorage {
         let trajectory: Vec<ContentId> = session.trajectory().to_vec();
 
         self.with_conn(move |conn| {
-            conn.execute("BEGIN", [])
+            conn.execute("SAVEPOINT save_session", [])
                 .map_err(|e| StorageError::Database {
-                    reason: format!("failed to begin transaction: {e}"),
+                    reason: format!("failed to begin savepoint: {e}"),
                 })?;
 
-            // Upsert session row
-            conn.execute(
-                "INSERT INTO sessions (id, context_budget, current_turn, updated_at)
-                 VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                 ON CONFLICT(id) DO UPDATE SET
-                    context_budget = excluded.context_budget,
-                    current_turn = excluded.current_turn,
-                    updated_at = excluded.updated_at",
-                rusqlite::params![id, budget, turn],
-            )
-            .map_err(|e| StorageError::Database {
-                reason: format!("failed to upsert session: {e}"),
-            })?;
-
-            // Clear existing deliveries and re-insert
-            conn.execute(
-                "DELETE FROM session_deliveries WHERE session_id = ?1",
-                rusqlite::params![id],
-            )
-            .map_err(|e| StorageError::Database {
-                reason: format!("failed to clear session deliveries: {e}"),
-            })?;
-
-            // Build a position map from trajectory for ordering
-            let mut position_map: std::collections::HashMap<String, i64> =
-                std::collections::HashMap::new();
-            for (pos, cid) in trajectory.iter().enumerate() {
-                // Last occurrence wins — gives the most recent position
-                position_map.insert(
-                    cid.0.clone(),
-                    i64::try_from(pos).unwrap_or(i64::MAX),
-                );
-            }
-
-            for item in &items {
-                let position = position_map
-                    .get(&item.content_id.0)
-                    .copied()
-                    .unwrap_or(0);
+            let result = (|| {
+                // Upsert session row
                 conn.execute(
-                    "INSERT INTO session_deliveries
-                     (session_id, content_id, resolution, token_count, turn_delivered, content_hash, position)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    rusqlite::params![
-                        id,
-                        item.content_id.0,
-                        item.resolution.to_string(),
-                        item.token_count,
-                        item.turn_delivered,
-                        item.content_hash,
-                        position,
-                    ],
+                    "INSERT INTO sessions (id, context_budget, current_turn, updated_at)
+                     VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                     ON CONFLICT(id) DO UPDATE SET
+                        context_budget = excluded.context_budget,
+                        current_turn = excluded.current_turn,
+                        updated_at = excluded.updated_at",
+                    rusqlite::params![id, budget, turn],
                 )
                 .map_err(|e| StorageError::Database {
-                    reason: format!("failed to insert session delivery: {e}"),
+                    reason: format!("failed to upsert session: {e}"),
                 })?;
-            }
 
-            conn.execute("COMMIT", [])
+                // Clear existing deliveries and re-insert
+                conn.execute(
+                    "DELETE FROM session_deliveries WHERE session_id = ?1",
+                    rusqlite::params![id],
+                )
                 .map_err(|e| StorageError::Database {
-                    reason: format!("failed to commit: {e}"),
+                    reason: format!("failed to clear session deliveries: {e}"),
                 })?;
-            Ok(())
+
+                // Build a position map from trajectory for ordering
+                let mut position_map: std::collections::HashMap<String, i64> =
+                    std::collections::HashMap::new();
+                for (pos, cid) in trajectory.iter().enumerate() {
+                    position_map.insert(
+                        cid.0.clone(),
+                        i64::try_from(pos).unwrap_or(i64::MAX),
+                    );
+                }
+
+                for item in &items {
+                    let position = position_map
+                        .get(&item.content_id.0)
+                        .copied()
+                        .unwrap_or(0);
+                    conn.execute(
+                        "INSERT INTO session_deliveries
+                         (session_id, content_id, resolution, token_count, turn_delivered, content_hash, position)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        rusqlite::params![
+                            id,
+                            item.content_id.0,
+                            item.resolution.to_string(),
+                            item.token_count,
+                            item.turn_delivered,
+                            item.content_hash,
+                            position,
+                        ],
+                    )
+                    .map_err(|e| StorageError::Database {
+                        reason: format!("failed to insert session delivery: {e}"),
+                    })?;
+                }
+                Ok(())
+            })();
+
+            match result {
+                Ok(()) => {
+                    conn.execute("RELEASE save_session", [])
+                        .map_err(|e| StorageError::Database {
+                            reason: format!("failed to commit: {e}"),
+                        })?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK TO save_session", []);
+                    let _ = conn.execute("RELEASE save_session", []);
+                    Err(e)
+                }
+            }
         })
         .await
     }

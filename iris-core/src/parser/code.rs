@@ -190,9 +190,11 @@ fn build_file_overview(
 /// The section text contains the full source code of the symbol.
 fn build_symbol_section(source_path: &str, content: &str, symbol: &Symbol) -> Section {
     let module_refs: Vec<&str> = symbol.module_path.iter().map(String::as_str).collect();
-    // Include item kind in the section ID to disambiguate (e.g. struct Foo vs impl Foo)
+    // Include item kind in the section ID to disambiguate (e.g. struct Foo vs impl Foo).
+    // For impl blocks, append the byte offset to handle multiple impls for the same type
+    // (e.g. `impl AstParser` and `impl Default for AstParser`).
     let qualified_name = if symbol.kind == crate::code::ItemKind::Impl {
-        format!("impl-{}", symbol.name)
+        format!("impl-{}-{}", symbol.name, symbol.byte_range.start)
     } else {
         symbol.name.clone()
     };
