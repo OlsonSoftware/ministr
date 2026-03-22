@@ -6,9 +6,11 @@
 //! `fastembed` crate for local ONNX-based inference with automatic model download.
 
 mod fastembed_impl;
+mod rerank;
 mod sparse;
 
 pub use fastembed_impl::FastEmbedder;
+pub use rerank::FastReranker;
 pub use sparse::FastSparseEmbedder;
 
 use crate::error::IndexError;
@@ -36,6 +38,36 @@ pub trait SparseEmbedder: Send + Sync {
     ///
     /// Returns [`IndexError::EmbeddingFailed`] if inference fails.
     fn embed_sparse(&self, texts: &[&str]) -> Result<Vec<SparseVector>, IndexError>;
+}
+
+/// A single reranking score: original document index paired with relevance.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RerankScore {
+    /// Original index in the input documents slice.
+    pub index: usize,
+    /// Cross-encoder relevance score (higher = more relevant).
+    pub score: f32,
+}
+
+/// Interface for cross-encoder reranking models.
+///
+/// Rerankers take a query and a set of candidate documents, scoring each
+/// document for relevance using a cross-encoder architecture. Unlike
+/// bi-encoder embeddings, cross-encoders jointly attend to query and
+/// document tokens for higher-quality relevance judgments.
+///
+/// Results are returned sorted by score descending (most relevant first).
+pub trait Reranker: Send + Sync {
+    /// Score documents for relevance to the query.
+    ///
+    /// Returns one [`RerankScore`] per input document, sorted by score
+    /// descending. Each score includes the original index so callers can
+    /// map back to their candidate list.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::EmbeddingFailed`] if inference fails.
+    fn rerank(&self, query: &str, documents: &[&str]) -> Result<Vec<RerankScore>, IndexError>;
 }
 
 /// Interface for text embedding models.
@@ -151,5 +183,57 @@ mod tests {
         let embedder: Box<dyn SparseEmbedder> = Box::new(MockSparseEmbedder);
         let vecs = embedder.embed_sparse(&["test"]).unwrap();
         assert_eq!(vecs.len(), 1);
+    }
+
+    /// A trivial reranker for unit-testing trait usage.
+    /// Scores documents by their length (longer = higher score).
+    struct MockReranker;
+
+    impl Reranker for MockReranker {
+        #[allow(clippy::cast_precision_loss)]
+        fn rerank(&self, _query: &str, documents: &[&str]) -> Result<Vec<RerankScore>, IndexError> {
+            let mut scores: Vec<RerankScore> = documents
+                .iter()
+                .enumerate()
+                .map(|(i, doc)| RerankScore {
+                    index: i,
+                    score: doc.len() as f32,
+                })
+                .collect();
+            scores.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            Ok(scores)
+        }
+    }
+
+    #[test]
+    fn mock_reranker_produces_sorted_scores() {
+        let reranker = MockReranker;
+        let scores = reranker
+            .rerank("query", &["short", "a much longer document", "medium len"])
+            .unwrap();
+        assert_eq!(scores.len(), 3);
+        // Sorted descending by score (length)
+        assert!(scores[0].score >= scores[1].score);
+        assert!(scores[1].score >= scores[2].score);
+        // Longest doc should be first
+        assert_eq!(scores[0].index, 1);
+    }
+
+    #[test]
+    fn mock_reranker_empty_input() {
+        let reranker = MockReranker;
+        let scores = reranker.rerank("query", &[]).unwrap();
+        assert!(scores.is_empty());
+    }
+
+    #[test]
+    fn reranker_trait_object_works() {
+        let reranker: Box<dyn Reranker> = Box::new(MockReranker);
+        let scores = reranker.rerank("query", &["doc1", "doc2"]).unwrap();
+        assert_eq!(scores.len(), 2);
     }
 }

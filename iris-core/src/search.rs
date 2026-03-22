@@ -71,6 +71,12 @@ pub struct SearchConfig {
     /// When > 0.0, the search pipeline uses RRF fusion to merge
     /// dense (HNSW) and sparse (inverted index) results.
     pub sparse_weight: f32,
+    /// Number of top candidates to pass through cross-encoder reranking.
+    ///
+    /// When `Some(n)`, the top `n` candidates from vector search are
+    /// reranked by a cross-encoder model before truncating to `top_k`.
+    /// When `None`, reranking is skipped (default).
+    pub rerank_top_k: Option<usize>,
 }
 
 impl Default for SearchConfig {
@@ -79,6 +85,7 @@ impl Default for SearchConfig {
             raw_k: DEFAULT_RAW_K,
             top_k: 10,
             sparse_weight: 0.0,
+            rerank_top_k: None,
         }
     }
 }
@@ -165,14 +172,12 @@ where
         let is_broad_query = query.split_whitespace().count() < BROAD_QUERY_WORD_THRESHOLD;
 
         let sparse_pair = if config.sparse_weight > 0.0 {
-            self.sparse_embedder
-                .zip(self.sparse_index)
+            self.sparse_embedder.zip(self.sparse_index)
         } else {
             None
         };
 
         let mut scored = if let Some((sparse_embedder, sparse_index)) = sparse_pair {
-
             let sparse_vecs = sparse_embedder.embed_sparse(&[query])?;
             let sparse_vec =
                 sparse_vecs
@@ -407,6 +412,7 @@ mod tests {
             raw_k: 30,
             top_k: 2,
             sparse_weight: 0.0,
+            rerank_top_k: None,
         };
         let results = searcher.search("auth", config).unwrap();
         assert!(results.len() <= 2);
@@ -663,6 +669,7 @@ mod tests {
             raw_k: 30,
             top_k: 10,
             sparse_weight: 0.5,
+            rerank_top_k: None,
         };
 
         let results = searcher.search("JWT signing", config).unwrap();
@@ -692,6 +699,7 @@ mod tests {
             raw_k: 30,
             top_k: 10,
             sparse_weight: 0.0,
+            rerank_top_k: None,
         };
 
         let results = searcher.search("test", config).unwrap();
