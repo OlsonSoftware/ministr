@@ -57,6 +57,9 @@ fastembed = "5"
 # Vector index
 hnsw_rs = "0.3"
 
+# XML parsing
+quick-xml = "0.37"
+
 # Hashing
 sha2 = "0.10"
 

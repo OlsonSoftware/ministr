@@ -463,18 +463,18 @@ phases:
 - id: W6
   name: Sitemap Crawling
   tagline: Structured URL discovery via sitemap.xml
-  status: pending
+  status: done
   problem: Documentation sites with hundreds of pages need structured discovery — blindly following links is slow and may miss content
   solution: Parse sitemap.xml and sitemap index files for URL discovery, filter by path prefix, and fetch in parallel with rate limiting
   tasks:
   - text: 'Implement sitemap.xml parser: handle both `<urlset>` (flat) and `<sitemapindex>` (nested sitemap files), extract `<loc>` URLs with optional `<lastmod>` timestamps'
-    checked: false
+    checked: true
   - text: Add path prefix filtering for sitemap URLs (e.g. only fetch URLs under `/docs/`) and configurable max page limit
-    checked: false
+    checked: true
   - text: Parallel page fetching with configurable concurrency (default 4 concurrent requests) and polite rate limiting (default 200ms between requests to same domain)
-    checked: false
+    checked: true
   - text: 'Unit tests: parse sample sitemap.xml and sitemap index files, verify URL extraction, path filtering, and lastmod parsing'
-    checked: false
+    checked: true
 - id: W7
   name: Web Cache and Refresh
   tagline: Persistent caching with staleness detection for web docs

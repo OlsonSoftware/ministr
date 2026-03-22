@@ -18,6 +18,9 @@ use crate::parser::html_to_md::html_to_markdown;
 use crate::storage::traits::Storage;
 use crate::token::count_tokens;
 use crate::web::cache::{WebCache, WebPageMeta, url_hash};
+use crate::web::sitemap::{
+    SitemapConfig, fetch_sitemap_pages, filter_entries, is_sitemap_url, parse_sitemap,
+};
 use crate::web::{HttpClient, normalize_url};
 
 /// The strategy used to fetch content from a URL.
@@ -38,6 +41,8 @@ pub enum FetchStrategy {
     LlmsTxtLinks,
     /// Content was fetched directly from the given URL.
     DirectFetch,
+    /// Content was crawled from a sitemap.xml.
+    Sitemap,
 }
 
 impl std::fmt::Display for FetchStrategy {
@@ -46,6 +51,7 @@ impl std::fmt::Display for FetchStrategy {
             Self::LlmsFullTxt => f.write_str("llms_full_txt"),
             Self::LlmsTxtLinks => f.write_str("llms_txt_links"),
             Self::DirectFetch => f.write_str("direct_fetch"),
+            Self::Sitemap => f.write_str("sitemap"),
         }
     }
 }
@@ -176,6 +182,11 @@ impl WebFetcher {
             })?
             .to_owned();
 
+        // Strategy 0: Sitemap URL — parse and crawl
+        if is_sitemap_url(parsed.as_str()) {
+            return self.fetch_via_sitemap(&parsed).await;
+        }
+
         // Strategy 1: Try llms-full.txt / llms.txt
         match self.try_llms_txt(&domain).await {
             Ok(result) => return Ok(result),
@@ -230,6 +241,83 @@ impl WebFetcher {
                 markdown,
             }],
             strategy: FetchStrategy::DirectFetch,
+            sections_indexed: 0,
+            claims_extracted: 0,
+            tokens_added: 0,
+        })
+    }
+
+    /// Fetch content via a sitemap.xml URL.
+    ///
+    /// Fetches the sitemap XML, parses it, applies path filtering and max page
+    /// limits, then fetches all matching pages in parallel.
+    ///
+    /// For `<sitemapindex>` documents, fetches and parses each child sitemap
+    /// to build the full URL list before crawling.
+    #[instrument(skip(self), fields(url = %url))]
+    async fn fetch_via_sitemap(&self, url: &Url) -> Result<FetchResult, WebError> {
+        let response = self.client.get(url.as_str()).await?;
+        let mut entries = parse_sitemap(&response.body)?;
+
+        // If entries look like child sitemaps (sitemapindex), resolve them
+        let is_index = entries.iter().all(|e| is_sitemap_url(&e.url));
+        if is_index && !entries.is_empty() {
+            let child_urls: Vec<String> = entries.iter().map(|e| e.url.clone()).collect();
+            entries.clear();
+            for child_url in &child_urls {
+                match self.client.get(child_url).await {
+                    Ok(child_response) => match parse_sitemap(&child_response.body) {
+                        Ok(child_entries) => entries.extend(child_entries),
+                        Err(e) => {
+                            warn!(url = %child_url, error = %e, "failed to parse child sitemap");
+                        }
+                    },
+                    Err(e) => {
+                        warn!(url = %child_url, error = %e, "failed to fetch child sitemap");
+                    }
+                }
+            }
+        }
+
+        let sitemap_config = SitemapConfig {
+            path_filter: self.config.path_filter.clone(),
+            max_pages: self.config.max_pages,
+            ..SitemapConfig::default()
+        };
+
+        let filtered = filter_entries(&entries, &sitemap_config);
+        let pages = fetch_sitemap_pages(&self.client, &filtered, &sitemap_config).await;
+
+        // Cache each fetched page
+        for page in &pages {
+            let now = chrono_now();
+            let meta = WebPageMeta {
+                source_url: page.url.clone(),
+                fetched_at: now,
+                etag: None,
+                content_hash: url_hash(&page.markdown),
+                content_type: Some("text/html".into()),
+            };
+            if let Err(e) = self
+                .cache
+                .store_page(&page.url, &page.markdown, &meta)
+                .await
+            {
+                warn!(url = %page.url, error = %e, "failed to cache sitemap page");
+            }
+        }
+
+        info!(
+            url = %url,
+            total_entries = entries.len(),
+            filtered = filtered.len(),
+            fetched = pages.len(),
+            "fetched via sitemap"
+        );
+
+        Ok(FetchResult {
+            pages,
+            strategy: FetchStrategy::Sitemap,
             sections_indexed: 0,
             claims_extracted: 0,
             tokens_added: 0,
@@ -550,6 +638,7 @@ mod tests {
         assert_eq!(FetchStrategy::LlmsFullTxt.to_string(), "llms_full_txt");
         assert_eq!(FetchStrategy::LlmsTxtLinks.to_string(), "llms_txt_links");
         assert_eq!(FetchStrategy::DirectFetch.to_string(), "direct_fetch");
+        assert_eq!(FetchStrategy::Sitemap.to_string(), "sitemap");
     }
 
     #[test]

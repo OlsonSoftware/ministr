@@ -389,10 +389,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Implement sitemap.xml parser: handle both `<urlset>` (flat) and `<sitemapindex>` (nested sitemap files), extract `<loc>` URLs with optional `<lastmod>` timestamps
-- [ ] Add path prefix filtering for sitemap URLs (e.g. only fetch URLs under `/docs/`) and configurable max page limit
-- [ ] Parallel page fetching with configurable concurrency (default 4 concurrent requests) and polite rate limiting (default 200ms between requests to same domain)
-- [ ] Unit tests: parse sample sitemap.xml and sitemap index files, verify URL extraction, path filtering, and lastmod parsing
+- [x] Implement sitemap.xml parser: handle both `<urlset>` (flat) and `<sitemapindex>` (nested sitemap files), extract `<loc>` URLs with optional `<lastmod>` timestamps
+- [x] Add path prefix filtering for sitemap URLs (e.g. only fetch URLs under `/docs/`) and configurable max page limit
+- [x] Parallel page fetching with configurable concurrency (default 4 concurrent requests) and polite rate limiting (default 200ms between requests to same domain)
+- [x] Unit tests: parse sample sitemap.xml and sitemap index files, verify URL extraction, path filtering, and lastmod parsing
 
 ---
 
