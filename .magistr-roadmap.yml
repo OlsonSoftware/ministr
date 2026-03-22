@@ -763,3 +763,100 @@ phases:
     checked: true
   - text: 'Fix iris_references: extract use imports and impl relationships during code ingestion'
     checked: true
+- id: H1
+  name: Operational Hardening
+  tagline: Fix the rough edges surfaced by real-world stress testing
+  status: done
+  problem: Stress testing revealed stale results during background indexing, FK failures in ref insertion, and no quantized model option
+  solution: Clear ingestion status in responses, robust ref insertion with graceful FK skip, configurable quantized embeddings
+  tasks:
+  - text: 'Surface ingestion status in tool responses: show "Indexing N/M files" message when background ingestion is in progress'
+    checked: true
+  - text: 'Harden ref insertion: verify both from/to symbol IDs exist before insert, use module-level anchor for imports'
+    checked: true
+  - text: 'Add quantized embedding model support: configurable model variant (e.g. AllMiniLML6V2Q) in config.toml'
+    checked: true
+- id: S1
+  name: Hybrid Search
+  tagline: Catch what dense embeddings miss with hybrid dense+sparse search
+  status: pending
+  problem: Dense-only vector search misses keyword-heavy queries and exact term matches
+  solution: Add SPLADE sparse embeddings and BM25, fuse with Reciprocal Rank Fusion for hybrid dense+sparse retrieval
+  tasks:
+  - text: Add SPLADE sparse embedding via fastembed-rs SparseTextEmbedding
+    checked: false
+  - text: Build sparse inverted index alongside HNSW dense index for keyword-level matching
+    checked: false
+  - text: Implement Reciprocal Rank Fusion (RRF) to merge dense + sparse retrieval results
+    checked: false
+  - text: Update survey pipeline to use hybrid search with configurable dense/sparse weights
+    checked: false
+- id: S2
+  name: Reranking
+  tagline: Precision-refine search results with cross-encoder reranking
+  status: pending
+  problem: First-stage retrieval returns noisy candidates — no precision refinement before delivery
+  solution: Add cross-encoder reranking via fastembed-rs between over-fetch and truncation in the survey pipeline
+  tasks:
+  - text: Integrate fastembed-rs cross-encoder reranker into iris-core
+    checked: false
+  - text: Add reranking stage between over-fetch and truncation in MultiResolutionSearch
+    checked: false
+  - text: 'Make reranking configurable: on/off toggle, model selection, rerank_top_k parameter'
+    checked: false
+- id: S3
+  name: Retrieval Evaluation
+  tagline: Measure what matters — retrieval quality with automated benchmarks
+  status: pending
+  problem: No way to measure retrieval quality or detect regressions from search pipeline changes
+  solution: Curated benchmark with gold relevance labels, automated precision/MRR/nDCG metrics, CI regression gate
+  tasks:
+  - text: 'Create curated retrieval benchmark: 50+ queries with gold-standard relevant section IDs'
+    checked: false
+  - text: 'Implement automated retrieval metrics: precision@k, MRR, nDCG in eval_retrieval test'
+    checked: false
+  - text: 'Add CI regression gate: fail build if retrieval quality drops below threshold'
+    checked: false
+- id: M1
+  name: MCP Protocol Evolution
+  tagline: Adopt MCP 2025 spec features for richer agent interaction
+  status: pending
+  problem: iris uses stdio-only transport with no push notifications, resource subscriptions, or async task support
+  solution: Add progress notifications, Streamable HTTP transport, resource subscriptions for coherence, async tasks for long ops
+  tasks:
+  - text: Send progress notifications during background ingestion (notifications/progress with file count)
+    checked: false
+  - text: Add Streamable HTTP (SSE) transport alongside stdio via rmcp for remote/multi-client deployments
+    checked: false
+  - text: Implement resource subscriptions for iris://status — push coherence alerts when files change
+    checked: false
+  - text: Async task support for iris_fetch and iris_clone — return task handle, poll for completion
+    checked: false
+- id: C8
+  name: Code Intelligence Depth
+  tagline: From import tracking to full call graph and cross-language refs
+  status: pending
+  problem: iris_references only extracts imports — no call graph, type usage, or multi-language support
+  solution: Extract call_expression for call graphs, type references from signatures, extend to Python/JS/TS/Go
+  tasks:
+  - text: Extract call graph via tree-sitter call_expression nodes, resolve callee against symbol table
+    checked: false
+  - text: Extract type usage references from function parameter and return types in signatures
+    checked: false
+  - text: 'Multi-language ref extraction: Python imports, JS/TS imports/requires, Go imports'
+    checked: false
+  - text: Add cyclomatic complexity metric and impact analysis (transitive caller count) to iris_symbols
+    checked: false
+- id: B2
+  name: Budget Intelligence
+  tagline: Proactive budget management that anticipates context pressure
+  status: pending
+  problem: Budget management is reactive — agent must explicitly call iris_budget to get eviction recommendations
+  solution: Proactive eviction recommendations, LLM-assisted abstractive compression via sampling, attention-position-aware scoring
+  tasks:
+  - text: 'Proactive eviction recommendations: attach suggestions to every tool response when budget pressure > elevated'
+    checked: false
+  - text: LLM-assisted abstractive compression via MCP sampling — 90%+ compression ratios vs extractive 60-80%
+    checked: false
+  - text: 'Attention-position-aware eviction scoring: weight mid-conversation content higher for eviction candidates'
+    checked: false

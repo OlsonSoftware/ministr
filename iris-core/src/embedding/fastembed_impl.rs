@@ -53,10 +53,15 @@ impl FastEmbedder {
     /// # Supported Models
     ///
     /// - `"all-MiniLM-L6-v2"` — 384 dimensions, fast general-purpose (default)
+    /// - `"all-MiniLM-L6-v2-q"` — 384 dimensions, quantized variant (faster, smaller)
     /// - `"all-MiniLM-L12-v2"` — 384 dimensions, slightly higher quality
+    /// - `"all-MiniLM-L12-v2-q"` — 384 dimensions, quantized variant
     /// - `"bge-small-en-v1.5"` — 384 dimensions, BAAI small English
+    /// - `"bge-small-en-v1.5-q"` — 384 dimensions, quantized variant
     /// - `"bge-base-en-v1.5"` — 768 dimensions, BAAI base English
+    /// - `"bge-base-en-v1.5-q"` — 768 dimensions, quantized variant
     /// - `"bge-large-en-v1.5"` — 1024 dimensions, BAAI large English
+    /// - `"bge-large-en-v1.5-q"` — 1024 dimensions, quantized variant
     ///
     /// # Errors
     ///
@@ -125,15 +130,23 @@ impl Embedder for FastEmbedder {
 fn parse_model_name(name: &str) -> Result<EmbeddingModel, IndexError> {
     match name {
         "all-MiniLM-L6-v2" => Ok(EmbeddingModel::AllMiniLML6V2),
+        "all-MiniLM-L6-v2-q" => Ok(EmbeddingModel::AllMiniLML6V2Q),
         "all-MiniLM-L12-v2" => Ok(EmbeddingModel::AllMiniLML12V2),
+        "all-MiniLM-L12-v2-q" => Ok(EmbeddingModel::AllMiniLML12V2Q),
         "bge-small-en-v1.5" => Ok(EmbeddingModel::BGESmallENV15),
+        "bge-small-en-v1.5-q" => Ok(EmbeddingModel::BGESmallENV15Q),
         "bge-base-en-v1.5" => Ok(EmbeddingModel::BGEBaseENV15),
+        "bge-base-en-v1.5-q" => Ok(EmbeddingModel::BGEBaseENV15Q),
         "bge-large-en-v1.5" => Ok(EmbeddingModel::BGELargeENV15),
+        "bge-large-en-v1.5-q" => Ok(EmbeddingModel::BGELargeENV15Q),
         _ => Err(IndexError::EmbeddingFailed {
             reason: format!(
                 "unknown embedding model '{name}'. Supported: \
-                 all-MiniLM-L6-v2, all-MiniLM-L12-v2, \
-                 bge-small-en-v1.5, bge-base-en-v1.5, bge-large-en-v1.5"
+                 all-MiniLM-L6-v2, all-MiniLM-L6-v2-q, \
+                 all-MiniLM-L12-v2, all-MiniLM-L12-v2-q, \
+                 bge-small-en-v1.5, bge-small-en-v1.5-q, \
+                 bge-base-en-v1.5, bge-base-en-v1.5-q, \
+                 bge-large-en-v1.5, bge-large-en-v1.5-q"
             ),
         }),
     }
@@ -142,8 +155,8 @@ fn parse_model_name(name: &str) -> Result<EmbeddingModel, IndexError> {
 /// Return the output dimension for a known embedding model.
 fn model_dimension(model: &EmbeddingModel) -> usize {
     match model {
-        EmbeddingModel::BGEBaseENV15 => 768,
-        EmbeddingModel::BGELargeENV15 => 1024,
+        EmbeddingModel::BGEBaseENV15 | EmbeddingModel::BGEBaseENV15Q => 768,
+        EmbeddingModel::BGELargeENV15 | EmbeddingModel::BGELargeENV15Q => 1024,
         // All other supported models (MiniLM, BGE-small) produce 384-dim vectors
         _ => 384,
     }
@@ -156,10 +169,15 @@ mod tests {
     #[test]
     fn parse_known_models() {
         assert!(parse_model_name("all-MiniLM-L6-v2").is_ok());
+        assert!(parse_model_name("all-MiniLM-L6-v2-q").is_ok());
         assert!(parse_model_name("all-MiniLM-L12-v2").is_ok());
+        assert!(parse_model_name("all-MiniLM-L12-v2-q").is_ok());
         assert!(parse_model_name("bge-small-en-v1.5").is_ok());
+        assert!(parse_model_name("bge-small-en-v1.5-q").is_ok());
         assert!(parse_model_name("bge-base-en-v1.5").is_ok());
+        assert!(parse_model_name("bge-base-en-v1.5-q").is_ok());
         assert!(parse_model_name("bge-large-en-v1.5").is_ok());
+        assert!(parse_model_name("bge-large-en-v1.5-q").is_ok());
     }
 
     #[test]
@@ -172,10 +190,15 @@ mod tests {
     #[test]
     fn model_dimensions_correct() {
         assert_eq!(model_dimension(&EmbeddingModel::AllMiniLML6V2), 384);
+        assert_eq!(model_dimension(&EmbeddingModel::AllMiniLML6V2Q), 384);
         assert_eq!(model_dimension(&EmbeddingModel::AllMiniLML12V2), 384);
+        assert_eq!(model_dimension(&EmbeddingModel::AllMiniLML12V2Q), 384);
         assert_eq!(model_dimension(&EmbeddingModel::BGESmallENV15), 384);
+        assert_eq!(model_dimension(&EmbeddingModel::BGESmallENV15Q), 384);
         assert_eq!(model_dimension(&EmbeddingModel::BGEBaseENV15), 768);
+        assert_eq!(model_dimension(&EmbeddingModel::BGEBaseENV15Q), 768);
         assert_eq!(model_dimension(&EmbeddingModel::BGELargeENV15), 1024);
+        assert_eq!(model_dimension(&EmbeddingModel::BGELargeENV15Q), 1024);
     }
 
     // Integration test: requires model download, so only run with --ignored
