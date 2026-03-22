@@ -741,15 +741,15 @@ phases:
 - id: PR5
   name: Final Hardening
   tagline: Last sweep before v0.1.0
-  status: pending
+  status: done
   problem: Miscellaneous polish items before tagging v0.1.0
   solution: 'Audit tracing levels, #[must_use], cargo audit, dead code cleanup'
   tasks:
   - text: Audit tracing levels — ingestion should WARN on 0 files, not just INFO
-    checked: false
+    checked: true
   - text: 'Comprehensive #[must_use] audit on public Result-returning functions'
-    checked: false
+    checked: true
   - text: Run cargo deny check + cargo audit, fix any findings
-    checked: false
+    checked: true
   - text: 'Dead code cleanup: DeltaResponse in server.rs — remove or implement'
-    checked: false
+    checked: true

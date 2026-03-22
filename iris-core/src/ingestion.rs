@@ -183,7 +183,11 @@ impl IngestionPipeline {
             total_embeddings: 0,
         };
 
-        info!(count = files.len(), "discovered files for ingestion");
+        if files.is_empty() {
+            warn!("discovered 0 files for ingestion");
+        } else {
+            info!(count = files.len(), "discovered files for ingestion");
+        }
 
         // Index new and changed files
         for file_path in &files {
@@ -657,10 +661,14 @@ impl IngestionPipeline {
             total_embeddings: 0,
         };
 
-        info!(
-            count = files.len(),
-            "discovered files for ingestion (with embeddings)"
-        );
+        if files.is_empty() {
+            warn!("discovered 0 files for ingestion (with embeddings)");
+        } else {
+            info!(
+                count = files.len(),
+                "discovered files for ingestion (with embeddings)"
+            );
+        }
 
         for file_path in &files {
             let relative = file_path
@@ -759,10 +767,14 @@ impl IngestionPipeline {
             total_embeddings: 0,
         };
 
-        info!(
-            count = files.len(),
-            "discovered files from multiple paths (with embeddings)"
-        );
+        if files.is_empty() {
+            warn!("discovered 0 files from multiple paths (with embeddings)");
+        } else {
+            info!(
+                count = files.len(),
+                "discovered files from multiple paths (with embeddings)"
+            );
+        }
 
         for file_path in &files {
             let relative = compute_relative_path(file_path, paths);
