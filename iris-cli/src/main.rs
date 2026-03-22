@@ -10,8 +10,10 @@ use std::sync::Arc;
 use clap::Parser;
 use miette::{IntoDiagnostic, Result, WrapErr};
 use rmcp::ServiceExt;
+use sha2::{Digest, Sha256};
 
 use iris_core::index::VectorIndexLoad as _;
+use iris_core::session::BudgetConfig;
 
 /// iris — a context cache controller for LLM agents.
 ///
@@ -107,20 +109,34 @@ async fn main() -> Result<()> {
         )
     };
 
-    // Build the query service.
+    // Run ingestion if a corpus path was provided.
+    if let Some(ref corpus_path) = cli.corpus {
+        run_ingestion(corpus_path, &storage, &*embedder, &*index, &index_dir).await?;
+    }
+
+    // Build the query service and start the MCP server.
+    let storage = Arc::new(storage);
     let service = Arc::new(iris_core::service::QueryService::new(
-        storage, embedder, index,
+        (*storage).clone(),
+        embedder,
+        index,
     ));
 
-    // Create the MCP server and serve over stdio.
-    let server = iris_mcp::server::IrisServer::new(service);
+    let session_id = corpus_session_id(cli.corpus.as_deref());
+    let budget_config = BudgetConfig {
+        max_context_tokens: config.default_context_budget,
+        ..BudgetConfig::default()
+    };
+
+    let server =
+        iris_mcp::server::IrisServer::with_persistence(service, budget_config, storage, session_id)
+            .await;
     let mcp_service = server
         .serve(rmcp::transport::stdio())
         .await
         .into_diagnostic()
         .wrap_err("failed to start MCP stdio transport")?;
 
-    // Wait for the service to shut down.
     mcp_service
         .waiting()
         .await
@@ -129,4 +145,59 @@ async fn main() -> Result<()> {
 
     tracing::info!("iris shutting down");
     Ok(())
+}
+
+/// Run the ingestion pipeline against the corpus directory, then persist the index.
+async fn run_ingestion(
+    corpus_path: &std::path::Path,
+    storage: &iris_core::storage::SqliteStorage,
+    embedder: &dyn iris_core::embedding::Embedder,
+    index: &dyn iris_core::index::VectorIndex,
+    index_dir: &std::path::Path,
+) -> Result<()> {
+    let start = std::time::Instant::now();
+    let pipeline = iris_core::ingestion::IngestionPipeline::new();
+    let stats = pipeline
+        .ingest_directory_with_embeddings(corpus_path, storage, embedder, index)
+        .await
+        .into_diagnostic()
+        .wrap_err("ingestion failed")?;
+
+    index
+        .persist(index_dir)
+        .into_diagnostic()
+        .wrap_err("failed to persist vector index")?;
+
+    let elapsed_ms = elapsed_millis(start);
+    tracing::info!(
+        files_discovered = stats.files_discovered,
+        files_indexed = stats.files_indexed,
+        files_skipped = stats.files_skipped,
+        files_removed = stats.files_removed,
+        files_failed = stats.files_failed,
+        sections = stats.total_sections,
+        claims = stats.total_claims,
+        embeddings = stats.total_embeddings,
+        elapsed_ms,
+        "ingestion complete"
+    );
+    Ok(())
+}
+
+/// Derive a stable session ID from the corpus path so sessions persist across restarts.
+fn corpus_session_id(corpus: Option<&std::path::Path>) -> Option<String> {
+    corpus.map(|p| {
+        let mut hasher = Sha256::new();
+        hasher.update(p.to_string_lossy().as_bytes());
+        let hash = hasher.finalize();
+        format!(
+            "iris-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7]
+        )
+    })
+}
+
+/// Convert elapsed duration to milliseconds, saturating at `u64::MAX`.
+fn elapsed_millis(start: std::time::Instant) -> u64 {
+    u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
