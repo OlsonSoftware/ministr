@@ -103,6 +103,33 @@ pub enum ParseError {
     EncodingError { path: PathBuf, reason: String },
 }
 
+/// Errors from the coherence subsystem (file watching and change detection).
+#[derive(Debug, thiserror::Error)]
+pub enum CoherenceError {
+    /// Failed to initialize the file watcher.
+    #[error("watcher initialization failed: {reason}")]
+    WatcherInit { reason: String },
+
+    /// Failed to watch a directory path.
+    #[error("failed to watch {path}: {reason}")]
+    WatchFailed {
+        path: std::path::PathBuf,
+        reason: String,
+    },
+
+    /// Re-indexing a changed file failed.
+    #[error("re-index failed for {path}: {source}")]
+    ReindexFailed {
+        path: std::path::PathBuf,
+        #[source]
+        source: Box<IngestionError>,
+    },
+
+    /// The watcher channel was disconnected.
+    #[error("watcher channel closed")]
+    ChannelClosed,
+}
+
 /// Errors from the ingestion pipeline.
 #[derive(Debug, thiserror::Error)]
 pub enum IngestionError {

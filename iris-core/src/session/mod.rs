@@ -23,5 +23,5 @@ pub use eviction::{EvictionCandidate, EvictionRanker};
 pub use prefetch::{
     CacheEntry, PrefetchCache, PrefetchEngine, PrefetchMetrics, PrefetchStrategy, TopicTracker,
 };
-pub use types::{DeliveredItem, EvictionPolicy, Session, SessionId};
+pub use types::{CoherenceAlert, DeliveredItem, EvictionPolicy, Session, SessionId};
 pub use window::{WindowEstimator, WindowStatus};

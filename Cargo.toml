@@ -50,6 +50,9 @@ hnsw_rs = "0.3"
 # Hashing
 sha2 = "0.10"
 
+# File watching
+notify = "7"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 

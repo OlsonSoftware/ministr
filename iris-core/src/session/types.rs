@@ -4,13 +4,26 @@
 //! content has been delivered to the agent, at what resolution and token cost,
 //! and maintains a trajectory of content access for prefetch prediction.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
 use crate::types::{ContentId, Resolution};
+
+/// A coherence alert generated when underlying content changes.
+///
+/// Contains lists of changed sections and stale content IDs that the agent
+/// should be notified about. Alerts are queued in the session and drained
+/// by the transport layer on the next tool response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoherenceAlert {
+    /// Section IDs that were re-indexed due to file changes.
+    pub changed_sections: Vec<String>,
+    /// Content IDs in the session shadow that are now stale.
+    pub stale_content_ids: Vec<String>,
+}
 
 /// Unique identifier for an agent session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -104,6 +117,10 @@ pub struct Session {
     trajectory: Vec<ContentId>,
     /// Current interaction turn counter.
     current_turn: u32,
+    /// Content IDs that have been marked stale due to underlying file changes.
+    stale: HashSet<String>,
+    /// Pending coherence alerts waiting to be delivered to the agent.
+    pending_alerts: VecDeque<CoherenceAlert>,
 }
 
 impl Session {
@@ -121,6 +138,8 @@ impl Session {
             delivered: BTreeMap::new(),
             trajectory: Vec::new(),
             current_turn: 0,
+            stale: HashSet::new(),
+            pending_alerts: VecDeque::new(),
         }
     }
 
@@ -144,6 +163,8 @@ impl Session {
             delivered,
             trajectory,
             current_turn,
+            stale: HashSet::new(),
+            pending_alerts: VecDeque::new(),
         }
     }
 
@@ -252,6 +273,79 @@ impl Session {
         self.delivered
             .get(&content_id.0)
             .is_some_and(|item| item.content_hash == current_hash)
+    }
+
+    // --- Coherence / stale tracking ---
+
+    /// Mark a delivered content item as stale due to underlying file changes.
+    ///
+    /// Returns `true` if the content was delivered and is now marked stale.
+    /// Returns `false` if the content was not in the session shadow.
+    pub fn mark_stale(&mut self, content_id: &ContentId) -> bool {
+        if self.delivered.contains_key(&content_id.0) {
+            self.stale.insert(content_id.0.clone());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check whether a delivered content item has been marked stale.
+    #[must_use]
+    pub fn is_stale(&self, content_id: &ContentId) -> bool {
+        self.stale.contains(&content_id.0)
+    }
+
+    /// Get all content IDs currently marked as stale.
+    #[must_use]
+    pub fn stale_content_ids(&self) -> Vec<String> {
+        self.stale.iter().cloned().collect()
+    }
+
+    /// Clear the stale mark for a content item (e.g. after re-delivery).
+    pub fn clear_stale(&mut self, content_id: &ContentId) {
+        self.stale.remove(&content_id.0);
+    }
+
+    /// Invalidate all delivered items that reference the given section IDs.
+    ///
+    /// Marks matching delivered items as stale and enqueues a coherence alert.
+    /// Returns the number of items that were invalidated.
+    pub fn invalidate_sections(&mut self, changed_section_ids: &[String]) -> usize {
+        let mut stale_ids = Vec::new();
+
+        for section_id in changed_section_ids {
+            let cid = ContentId(section_id.clone());
+            if self.mark_stale(&cid) {
+                stale_ids.push(section_id.clone());
+            }
+        }
+
+        let count = stale_ids.len();
+
+        if !stale_ids.is_empty() {
+            self.pending_alerts.push_back(CoherenceAlert {
+                changed_sections: changed_section_ids.to_vec(),
+                stale_content_ids: stale_ids,
+            });
+        }
+
+        count
+    }
+
+    /// Drain all pending coherence alerts.
+    ///
+    /// Returns the alerts and removes them from the queue. The transport
+    /// layer should call this on each tool response to deliver pending
+    /// alerts to the agent.
+    pub fn drain_alerts(&mut self) -> Vec<CoherenceAlert> {
+        self.pending_alerts.drain(..).collect()
+    }
+
+    /// Check if there are pending coherence alerts.
+    #[must_use]
+    pub fn has_pending_alerts(&self) -> bool {
+        !self.pending_alerts.is_empty()
     }
 }
 
@@ -656,5 +750,138 @@ mod tests {
         set.insert(id1.clone());
         assert!(set.contains(&id2));
         assert!(!set.contains(&id3));
+    }
+
+    // --- Stale tracking / coherence tests ---
+
+    #[test]
+    fn mark_stale_delivered_item() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+
+        assert!(session.mark_stale(&cid("s1")));
+        assert!(session.is_stale(&cid("s1")));
+    }
+
+    #[test]
+    fn mark_stale_undelivered_returns_false() {
+        let mut session = make_session();
+        assert!(!session.mark_stale(&cid("unknown")));
+        assert!(!session.is_stale(&cid("unknown")));
+    }
+
+    #[test]
+    fn stale_content_ids_lists_all_stale() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+        session.record_delivery(&cid("s2"), Resolution::Section, 100, 1, "h2".into());
+        session.record_delivery(&cid("s3"), Resolution::Section, 150, 1, "h3".into());
+
+        session.mark_stale(&cid("s1"));
+        session.mark_stale(&cid("s3"));
+
+        let stale = session.stale_content_ids();
+        assert_eq!(stale.len(), 2);
+        assert!(stale.contains(&"s1".to_string()));
+        assert!(stale.contains(&"s3".to_string()));
+    }
+
+    #[test]
+    fn clear_stale_removes_mark() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+
+        session.mark_stale(&cid("s1"));
+        assert!(session.is_stale(&cid("s1")));
+
+        session.clear_stale(&cid("s1"));
+        assert!(!session.is_stale(&cid("s1")));
+    }
+
+    #[test]
+    fn invalidate_sections_marks_delivered_stale_and_enqueues_alert() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+        session.record_delivery(&cid("s2"), Resolution::Section, 100, 1, "h2".into());
+
+        let count = session.invalidate_sections(&["s1".into(), "s3".into()]);
+        // s1 was delivered (stale), s3 was not
+        assert_eq!(count, 1);
+        assert!(session.is_stale(&cid("s1")));
+        assert!(!session.is_stale(&cid("s3")));
+
+        assert!(session.has_pending_alerts());
+        let alerts = session.drain_alerts();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(
+            alerts[0].changed_sections,
+            vec!["s1".to_string(), "s3".to_string()]
+        );
+        assert_eq!(alerts[0].stale_content_ids, vec!["s1".to_string()]);
+    }
+
+    #[test]
+    fn invalidate_sections_no_overlap_produces_no_alert() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+
+        let count = session.invalidate_sections(&["s99".into()]);
+        assert_eq!(count, 0);
+        assert!(!session.has_pending_alerts());
+    }
+
+    #[test]
+    fn drain_alerts_empties_queue() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+
+        session.invalidate_sections(&["s1".into()]);
+        assert!(session.has_pending_alerts());
+
+        let alerts = session.drain_alerts();
+        assert_eq!(alerts.len(), 1);
+        assert!(!session.has_pending_alerts());
+
+        // Second drain returns empty
+        let alerts = session.drain_alerts();
+        assert!(alerts.is_empty());
+    }
+
+    #[test]
+    fn multiple_invalidations_queue_multiple_alerts() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+        session.record_delivery(&cid("s2"), Resolution::Section, 100, 1, "h2".into());
+
+        session.invalidate_sections(&["s1".into()]);
+        session.invalidate_sections(&["s2".into()]);
+
+        let alerts = session.drain_alerts();
+        assert_eq!(alerts.len(), 2);
+    }
+
+    #[test]
+    fn coherence_alert_serde_roundtrip() {
+        let alert = CoherenceAlert {
+            changed_sections: vec!["s1".into(), "s2".into()],
+            stale_content_ids: vec!["s1".into()],
+        };
+        let json = serde_json::to_string(&alert).unwrap();
+        let back: CoherenceAlert = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, alert);
+    }
+
+    #[test]
+    fn re_delivery_clears_stale() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+        session.mark_stale(&cid("s1"));
+        assert!(session.is_stale(&cid("s1")));
+
+        // Re-deliver with updated content
+        session.record_delivery(&cid("s1"), Resolution::Section, 210, 2, "h2".into());
+        // Stale should be cleared after re-delivery
+        session.clear_stale(&cid("s1"));
+        assert!(!session.is_stale(&cid("s1")));
     }
 }
