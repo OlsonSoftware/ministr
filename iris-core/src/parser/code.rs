@@ -3,19 +3,28 @@
 //! Splits source files at function/struct/enum/trait/impl boundaries, producing
 //! one [`Section`] per top-level symbol with correct byte ranges. Generates
 //! multi-resolution chunks: a file-level overview section and per-symbol sections.
+//!
+//! Supports multiple languages via the [`GrammarRegistry`]. For Rust source,
+//! uses the dedicated Rust extractor; for other languages, uses the generic
+//! extractor with language-agnostic heuristics.
 
 use std::path::Path;
 
-use crate::code::{AstParser, Symbol, extract_symbols};
+use crate::code::{AstParser, GrammarRegistry, Symbol, extract_symbols, generic_extract_symbols};
 use crate::error::ParseError;
 use crate::parser::section_id::{generate_code_section_id, generate_section_id};
 use crate::types::{ContentId, DocumentTree, Section, SectionId};
 
 /// A document parser for source code files.
 ///
-/// Uses tree-sitter to parse Rust source into an AST, then extracts symbols
+/// Uses tree-sitter to parse source into an AST, then extracts symbols
 /// and produces multi-resolution sections: a file-level overview and one
 /// section per top-level symbol.
+///
+/// Supports multiple languages via the [`GrammarRegistry`]. For Rust files,
+/// the dedicated Rust extractor is used for maximum fidelity. For other
+/// languages with available grammars, the generic extractor provides
+/// language-agnostic symbol extraction using node kind heuristics.
 ///
 /// # Examples
 ///
@@ -48,25 +57,53 @@ impl super::DocumentParser for CodeParser {
     fn parse(&self, path: &Path, content: &str) -> Result<DocumentTree, ParseError> {
         let source = content.as_bytes();
 
-        let mut ast_parser = AstParser::new();
-        let tree = ast_parser.parse(source)?;
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+        let registry = GrammarRegistry::global();
+        let lang_name = registry.language_name_for_extension(ext);
+        let is_rust = lang_name == Some("rust");
+
+        // Select parser: use the grammar registry to find the right language
+        let tree = if is_rust {
+            // Rust: use the dedicated parser for backward compatibility
+            let mut ast_parser = AstParser::new();
+            ast_parser.parse(source)?
+        } else if let Some(ts_lang) = registry.language_for_extension(ext) {
+            // Other language with grammar: use the generic parser
+            let mut ast_parser = AstParser::with_language(ts_lang)?;
+            ast_parser.parse(source)?
+        } else {
+            // No grammar available: use Rust parser as fallback (will produce
+            // a parse tree with errors, but the generic extractor can still
+            // find some symbols via heuristics). For now, return an empty tree.
+            return Ok(build_fallback_tree(path, content));
+        };
 
         // Derive module path from file stem (e.g. "config" from "src/config.rs")
         let file_stem = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown");
-        let module_path: Vec<&str> =
-            if file_stem == "lib" || file_stem == "main" || file_stem == "mod" {
-                // lib.rs, main.rs, mod.rs don't add a module segment
-                vec![]
-            } else {
-                vec![file_stem]
-            };
+        let module_path: Vec<&str> = if file_stem == "lib"
+            || file_stem == "main"
+            || file_stem == "mod"
+            || file_stem == "index"
+            || file_stem == "__init__"
+        {
+            // Common "root" file names don't add a module segment
+            vec![]
+        } else {
+            vec![file_stem]
+        };
 
         let source_path = path.to_string_lossy();
 
-        let symbols = extract_symbols(&tree, source, &source_path, &module_path);
+        // Use the dedicated Rust extractor for Rust, generic for everything else
+        let symbols = if is_rust {
+            extract_symbols(&tree, source, &source_path, &module_path)
+        } else {
+            generic_extract_symbols(&tree, source, &source_path, &module_path)
+        };
 
         // Build file-level overview section (depth 1)
         let file_overview = build_file_overview(&source_path, &module_path, content, &symbols);
@@ -212,6 +249,35 @@ fn extract_module_doc(content: &str) -> Option<String> {
         return None;
     }
     Some(doc_lines.join("\n"))
+}
+
+/// Build a minimal document tree for files without a tree-sitter grammar.
+///
+/// Returns a single section containing the file content as-is, with no
+/// symbol-level children. This allows files with unsupported languages
+/// to still be indexed for text search.
+fn build_fallback_tree(path: &Path, content: &str) -> DocumentTree {
+    let source_path = path.to_string_lossy();
+    let id = SectionId(generate_section_id(&source_path, &[]));
+
+    let root_section = Section {
+        id,
+        heading_path: vec![source_path.to_string()],
+        depth: 1,
+        text: content.to_string(),
+        structural_nodes: Vec::new(),
+        children: Vec::new(),
+        claims: Vec::new(),
+        summary: None,
+    };
+
+    DocumentTree {
+        id: ContentId(source_path.to_string()),
+        title: format!("{} (source)", path.display()),
+        source_path: source_path.to_string(),
+        sections: vec![root_section],
+        summary: None,
+    }
 }
 
 #[cfg(test)]
@@ -473,5 +539,74 @@ fn internal_helper() {}
         assert!(child.text.contains("Doc comment"));
         // And the function itself
         assert!(child.text.contains("pub fn documented"));
+    }
+
+    // C7: Multi-language integration tests
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn parse_python_source() {
+        let parser = CodeParser::new();
+        let source = "def hello(name: str) -> str:\n    return f'Hello {name}'\n\nclass Greeter:\n    def greet(self):\n        pass\n";
+        let tree = parser.parse(Path::new("hello.py"), source).unwrap();
+        let root = &tree.sections[0];
+
+        assert!(
+            !root.children.is_empty(),
+            "Python source should produce symbol sections"
+        );
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn parse_typescript_source() {
+        let parser = CodeParser::new();
+        let source = "export function hello(name: string): string {\n  return `Hello ${name}`;\n}\n\nexport interface Greeter {\n  greet(): string;\n}\n";
+        let tree = parser.parse(Path::new("hello.ts"), source).unwrap();
+        let root = &tree.sections[0];
+
+        assert!(
+            !root.children.is_empty(),
+            "TypeScript source should produce symbol sections"
+        );
+    }
+
+    #[cfg(feature = "lang-go")]
+    #[test]
+    fn parse_go_source() {
+        let parser = CodeParser::new();
+        let source = "package main\n\nfunc Hello(name string) string {\n\treturn \"Hello \" + name\n}\n\ntype Greeter struct {\n\tName string\n}\n";
+        let tree = parser.parse(Path::new("main.go"), source).unwrap();
+        let root = &tree.sections[0];
+
+        assert!(
+            !root.children.is_empty(),
+            "Go source should produce symbol sections"
+        );
+    }
+
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn parse_java_source() {
+        let parser = CodeParser::new();
+        let source = "public class Greeter {\n    public String greet(String name) {\n        return \"Hello \" + name;\n    }\n}\n";
+        let tree = parser.parse(Path::new("Greeter.java"), source).unwrap();
+        let root = &tree.sections[0];
+
+        assert!(
+            !root.children.is_empty(),
+            "Java source should produce symbol sections"
+        );
+    }
+
+    #[test]
+    fn parse_unknown_extension_produces_fallback() {
+        let parser = CodeParser::new();
+        let source = "some content in an unknown language";
+        let tree = parser.parse(Path::new("file.zig"), source).unwrap();
+
+        // Fallback: single section with full content, no symbol children
+        assert_eq!(tree.sections.len(), 1);
+        assert!(tree.sections[0].text.contains("some content"));
     }
 }

@@ -581,10 +581,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Build a dynamic grammar loader that downloads and caches tree-sitter grammar `.so`/`.dylib` files on demand — when iris encounters a new file extension, it fetches the matching grammar from the tree-sitter grammar registry automatically
-- [ ] Maintain a language registry mapping file extensions to tree-sitter grammar crate names — cover all 30+ mainstream languages (Rust, TypeScript, JavaScript, Python, Go, Java, C, C++, C#, Ruby, Swift, Kotlin, Scala, PHP, Elixir, Haskell, Lua, Zig, OCaml, Dart, R, Shell/Bash, SQL, HTML, CSS, YAML, TOML, JSON, Terraform/HCL, Dockerfile, Protobuf, etc.)
-- [ ] Implement a generic AST symbol extractor with language-agnostic heuristics: identify nodes with names (functions, classes, types) by tree-sitter node kind patterns common across grammars (e.g. `*_definition`, `*_declaration`, `function_*`, `class_*`)
-- [ ] Add language-specific AST walker refinements for high-value languages: Rust (traits, impls, derive macros), TypeScript (interfaces, type aliases, decorators), Python (classes, decorators, type hints), Go (interfaces, methods, receivers)
-- [ ] Automatic language detection from file extension in `detect_parser_kind` — route to tree-sitter grammar if available, fall back to text-based parsing for unknown extensions, never fail on an unsupported language
-- [ ] Unit tests: parse and extract symbols from at least 5 languages (Rust, TypeScript, Python, Go, Java), verify the generic extractor produces reasonable symbols even for languages without a specific refinement
+- [x] Build a dynamic grammar loader that downloads and caches tree-sitter grammar `.so`/`.dylib` files on demand — when iris encounters a new file extension, it fetches the matching grammar from the tree-sitter grammar registry automatically
+- [x] Maintain a language registry mapping file extensions to tree-sitter grammar crate names — cover all 30+ mainstream languages (Rust, TypeScript, JavaScript, Python, Go, Java, C, C++, C#, Ruby, Swift, Kotlin, Scala, PHP, Elixir, Haskell, Lua, Zig, OCaml, Dart, R, Shell/Bash, SQL, HTML, CSS, YAML, TOML, JSON, Terraform/HCL, Dockerfile, Protobuf, etc.)
+- [x] Implement a generic AST symbol extractor with language-agnostic heuristics: identify nodes with names (functions, classes, types) by tree-sitter node kind patterns common across grammars (e.g. `*_definition`, `*_declaration`, `function_*`, `class_*`)
+- [x] Add language-specific AST walker refinements for high-value languages: Rust (traits, impls, derive macros), TypeScript (interfaces, type aliases, decorators), Python (classes, decorators, type hints), Go (interfaces, methods, receivers)
+- [x] Automatic language detection from file extension in `detect_parser_kind` — route to tree-sitter grammar if available, fall back to text-based parsing for unknown extensions, never fail on an unsupported language
+- [x] Unit tests: parse and extract symbols from at least 5 languages (Rust, TypeScript, Python, Go, Java), verify the generic extractor produces reasonable symbols even for languages without a specific refinement
 
