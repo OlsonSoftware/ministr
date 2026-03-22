@@ -692,37 +692,37 @@ phases:
 - id: PR2
   name: Eliminate .expect() from Library Code
   tagline: No panics in library code
-  status: pending
+  status: done
   problem: ~24 .expect() calls in non-test library code violate project conventions and can panic in production
   solution: Replace CSS selector expects with OnceLock statics, map errors properly, document invariants
   tasks:
   - text: Replace 12 Selector::parse().expect() with OnceLock statics in html.rs
-    checked: false
+    checked: true
   - text: Replace 8 Selector::parse().expect() with OnceLock statics in html_to_md.rs
-    checked: false
+    checked: true
   - text: Document invariant-based expects with SAFETY comments (common.rs:59, html.rs:135)
-    checked: false
+    checked: true
   - text: Replace semaphore.acquire().await.expect() with ? + mapped error in sitemap.rs
-    checked: false
+    checked: true
   - text: Replace service.rs:1224 expect with proper error return
-    checked: false
+    checked: true
   - text: Remove println! at parser/code.rs:313, replace with tracing::debug!
-    checked: false
+    checked: true
 - id: PR3
   name: License, README, Metadata
   tagline: Credible open-source packaging
-  status: pending
+  status: done
   problem: No LICENSE files despite declaring MIT OR Apache-2.0, no README.md for GitHub/crates.io
   solution: Add LICENSE-MIT, LICENSE-APACHE, README.md, fix Cargo.toml metadata
   tasks:
   - text: Add LICENSE-MIT with correct copyright
-    checked: false
+    checked: true
   - text: Add LICENSE-APACHE
-    checked: false
+    checked: true
   - text: Create README.md with project overview, install, usage, MCP integration, license badge
-    checked: false
+    checked: true
   - text: Add repository.workspace = true to iris-core and iris-mcp Cargo.toml
-    checked: false
+    checked: true
 - id: PR4
   name: Release Pipeline Polish
   tagline: One-command releases with cross-platform binaries

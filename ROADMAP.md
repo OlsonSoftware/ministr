@@ -588,3 +588,83 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Automatic language detection from file extension in `detect_parser_kind` — route to tree-sitter grammar if available, fall back to text-based parsing for unknown extensions, never fail on an unsupported language
 - [x] Unit tests: parse and extract symbols from at least 5 languages (Rust, TypeScript, Python, Go, Java), verify the generic extractor produces reasonable symbols even for languages without a specific refinement
 
+---
+
+## Phase PR1: Fix Code Indexing Bug ✦ "Dogfood iris on its own Rust source code"
+
+**Problem:** iris can't index its own source code — corpus paths show 0 documents despite correct architecture
+
+**Solution:** Add diagnostic logging, write integration tests, reproduce and fix the root cause
+
+### Tasks
+
+- [x] Add warn-level log when discover_paths finds 0 files for a corpus path
+- [x] Add diagnostic logging to background ingestion: resolved absolute paths, data dir, completion status
+- [x] Add debug log of canonical path in collect_path_entry for relative path resolution verification
+- [x] Enhance iris_toc to report ingestion state (running/completed/failed + stats) when 0 results
+- [x] Write integration test: multi-path code ingestion with .rs files, assert non-zero indexed count
+- [x] Reproduce with iris --corpus ./iris-core/src, examine stderr, fix root cause
+- [x] Add iris index and iris serve subcommands with backwards-compatible default to serve
+
+---
+
+## Phase PR2: Eliminate .expect() from Library Code ✦ "No panics in library code"
+
+**Problem:** ~24 .expect() calls in non-test library code violate project conventions and can panic in production
+
+**Solution:** Replace CSS selector expects with OnceLock statics, map errors properly, document invariants
+
+### Tasks
+
+- [x] Replace 12 Selector::parse().expect() with OnceLock statics in html.rs
+- [x] Replace 8 Selector::parse().expect() with OnceLock statics in html_to_md.rs
+- [x] Document invariant-based expects with SAFETY comments (common.rs:59, html.rs:135)
+- [x] Replace semaphore.acquire().await.expect() with ? + mapped error in sitemap.rs
+- [x] Replace service.rs:1224 expect with proper error return
+- [x] Remove println! at parser/code.rs:313, replace with tracing::debug!
+
+---
+
+## Phase PR3: License, README, Metadata ✦ "Credible open-source packaging"
+
+**Problem:** No LICENSE files despite declaring MIT OR Apache-2.0, no README.md for GitHub/crates.io
+
+**Solution:** Add LICENSE-MIT, LICENSE-APACHE, README.md, fix Cargo.toml metadata
+
+### Tasks
+
+- [x] Add LICENSE-MIT with correct copyright
+- [x] Add LICENSE-APACHE
+- [x] Create README.md with project overview, install, usage, MCP integration, license badge
+- [x] Add repository.workspace = true to iris-core and iris-mcp Cargo.toml
+
+---
+
+## Phase PR4: Release Pipeline Polish ✦ "One-command releases with cross-platform binaries"
+
+**Problem:** Release pipeline needs refinement for confident public releases
+
+**Solution:** Add Intel Mac target, version bump recipe, install script, MCP smoke test
+
+### Tasks
+
+- [ ] Add x86_64-apple-darwin target to release matrix
+- [ ] Add just release recipe: bump versions, update CHANGELOG, commit + tag
+- [ ] Add install.sh script for curl-based binary installation
+- [ ] Add MCP smoke test to CI: initialize + tools/list via stdin
+
+---
+
+## Phase PR5: Final Hardening ✦ "Last sweep before v0.1.0"
+
+**Problem:** Miscellaneous polish items before tagging v0.1.0
+
+**Solution:** Audit tracing levels, #[must_use], cargo audit, dead code cleanup
+
+### Tasks
+
+- [ ] Audit tracing levels — ingestion should WARN on 0 files, not just INFO
+- [ ] Comprehensive #[must_use] audit on public Result-returning functions
+- [ ] Run cargo deny check + cargo audit, fix any findings
+- [ ] Dead code cleanup: DeltaResponse in server.rs — remove or implement
+
