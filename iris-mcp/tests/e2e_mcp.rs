@@ -21,9 +21,10 @@ use iris_core::error::IndexError;
 use iris_core::index::{HnswIndex, VectorIndex};
 use iris_core::service::QueryService;
 use iris_core::session::BudgetConfig;
-use iris_core::storage::{SqliteStorage, Storage};
+use iris_core::storage::{SqliteStorage, Storage, SymbolRecord, SymbolRefRecord};
 use iris_core::types::{
-    Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, Section, SectionId,
+    Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RefKind, RelationType, Section,
+    SectionId, SymbolId,
 };
 use iris_mcp::server::IrisServer;
 use rmcp::ServerHandler;
@@ -2982,5 +2983,359 @@ async fn iris_clone_empty_repo_url_returns_error() {
     assert!(
         text.contains("clone failed") || text.contains("invalid"),
         "error should indicate invalid input, got: {text}"
+    );
+}
+
+// =============================================================================
+// Code Intelligence MCP Tools (C5)
+// =============================================================================
+
+/// Build test symbols for code intelligence testing.
+fn build_test_symbols() -> Vec<SymbolRecord> {
+    vec![
+        SymbolRecord {
+            id: SymbolId("sym-config::IrisConfig".into()),
+            file_path: "src/config.rs".into(),
+            name: "IrisConfig".into(),
+            kind: "struct".into(),
+            visibility: "pub".into(),
+            signature: "pub struct IrisConfig".into(),
+            doc_comment: Some("Configuration for the iris context cache.".into()),
+            module_path: "config".into(),
+            line_start: 10,
+            line_end: 25,
+        },
+        SymbolRecord {
+            id: SymbolId("sym-config::PrefetchConfig".into()),
+            file_path: "src/config.rs".into(),
+            name: "PrefetchConfig".into(),
+            kind: "struct".into(),
+            visibility: "pub".into(),
+            signature: "pub struct PrefetchConfig".into(),
+            doc_comment: Some("Prefetch engine configuration.".into()),
+            module_path: "config".into(),
+            line_start: 30,
+            line_end: 45,
+        },
+        SymbolRecord {
+            id: SymbolId("sym-service::QueryService".into()),
+            file_path: "src/service.rs".into(),
+            name: "QueryService".into(),
+            kind: "struct".into(),
+            visibility: "pub".into(),
+            signature: "pub struct QueryService".into(),
+            doc_comment: Some("High-level query service composing storage and index.".into()),
+            module_path: "service".into(),
+            line_start: 50,
+            line_end: 55,
+        },
+        SymbolRecord {
+            id: SymbolId("sym-service::survey".into()),
+            file_path: "src/service.rs".into(),
+            name: "survey".into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: "pub async fn survey(&self, query: &str, top_k: usize) -> Result<Vec<SurveyResult>, QueryError>".into(),
+            doc_comment: Some("Search the corpus for content relevant to a query.".into()),
+            module_path: "service".into(),
+            line_start: 60,
+            line_end: 80,
+        },
+        SymbolRecord {
+            id: SymbolId("sym-storage::Storage".into()),
+            file_path: "src/storage/traits.rs".into(),
+            name: "Storage".into(),
+            kind: "trait".into(),
+            visibility: "pub".into(),
+            signature: "pub trait Storage: Send + Sync".into(),
+            doc_comment: Some("Async storage interface for the iris content database.".into()),
+            module_path: "storage".into(),
+            line_start: 100,
+            line_end: 200,
+        },
+    ]
+}
+
+/// Build test symbol cross-references.
+fn build_test_refs() -> Vec<SymbolRefRecord> {
+    vec![
+        SymbolRefRecord {
+            from_symbol_id: SymbolId("sym-service::survey".into()),
+            to_symbol_id: SymbolId("sym-storage::Storage".into()),
+            ref_kind: RefKind::Calls,
+        },
+        SymbolRefRecord {
+            from_symbol_id: SymbolId("sym-service::survey".into()),
+            to_symbol_id: SymbolId("sym-config::IrisConfig".into()),
+            ref_kind: RefKind::Uses,
+        },
+    ]
+}
+
+/// Set up a server with code symbols indexed.
+async fn setup_server_with_symbols() -> IrisServer {
+    let dim = 16;
+    let embedder = Arc::new(MockEmbedder { dim });
+    let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Insert document corpus for normal tools
+    let corpus = build_corpus();
+    for doc in &corpus {
+        storage.insert_document(doc).await.unwrap();
+    }
+
+    // Index vectors
+    let texts_and_ids = [
+        (
+            "doc-summary::docs/auth.md",
+            "Complete authentication reference.",
+        ),
+        (
+            "section::docs/auth.md#tokens",
+            "JWT tokens use RS256 signing.",
+        ),
+    ];
+    for (id, text) in &texts_and_ids {
+        let vecs = embedder.embed(&[*text]).unwrap();
+        index.insert(id, &vecs[0]).unwrap();
+    }
+
+    // Insert code symbols
+    let symbols = build_test_symbols();
+    storage.insert_symbols(&symbols).await.unwrap();
+
+    // Insert cross-references
+    let refs = build_test_refs();
+    storage.insert_symbol_refs(&refs).await.unwrap();
+
+    let service = Arc::new(QueryService::new(storage, embedder, index));
+    IrisServer::new(service)
+}
+
+#[tokio::test]
+async fn iris_symbols_finds_struct_by_name() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(&server, "iris_symbols", json!({"query": "IrisConfig"})).await;
+
+    assert!(result.is_error.is_none() || result.is_error == Some(false));
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    let symbols = response["symbols"].as_array().unwrap();
+    assert!(!symbols.is_empty(), "should find IrisConfig by name search");
+    assert!(symbols.iter().any(|s| s["name"] == "IrisConfig"));
+}
+
+#[tokio::test]
+async fn iris_symbols_filters_by_kind() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(&server, "iris_symbols", json!({"kind": "function"})).await;
+
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    let symbols = response["symbols"].as_array().unwrap();
+    assert_eq!(symbols.len(), 1, "should find exactly one function");
+    assert_eq!(symbols[0]["name"], "survey");
+    assert_eq!(symbols[0]["kind"], "function");
+}
+
+#[tokio::test]
+async fn iris_symbols_filters_by_module() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(&server, "iris_symbols", json!({"module": "config"})).await;
+
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    let symbols = response["symbols"].as_array().unwrap();
+    assert_eq!(symbols.len(), 2, "should find two symbols in config module");
+    assert!(symbols.iter().all(|s| s["file"] == "src/config.rs"));
+}
+
+#[tokio::test]
+async fn iris_symbols_returns_all_when_no_filter() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(&server, "iris_symbols", json!({})).await;
+
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    let total = response["total"].as_u64().unwrap();
+    assert_eq!(total, 5, "should return all 5 symbols when unfiltered");
+}
+
+#[tokio::test]
+async fn iris_symbols_includes_doc_preview() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(&server, "iris_symbols", json!({"query": "Storage"})).await;
+
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    let symbols = response["symbols"].as_array().unwrap();
+    let storage_sym = symbols
+        .iter()
+        .find(|s| s["name"] == "Storage")
+        .expect("should find Storage trait");
+    assert!(
+        storage_sym["doc_preview"].is_string(),
+        "should include doc preview"
+    );
+}
+
+#[tokio::test]
+async fn iris_definition_returns_symbol_metadata() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(
+        &server,
+        "iris_definition",
+        json!({"symbol_id": "sym-config::IrisConfig"}),
+    )
+    .await;
+
+    assert!(result.is_error.is_none() || result.is_error == Some(false));
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    assert_eq!(response["name"], "IrisConfig");
+    assert_eq!(response["kind"], "struct");
+    assert_eq!(response["visibility"], "pub");
+    assert_eq!(response["file_path"], "src/config.rs");
+    assert_eq!(response["line_start"], 10);
+    assert_eq!(response["line_end"], 25);
+
+    // Heading path should include module + name
+    let heading = response["heading_path"].as_array().unwrap();
+    assert!(heading.iter().any(|h| h == "config"));
+    assert!(heading.iter().any(|h| h == "IrisConfig"));
+}
+
+#[tokio::test]
+async fn iris_definition_returns_budget_status() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(
+        &server,
+        "iris_definition",
+        json!({"symbol_id": "sym-config::IrisConfig"}),
+    )
+    .await;
+
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    assert!(
+        response["budget_status"].is_object(),
+        "response should include budget_status"
+    );
+}
+
+#[tokio::test]
+async fn iris_definition_not_found() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(
+        &server,
+        "iris_definition",
+        json!({"symbol_id": "nonexistent"}),
+    )
+    .await;
+
+    assert_eq!(result.is_error, Some(true));
+    let text = extract_text(&result.content);
+    assert!(
+        text.contains("Symbol not found"),
+        "should return user-friendly error, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn iris_references_finds_callers() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(
+        &server,
+        "iris_references",
+        json!({"symbol_id": "sym-storage::Storage"}),
+    )
+    .await;
+
+    assert!(result.is_error.is_none() || result.is_error == Some(false));
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    let refs = response["references"].as_array().unwrap();
+    assert!(!refs.is_empty(), "Storage should have references");
+    // survey calls Storage
+    assert!(
+        refs.iter()
+            .any(|r| r["from_name"] == "survey" && r["ref_kind"] == "calls")
+    );
+}
+
+#[tokio::test]
+async fn iris_references_filters_by_ref_kind() {
+    let server = setup_server_with_symbols().await;
+    // IrisConfig is referenced via "uses" only
+    let result = call_tool(
+        &server,
+        "iris_references",
+        json!({"symbol_id": "sym-config::IrisConfig", "ref_kind": "calls"}),
+    )
+    .await;
+
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    let refs = response["references"].as_array().unwrap();
+    assert!(
+        refs.is_empty(),
+        "IrisConfig should have no 'calls' references, only 'uses'"
+    );
+
+    // Now check with "uses"
+    let result = call_tool(
+        &server,
+        "iris_references",
+        json!({"symbol_id": "sym-config::IrisConfig", "ref_kind": "uses"}),
+    )
+    .await;
+
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    let refs = response["references"].as_array().unwrap();
+    assert_eq!(refs.len(), 1, "IrisConfig should have one 'uses' reference");
+    assert_eq!(refs[0]["from_name"], "survey");
+}
+
+#[tokio::test]
+async fn iris_references_not_found() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(
+        &server,
+        "iris_references",
+        json!({"symbol_id": "nonexistent"}),
+    )
+    .await;
+
+    assert_eq!(result.is_error, Some(true));
+    let text = extract_text(&result.content);
+    assert!(
+        text.contains("Symbol not found"),
+        "should return user-friendly error, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn iris_symbols_includes_budget_status() {
+    let server = setup_server_with_symbols().await;
+    let result = call_tool(&server, "iris_symbols", json!({"query": "Config"})).await;
+
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    assert!(
+        response["budget_status"].is_object(),
+        "iris_symbols response should include budget_status"
     );
 }

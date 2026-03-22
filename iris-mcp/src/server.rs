@@ -41,7 +41,7 @@ use iris_core::git::GitFetcher;
 use iris_core::index::VectorIndex;
 use iris_core::ingestion::IngestionPipeline;
 use iris_core::service::{
-    CompressedItem, QueryError, QueryService, RelatedClaimResult, SurveyResult,
+    CompressedItem, QueryError, QueryService, RelatedClaimResult, SurveyResult, SymbolRefResult,
 };
 use iris_core::session::delta::ContentDelta;
 use iris_core::session::eviction::EvictionCandidate;
@@ -49,9 +49,11 @@ use iris_core::session::prefetch::PrefetchEngine;
 use iris_core::session::{
     BudgetConfig, BudgetStatus, BudgetTracker, CoherenceAlert, EvictionPolicy, Session, SessionId,
 };
-use iris_core::storage::{SqliteStorage, Storage};
+use iris_core::storage::{SqliteStorage, Storage, SymbolFilter};
 use iris_core::token::count_tokens;
-use iris_core::types::{ContentId, RelationType, Resolution, SectionId, parent_section_id};
+use iris_core::types::{
+    ContentId, RefKind, RelationType, Resolution, SectionId, parent_section_id,
+};
 use iris_core::web::fetcher::WebFetcher;
 
 /// MCP server that exposes iris context-cache tools to LLM agents.
@@ -397,6 +399,88 @@ struct CloneResponse {
     from_cache: bool,
 }
 
+/// Parameters for the `iris_symbols` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SymbolsParams {
+    /// Fuzzy name search (case-insensitive substring match).
+    #[schemars(description = "Fuzzy symbol name search (case-insensitive substring match)")]
+    pub query: Option<String>,
+
+    /// Exact kind filter (e.g. "function", "struct", "trait", "enum", "impl").
+    #[schemars(
+        description = "Exact kind filter: 'function', 'struct', 'trait', 'enum', 'impl', 'const', 'static', 'type', 'mod'"
+    )]
+    pub kind: Option<String>,
+
+    /// Module path prefix filter (e.g. "config" matches `config::sub`).
+    #[schemars(description = "Module path prefix filter (e.g. 'config' matches config::sub)")]
+    pub module: Option<String>,
+
+    /// Exact visibility filter (e.g. "pub", "pub(crate)", "").
+    #[schemars(description = "Exact visibility filter: 'pub', 'pub(crate)', 'pub(super)', ''")]
+    pub visibility: Option<String>,
+}
+
+/// Parameters for the `iris_definition` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DefinitionParams {
+    /// The symbol ID to look up.
+    #[schemars(description = "Symbol ID to get the definition for (from iris_symbols results)")]
+    pub symbol_id: String,
+}
+
+/// Parameters for the `iris_references` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReferencesParams {
+    /// The symbol ID to find references for.
+    #[schemars(description = "Symbol ID to find references for (from iris_symbols results)")]
+    pub symbol_id: String,
+
+    /// Optional reference kind filter.
+    #[schemars(
+        description = "Optional reference kind filter: 'calls', 'implements', 'imports', 'uses'"
+    )]
+    pub ref_kind: Option<String>,
+}
+
+/// Response from the `iris_symbols` tool.
+#[derive(Debug, Serialize)]
+struct SymbolsResponse {
+    /// Matching symbols.
+    symbols: Vec<SymbolSummary>,
+    /// Total number of matches.
+    total: usize,
+}
+
+/// A compact symbol summary for search results.
+#[derive(Debug, Serialize)]
+struct SymbolSummary {
+    /// Symbol ID (use with `iris_definition` / `iris_references`).
+    id: String,
+    /// Symbol name.
+    name: String,
+    /// Symbol kind.
+    kind: String,
+    /// Source file path.
+    file: String,
+    /// Start line number.
+    line: u32,
+    /// Declaration signature.
+    signature: String,
+    /// First line of doc comment, if present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    doc_preview: Option<String>,
+}
+
+/// Response from the `iris_references` tool.
+#[derive(Debug, Serialize)]
+struct ReferencesResponse {
+    /// Cross-references for the symbol.
+    references: Vec<SymbolRefResult>,
+    /// Total number of references.
+    total: usize,
+}
+
 /// Corpus-level statistics returned in the `iris_toc` response header.
 #[derive(Debug, Serialize)]
 struct CorpusStatsHeader {
@@ -441,7 +525,10 @@ impl ServerHandler for IrisServer {
                  content has been dropped from your context window, iris_fetch to \
                  fetch web content by URL and add it to the corpus, iris_refresh \
                  to check cached web sources for staleness and re-fetch changed content, \
-                 and iris_clone to clone a git repository and index its content."
+                 iris_clone to clone a git repository and index its content, \
+                 iris_symbols to search the code symbol index, \
+                 iris_definition to get the full source definition of a symbol, \
+                 and iris_references to find all references to a symbol."
                     .to_string(),
             ),
         }
@@ -1345,6 +1432,182 @@ impl IrisServer {
         .instrument(span)
         .await
     }
+
+    /// Search the symbol index for code symbols.
+    ///
+    /// Returns matching symbols with their file location, signature, and
+    /// doc comment preview. Use the returned symbol IDs with `iris_definition`
+    /// and `iris_references`.
+    #[tool(
+        name = "iris_symbols",
+        description = "Search the code symbol index. Filter by name (fuzzy), kind, module, or visibility. Returns symbol IDs for use with iris_definition and iris_references."
+    )]
+    async fn symbols(
+        &self,
+        #[tool(aggr)] params: SymbolsParams,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_symbols", query = ?params.query, kind = ?params.kind);
+
+        async {
+            debug!(?params.query, ?params.kind, ?params.module, ?params.visibility, "iris_symbols request");
+
+            let filter = SymbolFilter {
+                name: params.query,
+                kind: params.kind,
+                visibility: params.visibility,
+                module: params.module,
+                file_path: None,
+            };
+
+            match self.service.search_symbols(&filter).await {
+                Ok(symbols) => {
+                    let total = symbols.len();
+                    let summaries: Vec<SymbolSummary> = symbols
+                        .into_iter()
+                        .map(|s| SymbolSummary {
+                            id: s.id.0,
+                            name: s.name,
+                            kind: s.kind,
+                            file: s.file_path,
+                            line: s.line_start,
+                            signature: s.signature,
+                            doc_preview: s.doc_comment.map(|d| {
+                                d.lines().next().unwrap_or("").to_string()
+                            }),
+                        })
+                        .collect();
+
+                    debug!(total, "iris_symbols success");
+
+                    let budget = self.budget.lock().await;
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+
+                    let response = self
+                        .build_response(SymbolsResponse { symbols: summaries, total }, budget_status)
+                        .await;
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, "iris_symbols failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_query_error(&e),
+                    )]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Get the full definition of a code symbol.
+    ///
+    /// Returns the symbol's source code with 3 lines of surrounding context,
+    /// module hierarchy, and all metadata.
+    #[tool(
+        name = "iris_definition",
+        description = "Get the full source definition of a code symbol by ID. Returns source code with surrounding context and module hierarchy."
+    )]
+    async fn definition(
+        &self,
+        #[tool(aggr)] params: DefinitionParams,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_definition", symbol_id = %params.symbol_id);
+
+        async {
+            debug!(symbol_id = %params.symbol_id, "iris_definition request");
+
+            match self.service.get_symbol_definition(&params.symbol_id).await {
+                Ok(def) => {
+                    let token_count = count_tokens(&def.source_context);
+                    let mut budget = self.budget.lock().await;
+                    budget.record_tokens(&params.symbol_id, token_count);
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+
+                    debug!(symbol_id = %params.symbol_id, token_count, "iris_definition success");
+
+                    let response = self.build_response(def, budget_status).await;
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, symbol_id = %params.symbol_id, "iris_definition failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_query_error(&e),
+                    )]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Find all references to a code symbol.
+    ///
+    /// Returns callers, implementors, importers, and users of the symbol,
+    /// with source locations.
+    #[tool(
+        name = "iris_references",
+        description = "Find all references to a code symbol: callers, implementors, importers. Optionally filter by reference kind."
+    )]
+    async fn references(
+        &self,
+        #[tool(aggr)] params: ReferencesParams,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let span = info_span!("iris_references", symbol_id = %params.symbol_id);
+
+        async {
+            debug!(symbol_id = %params.symbol_id, ref_kind = ?params.ref_kind, "iris_references request");
+
+            let ref_kind = params
+                .ref_kind
+                .as_deref()
+                .and_then(RefKind::parse);
+
+            match self
+                .service
+                .get_symbol_references(&params.symbol_id, ref_kind)
+                .await
+            {
+                Ok(refs) => {
+                    let total = refs.len();
+                    debug!(symbol_id = %params.symbol_id, total, "iris_references success");
+
+                    let budget = self.budget.lock().await;
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+
+                    let response = self
+                        .build_response(
+                            ReferencesResponse {
+                                references: refs,
+                                total,
+                            },
+                            budget_status,
+                        )
+                        .await;
+                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                Err(e) => {
+                    warn!(error = %e, symbol_id = %params.symbol_id, "iris_references failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_query_error(&e),
+                    )]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
 }
 
 impl IrisServer {
@@ -2144,6 +2407,9 @@ fn format_query_error(err: &QueryError) -> String {
                 "Claim not found: '{id}'. Use iris_extract to discover valid claim IDs \
                  within a section."
             )
+        }
+        QueryError::SymbolNotFound { id } => {
+            format!("Symbol not found: '{id}'. Use iris_symbols to search for valid symbol IDs.")
         }
     }
 }

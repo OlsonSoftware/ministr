@@ -15,9 +15,11 @@ use crate::error::{IndexError, StorageError};
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
 use crate::index::VectorIndex;
 use crate::search::{MultiResolutionSearch, SearchConfig};
-use crate::storage::{SqliteStorage, Storage};
+use crate::storage::{SqliteStorage, Storage, SymbolFilter, SymbolRecord};
 use crate::token::count_tokens;
-use crate::types::{ClaimId, ContentId, RelationType, Resolution, SectionId, TocEntry, VectorId};
+use crate::types::{
+    ClaimId, ContentId, RefKind, RelationType, Resolution, SectionId, SymbolId, TocEntry, VectorId,
+};
 
 /// A ranked result from a corpus survey search.
 #[derive(Debug, Clone, Serialize)]
@@ -95,6 +97,57 @@ pub struct RelatedClaimResult {
     pub confidence: f32,
 }
 
+/// A symbol definition with source context and module hierarchy.
+#[derive(Debug, Clone, Serialize)]
+pub struct SymbolDefinition {
+    /// The symbol record from storage.
+    pub id: String,
+    /// Symbol name.
+    pub name: String,
+    /// Symbol kind (e.g. "function", "struct").
+    pub kind: String,
+    /// Visibility (e.g. "pub", "pub(crate)").
+    pub visibility: String,
+    /// Declaration signature (without body).
+    pub signature: String,
+    /// Doc comment text, if present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_comment: Option<String>,
+    /// Source file path relative to corpus root.
+    pub file_path: String,
+    /// Start line (1-based).
+    pub line_start: u32,
+    /// End line (1-based, inclusive).
+    pub line_end: u32,
+    /// Module hierarchy path (e.g. `["config", "IrisConfig"]`).
+    pub heading_path: Vec<String>,
+    /// Source code of the symbol with 3 lines of surrounding context.
+    pub source_context: String,
+}
+
+/// A symbol reference result from cross-reference queries.
+#[derive(Debug, Clone, Serialize)]
+pub struct SymbolRefResult {
+    /// The symbol that holds the reference.
+    pub from_symbol_id: String,
+    /// Name of the referencing symbol.
+    pub from_name: String,
+    /// File containing the referencing symbol.
+    pub from_file: String,
+    /// Line of the referencing symbol.
+    pub from_line: u32,
+    /// The symbol being referenced.
+    pub to_symbol_id: String,
+    /// Name of the referenced symbol.
+    pub to_name: String,
+    /// File containing the referenced symbol.
+    pub to_file: String,
+    /// Line of the referenced symbol.
+    pub to_line: u32,
+    /// The kind of reference.
+    pub ref_kind: String,
+}
+
 /// Errors from the query service layer.
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
@@ -113,6 +166,10 @@ pub enum QueryError {
     /// The requested claim was not found.
     #[error("claim not found: {id}")]
     ClaimNotFound { id: String },
+
+    /// The requested symbol was not found.
+    #[error("symbol not found: {id}")]
+    SymbolNotFound { id: String },
 }
 
 /// High-level query service that composes storage, embedding, and vector index.
@@ -435,6 +492,148 @@ impl QueryService {
                 confidence: r.confidence,
             })
             .collect())
+    }
+
+    /// Search the symbol index with optional filters.
+    ///
+    /// Returns symbols matching the given filter criteria. All filter fields
+    /// are optional — omitting all fields returns all symbols.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] if a database operation fails.
+    #[instrument(skip(self))]
+    pub async fn search_symbols(
+        &self,
+        filter: &SymbolFilter,
+    ) -> Result<Vec<SymbolRecord>, QueryError> {
+        Ok(self.storage.list_symbols(filter).await?)
+    }
+
+    /// Get the full definition of a symbol with surrounding source context.
+    ///
+    /// Returns the symbol metadata plus the source code lines covering
+    /// the symbol with 3 lines of surrounding context, and a heading path
+    /// showing the module hierarchy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::SymbolNotFound`] if no symbol with the given ID
+    /// exists, or [`QueryError::Storage`] on database errors.
+    #[instrument(skip(self))]
+    pub async fn get_symbol_definition(
+        &self,
+        symbol_id: &str,
+    ) -> Result<SymbolDefinition, QueryError> {
+        let sid = SymbolId(symbol_id.to_string());
+        let symbol =
+            self.storage
+                .get_symbol(&sid)
+                .await?
+                .ok_or_else(|| QueryError::SymbolNotFound {
+                    id: symbol_id.to_string(),
+                })?;
+
+        // Build heading path from module path + symbol name
+        let mut heading_path: Vec<String> = symbol
+            .module_path
+            .split("::")
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        heading_path.push(symbol.name.clone());
+
+        // Read source file and extract context lines
+        let source_context = self
+            .read_source_context(&symbol.file_path, symbol.line_start, symbol.line_end)
+            .await;
+
+        Ok(SymbolDefinition {
+            id: symbol.id.0.clone(),
+            name: symbol.name,
+            kind: symbol.kind,
+            visibility: symbol.visibility,
+            signature: symbol.signature,
+            doc_comment: symbol.doc_comment,
+            file_path: symbol.file_path,
+            line_start: symbol.line_start,
+            line_end: symbol.line_end,
+            heading_path,
+            source_context,
+        })
+    }
+
+    /// Get all references for a symbol, optionally filtered by reference kind.
+    ///
+    /// Returns cross-references where the given symbol is the target (i.e.
+    /// callers, implementors, importers of the symbol).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::SymbolNotFound`] if the symbol does not exist,
+    /// or [`QueryError::Storage`] on database errors.
+    #[instrument(skip(self))]
+    pub async fn get_symbol_references(
+        &self,
+        symbol_id: &str,
+        ref_kind: Option<RefKind>,
+    ) -> Result<Vec<SymbolRefResult>, QueryError> {
+        let sid = SymbolId(symbol_id.to_string());
+
+        // Verify symbol exists
+        self.storage
+            .get_symbol(&sid)
+            .await?
+            .ok_or_else(|| QueryError::SymbolNotFound {
+                id: symbol_id.to_string(),
+            })?;
+
+        let refs = self.storage.query_refs(&sid, ref_kind).await?;
+
+        let mut results = Vec::with_capacity(refs.len());
+        for r in refs {
+            let from = self.storage.get_symbol(&r.from_symbol_id).await?;
+            let to = self.storage.get_symbol(&r.to_symbol_id).await?;
+
+            if let (Some(from_sym), Some(to_sym)) = (from, to) {
+                results.push(SymbolRefResult {
+                    from_symbol_id: from_sym.id.0,
+                    from_name: from_sym.name,
+                    from_file: from_sym.file_path,
+                    from_line: from_sym.line_start,
+                    to_symbol_id: to_sym.id.0,
+                    to_name: to_sym.name,
+                    to_file: to_sym.file_path,
+                    to_line: to_sym.line_start,
+                    ref_kind: r.ref_kind.to_string(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Read source file lines for symbol context display.
+    ///
+    /// Returns the symbol's source lines with 3 lines of surrounding context.
+    /// Falls back to a placeholder if the file cannot be read.
+    async fn read_source_context(&self, file_path: &str, line_start: u32, line_end: u32) -> String {
+        let Ok(content) = tokio::fs::read_to_string(file_path).await else {
+            return format!("[source unavailable: {file_path}]");
+        };
+
+        let lines: Vec<&str> = content.lines().collect();
+        let total = lines.len();
+
+        // 3 lines of context before and after, clamped to file bounds
+        let ctx = 3;
+        let start = (line_start as usize).saturating_sub(1).saturating_sub(ctx);
+        let end = (line_end as usize)
+            .min(total)
+            .saturating_add(ctx)
+            .min(total);
+
+        lines[start..end].join("\n")
     }
 
     /// Resolve a vector ID to its content text and optional heading path.
