@@ -101,7 +101,7 @@ pub struct AstItem {
     pub node_kind: String,
 }
 
-/// A tree-sitter parser initialized with the Rust language grammar.
+/// A tree-sitter parser that can be initialized with any language grammar.
 ///
 /// # Examples
 ///
@@ -130,6 +130,22 @@ impl AstParser {
             .set_language(&tree_sitter_rust::LANGUAGE.into())
             .expect("failed to load tree-sitter Rust grammar");
         Self { parser }
+    }
+
+    /// Create a parser initialized with the specified language grammar.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError::Failed`] if the language grammar cannot be loaded.
+    pub fn with_language(language: &tree_sitter::Language) -> Result<Self, ParseError> {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(language)
+            .map_err(|e| ParseError::Failed {
+                path: std::path::PathBuf::from("<language>"),
+                reason: format!("failed to load tree-sitter grammar: {e}"),
+            })?;
+        Ok(Self { parser })
     }
 
     /// Parse source bytes into a tree-sitter syntax tree.

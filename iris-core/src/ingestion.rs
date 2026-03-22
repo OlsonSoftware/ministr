@@ -1721,7 +1721,7 @@ mod tests {
 
     #[test]
     fn is_supported_file_rejects_others() {
-        assert!(!is_supported_file(Path::new("data.json")));
+        assert!(!is_supported_file(Path::new("data.csv")));
         assert!(!is_supported_file(Path::new("readme.txt")));
         assert!(!is_supported_file(Path::new("image.png")));
     }

@@ -71,7 +71,17 @@ glob = "0.3"
 
 # Tree-sitter parsing
 tree-sitter = "0.26"
+tree-sitter-language = "0.1"
 tree-sitter-rust = "0.24"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.25"
+tree-sitter-java = "0.23"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-c-sharp = "0.23"
 
 # CLI
 clap = { version = "4", features = ["derive"] }

@@ -79,18 +79,52 @@ pub enum ParserKind {
 
 /// Detect the parser kind from a file's extension.
 ///
-/// Returns `None` for unsupported extensions.
+/// Routes all known code file extensions to [`ParserKind::Code`], falling
+/// back to tree-sitter AST parsing when a grammar is available and to
+/// text-based heuristics otherwise. Returns `None` for truly unsupported
+/// extensions (images, binaries, etc.).
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::parser::{ParserKind, detect_parser_kind};
+/// use std::path::Path;
+///
+/// assert_eq!(detect_parser_kind(Path::new("lib.rs")), Some(ParserKind::Code));
+/// assert_eq!(detect_parser_kind(Path::new("app.tsx")), Some(ParserKind::Code));
+/// assert_eq!(detect_parser_kind(Path::new("main.go")), Some(ParserKind::Code));
+/// assert_eq!(detect_parser_kind(Path::new("hello.py")), Some(ParserKind::Code));
+/// assert_eq!(detect_parser_kind(Path::new("data.csv")), None);
+/// ```
 #[must_use]
 pub fn detect_parser_kind(path: &Path) -> Option<ParserKind> {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("md" | "markdown" | "mkd" | "mdx") => Some(ParserKind::Markdown),
-        Some("html" | "htm" | "xhtml") => Some(ParserKind::Html),
-        Some("pdf") => Some(ParserKind::Pdf),
-        Some("rs" | "ts" | "js" | "py" | "go" | "java" | "c" | "cpp" | "h") => {
-            Some(ParserKind::Code)
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        match ext {
+            "md" | "markdown" | "mkd" | "mdx" => return Some(ParserKind::Markdown),
+            "html" | "htm" | "xhtml" => return Some(ParserKind::Html),
+            "pdf" => return Some(ParserKind::Pdf),
+            _ => {
+                if crate::code::ALL_CODE_EXTENSIONS.contains(&ext) {
+                    return Some(ParserKind::Code);
+                }
+            }
         }
-        _ => None,
     }
+
+    // Filename-based detection for files without recognized extensions
+    let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+    if filename == "Dockerfile"
+        || filename.starts_with("Dockerfile.")
+        || filename == "Makefile"
+        || filename == "Justfile"
+        || filename == "justfile"
+        || filename == "Rakefile"
+        || filename == "Gemfile"
+    {
+        return Some(ParserKind::Code);
+    }
+
+    None
 }
 
 /// Create a boxed parser for the given [`ParserKind`].
@@ -165,7 +199,11 @@ mod tests {
 
     #[test]
     fn detect_code_extensions() {
-        for ext in &["rs", "ts", "js", "py", "go", "java", "c", "cpp", "h"] {
+        for ext in &[
+            "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp", "h", "cs", "rb",
+            "swift", "kt", "scala", "php", "ex", "hs", "lua", "zig", "ml", "dart", "sh", "sql",
+            "yml", "yaml", "toml", "json", "tf", "proto",
+        ] {
             let path = format!("file.{ext}");
             assert_eq!(
                 detect_parser_kind(Path::new(&path)),
@@ -173,6 +211,18 @@ mod tests {
                 "expected Code for .{ext}"
             );
         }
+    }
+
+    #[test]
+    fn detect_dockerfile_by_filename() {
+        assert_eq!(
+            detect_parser_kind(Path::new("Dockerfile")),
+            Some(ParserKind::Code)
+        );
+        assert_eq!(
+            detect_parser_kind(Path::new("Makefile")),
+            Some(ParserKind::Code)
+        );
     }
 
     #[test]

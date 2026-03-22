@@ -531,8 +531,8 @@ mod tests {
     #[test]
     fn unsupported_extensions() {
         assert!(!is_supported_file(Path::new("file.txt")));
-        assert!(!is_supported_file(Path::new("file.json")));
-        assert!(!is_supported_file(Path::new("no_extension")));
+        assert!(!is_supported_file(Path::new("image.png")));
+        assert!(!is_supported_file(Path::new("data.csv")));
     }
 
     // --- FileWatcher tests ---
