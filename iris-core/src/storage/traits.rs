@@ -10,6 +10,21 @@ use crate::session::{Session, SessionId};
 use crate::types::{ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, SectionId};
 
 /// Stored document metadata (without the full section tree).
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::storage::DocumentRecord;
+/// use iris_core::types::ContentId;
+///
+/// let record = DocumentRecord {
+///     id: ContentId("docs/api.md".into()),
+///     title: "API Reference".into(),
+///     source_path: "docs/api.md".into(),
+///     summary: Some("Full API reference.".into()),
+/// };
+/// assert_eq!(record.title, "API Reference");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentRecord {
     /// Unique document ID.

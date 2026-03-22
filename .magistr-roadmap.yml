@@ -228,7 +228,7 @@ phases:
   - text: Build mdBook documentation site — architecture overview, getting started guide, tool reference, configuration
     checked: false
   - text: 'Write doc tests for all public APIs in iris-core — non-trivial examples with # Examples sections'
-    checked: false
+    checked: true
   - text: Create reproducible benchmark suite — ingestion throughput, search latency, prefetch hit rate across corpus sizes
     checked: false
   - text: Build sample evaluation corpus — curated set of Markdown/HTML/PDF docs with ground-truth retrieval annotations
