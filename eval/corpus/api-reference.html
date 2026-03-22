@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>API Reference</title></head>
+<body>
+<h1>REST API Reference</h1>
+
+<h2>Authentication Endpoints</h2>
+
+<h3>POST /auth/login</h3>
+<p>Authenticates a user with email and password credentials. Returns an access token and refresh token pair. The access token is a JWT valid for 15 minutes. The refresh token is an opaque string valid for 30 days.</p>
+
+<h3>POST /auth/refresh</h3>
+<p>Exchanges a valid refresh token for a new access token. The refresh token is consumed and a new one is issued. This rotation prevents replay attacks.</p>
+
+<h3>POST /auth/logout</h3>
+<p>Revokes the current session and invalidates the refresh token. The access token remains valid until its natural expiration but is added to a server-side deny list.</p>
+
+<h2>Resource Endpoints</h2>
+
+<h3>GET /resources</h3>
+<p>Lists all resources accessible to the authenticated user. Supports pagination via <code>page</code> and <code>per_page</code> query parameters. Default page size is 20, maximum is 100. Results are sorted by creation date descending.</p>
+
+<h3>GET /resources/:id</h3>
+<p>Returns a single resource by its UUID. Returns 404 if the resource does not exist or the user lacks read permission.</p>
+
+<h3>POST /resources</h3>
+<p>Creates a new resource. The request body must include a <code>name</code> field (string, 1-255 characters) and an optional <code>description</code> field (string, max 2000 characters). Returns the created resource with a 201 status code.</p>
+
+<h3>PUT /resources/:id</h3>
+<p>Replaces a resource entirely. All fields must be provided. Returns 404 if the resource does not exist. Returns 403 if the user lacks write permission.</p>
+
+<h3>DELETE /resources/:id</h3>
+<p>Soft-deletes a resource by setting its <code>deleted_at</code> timestamp. The resource is excluded from list queries but can be restored within 30 days. After 30 days, a background job permanently removes it.</p>
+
+<h2>Health Endpoints</h2>
+
+<h3>GET /health/live</h3>
+<p>Returns 200 if the process is running. Used by Kubernetes liveness probes. Does not check backing services.</p>
+
+<h3>GET /health/ready</h3>
+<p>Returns 200 if the application is ready to serve traffic. Checks database connectivity and cache availability. Used by Kubernetes readiness probes.</p>
+</body>
+</html>

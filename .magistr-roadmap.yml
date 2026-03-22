@@ -230,9 +230,9 @@ phases:
   - text: 'Write doc tests for all public APIs in iris-core — non-trivial examples with # Examples sections'
     checked: true
   - text: Create reproducible benchmark suite — ingestion throughput, search latency, prefetch hit rate across corpus sizes
-    checked: false
+    checked: true
   - text: Build sample evaluation corpus — curated set of Markdown/HTML/PDF docs with ground-truth retrieval annotations
-    checked: false
+    checked: true
   - text: Set up cross-compilation CI — pre-built binaries for Linux x86_64, Linux aarch64, macOS Apple Silicon, Windows
     checked: false
   - text: Add installation methods — cargo install, homebrew tap, GitHub release binaries with checksums
