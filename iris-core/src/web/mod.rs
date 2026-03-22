@@ -7,6 +7,7 @@
 
 pub mod cache;
 pub mod fetcher;
+pub mod sitemap;
 
 use std::collections::HashMap;
 use std::time::Duration;

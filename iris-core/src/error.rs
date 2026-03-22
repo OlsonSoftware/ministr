@@ -204,6 +204,10 @@ pub enum WebError {
     /// Ingestion of fetched web content failed.
     #[error("web ingestion failed: {reason}")]
     IngestionFailed { reason: String },
+
+    /// Sitemap XML parsing failed.
+    #[error("sitemap parse error: {reason}")]
+    SitemapParse { reason: String },
 }
 
 #[cfg(test)]
