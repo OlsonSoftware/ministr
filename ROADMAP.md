@@ -202,7 +202,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Switch CLI from IrisServer::new() to IrisServer::with_persistence(), passing Arc&lt;SqliteStorage&gt; and budget config
 - [x] Generate or restore a stable session ID per corpus (derive from corpus path hash) so sessions persist across restarts
 - [x] Load budget config from IrisConfig (config.toml) instead of using BudgetConfig::default()
-- [ ] Verify analytics co-access patterns are recorded and served back via iris_budget prefetch_metrics
+- [x] Verify analytics co-access patterns are recorded and served back via iris_budget prefetch_metrics
 
 ---
 
@@ -214,10 +214,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Spawn FileWatcher on the corpus directory at CLI startup and feed events to CoherenceEngine
-- [ ] Wire CoherenceEngine.process_events to trigger re-ingestion of changed files and update the vector index
-- [ ] Propagate coherence alerts to active sessions via Session::invalidate_sections so stale content is flagged
-- [ ] Surface coherence_alerts in iris_read and iris_budget MCP tool responses when content has changed
+- [x] Spawn FileWatcher on the corpus directory at CLI startup and feed events to CoherenceEngine
+- [x] Wire CoherenceEngine.process_events to trigger re-ingestion of changed files and update the vector index
+- [x] Propagate coherence alerts to active sessions via Session::invalidate_sections so stale content is flagged
+- [x] Surface coherence_alerts in iris_read and iris_budget MCP tool responses when content has changed
 
 ---
 
