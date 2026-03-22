@@ -266,6 +266,11 @@ pub trait Storage: Send + Sync {
         id: &ContentId,
     ) -> impl Future<Output = Result<Option<DocumentRecord>, StorageError>> + Send;
 
+    /// Count documents in the corpus (lighter than listing all).
+    fn document_count(
+        &self,
+    ) -> impl Future<Output = Result<usize, StorageError>> + Send;
+
     /// List all documents in the corpus.
     fn list_documents(
         &self,

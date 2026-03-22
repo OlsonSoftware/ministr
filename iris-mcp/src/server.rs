@@ -74,6 +74,8 @@ pub struct IrisServer {
     ingestion_pipeline: Arc<IngestionPipeline>,
     embedder: Option<Arc<dyn Embedder>>,
     index: Option<Arc<dyn VectorIndex>>,
+    /// Shared ingestion status: 0=pending, 1=running, 2=complete.
+    ingestion_status: Arc<std::sync::atomic::AtomicU8>,
 }
 
 /// Tool response wrapper that includes budget status alongside the result data.
@@ -91,6 +93,9 @@ struct ToolResponse<T: Serialize> {
     /// Pending coherence alerts (present when underlying content has changed).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     coherence_alerts: Vec<CoherenceAlert>,
+    /// True when background corpus ingestion is still running.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    indexing_in_progress: bool,
 }
 
 /// Wrapper for survey responses that includes both results and dedup metadata.
@@ -1641,6 +1646,7 @@ impl IrisServer {
             ingestion_pipeline: Arc::new(IngestionPipeline::new()),
             embedder: None,
             index: None,
+            ingestion_status: Arc::new(std::sync::atomic::AtomicU8::new(0)),
         }
     }
 
@@ -1688,7 +1694,14 @@ impl IrisServer {
             ingestion_pipeline: Arc::new(IngestionPipeline::new()),
             embedder: None,
             index: None,
+            ingestion_status: Arc::new(std::sync::atomic::AtomicU8::new(0)),
         }
+    }
+
+    /// Get a clone of the ingestion status flag for use by background tasks.
+    #[must_use]
+    pub fn ingestion_status_arc(&self) -> Arc<std::sync::atomic::AtomicU8> {
+        Arc::clone(&self.ingestion_status)
     }
 
     /// Enable web fetching on this server.
@@ -1782,10 +1795,16 @@ impl IrisServer {
         let alerts = session.drain_alerts();
         drop(session);
 
+        let indexing = self
+            .ingestion_status
+            .load(std::sync::atomic::Ordering::Relaxed)
+            == 1;
+
         ToolResponse {
             data,
             budget_status,
             coherence_alerts: alerts,
+            indexing_in_progress: indexing,
         }
     }
 

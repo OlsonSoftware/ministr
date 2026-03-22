@@ -13,6 +13,7 @@ use rmcp::ServiceExt;
 use sha2::{Digest, Sha256};
 
 use iris_core::coherence::{CoherenceEngine, FileWatcher};
+use iris_core::storage::Storage as _;
 use iris_core::index::VectorIndexLoad as _;
 use iris_core::session::BudgetConfig;
 
@@ -104,8 +105,22 @@ async fn main() -> Result<()> {
     );
 
     // Initialize vector index.
+    // If the SQLite DB is empty (fresh migration) but a stale vector index
+    // exists on disk, discard it to avoid phantom IDs from a previous run.
     let dim = embedder.dimension();
     let index_dir = corpus_dir.join("index");
+    let doc_count: usize = storage
+        .document_count()
+        .await
+        .into_diagnostic()
+        .wrap_err("failed to check document count")?;
+    if doc_count == 0 && index_dir.exists() {
+        tracing::warn!("empty database with stale vector index — discarding old index");
+        std::fs::remove_dir_all(&index_dir)
+            .into_diagnostic()
+            .wrap_err("failed to remove stale vector index")?;
+    }
+
     let index: Arc<dyn iris_core::index::VectorIndex> = if index_dir.exists() {
         Arc::new(
             iris_core::index::HnswIndex::load(&index_dir)
@@ -169,6 +184,9 @@ async fn main() -> Result<()> {
         spawn_coherence(&local_paths, &server, &storage, &embedder, &index)?
     };
 
+    // Grab the ingestion status arc before .serve() consumes the server.
+    let ingestion_status = server.ingestion_status_arc();
+
     // Start MCP server FIRST so Claude Code doesn't time out.
     // Ingestion runs in background — tools return partial results until done.
     let mcp_service = server
@@ -185,6 +203,7 @@ async fn main() -> Result<()> {
         let bg_embedder = Arc::clone(&embedder);
         let bg_index = Arc::clone(&index);
         let bg_index_dir = index_dir.clone();
+        ingestion_status.store(1, std::sync::atomic::Ordering::Relaxed);
         tokio::spawn(async move {
             match run_corpus_ingestion(
                 &bg_corpus_paths,
@@ -199,6 +218,7 @@ async fn main() -> Result<()> {
                 Ok(()) => tracing::info!("background corpus ingestion complete"),
                 Err(e) => tracing::error!(error = %e, "background corpus ingestion failed"),
             }
+            ingestion_status.store(2, std::sync::atomic::Ordering::Relaxed);
         });
     }
 
