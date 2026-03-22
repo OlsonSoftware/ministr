@@ -91,7 +91,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Implement iris_read tool — full section text by hierarchical ID with heading_path and claims_available count
 - [x] Implement iris_extract tool — claim-level retrieval within a specific section, filtered by query relevance
 - [x] Add budget_status object to every tool response — tokens_used, tokens_remaining, pressure_level
-- [ ] Expose MCP resources — iris://status (index stats) and iris://corpus/{path} (document metadata)
+- [x] Expose MCP resources — iris://status (index stats) and iris://corpus/{path} (document metadata)
 - [x] Add #[instrument] tracing spans to all MCP tool handlers with request/response logging at DEBUG level
 - [x] Implement graceful error handling — map iris-core errors to MCP ErrorData with user-friendly messages
 - [x] Write end-to-end integration test — start MCP server, send JSON-RPC tool calls, verify responses

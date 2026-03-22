@@ -136,6 +136,12 @@ impl QueryService {
         self.index.as_ref()
     }
 
+    /// Access the storage layer for external use (e.g. MCP resource listing).
+    #[must_use]
+    pub fn storage(&self) -> &SqliteStorage {
+        &self.storage
+    }
+
     /// Search the corpus for content relevant to a natural language query.
     ///
     /// Performs multi-resolution vector search and enriches results with

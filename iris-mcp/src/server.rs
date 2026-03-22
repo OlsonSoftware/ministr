@@ -17,11 +17,17 @@
 
 use std::sync::Arc;
 
+use rmcp::RoleServer;
 use rmcp::ServerHandler;
+use rmcp::model::ErrorData as McpError;
 use rmcp::model::{
-    CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    CallToolResult, Content, Implementation, ListResourceTemplatesResult, ListResourcesResult,
+    PaginatedRequestParam, ProtocolVersion, RawResource, RawResourceTemplate,
+    ReadResourceRequestParam, ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::schemars;
+use rmcp::service::RequestContext;
 use rmcp::tool;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -188,7 +194,10 @@ impl ServerHandler for IrisServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             protocol_version: ProtocolVersion::LATEST,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
             server_info: Implementation {
                 name: "iris".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
@@ -202,6 +211,70 @@ impl ServerHandler for IrisServer {
                  iris_evicted to signal when content has been dropped from your context window."
                     .to_string(),
             ),
+        }
+    }
+
+    async fn list_resources(
+        &self,
+        _request: PaginatedRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        Ok(ListResourcesResult {
+            resources: vec![Resource::new(
+                RawResource {
+                    uri: "iris://status".to_string(),
+                    name: "iris status".to_string(),
+                    description: Some(
+                        "Index statistics — vector count, dimension, session state, and budget"
+                            .to_string(),
+                    ),
+                    mime_type: Some("application/json".to_string()),
+                    size: None,
+                },
+                None,
+            )],
+            next_cursor: None,
+        })
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: PaginatedRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult {
+            resource_templates: vec![ResourceTemplate::new(
+                RawResourceTemplate {
+                    uri_template: "iris://corpus/{path}".to_string(),
+                    name: "corpus document".to_string(),
+                    description: Some(
+                        "Document metadata — title, source path, summary, and section count"
+                            .to_string(),
+                    ),
+                    mime_type: Some("application/json".to_string()),
+                },
+                None,
+            )],
+            next_cursor: None,
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        let uri = &request.uri;
+        if uri == "iris://status" {
+            self.read_status_resource().await
+        } else if let Some(path) = uri.strip_prefix("iris://corpus/") {
+            self.read_corpus_resource(path).await
+        } else {
+            Err(McpError::new(
+                rmcp::model::ErrorCode::INVALID_PARAMS,
+                format!("unknown resource URI: {uri}"),
+                None,
+            ))
         }
     }
 }
@@ -831,6 +904,83 @@ impl IrisServer {
                 warn!(error = %e, "failed to persist session");
             }
         }
+    }
+
+    /// Build the `iris://status` resource content.
+    async fn read_status_resource(&self) -> Result<ReadResourceResult, McpError> {
+        let index = self.service.index();
+        let session = self.session.lock().await;
+        let budget = self.budget.lock().await;
+
+        let status = serde_json::json!({
+            "index": {
+                "vector_count": index.len(),
+                "dimension": index.dimension(),
+            },
+            "session": {
+                "id": session.id.to_string(),
+                "delivered_count": session.delivered_count(),
+            },
+            "budget": budget.budget_status(),
+        });
+
+        let text = serde_json::to_string_pretty(&status).unwrap_or_default();
+        Ok(ReadResourceResult {
+            contents: vec![ResourceContents::TextResourceContents {
+                uri: "iris://status".to_string(),
+                mime_type: Some("application/json".to_string()),
+                text,
+            }],
+        })
+    }
+
+    /// Build the `iris://corpus/{path}` resource content.
+    async fn read_corpus_resource(&self, path: &str) -> Result<ReadResourceResult, McpError> {
+        let storage = self.service.storage();
+        let documents = storage.list_documents().await.map_err(|e| {
+            McpError::new(
+                rmcp::model::ErrorCode::INTERNAL_ERROR,
+                format!("storage error: {e}"),
+                None,
+            )
+        })?;
+
+        let doc = documents
+            .iter()
+            .find(|d| d.source_path == path)
+            .ok_or_else(|| {
+                McpError::new(
+                    rmcp::model::ErrorCode::INVALID_PARAMS,
+                    format!("document not found for path: {path}"),
+                    None,
+                )
+            })?;
+
+        let sections = storage.list_sections(&doc.id).await.map_err(|e| {
+            McpError::new(
+                rmcp::model::ErrorCode::INTERNAL_ERROR,
+                format!("storage error: {e}"),
+                None,
+            )
+        })?;
+
+        let metadata = serde_json::json!({
+            "id": doc.id.0,
+            "title": doc.title,
+            "source_path": doc.source_path,
+            "summary": doc.summary,
+            "section_count": sections.len(),
+        });
+
+        let uri = format!("iris://corpus/{path}");
+        let text = serde_json::to_string_pretty(&metadata).unwrap_or_default();
+        Ok(ReadResourceResult {
+            contents: vec![ResourceContents::TextResourceContents {
+                uri,
+                mime_type: Some("application/json".to_string()),
+                text,
+            }],
+        })
     }
 }
 
@@ -1757,5 +1907,175 @@ mod tests {
             1,
             "should only return summary for the known section"
         );
+    }
+
+    // --- Resource tests ---
+
+    #[test]
+    fn server_info_enables_resources_capability() {
+        let server = setup_server_sync();
+        let info = server.get_info();
+
+        assert!(
+            info.capabilities.resources.is_some(),
+            "resources capability should be enabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_resources_returns_status_resource() {
+        let server = setup_server().await;
+        let result = server
+            .list_resources(PaginatedRequestParam::default(), make_test_context())
+            .await
+            .unwrap();
+
+        assert_eq!(result.resources.len(), 1);
+        assert_eq!(result.resources[0].uri, "iris://status");
+        assert_eq!(result.resources[0].name, "iris status");
+        assert!(result.resources[0].description.is_some());
+        assert_eq!(
+            result.resources[0].mime_type.as_deref(),
+            Some("application/json")
+        );
+    }
+
+    #[tokio::test]
+    async fn list_resource_templates_returns_corpus_template() {
+        let server = setup_server().await;
+        let result = server
+            .list_resource_templates(PaginatedRequestParam::default(), make_test_context())
+            .await
+            .unwrap();
+
+        assert_eq!(result.resource_templates.len(), 1);
+        assert_eq!(
+            result.resource_templates[0].uri_template,
+            "iris://corpus/{path}"
+        );
+        assert_eq!(result.resource_templates[0].name, "corpus document");
+    }
+
+    #[tokio::test]
+    async fn read_status_resource_returns_index_and_session_info() {
+        let server = setup_server().await;
+        let result = server.read_status_resource().await.unwrap();
+
+        assert_eq!(result.contents.len(), 1);
+        let text = match &result.contents[0] {
+            ResourceContents::TextResourceContents { uri, text, .. } => {
+                assert_eq!(uri, "iris://status");
+                text
+            }
+            ResourceContents::BlobResourceContents { .. } => {
+                panic!("expected text resource contents")
+            }
+        };
+
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert!(parsed["index"]["vector_count"].is_number());
+        assert!(parsed["index"]["dimension"].is_number());
+        assert!(parsed["session"]["id"].is_string());
+        assert!(parsed["session"]["delivered_count"].is_number());
+        assert!(parsed["budget"].is_object());
+    }
+
+    #[tokio::test]
+    async fn read_corpus_resource_returns_document_metadata() {
+        let server = setup_server().await;
+        let result = server.read_corpus_resource("docs/auth.md").await.unwrap();
+
+        assert_eq!(result.contents.len(), 1);
+        let text = match &result.contents[0] {
+            ResourceContents::TextResourceContents { uri, text, .. } => {
+                assert_eq!(uri, "iris://corpus/docs/auth.md");
+                text
+            }
+            ResourceContents::BlobResourceContents { .. } => {
+                panic!("expected text resource contents")
+            }
+        };
+
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["id"], "docs/auth.md");
+        assert_eq!(parsed["title"], "Authentication Guide");
+        assert_eq!(parsed["source_path"], "docs/auth.md");
+        assert_eq!(parsed["section_count"], 1);
+    }
+
+    #[tokio::test]
+    async fn read_corpus_resource_unknown_path_returns_error() {
+        let server = setup_server().await;
+        let result = server.read_corpus_resource("nonexistent.md").await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("document not found"),
+            "error should mention document not found: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn read_resource_dispatches_status_uri() {
+        let server = setup_server().await;
+        let result = server
+            .read_resource(
+                ReadResourceRequestParam {
+                    uri: "iris://status".to_string(),
+                },
+                make_test_context(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.contents.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn read_resource_dispatches_corpus_uri() {
+        let server = setup_server().await;
+        let result = server
+            .read_resource(
+                ReadResourceRequestParam {
+                    uri: "iris://corpus/docs/auth.md".to_string(),
+                },
+                make_test_context(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.contents.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn read_resource_unknown_uri_returns_error() {
+        let server = setup_server().await;
+        let result = server
+            .read_resource(
+                ReadResourceRequestParam {
+                    uri: "iris://unknown".to_string(),
+                },
+                make_test_context(),
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    /// Create a minimal `RequestContext` for testing resource handlers.
+    fn make_test_context() -> RequestContext<RoleServer> {
+        use rmcp::model::{ClientInfo, RequestId};
+        use rmcp::service::{AtomicU32RequestIdProvider, Peer};
+        use tokio_util::sync::CancellationToken;
+
+        let id_provider = Arc::new(AtomicU32RequestIdProvider::default());
+        let (peer, _rx) = Peer::new(id_provider, ClientInfo::default());
+        RequestContext {
+            ct: CancellationToken::new(),
+            id: RequestId::Number(1),
+            peer,
+        }
     }
 }
