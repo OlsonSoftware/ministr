@@ -794,16 +794,16 @@ phases:
 - id: S2
   name: Reranking
   tagline: Precision-refine search results with cross-encoder reranking
-  status: pending
+  status: done
   problem: First-stage retrieval returns noisy candidates — no precision refinement before delivery
   solution: Add cross-encoder reranking via fastembed-rs between over-fetch and truncation in the survey pipeline
   tasks:
   - text: Integrate fastembed-rs cross-encoder reranker into iris-core
-    checked: false
+    checked: true
   - text: Add reranking stage between over-fetch and truncation in MultiResolutionSearch
-    checked: false
+    checked: true
   - text: 'Make reranking configurable: on/off toggle, model selection, rerank_top_k parameter'
-    checked: false
+    checked: true
 - id: S3
   name: Retrieval Evaluation
   tagline: Measure what matters — retrieval quality with automated benchmarks

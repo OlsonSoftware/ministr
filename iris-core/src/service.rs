@@ -11,7 +11,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::embedding::{Embedder, SparseEmbedder};
+use crate::embedding::{Embedder, Reranker, SparseEmbedder};
 use crate::error::{IndexError, StorageError};
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
 use crate::index::{SparseIndex, VectorIndex};
@@ -186,6 +186,7 @@ pub struct QueryService {
     index: Arc<dyn VectorIndex>,
     sparse_embedder: Option<Arc<dyn SparseEmbedder>>,
     sparse_index: Option<Arc<dyn SparseIndex>>,
+    reranker: Option<Arc<dyn Reranker>>,
 }
 
 impl QueryService {
@@ -202,6 +203,7 @@ impl QueryService {
             index,
             sparse_embedder: None,
             sparse_index: None,
+            reranker: None,
         }
     }
 
@@ -214,6 +216,17 @@ impl QueryService {
     ) -> Self {
         self.sparse_embedder = Some(sparse_embedder);
         self.sparse_index = Some(sparse_index);
+        self
+    }
+
+    /// Add a cross-encoder reranker for improved relevance scoring.
+    ///
+    /// When configured, survey results are reranked by the cross-encoder
+    /// before truncation to `top_k`. The reranker processes the top
+    /// candidates from vector search to produce higher-quality rankings.
+    #[must_use]
+    pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
+        self.reranker = Some(reranker);
         self
     }
 
@@ -294,10 +307,15 @@ impl QueryService {
         } else {
             0.0
         };
+        // When reranking is enabled, fetch more candidates so the reranker
+        // has a larger pool to re-score before truncation.
+        let rerank_top_k = self.reranker.as_ref().map(|_| top_k.max(10) * 3);
+        let search_top_k = rerank_top_k.unwrap_or(top_k);
         let config = SearchConfig {
-            raw_k: top_k.max(10) * 3,
-            top_k,
+            raw_k: search_top_k.max(10) * 3,
+            top_k: search_top_k,
             sparse_weight,
+            rerank_top_k,
         };
 
         let scored = searcher.search(query, config)?;
@@ -319,6 +337,11 @@ impl QueryService {
                 text,
                 heading_path,
             });
+        }
+
+        // Apply cross-encoder reranking if configured
+        if let Some(reranker) = &self.reranker {
+            results = Self::rerank_results(query, results, top_k, reranker.as_ref())?;
         }
 
         Ok(results)
@@ -359,12 +382,21 @@ impl QueryService {
             raw_k: fetch_k,
             top_k: fetch_k,
             sparse_weight,
+            rerank_top_k: None,
         };
 
         let scored = searcher.search(query, config)?;
 
-        let mut results = Vec::with_capacity(top_k);
+        let mut results = Vec::new();
         let mut deduplicated_count = 0;
+
+        // When reranking, collect more candidates so the reranker has a
+        // larger pool; otherwise stop at top_k.
+        let collect_k = if self.reranker.is_some() {
+            fetch_k
+        } else {
+            top_k
+        };
 
         for sr in scored {
             let content_id = sr.vector_id.content_id().to_string();
@@ -388,9 +420,16 @@ impl QueryService {
                 heading_path,
             });
 
-            if results.len() >= top_k {
+            if results.len() >= collect_k {
                 break;
             }
+        }
+
+        // Apply cross-encoder reranking if configured
+        if let Some(reranker) = &self.reranker {
+            results = Self::rerank_results(query, results, top_k, reranker.as_ref())?;
+        } else {
+            results.truncate(top_k);
         }
 
         Ok((results, deduplicated_count))
@@ -732,6 +771,41 @@ impl QueryService {
             .min(total);
 
         lines[start..end].join("\n")
+    }
+
+    /// Rerank survey results using a cross-encoder model.
+    ///
+    /// Takes the already-resolved survey results, passes their text to the
+    /// reranker, re-sorts by cross-encoder score, and truncates to `top_k`.
+    fn rerank_results(
+        query: &str,
+        results: Vec<SurveyResult>,
+        top_k: usize,
+        model: &dyn Reranker,
+    ) -> Result<Vec<SurveyResult>, QueryError> {
+        if results.is_empty() {
+            return Ok(results);
+        }
+
+        let texts: Vec<&str> = results.iter().map(|r| r.text.as_str()).collect();
+        let scores = model.rerank(query, &texts)?;
+
+        // Build output in score-descending order (scores are already sorted
+        // descending by the Reranker contract).
+        let mut output = Vec::with_capacity(top_k.min(scores.len()));
+        // Convert results into an indexable container where items can be taken
+        let mut slots: Vec<Option<SurveyResult>> = results.into_iter().map(Some).collect();
+        for rs in scores {
+            if let Some(mut result) = slots.get_mut(rs.index).and_then(Option::take) {
+                result.score = rs.score;
+                output.push(result);
+            }
+            if output.len() >= top_k {
+                break;
+            }
+        }
+
+        Ok(output)
     }
 
     /// Resolve a vector ID to its content text and optional heading path.
@@ -1350,5 +1424,128 @@ mod tests {
         let entries = service.toc(Some("nonexistent.md")).await.unwrap();
 
         assert!(entries.is_empty());
+    }
+
+    // --- reranker tests ---
+
+    /// Mock reranker that scores by document text length (longer = higher).
+    struct LengthReranker;
+
+    impl Reranker for LengthReranker {
+        #[allow(clippy::cast_precision_loss)]
+        fn rerank(
+            &self,
+            _query: &str,
+            documents: &[&str],
+        ) -> Result<Vec<crate::embedding::RerankScore>, IndexError> {
+            let mut scores: Vec<crate::embedding::RerankScore> = documents
+                .iter()
+                .enumerate()
+                .map(|(i, doc)| crate::embedding::RerankScore {
+                    index: i,
+                    score: doc.len() as f32,
+                })
+                .collect();
+            scores.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            Ok(scores)
+        }
+    }
+
+    async fn setup_service_with_reranker(reranker: Arc<dyn Reranker>) -> QueryService {
+        let dim = 8;
+        let embedder = Arc::new(MockEmbedder { dim });
+        let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let doc = make_test_doc();
+        storage.insert_document(&doc).await.unwrap();
+
+        let texts_and_ids = [
+            (
+                "doc-summary::docs/auth.md",
+                "Complete authentication reference.",
+            ),
+            (
+                "sec-summary::docs/auth.md#tokens",
+                "Token authentication details.",
+            ),
+            (
+                "section::docs/auth.md#tokens",
+                "JWT tokens use RS256 signing. Tokens expire after 24 hours.",
+            ),
+            ("claim::c1", "JWT tokens use RS256 signing algorithm."),
+            ("claim::c2", "Tokens expire after 24 hours by default."),
+        ];
+
+        for (id, text) in &texts_and_ids {
+            let vecs = embedder.embed(&[*text]).unwrap();
+            index.insert(id, &vecs[0]).unwrap();
+        }
+
+        QueryService::new(storage, embedder, index).with_reranker(reranker)
+    }
+
+    #[tokio::test]
+    async fn survey_with_reranker_uses_reranked_scores() {
+        let service = setup_service_with_reranker(Arc::new(LengthReranker)).await;
+        let results = service.survey("JWT tokens", 5).await.unwrap();
+
+        assert!(!results.is_empty());
+        // LengthReranker scores by text length, so results should be sorted
+        // by text length descending
+        for window in results.windows(2) {
+            assert!(
+                window[0].score >= window[1].score,
+                "results should be sorted by reranked score: {} >= {}",
+                window[0].score,
+                window[1].score,
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn survey_with_reranker_respects_top_k() {
+        let service = setup_service_with_reranker(Arc::new(LengthReranker)).await;
+        let results = service.survey("JWT tokens", 2).await.unwrap();
+
+        assert!(
+            results.len() <= 2,
+            "reranked results should respect top_k=2, got {}",
+            results.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn survey_excluding_with_reranker() {
+        let service = setup_service_with_reranker(Arc::new(LengthReranker)).await;
+        // Exclude using the content_id format (after vector_id.content_id() extraction)
+        let exclude: HashSet<String> = ["docs/auth.md".to_string()].into_iter().collect();
+
+        let (results, dedup_count) = service
+            .survey_excluding("JWT tokens", 5, &exclude)
+            .await
+            .unwrap();
+
+        // The excluded content_id should have been filtered out
+        for r in &results {
+            assert_ne!(r.content_id, "docs/auth.md");
+        }
+        assert!(dedup_count > 0 || results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn survey_without_reranker_unchanged() {
+        // Verify that without a reranker, survey works as before
+        let service = setup_service().await;
+        let results = service.survey("JWT authentication", 5).await.unwrap();
+
+        assert!(!results.is_empty());
+        for window in results.windows(2) {
+            assert!(window[0].score >= window[1].score);
+        }
     }
 }

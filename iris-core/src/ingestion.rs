@@ -3128,6 +3128,7 @@ pub fn compute_hash(content: &str) -> String {
             raw_k: 30,
             top_k: 10,
             sparse_weight: 0.0,
+            rerank_top_k: None,
         };
         let results = searcher.search("ingestion pipeline", config).unwrap();
 

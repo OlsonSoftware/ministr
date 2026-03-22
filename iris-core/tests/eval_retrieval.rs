@@ -140,6 +140,7 @@ async fn eval_corpus_retrieval_quality() {
         raw_k: 30,
         top_k: 10,
         sparse_weight: 0.0,
+        rerank_top_k: None,
     };
 
     let k = 5;

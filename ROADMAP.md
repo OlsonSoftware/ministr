@@ -705,10 +705,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Add SPLADE sparse embedding via fastembed-rs SparseTextEmbedding
-- [ ] Build sparse inverted index alongside HNSW dense index for keyword-level matching
-- [ ] Implement Reciprocal Rank Fusion (RRF) to merge dense + sparse retrieval results
-- [ ] Update survey pipeline to use hybrid search with configurable dense/sparse weights
+- [x] Add SPLADE sparse embedding via fastembed-rs SparseTextEmbedding
+- [x] Build sparse inverted index alongside HNSW dense index for keyword-level matching
+- [x] Implement Reciprocal Rank Fusion (RRF) to merge dense + sparse retrieval results
+- [x] Update survey pipeline to use hybrid search with configurable dense/sparse weights
 
 ---
 
@@ -720,9 +720,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Integrate fastembed-rs cross-encoder reranker into iris-core
-- [ ] Add reranking stage between over-fetch and truncation in MultiResolutionSearch
-- [ ] Make reranking configurable: on/off toggle, model selection, rerank_top_k parameter
+- [x] Integrate fastembed-rs cross-encoder reranker into iris-core
+- [x] Add reranking stage between over-fetch and truncation in MultiResolutionSearch
+- [x] Make reranking configurable: on/off toggle, model selection, rerank_top_k parameter
 
 ---
 
