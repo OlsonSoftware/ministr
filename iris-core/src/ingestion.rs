@@ -1368,6 +1368,7 @@ pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
     let mut walker = WalkBuilder::new(dir);
     walker
         .hidden(false) // don't skip dotfiles by default (we handle .git via ALWAYS_IGNORE_DIRS)
+        .parents(true) // read .gitignore from parent directories (critical for subdirectory corpus roots)
         .git_ignore(true) // respect .gitignore
         .git_global(true) // respect global gitignore
         .git_exclude(true) // respect .git/info/exclude
