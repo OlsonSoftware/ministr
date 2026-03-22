@@ -1397,42 +1397,14 @@ fn collect_path_entry(
     Ok(())
 }
 
-/// Compute a relative path for a file based on which source path it came from.
+/// Compute a relative path for a file that is unique across all corpus sources.
 ///
-/// For files discovered under a directory source, strips the directory prefix.
-/// For individual file sources, uses just the file name.
-fn compute_relative_path(file: &Path, sources: &[PathBuf]) -> String {
-    // Try to strip a directory prefix from the source paths (longest match first)
-    let mut best_match: Option<&Path> = None;
-    for source in sources {
-        if source.is_dir() {
-            if let Ok(_rel) = file.strip_prefix(source) {
-                if best_match.is_none()
-                    || source.components().count()
-                        > best_match
-                            .expect("best_match should be Some")
-                            .components()
-                            .count()
-                {
-                    best_match = Some(source);
-                }
-            }
-        }
-    }
-
-    if let Some(base) = best_match {
-        return file
-            .strip_prefix(base)
-            .unwrap_or(file)
-            .to_string_lossy()
-            .to_string();
-    }
-
-    // For individual files (not under any directory source), use the file name
-    file.file_name().map_or_else(
-        || file.to_string_lossy().to_string(),
-        |n| n.to_string_lossy().to_string(),
-    )
+/// Uses the full path relative to the current working directory. This ensures
+/// files from different corpus roots (e.g. `iris-core/src/lib.rs` vs
+/// `iris-mcp/src/lib.rs`) never collide. Strips only the leading `./` if present.
+fn compute_relative_path(file: &Path, _sources: &[PathBuf]) -> String {
+    let s = file.to_string_lossy();
+    s.strip_prefix("./").unwrap_or(&s).to_string()
 }
 
 /// Recursively collect supported files from a directory.
@@ -2619,30 +2591,29 @@ mod tests {
     }
 
     #[test]
-    fn compute_relative_path_from_directory() {
-        let tmp = tempfile::tempdir().unwrap();
-        let docs = tmp.path().join("docs");
-        std::fs::create_dir(&docs).unwrap();
-        std::fs::write(docs.join("guide.md"), "# Guide").unwrap();
+    fn compute_relative_path_preserves_full_path() {
+        let sources = vec![PathBuf::from("./docs"), PathBuf::from("./src")];
 
-        let real_file = docs.join("guide.md");
-        let real_sources = vec![docs];
+        // Files keep their full path relative to CWD (minus leading ./)
+        let rel = compute_relative_path(Path::new("./docs/guide.md"), &sources);
+        assert_eq!(rel, "docs/guide.md");
 
-        let rel = compute_relative_path(&real_file, &real_sources);
-        assert_eq!(rel, "guide.md");
+        let rel = compute_relative_path(Path::new("./src/lib.rs"), &sources);
+        assert_eq!(rel, "src/lib.rs");
     }
 
     #[test]
-    fn compute_relative_path_individual_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("DESIGN.md");
-        std::fs::write(&file, "# Design").unwrap();
+    fn compute_relative_path_no_collision_across_crates() {
+        let sources = vec![
+            PathBuf::from("./iris-core/src"),
+            PathBuf::from("./iris-mcp/src"),
+        ];
 
-        // Source is the file itself (not a directory)
-        let sources = vec![file.clone()];
-
-        let rel = compute_relative_path(&file, &sources);
-        assert_eq!(rel, "DESIGN.md");
+        let rel1 = compute_relative_path(Path::new("./iris-core/src/lib.rs"), &sources);
+        let rel2 = compute_relative_path(Path::new("./iris-mcp/src/lib.rs"), &sources);
+        assert_ne!(rel1, rel2, "paths from different crates must not collide");
+        assert_eq!(rel1, "iris-core/src/lib.rs");
+        assert_eq!(rel2, "iris-mcp/src/lib.rs");
     }
 
     // --- C6.2: E2E unified code + doc search ---

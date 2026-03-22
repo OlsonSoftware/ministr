@@ -120,20 +120,9 @@ async fn main() -> Result<()> {
         )
     };
 
-    // Classify and ingest corpus sources.
-    if !corpus_paths.is_empty() {
-        run_corpus_ingestion(
-            &corpus_paths,
-            &corpus_dir,
-            &storage,
-            &*embedder,
-            &*index,
-            &index_dir,
-        )
-        .await?;
-    }
-
-    // Build the query service and start the MCP server.
+    // Build the query service and start the MCP server FIRST, before ingestion.
+    // This ensures the MCP handshake completes immediately so Claude Code
+    // doesn't time out waiting for the server to start.
     let storage = Arc::new(storage);
     let service = Arc::new(iris_core::service::QueryService::new(
         (*storage).clone(),
@@ -161,7 +150,7 @@ async fn main() -> Result<()> {
     // Enable git cloning for iris_clone tool.
     let server = enable_git_fetcher(server, &embedder, &index);
 
-    // Spawn coherence file watcher for local corpus paths only.
+    // Spawn coherence file watcher BEFORE serving (needs server reference).
     let local_paths: Vec<PathBuf> = corpus_paths
         .iter()
         .filter_map(|p| {
@@ -180,11 +169,38 @@ async fn main() -> Result<()> {
         spawn_coherence(&local_paths, &server, &storage, &embedder, &index)?
     };
 
+    // Start MCP server FIRST so Claude Code doesn't time out.
+    // Ingestion runs in background — tools return partial results until done.
     let mcp_service = server
         .serve(rmcp::transport::stdio())
         .await
         .into_diagnostic()
         .wrap_err("failed to start MCP stdio transport")?;
+
+    // Ingest corpus sources in background AFTER the MCP server is running.
+    if !corpus_paths.is_empty() {
+        let bg_corpus_paths = corpus_paths.clone();
+        let bg_corpus_dir = corpus_dir.clone();
+        let bg_storage = Arc::clone(&storage);
+        let bg_embedder = Arc::clone(&embedder);
+        let bg_index = Arc::clone(&index);
+        let bg_index_dir = index_dir.clone();
+        tokio::spawn(async move {
+            match run_corpus_ingestion(
+                &bg_corpus_paths,
+                &bg_corpus_dir,
+                &bg_storage,
+                &*bg_embedder,
+                &*bg_index,
+                &bg_index_dir,
+            )
+            .await
+            {
+                Ok(()) => tracing::info!("background corpus ingestion complete"),
+                Err(e) => tracing::error!(error = %e, "background corpus ingestion failed"),
+            }
+        });
+    }
 
     mcp_service
         .waiting()
