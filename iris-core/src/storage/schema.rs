@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 3;
+pub const CURRENT_SCHEMA_VERSION: usize = 4;
 
 /// Returns the migration set for the content database.
 ///
@@ -96,6 +96,26 @@ fn migrations() -> Migrations<'static> {
 
             CREATE INDEX idx_claim_rel_source ON claim_relationships(source_claim_id);
             CREATE INDEX idx_claim_rel_target ON claim_relationships(target_claim_id);
+            ",
+        ),
+        // V4: Cross-session analytics — access frequency and co-access patterns
+        M::up(
+            "
+            CREATE TABLE section_access_stats (
+                section_id    TEXT PRIMARY KEY NOT NULL,
+                access_count  INTEGER NOT NULL DEFAULT 0,
+                last_accessed TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+
+            CREATE TABLE co_access_patterns (
+                section_a TEXT NOT NULL,
+                section_b TEXT NOT NULL,
+                co_count  INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (section_a, section_b)
+            );
+
+            CREATE INDEX idx_co_access_a ON co_access_patterns(section_a);
+            CREATE INDEX idx_co_access_b ON co_access_patterns(section_b);
             ",
         ),
     ])
@@ -194,6 +214,8 @@ mod tests {
         assert!(tables.contains(&"file_hashes".to_string()));
         assert!(tables.contains(&"sessions".to_string()));
         assert!(tables.contains(&"session_deliveries".to_string()));
+        assert!(tables.contains(&"section_access_stats".to_string()));
+        assert!(tables.contains(&"co_access_patterns".to_string()));
     }
 
     #[test]

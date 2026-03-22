@@ -3,6 +3,7 @@
 //! This crate contains the core types, error definitions, and service traits
 //! for iris. It has no transport dependencies and no knowledge of MCP.
 
+pub mod analytics;
 pub mod coherence;
 pub mod config;
 pub mod embedding;

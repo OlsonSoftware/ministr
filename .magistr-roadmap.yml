@@ -222,9 +222,9 @@ phases:
   - text: Add parser auto-detection — select parser based on file extension, with manual override in corpus config
     checked: true
   - text: Implement cross-session analytics — track frequently-accessed sections, co-access patterns, per-corpus statistics
-    checked: false
+    checked: true
   - text: Feed cross-session data into prefetch — prioritize frequently-accessed and co-accessed sections for pre-warming
-    checked: false
+    checked: true
   - text: Build mdBook documentation site — architecture overview, getting started guide, tool reference, configuration
     checked: false
   - text: 'Write doc tests for all public APIs in iris-core — non-trivial examples with # Examples sections'

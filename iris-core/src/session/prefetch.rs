@@ -13,6 +13,8 @@
 //!   embeddings) and pre-warm sections nearest to the current topic.
 //! - **Structural**: Pre-warm sibling sections from the same document
 //!   (adjacent by position in the document tree).
+//! - **`CrossSession`**: Pre-warm sections that are frequently accessed across
+//!   sessions or frequently co-accessed with the current section.
 //!
 //! # Architecture
 //!
@@ -55,6 +57,8 @@ pub enum PrefetchStrategy {
     Topical,
     /// Structural proximity: sibling sections from the same document.
     Structural,
+    /// Cross-session analytics: frequently accessed or co-accessed sections.
+    CrossSession,
 }
 
 /// A pre-computed cache entry ready for immediate delivery.
@@ -91,6 +95,8 @@ pub struct PrefetchMetrics {
     pub topical_hits: u64,
     /// Hits from structural prefetch entries.
     pub structural_hits: u64,
+    /// Hits from cross-session prefetch entries.
+    pub cross_session_hits: u64,
 }
 
 impl PrefetchMetrics {
@@ -121,6 +127,7 @@ impl PrefetchMetrics {
             PrefetchStrategy::Sequential => self.sequential_hits,
             PrefetchStrategy::Topical => self.topical_hits,
             PrefetchStrategy::Structural => self.structural_hits,
+            PrefetchStrategy::CrossSession => self.cross_session_hits,
         };
         strategy_hits as f64 / total as f64
     }
@@ -195,6 +202,7 @@ impl PrefetchCache {
                     PrefetchStrategy::Sequential => self.metrics.sequential_hits += 1,
                     PrefetchStrategy::Topical => self.metrics.topical_hits += 1,
                     PrefetchStrategy::Structural => self.metrics.structural_hits += 1,
+                    PrefetchStrategy::CrossSession => self.metrics.cross_session_hits += 1,
                 }
             }
             self.touch(key);
@@ -566,6 +574,38 @@ impl PrefetchEngine {
                     resolution: Resolution::Section,
                     claims_available: claims,
                     strategy: PrefetchStrategy::Topical,
+                },
+            );
+        }
+    }
+
+    /// Pre-warm the cache with sections from cross-session analytics.
+    ///
+    /// Takes sections that are either frequently accessed across sessions
+    /// or frequently co-accessed with the current section. Inserts those
+    /// not already cached.
+    pub fn prefetch_cross_session(
+        &mut self,
+        candidates: Vec<crate::storage::SectionRecord>,
+        claims_counts: &HashMap<String, usize>,
+    ) {
+        for section in candidates {
+            if self.cache.peek(&section.id.0).is_some() {
+                continue;
+            }
+            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
+            let token_count = count_tokens(&section.text);
+            self.cache.insert(
+                section.id.0.clone(),
+                CacheEntry {
+                    content_id: section.id.0,
+                    text: section.text,
+                    token_count,
+                    heading_path: Some(section.heading_path),
+                    summary: section.summary,
+                    resolution: Resolution::Section,
+                    claims_available: claims,
+                    strategy: PrefetchStrategy::CrossSession,
                 },
             );
         }
@@ -1037,6 +1077,7 @@ mod tests {
             sequential_hits: 1,
             topical_hits: 2,
             structural_hits: 1,
+            cross_session_hits: 0,
         };
 
         assert!((metrics.strategy_hit_rate(PrefetchStrategy::Sequential) - 0.2).abs() < 1e-5);
@@ -1675,5 +1716,89 @@ mod tests {
             (phase2.hit_rate() - 1.0).abs() < 1e-5,
             "phase 2 should be 100% hit rate"
         );
+    }
+
+    // --- Cross-session prefetch tests ---
+
+    #[test]
+    fn prefetch_cross_session_inserts_candidates() {
+        let mut engine = PrefetchEngine::new(10);
+        let sections = vec![
+            make_section_record("s1", "doc1", "Cross-session section 1", 0),
+            make_section_record("s2", "doc1", "Cross-session section 2", 1),
+        ];
+        let claims_counts = std::collections::HashMap::new();
+
+        engine.prefetch_cross_session(sections, &claims_counts);
+
+        assert_eq!(engine.cache().len(), 2);
+        assert!(engine.cache().peek("s1").is_some());
+        assert!(engine.cache().peek("s2").is_some());
+        assert_eq!(
+            engine.cache().peek("s1").unwrap().strategy,
+            PrefetchStrategy::CrossSession
+        );
+    }
+
+    #[test]
+    fn prefetch_cross_session_skips_cached() {
+        let mut engine = PrefetchEngine::new(10);
+
+        // Pre-warm s1 via sequential
+        let s1 = make_section_record("s1", "doc1", "Already cached", 0);
+        engine.prefetch_sequential(Some(s1), None, None);
+
+        // Try cross-session with s1 and s2
+        let sections = vec![
+            make_section_record("s1", "doc1", "Already cached", 0),
+            make_section_record("s2", "doc1", "New section", 1),
+        ];
+        let claims_counts = std::collections::HashMap::new();
+        engine.prefetch_cross_session(sections, &claims_counts);
+
+        assert_eq!(engine.cache().len(), 2);
+        // s1 should still be sequential strategy (not overwritten)
+        assert_eq!(
+            engine.cache().peek("s1").unwrap().strategy,
+            PrefetchStrategy::Sequential
+        );
+        assert_eq!(
+            engine.cache().peek("s2").unwrap().strategy,
+            PrefetchStrategy::CrossSession
+        );
+    }
+
+    #[test]
+    fn cross_session_hit_records_strategy_metric() {
+        let mut engine = PrefetchEngine::new(10);
+        let sections = vec![make_section_record(
+            "s1",
+            "doc1",
+            "Cross-session content",
+            0,
+        )];
+        let claims_counts = std::collections::HashMap::new();
+        engine.prefetch_cross_session(sections, &claims_counts);
+
+        // Serve from cache
+        let entry = engine.try_serve("s1");
+        assert!(entry.is_some());
+
+        let m = engine.metrics();
+        assert_eq!(m.cross_session_hits, 1);
+        assert_eq!(m.hits, 1);
+    }
+
+    #[test]
+    fn cross_session_uses_claims_counts() {
+        let mut engine = PrefetchEngine::new(10);
+        let sections = vec![make_section_record("s1", "doc1", "With claims", 0)];
+        let mut claims_counts = std::collections::HashMap::new();
+        claims_counts.insert("s1".to_string(), 7);
+
+        engine.prefetch_cross_session(sections, &claims_counts);
+
+        let entry = engine.cache().peek("s1").unwrap();
+        assert_eq!(entry.claims_available, 7);
     }
 }
