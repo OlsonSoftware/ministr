@@ -5,6 +5,7 @@
 //! content from the corpus. This is the primary interface consumed by
 //! transport adapters (e.g. the MCP server in `iris-mcp`).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -296,6 +297,69 @@ impl QueryService {
         }
 
         Ok(results)
+    }
+
+    /// Like [`survey`], but filters out results whose content ID is in
+    /// `exclude_ids` before truncating to `top_k`.
+    ///
+    /// This ensures the 3x over-fetch buffer compensates for already-delivered
+    /// content rather than being wasted by premature truncation.
+    ///
+    /// Returns `(results, deduplicated_count)` where `deduplicated_count` is
+    /// the number of candidates that were skipped due to exclusion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError`] if embedding, search, or storage operations fail.
+    #[instrument(skip(self, exclude_ids), fields(query_len = query.len(), top_k, exclude_count = exclude_ids.len()))]
+    pub async fn survey_excluding(
+        &self,
+        query: &str,
+        top_k: usize,
+        exclude_ids: &HashSet<String>,
+    ) -> Result<(Vec<SurveyResult>, usize), QueryError> {
+        let searcher = MultiResolutionSearch::new(self.embedder.as_ref(), self.index.as_ref());
+        // Fetch the full raw_k candidates without truncation so we can
+        // filter out excluded IDs before selecting the final top_k.
+        let fetch_k = top_k.max(10) * 3;
+        let config = SearchConfig {
+            raw_k: fetch_k,
+            top_k: fetch_k,
+        };
+
+        let scored = searcher.search(query, config)?;
+
+        let mut results = Vec::with_capacity(top_k);
+        let mut deduplicated_count = 0;
+
+        for sr in scored {
+            let content_id = sr.vector_id.content_id().to_string();
+
+            if exclude_ids.contains(&content_id) {
+                deduplicated_count += 1;
+                continue;
+            }
+
+            let resolution = sr.resolution;
+            let (text, heading_path) = self
+                .resolve_content(&sr.vector_id, resolution)
+                .await
+                .unwrap_or_else(|_| (format!("[content unavailable: {content_id}]"), None));
+
+            results.push(SurveyResult {
+                content_id,
+                resolution: resolution.to_string(),
+                score: sr.score,
+                text,
+                heading_path,
+            });
+
+            if results.len() >= top_k {
+                break;
+            }
+        }
+
+        Ok((results, deduplicated_count))
     }
 
     /// Read the full text of a section by its hierarchical ID.

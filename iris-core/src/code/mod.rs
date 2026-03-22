@@ -18,6 +18,7 @@ pub(crate) mod ast_parser;
 pub mod generic_extractor;
 pub mod grammar;
 pub mod lang;
+pub mod refs;
 mod symbol;
 mod symbol_table;
 

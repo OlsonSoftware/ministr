@@ -753,3 +753,13 @@ phases:
     checked: true
   - text: 'Dead code cleanup: DeltaResponse in server.rs — remove or implement'
     checked: true
+- id: BF1
+  name: Bug Fixes
+  status: done
+  problem: Survey dedup too aggressive, symbol references never populated
+  solution: Move dedup before truncation, extract cross-references during ingestion
+  tasks:
+  - text: 'Fix survey dedup: move exclusion before truncation via survey_excluding()'
+    checked: true
+  - text: 'Fix iris_references: extract use imports and impl relationships during code ingestion'
+    checked: true

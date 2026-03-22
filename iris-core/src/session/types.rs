@@ -206,6 +206,15 @@ impl Session {
         self.delivered.get(&content_id.0)
     }
 
+    /// Returns the set of all delivered content ID strings.
+    ///
+    /// Used by the service layer to exclude already-delivered content
+    /// from search results before truncation.
+    #[must_use]
+    pub fn delivered_ids(&self) -> HashSet<String> {
+        self.delivered.keys().cloned().collect()
+    }
+
     /// Check whether the content has changed since it was last delivered.
     ///
     /// Returns `true` if the content was previously delivered with a different

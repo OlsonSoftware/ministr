@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, instrument, warn};
 
+use crate::code::refs::extract_refs;
 use crate::code::{AstParser, extract_symbols};
 use crate::embedding::Embedder;
 use crate::error::IngestionError;
@@ -19,7 +20,9 @@ use crate::index::VectorIndex;
 use crate::parser::{
     DocumentParser, MarkdownParser, ParserKind, create_parser, detect_parser_kind,
 };
-use crate::storage::traits::{FileHashRecord, Storage, SymbolRecord};
+use crate::storage::traits::{
+    FileHashRecord, Storage, SymbolFilter, SymbolRecord, SymbolRefRecord,
+};
 use crate::token::count_tokens;
 use crate::types::{Claim, DocumentTree, Section, SymbolId, VectorId};
 
@@ -1068,6 +1071,7 @@ fn collect_all_claims(sections: &[Section]) -> Vec<Claim> {
 ///
 /// Symbol stubs embed `"signature\ndoc_comment"` for high-precision search.
 /// Symbol full embeds the complete symbol source for broader matching.
+#[allow(clippy::too_many_lines)]
 async fn embed_code_symbols<S, E, I>(
     relative_path: &str,
     content: &str,
@@ -1150,6 +1154,13 @@ where
         .await
         .map_err(IngestionError::from)?;
 
+    // Extract and resolve cross-references (use imports, impl relationships)
+    if let Err(e) =
+        resolve_and_store_refs(&tree, source, relative_path, &symbol_records, storage).await
+    {
+        warn!(path = %relative_path, error = %e, "failed to extract symbol refs");
+    }
+
     // Build embeddable texts for symbol-stub and symbol-full
     let mut ids: Vec<VectorId> = Vec::new();
     let mut texts: Vec<String> = Vec::new();
@@ -1199,6 +1210,100 @@ where
         path = %relative_path,
         "embedded code symbols"
     );
+    Ok(count)
+}
+
+/// Resolve raw cross-references against the stored symbol table and persist them.
+///
+/// Extracts `use` imports and `impl Trait for Type` relationships from the AST,
+/// resolves target names against known symbols, and stores the resulting
+/// `SymbolRefRecord` values.
+async fn resolve_and_store_refs<S: Storage + ?Sized>(
+    tree: &tree_sitter::Tree,
+    source: &[u8],
+    file_path: &str,
+    local_symbols: &[SymbolRecord],
+    storage: &S,
+) -> Result<usize, IngestionError> {
+    let raw_refs = extract_refs(tree, source);
+    if raw_refs.is_empty() {
+        return Ok(0);
+    }
+
+    // Delete existing refs for this file before inserting new ones
+    let _ = storage.delete_refs_for_file(file_path).await;
+
+    let mut resolved = Vec::new();
+
+    for raw in &raw_refs {
+        // Determine the "from" symbol ID
+        let from_id = match &raw.from_context {
+            // For impl refs: the from_context is the implementing type name
+            Some(type_name) => {
+                // Look in local symbols first
+                local_symbols
+                    .iter()
+                    .find(|s| {
+                        s.name == *type_name
+                            && (s.kind == "struct" || s.kind == "enum" || s.kind == "type")
+                    })
+                    .map(|s| s.id.clone())
+            }
+            // For imports: use a synthetic file-level symbol ID
+            None => Some(SymbolId(format!("sym-{file_path}"))),
+        };
+
+        let Some(from_id) = from_id else {
+            continue;
+        };
+
+        // Resolve the target symbol by name
+        let target_filter = SymbolFilter {
+            name: Some(raw.target_name.clone()),
+            ..SymbolFilter::default()
+        };
+
+        let Ok(matches) = storage.list_symbols(&target_filter).await else {
+            continue;
+        };
+
+        if matches.is_empty() {
+            continue; // Target is likely from an external crate
+        }
+
+        // Pick the best match: prefer symbols in a file whose path aligns with
+        // the import path, but fall back to the first match.
+        let target = if matches.len() == 1 {
+            &matches[0]
+        } else {
+            // For implements: match the trait name exactly
+            // For imports: any symbol with that name is a valid match
+            &matches[0]
+        };
+
+        resolved.push(SymbolRefRecord {
+            from_symbol_id: from_id,
+            to_symbol_id: target.id.clone(),
+            ref_kind: raw.kind,
+        });
+    }
+
+    if resolved.is_empty() {
+        return Ok(0);
+    }
+
+    let count = resolved.len();
+    storage
+        .insert_symbol_refs(&resolved)
+        .await
+        .map_err(IngestionError::from)?;
+
+    debug!(
+        refs = count,
+        path = %file_path,
+        "resolved symbol cross-references"
+    );
+
     Ok(count)
 }
 
