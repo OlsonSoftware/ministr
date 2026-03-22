@@ -25,31 +25,33 @@ This starts the MCP server over stdio, ready to accept tool calls from any MCP c
 
 ### 2. Configure your MCP client
 
-**Claude Code** — add to your MCP settings:
+**Claude Code** — create `.mcp.json` at your project root:
 
 ```json
 {
   "mcpServers": {
     "iris": {
       "command": "iris",
-      "args": ["--corpus", "/path/to/your/docs"]
+      "args": ["--corpus", "./docs"]
     }
   }
 }
 ```
 
-**Cursor** — add to `.cursor/mcp.json`:
+**Cursor** — create `.cursor/mcp.json` in your project:
 
 ```json
 {
   "mcpServers": {
     "iris": {
       "command": "iris",
-      "args": ["--corpus", "/path/to/your/docs"]
+      "args": ["--corpus", "./docs"]
     }
   }
 }
 ```
+
+See the [MCP Client Setup](client-setup.md) guide for detailed instructions covering project/user/global scopes, the CLI shorthand, Cursor Settings UI, generic JSON-RPC clients, and troubleshooting.
 
 ### 3. Use the tools
 

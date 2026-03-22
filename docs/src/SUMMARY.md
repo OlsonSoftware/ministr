@@ -7,6 +7,7 @@
 # User Guide
 
 - [Getting Started](getting-started.md)
+- [MCP Client Setup](client-setup.md)
 - [Configuration](configuration.md)
 
 # Architecture

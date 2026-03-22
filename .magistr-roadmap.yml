@@ -238,8 +238,8 @@ phases:
   - text: Add installation methods — cargo install, homebrew tap, GitHub release binaries with checksums
     checked: false
   - text: Write MCP client configuration examples — Claude Code, Cursor, and generic JSON-RPC client setup guides
-    checked: false
+    checked: true
   - text: Final audit — cargo audit, cargo deny check, full test suite, clippy clean, benchmark baselines recorded
-    checked: false
+    checked: true
   - text: Tag and publish v0.1.0 release — changelog, GitHub release with binaries, crates.io publish
     checked: false
