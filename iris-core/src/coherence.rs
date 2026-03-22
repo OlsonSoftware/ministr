@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn unsupported_extensions() {
         assert!(!is_supported_file(Path::new("file.txt")));
-        assert!(!is_supported_file(Path::new("file.rs")));
+        assert!(!is_supported_file(Path::new("file.json")));
         assert!(!is_supported_file(Path::new("no_extension")));
     }
 

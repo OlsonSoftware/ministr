@@ -592,20 +592,20 @@ phases:
 - id: C3
   name: AST-Aware Code Chunking
   tagline: Chunk code at function/struct boundaries, not arbitrary line counts
-  status: pending
+  status: done
   problem: Naive text chunking splits functions mid-body and merges unrelated code — destroying semantic coherence for embeddings
   solution: 'New ParserKind::Code that uses tree-sitter to split at AST boundaries, producing multi-resolution chunks: file summaries, symbol stubs (signature + doc), and full implementations'
   tasks:
   - text: Add `ParserKind::Code` variant — detected for `.rs`, `.ts`, `.js`, `.py`, `.go`, `.java`, `.c`, `.cpp`, `.h` extensions
-    checked: false
+    checked: true
   - text: 'Implement AST-aware code chunker: split source files at function/struct/enum/trait/impl boundaries, producing one Section per top-level symbol with correct byte ranges'
-    checked: false
+    checked: true
   - text: 'Multi-resolution code chunks: file-level section (module doc + public symbol list as summary), symbol stubs (signature + doc comment, no body), full symbol (complete source including body)'
-    checked: false
+    checked: true
   - text: 'Section IDs for code follow pattern: `file.rs#module_path::SymbolName` (e.g. `config.rs#config::IrisConfig`, `ingestion.rs#ingestion::IngestionPipeline::ingest_directory`)'
-    checked: false
+    checked: true
   - text: 'Unit test: chunk a Rust source file, verify chunk boundaries align with AST node boundaries — no function split mid-body, no struct split from its impl block'
-    checked: false
+    checked: true
 - id: C4
   name: Symbol Storage Schema
   tagline: SQLite-backed symbol index with relationship tracking

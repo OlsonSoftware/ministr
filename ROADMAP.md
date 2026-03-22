@@ -477,9 +477,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Integration test: clone a repo, ingest its docs, verify iris_survey returns relevant content from the cloned source
-- [ ] E2E test: iris_clone + iris_fetch in the same session, verify iris_survey returns unified results from both local, web, and cloned sources
-- [ ] Error handling tests: nonexistent repo URL returns user-friendly error, private repo without auth returns clear auth failure message, empty repo is handled gracefully
+- [x] Integration test: clone a repo, ingest its docs, verify iris_survey returns relevant content from the cloned source
+- [x] E2E test: iris_clone + iris_fetch in the same session, verify iris_survey returns unified results from both local, web, and cloned sources
+- [x] Error handling tests: nonexistent repo URL returns user-friendly error, private repo without auth returns clear auth failure message, empty repo is handled gracefully
 
 ---
 
@@ -491,10 +491,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Add `tree-sitter` (0.25+) and `tree-sitter-rust` to workspace dependencies and iris-core Cargo.toml
-- [ ] Create `code` module in iris-core with `AstParser` struct — initializes tree-sitter parser with Rust language grammar, parses source bytes into a tree
-- [ ] Implement AST tree walker that visits top-level nodes and identifies item kinds: function_item, struct_item, enum_item, trait_item, impl_item, mod_item, type_item, const_item, static_item
-- [ ] Unit test: parse iris-core's own `config.rs` and `ingestion.rs`, verify correct AST node types are identified for structs, functions, and impls
+- [x] Add `tree-sitter` (0.25+) and `tree-sitter-rust` to workspace dependencies and iris-core Cargo.toml
+- [x] Create `code` module in iris-core with `AstParser` struct — initializes tree-sitter parser with Rust language grammar, parses source bytes into a tree
+- [x] Implement AST tree walker that visits top-level nodes and identifies item kinds: function_item, struct_item, enum_item, trait_item, impl_item, mod_item, type_item, const_item, static_item
+- [x] Unit test: parse iris-core's own `config.rs` and `ingestion.rs`, verify correct AST node types are identified for structs, functions, and impls
 
 ---
 
@@ -506,10 +506,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Define `Symbol` type with fields: name, kind (Function/Struct/Enum/Trait/Impl/Module/Const/TypeAlias), visibility (Public/PubCrate/Private), signature (first line), doc_comment, file_path, byte_range, module_path
-- [ ] Extract symbol metadata from Rust AST nodes: parse visibility modifiers, capture `///` doc comments from preceding comment nodes, build signature from the declaration line (without body)
-- [ ] Build `SymbolTable` collection type with query methods: find_by_name(pattern), filter_by_kind(kind), filter_by_visibility(vis), filter_by_module(path)
-- [ ] Unit test: extract symbols from iris-core source files, verify struct names, function signatures, visibility, and doc comments are captured correctly
+- [x] Define `Symbol` type with fields: name, kind (Function/Struct/Enum/Trait/Impl/Module/Const/TypeAlias), visibility (Public/PubCrate/Private), signature (first line), doc_comment, file_path, byte_range, module_path
+- [x] Extract symbol metadata from Rust AST nodes: parse visibility modifiers, capture `///` doc comments from preceding comment nodes, build signature from the declaration line (without body)
+- [x] Build `SymbolTable` collection type with query methods: find_by_name(pattern), filter_by_kind(kind), filter_by_visibility(vis), filter_by_module(path)
+- [x] Unit test: extract symbols from iris-core source files, verify struct names, function signatures, visibility, and doc comments are captured correctly
 
 ---
 
@@ -521,11 +521,11 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Add `ParserKind::Code` variant — detected for `.rs`, `.ts`, `.js`, `.py`, `.go`, `.java`, `.c`, `.cpp`, `.h` extensions
-- [ ] Implement AST-aware code chunker: split source files at function/struct/enum/trait/impl boundaries, producing one Section per top-level symbol with correct byte ranges
-- [ ] Multi-resolution code chunks: file-level section (module doc + public symbol list as summary), symbol stubs (signature + doc comment, no body), full symbol (complete source including body)
-- [ ] Section IDs for code follow pattern: `file.rs#module_path::SymbolName` (e.g. `config.rs#config::IrisConfig`, `ingestion.rs#ingestion::IngestionPipeline::ingest_directory`)
-- [ ] Unit test: chunk a Rust source file, verify chunk boundaries align with AST node boundaries — no function split mid-body, no struct split from its impl block
+- [x] Add `ParserKind::Code` variant — detected for `.rs`, `.ts`, `.js`, `.py`, `.go`, `.java`, `.c`, `.cpp`, `.h` extensions
+- [x] Implement AST-aware code chunker: split source files at function/struct/enum/trait/impl boundaries, producing one Section per top-level symbol with correct byte ranges
+- [x] Multi-resolution code chunks: file-level section (module doc + public symbol list as summary), symbol stubs (signature + doc comment, no body), full symbol (complete source including body)
+- [x] Section IDs for code follow pattern: `file.rs#module_path::SymbolName` (e.g. `config.rs#config::IrisConfig`, `ingestion.rs#ingestion::IngestionPipeline::ingest_directory`)
+- [x] Unit test: chunk a Rust source file, verify chunk boundaries align with AST node boundaries — no function split mid-body, no struct split from its impl block
 
 ---
 

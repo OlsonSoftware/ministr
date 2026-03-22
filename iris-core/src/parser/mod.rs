@@ -2,11 +2,13 @@
 //!
 //! The [`DocumentParser`] trait provides a format-agnostic interface for turning
 //! raw document content into a [`DocumentTree`]. Implementations exist for
-//! Markdown ([`MarkdownParser`]), HTML ([`HtmlParser`]), and PDF ([`PdfParser`]).
+//! Markdown ([`MarkdownParser`]), HTML ([`HtmlParser`]), PDF ([`PdfParser`]),
+//! and source code ([`CodeParser`]).
 //!
 //! Use [`detect_parser_kind`] to auto-detect the parser from a file extension,
 //! or [`create_parser`] to instantiate the appropriate parser for a [`ParserKind`].
 
+mod code;
 mod common;
 mod html;
 pub mod html_to_md;
@@ -14,11 +16,12 @@ mod markdown;
 mod pdf;
 mod section_id;
 
+pub use code::CodeParser;
 pub use html::HtmlParser;
 pub use html_to_md::{ContentExtractor, HtmlToMarkdown, html_to_markdown};
 pub use markdown::MarkdownParser;
 pub use pdf::PdfParser;
-pub use section_id::generate_section_id;
+pub use section_id::{generate_code_section_id, generate_section_id};
 
 use std::path::Path;
 
@@ -58,6 +61,7 @@ pub trait DocumentParser: Send + Sync {
 /// assert_eq!(detect_parser_kind(Path::new("doc.md")), Some(ParserKind::Markdown));
 /// assert_eq!(detect_parser_kind(Path::new("page.html")), Some(ParserKind::Html));
 /// assert_eq!(detect_parser_kind(Path::new("manual.pdf")), Some(ParserKind::Pdf));
+/// assert_eq!(detect_parser_kind(Path::new("main.rs")), Some(ParserKind::Code));
 /// assert_eq!(detect_parser_kind(Path::new("data.csv")), None);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -69,6 +73,8 @@ pub enum ParserKind {
     Html,
     /// PDF.
     Pdf,
+    /// Source code (parsed via tree-sitter AST).
+    Code,
 }
 
 /// Detect the parser kind from a file's extension.
@@ -80,6 +86,9 @@ pub fn detect_parser_kind(path: &Path) -> Option<ParserKind> {
         Some("md" | "markdown" | "mkd" | "mdx") => Some(ParserKind::Markdown),
         Some("html" | "htm" | "xhtml") => Some(ParserKind::Html),
         Some("pdf") => Some(ParserKind::Pdf),
+        Some("rs" | "ts" | "js" | "py" | "go" | "java" | "c" | "cpp" | "h") => {
+            Some(ParserKind::Code)
+        }
         _ => None,
     }
 }
@@ -102,6 +111,7 @@ pub fn create_parser(kind: ParserKind) -> Box<dyn DocumentParser> {
         ParserKind::Markdown => Box::new(MarkdownParser::new()),
         ParserKind::Html => Box::new(HtmlParser::new()),
         ParserKind::Pdf => Box::new(PdfParser::new()),
+        ParserKind::Code => Box::new(CodeParser::new()),
     }
 }
 
@@ -151,6 +161,18 @@ mod tests {
             detect_parser_kind(Path::new("manual.pdf")),
             Some(ParserKind::Pdf)
         );
+    }
+
+    #[test]
+    fn detect_code_extensions() {
+        for ext in &["rs", "ts", "js", "py", "go", "java", "c", "cpp", "h"] {
+            let path = format!("file.{ext}");
+            assert_eq!(
+                detect_parser_kind(Path::new(&path)),
+                Some(ParserKind::Code),
+                "expected Code for .{ext}"
+            );
+        }
     }
 
     #[test]
