@@ -96,6 +96,20 @@ struct ExtractResponse {
     claims: Vec<iris_core::service::ClaimResult>,
 }
 
+/// Response when a section has already been delivered and is unchanged.
+///
+/// Returned instead of full text to avoid wasting context tokens on
+/// content the agent already has.
+#[derive(Debug, Serialize)]
+struct AlreadyDeliveredResponse {
+    /// The requested section ID.
+    section_id: String,
+    /// Always `"already_delivered"`.
+    status: &'static str,
+    /// Number of claims available for extraction.
+    claims_available: usize,
+}
+
 /// Response when a previously-delivered section has changed.
 ///
 /// Will be used when full delta delivery is enabled (requires storing
@@ -453,17 +467,37 @@ impl IrisServer {
                     let is_re_request = session.is_re_request(&content_id, &current_hash);
                     drop(session);
 
-                    // Case 2: Already delivered and unchanged — fault correction
-                    if already_delivered && !has_changed && is_re_request {
+                    // Case 2: Already delivered and unchanged — skip re-delivery
+                    if already_delivered && !has_changed {
                         debug!(
                             section_id = %params.section_id,
-                            "iris_read fault correction: re-request detected"
+                            "iris_read: already delivered, skipping re-delivery"
                         );
-                        let mut budget = self.budget.lock().await;
-                        budget.force_evict(&params.section_id);
+
+                        // If agent re-requests content it should still have,
+                        // treat as a fault-based eviction signal.
+                        if is_re_request {
+                            let mut budget = self.budget.lock().await;
+                            budget.force_evict(&params.section_id);
+                        }
+
+                        let budget = self.budget.lock().await;
+                        let budget_status = budget.budget_status();
+                        drop(budget);
+
+                        let skip = AlreadyDeliveredResponse {
+                            section_id: params.section_id.clone(),
+                            status: "already_delivered",
+                            claims_available: detail.claims_available,
+                        };
+                        let response = self.build_response(skip, budget_status).await;
+                        let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
+                            format!("{{\"error\": \"serialization failed: {e}\"}}")
+                        });
+                        return Ok(CallToolResult::success(vec![Content::text(json)]));
                     }
 
-                    // Record delivery, analytics, and trigger prefetch
+                    // Case 1: New content (or changed) — deliver full text
                     let budget_status = self
                         .record_section_delivery(&params.section_id, &detail.text, current_hash)
                         .await;
@@ -1563,7 +1597,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_re_request_re_delivers_unchanged_content() {
+    async fn read_re_request_skips_unchanged_content() {
         let server = setup_server().await;
 
         // First read — delivers content
@@ -1580,7 +1614,7 @@ mod tests {
             "first read should return full text"
         );
 
-        // Second read — re-request triggers fault-based correction and re-delivers
+        // Second read — already delivered and unchanged, should skip re-delivery
         let result2 = server
             .read(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
@@ -1589,13 +1623,21 @@ mod tests {
             .unwrap();
         let text2 = extract_text(&result2.content);
         let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
+        assert_eq!(
+            parsed2["status"], "already_delivered",
+            "re-request should return already_delivered status"
+        );
         assert!(
-            parsed2["text"].is_string(),
-            "re-request should re-deliver full text"
+            parsed2["text"].is_null(),
+            "re-request should not include full text"
         );
         assert!(
             parsed2["budget_status"].is_object(),
-            "re-delivery should include budget_status"
+            "response should include budget_status"
+        );
+        assert!(
+            parsed2["claims_available"].is_number(),
+            "response should include claims_available"
         );
     }
 
@@ -1880,8 +1922,10 @@ mod tests {
         let text1 = extract_text(&result1.content);
         let parsed1: serde_json::Value = serde_json::from_str(text1).unwrap();
         let used_after_first = parsed1["budget_status"]["tokens_used"].as_u64().unwrap();
+        assert!(used_after_first > 0, "first read should use tokens");
 
-        // Second read (re-request) — triggers fault correction, then re-delivers
+        // Second read (re-request) — triggers fault correction (force_evict)
+        // and returns already_delivered without re-recording
         let result2 = server
             .read(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
@@ -1890,13 +1934,17 @@ mod tests {
             .unwrap();
         let text2 = extract_text(&result2.content);
         let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
+        assert_eq!(
+            parsed2["status"], "already_delivered",
+            "re-request should skip re-delivery"
+        );
 
-        // After fault correction + re-delivery, budget should be same as first delivery
-        // (force_evict removed old entry, then re-delivery added it back)
+        // After fault correction, budget should be 0 — force_evict removed the
+        // entry and no re-delivery occurred
         let used_after_second = parsed2["budget_status"]["tokens_used"].as_u64().unwrap();
         assert_eq!(
-            used_after_first, used_after_second,
-            "budget should be same after fault correction + re-delivery"
+            used_after_second, 0,
+            "budget should be zero after fault correction without re-delivery"
         );
     }
 

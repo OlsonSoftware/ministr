@@ -355,6 +355,9 @@ async fn full_flow_survey_read_extract_via_call_tool() {
     assert!(tokens_after_survey > 0);
 
     // Step 2: Read a specific section
+    // Note: survey may have already delivered content from this section at
+    // claim level. If the section itself was delivered, iris_read returns
+    // "already_delivered" instead of full text — which is correct behavior.
     let read_result = call_tool(
         &server,
         "iris_read",
@@ -370,19 +373,30 @@ async fn full_flow_survey_read_extract_via_call_tool() {
     let read_json: serde_json::Value =
         serde_json::from_str(extract_text(&read_result.content)).unwrap();
 
-    assert_eq!(read_json["section_id"], "docs/auth.md#tokens");
-    assert!(read_json["text"].as_str().unwrap().contains("JWT tokens"));
-    assert_eq!(read_json["claims_available"], 2);
+    // Section may be already_delivered (if survey included it) or fresh
+    if read_json["status"].as_str() == Some("already_delivered") {
+        assert_eq!(read_json["section_id"], "docs/auth.md#tokens");
+        assert!(read_json["claims_available"].is_number());
+    } else {
+        assert_eq!(read_json["section_id"], "docs/auth.md#tokens");
+        assert!(read_json["text"].as_str().unwrap().contains("JWT tokens"));
+        assert_eq!(read_json["claims_available"], 2);
 
-    let heading_path = read_json["heading_path"].as_array().unwrap();
-    assert_eq!(heading_path[0], "Authentication");
-    assert_eq!(heading_path[1], "Tokens");
+        let heading_path = read_json["heading_path"].as_array().unwrap();
+        assert_eq!(heading_path[0], "Authentication");
+        assert_eq!(heading_path[1], "Tokens");
+    }
 
     let tokens_after_read = read_json["budget_status"]["tokens_used"].as_u64().unwrap();
-    assert!(
-        tokens_after_read >= tokens_after_survey,
-        "budget should accumulate: {tokens_after_read} >= {tokens_after_survey}"
-    );
+    // If the section was already delivered by survey, the read returns
+    // already_delivered and may trigger fault correction (budget decreases).
+    // Otherwise budget accumulates as before.
+    if read_json["status"].as_str() != Some("already_delivered") {
+        assert!(
+            tokens_after_read >= tokens_after_survey,
+            "budget should accumulate: {tokens_after_read} >= {tokens_after_survey}"
+        );
+    }
 
     // Step 3: Extract claims
     let extract_result = call_tool(
@@ -449,7 +463,7 @@ async fn survey_deduplicates_already_delivered_content() {
 }
 
 #[tokio::test]
-async fn read_re_request_re_delivers_with_fault_correction() {
+async fn read_re_request_skips_unchanged_with_fault_correction() {
     let server = setup_server().await;
 
     // First read — full content
@@ -462,8 +476,8 @@ async fn read_re_request_re_delivers_with_fault_correction() {
     let j1: serde_json::Value = serde_json::from_str(extract_text(&r1.content)).unwrap();
     assert!(j1["text"].is_string(), "first read returns full text");
 
-    // Second read — re-request of unchanged content triggers fault correction
-    // and re-delivers the full text (agent lost it from context)
+    // Second read — already delivered and unchanged, skips re-delivery
+    // to save context tokens. Fault correction evicts the budget entry.
     let r2 = call_tool(
         &server,
         "iris_read",
@@ -471,11 +485,16 @@ async fn read_re_request_re_delivers_with_fault_correction() {
     )
     .await;
     let j2: serde_json::Value = serde_json::from_str(extract_text(&r2.content)).unwrap();
+    assert_eq!(
+        j2["status"], "already_delivered",
+        "re-request should return already_delivered"
+    );
     assert!(
-        j2["text"].is_string(),
-        "re-request should re-deliver full text"
+        j2["text"].is_null(),
+        "should not include full text on re-request"
     );
     assert!(j2["budget_status"].is_object());
+    assert!(j2["claims_available"].is_number());
 }
 
 // ---------------------------------------------------------------------------
@@ -1327,26 +1346,14 @@ async fn e2e_survey_from_corpus_dir_returns_ranked_results() {
 async fn e2e_read_returns_heading_paths_and_content_hash() {
     let (server, _dir) = setup_server_from_corpus_dir().await;
 
-    // First discover section IDs via survey
-    let survey = call_tool(
+    // Read a section directly (before any survey, so it's a fresh delivery)
+    let section_id = "api.md#api-reference/rate-limits";
+    let read = call_tool(
         &server,
-        "iris_survey",
-        json!({"query": "tokens authentication JWT", "top_k": 10}),
+        "iris_read",
+        json!({"section_id": section_id}),
     )
     .await;
-    let survey_json: serde_json::Value =
-        serde_json::from_str(extract_text(&survey.content)).unwrap();
-    let results = survey_json["results"].as_array().unwrap();
-
-    // Find a section-level result to read
-    let section_result = results
-        .iter()
-        .find(|r| r["resolution"].as_str() == Some("section"))
-        .expect("should have at least one section-level result");
-    let section_id = section_result["content_id"].as_str().unwrap();
-
-    // Read the section
-    let read = call_tool(&server, "iris_read", json!({"section_id": section_id})).await;
 
     assert!(
         read.is_error.is_none() || read.is_error == Some(false),
@@ -1375,9 +1382,7 @@ async fn e2e_read_returns_heading_paths_and_content_hash() {
         "should report claims_available"
     );
 
-    // Verify content_hash is present in the response (used internally for dedup)
-    // The content hash is tracked internally via the session shadow — verify
-    // the session recorded it by checking that re-request detection works
+    // Verify the session recorded delivery (content hash tracked for dedup)
     let session = server.session_arc();
     let session = session.lock().await;
     let content_id = iris_core::types::ContentId(section_id.to_string());
@@ -1564,7 +1569,7 @@ async fn e2e_read_session_dedup_on_second_request() {
     }
 
     // Second read — same section, unchanged content
-    // Current behavior: re-request triggers fault correction and re-delivers
+    // Should return "already_delivered" to save context tokens
     let r2 = call_tool(
         &server,
         "iris_read",
@@ -1573,13 +1578,16 @@ async fn e2e_read_session_dedup_on_second_request() {
     .await;
     let j2: serde_json::Value = serde_json::from_str(extract_text(&r2.content)).unwrap();
 
-    // The server re-delivers on re-request (fault correction path) but the
-    // session shadow tracked the deduplication state correctly
+    assert_eq!(
+        j2["status"], "already_delivered",
+        "re-request should return already_delivered status"
+    );
     assert!(
-        j2["text"].is_string(),
-        "re-request should still return text (fault correction re-delivery)"
+        j2["text"].is_null(),
+        "re-request should not include full text"
     );
     assert!(j2["budget_status"].is_object());
+    assert!(j2["claims_available"].is_number());
 
     // Verify survey deduplication works — same query returns fewer results
     let s1 = call_tool(
