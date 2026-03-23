@@ -1073,10 +1073,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 - [x] Persist clone cache directories with root metadata — clone source trees are read-only assets, not temp artifacts to be cleaned up
 - [x] Map clone source paths in the symbol index so iris_definition resolves to cached clone files instead of returning [source unavailable]
-- [ ] Implement MCP notifications/cancelled handler — listen for client cancellation and propagate to in-flight operations
-- [ ] Thread tokio_util::sync::CancellationToken through clone, fetch, and index pipelines — abort on cancellation, clean up partial state
-- [ ] Content-addressable embedding cache: store embeddings keyed by content hash — skip re-embedding unchanged chunks on session restart (DRY computation)
-- [ ] Warm-load index from persistent storage on session start — only re-embed chunks whose content hash changed since last session
+- [x] Implement MCP notifications/cancelled handler — listen for client cancellation and propagate to in-flight operations
+- [x] Thread tokio_util::sync::CancellationToken through clone, fetch, and index pipelines — abort on cancellation, clean up partial state
+- [x] Content-addressable embedding cache: store embeddings keyed by content hash — skip re-embedding unchanged chunks on session restart (DRY computation)
+- [x] Warm-load index from persistent storage on session start — only re-embed chunks whose content hash changed since last session
 
 ---
 

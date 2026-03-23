@@ -1165,7 +1165,7 @@ phases:
 - id: CL1
   name: Clone Lifecycle and Incremental Index
   tagline: Fast warm starts, readable clone sources, cancellable tasks
-  status: in_progress
+  status: done
   problem: iris_definition returns [source unavailable] for cloned repos. Indexing runs from scratch every session. MCP tool cancellations don't stop server-side work (50+ min CPU wasted).
   solution: Persist clone caches with source path mapping. Content-hash-based embedding cache for incremental indexing. Implement MCP notifications/cancelled with CancellationToken threading.
   tasks:
@@ -1178,9 +1178,9 @@ phases:
   - text: Thread tokio_util::sync::CancellationToken through clone, fetch, and index pipelines — abort on cancellation, clean up partial state
     checked: true
   - text: 'Content-addressable embedding cache: store embeddings keyed by content hash — skip re-embedding unchanged chunks on session restart (DRY computation)'
-    checked: false
+    checked: true
   - text: Warm-load index from persistent storage on session start — only re-embed chunks whose content hash changed since last session
-    checked: false
+    checked: true
 - id: ML1
   name: Multi-Language Code Intelligence
   tagline: Full symbol extraction and references for Python, TypeScript, and Go

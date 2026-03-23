@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 12;
+pub const CURRENT_SCHEMA_VERSION: usize = 13;
 
 /// Returns the migration set for the content database.
 ///
@@ -247,6 +247,18 @@ fn migrations() -> Migrations<'static> {
             ALTER TABLE corpus_roots ADD COLUMN sparse_paths TEXT NOT NULL DEFAULT '[]';
             ",
         ),
+        // V13: Content-addressable embedding cache — skip re-embedding unchanged chunks
+        M::up(
+            "
+            CREATE TABLE embedding_cache (
+                content_hash TEXT NOT NULL,
+                model_name   TEXT NOT NULL,
+                vector       BLOB NOT NULL,
+                created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                PRIMARY KEY (content_hash, model_name)
+            );
+            ",
+        ),
     ])
 }
 
@@ -352,6 +364,7 @@ mod tests {
         assert!(tables.contains(&"bridge_endpoints".to_string()));
         assert!(tables.contains(&"bridge_links".to_string()));
         assert!(tables.contains(&"corpus_roots".to_string()));
+        assert!(tables.contains(&"embedding_cache".to_string()));
     }
 
     #[test]
