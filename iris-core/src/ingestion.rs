@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, instrument, warn};
 
+use crate::code::package_graph::PackageGraph;
 use crate::code::refs::extract_refs;
 use crate::code::{AstParser, extract_symbols};
 use crate::embedding::{Embedder, SparseEmbedder};
@@ -197,6 +198,8 @@ pub struct IngestionPipeline {
     relationship_detector: HeuristicRelationshipDetector,
     /// Optional shared progress tracker for background ingestion.
     progress: Option<Arc<IngestionProgress>>,
+    /// Optional workspace package graph for cross-crate reference resolution.
+    package_graph: Option<PackageGraph>,
 }
 
 impl IngestionPipeline {
@@ -213,6 +216,7 @@ impl IngestionPipeline {
             summary_generator: ExtractiveSummaryGenerator::new(),
             relationship_detector: HeuristicRelationshipDetector::new(),
             progress: None,
+            package_graph: None,
         }
     }
 
@@ -228,6 +232,7 @@ impl IngestionPipeline {
             summary_generator: ExtractiveSummaryGenerator::new(),
             relationship_detector: HeuristicRelationshipDetector::new(),
             progress: None,
+            package_graph: None,
         }
     }
 
@@ -245,6 +250,13 @@ impl IngestionPipeline {
     #[must_use]
     pub fn with_min_section_tokens(mut self, min_tokens: usize) -> Self {
         self.min_section_tokens = min_tokens;
+        self
+    }
+
+    /// Set the workspace package graph for cross-crate reference resolution.
+    #[must_use]
+    pub fn with_package_graph(mut self, graph: PackageGraph) -> Self {
+        self.package_graph = Some(graph);
         self
     }
 
@@ -688,7 +700,7 @@ impl IngestionPipeline {
 
         // For code files: extract symbols, store in SQLite, and embed into vector index
         if parser_kind == ParserKind::Code {
-            embed_code_symbols(source_path, content, storage, embedder, index).await?;
+            embed_code_symbols(source_path, content, storage, embedder, index, None).await?;
         }
 
         // Detect and store claim relationships
@@ -762,6 +774,7 @@ impl IngestionPipeline {
     /// # Errors
     ///
     /// Returns [`IngestionError`] if directory traversal, storage, or embedding fails.
+    #[allow(clippy::too_many_lines)]
     #[instrument(skip(self, storage, embedder, index), fields(dir = %dir.display()))]
     pub async fn ingest_directory_with_embeddings<S, E, I>(
         &self,
@@ -775,6 +788,27 @@ impl IngestionPipeline {
         E: Embedder + ?Sized,
         I: VectorIndex + ?Sized,
     {
+        // Auto-detect workspace and build package graph for cross-crate resolution.
+        // Uses the pre-set graph if available, otherwise detects from the corpus root.
+        let detected_graph = if self.package_graph.is_none() {
+            crate::workspace::detect_workspace(dir).and_then(|ws| {
+                let graph = PackageGraph::from_cargo_workspace(dir, &ws.members);
+                if graph.is_empty() {
+                    None
+                } else {
+                    info!(
+                        packages = graph.packages().len(),
+                        kind = %ws.kind,
+                        "detected workspace, built package graph for cross-crate resolution"
+                    );
+                    Some(graph)
+                }
+            })
+        } else {
+            None
+        };
+        let active_graph = self.package_graph.as_ref().or(detected_graph.as_ref());
+
         let files = discover_files(dir)?;
         let mut stats = IngestionStats {
             files_discovered: files.len(),
@@ -808,7 +842,14 @@ impl IngestionPipeline {
                 .to_string();
 
             match self
-                .ingest_file_with_embeddings(file_path, &relative, storage, embedder, index)
+                .ingest_file_with_embeddings(
+                    file_path,
+                    &relative,
+                    storage,
+                    embedder,
+                    index,
+                    active_graph,
+                )
                 .await
             {
                 Ok(FileResult::Skipped) => {
@@ -880,6 +921,7 @@ impl IngestionPipeline {
     /// # Errors
     ///
     /// Returns [`IngestionError`] if path resolution, storage, or embedding fails.
+    #[allow(clippy::too_many_lines)]
     #[instrument(skip(self, storage, embedder, index), fields(path_count = paths.len()))]
     pub async fn ingest_paths_with_embeddings<S, E, I>(
         &self,
@@ -893,6 +935,8 @@ impl IngestionPipeline {
         E: Embedder + ?Sized,
         I: VectorIndex + ?Sized,
     {
+        let active_graph = self.package_graph.as_ref();
+
         let files = discover_paths(paths)?;
         let mut stats = IngestionStats {
             files_discovered: files.len(),
@@ -941,7 +985,14 @@ impl IngestionPipeline {
             let relative = compute_relative_path(file_path, paths);
 
             match self
-                .ingest_file_with_embeddings(file_path, &relative, storage, embedder, index)
+                .ingest_file_with_embeddings(
+                    file_path,
+                    &relative,
+                    storage,
+                    embedder,
+                    index,
+                    active_graph,
+                )
                 .await
             {
                 Ok(FileResult::Skipped) => {
@@ -1008,7 +1059,7 @@ impl IngestionPipeline {
 
     /// Ingest a single file with multi-resolution embedding.
     #[allow(clippy::too_many_lines)]
-    #[instrument(skip(self, storage, embedder, index), fields(path = %relative_path))]
+    #[instrument(skip(self, storage, embedder, index, package_graph), fields(path = %relative_path))]
     async fn ingest_file_with_embeddings<S, E, I>(
         &self,
         file_path: &Path,
@@ -1016,6 +1067,7 @@ impl IngestionPipeline {
         storage: &S,
         embedder: &E,
         index: &I,
+        package_graph: Option<&PackageGraph>,
     ) -> Result<FileResult, IngestionError>
     where
         S: Storage + ?Sized,
@@ -1123,7 +1175,15 @@ impl IngestionPipeline {
             .parser_override
             .or_else(|| detect_parser_kind(Path::new(relative_path)));
         if parser_kind == Some(ParserKind::Code) {
-            embed_code_symbols(relative_path, &content_str, storage, embedder, index).await?;
+            embed_code_symbols(
+                relative_path,
+                &content_str,
+                storage,
+                embedder,
+                index,
+                package_graph,
+            )
+            .await?;
         }
 
         // Detect and store claim relationships
@@ -1317,6 +1377,7 @@ async fn embed_code_symbols<S, E, I>(
     storage: &S,
     embedder: &E,
     index: &I,
+    package_graph: Option<&PackageGraph>,
 ) -> Result<usize, IngestionError>
 where
     S: Storage + ?Sized,
@@ -1417,6 +1478,7 @@ where
         language,
         &symbol_records,
         storage,
+        package_graph,
     )
     .await
     {
@@ -1481,6 +1543,11 @@ where
 /// resolves target names against known symbols, and stores the resulting
 /// `SymbolRefRecord` values. Refs that can't be resolved (external crates,
 /// missing symbols) are silently skipped.
+///
+/// When a [`PackageGraph`] is provided, cross-crate `use` imports are
+/// disambiguated by filtering symbol candidates to the target crate's
+/// directory prefix.
+#[allow(clippy::too_many_lines)]
 async fn resolve_and_store_refs<S: Storage + ?Sized>(
     tree: &tree_sitter::Tree,
     source: &[u8],
@@ -1488,6 +1555,7 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
     language: &str,
     local_symbols: &[SymbolRecord],
     storage: &S,
+    package_graph: Option<&PackageGraph>,
 ) -> Result<usize, IngestionError> {
     let raw_refs = extract_refs(tree, source, language);
     if raw_refs.is_empty() {
@@ -1568,12 +1636,40 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
             0 => continue, // No valid target found
             1 => primary[0],
             _ => {
-                // Prefer a target in a different file (cross-file ref is more useful)
-                primary
-                    .iter()
-                    .find(|s| s.file_path != file_path)
-                    .copied()
-                    .unwrap_or(primary[0])
+                // Cross-crate disambiguation: if we know the target crate and have
+                // a package graph, filter candidates to that crate's directory.
+                let crate_filtered: Vec<_> =
+                    if let (Some(tc), Some(graph)) = (&raw.target_crate, package_graph) {
+                        if let Some(dir_prefix) = graph.dir_prefix_for_crate(tc) {
+                            primary
+                                .iter()
+                                .filter(|s| s.file_path.starts_with(dir_prefix))
+                                .copied()
+                                .collect()
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    };
+
+                if crate_filtered.len() == 1 {
+                    crate_filtered[0]
+                } else if !crate_filtered.is_empty() {
+                    // Multiple matches in the target crate — pick cross-file
+                    crate_filtered
+                        .iter()
+                        .find(|s| s.file_path != file_path)
+                        .copied()
+                        .unwrap_or(crate_filtered[0])
+                } else {
+                    // Fallback: prefer a target in a different file
+                    primary
+                        .iter()
+                        .find(|s| s.file_path != file_path)
+                        .copied()
+                        .unwrap_or(primary[0])
+                }
             }
         };
 
@@ -3435,10 +3531,17 @@ pub fn compute_hash(content: &str) -> String {
         let tree = parser.parse(source, None).unwrap();
 
         let local_symbols = vec![mod_sym.clone(), struct_sym];
-        let inserted =
-            resolve_and_store_refs(&tree, source, "test.rs", "rust", &local_symbols, &storage)
-                .await
-                .unwrap();
+        let inserted = resolve_and_store_refs(
+            &tree,
+            source,
+            "test.rs",
+            "rust",
+            &local_symbols,
+            &storage,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(inserted, 1, "should resolve one import ref");
 

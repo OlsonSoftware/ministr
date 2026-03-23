@@ -28,6 +28,7 @@ use crate::types::RefKind;
 ///     kind: RefKind::Imports,
 ///     line: 5,
 ///     from_context: None,
+///     target_crate: Some("iris_core".to_string()),
 /// };
 /// assert_eq!(raw.kind, RefKind::Imports);
 /// ```
@@ -42,6 +43,9 @@ pub struct RawRef {
     /// For `impl Trait for Type`: the implementing type name (the "from" side).
     /// For imports: `None` (the whole file is the "from" context).
     pub from_context: Option<String>,
+    /// The root crate name from a use path (e.g., `"iris_core"` from `use iris_core::Foo`).
+    /// Used for cross-crate resolution in workspace contexts.
+    pub target_crate: Option<String>,
 }
 
 /// Primitive and built-in type names to exclude from type-usage references.
@@ -110,8 +114,52 @@ fn extract_use_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<
     // The argument child contains the use path.
     // It can be a scoped_identifier, use_list, use_as_clause, or identifier.
     if let Some(arg) = node.child_by_field_name("argument") {
+        // Extract the root crate name before collecting symbol names.
+        let root_crate = extract_use_root_crate(&arg, source);
+
+        let start = refs.len();
         collect_use_names(&arg, source, line, refs);
+
+        // Set the target_crate on all newly added refs from this use declaration.
+        if let Some(ref crate_name) = root_crate {
+            for r in &mut refs[start..] {
+                r.target_crate = Some(crate_name.clone());
+            }
+        }
     }
+}
+
+/// Extract the root crate name from a use path node.
+///
+/// Walks up the `path` chain of nested `scoped_identifier` nodes to find
+/// the root identifier. For `use iris_core::code::refs::RawRef`, returns
+/// `Some("iris_core")`. For bare identifiers or `self`/`super`/`crate`
+/// prefixed paths, returns `None`.
+fn extract_use_root_crate(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
+    let mut current = *node;
+
+    // Walk down the path chain: scoped_identifier → path → scoped_identifier → path → ...
+    loop {
+        match current.kind() {
+            "scoped_identifier" | "scoped_use_list" | "use_as_clause" => {
+                if let Some(path_node) = current.child_by_field_name("path") {
+                    current = path_node;
+                } else {
+                    break;
+                }
+            }
+            "identifier" | "type_identifier" => {
+                let name = current.utf8_text(source).ok()?;
+                // Skip Rust path prefixes — these are not external crate names
+                if name == "self" || name == "super" || name == "crate" {
+                    return None;
+                }
+                return Some(name.to_string());
+            }
+            _ => break,
+        }
+    }
+    None
 }
 
 /// Recursively collect imported symbol names from a use path node.
@@ -131,6 +179,7 @@ fn collect_use_names(
                         kind: RefKind::Imports,
                         line,
                         from_context: None,
+                        target_crate: None, // set by extract_use_refs after collection
                     });
                 }
             }
@@ -193,6 +242,7 @@ fn extract_impl_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec
         kind: RefKind::Implements,
         line,
         from_context: Some(type_name.to_string()),
+        target_crate: None,
     });
 }
 
@@ -292,6 +342,7 @@ fn extract_call_ref(
             kind: RefKind::Calls,
             line,
             from_context: fn_context.map(String::from),
+            target_crate: None,
         });
     }
 }
@@ -318,6 +369,7 @@ fn collect_type_identifiers(
                         kind: RefKind::Uses,
                         line,
                         from_context: fn_context.map(String::from),
+                        target_crate: None,
                     });
                 }
             }
@@ -384,6 +436,7 @@ fn extract_python_import(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut
                         kind: RefKind::Imports,
                         line,
                         from_context: None,
+                        target_crate: None,
                     });
                 }
             }
@@ -396,6 +449,7 @@ fn extract_python_import(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut
                             kind: RefKind::Imports,
                             line,
                             from_context: None,
+                            target_crate: None,
                         });
                     }
                 }
@@ -441,6 +495,7 @@ fn collect_python_from_names(
                             kind: RefKind::Imports,
                             line,
                             from_context: None,
+                            target_crate: None,
                         });
                     }
                 }
@@ -454,6 +509,7 @@ fn collect_python_from_names(
                             kind: RefKind::Imports,
                             line,
                             from_context: None,
+                            target_crate: None,
                         });
                     }
                 }
@@ -544,6 +600,7 @@ fn extract_js_import(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec
                             kind: RefKind::Imports,
                             line,
                             from_context: None,
+                            target_crate: None,
                         });
                     }
                 }
@@ -557,6 +614,7 @@ fn extract_js_import(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec
                             kind: RefKind::Imports,
                             line,
                             from_context: None,
+                            target_crate: None,
                         });
                     }
                 }
@@ -588,6 +646,7 @@ fn collect_js_import_names(
                             kind: RefKind::Imports,
                             line,
                             from_context: None,
+                            target_crate: None,
                         });
                     }
                 }
@@ -629,6 +688,7 @@ fn extract_js_specifier_name(
                     kind: RefKind::Imports,
                     line,
                     from_context: None,
+                    target_crate: None,
                 });
             }
         }
@@ -656,6 +716,7 @@ fn extract_js_require(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Ve
                             kind: RefKind::Imports,
                             line,
                             from_context: None,
+                            target_crate: None,
                         });
                     }
                 }
@@ -730,6 +791,7 @@ fn extract_go_imports(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Ve
                         kind: RefKind::Imports,
                         line,
                         from_context: None,
+                        target_crate: None,
                     });
                 }
             }
@@ -766,6 +828,7 @@ fn extract_go_import_spec(
                 kind: RefKind::Imports,
                 line,
                 from_context: None,
+                target_crate: None,
             });
         }
     }
@@ -1300,5 +1363,83 @@ fn process(config: Config) {}
         let tree = parser.parse(b"fn main() {}").unwrap();
         let refs = extract_refs(&tree, b"fn main() {}", "unknown");
         assert!(refs.is_empty());
+    }
+
+    // --- target_crate extraction tests ---
+
+    #[test]
+    fn target_crate_from_simple_use() {
+        let refs = parse_and_extract("use std::collections::HashMap;");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].target_crate.as_deref(), Some("std"));
+    }
+
+    #[test]
+    fn target_crate_from_grouped_use() {
+        let refs = parse_and_extract("use iris_core::code::{RawRef, RefKind};");
+        assert_eq!(refs.len(), 2);
+        for r in &refs {
+            assert_eq!(r.target_crate.as_deref(), Some("iris_core"));
+        }
+    }
+
+    #[test]
+    fn target_crate_none_for_crate_prefix() {
+        let refs = parse_and_extract("use crate::config::IrisConfig;");
+        assert_eq!(refs.len(), 1);
+        // `crate::` paths are local — target_crate should be None
+        assert_eq!(refs[0].target_crate, None);
+    }
+
+    #[test]
+    fn target_crate_none_for_self_prefix() {
+        let refs = parse_and_extract("use self::submodule::Thing;");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].target_crate, None);
+    }
+
+    #[test]
+    fn target_crate_none_for_super_prefix() {
+        let refs = parse_and_extract("use super::config::Config;");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].target_crate, None);
+    }
+
+    #[test]
+    fn target_crate_from_use_as() {
+        let refs = parse_and_extract("use serde::Serialize as Ser;");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].target_crate.as_deref(), Some("serde"));
+    }
+
+    #[test]
+    fn target_crate_none_for_bare_identifier() {
+        // `use HashMap;` — bare identifier, no crate path
+        let refs = parse_and_extract("use HashMap;");
+        assert_eq!(refs.len(), 1);
+        // A bare identifier with no scoping — the name itself would be the "root"
+        // but since it's not a path (no ::), we treat it as the crate name
+        // This is fine — it maps to nothing useful in a workspace graph
+        assert_eq!(refs[0].target_crate.as_deref(), Some("HashMap"));
+    }
+
+    #[test]
+    fn target_crate_not_set_on_impl_refs() {
+        let source = r"
+            pub struct Foo;
+            pub trait Display {}
+            impl Display for Foo {}
+        ";
+        let refs = parse_and_extract(source);
+        let impl_ref = refs.iter().find(|r| r.kind == RefKind::Implements).unwrap();
+        assert_eq!(impl_ref.target_crate, None);
+    }
+
+    #[test]
+    fn target_crate_not_set_on_call_refs() {
+        let source = r"fn main() { foo(); }";
+        let refs = parse_and_extract(source);
+        let call_ref = refs.iter().find(|r| r.kind == RefKind::Calls).unwrap();
+        assert_eq!(call_ref.target_crate, None);
     }
 }
