@@ -1236,12 +1236,12 @@ impl IrisServer {
 
     /// Generate compressed summaries for content the agent wants to evict.
     ///
-    /// For each content ID, returns a short extractive summary that preserves
-    /// the gist while reducing token count by 60–80%. The agent can replace
-    /// the full section with this summary to free budget.
+    /// When MCP sampling is available, uses LLM-assisted abstractive
+    /// compression for 90%+ token reduction. Falls back to extractive
+    /// TF-IDF summarization (60–80% reduction) when sampling is unavailable.
     #[tool(
         name = "iris_compress",
-        description = "Generate compressed summaries for sections the agent wants to evict from context. Returns short summaries preserving the gist, with original and compressed token counts."
+        description = "Generate compressed summaries for sections the agent wants to evict from context. Uses LLM-assisted abstractive compression (90%+ reduction) when sampling is available, falling back to extractive (60-80%). Returns summaries with original/compressed token counts and compression method."
     )]
     async fn compress(
         &self,
@@ -1252,7 +1252,24 @@ impl IrisServer {
         async {
             debug!(content_ids = ?params.content_ids, "iris_compress request");
 
-            match self.service.compress_content(&params.content_ids).await {
+            // Try abstractive compression via MCP sampling if peer is available
+            let result = {
+                let peer_guard = self.peer.lock().await;
+                if let Some(peer) = peer_guard.clone() {
+                    drop(peer_guard);
+                    let compressor = crate::sampling::SamplingCompressor::new(peer);
+                    debug!("attempting abstractive compression via MCP sampling");
+                    self.service
+                        .compress_content_abstractive(&params.content_ids, &compressor)
+                        .await
+                } else {
+                    drop(peer_guard);
+                    debug!("no peer available, using extractive compression");
+                    self.service.compress_content(&params.content_ids).await
+                }
+            };
+
+            match result {
                 Ok(summaries) => {
                     debug!(summary_count = summaries.len(), "iris_compress success");
 

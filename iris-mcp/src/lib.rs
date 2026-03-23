@@ -5,5 +5,6 @@
 //! and request/response mapping.
 
 pub mod error;
+pub mod sampling;
 pub mod server;
 pub mod task;

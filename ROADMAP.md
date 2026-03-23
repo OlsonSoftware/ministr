@@ -779,7 +779,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 ### Tasks
 
 - [x] Proactive eviction recommendations: attach suggestions to every tool response when budget pressure > elevated
-- [ ] LLM-assisted abstractive compression via MCP sampling — 90%+ compression ratios vs extractive 60-80%
+- [x] LLM-assisted abstractive compression via MCP sampling — 90%+ compression ratios vs extractive 60-80%
 - [x] Attention-position-aware eviction scoring: weight mid-conversation content higher for eviction candidates
 - [x] iris_compress returns identity (0% compression) for small sections — extractive compressor needs minimum-length threshold or skip logic
 
