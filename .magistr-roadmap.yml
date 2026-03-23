@@ -994,6 +994,24 @@ phases:
     checked: false
   - text: Tests for concurrent multi-session access and coherence propagation
     checked: false
+- id: PF1
+  name: Indexing Performance & Persistence
+  status: done
+  problem: iris reindexes slowly on every session start — reads/hashes all files even when nothing changed, HNSW dump files accumulate to 1GB+
+  solution: mtime-based fast skip, HNSW dump file cleanup, better progress reporting
+  tasks:
+  - text: Add mtime_ns to FileHashRecord and SQLite schema (migration V9)
+    checked: true
+  - text: Per-file mtime fast-path — skip SHA-256 hash when mtime unchanged
+    checked: true
+  - text: Manifest-level mtime fast skip — skip entire ingestion loop when all files unchanged
+    checked: true
+  - text: HNSW dump file cleanup — remove stale .hnsw.data/.hnsw.graph files before persist
+    checked: true
+  - text: Fix progress reporting — "Checking X/Y files" instead of misleading "Indexing"
+    checked: true
+  - text: list_file_hashes Storage trait method for bulk mtime comparison
+    checked: true
 - id: L1
   name: Extended Language Refinements
   tagline: First-class symbol extraction for the languages developers actually use

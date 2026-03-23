@@ -213,6 +213,7 @@ async fn file_hash_crud() {
     let record = FileHashRecord {
         path: "docs/api.md".into(),
         content_hash: "abc123".into(),
+        mtime_ns: Some(1_700_000_000_000_000_000),
     };
     storage.upsert_file_hash(&record).await.unwrap();
 
@@ -221,15 +222,18 @@ async fn file_hash_crud() {
     assert!(retrieved.is_some());
     let retrieved = retrieved.unwrap();
     assert_eq!(retrieved.content_hash, "abc123");
+    assert_eq!(retrieved.mtime_ns, Some(1_700_000_000_000_000_000));
 
     // Update (upsert)
     let updated = FileHashRecord {
         path: "docs/api.md".into(),
         content_hash: "def456".into(),
+        mtime_ns: Some(1_700_000_001_000_000_000),
     };
     storage.upsert_file_hash(&updated).await.unwrap();
     let retrieved = storage.get_file_hash("docs/api.md").await.unwrap().unwrap();
     assert_eq!(retrieved.content_hash, "def456");
+    assert_eq!(retrieved.mtime_ns, Some(1_700_000_001_000_000_000));
 
     // Delete
     let deleted = storage.delete_file_hash("docs/api.md").await.unwrap();
@@ -245,6 +249,48 @@ async fn file_hash_crud() {
     // Delete nonexistent
     let deleted = storage.delete_file_hash("nope.md").await.unwrap();
     assert!(!deleted);
+}
+
+#[tokio::test]
+async fn file_hash_mtime_none_roundtrip() {
+    use iris_core::storage::traits::FileHashRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let record = FileHashRecord {
+        path: "src/main.rs".into(),
+        content_hash: "aaa".into(),
+        mtime_ns: None,
+    };
+    storage.upsert_file_hash(&record).await.unwrap();
+
+    let retrieved = storage.get_file_hash("src/main.rs").await.unwrap().unwrap();
+    assert_eq!(retrieved.mtime_ns, None);
+}
+
+#[tokio::test]
+async fn list_file_hashes_returns_all() {
+    use iris_core::storage::traits::FileHashRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    for (path, mtime) in [("a.rs", Some(100_i64)), ("b.rs", Some(200)), ("c.rs", None)] {
+        storage
+            .upsert_file_hash(&FileHashRecord {
+                path: path.into(),
+                content_hash: format!("hash-{path}"),
+                mtime_ns: mtime,
+            })
+            .await
+            .unwrap();
+    }
+
+    let all = storage.list_file_hashes().await.unwrap();
+    assert_eq!(all.len(), 3);
+    assert_eq!(all[0].path, "a.rs");
+    assert_eq!(all[0].mtime_ns, Some(100));
+    assert_eq!(all[2].path, "c.rs");
+    assert_eq!(all[2].mtime_ns, None);
 }
 
 #[tokio::test]
@@ -310,7 +356,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 8);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 9);
 }
 
 #[tokio::test]

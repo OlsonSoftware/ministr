@@ -911,6 +911,23 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ---
 
+## Phase PF1: Indexing Performance & Persistence
+
+**Problem:** iris reindexes slowly on every session start — reads/hashes all files even when nothing changed, HNSW dump files accumulate to 1GB+
+
+**Solution:** mtime-based fast skip, HNSW dump file cleanup, better progress reporting
+
+### Tasks
+
+- [x] Add mtime_ns to FileHashRecord and SQLite schema (migration V9)
+- [x] Per-file mtime fast-path — skip SHA-256 hash when mtime unchanged
+- [x] Manifest-level mtime fast skip — skip entire ingestion loop when all files unchanged
+- [x] HNSW dump file cleanup — remove stale .hnsw.data/.hnsw.graph files before persist
+- [x] Fix progress reporting — "Checking X/Y files" instead of misleading "Indexing"
+- [x] list_file_hashes Storage trait method for bulk mtime comparison
+
+---
+
 ## Phase L1: Extended Language Refinements ✦ "First-class symbol extraction for the languages developers actually use"
 
 **Problem:** Generic extractor misclassifies symbols in common languages; only 4 of 30+ supported grammars have dedicated refinements

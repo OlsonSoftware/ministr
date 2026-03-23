@@ -642,12 +642,13 @@ impl Storage for SqliteStorage {
         let record = record.clone();
         self.with_conn(move |conn| {
             conn.execute(
-                "INSERT INTO file_hashes (path, content_hash, last_indexed)
-                 VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                "INSERT INTO file_hashes (path, content_hash, last_indexed, mtime_ns)
+                 VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?3)
                  ON CONFLICT(path) DO UPDATE SET
                     content_hash = excluded.content_hash,
-                    last_indexed = excluded.last_indexed",
-                rusqlite::params![record.path, record.content_hash],
+                    last_indexed = excluded.last_indexed,
+                    mtime_ns = excluded.mtime_ns",
+                rusqlite::params![record.path, record.content_hash, record.mtime_ns],
             )
             .map_err(|e| StorageError::Database {
                 reason: format!("failed to upsert file hash: {e}"),
@@ -661,7 +662,7 @@ impl Storage for SqliteStorage {
         let path = path.to_owned();
         self.with_conn(move |conn| {
             let mut stmt = conn
-                .prepare("SELECT path, content_hash FROM file_hashes WHERE path = ?1")
+                .prepare("SELECT path, content_hash, mtime_ns FROM file_hashes WHERE path = ?1")
                 .map_err(|e| StorageError::Database {
                     reason: e.to_string(),
                 })?;
@@ -671,6 +672,7 @@ impl Storage for SqliteStorage {
                     Ok(FileHashRecord {
                         path: row.get(0)?,
                         content_hash: row.get(1)?,
+                        mtime_ns: row.get(2)?,
                     })
                 })
                 .optional()
@@ -695,6 +697,35 @@ impl Storage for SqliteStorage {
                     reason: e.to_string(),
                 })?;
             Ok(affected > 0)
+        })
+        .await
+    }
+
+    async fn list_file_hashes(&self) -> Result<Vec<FileHashRecord>, StorageError> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare("SELECT path, content_hash, mtime_ns FROM file_hashes ORDER BY path")
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let records = stmt
+                .query_map([], |row| {
+                    Ok(FileHashRecord {
+                        path: row.get(0)?,
+                        content_hash: row.get(1)?,
+                        mtime_ns: row.get(2)?,
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            Ok(records)
         })
         .await
     }

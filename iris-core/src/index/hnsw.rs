@@ -317,6 +317,26 @@ impl VectorIndex for HnswIndex {
             reason: format!("failed to create directory: {e}"),
         })?;
 
+        // Clean up stale HNSW dump files from previous persists.
+        // `file_dump()` creates new files with a unique numeric suffix each
+        // time, so old dump files accumulate indefinitely without this cleanup.
+        let mut cleaned = 0usize;
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with(DUMP_BASENAME)
+                    && name_str.contains(".hnsw.")
+                    && fs::remove_file(entry.path()).is_ok()
+                {
+                    cleaned += 1;
+                }
+            }
+        }
+        if cleaned > 0 {
+            debug!(cleaned, "removed stale HNSW dump files before persist");
+        }
+
         // Dump the HNSW graph and data
         inner
             .hnsw
@@ -624,6 +644,53 @@ mod tests {
         let nested = tmp.path().join("deep").join("nested").join("index");
         index.persist(&nested).unwrap();
         assert!(nested.join(ID_MAP_FILE).exists());
+    }
+
+    #[test]
+    fn persist_cleans_up_stale_dump_files() {
+        let dim = 4;
+        let index = HnswIndex::new(dim, 100).unwrap();
+        index.insert("v1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let index_dir = tmp.path().join("cleanup_test");
+
+        // Persist twice — second persist should clean up files from the first
+        index.persist(&index_dir).unwrap();
+
+        let count_before: usize = fs::read_dir(&index_dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".hnsw.")
+            })
+            .count();
+        assert!(count_before > 0);
+
+        // Insert another vector so the dump files are different
+        index.insert("v2", &[0.0, 1.0, 0.0, 0.0]).unwrap();
+        index.persist(&index_dir).unwrap();
+
+        let count_after: usize = fs::read_dir(&index_dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".hnsw.")
+            })
+            .count();
+
+        // Should have exactly one pair (data + graph), not accumulating
+        assert_eq!(count_after, count_before);
+
+        // Verify the index still loads correctly after cleanup
+        let loaded = HnswIndex::load(&index_dir).unwrap();
+        assert_eq!(loaded.len(), 2);
     }
 
     #[test]

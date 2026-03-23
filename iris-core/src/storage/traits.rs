@@ -124,6 +124,8 @@ pub struct FileHashRecord {
     pub path: String,
     /// Content hash (e.g. SHA-256 hex).
     pub content_hash: String,
+    /// File modification time in nanoseconds since epoch (for fast mtime pre-check).
+    pub mtime_ns: Option<i64>,
 }
 
 /// A web cache record tracking fetch metadata for staleness detection.
@@ -371,6 +373,11 @@ pub trait Storage: Send + Sync {
         &self,
         path: &str,
     ) -> impl Future<Output = Result<bool, StorageError>> + Send;
+
+    /// List all file hash records (for manifest-level mtime fast skip).
+    fn list_file_hashes(
+        &self,
+    ) -> impl Future<Output = Result<Vec<FileHashRecord>, StorageError>> + Send;
 
     // -- Sessions --
 

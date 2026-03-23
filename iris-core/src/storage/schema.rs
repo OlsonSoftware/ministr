@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 8;
+pub const CURRENT_SCHEMA_VERSION: usize = 9;
 
 /// Returns the migration set for the content database.
 ///
@@ -181,6 +181,12 @@ fn migrations() -> Migrations<'static> {
         M::up(
             "
             ALTER TABLE symbols ADD COLUMN cyclomatic_complexity INTEGER;
+            ",
+        ),
+        // V9: File mtime for fast change detection without re-hashing
+        M::up(
+            "
+            ALTER TABLE file_hashes ADD COLUMN mtime_ns INTEGER;
             ",
         ),
     ])
