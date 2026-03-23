@@ -306,6 +306,11 @@ impl PrefetchCache {
         self.metrics = PrefetchMetrics::default();
     }
 
+    /// Iterate over cached content IDs.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.entries.keys().map(String::as_str)
+    }
+
     /// Move a key to the most-recently-used position.
     fn touch(&mut self, key: &str) {
         self.order.retain(|k| k != key);
