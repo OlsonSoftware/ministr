@@ -21,7 +21,10 @@
 
 pub mod detector;
 pub mod linker;
+pub mod napi;
+pub mod pyo3;
 pub mod tauri;
+pub mod wasm_bindgen;
 
 use std::fmt;
 
