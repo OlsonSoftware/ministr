@@ -208,6 +208,24 @@ impl BudgetTracker {
         }
         EvictionRanker::rank(session, max_candidates)
     }
+
+    /// Recommend automatic tier promotions based on current pressure.
+    ///
+    /// Delegates to [`CompressionPipeline::recommend_promotions`] using the
+    /// current pressure level. Recently accessed items (within the last 3
+    /// turns) are protected from promotion under elevated pressure, but
+    /// all items are eligible under critical pressure.
+    ///
+    /// Returns promotions sorted by estimated tokens freed (largest first).
+    #[must_use]
+    pub fn auto_promote(&self, session: &Session) -> Vec<super::compression::TierPromotion> {
+        const RECENCY_PROTECTION_TURNS: u32 = 3;
+        super::compression::CompressionPipeline::recommend_promotions(
+            session,
+            self.pressure_level(),
+            RECENCY_PROTECTION_TURNS,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -623,6 +641,128 @@ mod tests {
         assert!(
             !candidates.is_empty(),
             "should return candidates under critical pressure"
+        );
+    }
+
+    // --- auto_promote tests ---
+
+    #[test]
+    fn auto_promote_empty_under_normal_pressure() {
+        let tracker = tracker_with_capacity(1000);
+        let mut session = crate::session::Session::new(
+            crate::session::SessionId::from("test".to_string()),
+            1000,
+            EvictionPolicy::Fifo,
+        );
+
+        session.record_delivery(
+            &crate::types::ContentId::from("s1".to_string()),
+            crate::types::Resolution::Section,
+            300,
+            1,
+            "h1".into(),
+        );
+
+        // 0/1000 = 0.0 -> Normal (tracker has no tokens recorded)
+        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+        let promotions = tracker.auto_promote(&session);
+        assert!(promotions.is_empty(), "no promotions under normal pressure");
+    }
+
+    #[test]
+    fn auto_promote_recommends_under_elevated() {
+        let mut tracker = tracker_with_capacity(1000);
+        let mut session = crate::session::Session::new(
+            crate::session::SessionId::from("test".to_string()),
+            1000,
+            EvictionPolicy::Fifo,
+        );
+
+        // Deliver at turn 1, then advance session to turn 10
+        // so the item is old enough to be promoted (age 9 > protection 3)
+        tracker.record_tokens("s1", 900);
+        session.record_delivery(
+            &crate::types::ContentId::from("s1".to_string()),
+            crate::types::Resolution::Section,
+            900,
+            1,
+            "h1".into(),
+        );
+        // Advance turn by delivering a small item at turn 10
+        session.record_delivery(
+            &crate::types::ContentId::from("marker".to_string()),
+            crate::types::Resolution::Claim,
+            10,
+            10,
+            "hm".into(),
+        );
+
+        // 900/1000 = 0.9 -> Elevated
+        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        let promotions = tracker.auto_promote(&session);
+        // s1 is old (turn 1, age 9 > 3), should be promoted
+        let s1_promo = promotions.iter().find(|p| p.content_id == "s1");
+        assert!(
+            s1_promo.is_some(),
+            "old item should be recommended for promotion under elevated pressure"
+        );
+        assert_eq!(
+            s1_promo.unwrap().recommended_tier,
+            crate::session::CompressionTier::Extractive
+        );
+    }
+
+    #[test]
+    fn auto_promote_protects_recent_under_elevated() {
+        let mut tracker = tracker_with_capacity(1000);
+        let mut session = crate::session::Session::new(
+            crate::session::SessionId::from("test".to_string()),
+            1000,
+            EvictionPolicy::Fifo,
+        );
+
+        // Record at current turn (turn 10) — within recency protection
+        tracker.record_tokens("s1", 900);
+        session.record_delivery(
+            &crate::types::ContentId::from("s1".to_string()),
+            crate::types::Resolution::Section,
+            900,
+            10,
+            "h1".into(),
+        );
+
+        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        let promotions = tracker.auto_promote(&session);
+        assert!(
+            promotions.is_empty(),
+            "recently accessed items should be protected under elevated pressure"
+        );
+    }
+
+    #[test]
+    fn auto_promote_does_not_protect_under_critical() {
+        let mut tracker = tracker_with_capacity(1000);
+        let mut session = crate::session::Session::new(
+            crate::session::SessionId::from("test".to_string()),
+            1000,
+            EvictionPolicy::Fifo,
+        );
+
+        // Recent item but critical pressure — should still promote
+        tracker.record_tokens("s1", 960);
+        session.record_delivery(
+            &crate::types::ContentId::from("s1".to_string()),
+            crate::types::Resolution::Section,
+            960,
+            10,
+            "h1".into(),
+        );
+
+        assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
+        let promotions = tracker.auto_promote(&session);
+        assert!(
+            !promotions.is_empty(),
+            "critical pressure should override recency protection"
         );
     }
 }

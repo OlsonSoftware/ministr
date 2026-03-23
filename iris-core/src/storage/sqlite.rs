@@ -859,6 +859,7 @@ impl Storage for SqliteStorage {
                     token_count,
                     turn_delivered,
                     content_hash,
+                    compression_tier: crate::session::CompressionTier::Full,
                 };
 
                 delivered.insert(content_id_str.clone(), item);
