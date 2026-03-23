@@ -46,7 +46,8 @@ use iris_core::service::{
 use iris_core::session::eviction::EvictionCandidate;
 use iris_core::session::prefetch::PrefetchEngine;
 use iris_core::session::{
-    BudgetConfig, BudgetStatus, BudgetTracker, CoherenceAlert, EvictionPolicy, Session, SessionId,
+    BudgetConfig, BudgetStatus, BudgetTracker, CoherenceAlert, EvictionPolicy, PressureLevel,
+    Session, SessionId,
 };
 use iris_core::storage::{SqliteStorage, Storage, SymbolFilter};
 use iris_core::token::count_tokens;
@@ -100,6 +101,9 @@ struct ToolResponse<T: Serialize> {
     /// Human-readable ingestion status message (e.g. "Indexing 12/42 files").
     #[serde(skip_serializing_if = "Option::is_none")]
     indexing_message: Option<String>,
+    /// Proactive eviction recommendations when budget pressure is elevated or critical.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    eviction_recommendations: Vec<EvictionCandidate>,
 }
 
 /// Wrapper for survey responses that includes both results and dedup metadata.
@@ -1097,9 +1101,9 @@ impl IrisServer {
             drop(session);
 
             let pressure_str = match status.pressure_level {
-                iris_core::session::PressureLevel::Normal => "normal",
-                iris_core::session::PressureLevel::Elevated => "elevated",
-                iris_core::session::PressureLevel::Critical => "critical",
+                PressureLevel::Normal => "normal",
+                PressureLevel::Elevated => "elevated",
+                PressureLevel::Critical => "critical",
             };
 
             debug!(
@@ -1809,6 +1813,10 @@ impl IrisServer {
     }
 
     /// Build a tool response with budget status and any pending coherence alerts.
+    ///
+    /// When budget pressure is elevated or critical, proactively includes
+    /// eviction recommendations so the agent can free context tokens without
+    /// having to call `iris_budget` explicitly.
     async fn build_response<T: Serialize>(
         &self,
         data: T,
@@ -1816,6 +1824,14 @@ impl IrisServer {
     ) -> ToolResponse<T> {
         let mut session = self.session.lock().await;
         let alerts = session.drain_alerts();
+
+        // Compute eviction recommendations when under pressure
+        let eviction_recommendations = if budget_status.pressure_level != PressureLevel::Normal {
+            let budget = self.budget.lock().await;
+            budget.eviction_candidates(&session, 3)
+        } else {
+            Vec::new()
+        };
         drop(session);
 
         let progress = &self.ingestion_progress;
@@ -1834,6 +1850,7 @@ impl IrisServer {
             coherence_alerts: alerts,
             indexing_in_progress: indexing,
             indexing_message,
+            eviction_recommendations,
         }
     }
 
@@ -3774,5 +3791,122 @@ mod tests {
         server.set_peer(peer);
 
         assert!(server.get_peer().is_some());
+    }
+
+    // --- Proactive eviction recommendation tests ---
+
+    /// Helper: create a server with a tiny budget so any delivery triggers pressure.
+    async fn setup_pressured_server() -> IrisServer {
+        let dim = 8;
+        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 100).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let doc = make_test_doc();
+        storage.insert_document(&doc).await.unwrap();
+
+        let texts_and_ids = [(
+            "section::docs/auth.md#tokens",
+            "JWT tokens use RS256 signing. Tokens expire after 24 hours.",
+        )];
+        for (id, text) in &texts_and_ids {
+            let vecs = embedder.embed(&[*text]).unwrap();
+            index.insert(id, &vecs[0]).unwrap();
+        }
+
+        let service = Arc::new(QueryService::new(storage, embedder, index));
+        let budget_config = BudgetConfig {
+            max_context_tokens: 20, // Very small — any delivery triggers pressure
+            pressure_threshold: 0.5,
+            critical_threshold: 0.9,
+        };
+        IrisServer::with_budget_config(service, budget_config)
+    }
+
+    #[tokio::test]
+    async fn no_eviction_recommendations_at_normal_pressure() {
+        let server = setup_server().await;
+
+        // TOC doesn't deliver content, so budget stays normal
+        let result = server.toc(TocParams { document_id: None }).await.unwrap();
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(
+            parsed["budget_status"]["pressure_level"], "normal",
+            "pressure should be normal"
+        );
+        assert!(
+            parsed.get("eviction_recommendations").is_none(),
+            "should not include eviction_recommendations at normal pressure"
+        );
+    }
+
+    #[tokio::test]
+    async fn eviction_recommendations_included_under_elevated_pressure() {
+        let server = setup_pressured_server().await;
+
+        // Read a section to push past the pressure threshold
+        server
+            .read(ReadParams {
+                section_id: "docs/auth.md#tokens".to_string(),
+            })
+            .await
+            .unwrap();
+
+        // Now call toc — a tool that doesn't deliver content itself
+        // but should still include eviction recommendations
+        let result = server.toc(TocParams { document_id: None }).await.unwrap();
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_ne!(
+            parsed["budget_status"]["pressure_level"], "normal",
+            "pressure should be elevated or critical"
+        );
+        let recommendations = parsed["eviction_recommendations"]
+            .as_array()
+            .expect("should have eviction_recommendations array");
+        assert!(
+            !recommendations.is_empty(),
+            "should have at least one eviction recommendation"
+        );
+
+        // Verify recommendation structure
+        let rec = &recommendations[0];
+        assert!(rec["content_id"].is_string(), "should have content_id");
+        assert!(rec["reason"].is_string(), "should have reason");
+        assert!(
+            rec["tokens_recoverable"].is_number(),
+            "should have tokens_recoverable"
+        );
+        assert!(rec["score"].is_number(), "should have score");
+    }
+
+    #[tokio::test]
+    async fn eviction_recommendations_in_survey_response_under_pressure() {
+        let server = setup_pressured_server().await;
+
+        // First survey fills the budget
+        let result = server
+            .survey(SurveyParams {
+                query: "JWT tokens".to_string(),
+                top_k: Some(5),
+            })
+            .await
+            .unwrap();
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        // With a 20-token budget the first survey should push past the threshold
+        if parsed["budget_status"]["pressure_level"] != "normal" {
+            let recommendations = parsed["eviction_recommendations"]
+                .as_array()
+                .expect("should have eviction_recommendations");
+            assert!(
+                !recommendations.is_empty(),
+                "survey response should include eviction recommendations under pressure"
+            );
+        }
     }
 }
