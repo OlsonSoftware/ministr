@@ -14,7 +14,7 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::code::package_graph::PackageGraph;
 use crate::code::refs::extract_refs;
-use crate::code::{AstParser, extract_symbols};
+use crate::code::{AstParser, GrammarRegistry, extract_symbols, generic_extract_symbols};
 use crate::embedding::{Embedder, SparseEmbedder};
 use crate::error::IngestionError;
 use crate::extraction::claims::{ClaimExtractor, HeuristicClaimExtractor};
@@ -1684,15 +1684,44 @@ where
 {
     let source = content.as_bytes();
 
-    let mut ast_parser = AstParser::new();
-    let Ok(tree) = ast_parser.parse(source) else {
-        return Ok(0); // Unparseable code — skip symbol embedding
+    // Detect language from file extension for multi-language symbol extraction.
+    let registry = GrammarRegistry::global();
+    let ext = Path::new(relative_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let language = registry.language_name_for_extension(ext);
+    let is_rust = language.is_none_or(|l| l == "rust");
+
+    // Parse with the appropriate language grammar.
+    let tree = if is_rust {
+        let mut ast_parser = AstParser::new();
+        match ast_parser.parse(source) {
+            Ok(t) => t,
+            Err(_) => return Ok(0),
+        }
+    } else {
+        let Some(ts_lang) = registry.language_for_extension(ext) else {
+            return Ok(0); // No grammar available for this extension
+        };
+        let Ok(mut ast_parser) = AstParser::with_language(ts_lang) else {
+            return Ok(0);
+        };
+        match ast_parser.parse(source) {
+            Ok(t) => t,
+            Err(_) => return Ok(0),
+        }
     };
 
     let module_parts = module_path_from_file(relative_path);
     let module_path: Vec<&str> = module_parts.iter().map(String::as_str).collect();
 
-    let symbols = extract_symbols(&tree, source, relative_path, &module_path);
+    // Use the Rust-specific extractor for .rs files, generic extractor for all others.
+    let symbols = if is_rust {
+        extract_symbols(&tree, source, relative_path, &module_path)
+    } else {
+        generic_extract_symbols(&tree, source, relative_path, &module_path)
+    };
 
     if symbols.is_empty() {
         return Ok(0);

@@ -1184,21 +1184,21 @@ phases:
 - id: ML1
   name: Multi-Language Code Intelligence
   tagline: Full symbol extraction and references for Python, TypeScript, and Go
-  status: pending
+  status: done
   problem: iris only extracts code symbols from Rust. Python, TypeScript, Go files get document-level treatment but no class/function/interface symbols or cross-file references. The LanguageRefinement trait exists but only Rust implements it.
   solution: Implement LanguageRefinement for Python, TypeScript, and Go using their tree-sitter grammar crates (OCP — pure extension, no core modification). Extract shared query patterns into a reusable builder (DRY).
   tasks:
   - text: Add tree-sitter-python, tree-sitter-typescript, tree-sitter-go as optional Cargo features with conditional compilation
-    checked: false
+    checked: true
   - text: 'Implement LanguageRefinement for Python: class, function, method, decorator, and import extraction via tree-sitter queries'
-    checked: false
+    checked: true
   - text: 'Implement LanguageRefinement for TypeScript: class, interface, type alias, function, export, and import extraction via tree-sitter queries'
-    checked: false
+    checked: true
   - text: 'Implement LanguageRefinement for Go: struct, interface, function, method (receiver), and import extraction via tree-sitter queries'
-    checked: false
+    checked: true
   - text: Extract shared tree-sitter query patterns into a reusable query builder — common patterns like "find all imports" should be language-parameterized, not duplicated (DRY)
-    checked: false
+    checked: true
   - text: Add cross-file reference resolution for Python imports, TypeScript imports/exports, and Go imports — reuse the existing reference graph infrastructure
-    checked: false
+    checked: true
   - text: 'Integration tests: clone pydantic (Python), MCP TypeScript SDK, and bubbletea (Go) — verify iris_symbols, iris_definition, and iris_references return correct results for each language'
-    checked: false
+    checked: true
