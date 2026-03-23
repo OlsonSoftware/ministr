@@ -14,6 +14,7 @@ use tracing::instrument;
 use crate::embedding::{Embedder, Reranker, SparseEmbedder};
 use crate::error::{IndexError, StorageError};
 use crate::extraction::abstractive::AbstractiveCompressor;
+use crate::extraction::claims::{ClaimExtractor, HeuristicClaimExtractor};
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
 use crate::index::{SparseIndex, VectorIndex};
 use crate::search::{MultiResolutionSearch, SearchConfig};
@@ -508,15 +509,19 @@ impl QueryService {
     ) -> Result<Vec<ClaimResult>, QueryError> {
         let sid = SectionId(section_id.to_string());
 
-        // Verify section exists
-        self.storage
-            .get_section(&sid)
-            .await?
-            .ok_or_else(|| QueryError::SectionNotFound {
-                id: section_id.to_string(),
-            })?;
+        // Try section lookup first
+        let section_exists = self.storage.get_section(&sid).await?.is_some();
 
-        let claims = self.storage.list_claims(&sid).await?;
+        let claims = if section_exists {
+            self.storage.list_claims(&sid).await?
+        } else if section_id.starts_with("sym-") {
+            // Fall back to generating claims from symbol doc comments
+            self.extract_symbol_claims(section_id).await?
+        } else {
+            return Err(QueryError::SectionNotFound {
+                id: section_id.to_string(),
+            });
+        };
 
         if claims.is_empty() {
             return Ok(Vec::new());
@@ -592,34 +597,125 @@ impl QueryService {
         let mut results = Vec::with_capacity(content_ids.len());
 
         for id in content_ids {
-            let sid = SectionId(id.clone());
-            if let Some(section) = self.storage.get_section(&sid).await? {
-                // Use existing summary if available, otherwise generate one
-                let summary = section
-                    .summary
-                    .unwrap_or_else(|| summarizer.summarize(&section.text, 2));
-                let original_tokens = count_tokens(&section.text);
-                let compressed_tokens = count_tokens(&summary);
-
-                // Skip sections where compression achieves no reduction —
-                // the extractive summarizer returns identity for sections
-                // with fewer sentences than max_sentences.
-                if compressed_tokens >= original_tokens {
-                    continue;
-                }
-
-                results.push(CompressedItem {
-                    original_id: id.clone(),
-                    summary,
-                    original_tokens,
-                    compressed_tokens,
-                    method: "extractive".to_string(),
-                });
+            // Try section lookup first, then fall back to symbol lookup
+            if let Some(item) = self.try_compress_section(id, &summarizer).await? {
+                results.push(item);
+            } else if let Some(item) = self.try_compress_symbol(id).await? {
+                results.push(item);
             }
-            // Silently skip unknown content IDs and uncompressible sections
+            // Silently skip truly unknown content IDs
         }
 
         Ok(results)
+    }
+
+    /// Try to compress a section by its ID. Returns `None` if not found or
+    /// if compression achieves no reduction.
+    async fn try_compress_section(
+        &self,
+        id: &str,
+        summarizer: &ExtractiveSummaryGenerator,
+    ) -> Result<Option<CompressedItem>, QueryError> {
+        let sid = SectionId(id.to_string());
+        let Some(section) = self.storage.get_section(&sid).await? else {
+            return Ok(None);
+        };
+
+        let summary = section
+            .summary
+            .unwrap_or_else(|| summarizer.summarize(&section.text, 2));
+        let original_tokens = count_tokens(&section.text);
+        let compressed_tokens = count_tokens(&summary);
+
+        // Skip sections where compression achieves no reduction
+        if compressed_tokens >= original_tokens {
+            return Ok(None);
+        }
+
+        Ok(Some(CompressedItem {
+            original_id: id.to_string(),
+            summary,
+            original_tokens,
+            compressed_tokens,
+            method: "extractive".to_string(),
+        }))
+    }
+
+    /// Try to compress a symbol by its ID. Generates a compact summary
+    /// from the symbol's signature and doc comment.
+    async fn try_compress_symbol(&self, id: &str) -> Result<Option<CompressedItem>, QueryError> {
+        if !id.starts_with("sym-") {
+            return Ok(None);
+        }
+
+        let sid = SymbolId(id.to_string());
+        let Some(symbol) = self.storage.get_symbol(&sid).await? else {
+            return Ok(None);
+        };
+
+        // Build a compact representation from signature + doc summary
+        let mut summary = symbol.signature.clone();
+        if let Some(ref doc) = symbol.doc_comment {
+            // Take just the first sentence of the doc comment
+            let first_sentence = doc
+                .split_once(". ")
+                .map_or(doc.as_str(), |(first, _)| first);
+            summary = format!("/// {first_sentence}\n{summary}");
+        }
+
+        // Estimate original size from the full source context
+        let original_text = self
+            .read_source_context(&symbol.file_path, symbol.line_start, symbol.line_end)
+            .await;
+        let original_tokens = count_tokens(&original_text);
+        let compressed_tokens = count_tokens(&summary);
+
+        // Always return a result for symbols — the caller asked for compression
+        Ok(Some(CompressedItem {
+            original_id: id.to_string(),
+            summary,
+            original_tokens,
+            compressed_tokens,
+            method: "symbol_stub".to_string(),
+        }))
+    }
+
+    /// Generate claims from a symbol's doc comment using the heuristic extractor.
+    ///
+    /// Returns claim records derived from the doc comment text. If the symbol
+    /// has no doc comment, returns an empty vec.
+    async fn extract_symbol_claims(
+        &self,
+        symbol_id: &str,
+    ) -> Result<Vec<crate::storage::ClaimRecord>, QueryError> {
+        let sid = SymbolId(symbol_id.to_string());
+        let symbol =
+            self.storage
+                .get_symbol(&sid)
+                .await?
+                .ok_or_else(|| QueryError::SymbolNotFound {
+                    id: symbol_id.to_string(),
+                })?;
+
+        let Some(ref doc) = symbol.doc_comment else {
+            return Ok(Vec::new());
+        };
+
+        let extractor = HeuristicClaimExtractor::new();
+        let section_id = SectionId(symbol_id.to_string());
+        let claims = extractor.extract(doc, &section_id);
+
+        Ok(claims
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| crate::storage::ClaimRecord {
+                id: c.id,
+                section_id: SectionId(symbol_id.to_string()),
+                text: c.text,
+                #[allow(clippy::cast_possible_wrap)]
+                position: i as i64,
+            })
+            .collect())
     }
 
     /// Compress content using LLM-assisted abstractive compression.
@@ -648,6 +744,10 @@ impl QueryService {
         for id in content_ids {
             let sid = SectionId(id.clone());
             let Some(section) = self.storage.get_section(&sid).await? else {
+                // Fall back to symbol compression for non-section content IDs
+                if let Some(item) = self.try_compress_symbol(id).await? {
+                    results.push(item);
+                }
                 continue;
             };
 
@@ -1547,6 +1647,163 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results[0].method, "extractive");
+    }
+
+    // --- symbol compress/extract tests ---
+
+    async fn setup_service_with_symbol() -> QueryService {
+        let dim = 8;
+        let embedder = Arc::new(MockEmbedder { dim });
+        let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        // Create a test source file
+        let test_dir = tempfile::tempdir().unwrap();
+        let src_file = test_dir.path().join("config.rs");
+        std::fs::write(
+            &src_file,
+            "/// The main config struct.\n/// It provides 3 configurable fields for runtime tuning.\npub struct Config {\n    pub max_items: usize,\n}\n",
+        )
+        .unwrap();
+
+        // Store the corpus root and symbol
+        let symbol = SymbolRecord {
+            id: SymbolId("sym-config.rs::Config".into()),
+            file_path: src_file.to_str().unwrap().to_string(),
+            name: "Config".into(),
+            kind: "struct".into(),
+            visibility: "pub".into(),
+            signature: "pub struct Config".into(),
+            doc_comment: Some(
+                "The main config struct. It provides 3 configurable fields for runtime tuning."
+                    .into(),
+            ),
+            module_path: String::new(),
+            line_start: 3,
+            line_end: 5,
+            cyclomatic_complexity: None,
+        };
+        storage.insert_symbols(&[symbol]).await.unwrap();
+
+        QueryService::new(storage, embedder, index)
+    }
+
+    #[tokio::test]
+    async fn compress_symbol_returns_stub_summary() {
+        let service = setup_service_with_symbol().await;
+        let results = service
+            .compress_content(&["sym-config.rs::Config".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1, "should return 1 compressed symbol");
+        assert_eq!(results[0].original_id, "sym-config.rs::Config");
+        assert_eq!(results[0].method, "symbol_stub");
+        assert!(
+            results[0].summary.contains("pub struct Config"),
+            "summary should contain signature: {:?}",
+            results[0].summary
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_claims_from_symbol_doc_comment() {
+        let service = setup_service_with_symbol().await;
+        let claims = service
+            .extract_claims("sym-config.rs::Config", None)
+            .await
+            .unwrap();
+
+        // The doc comment has assertive sentences → should produce claims
+        assert!(!claims.is_empty(), "should extract claims from doc comment");
+    }
+
+    #[tokio::test]
+    async fn extract_claims_symbol_without_doc_returns_empty() {
+        let dim = 8;
+        let embedder = Arc::new(MockEmbedder { dim });
+        let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let symbol = SymbolRecord {
+            id: SymbolId("sym-bare.rs::Bare".into()),
+            file_path: "bare.rs".into(),
+            name: "Bare".into(),
+            kind: "struct".into(),
+            visibility: "pub".into(),
+            signature: "pub struct Bare".into(),
+            doc_comment: None,
+            module_path: String::new(),
+            line_start: 1,
+            line_end: 1,
+            cyclomatic_complexity: None,
+        };
+        storage.insert_symbols(&[symbol]).await.unwrap();
+        let service = QueryService::new(storage, embedder, index);
+
+        let claims = service
+            .extract_claims("sym-bare.rs::Bare", None)
+            .await
+            .unwrap();
+        assert!(claims.is_empty(), "no doc comment → no claims");
+    }
+
+    // --- name_exact filter tests ---
+
+    #[tokio::test]
+    async fn list_symbols_name_exact_matches_only_exact() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let symbols = vec![
+            SymbolRecord {
+                id: SymbolId("sym-a.rs::Default".into()),
+                file_path: "a.rs".into(),
+                name: "Default".into(),
+                kind: "trait".into(),
+                visibility: "pub".into(),
+                signature: "pub trait Default".into(),
+                doc_comment: None,
+                module_path: String::new(),
+                line_start: 1,
+                line_end: 1,
+                cyclomatic_complexity: None,
+            },
+            SymbolRecord {
+                id: SymbolId("sym-b.rs::DEFAULT_TOP_LIMIT".into()),
+                file_path: "b.rs".into(),
+                name: "DEFAULT_TOP_LIMIT".into(),
+                kind: "const".into(),
+                visibility: "pub".into(),
+                signature: "pub const DEFAULT_TOP_LIMIT: usize = 10".into(),
+                doc_comment: None,
+                module_path: String::new(),
+                line_start: 1,
+                line_end: 1,
+                cyclomatic_complexity: None,
+            },
+        ];
+        storage.insert_symbols(&symbols).await.unwrap();
+
+        // Fuzzy name search matches both
+        let fuzzy = storage
+            .list_symbols(&SymbolFilter {
+                name: Some("Default".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(fuzzy.len(), 2, "fuzzy should match both symbols");
+
+        // Exact name search matches only "Default"
+        let exact = storage
+            .list_symbols(&SymbolFilter {
+                name_exact: Some("Default".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(exact.len(), 1, "exact should match only one");
+        assert_eq!(exact[0].name, "Default");
     }
 
     // --- cosine_similarity tests ---

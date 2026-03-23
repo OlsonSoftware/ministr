@@ -87,23 +87,54 @@ pub fn extract_refs(tree: &tree_sitter::Tree, source: &[u8], language: &str) -> 
 fn extract_refs_rust(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     let mut refs = Vec::new();
     let root = tree.root_node();
+    extract_refs_rust_from_node(&root, source, &mut refs);
+    refs
+}
 
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
-        match node.kind() {
-            "use_declaration" => extract_use_refs(&node, source, &mut refs),
+/// Recursively extract refs from a node and its children.
+///
+/// Handles top-level items and descends into `mod` blocks to capture
+/// references from nested module definitions.
+fn extract_refs_rust_from_node(
+    node: &tree_sitter::Node<'_>,
+    source: &[u8],
+    refs: &mut Vec<RawRef>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "use_declaration" => extract_use_refs(&child, source, refs),
             "impl_item" => {
-                extract_impl_refs(&node, source, &mut refs);
-                extract_from_impl_body(&node, source, &mut refs);
+                extract_impl_refs(&child, source, refs);
+                extract_from_impl_body(&child, source, refs);
             }
             "function_item" => {
-                extract_from_function(&node, source, &mut refs);
+                extract_from_function(&child, source, refs);
+            }
+            "struct_item" => {
+                extract_from_struct(&child, source, refs);
+            }
+            "enum_item" => {
+                extract_from_enum(&child, source, refs);
+            }
+            "trait_item" => {
+                extract_from_trait(&child, source, refs);
+            }
+            "const_item" | "static_item" => {
+                extract_from_const_static(&child, source, refs);
+            }
+            "type_item" => {
+                extract_from_type_alias(&child, source, refs);
+            }
+            "mod_item" => {
+                // Descend into inline module bodies
+                if let Some(body) = child.child_by_field_name("body") {
+                    extract_refs_rust_from_node(&body, source, refs);
+                }
             }
             _ => {}
         }
     }
-
-    refs
 }
 
 /// Extract import references from a `use_declaration` node.
@@ -234,6 +265,10 @@ fn extract_impl_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec
     let trait_name = trait_name.split('<').next().unwrap_or(trait_name).trim();
     let type_name = type_name.split('<').next().unwrap_or(type_name).trim();
 
+    // Strip scope prefix for qualified paths (e.g., "crate::foo::Display" → "Display")
+    let trait_name = trait_name.rsplit("::").next().unwrap_or(trait_name);
+    let type_name = type_name.rsplit("::").next().unwrap_or(type_name);
+
     #[allow(clippy::cast_possible_truncation)]
     let line = node.start_position().row as u32 + 1;
 
@@ -281,6 +316,92 @@ fn extract_from_impl_body(
         if child.kind() == "function_item" {
             extract_from_function(&child, source, refs);
         }
+    }
+}
+
+/// Extract type references from struct field definitions.
+///
+/// For `struct Foo { bar: Session, baz: Vec<Config> }`, extracts
+/// `Uses` refs for `Session` and `Config`.
+fn extract_from_struct(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let struct_name = node
+        .child_by_field_name("name")
+        .and_then(|n| n.utf8_text(source).ok());
+
+    // Field declarations are inside the `field_declaration_list` body.
+    if let Some(body) = node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "field_declaration" {
+                if let Some(type_node) = child.child_by_field_name("type") {
+                    collect_type_identifiers(&type_node, source, struct_name, refs);
+                }
+            }
+        }
+    }
+}
+
+/// Extract type references from enum variant fields.
+///
+/// For `enum Foo { Bar(Session), Baz { x: Config } }`, extracts
+/// `Uses` refs for `Session` and `Config`.
+fn extract_from_enum(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let enum_name = node
+        .child_by_field_name("name")
+        .and_then(|n| n.utf8_text(source).ok());
+
+    if let Some(body) = node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "enum_variant" {
+                // Recursively collect type identifiers from the entire variant.
+                // This handles both tuple variants `A(Session)` and struct
+                // variants `B { x: Config }` without special-casing node types.
+                collect_type_identifiers(&child, source, enum_name, refs);
+            }
+        }
+    }
+}
+
+/// Extract type references from trait method signatures.
+///
+/// For `trait Foo { fn bar(&self, x: Session) -> Config; }`, extracts
+/// `Uses` refs for `Session` and `Config`.
+fn extract_from_trait(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let Some(body) = node.child_by_field_name("body") else {
+        return;
+    };
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        if child.kind() == "function_signature_item" || child.kind() == "function_item" {
+            extract_from_function(&child, source, refs);
+        }
+    }
+}
+
+/// Extract type references from `const` and `static` type annotations.
+///
+/// For `const FOO: Session = ...;`, extracts a `Uses` ref for `Session`.
+fn extract_from_const_static(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let name = node
+        .child_by_field_name("name")
+        .and_then(|n| n.utf8_text(source).ok());
+
+    if let Some(type_node) = node.child_by_field_name("type") {
+        collect_type_identifiers(&type_node, source, name, refs);
+    }
+}
+
+/// Extract type references from type alias definitions.
+///
+/// For `type Foo = Vec<Session>;`, extracts a `Uses` ref for `Session`.
+fn extract_from_type_alias(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let name = node
+        .child_by_field_name("name")
+        .and_then(|n| n.utf8_text(source).ok());
+
+    if let Some(type_node) = node.child_by_field_name("type") {
+        collect_type_identifiers(&type_node, source, name, refs);
     }
 }
 
@@ -1441,5 +1562,118 @@ fn process(config: Config) {}
         let refs = parse_and_extract(source);
         let call_ref = refs.iter().find(|r| r.kind == RefKind::Calls).unwrap();
         assert_eq!(call_ref.target_crate, None);
+    }
+
+    // --- Scoped trait/type name extraction ---
+
+    #[test]
+    fn extract_impl_scoped_trait_strips_path() {
+        let source = r"
+            pub struct Foo;
+            impl crate::traits::Display for Foo {}
+        ";
+        let refs = parse_and_extract(source);
+        let impl_ref = refs.iter().find(|r| r.kind == RefKind::Implements).unwrap();
+        assert_eq!(impl_ref.target_name, "Display");
+        assert_eq!(impl_ref.from_context.as_deref(), Some("Foo"));
+    }
+
+    #[test]
+    fn extract_impl_scoped_type_strips_path() {
+        let source = r"
+            pub trait Bar {}
+            impl Bar for super::other::Baz {}
+        ";
+        let refs = parse_and_extract(source);
+        let impl_ref = refs.iter().find(|r| r.kind == RefKind::Implements).unwrap();
+        assert_eq!(impl_ref.from_context.as_deref(), Some("Baz"));
+    }
+
+    // --- Struct field type extraction ---
+
+    #[test]
+    fn extract_struct_field_types() {
+        let source = r"
+            pub struct Foo {
+                pub bar: Session,
+                pub baz: Vec<Config>,
+            }
+        ";
+        let refs = parse_and_extract(source);
+        let uses: Vec<_> = refs.iter().filter(|r| r.kind == RefKind::Uses).collect();
+        let names: Vec<&str> = uses.iter().map(|r| r.target_name.as_str()).collect();
+        assert!(names.contains(&"Session"), "missing Session ref: {names:?}");
+        assert!(names.contains(&"Config"), "missing Config ref: {names:?}");
+    }
+
+    // --- Enum variant type extraction ---
+
+    #[test]
+    fn extract_enum_variant_types() {
+        let source = r"
+            pub enum MyEnum {
+                A(Session),
+                B { x: Config },
+            }
+        ";
+        let refs = parse_and_extract(source);
+        let uses: Vec<_> = refs.iter().filter(|r| r.kind == RefKind::Uses).collect();
+        let names: Vec<&str> = uses.iter().map(|r| r.target_name.as_str()).collect();
+        assert!(names.contains(&"Session"), "missing Session ref: {names:?}");
+        assert!(names.contains(&"Config"), "missing Config ref: {names:?}");
+    }
+
+    // --- Trait method signature extraction ---
+
+    #[test]
+    fn extract_trait_method_types() {
+        let source = r"
+            pub trait MyTrait {
+                fn process(&self, input: Session) -> Config;
+            }
+        ";
+        let refs = parse_and_extract(source);
+        let uses: Vec<_> = refs.iter().filter(|r| r.kind == RefKind::Uses).collect();
+        let names: Vec<&str> = uses.iter().map(|r| r.target_name.as_str()).collect();
+        assert!(names.contains(&"Session"), "missing Session ref: {names:?}");
+        assert!(names.contains(&"Config"), "missing Config ref: {names:?}");
+    }
+
+    // --- Const/static type extraction ---
+
+    #[test]
+    fn extract_const_type() {
+        let source = r"const MY_CONST: Config = Config::default();";
+        let refs = parse_and_extract(source);
+        let uses: Vec<_> = refs.iter().filter(|r| r.kind == RefKind::Uses).collect();
+        assert!(
+            uses.iter().any(|r| r.target_name == "Config"),
+            "missing Config type ref: {uses:?}"
+        );
+    }
+
+    // --- Mod block descent ---
+
+    #[test]
+    fn extract_refs_inside_mod_block() {
+        let source = r"
+            mod inner {
+                use super::Config;
+                pub struct Wrapper {
+                    pub cfg: Config,
+                }
+            }
+        ";
+        let refs = parse_and_extract(source);
+        let imports: Vec<_> = refs.iter().filter(|r| r.kind == RefKind::Imports).collect();
+        assert!(
+            imports.iter().any(|r| r.target_name == "Config"),
+            "should find import inside mod block: {imports:?}"
+        );
+        let uses: Vec<_> = refs.iter().filter(|r| r.kind == RefKind::Uses).collect();
+        assert!(
+            uses.iter().any(|r| r.target_name == "Config"),
+            "should find struct field type ref inside mod block: {uses:?}"
+        );
     }
 }

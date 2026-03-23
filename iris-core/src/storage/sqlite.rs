@@ -1392,7 +1392,10 @@ impl Storage for SqliteStorage {
             );
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
-            if let Some(ref name) = filter.name {
+            if let Some(ref exact) = filter.name_exact {
+                sql.push_str(" AND name = ?");
+                params.push(Box::new(exact.clone()));
+            } else if let Some(ref name) = filter.name {
                 sql.push_str(" AND name LIKE ?");
                 params.push(Box::new(format!("%{name}%")));
             }

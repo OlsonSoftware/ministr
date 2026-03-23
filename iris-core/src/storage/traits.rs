@@ -312,6 +312,8 @@ pub struct BridgeLinkDetail {
 pub struct SymbolFilter {
     /// Fuzzy name match (case-insensitive substring).
     pub name: Option<String>,
+    /// Exact name match (case-sensitive). Takes precedence over `name` when set.
+    pub name_exact: Option<String>,
     /// Exact kind match (e.g. "function", "struct").
     pub kind: Option<String>,
     /// Exact visibility match (e.g. "pub").

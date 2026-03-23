@@ -2281,6 +2281,7 @@ impl IrisServer {
 
             let filter = SymbolFilter {
                 name: params.query,
+                name_exact: None,
                 kind: params.kind,
                 visibility: params.visibility,
                 module: params.module,
