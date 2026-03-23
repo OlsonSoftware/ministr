@@ -1818,11 +1818,11 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
             continue;
         };
 
-        // Resolve the target symbol by name — must be a primary definition,
+        // Resolve the target symbol by exact name — must be a primary definition,
         // not an impl block or nested item (those have composite names that
         // won't match simple use-path imports).
         let target_filter = SymbolFilter {
-            name: Some(raw.target_name.clone()),
+            name_exact: Some(raw.target_name.clone()),
             ..SymbolFilter::default()
         };
 
