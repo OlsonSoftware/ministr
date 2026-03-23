@@ -890,7 +890,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 - [x] Declare iris-specific extensions (budget protocol, coherence notifications, compression tiers)
 - [x] Extension negotiation during initialization handshake
-- [ ] Server Cards — expose .well-known/mcp.json with tool catalog, capabilities, and version metadata
+- [x] Server Cards — expose .well-known/mcp.json with tool catalog, capabilities, and version metadata
 - [ ] OAuth 2.1 framework for remote Streamable HTTP deployment
 
 ---

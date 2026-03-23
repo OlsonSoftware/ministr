@@ -909,22 +909,41 @@ impl ServerHandler for IrisServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult {
-            resources: vec![Resource::new(
-                RawResource {
-                    uri: "iris://status".to_string(),
-                    name: "iris status".to_string(),
-                    description: Some(
-                        "Index statistics — vector count, dimension, session state, and budget"
-                            .to_string(),
-                    ),
-                    mime_type: Some("application/json".to_string()),
-                    size: None,
-                    icons: None,
-                    meta: None,
-                    title: None,
-                },
-                None,
-            )],
+            resources: vec![
+                Resource::new(
+                    RawResource {
+                        uri: "mcp://server-card.json".to_string(),
+                        name: "server card".to_string(),
+                        description: Some(
+                            "MCP Server Card (SEP-1649) — tool catalog, capabilities, \
+                             version metadata, and iris extension declarations"
+                                .to_string(),
+                        ),
+                        mime_type: Some("application/json".to_string()),
+                        size: None,
+                        icons: None,
+                        meta: None,
+                        title: None,
+                    },
+                    None,
+                ),
+                Resource::new(
+                    RawResource {
+                        uri: "iris://status".to_string(),
+                        name: "iris status".to_string(),
+                        description: Some(
+                            "Index statistics — vector count, dimension, session state, and budget"
+                                .to_string(),
+                        ),
+                        mime_type: Some("application/json".to_string()),
+                        size: None,
+                        icons: None,
+                        meta: None,
+                        title: None,
+                    },
+                    None,
+                ),
+            ],
             next_cursor: None,
             meta: None,
         })
@@ -961,7 +980,9 @@ impl ServerHandler for IrisServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         let uri = &request.uri;
-        if uri == "iris://status" {
+        if uri == "mcp://server-card.json" {
+            Ok(self.read_server_card_resource())
+        } else if uri == "iris://status" {
             self.read_status_resource().await
         } else if let Some(path) = uri.strip_prefix("iris://corpus/") {
             self.read_corpus_resource(path).await
@@ -3267,6 +3288,78 @@ impl IrisServer {
             .collect()
     }
 
+    /// Build the `mcp://server-card.json` server card (SEP-1649).
+    ///
+    /// Returns a structured metadata document describing this server's identity,
+    /// protocol version, capabilities, extensions, and full tool catalog. Clients
+    /// can read this resource to discover server features without completing the
+    /// initialization handshake.
+    fn build_server_card(&self) -> serde_json::Value {
+        let info = self.get_info();
+
+        // Build the tool catalog from the macro-generated tool router.
+        let tools: Vec<serde_json::Value> = self
+            .tool_router
+            .list_all()
+            .into_iter()
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.name,
+                    "description": t.description,
+                })
+            })
+            .collect();
+
+        // Build capabilities object mirroring the initialization result.
+        let mut capabilities = serde_json::json!({});
+        if info.capabilities.tools.is_some() {
+            capabilities["tools"] = serde_json::json!({ "listChanged": true });
+        }
+        if let Some(ref res) = info.capabilities.resources {
+            capabilities["resources"] = serde_json::json!({
+                "subscribe": res.subscribe.unwrap_or(false),
+                "listChanged": res.list_changed.unwrap_or(false),
+            });
+        }
+        if info.capabilities.prompts.is_some() {
+            capabilities["prompts"] = serde_json::json!({ "listChanged": true });
+        }
+        if info.capabilities.tasks.is_some() {
+            capabilities["tasks"] = serde_json::json!({});
+        }
+        if info.capabilities.completions.is_some() {
+            capabilities["completions"] = serde_json::json!({});
+        }
+        if let Some(ref extensions) = info.capabilities.extensions {
+            capabilities["extensions"] = serde_json::to_value(extensions).unwrap_or_default();
+        }
+
+        serde_json::json!({
+            "$schema": "https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json",
+            "version": "1.0",
+            "protocolVersion": info.protocol_version.to_string(),
+            "serverInfo": {
+                "name": info.server_info.name,
+                "version": info.server_info.version,
+                "description": info.server_info.description,
+            },
+            "capabilities": capabilities,
+            "tools": tools,
+        })
+    }
+
+    /// Read the `mcp://server-card.json` resource content.
+    fn read_server_card_resource(&self) -> ReadResourceResult {
+        let card = self.build_server_card();
+        let text = serde_json::to_string_pretty(&card).unwrap_or_default();
+        ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
+            meta: None,
+            uri: "mcp://server-card.json".to_string(),
+            mime_type: Some("application/json".to_string()),
+            text,
+        }])
+    }
+
     /// Build the `iris://status` resource content.
     async fn read_status_resource(&self) -> Result<ReadResourceResult, McpError> {
         let index = self.service.index();
@@ -4579,14 +4672,15 @@ mod tests {
         let (client, _server) = wrap_test_client(setup_server().await).await;
         let result = client.peer().list_resources(None).await.unwrap();
 
-        assert_eq!(result.resources.len(), 1);
-        assert_eq!(result.resources[0].uri, "iris://status");
-        assert_eq!(result.resources[0].name, "iris status");
-        assert!(result.resources[0].description.is_some());
-        assert_eq!(
-            result.resources[0].mime_type.as_deref(),
-            Some("application/json")
-        );
+        assert_eq!(result.resources.len(), 2);
+        let status = result
+            .resources
+            .iter()
+            .find(|r| r.uri == "iris://status")
+            .expect("should include iris://status resource");
+        assert_eq!(status.name, "iris status");
+        assert!(status.description.is_some());
+        assert_eq!(status.mime_type.as_deref(), Some("application/json"));
     }
 
     #[tokio::test]
@@ -5568,5 +5662,184 @@ mod tests {
             result.completion.values.is_empty(),
             "should return empty for unknown prompt"
         );
+    }
+
+    // --- Server Card tests (SEP-1649) ---
+
+    #[test]
+    fn server_card_has_required_schema_fields() {
+        let server = setup_server_sync();
+        let card = server.build_server_card();
+
+        assert_eq!(
+            card["$schema"],
+            "https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json"
+        );
+        assert_eq!(card["version"], "1.0");
+        assert!(
+            card["protocolVersion"].is_string(),
+            "protocolVersion should be a string"
+        );
+    }
+
+    #[test]
+    fn server_card_has_server_info() {
+        let server = setup_server_sync();
+        let card = server.build_server_card();
+
+        assert_eq!(card["serverInfo"]["name"], "iris");
+        assert_eq!(card["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
+        assert!(
+            card["serverInfo"]["description"].is_string(),
+            "description should be present"
+        );
+    }
+
+    #[test]
+    fn server_card_has_capabilities() {
+        let server = setup_server_sync();
+        let card = server.build_server_card();
+
+        let caps = &card["capabilities"];
+        assert!(
+            caps["tools"].is_object(),
+            "tools capability should be present"
+        );
+        assert!(
+            caps["resources"].is_object(),
+            "resources capability should be present"
+        );
+        assert!(
+            caps["prompts"].is_object(),
+            "prompts capability should be present"
+        );
+        assert!(
+            caps["tasks"].is_object(),
+            "tasks capability should be present"
+        );
+        assert!(
+            caps["completions"].is_object(),
+            "completions capability should be present"
+        );
+    }
+
+    #[test]
+    fn server_card_includes_iris_extensions() {
+        let server = setup_server_sync();
+        let card = server.build_server_card();
+
+        let extensions = &card["capabilities"]["extensions"];
+        assert!(
+            extensions[EXT_BUDGET_PROTOCOL].is_object(),
+            "should include budget-protocol extension"
+        );
+        assert!(
+            extensions[EXT_COHERENCE].is_object(),
+            "should include coherence extension"
+        );
+        assert!(
+            extensions[EXT_COMPRESSION].is_object(),
+            "should include compression extension"
+        );
+    }
+
+    #[test]
+    fn server_card_includes_full_tool_catalog() {
+        let server = setup_server_sync();
+        let card = server.build_server_card();
+
+        let tools = card["tools"].as_array().expect("tools should be an array");
+        // All 15 iris tools should be listed.
+        assert!(
+            tools.len() >= 15,
+            "should have at least 15 tools, got {}",
+            tools.len()
+        );
+
+        let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+        for expected in &[
+            "iris_survey",
+            "iris_read",
+            "iris_extract",
+            "iris_related",
+            "iris_evicted",
+            "iris_budget",
+            "iris_compress",
+            "iris_toc",
+            "iris_fetch",
+            "iris_refresh",
+            "iris_clone",
+            "iris_task",
+            "iris_symbols",
+            "iris_definition",
+            "iris_references",
+        ] {
+            assert!(
+                tool_names.contains(expected),
+                "tool catalog should include {expected}"
+            );
+        }
+
+        // Every tool should have a description.
+        for tool in tools {
+            assert!(
+                tool["description"].is_string(),
+                "tool {} should have a description",
+                tool["name"]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn list_resources_includes_server_card() {
+        let (client, _server) = wrap_test_client(setup_server().await).await;
+        let result = client.peer().list_resources(None).await.unwrap();
+
+        let uris: Vec<&str> = result.resources.iter().map(|r| r.uri.as_str()).collect();
+        assert!(
+            uris.contains(&"mcp://server-card.json"),
+            "list_resources should include mcp://server-card.json, got: {uris:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_resource_dispatches_server_card_uri() {
+        let (client, _server) = wrap_test_client(setup_server().await).await;
+        let result = client
+            .peer()
+            .read_resource(ReadResourceRequestParams::new("mcp://server-card.json"))
+            .await
+            .unwrap();
+
+        assert_eq!(result.contents.len(), 1);
+        let text = match &result.contents[0] {
+            ResourceContents::TextResourceContents { uri, text, .. } => {
+                assert_eq!(uri, "mcp://server-card.json");
+                text
+            }
+            ResourceContents::BlobResourceContents { .. } => {
+                panic!("expected text resource contents")
+            }
+        };
+
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["serverInfo"]["name"], "iris");
+        assert!(parsed["tools"].is_array());
+    }
+
+    #[test]
+    fn server_card_resource_is_valid_json() {
+        let server = setup_server_sync();
+        let result = server.read_server_card_resource();
+
+        let text = match &result.contents[0] {
+            ResourceContents::TextResourceContents { text, .. } => text,
+            ResourceContents::BlobResourceContents { .. } => {
+                panic!("expected text resource contents")
+            }
+        };
+
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["version"], "1.0");
     }
 }
