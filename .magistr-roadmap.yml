@@ -1015,14 +1015,14 @@ phases:
 - id: L1
   name: Extended Language Refinements
   tagline: First-class symbol extraction for the languages developers actually use
-  status: pending
+  status: in_progress
   problem: Generic extractor misclassifies symbols in common languages; only 4 of 30+ supported grammars have dedicated refinements
   solution: Add LanguageRefinement implementations for high-impact languages (Java, C/C++, Swift, Kotlin), improve generic fallback heuristics, validate with cross-language test matrix
   tasks:
   - text: 'Java refinement: class, interface, enum, annotation types, method visibility modifiers, generics'
-    checked: false
+    checked: true
   - text: 'C/C++ refinement: namespace, class, struct, template, function, header/impl split (.h/.c/.cpp/.hpp)'
-    checked: false
+    checked: true
   - text: 'Swift refinement: protocol, extension, struct, class, func, @objc annotations (Tauri mobile plugins)'
     checked: false
   - text: 'Kotlin refinement: data class, object, companion object, fun, annotations (Tauri mobile plugins)'
