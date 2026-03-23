@@ -825,11 +825,11 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Contiguity penalty in EvictionRanker — prefer evicting adjacent blocks to preserve positional coherence
-- [ ] Observation masking tier — evict to heading-only bookmark, re-fetchable via iris_read
-- [ ] Multi-tier compression pipeline: full text → abstractive → extractive → bookmark → evicted
-- [ ] Auto-tier-promotion based on pressure level, access recency, and token weight
-- [ ] Tests for contiguity scoring, masking round-trip, and tier transitions
+- [x] Contiguity penalty in EvictionRanker — prefer evicting adjacent blocks to preserve positional coherence
+- [x] Observation masking tier — evict to heading-only bookmark, re-fetchable via iris_read
+- [x] Multi-tier compression pipeline: full text → abstractive → extractive → bookmark → evicted
+- [x] Auto-tier-promotion based on pressure level, access recency, and token weight
+- [x] Tests for contiguity scoring, masking round-trip, and tier transitions
 
 ---
 
