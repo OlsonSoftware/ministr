@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 
+use crate::code::bridge::linker::{BridgeLinker, SourceFile as BridgeSourceFile};
+use crate::code::bridge::{BridgeEndpoint, BridgeKind, create_linker_for_kinds, detector};
 use crate::code::package_graph::PackageGraph;
 use crate::code::refs::extract_refs;
 use crate::code::{AstParser, GrammarRegistry, extract_symbols, generic_extract_symbols};
@@ -25,7 +27,8 @@ use crate::parser::{
     DocumentParser, MarkdownParser, ParserKind, create_parser, detect_parser_kind,
 };
 use crate::storage::traits::{
-    FileHashRecord, Storage, SymbolFilter, SymbolRecord, SymbolRefRecord,
+    BridgeEndpointRecord, BridgeLinkRecord, FileHashRecord, Storage, SymbolFilter, SymbolRecord,
+    SymbolRefRecord,
 };
 use crate::token::count_tokens;
 use crate::types::{
@@ -497,6 +500,7 @@ impl IngestionPipeline {
             sections: section_count,
             claims: claim_count,
             pending_refs: Vec::new(),
+            bridge_endpoints: Vec::new(),
         })
     }
 
@@ -707,7 +711,8 @@ impl IngestionPipeline {
         // For code files: extract symbols, store in SQLite, and embed into vector index
         if parser_kind == ParserKind::Code {
             let _result =
-                embed_code_symbols(source_path, content, storage, embedder, index, None).await?;
+                embed_code_symbols(source_path, content, storage, embedder, index, None, None)
+                    .await?;
         }
 
         // Detect and store claim relationships
@@ -874,7 +879,18 @@ impl IngestionPipeline {
             progress.start(files.len());
         }
 
+        // Detect bridge frameworks and create linker (once per corpus root).
+        let detected_kinds = detector::FrameworkDetector::detect(dir);
+        let bridge_linker = create_linker_for_kinds(&detected_kinds);
+        if !detected_kinds.is_empty() {
+            info!(
+                kinds = ?detected_kinds,
+                "detected bridge frameworks for cross-language linking"
+            );
+        }
+
         let mut all_pending_refs = Vec::new();
+        let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
 
         for file_path in &files {
             // Check cancellation at the top of each file iteration.
@@ -911,6 +927,7 @@ impl IngestionPipeline {
                     embedder,
                     index,
                     active_graph,
+                    bridge_linker.as_ref(),
                 )
                 .await
             {
@@ -922,12 +939,14 @@ impl IngestionPipeline {
                     sections,
                     claims,
                     pending_refs,
+                    bridge_endpoints,
                 }) => {
                     debug!(path = %relative, sections, claims, "indexed with embeddings");
                     stats.files_indexed += 1;
                     stats.total_sections += sections;
                     stats.total_claims += claims;
                     all_pending_refs.extend(pending_refs);
+                    all_bridge_endpoints.extend(bridge_endpoints);
 
                     // Tag the document with its corpus root.
                     if let Some(rid) = root_id {
@@ -951,6 +970,9 @@ impl IngestionPipeline {
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
         resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
+
+        // Bridge linking: join accumulated endpoints into cross-language links.
+        store_bridge_links(&all_bridge_endpoints, bridge_linker.as_ref(), storage).await;
 
         // Remove documents for files that no longer exist.
         // When a root_id is set, only clean up documents belonging to this root
@@ -1120,7 +1142,25 @@ impl IngestionPipeline {
             progress.start(files.len());
         }
 
+        // Detect bridge frameworks across all directory roots.
+        let mut all_bridge_kinds = std::collections::BTreeSet::new();
+        for path in paths {
+            if path.is_dir() {
+                let kinds = detector::FrameworkDetector::detect(path);
+                all_bridge_kinds.extend(kinds);
+            }
+        }
+        let bridge_kinds: Vec<BridgeKind> = all_bridge_kinds.into_iter().collect();
+        let bridge_linker = create_linker_for_kinds(&bridge_kinds);
+        if !bridge_kinds.is_empty() {
+            info!(
+                kinds = ?bridge_kinds,
+                "detected bridge frameworks for cross-language linking"
+            );
+        }
+
         let mut all_pending_refs = Vec::new();
+        let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
 
         for file_path in &files {
             let relative = compute_relative_path(file_path, paths);
@@ -1145,6 +1185,7 @@ impl IngestionPipeline {
                     embedder,
                     index,
                     active_graph,
+                    bridge_linker.as_ref(),
                 )
                 .await
             {
@@ -1156,12 +1197,14 @@ impl IngestionPipeline {
                     sections,
                     claims,
                     pending_refs,
+                    bridge_endpoints,
                 }) => {
                     debug!(path = %relative, sections, claims, "indexed with embeddings");
                     stats.files_indexed += 1;
                     stats.total_sections += sections;
                     stats.total_claims += claims;
                     all_pending_refs.extend(pending_refs);
+                    all_bridge_endpoints.extend(bridge_endpoints);
 
                     // Tag document with its corpus root.
                     if let Some(root_id) = find_root_for_file(file_path, &roots) {
@@ -1185,6 +1228,9 @@ impl IngestionPipeline {
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
         resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
+
+        // Bridge linking: join accumulated endpoints into cross-language links.
+        store_bridge_links(&all_bridge_endpoints, bridge_linker.as_ref(), storage).await;
 
         // Remove documents for files that no longer exist, scoped to the
         // local roots we just ingested.  Documents from other roots (git
@@ -1234,8 +1280,8 @@ impl IngestionPipeline {
     }
 
     /// Ingest a single file with multi-resolution embedding.
-    #[allow(clippy::too_many_lines)]
-    #[instrument(skip(self, storage, embedder, index, package_graph), fields(path = %relative_path))]
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+    #[instrument(skip(self, storage, embedder, index, package_graph, bridge_linker), fields(path = %relative_path))]
     async fn ingest_file_with_embeddings<S, E, I>(
         &self,
         file_path: &Path,
@@ -1244,6 +1290,7 @@ impl IngestionPipeline {
         embedder: &E,
         index: &I,
         package_graph: Option<&PackageGraph>,
+        bridge_linker: Option<&BridgeLinker>,
     ) -> Result<FileResult, IngestionError>
     where
         S: Storage + ?Sized,
@@ -1351,6 +1398,7 @@ impl IngestionPipeline {
             .parser_override
             .or_else(|| detect_parser_kind(Path::new(relative_path)));
         let mut pending_refs = Vec::new();
+        let mut bridge_endpoints = Vec::new();
         if parser_kind == Some(ParserKind::Code) {
             let result = embed_code_symbols(
                 relative_path,
@@ -1359,9 +1407,11 @@ impl IngestionPipeline {
                 embedder,
                 index,
                 package_graph,
+                bridge_linker,
             )
             .await?;
             pending_refs = result.pending_refs;
+            bridge_endpoints = result.bridge_endpoints;
         }
 
         // Detect and store claim relationships
@@ -1395,6 +1445,7 @@ impl IngestionPipeline {
             sections: section_count,
             claims: claim_count,
             pending_refs,
+            bridge_endpoints,
         })
     }
 
@@ -1704,9 +1755,10 @@ fn collect_all_claims(sections: &[Section]) -> Vec<Claim> {
 /// Symbol full embeds the complete symbol source for broader matching.
 #[allow(clippy::too_many_lines)]
 /// Result of code symbol embedding: unresolved cross-references
-/// for second-pass resolution.
+/// for second-pass resolution and bridge endpoints for post-loop linking.
 struct EmbedSymbolsResult {
     pending_refs: Vec<PendingRef>,
+    bridge_endpoints: Vec<BridgeEndpoint>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1717,6 +1769,7 @@ async fn embed_code_symbols<S, E, I>(
     embedder: &E,
     index: &I,
     package_graph: Option<&PackageGraph>,
+    bridge_linker: Option<&BridgeLinker>,
 ) -> Result<EmbedSymbolsResult, IngestionError>
 where
     S: Storage + ?Sized,
@@ -1727,6 +1780,7 @@ where
     let empty_result = || {
         Ok(EmbedSymbolsResult {
             pending_refs: Vec::new(),
+            bridge_endpoints: Vec::new(),
         })
     };
 
@@ -1854,6 +1908,20 @@ where
         }
     };
 
+    // Bridge endpoint extraction — reuses the already-parsed tree-sitter AST.
+    let bridge_endpoints = if let Some(linker) = bridge_linker {
+        let language_name = language;
+        let sf = BridgeSourceFile {
+            file_path: relative_path,
+            language: language_name,
+            tree: &tree,
+            source,
+        };
+        linker.extract_all(&[sf])
+    } else {
+        Vec::new()
+    };
+
     // Build embeddable texts for symbol-stub and symbol-full
     let mut ids: Vec<VectorId> = Vec::new();
     let mut texts: Vec<String> = Vec::new();
@@ -1902,7 +1970,10 @@ where
         path = %relative_path,
         "embedded code symbols"
     );
-    Ok(EmbedSymbolsResult { pending_refs })
+    Ok(EmbedSymbolsResult {
+        pending_refs,
+        bridge_endpoints,
+    })
 }
 
 /// A reference that could not be resolved during first-pass ingestion.
@@ -2235,6 +2306,81 @@ async fn resolve_pending_refs<S: Storage + ?Sized>(
     resolved
 }
 
+/// Run the bridge linker on accumulated endpoints and store the results.
+///
+/// Converts `BridgeEndpoint`s to storage records, inserts them, links
+/// exports↔imports, and stores the resulting `BridgeLinkRecord`s.
+async fn store_bridge_links<S: Storage + ?Sized>(
+    endpoints: &[BridgeEndpoint],
+    linker: Option<&BridgeLinker>,
+    storage: &S,
+) {
+    let Some(linker) = linker else { return };
+    if endpoints.is_empty() {
+        return;
+    }
+
+    let links = linker.link(endpoints);
+
+    let ep_records: Vec<BridgeEndpointRecord> = endpoints
+        .iter()
+        .map(|ep| BridgeEndpointRecord {
+            id: None,
+            file_path: ep.file_path.clone(),
+            binding_key: ep.binding_key.clone(),
+            kind: ep.kind.as_str().to_string(),
+            role: ep.role.as_str().to_string(),
+            language: ep.language.clone(),
+            line: ep.line,
+            symbol_name: ep.symbol_name.clone(),
+            confidence: ep.confidence,
+        })
+        .collect();
+
+    let Ok(ep_ids) = storage.insert_bridge_endpoints(&ep_records).await else {
+        warn!("failed to insert bridge endpoints");
+        return;
+    };
+
+    let link_records: Vec<BridgeLinkRecord> = links
+        .iter()
+        .filter_map(|link| {
+            let export_id = find_endpoint_id(endpoints, &ep_ids, &link.export)?;
+            let import_id = find_endpoint_id(endpoints, &ep_ids, &link.import)?;
+            Some(BridgeLinkRecord {
+                export_ep_id: export_id,
+                import_ep_id: import_id,
+                kind: link.kind.as_str().to_string(),
+                confidence: link.confidence,
+            })
+        })
+        .collect();
+
+    if let Err(e) = storage.insert_bridge_links(&link_records).await {
+        warn!(error = %e, "failed to insert bridge links");
+        return;
+    }
+
+    info!(
+        endpoints = ep_records.len(),
+        links = link_records.len(),
+        "bridge extraction complete"
+    );
+}
+
+/// Find the database row ID for a bridge endpoint by matching against
+/// the insertion-ordered endpoint list and their returned IDs.
+fn find_endpoint_id(
+    endpoints: &[BridgeEndpoint],
+    ids: &[i64],
+    target: &BridgeEndpoint,
+) -> Option<i64> {
+    endpoints.iter().zip(ids.iter()).find_map(|(ep, &id)| {
+        (ep.file_path == target.file_path && ep.line == target.line && ep.role == target.role)
+            .then_some(id)
+    })
+}
+
 /// Delete all vectors associated with a document from the index.
 ///
 /// Queries storage for the document's sections and claims, derives their
@@ -2350,6 +2496,8 @@ enum FileResult {
         claims: usize,
         /// Refs that could not be resolved in this pass (target not yet indexed).
         pending_refs: Vec<PendingRef>,
+        /// Bridge endpoints extracted from this file.
+        bridge_endpoints: Vec<BridgeEndpoint>,
     },
 }
 
