@@ -20,9 +20,11 @@
 //! which bridge frameworks are present in a project.
 
 pub mod detector;
+pub mod http_route;
 pub mod linker;
 pub mod napi;
 pub mod pyo3;
+pub mod semantic;
 pub mod tauri;
 pub mod wasm_bindgen;
 
