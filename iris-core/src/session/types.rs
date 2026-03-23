@@ -17,7 +17,7 @@ use crate::types::{ContentId, Resolution};
 /// Contains lists of changed sections and stale content IDs that the agent
 /// should be notified about. Alerts are queued in the session and drained
 /// by the transport layer on the next tool response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CoherenceAlert {
     /// Section IDs that were re-indexed due to file changes.
     pub changed_sections: Vec<String>,

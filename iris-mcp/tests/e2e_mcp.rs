@@ -13,7 +13,6 @@
 //! - Error responses are user-friendly for nonexistent sections
 //! - `iris_fetch` fetches web content and makes it searchable
 
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use iris_core::embedding::Embedder;
@@ -264,16 +263,11 @@ async fn call_tool(client: &McpClient, name: &str, args: serde_json::Value) -> C
     let arguments = args
         .as_object()
         .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
-    client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            name: Cow::Owned(name.to_string()),
-            arguments,
-            meta: None,
-            task: None,
-        })
-        .await
-        .unwrap()
+    let mut params = CallToolRequestParams::new(name.to_string());
+    if let Some(args) = arguments {
+        params = params.with_arguments(args);
+    }
+    client.peer().call_tool(params).await.unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -920,10 +914,7 @@ async fn read_status_resource() {
 
     let result = client
         .peer()
-        .read_resource(ReadResourceRequestParams {
-            uri: "iris://status".to_string(),
-            meta: None,
-        })
+        .read_resource(ReadResourceRequestParams::new("iris://status"))
         .await
         .unwrap();
 

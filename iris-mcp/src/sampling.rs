@@ -10,6 +10,7 @@ use rmcp::model::{
     CreateMessageRequestParams, ModelHint, ModelPreferences, SamplingMessage,
     SamplingMessageContent,
 };
+
 use rmcp::service::Peer;
 
 /// System prompt for the compression LLM.
@@ -56,27 +57,19 @@ impl AbstractiveCompressor for SamplingCompressor {
         };
 
         #[allow(clippy::cast_possible_truncation)]
-        let params = CreateMessageRequestParams {
-            meta: None,
-            task: None,
-            messages: vec![SamplingMessage::user_text(user_message)],
-            model_preferences: Some(ModelPreferences {
-                hints: Some(vec![ModelHint {
-                    name: Some("claude".into()),
-                }]),
-                cost_priority: Some(0.8),
-                speed_priority: Some(0.9),
-                intelligence_priority: Some(0.3),
-            }),
-            system_prompt: Some(COMPRESS_SYSTEM_PROMPT.to_string()),
-            include_context: None,
-            temperature: Some(0.0),
-            max_tokens: target_tokens as u32,
-            stop_sequences: None,
-            metadata: None,
-            tools: None,
-            tool_choice: None,
-        };
+        let params = CreateMessageRequestParams::new(
+            vec![SamplingMessage::user_text(user_message)],
+            target_tokens as u32,
+        )
+        .with_model_preferences(
+            ModelPreferences::new()
+                .with_hints(vec![ModelHint::new("claude")])
+                .with_cost_priority(0.8)
+                .with_speed_priority(0.9)
+                .with_intelligence_priority(0.3),
+        )
+        .with_system_prompt(COMPRESS_SYSTEM_PROMPT)
+        .with_temperature(0.0);
 
         let result = self
             .peer

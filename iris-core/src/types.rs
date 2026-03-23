@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// assert_eq!(id.to_string(), "doc-api");
 /// assert_eq!(id.as_ref(), "doc-api");
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContentId(pub String);
 
 impl fmt::Display for ContentId {
@@ -50,7 +50,7 @@ impl AsRef<str> for ContentId {
 /// let id = SectionId::from("docs/auth.md#error-handling".to_string());
 /// assert_eq!(id.to_string(), "docs/auth.md#error-handling");
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SectionId(pub String);
 
 impl fmt::Display for SectionId {
@@ -559,7 +559,7 @@ pub struct ClaimRelationship {
 /// };
 /// assert_eq!(entry.depth, 2);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TocEntry {
     /// Parent document ID.
     pub document_id: ContentId,

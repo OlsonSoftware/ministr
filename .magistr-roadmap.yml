@@ -862,3 +862,135 @@ phases:
     checked: true
   - text: iris_compress returns identity (0% compression) for small sections — extractive compressor needs minimum-length threshold or skip logic
     checked: true
+- id: V20
+  name: Protocol Foundation
+  tagline: Upgrade to MCP 2025-11-25 specification
+  status: done
+  problem: iris targets MCP 2025-03-26 via rmcp 0.16 — two spec revisions behind, missing structured outputs, elicitation, async tasks, tool annotations, and extensions
+  solution: Upgrade rmcp to latest release targeting 2025-11-25 spec, fix all breakage, update protocol version and server metadata
+  tasks:
+  - text: Upgrade rmcp dependency to latest release targeting MCP 2025-11-25 spec
+    checked: true
+  - text: Fix all compilation breakage from rmcp API changes across iris-mcp crate
+    checked: true
+  - text: Update ProtocolVersion to 2025-11-25 and add Implementation.description field
+    checked: true
+  - text: Adopt JSON Schema 2020-12 as default dialect for tool parameter schemas
+    checked: true
+  - text: Regression test — verify all existing tests pass after rmcp upgrade
+    checked: true
+- id: V21
+  name: Tool Metadata Modernization
+  tagline: Structured outputs and tool annotations for all 15 tools
+  status: pending
+  problem: Tool responses are untyped JSON text blobs — agents must parse free-form text; no behavioral metadata for trust/safety decisions
+  solution: Add outputSchema + structuredContent to every tool, annotate all tools with readOnlyHint/destructiveHint/idempotentHint/openWorldHint
+  tasks:
+  - text: Define Rust output schema types (schemars) for all 15 tool responses
+    checked: false
+  - text: Return structuredContent alongside text content in all tool handlers
+    checked: false
+  - text: 'Add outputSchema to all tool definitions via #[tool] macro attributes'
+    checked: false
+  - text: Add tool annotations (readOnlyHint, destructiveHint, idempotentHint, openWorldHint) to all tools
+    checked: false
+  - text: Tests for structured output serialization and annotation correctness
+    checked: false
+- id: V22
+  name: Advanced Eviction & Compression
+  tagline: Research-backed eviction intelligence and multi-tier compression pipeline
+  status: pending
+  problem: Evicting scattered sections disrupts positional coherence; only two compression tiers (extractive/abstractive) with no intermediate bookmark tier
+  solution: 'Add contiguity penalty to eviction scoring, observation masking (bookmark-only) tier, and auto-tier-promotion pipeline: full → abstractive → extractive → bookmark → evicted'
+  tasks:
+  - text: Contiguity penalty in EvictionRanker — prefer evicting adjacent blocks to preserve positional coherence
+    checked: false
+  - text: Observation masking tier — evict to heading-only bookmark, re-fetchable via iris_read
+    checked: false
+  - text: 'Multi-tier compression pipeline: full text → abstractive → extractive → bookmark → evicted'
+    checked: false
+  - text: Auto-tier-promotion based on pressure level, access recency, and token weight
+    checked: false
+  - text: Tests for contiguity scoring, masking round-trip, and tier transitions
+    checked: false
+- id: V23
+  name: Protocol-Native Async Tasks
+  tagline: Replace custom TaskManager with MCP Tasks primitive
+  status: pending
+  problem: iris_fetch and iris_clone use a custom task system that doesn't interoperate with MCP clients' native task UIs or other MCP servers
+  solution: Adopt the 2025-11-25 Tasks primitive for call-now-fetch-later semantics; migrate existing async operations; deprecate custom TaskManager
+  tasks:
+  - text: 'Implement MCP Tasks primitive in iris-mcp (task lifecycle: created → running → completed/failed/canceled)'
+    checked: false
+  - text: Migrate iris_fetch async mode from custom TaskManager to MCP Tasks
+    checked: false
+  - text: Migrate iris_clone async mode from custom TaskManager to MCP Tasks
+    checked: false
+  - text: Update iris_task tool to delegate to MCP task polling; deprecate custom TaskManager
+    checked: false
+- id: V24
+  name: Elicitation & Interactive Budget
+  tagline: Cache controller that negotiates with the agent
+  status: pending
+  problem: Budget management is passive — iris can only recommend eviction in responses; agents must manually decide what to drop
+  solution: Use MCP elicitation to proactively negotiate eviction under pressure, confirm expensive compression, and disambiguate search queries
+  tasks:
+  - text: Declare elicitation capability in ServerCapabilities
+    checked: false
+  - text: Budget pressure elicitation — when pressure ≥ elevated, ask agent which sections to evict
+    checked: false
+  - text: Compression mode elicitation — confirm before expensive abstractive compression via sampling
+    checked: false
+  - text: Search disambiguation — elicit to refine ambiguous iris_survey queries with follow-up
+    checked: false
+  - text: Tests for elicitation request/response flow with mock client
+    checked: false
+- id: V25
+  name: MCP Prompts & Completions
+  tagline: Predefined workflows and tab-completion for IDs
+  status: pending
+  problem: Users must know iris tool APIs to get value; no guided workflows or autocompletion for content IDs
+  solution: Expose MCP prompts for common workflows (session summary, next-read recommendations, dependency chains) and completions for section/symbol/claim IDs
+  tasks:
+  - text: Implement prompt capability and list_prompts/get_prompt handlers
+    checked: false
+  - text: '"session-summary" prompt — summarize sections read, budget state, and session activity'
+    checked: false
+  - text: '"what-next" prompt — recommend unread sections based on access patterns and prefetch'
+    checked: false
+  - text: '"dependency-chain" prompt — trace claim relationships from a given concept'
+    checked: false
+  - text: Completions support — tab-completion for section IDs, symbol IDs, and claim IDs
+    checked: false
+- id: V26
+  name: Extensions, Discovery & Auth
+  tagline: Ecosystem integration and remote deployment readiness
+  status: pending
+  problem: iris-specific capabilities (budget protocol, coherence notifications) aren't formally declared; no server discovery for HTTP transport; no auth for remote use
+  solution: Declare extensions via the 2025-11-25 framework, publish Server Cards at .well-known/mcp.json, add optional OAuth 2.1 for remote deployment
+  tasks:
+  - text: Declare iris-specific extensions (budget protocol, coherence notifications, compression tiers)
+    checked: false
+  - text: Extension negotiation during initialization handshake
+    checked: false
+  - text: Server Cards — expose .well-known/mcp.json with tool catalog, capabilities, and version metadata
+    checked: false
+  - text: OAuth 2.1 framework for remote Streamable HTTP deployment
+    checked: false
+- id: V27
+  name: Multi-Agent Context Sharing
+  tagline: Shared corpus, independent sessions, coordinated coherence
+  status: pending
+  problem: iris supports one session at a time — no way for multiple agents to share a corpus with independent budgets and coordinated change notifications
+  solution: Session federation with per-agent budgets, cross-session coherence via resource subscriptions, and configurable isolation policies
+  tasks:
+  - text: Session federation — multiple named sessions sharing a single indexed corpus
+    checked: false
+  - text: Cross-session budget coordination — shared corpus with independent per-agent budgets
+    checked: false
+  - text: Cross-agent coherence notifications via MCP resource subscriptions
+    checked: false
+  - text: Session isolation policies — read-only vs read-write session access modes
+    checked: false
+  - text: Tests for concurrent multi-session access and coherence propagation
+    checked: false
