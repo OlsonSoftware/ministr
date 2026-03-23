@@ -12,9 +12,10 @@ use tracing::instrument;
 
 use super::schema::{configure_connection, run_migrations};
 use super::traits::{
-    ClaimRecord, CoAccessRecord, CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord,
-    RelatedClaimRecord, SectionAccessStat, SectionRecord, Storage, SymbolFilter, SymbolRecord,
-    SymbolRefRecord, WebCacheRecord,
+    BridgeEndpointRecord, BridgeLinkDetail, BridgeLinkRecord, ClaimRecord, CoAccessRecord,
+    CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord, RelatedClaimRecord,
+    SectionAccessStat, SectionRecord, Storage, SymbolFilter, SymbolRecord, SymbolRefRecord,
+    WebCacheRecord,
 };
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
@@ -1636,6 +1637,182 @@ impl Storage for SqliteStorage {
             }
 
             Ok(result)
+        })
+        .await
+    }
+
+    async fn insert_bridge_endpoints(
+        &self,
+        endpoints: &[BridgeEndpointRecord],
+    ) -> Result<Vec<i64>, StorageError> {
+        let endpoints = endpoints.to_vec();
+        self.with_conn(move |conn| {
+            let mut ids = Vec::with_capacity(endpoints.len());
+            let mut stmt = conn
+                .prepare(
+                    "INSERT INTO bridge_endpoints
+                     (file_path, binding_key, kind, role, language, line, symbol_name, confidence)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            for ep in &endpoints {
+                stmt.execute(rusqlite::params![
+                    ep.file_path,
+                    ep.binding_key,
+                    ep.kind,
+                    ep.role,
+                    ep.language,
+                    ep.line,
+                    ep.symbol_name,
+                    f64::from(ep.confidence),
+                ])
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to insert bridge endpoint '{}': {e}", ep.binding_key),
+                })?;
+                ids.push(conn.last_insert_rowid());
+            }
+            Ok(ids)
+        })
+        .await
+    }
+
+    async fn insert_bridge_links(&self, links: &[BridgeLinkRecord]) -> Result<(), StorageError> {
+        let links = links.to_vec();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "INSERT OR REPLACE INTO bridge_links
+                     (export_ep_id, import_ep_id, kind, confidence)
+                     VALUES (?1, ?2, ?3, ?4)",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            for link in &links {
+                stmt.execute(rusqlite::params![
+                    link.export_ep_id,
+                    link.import_ep_id,
+                    link.kind,
+                    f64::from(link.confidence),
+                ])
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to insert bridge link: {e}"),
+                })?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    async fn query_bridge_links(
+        &self,
+        file_path: Option<&str>,
+        kind: Option<&str>,
+    ) -> Result<Vec<BridgeLinkDetail>, StorageError> {
+        let file_path = file_path.map(ToString::to_string);
+        let kind = kind.map(ToString::to_string);
+        self.with_conn(move |conn| {
+            let base = "
+                SELECT
+                    bl.kind, bl.confidence,
+                    ex.file_path, ex.binding_key, ex.symbol_name, ex.language, ex.line,
+                    im.file_path, im.binding_key, im.symbol_name, im.language, im.line
+                FROM bridge_links bl
+                JOIN bridge_endpoints ex ON bl.export_ep_id = ex.id
+                JOIN bridge_endpoints im ON bl.import_ep_id = im.id
+            ";
+
+            let mut conditions = Vec::new();
+            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+            let mut param_idx = 1;
+
+            if let Some(ref fp) = file_path {
+                conditions.push(format!(
+                    "(ex.file_path = ?{param_idx} OR im.file_path = ?{param_idx})"
+                ));
+                params.push(Box::new(fp.clone()));
+                param_idx += 1;
+            }
+
+            if let Some(ref k) = kind {
+                conditions.push(format!("bl.kind = ?{param_idx}"));
+                params.push(Box::new(k.clone()));
+            }
+
+            let sql = if conditions.is_empty() {
+                format!("{base} ORDER BY bl.confidence DESC")
+            } else {
+                format!(
+                    "{base} WHERE {} ORDER BY bl.confidence DESC",
+                    conditions.join(" AND ")
+                )
+            };
+
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params.iter().map(std::convert::AsRef::as_ref).collect();
+
+            let mut stmt = conn.prepare(&sql).map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    Ok(BridgeLinkDetail {
+                        kind: row.get(0)?,
+                        #[allow(clippy::cast_possible_truncation)]
+                        confidence: row.get::<_, f64>(1)? as f32, // SQLite stores f64; truncation to f32 is intentional
+                        export_file: row.get(2)?,
+                        export_binding_key: row.get(3)?,
+                        export_symbol: row.get(4)?,
+                        export_language: row.get(5)?,
+                        export_line: row.get(6)?,
+                        import_file: row.get(7)?,
+                        import_binding_key: row.get(8)?,
+                        import_symbol: row.get(9)?,
+                        import_language: row.get(10)?,
+                        import_line: row.get(11)?,
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })
+        })
+        .await
+    }
+
+    async fn delete_bridge_data_for_file(&self, file_path: &str) -> Result<(), StorageError> {
+        let file_path = file_path.to_string();
+        self.with_conn(move |conn| {
+            // Delete links that reference endpoints in this file, then delete the endpoints.
+            conn.execute(
+                "DELETE FROM bridge_links WHERE export_ep_id IN
+                     (SELECT id FROM bridge_endpoints WHERE file_path = ?1)
+                 OR import_ep_id IN
+                     (SELECT id FROM bridge_endpoints WHERE file_path = ?1)",
+                rusqlite::params![file_path],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+
+            conn.execute(
+                "DELETE FROM bridge_endpoints WHERE file_path = ?1",
+                rusqlite::params![file_path],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+
+            Ok(())
         })
         .await
     }

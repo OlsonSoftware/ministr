@@ -112,6 +112,7 @@ impl AsRef<str> for SymbolId {
 ///
 /// assert_eq!(RefKind::Calls.as_str(), "calls");
 /// assert_eq!(RefKind::parse("implements"), Some(RefKind::Implements));
+/// assert_eq!(RefKind::parse("bridge"), Some(RefKind::Bridge));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -124,6 +125,8 @@ pub enum RefKind {
     Imports,
     /// Symbol A uses symbol B (type reference, field access).
     Uses,
+    /// Cross-language bridge link between symbols in different languages.
+    Bridge,
 }
 
 impl RefKind {
@@ -135,6 +138,7 @@ impl RefKind {
             Self::Implements => "implements",
             Self::Imports => "imports",
             Self::Uses => "uses",
+            Self::Bridge => "bridge",
         }
     }
 
@@ -146,6 +150,7 @@ impl RefKind {
             "implements" => Some(Self::Implements),
             "imports" => Some(Self::Imports),
             "uses" => Some(Self::Uses),
+            "bridge" => Some(Self::Bridge),
             _ => None,
         }
     }

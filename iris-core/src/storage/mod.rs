@@ -13,7 +13,8 @@ pub use corpus::ensure_corpus_layout;
 pub use schema::CURRENT_SCHEMA_VERSION;
 pub use sqlite::SqliteStorage;
 pub use traits::{
-    ClaimRecord, CoAccessRecord, CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord,
-    RelatedClaimRecord, SectionAccessStat, SectionRecord, Storage, SymbolFilter, SymbolRecord,
-    SymbolRefRecord, WebCacheRecord,
+    BridgeEndpointRecord, BridgeLinkDetail, BridgeLinkRecord, ClaimRecord, CoAccessRecord,
+    CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord, RelatedClaimRecord,
+    SectionAccessStat, SectionRecord, Storage, SymbolFilter, SymbolRecord, SymbolRefRecord,
+    WebCacheRecord,
 };

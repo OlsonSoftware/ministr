@@ -1034,7 +1034,7 @@ phases:
 - id: L2
   name: Cross-Language Bridge Framework
   tagline: Follow the call across the language boundary
-  status: in_progress
+  status: done
   problem: No way to trace calls across language boundaries — invoke() in JS disappears at the Rust border
   solution: BridgeExtractor trait with two-pass pipeline (extract endpoints per-file, then join on binding_key), SQLite storage, confidence scoring, and integration with iris_references
   tasks:
@@ -1045,13 +1045,13 @@ phases:
   - text: 'BridgeLinker: two-pass pipeline — extract endpoints per-file, then join on binding_key to form BridgeLinks'
     checked: true
   - text: 'SQLite schema: bridge_endpoints and bridge_links tables with file_path, binding_key, language, confidence columns'
-    checked: false
+    checked: true
   - text: 'Framework auto-detection: scan Cargo.toml, package.json, tauri.conf.json, pyproject.toml to activate relevant bridge extractors'
-    checked: false
+    checked: true
   - text: 'Confidence scoring: exact string match (1.0), case-transformed (0.9), registration-validated (1.0), fuzzy/semantic (0.7)'
-    checked: false
+    checked: true
   - text: 'Integration: surface bridge links in iris_references with ref_kind "bridge", including cross-language file path and symbol info'
-    checked: false
+    checked: true
 - id: L3
   name: Tauri Bridge Implementation
   tagline: Trace from React component to Rust command handler in one hop

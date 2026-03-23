@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 9;
+pub const CURRENT_SCHEMA_VERSION: usize = 10;
 
 /// Returns the migration set for the content database.
 ///
@@ -189,6 +189,36 @@ fn migrations() -> Migrations<'static> {
             ALTER TABLE file_hashes ADD COLUMN mtime_ns INTEGER;
             ",
         ),
+        // V10: Cross-language bridge endpoints and links
+        M::up(
+            "
+            CREATE TABLE bridge_endpoints (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path   TEXT NOT NULL,
+                binding_key TEXT NOT NULL,
+                kind        TEXT NOT NULL,
+                role        TEXT NOT NULL,
+                language    TEXT NOT NULL,
+                line        INTEGER NOT NULL,
+                symbol_name TEXT NOT NULL,
+                confidence  REAL NOT NULL
+            );
+
+            CREATE INDEX idx_bridge_ep_key ON bridge_endpoints(binding_key, kind);
+            CREATE INDEX idx_bridge_ep_file ON bridge_endpoints(file_path);
+
+            CREATE TABLE bridge_links (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                export_ep_id INTEGER NOT NULL REFERENCES bridge_endpoints(id) ON DELETE CASCADE,
+                import_ep_id INTEGER NOT NULL REFERENCES bridge_endpoints(id) ON DELETE CASCADE,
+                kind         TEXT NOT NULL,
+                confidence   REAL NOT NULL,
+                UNIQUE(export_ep_id, import_ep_id)
+            );
+
+            CREATE INDEX idx_bridge_links_kind ON bridge_links(kind);
+            ",
+        ),
     ])
 }
 
@@ -291,6 +321,8 @@ mod tests {
         assert!(tables.contains(&"web_cache".to_string()));
         assert!(tables.contains(&"symbols".to_string()));
         assert!(tables.contains(&"symbol_refs".to_string()));
+        assert!(tables.contains(&"bridge_endpoints".to_string()));
+        assert!(tables.contains(&"bridge_links".to_string()));
     }
 
     #[test]

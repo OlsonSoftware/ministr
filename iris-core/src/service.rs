@@ -793,32 +793,60 @@ impl QueryService {
     ) -> Result<Vec<SymbolRefResult>, QueryError> {
         let sid = SymbolId(symbol_id.to_string());
 
-        // Verify symbol exists
-        self.storage
-            .get_symbol(&sid)
-            .await?
-            .ok_or_else(|| QueryError::SymbolNotFound {
-                id: symbol_id.to_string(),
-            })?;
+        // Verify symbol exists and get its file path for bridge queries
+        let symbol =
+            self.storage
+                .get_symbol(&sid)
+                .await?
+                .ok_or_else(|| QueryError::SymbolNotFound {
+                    id: symbol_id.to_string(),
+                })?;
 
-        let refs = self.storage.query_refs(&sid, ref_kind).await?;
+        let mut results = Vec::new();
 
-        let mut results = Vec::with_capacity(refs.len());
-        for r in refs {
-            let from = self.storage.get_symbol(&r.from_symbol_id).await?;
-            let to = self.storage.get_symbol(&r.to_symbol_id).await?;
+        // Include standard symbol refs unless we're filtering to bridge-only
+        if ref_kind != Some(RefKind::Bridge) {
+            let refs = self.storage.query_refs(&sid, ref_kind).await?;
 
-            if let (Some(from_sym), Some(to_sym)) = (from, to) {
+            for r in refs {
+                let from = self.storage.get_symbol(&r.from_symbol_id).await?;
+                let to = self.storage.get_symbol(&r.to_symbol_id).await?;
+
+                if let (Some(from_sym), Some(to_sym)) = (from, to) {
+                    results.push(SymbolRefResult {
+                        from_symbol_id: from_sym.id.0,
+                        from_name: from_sym.name,
+                        from_file: from_sym.file_path,
+                        from_line: from_sym.line_start,
+                        to_symbol_id: to_sym.id.0,
+                        to_name: to_sym.name,
+                        to_file: to_sym.file_path,
+                        to_line: to_sym.line_start,
+                        ref_kind: r.ref_kind.to_string(),
+                    });
+                }
+            }
+        }
+
+        // Include bridge links when ref_kind is None or Bridge
+        if ref_kind.is_none() || ref_kind == Some(RefKind::Bridge) {
+            let bridge_links = self
+                .storage
+                .query_bridge_links(Some(&symbol.file_path), None)
+                .await?;
+
+            for link in bridge_links {
+                // Map bridge links to SymbolRefResult: export → from, import → to
                 results.push(SymbolRefResult {
-                    from_symbol_id: from_sym.id.0,
-                    from_name: from_sym.name,
-                    from_file: from_sym.file_path,
-                    from_line: from_sym.line_start,
-                    to_symbol_id: to_sym.id.0,
-                    to_name: to_sym.name,
-                    to_file: to_sym.file_path,
-                    to_line: to_sym.line_start,
-                    ref_kind: r.ref_kind.to_string(),
+                    from_symbol_id: String::new(),
+                    from_name: link.export_symbol,
+                    from_file: link.export_file,
+                    from_line: link.export_line,
+                    to_symbol_id: String::new(),
+                    to_name: link.import_symbol,
+                    to_file: link.import_file,
+                    to_line: link.import_line,
+                    ref_kind: "bridge".to_string(),
                 });
             }
         }
