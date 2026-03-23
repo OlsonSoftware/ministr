@@ -57,6 +57,42 @@ pub enum EvictionPolicy {
     Lru,
 }
 
+/// Compression tier for delivered content in the multi-tier eviction pipeline.
+///
+/// Content progresses through tiers as budget pressure increases:
+/// `Full → Abstractive → Extractive → Bookmark → Evicted`.
+///
+/// Higher tiers use fewer tokens but retain less information. The pipeline
+/// ensures graceful degradation — content is compressed before being fully
+/// evicted, preserving at least structural awareness (bookmarks) until
+/// budget pressure forces complete removal.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CompressionTier {
+    /// Full original text — no compression applied.
+    Full,
+    /// LLM-generated abstractive summary (~90%+ token reduction).
+    Abstractive,
+    /// TF-IDF extractive summary (~60–80% token reduction).
+    Extractive,
+    /// Heading-only bookmark (~95%+ reduction). Re-fetchable via `iris_read`.
+    Bookmark,
+    /// Fully evicted from context — only metadata remains in the session shadow.
+    Evicted,
+}
+
 /// Record of a single content delivery to the agent.
 ///
 /// Tracks what was delivered, at what resolution, the token cost, and when
@@ -74,6 +110,8 @@ pub struct DeliveredItem {
     pub turn_delivered: u32,
     /// SHA-256 hash of the delivered content for change detection.
     pub content_hash: String,
+    /// Current compression tier in the multi-tier eviction pipeline.
+    pub compression_tier: CompressionTier,
 }
 
 /// An agent interaction session tracking delivered content and access patterns.
@@ -189,6 +227,7 @@ impl Session {
             token_count,
             turn_delivered: turn,
             content_hash,
+            compression_tier: CompressionTier::Full,
         };
 
         self.delivered.insert(content_id.0.clone(), item);
@@ -268,6 +307,65 @@ impl Session {
     /// if it existed.
     pub fn remove_delivered(&mut self, content_id: &ContentId) -> Option<DeliveredItem> {
         self.delivered.remove(&content_id.0)
+    }
+
+    /// Mask a delivered item to bookmark tier.
+    ///
+    /// Converts the item to a heading-only bookmark, keeping the content ID
+    /// in the session shadow but reducing its token count to a small stub.
+    /// The content remains re-fetchable via `iris_read`.
+    ///
+    /// Returns the number of tokens freed, or `None` if the content was not
+    /// found or was already at bookmark tier or higher.
+    pub fn mask_to_bookmark(
+        &mut self,
+        content_id: &ContentId,
+        heading_path: &[String],
+    ) -> Option<usize> {
+        let item = self.delivered.get_mut(&content_id.0)?;
+
+        // Don't re-mask items already at bookmark or evicted tier
+        if item.compression_tier >= CompressionTier::Bookmark {
+            return None;
+        }
+
+        let original_tokens = item.token_count;
+        let bookmark = Self::bookmark_text(heading_path);
+        let bookmark_tokens = bookmark.split_whitespace().count().max(1);
+
+        item.compression_tier = CompressionTier::Bookmark;
+        item.token_count = bookmark_tokens;
+
+        Some(original_tokens.saturating_sub(bookmark_tokens))
+    }
+
+    /// Set the compression tier and token count for a delivered item.
+    ///
+    /// Used by the compression pipeline to track tier transitions. Returns
+    /// the number of tokens freed, or `None` if the content was not found.
+    pub fn set_compression_tier(
+        &mut self,
+        content_id: &ContentId,
+        tier: CompressionTier,
+        new_token_count: usize,
+    ) -> Option<usize> {
+        let item = self.delivered.get_mut(&content_id.0)?;
+        let original_tokens = item.token_count;
+        item.compression_tier = tier;
+        item.token_count = new_token_count;
+        Some(original_tokens.saturating_sub(new_token_count))
+    }
+
+    /// Generate bookmark text from a heading path.
+    ///
+    /// Produces a compact heading-only stub like `"[bookmark: Chapter 3 > Auth > Tokens]"`
+    /// that preserves structural awareness at minimal token cost.
+    #[must_use]
+    pub fn bookmark_text(heading_path: &[String]) -> String {
+        if heading_path.is_empty() {
+            return "[bookmark]".to_string();
+        }
+        format!("[bookmark: {}]", heading_path.join(" > "))
     }
 
     /// Detect whether a re-request indicates the agent lost this content.
@@ -658,6 +756,7 @@ mod tests {
             token_count: 250,
             turn_delivered: 3,
             content_hash: "abc123".into(),
+            compression_tier: CompressionTier::Full,
         };
         let json = serde_json::to_string(&item).unwrap();
         let back: DeliveredItem = serde_json::from_str(&json).unwrap();
@@ -892,5 +991,160 @@ mod tests {
         // Stale should be cleared after re-delivery
         session.clear_stale(&cid("s1"));
         assert!(!session.is_stale(&cid("s1")));
+    }
+
+    // --- CompressionTier tests ---
+
+    #[test]
+    fn compression_tier_ordering() {
+        assert!(CompressionTier::Full < CompressionTier::Abstractive);
+        assert!(CompressionTier::Abstractive < CompressionTier::Extractive);
+        assert!(CompressionTier::Extractive < CompressionTier::Bookmark);
+        assert!(CompressionTier::Bookmark < CompressionTier::Evicted);
+    }
+
+    #[test]
+    fn compression_tier_serde_roundtrip() {
+        for tier in [
+            CompressionTier::Full,
+            CompressionTier::Abstractive,
+            CompressionTier::Extractive,
+            CompressionTier::Bookmark,
+            CompressionTier::Evicted,
+        ] {
+            let json = serde_json::to_string(&tier).unwrap();
+            let back: CompressionTier = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, tier, "roundtrip failed for {tier:?}");
+        }
+    }
+
+    #[test]
+    fn new_delivery_has_full_tier() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+
+        let item = session.get_delivered(&cid("s1")).unwrap();
+        assert_eq!(item.compression_tier, CompressionTier::Full);
+    }
+
+    // --- Masking / bookmark tests ---
+
+    #[test]
+    fn mask_to_bookmark_reduces_tokens() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 500, 1, "h1".into());
+
+        let freed = session.mask_to_bookmark(&cid("s1"), &["Chapter 1".into(), "Auth".into()]);
+        assert!(freed.is_some());
+        let freed = freed.unwrap();
+        assert!(freed > 490, "should free most tokens: freed {freed}");
+
+        let item = session.get_delivered(&cid("s1")).unwrap();
+        assert_eq!(item.compression_tier, CompressionTier::Bookmark);
+        assert!(
+            item.token_count < 10,
+            "bookmark should have minimal tokens: {}",
+            item.token_count
+        );
+    }
+
+    #[test]
+    fn mask_to_bookmark_nonexistent_returns_none() {
+        let mut session = make_session();
+        let result = session.mask_to_bookmark(&cid("unknown"), &["Heading".into()]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn mask_already_bookmarked_returns_none() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 500, 1, "h1".into());
+
+        // First mask succeeds
+        assert!(
+            session
+                .mask_to_bookmark(&cid("s1"), &["H1".into()])
+                .is_some()
+        );
+        // Second mask returns None (already bookmarked)
+        assert!(
+            session
+                .mask_to_bookmark(&cid("s1"), &["H1".into()])
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn bookmark_text_with_heading_path() {
+        let text = Session::bookmark_text(&["Chapter 3".into(), "Auth".into(), "Tokens".into()]);
+        assert_eq!(text, "[bookmark: Chapter 3 > Auth > Tokens]");
+    }
+
+    #[test]
+    fn bookmark_text_empty_heading() {
+        let text = Session::bookmark_text(&[]);
+        assert_eq!(text, "[bookmark]");
+    }
+
+    #[test]
+    fn bookmark_text_single_heading() {
+        let text = Session::bookmark_text(&["Introduction".into()]);
+        assert_eq!(text, "[bookmark: Introduction]");
+    }
+
+    // --- set_compression_tier tests ---
+
+    #[test]
+    fn set_compression_tier_updates_item() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 1000, 1, "h1".into());
+
+        let freed = session.set_compression_tier(&cid("s1"), CompressionTier::Extractive, 300);
+        assert_eq!(freed, Some(700));
+
+        let item = session.get_delivered(&cid("s1")).unwrap();
+        assert_eq!(item.compression_tier, CompressionTier::Extractive);
+        assert_eq!(item.token_count, 300);
+    }
+
+    #[test]
+    fn set_compression_tier_nonexistent_returns_none() {
+        let mut session = make_session();
+        let result = session.set_compression_tier(&cid("nope"), CompressionTier::Bookmark, 5);
+        assert!(result.is_none());
+    }
+
+    // --- Full pipeline integration test ---
+
+    #[test]
+    fn full_tier_progression_through_masking() {
+        let mut session = make_session();
+        session.record_delivery(&cid("doc"), Resolution::Section, 2000, 1, "h1".into());
+
+        // Start at Full
+        assert_eq!(
+            session.get_delivered(&cid("doc")).unwrap().compression_tier,
+            CompressionTier::Full
+        );
+
+        // Simulate extractive compression
+        let freed = session.set_compression_tier(&cid("doc"), CompressionTier::Extractive, 600);
+        assert_eq!(freed, Some(1400));
+
+        // Mask to bookmark
+        let freed = session.mask_to_bookmark(&cid("doc"), &["API".into(), "Rate Limits".into()]);
+        assert!(freed.is_some());
+
+        let item = session.get_delivered(&cid("doc")).unwrap();
+        assert_eq!(item.compression_tier, CompressionTier::Bookmark);
+        assert!(item.token_count < 10);
+
+        // Simulate eviction
+        let freed = session.set_compression_tier(&cid("doc"), CompressionTier::Evicted, 0);
+        assert!(freed.is_some());
+
+        let item = session.get_delivered(&cid("doc")).unwrap();
+        assert_eq!(item.compression_tier, CompressionTier::Evicted);
+        assert_eq!(item.token_count, 0);
     }
 }

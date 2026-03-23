@@ -10,8 +10,10 @@
 //! - [`WindowEstimator`] — models context window fill with FIFO/LRU eviction
 //! - [`BudgetTracker`] — threshold-based pressure levels driving response compression
 //! - [`EvictionRanker`] — scores delivered items for eviction priority
+//! - [`CompressionPipeline`] — multi-tier compression with auto-promotion
 
 mod budget;
+pub mod compression;
 pub mod delta;
 pub mod eviction;
 pub mod prefetch;
@@ -19,9 +21,12 @@ mod types;
 mod window;
 
 pub use budget::{BudgetConfig, BudgetStatus, BudgetTracker, PressureLevel};
+pub use compression::{CompressionPipeline, TierPromotion};
 pub use eviction::{EvictionCandidate, EvictionRanker};
 pub use prefetch::{
     CacheEntry, PrefetchCache, PrefetchEngine, PrefetchMetrics, PrefetchStrategy, TopicTracker,
 };
-pub use types::{CoherenceAlert, DeliveredItem, EvictionPolicy, Session, SessionId};
+pub use types::{
+    CoherenceAlert, CompressionTier, DeliveredItem, EvictionPolicy, Session, SessionId,
+};
 pub use window::{WindowEstimator, WindowStatus};

@@ -899,20 +899,20 @@ phases:
 - id: V22
   name: Advanced Eviction & Compression
   tagline: Research-backed eviction intelligence and multi-tier compression pipeline
-  status: pending
+  status: done
   problem: Evicting scattered sections disrupts positional coherence; only two compression tiers (extractive/abstractive) with no intermediate bookmark tier
   solution: 'Add contiguity penalty to eviction scoring, observation masking (bookmark-only) tier, and auto-tier-promotion pipeline: full → abstractive → extractive → bookmark → evicted'
   tasks:
   - text: Contiguity penalty in EvictionRanker — prefer evicting adjacent blocks to preserve positional coherence
-    checked: false
+    checked: true
   - text: Observation masking tier — evict to heading-only bookmark, re-fetchable via iris_read
-    checked: false
+    checked: true
   - text: 'Multi-tier compression pipeline: full text → abstractive → extractive → bookmark → evicted'
-    checked: false
+    checked: true
   - text: Auto-tier-promotion based on pressure level, access recency, and token weight
-    checked: false
+    checked: true
   - text: Tests for contiguity scoring, masking round-trip, and tier transitions
-    checked: false
+    checked: true
 - id: V23
   name: Protocol-Native Async Tasks
   tagline: Replace custom TaskManager with MCP Tasks primitive

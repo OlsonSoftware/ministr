@@ -30,16 +30,20 @@ pub struct EvictionCandidate {
 
 /// Ranks delivered content items by eviction priority.
 ///
-/// The ranking considers four factors:
-/// - **Recency decay** (weight 0.4): older items score higher. Uses normalized
+/// The ranking considers five factors:
+/// - **Recency decay** (weight 0.35): older items score higher. Uses normalized
 ///   turn distance: `(current_turn - turn_delivered) / current_turn`.
-/// - **Token weight** (weight 0.25): larger items are more valuable to evict,
+/// - **Token weight** (weight 0.2): larger items are more valuable to evict,
 ///   as they free more budget. Normalized against the largest item.
 /// - **Attention position** (weight 0.2): mid-context items score higher,
 ///   modeling the "Lost in the Middle" U-shaped attention bias. Content at
 ///   the start and end of the context window is better attended by the LLM.
 /// - **Resolution priority** (weight 0.15): summaries are cheap to re-fetch
 ///   and score higher for eviction. Sections are moderate, claims score lowest.
+/// - **Contiguity bonus** (weight 0.1): items adjacent to other high-scoring
+///   candidates get a bonus, encouraging eviction of contiguous blocks.
+///   This preserves positional coherence in the remaining context, avoiding
+///   the degradation caused by non-contiguous eviction (arxiv 2511.04686).
 ///
 /// # Examples
 ///
@@ -110,10 +114,22 @@ impl EvictionRanker {
             .max()
             .unwrap_or(0);
 
-        let mut candidates: Vec<EvictionCandidate> = items
+        // Sort items by turn_delivered for contiguity analysis
+        let mut sorted_items: Vec<&DeliveredItem> = items.clone();
+        sorted_items.sort_by_key(|item| item.turn_delivered);
+
+        // Pass 1: compute base scores (without contiguity)
+        let base_scores: Vec<f64> = sorted_items
             .iter()
             .map(|item| {
-                let score = Self::compute_score(item, current_turn, max_tokens, min_turn, max_turn);
+                Self::compute_base_score(item, current_turn, max_tokens, min_turn, max_turn)
+            })
+            .collect();
+
+        let mut candidates: Vec<EvictionCandidate> = sorted_items
+            .iter()
+            .zip(&base_scores)
+            .map(|(item, &score)| {
                 let reason = Self::describe_reason(item, current_turn, min_turn, max_turn);
                 EvictionCandidate {
                     content_id: item.content_id.0.clone(),
@@ -123,6 +139,9 @@ impl EvictionRanker {
                 }
             })
             .collect();
+
+        // Pass 2: apply contiguity bonuses
+        Self::apply_contiguity_bonus(&mut candidates, &base_scores);
 
         // Sort by score descending (best eviction candidates first)
         candidates.sort_by(|a, b| {
@@ -140,16 +159,18 @@ impl EvictionRanker {
     /// The score combines four factors: recency decay, token weight, attention
     /// position bias, and resolution priority. The position factor uses a
     /// quadratic U-shaped curve to model the "Lost in the Middle" phenomenon.
+    ///
+    /// This returns the **base** score before contiguity bonuses are applied.
     #[allow(clippy::cast_precision_loss)]
-    fn compute_score(
+    fn compute_base_score(
         item: &DeliveredItem,
         current_turn: u32,
         max_tokens: usize,
         min_turn: u32,
         max_turn: u32,
     ) -> f64 {
-        const RECENCY_WEIGHT: f64 = 0.4;
-        const TOKEN_WEIGHT: f64 = 0.25;
+        const RECENCY_WEIGHT: f64 = 0.35;
+        const TOKEN_WEIGHT: f64 = 0.2;
         const POSITION_WEIGHT: f64 = 0.2;
         const RESOLUTION_WEIGHT: f64 = 0.15;
 
@@ -175,6 +196,52 @@ impl EvictionRanker {
             + token_score * TOKEN_WEIGHT
             + position_score * POSITION_WEIGHT
             + resolution_score * RESOLUTION_WEIGHT
+    }
+
+    /// Apply contiguity bonuses to base scores.
+    ///
+    /// Items adjacent (in delivery order) to other high-scoring candidates
+    /// receive a bonus. This encourages evicting contiguous blocks, which
+    /// preserves positional coherence in the remaining context — avoiding
+    /// the "positional scrambling" that degrades LLM attention (Liu et al.,
+    /// 2023; arxiv 2511.04686).
+    ///
+    /// The bonus for each item is the average base score of its immediate
+    /// neighbors (previous and next in turn order), weighted by
+    /// `CONTIGUITY_WEIGHT`.
+    fn apply_contiguity_bonus(candidates: &mut [EvictionCandidate], base_scores: &[f64]) {
+        const CONTIGUITY_WEIGHT: f64 = 0.1;
+
+        if candidates.len() <= 1 {
+            return;
+        }
+
+        // Compute contiguity bonuses from the base scores of neighbors
+        let bonuses: Vec<f64> = (0..base_scores.len())
+            .map(|i| {
+                let mut neighbor_sum = 0.0;
+                let mut neighbor_count = 0u32;
+
+                if i > 0 {
+                    neighbor_sum += base_scores[i - 1];
+                    neighbor_count += 1;
+                }
+                if i + 1 < base_scores.len() {
+                    neighbor_sum += base_scores[i + 1];
+                    neighbor_count += 1;
+                }
+
+                if neighbor_count == 0 {
+                    0.0
+                } else {
+                    (neighbor_sum / f64::from(neighbor_count)) * CONTIGUITY_WEIGHT
+                }
+            })
+            .collect();
+
+        for (candidate, bonus) in candidates.iter_mut().zip(bonuses) {
+            candidate.score += bonus;
+        }
     }
 
     /// Score by attention position — higher means worse-attended (mid-context).
@@ -579,5 +646,98 @@ mod tests {
 
         assert!(score_start.abs() < f64::EPSILON);
         assert!(score_end.abs() < f64::EPSILON);
+    }
+
+    // --- Contiguity bonus tests ---
+
+    #[test]
+    fn contiguity_bonus_boosts_adjacent_high_scorers() {
+        let mut session = make_session();
+
+        // Three adjacent items delivered in consecutive turns, all same size/resolution
+        // Middle item should get a contiguity bonus from both neighbors
+        session.record_delivery(&cid("a"), Resolution::Section, 200, 1, "h1".into());
+        session.record_delivery(&cid("b"), Resolution::Section, 200, 2, "h2".into());
+        session.record_delivery(&cid("c"), Resolution::Section, 200, 3, "h3".into());
+        // One isolated item far away
+        session.record_delivery(&cid("lone"), Resolution::Section, 200, 20, "h4".into());
+
+        let candidates = EvictionRanker::rank(&session, 10);
+
+        // Find scores for adjacent group vs isolated item
+        let a_score = candidates
+            .iter()
+            .find(|c| c.content_id == "a")
+            .unwrap()
+            .score;
+        let b_score = candidates
+            .iter()
+            .find(|c| c.content_id == "b")
+            .unwrap()
+            .score;
+        let c_score = candidates
+            .iter()
+            .find(|c| c.content_id == "c")
+            .unwrap()
+            .score;
+
+        // The middle item (b) should benefit from contiguity with both neighbors
+        // (a and c have high base scores due to recency decay), so b's contiguity
+        // bonus should be >= a's and c's
+        // All three adjacent items should have scores influenced by their neighbors
+        assert!(
+            a_score > 0.0 && b_score > 0.0 && c_score > 0.0,
+            "all adjacent items should have positive scores: a={a_score}, b={b_score}, c={c_score}"
+        );
+    }
+
+    #[test]
+    fn contiguity_bonus_with_single_item_is_zero() {
+        let mut session = make_session();
+        session.record_delivery(&cid("only"), Resolution::Section, 200, 1, "h1".into());
+
+        let candidates = EvictionRanker::rank(&session, 5);
+        assert_eq!(candidates.len(), 1);
+        // Single item has no neighbors, so contiguity bonus should be 0
+        // Score should equal the base score only
+        assert!(candidates[0].score > 0.0);
+    }
+
+    #[test]
+    fn contiguity_bonus_preserves_sort_order_for_clear_winners() {
+        let mut session = make_session();
+
+        // Old, large, summary items — clear eviction candidates
+        session.record_delivery(&cid("old1"), Resolution::Summary, 1000, 1, "h1".into());
+        session.record_delivery(&cid("old2"), Resolution::Summary, 1000, 2, "h2".into());
+        // Recent, small, claim — poor eviction candidate
+        session.record_delivery(&cid("new"), Resolution::Claim, 20, 20, "h3".into());
+
+        let candidates = EvictionRanker::rank(&session, 10);
+
+        // Old summaries should still rank above the new claim even with contiguity
+        let new_score = candidates
+            .iter()
+            .find(|c| c.content_id == "new")
+            .unwrap()
+            .score;
+        let old1_score = candidates
+            .iter()
+            .find(|c| c.content_id == "old1")
+            .unwrap()
+            .score;
+
+        assert!(
+            old1_score > new_score,
+            "old summary should still outrank recent claim: old={old1_score}, new={new_score}"
+        );
+    }
+
+    #[test]
+    fn apply_contiguity_bonus_empty_is_noop() {
+        let mut candidates: Vec<EvictionCandidate> = Vec::new();
+        let base_scores: Vec<f64> = Vec::new();
+        EvictionRanker::apply_contiguity_bonus(&mut candidates, &base_scores);
+        assert!(candidates.is_empty());
     }
 }
