@@ -34,6 +34,7 @@ fastembed.workspace = true
 hnsw_rs.workspace = true
 notify.workspace = true
 tokio-util = "0.7"
+futures = "0.3"
 glob.workspace = true
 ignore.workspace = true
 tree-sitter.workspace = true

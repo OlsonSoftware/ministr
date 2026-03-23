@@ -42,7 +42,7 @@ use rmcp::service::{NotificationContext, Peer, RequestContext};
 use rmcp::{prompt, prompt_handler, prompt_router, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info_span, warn};
 
@@ -3269,7 +3269,7 @@ impl IrisServer {
         }
     }
 
-    /// Execute the refresh pipeline for both web and git sources.
+    /// Execute the refresh pipeline for both web and git sources concurrently.
     ///
     /// Separated from the tool handler to satisfy the `too_many_lines` lint.
     async fn refresh_all_sources(
@@ -3279,56 +3279,22 @@ impl IrisServer {
         embedder: &dyn Embedder,
         index: &dyn VectorIndex,
     ) -> Result<CallToolResult, McpError> {
-        // --- Web refresh ---
-        let (urls_checked, urls_refreshed, urls_unchanged, urls_failed, web_details) =
-            if let Some(ref web_fetcher) = self.web_fetcher {
-                match web_fetcher
-                    .refresh_all(
-                        params.url.as_deref(),
-                        &self.ingestion_pipeline,
-                        storage.as_ref(),
-                        embedder,
-                        index,
-                    )
-                    .await
-                {
-                    Ok(result) => {
-                        let details: Vec<RefreshUrlDetailResponse> = result
-                            .details
-                            .iter()
-                            .map(|d| RefreshUrlDetailResponse {
-                                url: d.url.clone(),
-                                status: d.status.to_string(),
-                            })
-                            .collect();
-                        (
-                            result.urls_checked,
-                            result.urls_refreshed,
-                            result.urls_unchanged,
-                            result.urls_failed,
-                            details,
-                        )
-                    }
-                    Err(e) => {
-                        if params.url.is_some() {
-                            debug!(error = %e, "web refresh skipped (URL may be git)");
-                            (0, 0, 0, 0, Vec::new())
-                        } else {
-                            warn!(error = %e, "iris_refresh web failed");
-                            return Ok(CallToolResult::error(vec![Content::text(format!(
-                                "refresh failed: {e}"
-                            ))]));
-                        }
-                    }
-                }
-            } else {
-                (0, 0, 0, 0, Vec::new())
-            };
+        // Run web and git refresh concurrently.
+        // Run web and git refresh concurrently.
+        let (web_result, git_result) = tokio::join!(
+            self.refresh_web_sources(params, storage, embedder, index),
+            self.refresh_git_sources(params.url.as_deref(), storage, embedder, index),
+        );
 
-        // --- Git refresh ---
-        let (git_checked, git_refreshed, git_unchanged, git_failed, git_details) = self
-            .refresh_git_sources(params.url.as_deref(), storage, embedder, index)
-            .await;
+        // Surface fatal web errors as tool errors.
+        let (urls_checked, urls_refreshed, urls_unchanged, urls_failed, web_details) =
+            match web_result {
+                Ok(tuple) => tuple,
+                Err(msg) => {
+                    return Ok(CallToolResult::error(vec![Content::text(msg)]));
+                }
+            };
+        let (git_checked, git_refreshed, git_unchanged, git_failed, git_details) = git_result;
 
         debug!(
             urls_checked,
@@ -3370,7 +3336,65 @@ impl IrisServer {
         structured_result(&response)
     }
 
+    /// Refresh cached web URLs, returning aggregate counts and per-URL details.
+    ///
+    /// Returns `Err(message)` when the web refresh fails fatally (no URL filter),
+    /// so the caller can surface the error as a `CallToolResult::error`.
+    async fn refresh_web_sources(
+        &self,
+        params: &RefreshParams,
+        storage: &Arc<SqliteStorage>,
+        embedder: &dyn Embedder,
+        index: &dyn VectorIndex,
+    ) -> Result<(usize, usize, usize, usize, Vec<RefreshUrlDetailResponse>), String> {
+        let Some(ref web_fetcher) = self.web_fetcher else {
+            return Ok((0, 0, 0, 0, Vec::new()));
+        };
+
+        match web_fetcher
+            .refresh_all(
+                params.url.as_deref(),
+                &self.ingestion_pipeline,
+                storage.as_ref(),
+                embedder,
+                index,
+            )
+            .await
+        {
+            Ok(result) => {
+                let details: Vec<RefreshUrlDetailResponse> = result
+                    .details
+                    .iter()
+                    .map(|d| RefreshUrlDetailResponse {
+                        url: d.url.clone(),
+                        status: d.status.to_string(),
+                    })
+                    .collect();
+                Ok((
+                    result.urls_checked,
+                    result.urls_refreshed,
+                    result.urls_unchanged,
+                    result.urls_failed,
+                    details,
+                ))
+            }
+            Err(e) => {
+                if params.url.is_some() {
+                    debug!(error = %e, "web refresh skipped (URL may be git)");
+                    Ok((0, 0, 0, 0, Vec::new()))
+                } else {
+                    warn!(error = %e, "iris_refresh web failed");
+                    Err(format!("refresh failed: {e}"))
+                }
+            }
+        }
+    }
+
     /// Refresh all cached git clones, or a single repo if `url_filter` matches.
+    ///
+    /// Phase 1: check staleness of all repos concurrently (bounded by
+    /// `GitFetcherConfig::refresh_concurrency`).
+    /// Phase 2: re-ingest stale repos sequentially (disk-bound, not worth parallelising).
     ///
     /// Returns `(checked, refreshed, unchanged, failed, details)`.
     #[allow(clippy::too_many_lines)]
@@ -3404,29 +3428,58 @@ impl IrisServer {
             }
         };
 
-        let mut checked = 0;
-        let mut refreshed = 0;
-        let mut unchanged = 0;
-        let mut failed = 0;
-        let mut details = Vec::with_capacity(records.len());
+        // Phase 1: concurrent staleness checks + re-clones for stale repos.
+        let concurrency = git_fetcher.config().refresh_concurrency;
+        let semaphore = Arc::new(Semaphore::new(concurrency));
+        let mut handles = Vec::with_capacity(records.len());
 
-        for record in &records {
-            checked += 1;
+        for record in records {
+            let permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("locally-owned semaphore is never closed");
+            let fetcher = Arc::clone(git_fetcher);
             let paths_opt: Option<Vec<String>> = if record.checked_out_paths.is_empty() {
                 None
             } else {
                 Some(record.checked_out_paths.clone())
             };
 
-            match git_fetcher
-                .refresh(
-                    &record.repo_url,
-                    paths_opt.as_deref(),
-                    record.branch.as_deref(),
-                    &record.commit_sha,
-                )
-                .await
-            {
+            handles.push(tokio::spawn(async move {
+                let result = fetcher
+                    .refresh(
+                        &record.repo_url,
+                        paths_opt.as_deref(),
+                        record.branch.as_deref(),
+                        &record.commit_sha,
+                    )
+                    .await;
+                drop(permit);
+                (record, paths_opt, result)
+            }));
+        }
+
+        // Phase 2: collect results and re-ingest stale repos sequentially.
+        let mut checked = 0;
+        let mut refreshed = 0;
+        let mut unchanged = 0;
+        let mut failed = 0;
+        let mut details = Vec::with_capacity(handles.len());
+
+        for handle in handles {
+            checked += 1;
+            let Ok((record, paths_opt, refresh_result)) = handle.await else {
+                failed += 1;
+                warn!("git refresh task panicked");
+                details.push(RefreshGitDetailResponse {
+                    repo_url: String::from("<unknown>"),
+                    status: "failed: task panicked".to_string(),
+                });
+                continue;
+            };
+
+            match refresh_result {
                 Ok(None) => {
                     unchanged += 1;
                     details.push(RefreshGitDetailResponse {
@@ -3435,7 +3488,6 @@ impl IrisServer {
                     });
                 }
                 Ok(Some(clone_result)) => {
-                    // Re-ingest the refreshed clone.
                     let params = CloneParams {
                         repo: record.repo_url.clone(),
                         paths: paths_opt,
@@ -5279,6 +5331,7 @@ mod tests {
 
         let git_config = iris_core::git::GitFetcherConfig {
             remote_dir: std::path::PathBuf::from("/tmp/iris-test-clone"),
+            ..iris_core::git::GitFetcherConfig::default()
         };
         let git_fetcher = GitFetcher::new(git_config);
 

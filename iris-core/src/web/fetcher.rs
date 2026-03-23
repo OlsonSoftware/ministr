@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+use futures::stream::{self, StreamExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 use url::Url;
@@ -122,6 +123,8 @@ pub struct WebFetcherConfig {
     pub path_filter: Option<String>,
     /// Time-to-live in seconds before a cached URL is considered stale (default: 3600 = 1 hour).
     pub staleness_ttl_secs: u64,
+    /// Maximum concurrent URL staleness checks during refresh (default: 4).
+    pub refresh_concurrency: usize,
 }
 
 impl Default for WebFetcherConfig {
@@ -130,6 +133,7 @@ impl Default for WebFetcherConfig {
             max_pages: 50,
             path_filter: None,
             staleness_ttl_secs: 3600,
+            refresh_concurrency: 4,
         }
     }
 }
@@ -840,37 +844,42 @@ impl WebFetcher {
                 })?
         };
 
-        let mut details = Vec::with_capacity(records.len());
-        let mut refreshed = 0;
-        let mut unchanged = 0;
-        let mut failed = 0;
-
-        for record in &records {
-            let detail = self
-                .refresh_url(
+        let concurrency = self.config.refresh_concurrency;
+        let num_records = records.len();
+        let details: Vec<RefreshUrlDetail> = stream::iter(records)
+            .map(|record| async move {
+                self.refresh_url(
                     &record.source_url,
-                    record,
+                    &record,
                     pipeline,
                     storage,
                     embedder,
                     index,
                 )
-                .await;
+                .await
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        let mut refreshed = 0;
+        let mut unchanged = 0;
+        let mut failed = 0;
+        for detail in &details {
             match &detail.status {
                 RefreshUrlStatus::Updated => refreshed += 1,
                 RefreshUrlStatus::Unchanged => unchanged += 1,
                 RefreshUrlStatus::Failed(_) => failed += 1,
             }
-            details.push(detail);
         }
 
         info!(
-            checked = records.len(),
+            checked = num_records,
             refreshed, unchanged, failed, "refresh complete"
         );
 
         Ok(RefreshResult {
-            urls_checked: records.len(),
+            urls_checked: num_records,
             urls_refreshed: refreshed,
             urls_unchanged: unchanged,
             urls_failed: failed,
