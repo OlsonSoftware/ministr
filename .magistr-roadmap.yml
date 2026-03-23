@@ -1055,7 +1055,7 @@ phases:
 - id: L3
   name: Tauri Bridge Implementation
   tagline: Trace from React component to Rust command handler in one hop
-  status: in_progress
+  status: done
   problem: Tauri apps split logic across JS/TS frontend and Rust backend with string-based invoke() IPC — invisible to symbol tracing
   solution: 'Tree-sitter queries to detect invoke() ↔ #[tauri::command] and emit/listen event bridges, with generate_handler! cross-validation and a dedicated iris_bridge MCP tool'
   tasks:
@@ -1066,11 +1066,11 @@ phases:
   - text: 'Command registration validation: cross-reference with tauri::generate_handler![] for confidence boost'
     checked: true
   - text: 'Edge cases: rename_all/camelCase transforms, async commands, command modules, Tauri v1 vs v2 invoke patterns'
-    checked: false
+    checked: true
   - text: 'Test fixture: minimal Tauri app with 5+ commands, events, state management, and plugin usage'
-    checked: false
+    checked: true
   - text: 'iris_bridge MCP tool: dedicated cross-language navigation with query, bridge_kind, and language filters'
-    checked: false
+    checked: true
 - id: L4
   name: FFI & Web Bridge Suite
   tagline: Every FFI boundary becomes a navigable link

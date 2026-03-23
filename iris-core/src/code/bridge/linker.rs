@@ -8,9 +8,12 @@
 //! 2. **Pass 2 — Join**: Group endpoints by `(BridgeKind, binding_key)` and
 //!    pair exports with imports to form [`BridgeLink`]s.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use super::{BridgeEndpoint, BridgeExtractor, BridgeKind, BridgeLink, EndpointRole};
+use super::{
+    BridgeEndpoint, BridgeExtractor, BridgeKind, BridgeLink, ConfidenceLevel, EndpointRole,
+    normalize_binding_key,
+};
 
 /// A source file prepared for bridge extraction.
 ///
@@ -100,12 +103,16 @@ impl BridgeLinker {
     /// export with each import in the group. When multiple exports or imports
     /// share a key, all combinations are produced (cartesian product).
     ///
+    /// After exact matching, performs a second pass with case-normalized keys
+    /// (e.g. `snake_case` ↔ `camelCase`) to catch cross-convention matches
+    /// at [`ConfidenceLevel::CaseTransformed`] confidence.
+    ///
     /// Links are sorted by descending confidence for deterministic output.
     #[must_use]
     pub fn link(&self, endpoints: &[BridgeEndpoint]) -> Vec<BridgeLink> {
         type EndpointGroup<'a> = (Vec<&'a BridgeEndpoint>, Vec<&'a BridgeEndpoint>);
 
-        // Group by (kind, binding_key)
+        // Group by (kind, binding_key) — exact match
         let mut groups: HashMap<(BridgeKind, &str), EndpointGroup<'_>> = HashMap::new();
 
         for ep in endpoints {
@@ -121,10 +128,67 @@ impl BridgeLinker {
 
         let mut links = Vec::new();
 
-        for (exports, imports) in groups.values() {
+        // Track which endpoints got exact-matched so we skip them in the normalized pass
+        let mut exact_matched_exports: HashSet<(BridgeKind, &str)> = HashSet::new();
+        let mut exact_matched_imports: HashSet<(BridgeKind, &str)> = HashSet::new();
+
+        for ((kind, key), (exports, imports)) in &groups {
+            if !exports.is_empty() && !imports.is_empty() {
+                exact_matched_exports.insert((*kind, key));
+                exact_matched_imports.insert((*kind, key));
+                for export in exports {
+                    for import in imports {
+                        links.push(BridgeLink::new((*export).clone(), (*import).clone()));
+                    }
+                }
+            }
+        }
+
+        // Pass 2: case-normalized matching for unmatched endpoints.
+        // Group by (kind, normalized_key) and pair unmatched exports with unmatched imports.
+        let mut normalized_groups: HashMap<(BridgeKind, String), EndpointGroup<'_>> =
+            HashMap::new();
+
+        for ep in endpoints {
+            let exact_key = (ep.kind, ep.binding_key.as_str());
+            let is_matched = match ep.role {
+                EndpointRole::Export => exact_matched_exports.contains(&exact_key),
+                EndpointRole::Import => exact_matched_imports.contains(&exact_key),
+            };
+            if is_matched {
+                continue;
+            }
+
+            let normalized = normalize_binding_key(&ep.binding_key);
+            let norm_key = (ep.kind, normalized);
+            let entry = normalized_groups
+                .entry(norm_key)
+                .or_insert_with(|| (Vec::new(), Vec::new()));
+            match ep.role {
+                EndpointRole::Export => entry.0.push(ep),
+                EndpointRole::Import => entry.1.push(ep),
+            }
+        }
+
+        for (exports, imports) in normalized_groups.values() {
             for export in exports {
                 for import in imports {
-                    links.push(BridgeLink::new((*export).clone(), (*import).clone()));
+                    // Skip same-key pairs (they would have been exact-matched)
+                    if export.binding_key == import.binding_key {
+                        continue;
+                    }
+                    // Create the link with case-transformed confidence cap
+                    let mut ex = (*export).clone();
+                    let mut im = (*import).clone();
+                    // Normalize binding keys for the link
+                    let normalized_key = normalize_binding_key(&ex.binding_key);
+                    ex.binding_key.clone_from(&normalized_key);
+                    im.binding_key = normalized_key;
+                    // Cap confidence at CaseTransformed level
+                    let cap = ConfidenceLevel::CaseTransformed.score();
+                    ex.confidence = ex.confidence.min(cap);
+                    im.confidence = im.confidence.min(cap);
+                    links.push(BridgeLink::new(ex, im));
                 }
             }
         }
@@ -446,5 +510,95 @@ mod tests {
     fn default_linker_is_empty() {
         let linker = BridgeLinker::default();
         assert!(linker.extract_all(&[]).is_empty());
+    }
+
+    #[test]
+    fn case_normalized_matching_snake_to_camel() {
+        let endpoints = vec![
+            make_endpoint(
+                "get_user",
+                BridgeKind::TauriCommand,
+                EndpointRole::Export,
+                "rust",
+                1.0,
+            ),
+            make_endpoint(
+                "getUser",
+                BridgeKind::TauriCommand,
+                EndpointRole::Import,
+                "typescript",
+                1.0,
+            ),
+        ];
+
+        let linker = BridgeLinker::new();
+        let links = linker.link(&endpoints);
+
+        assert_eq!(
+            links.len(),
+            1,
+            "case-normalized match should produce a link"
+        );
+        assert!(
+            links[0].confidence <= ConfidenceLevel::CaseTransformed.score(),
+            "case-normalized links should be capped at CaseTransformed confidence"
+        );
+    }
+
+    #[test]
+    fn exact_match_preferred_over_normalized() {
+        let endpoints = vec![
+            make_endpoint(
+                "greet",
+                BridgeKind::TauriCommand,
+                EndpointRole::Export,
+                "rust",
+                1.0,
+            ),
+            make_endpoint(
+                "greet",
+                BridgeKind::TauriCommand,
+                EndpointRole::Import,
+                "typescript",
+                1.0,
+            ),
+        ];
+
+        let linker = BridgeLinker::new();
+        let links = linker.link(&endpoints);
+
+        assert_eq!(links.len(), 1);
+        // Exact match keeps full confidence
+        assert!((links[0].confidence - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn no_duplicate_links_for_exact_and_normalized() {
+        // If endpoints match exactly, no additional normalized link should appear
+        let endpoints = vec![
+            make_endpoint(
+                "save",
+                BridgeKind::TauriCommand,
+                EndpointRole::Export,
+                "rust",
+                1.0,
+            ),
+            make_endpoint(
+                "save",
+                BridgeKind::TauriCommand,
+                EndpointRole::Import,
+                "typescript",
+                1.0,
+            ),
+        ];
+
+        let linker = BridgeLinker::new();
+        let links = linker.link(&endpoints);
+
+        assert_eq!(
+            links.len(),
+            1,
+            "only exact match, no duplicate from normalization"
+        );
     }
 }

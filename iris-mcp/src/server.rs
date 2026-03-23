@@ -625,6 +625,70 @@ struct ReferencesResponse {
     total: usize,
 }
 
+/// Parameters for the `iris_bridge` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct BridgeParams {
+    /// Optional search query to filter bridge links by binding key or symbol name.
+    #[schemars(
+        description = "Search query to filter by binding key or symbol name (case-insensitive substring match)"
+    )]
+    pub query: Option<String>,
+
+    /// Optional bridge kind filter.
+    #[schemars(
+        description = "Filter by bridge kind: 'tauri_command', 'tauri_event', 'napi', 'wasm_bindgen', 'pyo3', 'http_route', 'ffi'"
+    )]
+    pub bridge_kind: Option<String>,
+
+    /// Optional language filter.
+    #[schemars(
+        description = "Filter links involving this language (e.g. 'rust', 'typescript', 'javascript', 'python')"
+    )]
+    pub language: Option<String>,
+
+    /// Optional file path filter.
+    #[schemars(description = "Filter links where either endpoint is in this file path")]
+    pub file_path: Option<String>,
+}
+
+/// Response from the `iris_bridge` tool.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct BridgeResponse {
+    /// Matched bridge links.
+    links: Vec<BridgeLinkSummary>,
+    /// Total number of links returned.
+    total: usize,
+}
+
+/// A compact bridge link summary for search results.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct BridgeLinkSummary {
+    /// Bridge mechanism kind (e.g. `"tauri_command"`).
+    kind: String,
+    /// Combined confidence score.
+    confidence: f32,
+    /// Export (definition) side.
+    export: BridgeEndpointSummary,
+    /// Import (call site) side.
+    import: BridgeEndpointSummary,
+}
+
+/// One side of a bridge link in the response.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct BridgeEndpointSummary {
+    /// Binding key.
+    binding_key: String,
+    /// Symbol name.
+    symbol_name: String,
+    /// Source file path.
+    file: String,
+    /// Source line number.
+    line: u32,
+    /// Language.
+    language: String,
+}
+
 /// Corpus-level statistics returned in the `iris_toc` response header.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 struct CorpusStatsHeader {
@@ -2314,6 +2378,82 @@ impl IrisServer {
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %params.symbol_id, "iris_references failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_query_error(&e),
+                    )]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
+    /// Query cross-language bridge links.
+    ///
+    /// Returns bridge links (export↔import pairs) with optional filtering by
+    /// search query, bridge kind, language, or file path.
+    #[tool(
+        name = "iris_bridge",
+        description = "Search cross-language bridge links (e.g. Tauri commands, NAPI exports, PyO3 bindings). Filter by query, bridge_kind, language, or file_path. Returns matched export↔import pairs with confidence scores.",
+        output_schema = tool_output_schema::<ToolResponse<BridgeResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn bridge(
+        &self,
+        Parameters(params): Parameters<BridgeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let span = info_span!("iris_bridge", query = ?params.query, kind = ?params.bridge_kind);
+
+        async {
+            debug!(?params.query, ?params.bridge_kind, ?params.language, ?params.file_path, "iris_bridge request");
+
+            match self
+                .service
+                .query_bridges(
+                    params.query.as_deref(),
+                    params.bridge_kind.as_deref(),
+                    params.language.as_deref(),
+                    params.file_path.as_deref(),
+                )
+                .await
+            {
+                Ok(links) => {
+                    let total = links.len();
+
+                    let summaries: Vec<BridgeLinkSummary> = links
+                        .into_iter()
+                        .map(|l| BridgeLinkSummary {
+                            kind: l.kind,
+                            confidence: l.confidence,
+                            export: BridgeEndpointSummary {
+                                binding_key: l.export_binding_key,
+                                symbol_name: l.export_symbol,
+                                file: l.export_file,
+                                line: l.export_line,
+                                language: l.export_language,
+                            },
+                            import: BridgeEndpointSummary {
+                                binding_key: l.import_binding_key,
+                                symbol_name: l.import_symbol,
+                                file: l.import_file,
+                                line: l.import_line,
+                                language: l.import_language,
+                            },
+                        })
+                        .collect();
+
+                    debug!(total, "iris_bridge success");
+
+                    let budget = self.budget.lock().await;
+                    let budget_status = budget.budget_status();
+                    drop(budget);
+
+                    let response = self
+                        .build_response(BridgeResponse { links: summaries, total }, budget_status)
+                        .await;
+                    structured_result(&response)
+                }
+                Err(e) => {
+                    warn!(error = %e, "iris_bridge failed");
                     Ok(CallToolResult::error(vec![Content::text(
                         format_query_error(&e),
                     )]))

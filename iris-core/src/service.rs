@@ -17,7 +17,7 @@ use crate::extraction::abstractive::AbstractiveCompressor;
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
 use crate::index::{SparseIndex, VectorIndex};
 use crate::search::{MultiResolutionSearch, SearchConfig};
-use crate::storage::{SqliteStorage, Storage, SymbolFilter, SymbolRecord};
+use crate::storage::{BridgeLinkDetail, SqliteStorage, Storage, SymbolFilter, SymbolRecord};
 use crate::token::count_tokens;
 use crate::types::{
     ClaimId, ContentId, RefKind, RelationType, Resolution, SectionId, SymbolId, TocEntry, VectorId,
@@ -867,6 +867,49 @@ impl QueryService {
         symbol_ids: &[SymbolId],
     ) -> Result<std::collections::HashMap<SymbolId, u32>, QueryError> {
         Ok(self.storage.transitive_caller_counts(symbol_ids).await?)
+    }
+
+    /// Query cross-language bridge links with optional filters.
+    ///
+    /// Returns bridge links (export↔import pairs) matching the given criteria.
+    /// Filters by file path, bridge kind, and/or language. When `query` is
+    /// provided, filters links where the binding key contains the query string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] if a database operation fails.
+    pub async fn query_bridges(
+        &self,
+        query: Option<&str>,
+        bridge_kind: Option<&str>,
+        language: Option<&str>,
+        file_path: Option<&str>,
+    ) -> Result<Vec<BridgeLinkDetail>, QueryError> {
+        let mut links = self
+            .storage
+            .query_bridge_links(file_path, bridge_kind)
+            .await?;
+
+        // Apply additional filters not supported by the storage layer
+        if let Some(q) = query {
+            let q_lower = q.to_lowercase();
+            links.retain(|l| {
+                l.export_binding_key.to_lowercase().contains(&q_lower)
+                    || l.import_binding_key.to_lowercase().contains(&q_lower)
+                    || l.export_symbol.to_lowercase().contains(&q_lower)
+                    || l.import_symbol.to_lowercase().contains(&q_lower)
+            });
+        }
+
+        if let Some(lang) = language {
+            let lang_lower = lang.to_lowercase();
+            links.retain(|l| {
+                l.export_language.to_lowercase() == lang_lower
+                    || l.import_language.to_lowercase() == lang_lower
+            });
+        }
+
+        Ok(links)
     }
 
     /// Read source file lines for symbol context display.
