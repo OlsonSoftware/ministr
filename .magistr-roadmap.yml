@@ -829,7 +829,7 @@ phases:
   - text: Add Streamable HTTP (SSE) transport alongside stdio via rmcp for remote/multi-client deployments
     checked: true
   - text: Implement resource subscriptions for iris://status — push coherence alerts when files change
-    checked: false
+    checked: true
   - text: Async task support for iris_fetch and iris_clone — return task handle, poll for completion
     checked: false
 - id: C8

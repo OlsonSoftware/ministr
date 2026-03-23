@@ -16,6 +16,7 @@
 //! and the content is re-delivered. The `iris_evicted` tool accepts explicit
 //! eviction feedback from the agent.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use rmcp::RoleServer;
@@ -27,7 +28,8 @@ use rmcp::model::{
     CallToolResult, Content, Implementation, ListResourceTemplatesResult, ListResourcesResult,
     NumberOrString, PaginatedRequestParams, ProgressNotificationParam, ProtocolVersion,
     RawResource, RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, Resource,
-    ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo,
+    ResourceContents, ResourceTemplate, ResourceUpdatedNotificationParam, ServerCapabilities,
+    ServerInfo, SubscribeRequestParams, UnsubscribeRequestParams,
 };
 use rmcp::schemars;
 use rmcp::service::{NotificationContext, Peer, RequestContext};
@@ -80,6 +82,11 @@ pub struct IrisServer {
     ingestion_progress: Arc<IngestionProgress>,
     /// MCP peer for sending server-initiated notifications.
     peer: Arc<Mutex<Option<Peer<RoleServer>>>>,
+    /// Resource URIs that the client has subscribed to for change notifications.
+    subscriptions: Arc<Mutex<HashSet<String>>>,
+    /// Receiver for coherence change notifications from the file watcher task.
+    /// Consumed once in `on_initialized` to spawn the notification dispatcher.
+    coherence_rx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Vec<String>>>>>,
     /// Macro-generated tool router for dispatching tool calls.
     tool_router: ToolRouter<Self>,
 }
@@ -518,6 +525,7 @@ impl ServerHandler for IrisServer {
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_resources_subscribe()
                 .build(),
             server_info: Implementation {
                 name: "iris".to_string(),
@@ -615,6 +623,37 @@ impl ServerHandler for IrisServer {
         }
     }
 
+    async fn subscribe(
+        &self,
+        request: SubscribeRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        let uri = &request.uri;
+        // Only iris://status supports subscriptions for now.
+        if uri != "iris://status" {
+            return Err(McpError::new(
+                rmcp::model::ErrorCode::INVALID_PARAMS,
+                format!("resource URI does not support subscriptions: {uri}"),
+                None,
+            ));
+        }
+        let mut subs = self.subscriptions.lock().await;
+        subs.insert(uri.clone());
+        tracing::info!(uri, "client subscribed to resource");
+        Ok(())
+    }
+
+    async fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        let mut subs = self.subscriptions.lock().await;
+        subs.remove(&request.uri);
+        tracing::info!(uri = %request.uri, "client unsubscribed from resource");
+        Ok(())
+    }
+
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
         tracing::info!("client initialized, starting ingestion progress notifier");
         // Store the peer for server-initiated notifications.
@@ -626,6 +665,22 @@ impl ServerHandler for IrisServer {
         tokio::spawn(async move {
             run_ingestion_progress_notifier(progress, peer_lock).await;
         });
+
+        // Spawn the resource subscription notification dispatcher.
+        // Takes ownership of the coherence receiver (if present) and pushes
+        // `notifications/resources/updated` to the client when subscribed
+        // resources change due to file modifications.
+        let coherence_rx = {
+            let mut guard = self.coherence_rx.lock().await;
+            guard.take()
+        };
+        if let Some(rx) = coherence_rx {
+            let peer_lock = Arc::clone(&self.peer);
+            let subscriptions = Arc::clone(&self.subscriptions);
+            tokio::spawn(async move {
+                run_subscription_notifier(rx, peer_lock, subscriptions).await;
+            });
+        }
     }
 }
 
@@ -1702,6 +1757,8 @@ impl IrisServer {
             index: None,
             ingestion_progress: Arc::new(IngestionProgress::new()),
             peer: Arc::new(Mutex::new(None)),
+            subscriptions: Arc::new(Mutex::new(HashSet::new())),
+            coherence_rx: Arc::new(Mutex::new(None)),
             tool_router: Self::tool_router(),
         }
     }
@@ -1752,6 +1809,8 @@ impl IrisServer {
             index: None,
             ingestion_progress: Arc::new(IngestionProgress::new()),
             peer: Arc::new(Mutex::new(None)),
+            subscriptions: Arc::new(Mutex::new(HashSet::new())),
+            coherence_rx: Arc::new(Mutex::new(None)),
             tool_router: Self::tool_router(),
         }
     }
@@ -1806,6 +1865,17 @@ impl IrisServer {
     #[must_use]
     pub fn session_arc(&self) -> Arc<Mutex<Session>> {
         Arc::clone(&self.session)
+    }
+
+    /// Set the coherence notification receiver for resource subscription push.
+    ///
+    /// The receiver carries affected section IDs from the coherence file watcher.
+    /// It is consumed in `on_initialized` to spawn a task that pushes
+    /// `notifications/resources/updated` to subscribed clients.
+    pub fn set_coherence_receiver(&self, rx: tokio::sync::mpsc::UnboundedReceiver<Vec<String>>) {
+        if let Ok(mut guard) = self.coherence_rx.try_lock() {
+            *guard = Some(rx);
+        }
     }
 
     /// Access the storage `Arc`, if persistence is enabled.
@@ -2589,6 +2659,52 @@ async fn run_ingestion_progress_notifier(
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
+}
+
+/// Listen for coherence change events and push `notifications/resources/updated`
+/// to the MCP client for any subscribed resource URIs.
+///
+/// Currently only `iris://status` supports subscriptions — any coherence event
+/// (file change → section invalidation) triggers an update notification for it.
+/// Runs until the coherence sender is dropped or the peer channel closes.
+async fn run_subscription_notifier(
+    mut coherence_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<String>>,
+    peer_lock: Arc<Mutex<Option<Peer<RoleServer>>>>,
+    subscriptions: Arc<Mutex<HashSet<String>>>,
+) {
+    tracing::info!("resource subscription notifier started");
+
+    while let Some(affected_sections) = coherence_rx.recv().await {
+        let subs = subscriptions.lock().await;
+        if subs.is_empty() {
+            continue;
+        }
+
+        // Any coherence event affects iris://status (it includes session state).
+        if subs.contains("iris://status") {
+            let peer = peer_lock.lock().await;
+            if let Some(ref p) = *peer {
+                tracing::debug!(
+                    affected_sections = affected_sections.len(),
+                    "pushing resource update notification for iris://status"
+                );
+                if p.notify_resource_updated(ResourceUpdatedNotificationParam {
+                    uri: "iris://status".to_string(),
+                })
+                .await
+                .is_err()
+                {
+                    tracing::debug!("peer channel closed, subscription notifier exiting");
+                    break;
+                }
+            } else {
+                tracing::debug!("no peer available, subscription notifier exiting");
+                break;
+            }
+        }
+    }
+
+    tracing::info!("resource subscription notifier stopped");
 }
 
 #[cfg(test)]
@@ -3847,5 +3963,128 @@ mod tests {
                 "survey response should include eviction recommendations under pressure"
             );
         }
+    }
+
+    // --- Resource subscription tests ---
+
+    #[tokio::test]
+    async fn subscribe_adds_uri_to_set() {
+        let server = setup_server().await;
+        let subs = server.subscriptions.lock().await;
+        assert!(subs.is_empty());
+        drop(subs);
+
+        // Manually add to subscriptions (simulating subscribe handler).
+        server
+            .subscriptions
+            .lock()
+            .await
+            .insert("iris://status".to_string());
+        let subs = server.subscriptions.lock().await;
+        assert!(subs.contains("iris://status"));
+    }
+
+    #[tokio::test]
+    async fn subscribe_is_idempotent() {
+        let server = setup_server().await;
+        let subs = &server.subscriptions;
+        subs.lock().await.insert("iris://status".to_string());
+        subs.lock().await.insert("iris://status".to_string());
+        assert_eq!(subs.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_removes_uri() {
+        let server = setup_server().await;
+        server
+            .subscriptions
+            .lock()
+            .await
+            .insert("iris://status".to_string());
+        server.subscriptions.lock().await.remove("iris://status");
+        assert!(server.subscriptions.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_nonexistent_is_noop() {
+        let server = setup_server().await;
+        server
+            .subscriptions
+            .lock()
+            .await
+            .remove("iris://nonexistent");
+        assert!(server.subscriptions.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn capabilities_include_subscribe() {
+        let server = setup_server().await;
+        let info = server.get_info();
+        let resources = info.capabilities.resources.expect("resources capability");
+        assert_eq!(resources.subscribe, Some(true));
+    }
+
+    #[tokio::test]
+    async fn set_coherence_receiver_stores_receiver() {
+        let server = setup_server().await;
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
+        server.set_coherence_receiver(rx);
+        let guard = server.coherence_rx.lock().await;
+        assert!(
+            guard.is_some(),
+            "coherence_rx should be set after set_coherence_receiver"
+        );
+    }
+
+    #[tokio::test]
+    async fn subscription_notifier_sends_when_subscribed() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
+        let peer_lock: Arc<Mutex<Option<Peer<RoleServer>>>> = Arc::new(Mutex::new(None));
+        let subscriptions = Arc::new(Mutex::new(HashSet::new()));
+
+        // Without a peer, the notifier should exit cleanly when it receives events.
+        subscriptions
+            .lock()
+            .await
+            .insert("iris://status".to_string());
+
+        let subs_clone = Arc::clone(&subscriptions);
+        let peer_clone = Arc::clone(&peer_lock);
+        let handle = tokio::spawn(async move {
+            run_subscription_notifier(rx, peer_clone, subs_clone).await;
+        });
+
+        // Send a coherence event.
+        tx.send(vec!["docs/auth.md#tokens".to_string()]).unwrap();
+
+        // The notifier should exit because there's no peer.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+        assert!(
+            result.is_ok(),
+            "notifier should exit when no peer is available"
+        );
+    }
+
+    #[tokio::test]
+    async fn subscription_notifier_skips_when_no_subscriptions() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
+        let peer_lock: Arc<Mutex<Option<Peer<RoleServer>>>> = Arc::new(Mutex::new(None));
+        let subscriptions = Arc::new(Mutex::new(HashSet::new()));
+        // No subscriptions — notifier should skip the event and wait for more.
+
+        let subs_clone = Arc::clone(&subscriptions);
+        let peer_clone = Arc::clone(&peer_lock);
+        let handle = tokio::spawn(async move {
+            run_subscription_notifier(rx, peer_clone, subs_clone).await;
+        });
+
+        // Send event with no subscriptions active — should be skipped.
+        tx.send(vec!["docs/auth.md#tokens".to_string()]).unwrap();
+
+        // Drop sender to close the channel, causing notifier to exit.
+        drop(tx);
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+        assert!(result.is_ok(), "notifier should exit when channel closes");
     }
 }

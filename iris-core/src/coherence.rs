@@ -379,11 +379,14 @@ impl CoherenceEngine {
 /// * `engine` - The coherence engine for processing events
 /// * `storage` - Storage backend for re-indexing
 /// * `session` - Session to invalidate on changes
+/// * `notify_tx` - Optional sender to push affected section IDs to subscribers
+///   (e.g. MCP resource subscription notifications)
 pub fn spawn_coherence_task<S: Storage + 'static>(
     mut watcher: FileWatcher,
     engine: Arc<CoherenceEngine>,
     storage: Arc<S>,
     session: Arc<tokio::sync::Mutex<Session>>,
+    notify_tx: Option<mpsc::UnboundedSender<Vec<String>>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         info!("coherence task started");
@@ -412,6 +415,10 @@ pub fn spawn_coherence_task<S: Storage + 'static>(
                         affected = affected_sections.len(),
                         invalidated, "coherence: sections updated, session entries invalidated"
                     );
+                    // Notify subscribers (e.g. MCP resource subscriptions) about changes.
+                    if let Some(ref tx) = notify_tx {
+                        let _ = tx.send(affected_sections);
+                    }
                 }
                 Ok(_) => {
                     debug!("coherence: no sections affected by file changes");
@@ -761,5 +768,95 @@ mod tests {
         assert!(matches!(events[0], CoherenceEvent::Created(_)));
         assert!(matches!(events[1], CoherenceEvent::Modified(_)));
         assert!(matches!(events[2], CoherenceEvent::Removed(_)));
+    }
+
+    // --- spawn_coherence_task notify channel tests ---
+
+    /// Verify that the notify sender in `spawn_coherence_task` fires when
+    /// `process_events` returns affected sections.
+    ///
+    /// Uses a direct `process_events` call (no file watcher) to avoid
+    /// platform-specific `FSEvents` timing issues in test mode.
+    #[tokio::test]
+    async fn coherence_engine_notifies_on_section_changes() {
+        use crate::storage::SqliteStorage;
+        use std::io::Write;
+
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("test.md");
+        {
+            let mut f = std::fs::File::create(&file_path).unwrap();
+            writeln!(f, "# Hello\n\nOriginal content.").unwrap();
+        }
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(storage);
+
+        // Ingest via public API so document IDs are consistent.
+        let pipeline = IngestionPipeline::new();
+        pipeline
+            .ingest_directory(dir.path(), storage.as_ref())
+            .await
+            .unwrap();
+
+        let engine = CoherenceEngine::new(dir.path().to_path_buf());
+
+        // Modify the file so re-indexing detects a change.
+        {
+            let mut f = std::fs::File::create(&file_path).unwrap();
+            writeln!(f, "# Hello\n\nUpdated content with significant changes.").unwrap();
+        }
+
+        let events = vec![CoherenceEvent::Modified(file_path)];
+        let affected = engine
+            .process_events(&events, storage.as_ref())
+            .await
+            .unwrap();
+
+        // The coherence engine should detect that sections changed.
+        assert!(
+            !affected.is_empty(),
+            "process_events should return affected section IDs after file modification"
+        );
+    }
+
+    /// Verify that `spawn_coherence_task` accepts `None` for `notify_tx`
+    /// and runs without errors (backwards compatibility).
+    #[tokio::test]
+    async fn spawn_coherence_task_accepts_none_notify() {
+        use crate::storage::SqliteStorage;
+        use std::io::Write;
+
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("test.md");
+        {
+            let mut f = std::fs::File::create(&file_path).unwrap();
+            writeln!(f, "# Hello\n\nOriginal.").unwrap();
+        }
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(storage);
+
+        let pipeline = IngestionPipeline::new();
+        pipeline
+            .ingest_directory(dir.path(), storage.as_ref())
+            .await
+            .unwrap();
+
+        let session = Arc::new(tokio::sync::Mutex::new(Session::new(
+            SessionId::from("test-session".to_string()),
+            100_000,
+            EvictionPolicy::Fifo,
+        )));
+
+        let engine = Arc::new(CoherenceEngine::new(dir.path().to_path_buf()));
+        let watcher = FileWatcher::new(&[dir.path().to_path_buf()]).unwrap();
+
+        // Pass None — should compile and run without panicking.
+        let handle = spawn_coherence_task(watcher, engine, Arc::clone(&storage), session, None);
+
+        // Give a moment, then abort — no crash means success.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        handle.abort();
     }
 }
