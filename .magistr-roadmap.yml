@@ -1015,7 +1015,7 @@ phases:
 - id: L1
   name: Extended Language Refinements
   tagline: First-class symbol extraction for the languages developers actually use
-  status: in_progress
+  status: done
   problem: Generic extractor misclassifies symbols in common languages; only 4 of 30+ supported grammars have dedicated refinements
   solution: Add LanguageRefinement implementations for high-impact languages (Java, C/C++, Swift, Kotlin), improve generic fallback heuristics, validate with cross-language test matrix
   tasks:
@@ -1030,7 +1030,7 @@ phases:
   - text: 'Generic extractor improvements: decorator/annotation extraction, nested type support, better visibility inference for class-based languages'
     checked: true
   - text: 'Cross-language test matrix: fixture files for 15+ languages validating symbol extraction quality against expected output'
-    checked: false
+    checked: true
 - id: L2
   name: Cross-Language Bridge Framework
   tagline: Follow the call across the language boundary
