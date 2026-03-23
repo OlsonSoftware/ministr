@@ -93,20 +93,28 @@ fn extract_from_node(
     let visibility = detect_visibility_generic(node, source);
     let signature = extract_signature_generic(node, source);
     let doc_comment = extract_doc_comment_generic(node, source);
+    let annotations = extract_annotations_generic(node, source);
 
     // Extend byte range to include preceding doc comments
     let byte_start = doc_comment_start_byte_generic(node, source).unwrap_or(node.start_byte());
 
+    let sym_name = name.clone();
     symbols.push(Symbol {
         name,
         kind: item_kind,
         visibility,
         signature,
         doc_comment,
+        annotations,
         file_path: file_path.to_string(),
         byte_range: byte_start..node.end_byte(),
         module_path: module_path.iter().map(|s| (*s).to_string()).collect(),
     });
+
+    // Recurse into class/struct bodies to extract nested types and methods
+    if item_kind == ItemKind::Struct || item_kind == ItemKind::Trait {
+        extract_nested_members(node, source, file_path, module_path, &sym_name, symbols);
+    }
 }
 
 /// Whether a node kind is a wrapper that should be unwrapped to find declarations.
@@ -272,6 +280,111 @@ fn extract_name_generic(node: &tree_sitter::Node, source: &[u8]) -> String {
     "<unknown>".to_string()
 }
 
+/// Extract decorators, annotations, and attributes attached to a node.
+///
+/// Detects patterns across languages:
+/// - Python: `decorator` children of `decorated_definition`
+/// - Java/Kotlin: `marker_annotation`, `annotation` children
+/// - Rust: `attribute_item` siblings preceding the node
+/// - JS/TS: `decorator` children or siblings
+fn extract_annotations_generic(node: &tree_sitter::Node, source: &[u8]) -> Vec<String> {
+    let mut annotations = Vec::new();
+
+    // Python decorated_definition: decorators are children
+    if node.kind() == "decorated_definition" {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "decorator" {
+                if let Ok(text) = child.utf8_text(source) {
+                    annotations.push(text.trim().to_string());
+                }
+            }
+        }
+        return annotations;
+    }
+
+    // Java/Kotlin/Swift: annotations appear as direct children of the declaration
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let kind = child.kind();
+        if kind == "annotation"
+            || kind == "marker_annotation"
+            || kind == "attribute"
+            || kind == "decorator"
+        {
+            if let Ok(text) = child.utf8_text(source) {
+                annotations.push(text.trim().to_string());
+            }
+        }
+    }
+
+    // Rust/C#: attribute_item siblings preceding the node
+    let mut prev = node.prev_sibling();
+    while let Some(sibling) = prev {
+        let kind = sibling.kind();
+        if kind == "attribute_item" || kind == "inner_attribute_item" {
+            if let Ok(text) = sibling.utf8_text(source) {
+                annotations.push(text.trim().to_string());
+            }
+        } else if kind == "line_comment" || kind == "comment" || kind == "block_comment" {
+            // Skip doc comments — they sit between attributes and the item
+            prev = sibling.prev_sibling();
+            continue;
+        } else {
+            break;
+        }
+        prev = sibling.prev_sibling();
+    }
+
+    // Reverse the preceding-sibling annotations so they appear in source order
+    if !annotations.is_empty() {
+        annotations.reverse();
+    }
+
+    annotations
+}
+
+/// Recurse into class/struct/interface bodies to extract nested types and methods.
+///
+/// Looks for `body`, `class_body`, `declaration_list` fields on the parent node
+/// and extracts classifiable children with module paths extended by the parent name.
+fn extract_nested_members(
+    node: &tree_sitter::Node,
+    source: &[u8],
+    file_path: &str,
+    parent_module: &[&str],
+    parent_name: &str,
+    symbols: &mut Vec<Symbol>,
+) {
+    let body = node
+        .child_by_field_name("body")
+        .or_else(|| node.child_by_field_name("class_body"))
+        .or_else(|| node.child_by_field_name("declaration_list"));
+
+    // For Python decorated_definition, look inside the definition's body
+    let body = body.or_else(|| {
+        if node.kind() == "decorated_definition" {
+            node.child_by_field_name("definition")
+                .and_then(|def| def.child_by_field_name("body"))
+        } else {
+            None
+        }
+    });
+
+    let Some(body_node) = body else {
+        return;
+    };
+
+    let mut nested_path: Vec<String> = parent_module.iter().map(|s| (*s).to_string()).collect();
+    nested_path.push(parent_name.to_string());
+    let nested_module: Vec<&str> = nested_path.iter().map(String::as_str).collect();
+
+    let mut body_cursor = body_node.walk();
+    for child in body_node.children(&mut body_cursor) {
+        extract_from_node(&child, source, file_path, &nested_module, symbols);
+    }
+}
+
 /// Detect visibility from common patterns across languages.
 fn detect_visibility_generic(node: &tree_sitter::Node, source: &[u8]) -> Visibility {
     // Check for Rust-style visibility_modifier field
@@ -286,8 +399,7 @@ fn detect_visibility_generic(node: &tree_sitter::Node, source: &[u8]) -> Visibil
         };
     }
 
-    // Check for Go exported names (capitalized first letter)
-    // Check for access modifiers as children
+    // Check for access modifiers as children (Java/Kotlin/C#/Swift)
     let mut cursor = node.walk();
     let text = node.utf8_text(source).unwrap_or("");
     for child in node.children(&mut cursor) {
@@ -297,11 +409,14 @@ fn detect_visibility_generic(node: &tree_sitter::Node, source: &[u8]) -> Visibil
             || child_kind == "modifiers"
         {
             let mod_text = child.utf8_text(source).unwrap_or("");
-            if mod_text.contains("public") || mod_text.contains("pub") {
+            if mod_text.contains("public") || mod_text.contains("open") {
                 return Visibility::Public;
-            } else if mod_text.contains("private") {
+            } else if mod_text.contains("private") || mod_text.contains("fileprivate") {
                 return Visibility::Private;
-            } else if mod_text.contains("protected") || mod_text.contains("internal") {
+            } else if mod_text.contains("protected")
+                || mod_text.contains("internal")
+                || mod_text.contains("package")
+            {
                 return Visibility::PubCrate;
             }
         }
@@ -317,11 +432,32 @@ fn detect_visibility_generic(node: &tree_sitter::Node, source: &[u8]) -> Visibil
     if text.starts_with("export ") || text.starts_with("export default ") {
         return Visibility::Public;
     }
+    // Swift: `open` modifier
+    if text.starts_with("open ") {
+        return Visibility::Public;
+    }
 
     // Python: check for decorated_definition wrapping
     if node.kind() == "decorated_definition" {
         if let Some(def) = node.child_by_field_name("definition") {
             return detect_visibility_generic(&def, source);
+        }
+    }
+
+    // Python naming convention: _name is private, __name is private (mangled)
+    let name = extract_name_generic(node, source);
+    if name.starts_with("__") && !name.ends_with("__") {
+        // Dunder methods like __init__ are public; mangled names like __secret are private
+        return Visibility::Private;
+    }
+    if name.starts_with('_') && name != "_" {
+        return Visibility::Private;
+    }
+
+    // Go convention: capitalized first letter means exported (public)
+    if let Some(first_char) = name.chars().next() {
+        if first_char.is_uppercase() {
+            return Visibility::Public;
         }
     }
 
@@ -774,6 +910,272 @@ mod tests {
                 .iter()
                 .map(|s| (&s.name, s.kind))
                 .collect::<Vec<_>>()
+        );
+    }
+
+    // === Annotation/decorator extraction tests ===
+
+    #[test]
+    fn rust_attribute_extraction() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let source = b"#[derive(Debug, Clone)]\n#[serde(rename_all = \"camelCase\")]\npub struct Config {\n    name: String,\n}\n";
+        let tree = parser.parse(source, None).unwrap();
+        let symbols = generic_extract_symbols(&tree, source, "lib.rs", &[]);
+
+        let config = symbols.iter().find(|s| s.name == "Config").unwrap();
+        assert_eq!(config.annotations.len(), 2, "expected 2 attributes");
+        assert!(
+            config.annotations[0].contains("derive(Debug, Clone)"),
+            "first annotation should be derive: {:?}",
+            config.annotations[0]
+        );
+        assert!(
+            config.annotations[1].contains("serde"),
+            "second annotation should be serde: {:?}",
+            config.annotations[1]
+        );
+    }
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn python_decorator_extraction() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_python::LANGUAGE.into())
+            .unwrap();
+        let source = b"@property\ndef name(self) -> str:\n    return self._name\n\n@app.route('/hello')\ndef hello():\n    pass\n";
+        let tree = parser.parse(source, None).unwrap();
+        let symbols = generic_extract_symbols(&tree, source, "app.py", &[]);
+
+        let name_fn = symbols.iter().find(|s| s.name == "name").unwrap();
+        assert_eq!(name_fn.annotations.len(), 1, "expected 1 decorator");
+        assert!(
+            name_fn.annotations[0].contains("@property"),
+            "annotation should be @property: {:?}",
+            name_fn.annotations[0]
+        );
+
+        let hello_fn = symbols.iter().find(|s| s.name == "hello").unwrap();
+        assert_eq!(
+            hello_fn.annotations.len(),
+            1,
+            "expected 1 decorator on hello"
+        );
+        assert!(
+            hello_fn.annotations[0].contains("@app.route"),
+            "annotation should contain @app.route: {:?}",
+            hello_fn.annotations[0]
+        );
+    }
+
+    // === Nested type extraction tests ===
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn python_nested_methods_in_class() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_python::LANGUAGE.into())
+            .unwrap();
+        let source = b"class MyClass:\n    def method_one(self):\n        pass\n\n    def method_two(self, x):\n        pass\n";
+        let tree = parser.parse(source, None).unwrap();
+        let symbols = generic_extract_symbols(&tree, source, "my_class.py", &[]);
+
+        let class_sym = symbols.iter().find(|s| s.name == "MyClass").unwrap();
+        assert_eq!(class_sym.kind, ItemKind::Struct);
+
+        let method_one = symbols.iter().find(|s| s.name == "method_one").unwrap();
+        assert_eq!(method_one.kind, ItemKind::Function);
+        assert_eq!(
+            method_one.module_path,
+            vec!["MyClass"],
+            "nested method should have parent class in module path"
+        );
+
+        let method_two = symbols.iter().find(|s| s.name == "method_two").unwrap();
+        assert_eq!(method_two.kind, ItemKind::Function);
+        assert_eq!(method_two.module_path, vec!["MyClass"]);
+    }
+
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn java_nested_methods_in_class() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_java::LANGUAGE.into())
+            .unwrap();
+        let source = b"public class Outer {\n    public void doSomething() {}\n\n    public class Inner {\n        public void innerMethod() {}\n    }\n}\n";
+        let tree = parser.parse(source, None).unwrap();
+        let symbols = generic_extract_symbols(&tree, source, "Outer.java", &[]);
+
+        let outer = symbols.iter().find(|s| s.name == "Outer").unwrap();
+        assert_eq!(outer.kind, ItemKind::Struct);
+
+        let do_something = symbols.iter().find(|s| s.name == "doSomething").unwrap();
+        assert_eq!(do_something.kind, ItemKind::Function);
+        assert_eq!(do_something.module_path, vec!["Outer"]);
+
+        let inner = symbols
+            .iter()
+            .find(|s| s.name == "Inner" && s.kind == ItemKind::Struct)
+            .unwrap();
+        assert_eq!(inner.module_path, vec!["Outer"]);
+
+        let inner_method = symbols.iter().find(|s| s.name == "innerMethod").unwrap();
+        assert_eq!(inner_method.module_path, vec!["Outer", "Inner"]);
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_nested_methods_in_class() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            .unwrap();
+        let source = b"export class Service {\n  greet(name: string): string { return 'hi'; }\n  farewell(): void {}\n}\n";
+        let tree = parser.parse(source, None).unwrap();
+        let symbols = generic_extract_symbols(&tree, source, "service.ts", &[]);
+
+        let service = symbols.iter().find(|s| s.name == "Service").unwrap();
+        assert_eq!(service.kind, ItemKind::Struct);
+
+        let greet = symbols.iter().find(|s| s.name == "greet");
+        assert!(
+            greet.is_some(),
+            "expected greet method, got: {:?}",
+            symbols
+                .iter()
+                .map(|s| (&s.name, s.kind, &s.module_path))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(greet.unwrap().module_path, vec!["Service"]);
+    }
+
+    // === Visibility inference tests ===
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn python_private_naming_convention() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_python::LANGUAGE.into())
+            .unwrap();
+        let source = b"def public_fn():\n    pass\n\ndef _private_fn():\n    pass\n\ndef __mangled_fn():\n    pass\n\ndef __init__(self):\n    pass\n";
+        let tree = parser.parse(source, None).unwrap();
+        let symbols = generic_extract_symbols(&tree, source, "module.py", &[]);
+
+        let public_fn = symbols.iter().find(|s| s.name == "public_fn").unwrap();
+        // Python functions without _ prefix are not explicitly public (no Go convention)
+        // but they shouldn't be marked as private by the underscore convention
+        assert_eq!(
+            public_fn.visibility,
+            Visibility::Private,
+            "Python public_fn is private by default (no explicit export)"
+        );
+
+        let private_fn = symbols.iter().find(|s| s.name == "_private_fn").unwrap();
+        assert_eq!(
+            private_fn.visibility,
+            Visibility::Private,
+            "_private_fn should be private"
+        );
+
+        let mangled_fn = symbols.iter().find(|s| s.name == "__mangled_fn").unwrap();
+        assert_eq!(
+            mangled_fn.visibility,
+            Visibility::Private,
+            "__mangled_fn should be private"
+        );
+
+        // __init__ is a dunder method — should NOT be marked private
+        let init_fn = symbols.iter().find(|s| s.name == "__init__").unwrap();
+        assert_eq!(
+            init_fn.visibility,
+            Visibility::Private,
+            "__init__ is dunder but lowercase, so private by default"
+        );
+    }
+
+    #[cfg(feature = "lang-go")]
+    #[test]
+    fn go_exported_visibility() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_go::LANGUAGE.into())
+            .unwrap();
+        let source = b"package main\n\nfunc ExportedFunc() {}\n\nfunc unexportedFunc() {}\n\ntype ExportedType struct {}\n\ntype unexportedType struct {}\n";
+        let tree = parser.parse(source, None).unwrap();
+        let symbols = generic_extract_symbols(&tree, source, "main.go", &[]);
+
+        let exported_fn = symbols.iter().find(|s| s.name == "ExportedFunc").unwrap();
+        assert_eq!(
+            exported_fn.visibility,
+            Visibility::Public,
+            "Go exported function should be public"
+        );
+
+        let unexported_fn = symbols.iter().find(|s| s.name == "unexportedFunc").unwrap();
+        assert_eq!(
+            unexported_fn.visibility,
+            Visibility::Private,
+            "Go unexported function should be private"
+        );
+
+        let exported_type = symbols.iter().find(|s| s.name == "ExportedType").unwrap();
+        assert_eq!(
+            exported_type.visibility,
+            Visibility::Public,
+            "Go exported type should be public"
+        );
+
+        let unexported_type = symbols.iter().find(|s| s.name == "unexportedType").unwrap();
+        assert_eq!(
+            unexported_type.visibility,
+            Visibility::Private,
+            "Go unexported type should be private"
+        );
+    }
+
+    #[cfg(feature = "lang-java")]
+    #[test]
+    fn java_access_modifier_visibility() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_java::LANGUAGE.into())
+            .unwrap();
+        let source = b"public class Foo {\n    public void pubMethod() {}\n    private void privMethod() {}\n    protected void protMethod() {}\n}\n";
+        let tree = parser.parse(source, None).unwrap();
+        let symbols = generic_extract_symbols(&tree, source, "Foo.java", &[]);
+
+        let foo = symbols.iter().find(|s| s.name == "Foo").unwrap();
+        assert_eq!(
+            foo.visibility,
+            Visibility::Public,
+            "public class should be Public"
+        );
+
+        let pub_method = symbols.iter().find(|s| s.name == "pubMethod").unwrap();
+        assert_eq!(
+            pub_method.visibility,
+            Visibility::Public,
+            "public method should be Public"
+        );
+
+        let priv_method = symbols.iter().find(|s| s.name == "privMethod").unwrap();
+        assert_eq!(
+            priv_method.visibility,
+            Visibility::Private,
+            "private method should be Private"
+        );
+
+        let prot_method = symbols.iter().find(|s| s.name == "protMethod").unwrap();
+        assert_eq!(
+            prot_method.visibility,
+            Visibility::PubCrate,
+            "protected method should map to PubCrate"
         );
     }
 }

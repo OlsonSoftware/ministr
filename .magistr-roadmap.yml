@@ -1028,7 +1028,7 @@ phases:
   - text: 'Kotlin refinement: data class, object, companion object, fun, annotations (Tauri mobile plugins)'
     checked: true
   - text: 'Generic extractor improvements: decorator/annotation extraction, nested type support, better visibility inference for class-based languages'
-    checked: false
+    checked: true
   - text: 'Cross-language test matrix: fixture files for 15+ languages validating symbol extraction quality against expected output'
     checked: false
 - id: L2

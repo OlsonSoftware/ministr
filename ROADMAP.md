@@ -940,7 +940,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] C/C++ refinement: namespace, class, struct, template, function, header/impl split (.h/.c/.cpp/.hpp)
 - [x] Swift refinement: protocol, extension, struct, class, func, @objc annotations (Tauri mobile plugins)
 - [x] Kotlin refinement: data class, object, companion object, fun, annotations (Tauri mobile plugins)
-- [ ] Generic extractor improvements: decorator/annotation extraction, nested type support, better visibility inference for class-based languages
+- [x] Generic extractor improvements: decorator/annotation extraction, nested type support, better visibility inference for class-based languages
 - [ ] Cross-language test matrix: fixture files for 15+ languages validating symbol extraction quality against expected output
 
 ---
