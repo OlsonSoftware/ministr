@@ -362,6 +362,14 @@ pub struct TocParams {
         description = "Optional document ID to filter the table of contents to a single document"
     )]
     pub document_id: Option<String>,
+
+    /// Number of entries to skip (default: 0). Use with `limit` for pagination.
+    #[schemars(description = "Number of entries to skip (default: 0)")]
+    pub offset: Option<usize>,
+
+    /// Maximum number of entries to return (default: 100).
+    #[schemars(description = "Maximum number of entries to return (default: 100)")]
+    pub limit: Option<usize>,
 }
 
 /// Parameters for the `iris_fetch` tool.
@@ -699,10 +707,14 @@ struct BridgeEndpointSummary {
 struct CorpusStatsHeader {
     /// Number of documents in the corpus.
     documents: usize,
-    /// Number of sections across all documents.
+    /// Total number of sections across all documents (before pagination).
     sections: usize,
     /// Number of claims across all sections.
     claims: usize,
+    /// Offset of the first returned entry within the full list.
+    offset: usize,
+    /// Number of entries returned in this page.
+    returned: usize,
     /// Ingestion state: `"pending"`, `"running"`, or `"complete"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     ingestion_status: Option<String>,
@@ -1901,7 +1913,7 @@ impl IrisServer {
     /// orientation. Optionally filtered to a single document.
     #[tool(
         name = "iris_toc",
-        description = "Return a table of contents for the indexed corpus. Lists all documents and sections with metadata (heading path, depth, claim count, token count) but no text content. Optionally filter to a single document by ID.",
+        description = "Return a table of contents for the indexed corpus. Lists documents and sections with metadata (heading path, depth, claim count, token count) but no text content. Paginated: returns up to `limit` entries (default 100) starting at `offset` (default 0). Use `corpus_stats.sections` to know the total count. Optionally filter to a single document by ID.",
         output_schema = tool_output_schema::<ToolResponse<TocResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1926,9 +1938,15 @@ impl IrisServer {
                     doc_ids.dedup();
                     let total_documents = doc_ids.len();
 
+                    // Apply pagination
+                    let offset = params.offset.unwrap_or(0);
+                    let limit = params.limit.unwrap_or(100);
+                    let paginated: Vec<_> = entries.into_iter().skip(offset).take(limit).collect();
+                    let returned = paginated.len();
+
                     debug!(
                         total_documents,
-                        total_sections, total_claims, "iris_toc success"
+                        total_sections, total_claims, offset, returned, "iris_toc success"
                     );
 
                     let reg = self.registry.lock().await;
@@ -1961,10 +1979,12 @@ impl IrisServer {
                                     documents: total_documents,
                                     sections: total_sections,
                                     claims: total_claims,
+                                    offset,
+                                    returned,
                                     ingestion_status,
                                 },
                                 roots,
-                                entries,
+                                entries: paginated,
                             },
                             budget_status,
                         )
@@ -5175,7 +5195,11 @@ mod tests {
 
         // TOC doesn't deliver content, so budget stays normal
         let result = server
-            .toc(Parameters(TocParams { document_id: None }))
+            .toc(Parameters(TocParams {
+                document_id: None,
+                offset: None,
+                limit: None,
+            }))
             .await
             .unwrap();
         let text = extract_text(&result.content);
@@ -5206,7 +5230,11 @@ mod tests {
         // Now call toc — a tool that doesn't deliver content itself
         // but should still include eviction recommendations
         let result = server
-            .toc(Parameters(TocParams { document_id: None }))
+            .toc(Parameters(TocParams {
+                document_id: None,
+                offset: None,
+                limit: None,
+            }))
             .await
             .unwrap();
         let text = extract_text(&result.content);
@@ -6104,5 +6132,48 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(parsed["version"], "1.0");
+    }
+
+    #[tokio::test]
+    async fn toc_pagination_defaults_to_100() {
+        let server = setup_server().await;
+        let result = server
+            .toc(Parameters(TocParams {
+                document_id: None,
+                offset: None,
+                limit: None,
+            }))
+            .await
+            .unwrap();
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        // Our test corpus has 1 section — verify pagination metadata
+        assert_eq!(parsed["corpus_stats"]["sections"], 1);
+        assert_eq!(parsed["corpus_stats"]["offset"], 0);
+        assert_eq!(parsed["corpus_stats"]["returned"], 1);
+        assert_eq!(parsed["entries"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn toc_pagination_with_offset_and_limit() {
+        let server = setup_server().await;
+
+        // Offset past all entries → empty page
+        let result = server
+            .toc(Parameters(TocParams {
+                document_id: None,
+                offset: Some(100),
+                limit: Some(10),
+            }))
+            .await
+            .unwrap();
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(parsed["corpus_stats"]["sections"], 1);
+        assert_eq!(parsed["corpus_stats"]["offset"], 100);
+        assert_eq!(parsed["corpus_stats"]["returned"], 0);
+        assert!(parsed["entries"].as_array().unwrap().is_empty());
     }
 }
