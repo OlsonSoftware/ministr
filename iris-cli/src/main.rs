@@ -197,12 +197,19 @@ async fn init_infrastructure(
         .into_diagnostic()
         .wrap_err("failed to open content database")?;
 
-    // Initialize embedder.
-    let embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
+    // Initialize embedder with content-addressable cache.
+    let raw_embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
         iris_core::embedding::FastEmbedder::new(&config.default_model, None)
             .into_diagnostic()
             .wrap_err("failed to initialize embedding model")?,
     );
+    let embedding_cache = iris_core::embedding::cache::EmbeddingCache::new(storage.conn());
+    let embedder: Arc<dyn iris_core::embedding::Embedder> =
+        Arc::new(iris_core::embedding::CachedEmbedder::new(
+            raw_embedder,
+            embedding_cache,
+            &config.default_model,
+        ));
 
     // Initialize vector index.
     // If the SQLite DB is empty (fresh migration) but a stale vector index

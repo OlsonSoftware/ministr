@@ -5,10 +5,12 @@
 //! The [`FastEmbedder`] and [`FastSparseEmbedder`] implementations wrap the
 //! `fastembed` crate for local ONNX-based inference with automatic model download.
 
+pub mod cache;
 mod fastembed_impl;
 mod rerank;
 mod sparse;
 
+pub use cache::CachedEmbedder;
 pub use fastembed_impl::FastEmbedder;
 pub use rerank::FastReranker;
 pub use sparse::FastSparseEmbedder;

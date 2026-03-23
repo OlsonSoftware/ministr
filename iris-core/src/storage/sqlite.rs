@@ -72,6 +72,15 @@ impl SqliteStorage {
         })
     }
 
+    /// Get a clone of the underlying connection handle.
+    ///
+    /// Used by subsystems (e.g. embedding cache) that need synchronous
+    /// access to the same database.
+    #[must_use]
+    pub fn conn(&self) -> Arc<Mutex<Connection>> {
+        Arc::clone(&self.conn)
+    }
+
     /// Run a blocking closure against the connection inside `spawn_blocking`.
     async fn with_conn<F, T>(&self, f: F) -> Result<T, StorageError>
     where
