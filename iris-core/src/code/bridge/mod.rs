@@ -21,6 +21,7 @@
 
 pub mod detector;
 pub mod linker;
+pub mod tauri;
 
 use std::fmt;
 
