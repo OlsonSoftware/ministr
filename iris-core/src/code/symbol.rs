@@ -86,6 +86,7 @@ impl std::fmt::Display for Visibility {
 ///     visibility: Visibility::Public,
 ///     signature: "pub struct IrisConfig".into(),
 ///     doc_comment: Some("Configuration for iris.".into()),
+///     annotations: vec!["#[derive(Debug)]".into()],
 ///     file_path: "src/config.rs".into(),
 ///     byte_range: 100..250,
 ///     module_path: vec!["config".into()],
@@ -105,6 +106,10 @@ pub struct Symbol {
     pub signature: String,
     /// The `///` or `//!` doc comment text, if present.
     pub doc_comment: Option<String>,
+    /// Decorators, annotations, or attributes attached to this symbol.
+    ///
+    /// Examples: `@property`, `@Override`, `#[derive(Debug)]`, `@Component`.
+    pub annotations: Vec<String>,
     /// Source file path (relative to corpus root).
     pub file_path: String,
     /// Byte range in the source file covering the entire item (including doc comments).
@@ -166,6 +171,7 @@ pub fn extract_symbols(
             visibility,
             signature,
             doc_comment,
+            annotations: Vec::new(),
             file_path: file_path.to_string(),
             byte_range: byte_start..child.end_byte(),
             module_path: module_path.iter().map(|s| (*s).to_string()).collect(),
@@ -198,6 +204,7 @@ pub fn extract_symbols(
                         visibility: method_vis,
                         signature: method_sig,
                         doc_comment: method_doc,
+                        annotations: Vec::new(),
                         file_path: file_path.to_string(),
                         byte_range: method_start..body_child.end_byte(),
                         module_path: method_module.iter().map(|s| (*s).to_string()).collect(),
