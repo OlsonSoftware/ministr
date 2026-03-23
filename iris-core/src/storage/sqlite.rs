@@ -1313,8 +1313,8 @@ impl Storage for SqliteStorage {
             let mut stmt = conn
                 .prepare(
                     "INSERT OR REPLACE INTO symbols
-                     (id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                     (id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end, cyclomatic_complexity)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 )
                 .map_err(|e| StorageError::Database {
                     reason: e.to_string(),
@@ -1332,6 +1332,7 @@ impl Storage for SqliteStorage {
                     sym.module_path,
                     sym.line_start,
                     sym.line_end,
+                    sym.cyclomatic_complexity,
                 ])
                 .map_err(|e| StorageError::Database {
                     reason: format!("failed to insert symbol {}: {e}", sym.id),
@@ -1346,7 +1347,7 @@ impl Storage for SqliteStorage {
         let filter = filter.clone();
         self.with_conn(move |conn| {
             let mut sql = String::from(
-                "SELECT id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end
+                "SELECT id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end, cyclomatic_complexity
                  FROM symbols WHERE 1=1",
             );
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -1396,6 +1397,7 @@ impl Storage for SqliteStorage {
                         module_path: row.get(7)?,
                         line_start: row.get(8)?,
                         line_end: row.get(9)?,
+                        cyclomatic_complexity: row.get(10)?,
                     })
                 })
                 .map_err(|e| StorageError::Database {
@@ -1415,7 +1417,7 @@ impl Storage for SqliteStorage {
         self.with_conn(move |conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end
+                    "SELECT id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end, cyclomatic_complexity
                      FROM symbols WHERE id = ?1",
                 )
                 .map_err(|e| StorageError::Database {
@@ -1434,6 +1436,7 @@ impl Storage for SqliteStorage {
                     module_path: row.get(7)?,
                     line_start: row.get(8)?,
                     line_end: row.get(9)?,
+                    cyclomatic_complexity: row.get(10)?,
                 })
             })
             .optional()
@@ -1559,6 +1562,48 @@ impl Storage for SqliteStorage {
                 reason: e.to_string(),
             })?;
             Ok(())
+        })
+        .await
+    }
+
+    async fn transitive_caller_counts(
+        &self,
+        symbol_ids: &[SymbolId],
+    ) -> Result<std::collections::HashMap<SymbolId, u32>, StorageError> {
+        let symbol_ids = symbol_ids.to_vec();
+        self.with_conn(move |conn| {
+            let mut result = std::collections::HashMap::new();
+
+            // Use a recursive CTE per symbol to count transitive callers.
+            // Bounded to depth 10 to prevent runaway on cycles.
+            let sql = "
+                WITH RECURSIVE callers(id, depth) AS (
+                    SELECT from_symbol_id, 1
+                    FROM symbol_refs
+                    WHERE to_symbol_id = ?1 AND ref_kind = 'calls'
+                    UNION
+                    SELECT sr.from_symbol_id, c.depth + 1
+                    FROM symbol_refs sr
+                    JOIN callers c ON sr.to_symbol_id = c.id
+                    WHERE sr.ref_kind = 'calls' AND c.depth < 10
+                )
+                SELECT COUNT(DISTINCT id) FROM callers
+            ";
+
+            let mut stmt = conn.prepare(sql).map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+
+            for sid in &symbol_ids {
+                let count: u32 = stmt
+                    .query_row(rusqlite::params![sid.as_ref()], |row| row.get(0))
+                    .unwrap_or(0);
+                if count > 0 {
+                    result.insert(sid.clone(), count);
+                }
+            }
+
+            Ok(result)
         })
         .await
     }

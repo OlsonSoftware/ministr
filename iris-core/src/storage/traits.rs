@@ -179,6 +179,7 @@ pub struct GitCacheRecord {
 ///     module_path: "config".into(),
 ///     line_start: 10,
 ///     line_end: 25,
+///     cyclomatic_complexity: None,
 /// };
 /// assert_eq!(record.name, "IrisConfig");
 /// ```
@@ -204,6 +205,8 @@ pub struct SymbolRecord {
     pub line_start: u32,
     /// End line number (1-based, inclusive).
     pub line_end: u32,
+    /// Cyclomatic complexity (only set for function symbols).
+    pub cyclomatic_complexity: Option<u32>,
 }
 
 /// A stored cross-reference between two symbols.
@@ -524,4 +527,13 @@ pub trait Storage: Send + Sync {
         &self,
         file_path: &str,
     ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Compute transitive caller counts for a batch of symbols.
+    ///
+    /// Returns a map from symbol ID to the number of unique symbols that
+    /// transitively call into it (following `Calls` ref_kind edges).
+    fn transitive_caller_counts(
+        &self,
+        symbol_ids: &[SymbolId],
+    ) -> impl Future<Output = Result<std::collections::HashMap<SymbolId, u32>, StorageError>> + Send;
 }

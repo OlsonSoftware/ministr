@@ -1309,6 +1309,15 @@ where
             #[allow(clippy::cast_possible_truncation)]
             let line_end = content[..sym.byte_range.end].matches('\n').count() as u32 + 1;
 
+            // Compute cyclomatic complexity for function symbols
+            let cyclomatic_complexity = if sym.kind == crate::code::ItemKind::Function {
+                tree.root_node()
+                    .descendant_for_byte_range(sym.byte_range.start, sym.byte_range.end)
+                    .map(|node| crate::code::cyclomatic_complexity(&node, source))
+            } else {
+                None
+            };
+
             SymbolRecord {
                 id: SymbolId(symbol_id),
                 file_path: relative_path.to_string(),
@@ -1320,6 +1329,7 @@ where
                 module_path: module_str,
                 line_start,
                 line_end,
+                cyclomatic_complexity,
             }
         })
         .collect();
@@ -3245,6 +3255,7 @@ pub fn compute_hash(content: &str) -> String {
             line_end: 1,
             signature: String::new(),
             doc_comment: None,
+            cyclomatic_complexity: None,
         };
         let struct_sym = SymbolRecord {
             id: SymbolId::from("sym-test.rs::MyStruct".to_string()),
@@ -3257,6 +3268,7 @@ pub fn compute_hash(content: &str) -> String {
             line_end: 10,
             signature: String::new(),
             doc_comment: None,
+            cyclomatic_complexity: None,
         };
         // A target symbol in another file
         let target_sym = SymbolRecord {
@@ -3270,6 +3282,7 @@ pub fn compute_hash(content: &str) -> String {
             line_end: 5,
             signature: String::new(),
             doc_comment: None,
+            cyclomatic_complexity: None,
         };
 
         storage

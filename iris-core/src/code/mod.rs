@@ -15,6 +15,7 @@
 //! extraction using node kind heuristics common across grammars.
 
 pub(crate) mod ast_parser;
+mod complexity;
 pub mod generic_extractor;
 pub mod grammar;
 pub mod lang;
@@ -23,6 +24,7 @@ mod symbol;
 mod symbol_table;
 
 pub use ast_parser::{AstItem, AstParser, ItemKind, walk_top_level_items};
+pub use complexity::cyclomatic_complexity;
 pub use generic_extractor::generic_extract_symbols;
 pub use grammar::{ALL_CODE_EXTENSIONS, GrammarRegistry, LanguageGrammar};
 pub use symbol::{Symbol, Visibility, extract_symbols};

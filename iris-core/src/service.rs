@@ -750,6 +750,21 @@ impl QueryService {
         Ok(results)
     }
 
+    /// Compute transitive caller counts for a batch of symbols.
+    ///
+    /// Delegates to storage-level recursive CTE query. Returns a map from
+    /// symbol ID to the number of unique transitive callers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] if a database operation fails.
+    pub async fn transitive_caller_counts(
+        &self,
+        symbol_ids: &[SymbolId],
+    ) -> Result<std::collections::HashMap<SymbolId, u32>, QueryError> {
+        Ok(self.storage.transitive_caller_counts(symbol_ids).await?)
+    }
+
     /// Read source file lines for symbol context display.
     ///
     /// Returns the symbol's source lines with 3 lines of surrounding context.
