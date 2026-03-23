@@ -936,8 +936,8 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Java refinement: class, interface, enum, annotation types, method visibility modifiers, generics
-- [ ] C/C++ refinement: namespace, class, struct, template, function, header/impl split (.h/.c/.cpp/.hpp)
+- [x] Java refinement: class, interface, enum, annotation types, method visibility modifiers, generics
+- [x] C/C++ refinement: namespace, class, struct, template, function, header/impl split (.h/.c/.cpp/.hpp)
 - [ ] Swift refinement: protocol, extension, struct, class, func, @objc annotations (Tauri mobile plugins)
 - [ ] Kotlin refinement: data class, object, companion object, fun, annotations (Tauri mobile plugins)
 - [ ] Generic extractor improvements: decorator/annotation extraction, nested type support, better visibility inference for class-based languages

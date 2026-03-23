@@ -4,7 +4,10 @@
 //! language-specific node kind classification and name extraction on top of
 //! the generic extractor.
 
+mod c;
+mod cpp;
 mod go;
+mod java;
 mod python;
 mod rust;
 mod typescript;
@@ -40,6 +43,9 @@ pub fn refinement_for(language: &str) -> Option<Box<dyn LanguageRefinement>> {
         "python" => Some(Box::new(python::PythonRefinement)),
         "typescript" | "tsx" => Some(Box::new(typescript::TypeScriptRefinement)),
         "go" => Some(Box::new(go::GoRefinement)),
+        "java" => Some(Box::new(java::JavaRefinement)),
+        "c" => Some(Box::new(c::CRefinement)),
+        "cpp" => Some(Box::new(cpp::CppRefinement)),
         _ => None,
     }
 }
