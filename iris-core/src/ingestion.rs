@@ -359,7 +359,24 @@ impl IngestionPipeline {
         relative_path: &str,
         storage: &S,
     ) -> Result<FileResult, IngestionError> {
-        // Read file content
+        // Get file mtime for fast change detection
+        let file_mtime_ns = file_mtime_nanos(file_path).await;
+
+        // Check stored hash record — mtime fast-path avoids reading the file
+        let existing_hash = storage
+            .get_file_hash(relative_path)
+            .await
+            .map_err(IngestionError::from)?;
+
+        if let Some(ref existing) = existing_hash {
+            if let (Some(stored_mtime), Some(current_mtime)) = (existing.mtime_ns, file_mtime_ns) {
+                if stored_mtime == current_mtime {
+                    return Ok(FileResult::Skipped);
+                }
+            }
+        }
+
+        // mtime changed or unavailable — read and hash
         let content = tokio::fs::read(file_path)
             .await
             .map_err(|e| IngestionError::Io {
@@ -371,17 +388,19 @@ impl IngestionPipeline {
             path: file_path.to_path_buf(),
         })?;
 
-        // Compute content hash
         let hash = compute_sha256(&content_str);
-
-        // Check if file is unchanged
-        let existing_hash = storage
-            .get_file_hash(relative_path)
-            .await
-            .map_err(IngestionError::from)?;
 
         if let Some(ref existing) = existing_hash {
             if existing.content_hash == hash {
+                // Content unchanged despite mtime change — update stored mtime
+                storage
+                    .upsert_file_hash(&FileHashRecord {
+                        path: relative_path.to_string(),
+                        content_hash: hash,
+                        mtime_ns: file_mtime_ns,
+                    })
+                    .await
+                    .map_err(IngestionError::from)?;
                 return Ok(FileResult::Skipped);
             }
         }
@@ -452,6 +471,7 @@ impl IngestionPipeline {
             .upsert_file_hash(&FileHashRecord {
                 path: relative_path.to_string(),
                 content_hash: hash,
+                mtime_ns: file_mtime_ns,
             })
             .await
             .map_err(IngestionError::from)?;
@@ -563,6 +583,7 @@ impl IngestionPipeline {
             .upsert_file_hash(&FileHashRecord {
                 path: source_path.to_string(),
                 content_hash: hash,
+                mtime_ns: None,
             })
             .await
             .map_err(IngestionError::from)?;
@@ -692,6 +713,7 @@ impl IngestionPipeline {
             .upsert_file_hash(&FileHashRecord {
                 path: source_path.to_string(),
                 content_hash: hash,
+                mtime_ns: None,
             })
             .await
             .map_err(IngestionError::from)?;
@@ -892,6 +914,25 @@ impl IngestionPipeline {
             );
         }
 
+        // Manifest-level mtime fast skip: if all files have matching mtimes
+        // in the database and no files were added/removed, skip the entire
+        // ingestion loop. This turns a warm start from "read N files + hash"
+        // into "stat N files + 1 DB query".
+        if !files.is_empty() {
+            if let Ok(true) = all_files_unchanged_by_mtime(&files, paths, storage).await {
+                info!(
+                    files = files.len(),
+                    "all files unchanged (mtime fast skip) — skipping ingestion"
+                );
+                stats.files_skipped = files.len();
+                if let Some(ref progress) = self.progress {
+                    progress.start(files.len());
+                    progress.complete();
+                }
+                return Ok(stats);
+            }
+        }
+
         if let Some(ref progress) = self.progress {
             progress.start(files.len());
         }
@@ -966,6 +1007,7 @@ impl IngestionPipeline {
     }
 
     /// Ingest a single file with multi-resolution embedding.
+    #[allow(clippy::too_many_lines)]
     #[instrument(skip(self, storage, embedder, index), fields(path = %relative_path))]
     async fn ingest_file_with_embeddings<S, E, I>(
         &self,
@@ -980,7 +1022,25 @@ impl IngestionPipeline {
         E: Embedder + ?Sized,
         I: VectorIndex + ?Sized,
     {
-        // Read file content
+        // Get file mtime for fast change detection
+        let file_mtime_ns = file_mtime_nanos(file_path).await;
+
+        // Check stored hash record — mtime fast-path avoids reading the file
+        let existing_hash = storage
+            .get_file_hash(relative_path)
+            .await
+            .map_err(IngestionError::from)?;
+
+        if let Some(ref existing) = existing_hash {
+            // If mtime matches, the file content hasn't changed — skip without reading
+            if let (Some(stored_mtime), Some(current_mtime)) = (existing.mtime_ns, file_mtime_ns) {
+                if stored_mtime == current_mtime {
+                    return Ok(FileResult::Skipped);
+                }
+            }
+        }
+
+        // mtime changed (or unavailable) — read file and check content hash
         let content = tokio::fs::read(file_path)
             .await
             .map_err(|e| IngestionError::Io {
@@ -992,17 +1052,20 @@ impl IngestionPipeline {
             path: file_path.to_path_buf(),
         })?;
 
-        // Compute content hash
         let hash = compute_sha256(&content_str);
-
-        // Check if file is unchanged
-        let existing_hash = storage
-            .get_file_hash(relative_path)
-            .await
-            .map_err(IngestionError::from)?;
 
         if let Some(ref existing) = existing_hash {
             if existing.content_hash == hash {
+                // Content unchanged despite mtime change (e.g. file was touched).
+                // Update the stored mtime so the next check is fast.
+                storage
+                    .upsert_file_hash(&FileHashRecord {
+                        path: relative_path.to_string(),
+                        content_hash: hash,
+                        mtime_ns: file_mtime_ns,
+                    })
+                    .await
+                    .map_err(IngestionError::from)?;
                 return Ok(FileResult::Skipped);
             }
         }
@@ -1085,6 +1148,7 @@ impl IngestionPipeline {
             .upsert_file_hash(&FileHashRecord {
                 path: relative_path.to_string(),
                 content_hash: hash,
+                mtime_ns: file_mtime_ns,
             })
             .await
             .map_err(IngestionError::from)?;
@@ -1886,6 +1950,64 @@ pub fn compute_sha256(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// Get the file modification time as nanoseconds since the Unix epoch.
+///
+/// Returns `None` if the metadata cannot be read or the mtime cannot be
+/// represented as nanoseconds (pre-epoch files on some platforms).
+async fn file_mtime_nanos(path: &Path) -> Option<i64> {
+    let meta = tokio::fs::metadata(path).await.ok()?;
+    let mtime = meta.modified().ok()?;
+    let duration = mtime.duration_since(std::time::UNIX_EPOCH).ok()?;
+    i64::try_from(duration.as_nanos()).ok()
+}
+
+/// Check if all discovered files have unchanged mtimes compared to stored records.
+///
+/// Returns `true` when every file has a stored mtime and the current mtime matches,
+/// AND the number of stored records equals the number of discovered files (no
+/// additions or deletions). This enables skipping the entire ingestion loop.
+///
+/// Returns `false` if any mtime is missing or doesn't match, or on any error.
+async fn all_files_unchanged_by_mtime<S: Storage + ?Sized>(
+    files: &[PathBuf],
+    paths: &[PathBuf],
+    storage: &S,
+) -> Result<bool, IngestionError> {
+    let stored = storage
+        .list_file_hashes()
+        .await
+        .map_err(IngestionError::from)?;
+
+    // Build a lookup from relative path → stored mtime
+    let stored_map: std::collections::HashMap<&str, Option<i64>> = stored
+        .iter()
+        .map(|r| (r.path.as_str(), r.mtime_ns))
+        .collect();
+
+    // Quick count check: if file count changed, something was added/removed
+    if stored_map.len() != files.len() {
+        return Ok(false);
+    }
+
+    for file_path in files {
+        let relative = compute_relative_path(file_path, paths);
+        let Some(stored_mtime) = stored_map.get(relative.as_str()) else {
+            return Ok(false); // New file not in DB
+        };
+        let Some(stored_ns) = stored_mtime else {
+            return Ok(false); // No mtime stored (pre-migration data)
+        };
+        let Some(current_ns) = file_mtime_nanos(file_path).await else {
+            return Ok(false); // Can't read mtime
+        };
+        if *stored_ns != current_ns {
+            return Ok(false); // mtime changed
+        }
+    }
+
+    Ok(true)
 }
 
 /// Recursively enrich sections with claims and summaries.

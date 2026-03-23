@@ -115,7 +115,7 @@ struct ToolResponse<T: Serialize + schemars::JsonSchema> {
     /// True when background corpus ingestion is still running.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     indexing_in_progress: bool,
-    /// Human-readable ingestion status message (e.g. "Indexing 12/42 files").
+    /// Human-readable ingestion status message (e.g. "Checking 12/42 files").
     #[serde(skip_serializing_if = "Option::is_none")]
     indexing_message: Option<String>,
     /// Proactive eviction recommendations when budget pressure is elevated or critical.
@@ -2218,7 +2218,7 @@ impl IrisServer {
         let indexing_message = if indexing {
             let done = progress.files_done();
             let total = progress.files_total();
-            Some(format!("Indexing {done}/{total} files"))
+            Some(format!("Checking {done}/{total} files"))
         } else {
             None
         };
@@ -2896,7 +2896,7 @@ async fn run_ingestion_progress_notifier(
                         progress_token: token.clone(),
                         progress: total as f64,
                         total: Some(total as f64),
-                        message: Some("Indexing complete".to_string()),
+                        message: Some("Corpus ready".to_string()),
                     })
                     .await;
             }
@@ -2917,7 +2917,7 @@ async fn run_ingestion_progress_notifier(
                     progress_token: token.clone(),
                     progress: done as f64,
                     total: Some(total as f64),
-                    message: Some(format!("Indexing {done}/{total} files")),
+                    message: Some(format!("Checking {done}/{total} files")),
                 })
                 .await
                 .is_err()
