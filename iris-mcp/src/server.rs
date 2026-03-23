@@ -28,14 +28,14 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData as McpError;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, CancelTaskParams, CompleteRequestParams, CompleteResult,
-    CompletionInfo, Content, CreateTaskResult, GetPromptRequestParams, GetPromptResult,
-    GetTaskInfoParams, GetTaskPayloadResult, GetTaskResult, GetTaskResultParams, Implementation,
-    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListTasksResult,
-    NumberOrString, PaginatedRequestParams, ProgressNotificationParam, PromptMessage,
-    PromptMessageRole, RawResource, RawResourceTemplate, ReadResourceRequestParams,
-    ReadResourceResult, Reference, Resource, ResourceContents, ResourceTemplate,
-    ResourceUpdatedNotificationParam, ServerCapabilities, ServerInfo, SubscribeRequestParams,
-    UnsubscribeRequestParams,
+    CompletionInfo, Content, CreateTaskResult, ExtensionCapabilities, GetPromptRequestParams,
+    GetPromptResult, GetTaskInfoParams, GetTaskPayloadResult, GetTaskResult, GetTaskResultParams,
+    Implementation, InitializeRequestParams, InitializeResult, ListPromptsResult,
+    ListResourceTemplatesResult, ListResourcesResult, ListTasksResult, NumberOrString,
+    PaginatedRequestParams, ProgressNotificationParam, PromptMessage, PromptMessageRole,
+    RawResource, RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, Reference,
+    Resource, ResourceContents, ResourceTemplate, ResourceUpdatedNotificationParam,
+    ServerCapabilities, ServerInfo, SubscribeRequestParams, UnsubscribeRequestParams,
 };
 use rmcp::schemars;
 use rmcp::service::{NotificationContext, Peer, RequestContext};
@@ -68,6 +68,82 @@ use iris_core::web::fetcher::WebFetcher;
 
 use crate::task::{McpTaskManager, task_to_cancel_result, task_to_get_result};
 
+// ── iris MCP extension identifiers (SEP-1724) ──────────────────────────
+
+/// Extension identifier for the iris budget protocol.
+///
+/// Advertises that the server provides per-response budget status snapshots,
+/// proactive eviction recommendations at elevated pressure, and context-window
+/// token accounting.
+pub const EXT_BUDGET_PROTOCOL: &str = "dev.iris/budget-protocol";
+
+/// Extension identifier for iris coherence notifications.
+///
+/// Advertises that the server emits `notifications/resources/updated` when
+/// underlying corpus files change, enabling agents to refresh stale context.
+pub const EXT_COHERENCE: &str = "dev.iris/coherence";
+
+/// Extension identifier for iris multi-tier compression.
+///
+/// Advertises that the server supports compressing context at multiple
+/// granularity levels: full text, atomic claims, and summaries.
+pub const EXT_COMPRESSION: &str = "dev.iris/compression";
+
+/// Build the `ExtensionCapabilities` map advertising all iris extensions.
+fn iris_extension_capabilities() -> ExtensionCapabilities {
+    let mut extensions = ExtensionCapabilities::new();
+    extensions.insert(
+        EXT_BUDGET_PROTOCOL.to_string(),
+        serde_json::from_value(serde_json::json!({ "version": "1" }))
+            .expect("static JSON is valid"),
+    );
+    extensions.insert(
+        EXT_COHERENCE.to_string(),
+        serde_json::from_value(serde_json::json!({ "version": "1" }))
+            .expect("static JSON is valid"),
+    );
+    extensions.insert(
+        EXT_COMPRESSION.to_string(),
+        serde_json::from_value(serde_json::json!({
+            "version": "1",
+            "tiers": ["summary", "claims", "full"]
+        }))
+        .expect("static JSON is valid"),
+    );
+    extensions
+}
+
+/// Result of extension negotiation during the initialization handshake.
+///
+/// Each flag is `true` when **both** client and server advertise support for
+/// the corresponding extension. Tools can check these flags to adapt their
+/// behavior — e.g. omitting eviction recommendations when the client does not
+/// understand the budget protocol.
+#[derive(Debug, Clone, Default)]
+pub struct NegotiatedExtensions {
+    /// Client understands per-response budget status and eviction recommendations.
+    pub budget_protocol: bool,
+    /// Client can handle coherence change notifications via resource subscriptions.
+    pub coherence: bool,
+    /// Client supports multi-tier compression (summary / claims / full).
+    pub compression: bool,
+}
+
+impl NegotiatedExtensions {
+    /// Negotiate extensions by intersecting server-advertised extensions with
+    /// the client's declared extension support.
+    fn negotiate(client_extensions: Option<&ExtensionCapabilities>) -> Self {
+        let Some(client) = client_extensions else {
+            return Self::default();
+        };
+        Self {
+            budget_protocol: client.contains_key(EXT_BUDGET_PROTOCOL),
+            coherence: client.contains_key(EXT_COHERENCE),
+            compression: client.contains_key(EXT_COMPRESSION),
+        }
+    }
+}
+
 /// MCP server that exposes iris context-cache tools to LLM agents.
 ///
 /// `IrisServer` adapts the [`QueryService`] to the MCP protocol.
@@ -97,6 +173,11 @@ pub struct IrisServer {
     coherence_rx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Vec<String>>>>>,
     /// MCP Tasks manager for async fetch/clone operations (SEP-1686).
     task_manager: Arc<McpTaskManager>,
+    /// Result of MCP extension negotiation (SEP-1724).
+    ///
+    /// Populated during the initialization handshake by intersecting
+    /// server-advertised iris extensions with the client's declared support.
+    negotiated_extensions: Arc<Mutex<NegotiatedExtensions>>,
     /// Macro-generated tool router for dispatching tool calls.
     tool_router: ToolRouter<Self>,
     /// Macro-generated prompt router for dispatching prompt requests.
@@ -639,6 +720,7 @@ impl ServerHandler for IrisServer {
                 .enable_tasks()
                 .enable_prompts()
                 .enable_completions()
+                .enable_extensions_with(iris_extension_capabilities())
                 .build(),
         )
         .with_server_info(
@@ -664,6 +746,32 @@ impl ServerHandler for IrisServer {
              iris_definition to get the full source definition of a symbol, \
              and iris_references to find all references to a symbol.",
         )
+    }
+
+    // ── Extension Negotiation (SEP-1724) ─────────────────────────────
+
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, McpError> {
+        // Negotiate iris extensions by intersecting our capabilities with the
+        // client's declared extension support.
+        let negotiated = NegotiatedExtensions::negotiate(request.capabilities.extensions.as_ref());
+        tracing::info!(
+            budget = negotiated.budget_protocol,
+            coherence = negotiated.coherence,
+            compression = negotiated.compression,
+            "extension negotiation complete"
+        );
+        *self.negotiated_extensions.lock().await = negotiated;
+
+        // Preserve the default rmcp behavior: store peer info for later access.
+        if context.peer.peer_info().is_none() {
+            context.peer.set_peer_info(request);
+        }
+
+        Ok(self.get_info())
     }
 
     // ── MCP Tasks (SEP-1686) ────────────────────────────────────────
@@ -2452,6 +2560,7 @@ impl IrisServer {
             peer: Arc::new(Mutex::new(None)),
             subscriptions: Arc::new(Mutex::new(HashSet::new())),
             coherence_rx: Arc::new(Mutex::new(None)),
+            negotiated_extensions: Arc::new(Mutex::new(NegotiatedExtensions::default())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
         }
@@ -2506,6 +2615,7 @@ impl IrisServer {
             peer: Arc::new(Mutex::new(None)),
             subscriptions: Arc::new(Mutex::new(HashSet::new())),
             coherence_rx: Arc::new(Mutex::new(None)),
+            negotiated_extensions: Arc::new(Mutex::new(NegotiatedExtensions::default())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
         }
@@ -2515,6 +2625,14 @@ impl IrisServer {
     #[must_use]
     pub fn ingestion_progress_arc(&self) -> Arc<IngestionProgress> {
         Arc::clone(&self.ingestion_progress)
+    }
+
+    /// Get the negotiated extensions for this session.
+    ///
+    /// Returns a snapshot of the extension negotiation result. Only meaningful
+    /// after the initialization handshake has completed.
+    pub async fn negotiated_extensions(&self) -> NegotiatedExtensions {
+        self.negotiated_extensions.lock().await.clone()
     }
 
     /// Enable web fetching on this server.
@@ -3616,6 +3734,109 @@ mod tests {
         let info = server.get_info();
 
         assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
+    }
+
+    // --- Extension declaration tests ---
+
+    #[test]
+    fn server_info_advertises_iris_extensions() {
+        let server = setup_server_sync();
+        let info = server.get_info();
+
+        let extensions = info
+            .capabilities
+            .extensions
+            .as_ref()
+            .expect("extensions capability should be set");
+
+        assert!(
+            extensions.contains_key(EXT_BUDGET_PROTOCOL),
+            "should advertise budget-protocol extension"
+        );
+        assert!(
+            extensions.contains_key(EXT_COHERENCE),
+            "should advertise coherence extension"
+        );
+        assert!(
+            extensions.contains_key(EXT_COMPRESSION),
+            "should advertise compression extension"
+        );
+    }
+
+    #[test]
+    fn extension_budget_protocol_has_version() {
+        let server = setup_server_sync();
+        let info = server.get_info();
+        let extensions = info.capabilities.extensions.as_ref().unwrap();
+        let budget = &extensions[EXT_BUDGET_PROTOCOL];
+        assert_eq!(budget["version"], serde_json::json!("1"));
+    }
+
+    #[test]
+    fn extension_compression_has_tiers() {
+        let server = setup_server_sync();
+        let info = server.get_info();
+        let extensions = info.capabilities.extensions.as_ref().unwrap();
+        let compression = &extensions[EXT_COMPRESSION];
+        assert_eq!(
+            compression["tiers"],
+            serde_json::json!(["summary", "claims", "full"])
+        );
+    }
+
+    // --- Extension negotiation tests ---
+
+    #[test]
+    fn negotiation_with_no_client_extensions_yields_all_false() {
+        let result = NegotiatedExtensions::negotiate(None);
+        assert!(!result.budget_protocol);
+        assert!(!result.coherence);
+        assert!(!result.compression);
+    }
+
+    #[test]
+    fn negotiation_with_empty_client_extensions_yields_all_false() {
+        let empty = ExtensionCapabilities::new();
+        let result = NegotiatedExtensions::negotiate(Some(&empty));
+        assert!(!result.budget_protocol);
+        assert!(!result.coherence);
+        assert!(!result.compression);
+    }
+
+    #[test]
+    fn negotiation_with_matching_client_extensions() {
+        let mut client_ext = ExtensionCapabilities::new();
+        client_ext.insert(EXT_BUDGET_PROTOCOL.to_string(), serde_json::Map::new());
+        client_ext.insert(EXT_COHERENCE.to_string(), serde_json::Map::new());
+        client_ext.insert(EXT_COMPRESSION.to_string(), serde_json::Map::new());
+
+        let result = NegotiatedExtensions::negotiate(Some(&client_ext));
+        assert!(result.budget_protocol);
+        assert!(result.coherence);
+        assert!(result.compression);
+    }
+
+    #[test]
+    fn negotiation_partial_match() {
+        let mut client_ext = ExtensionCapabilities::new();
+        client_ext.insert(EXT_BUDGET_PROTOCOL.to_string(), serde_json::Map::new());
+        // Client does NOT advertise coherence or compression.
+
+        let result = NegotiatedExtensions::negotiate(Some(&client_ext));
+        assert!(result.budget_protocol);
+        assert!(!result.coherence);
+        assert!(!result.compression);
+    }
+
+    #[test]
+    fn negotiation_ignores_unknown_client_extensions() {
+        let mut client_ext = ExtensionCapabilities::new();
+        client_ext.insert("io.example/unknown".to_string(), serde_json::Map::new());
+
+        let result = NegotiatedExtensions::negotiate(Some(&client_ext));
+        assert!(!result.budget_protocol);
+        assert!(!result.coherence);
+        assert!(!result.compression);
     }
 
     // --- Budget status tests ---
