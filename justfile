@@ -52,6 +52,10 @@ bench-prefetch:
 bench-eval:
     cargo test --test eval_retrieval -p iris-core -- --nocapture
 
+# Run retrieval quality regression gate (fails build if metrics drop)
+eval-gate:
+    cargo test --test eval_retrieval eval_retrieval_regression_gate -p iris-core -- --nocapture
+
 # Run all benchmarks
 bench-all:
     cargo bench -p iris-core

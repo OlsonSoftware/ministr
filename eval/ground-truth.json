@@ -107,6 +107,343 @@
       "expected": [
         { "section_id": "testing-strategy.md#testing-strategy/property-based-testing", "relevance": 3 }
       ]
+    },
+    {
+      "query": "OAuth 2.0 PKCE authentication flow",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/overview", "relevance": 3 },
+        { "section_id": "api-reference.html#rest-api-reference/authentication-endpoints", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "refresh token rotation and revocation",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/token-management", "relevance": 3 },
+        { "section_id": "api-reference.html#rest-api-reference/authentication-endpoints", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "session management cookies CSRF protection",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/session-handling", "relevance": 3 },
+        { "section_id": "authentication.md#authentication-system/overview", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "brute force attack prevention exponential backoff",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/rate-limiting", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "what events are captured in the audit log?",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/audit-logging", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "Redis session store server-side tracking",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/session-handling", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "service-to-service authentication client credentials",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/overview", "relevance": 3 },
+        { "section_id": "api-reference.html#rest-api-reference/authentication-endpoints", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "UUID primary keys and timestamp conventions",
+      "expected": [
+        { "section_id": "database-design.md#database-design/schema-conventions", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "rollback scripts for database migrations",
+      "expected": [
+        { "section_id": "database-design.md#database-design/migration-strategy", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "database index design foreign key indexing",
+      "expected": [
+        { "section_id": "database-design.md#database-design/indexing-strategy", "relevance": 3 },
+        { "section_id": "database-design.md#database-design/query-patterns", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "full text search PostgreSQL tsvector GIN",
+      "expected": [
+        { "section_id": "database-design.md#database-design/indexing-strategy", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "parameterized queries and batch inserts",
+      "expected": [
+        { "section_id": "database-design.md#database-design/query-patterns", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "read replicas and write consistency",
+      "expected": [
+        { "section_id": "database-design.md#database-design/query-patterns", "relevance": 3 },
+        { "section_id": "database-design.md#database-design/connection-pooling", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "idle timeout and connection validation health check",
+      "expected": [
+        { "section_id": "database-design.md#database-design/connection-pooling", "relevance": 3 },
+        { "section_id": "api-reference.html#rest-api-reference/health-endpoints", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "thiserror error enum hierarchy pattern",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/error-types", "relevance": 3 },
+        { "section_id": "error-handling.md#error-handling-guide/error-types/application-errors", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "infrastructure errors backing service failures",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/error-types/infrastructure-errors", "relevance": 3 },
+        { "section_id": "error-handling.md#error-handling-guide/retry-policy", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "error propagation context and the question mark operator",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/error-propagation", "relevance": 3 },
+        { "section_id": "error-handling.md#error-handling-guide/error-types", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "converting service errors to HTTP responses",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/error-propagation", "relevance": 3 },
+        { "section_id": "error-handling.md#error-handling-guide/error-types/application-errors", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "exponential backoff retry with max delay",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/retry-policy", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "Prometheus metrics error rate alerting",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/observability", "relevance": 3 },
+        { "section_id": "deployment.md#deployment-guide/monitoring", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "structured logging correlation ID stack trace",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/observability", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "multi-stage Docker build distroless runtime",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/container-build", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "Docker build arguments RUST_VERSION FEATURES PROFILE",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/container-build", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "liveness readiness probes HTTP health check",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/kubernetes-deployment/pod-configuration", "relevance": 3 },
+        { "section_id": "api-reference.html#rest-api-reference/health-endpoints", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "horizontal pod autoscaler CPU scaling",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/kubernetes-deployment/horizontal-pod-autoscaler", "relevance": 3 },
+        { "section_id": "deployment.md#deployment-guide/kubernetes-deployment/pod-configuration", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "environment variables TOML config file precedence",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/configuration-management", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "Kubernetes secrets mounted as environment variables",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/configuration-management", "relevance": 3 },
+        { "section_id": "deployment.md#deployment-guide/kubernetes-deployment/pod-configuration", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "zero downtime deployment maxSurge maxUnavailable",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/rolling-updates", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "Argo Rollouts canary analysis window",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/rolling-updates", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "request latency histogram and connection pool gauge",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/monitoring", "relevance": 3 },
+        { "section_id": "database-design.md#database-design/connection-pooling", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "unit test coverage target trait object injection",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/test-pyramid/unit-tests", "relevance": 3 },
+        { "section_id": "testing-strategy.md#testing-strategy/test-pyramid", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "integration tests with test containers and real database",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/test-pyramid/integration-tests", "relevance": 3 },
+        { "section_id": "testing-strategy.md#testing-strategy/test-pyramid", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "end-to-end tests staging environment ignore tag",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/test-pyramid/end-to-end-tests", "relevance": 3 },
+        { "section_id": "testing-strategy.md#testing-strategy/continuous-integration", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "serialization round-trip idempotent property testing",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/property-based-testing", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "k6 load testing baseline performance regression",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/performance-testing", "relevance": 3 },
+        { "section_id": "testing-strategy.md#testing-strategy/continuous-integration", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "Criterion.rs benchmark statistical significance nightly CI",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/performance-testing", "relevance": 3 },
+        { "section_id": "testing-strategy.md#testing-strategy/continuous-integration", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "CI pipeline format check lint coverage steps",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/continuous-integration", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "POST login endpoint access token refresh token pair",
+      "expected": [
+        { "section_id": "api-reference.html#rest-api-reference/authentication-endpoints", "relevance": 3 },
+        { "section_id": "authentication.md#authentication-system/token-management", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "refresh token consumed and rotated to prevent replay",
+      "expected": [
+        { "section_id": "api-reference.html#rest-api-reference/authentication-endpoints", "relevance": 3 },
+        { "section_id": "authentication.md#authentication-system/token-management", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "logout session revocation deny list",
+      "expected": [
+        { "section_id": "api-reference.html#rest-api-reference/authentication-endpoints", "relevance": 3 },
+        { "section_id": "authentication.md#authentication-system/session-handling", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "resource pagination page size sorting",
+      "expected": [
+        { "section_id": "api-reference.html#rest-api-reference/resource-endpoints", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "soft delete resource restore background job",
+      "expected": [
+        { "section_id": "api-reference.html#rest-api-reference/resource-endpoints", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "health endpoint backing service database cache check",
+      "expected": [
+        { "section_id": "api-reference.html#rest-api-reference/health-endpoints", "relevance": 3 },
+        { "section_id": "deployment.md#deployment-guide/kubernetes-deployment/pod-configuration", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "scale-down cooldown period autoscaler configuration",
+      "expected": [
+        { "section_id": "deployment.md#deployment-guide/kubernetes-deployment/horizontal-pod-autoscaler", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "non-transient errors never retried validation authentication",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/retry-policy", "relevance": 3 },
+        { "section_id": "error-handling.md#error-handling-guide/error-types/application-errors", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "in-memory fakes vs mocks for test dependencies",
+      "expected": [
+        { "section_id": "testing-strategy.md#testing-strategy/test-pyramid/unit-tests", "relevance": 3 },
+        { "section_id": "testing-strategy.md#testing-strategy/test-pyramid/integration-tests", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "RS256 signed JWT token expiration 15 minutes",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/token-management", "relevance": 3 },
+        { "section_id": "api-reference.html#rest-api-reference/authentication-endpoints", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "IP address geographic location tracking",
+      "expected": [
+        { "section_id": "authentication.md#authentication-system/audit-logging", "relevance": 3 },
+        { "section_id": "authentication.md#authentication-system/session-handling", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "database upsert ON CONFLICT batch operations",
+      "expected": [
+        { "section_id": "database-design.md#database-design/query-patterns", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "error rate threshold alerting 1% five minute window",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/observability", "relevance": 3 },
+        { "section_id": "deployment.md#deployment-guide/monitoring", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "500 response correlation ID generic error mapping",
+      "expected": [
+        { "section_id": "error-handling.md#error-handling-guide/error-types/infrastructure-errors", "relevance": 3 },
+        { "section_id": "error-handling.md#error-handling-guide/error-propagation", "relevance": 2 }
+      ]
     }
   ]
 }

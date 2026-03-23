@@ -807,16 +807,16 @@ phases:
 - id: S3
   name: Retrieval Evaluation
   tagline: Measure what matters — retrieval quality with automated benchmarks
-  status: pending
+  status: done
   problem: No way to measure retrieval quality or detect regressions from search pipeline changes
   solution: Curated benchmark with gold relevance labels, automated precision/MRR/nDCG metrics, CI regression gate
   tasks:
   - text: 'Create curated retrieval benchmark: 50+ queries with gold-standard relevant section IDs'
-    checked: false
+    checked: true
   - text: 'Implement automated retrieval metrics: precision@k, MRR, nDCG in eval_retrieval test'
-    checked: false
+    checked: true
   - text: 'Add CI regression gate: fail build if retrieval quality drops below threshold'
-    checked: false
+    checked: true
 - id: M1
   name: MCP Protocol Evolution
   tagline: Adopt MCP 2025 spec features for richer agent interaction
