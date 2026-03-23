@@ -751,7 +751,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Send progress notifications during background ingestion (notifications/progress with file count)
 - [x] Add Streamable HTTP (SSE) transport alongside stdio via rmcp for remote/multi-client deployments
 - [x] Implement resource subscriptions for iris://status — push coherence alerts when files change
-- [ ] Async task support for iris_fetch and iris_clone — return task handle, poll for completion
+- [x] Async task support for iris_fetch and iris_clone — return task handle, poll for completion
 
 ---
 
