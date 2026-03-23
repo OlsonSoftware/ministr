@@ -4,7 +4,7 @@
 //! tool registration. The server exposes iris tools (`iris_survey`,
 //! `iris_read`, `iris_extract`, `iris_related`, `iris_evicted`,
 //! `iris_budget`, `iris_compress`, `iris_toc`, `iris_fetch`,
-//! `iris_refresh`, `iris_clone`) over the MCP protocol.
+//! `iris_refresh`, `iris_clone`, `iris_task`) over the MCP protocol.
 //!
 //! Every tool response includes a `budget_status` object with the current
 //! token budget state. Survey and read responses are deduplicated against
@@ -60,6 +60,8 @@ use iris_core::types::{
 };
 use iris_core::web::fetcher::WebFetcher;
 
+use crate::task::TaskManager;
+
 /// MCP server that exposes iris context-cache tools to LLM agents.
 ///
 /// `IrisServer` adapts the [`QueryService`] to the MCP protocol.
@@ -87,6 +89,8 @@ pub struct IrisServer {
     /// Receiver for coherence change notifications from the file watcher task.
     /// Consumed once in `on_initialized` to spawn the notification dispatcher.
     coherence_rx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Vec<String>>>>>,
+    /// Background task manager for async fetch/clone operations.
+    task_manager: Arc<TaskManager>,
     /// Macro-generated tool router for dispatching tool calls.
     tool_router: ToolRouter<Self>,
 }
@@ -283,6 +287,12 @@ pub struct FetchParams {
     /// Only fetch URLs whose path starts with this prefix (e.g. '/docs/').
     #[schemars(description = "Only fetch URLs whose path starts with this prefix (e.g. '/docs/')")]
     pub path_filter: Option<String>,
+
+    /// Run the fetch in the background and return a task handle immediately.
+    /// Use `iris_task` to poll for completion. Default: false (synchronous).
+    #[schemars(description = "Run in background and return a task handle (default: false)")]
+    #[serde(default)]
+    pub async_task: bool,
 }
 
 /// Response from the `iris_fetch` tool.
@@ -387,6 +397,12 @@ pub struct CloneParams {
     /// Optional branch to clone (defaults to the repository's default branch).
     #[schemars(description = "Optional branch to clone (defaults to repository default)")]
     pub branch: Option<String>,
+
+    /// Run the clone in the background and return a task handle immediately.
+    /// Use `iris_task` to poll for completion. Default: false (synchronous).
+    #[schemars(description = "Run in background and return a task handle (default: false)")]
+    #[serde(default)]
+    pub async_task: bool,
 }
 
 /// Response from the `iris_clone` tool.
@@ -404,6 +420,25 @@ struct CloneResponse {
     index_time_ms: u64,
     /// Whether the clone was served from cache.
     from_cache: bool,
+}
+
+/// Parameters for the `iris_task` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TaskParams {
+    /// Task ID returned by a previous async `iris_fetch` or `iris_clone` call.
+    #[schemars(description = "Task ID to check status for")]
+    pub task_id: String,
+}
+
+/// Response returned when an async task is spawned.
+#[derive(Debug, Serialize)]
+struct AsyncTaskResponse {
+    /// The task ID to poll with `iris_task`.
+    task_id: String,
+    /// Always `"running"` for a newly spawned task.
+    status: &'static str,
+    /// Hint for the agent.
+    message: String,
 }
 
 /// Parameters for the `iris_symbols` tool.
@@ -544,6 +579,7 @@ impl ServerHandler for IrisServer {
                  fetch web content by URL and add it to the corpus, iris_refresh \
                  to check cached web sources for staleness and re-fetch changed content, \
                  iris_clone to clone a git repository and index its content, \
+                 iris_task to poll background fetch/clone tasks, \
                  iris_symbols to search the code symbol index, \
                  iris_definition to get the full source definition of a symbol, \
                  and iris_references to find all references to a symbol."
@@ -1373,6 +1409,67 @@ impl IrisServer {
                 )]));
             };
 
+            // Async mode: spawn background task and return handle immediately.
+            if params.async_task {
+                let task_id = self
+                    .task_manager
+                    .create(&format!("fetching {}", params.url))
+                    .await;
+                let task_mgr = Arc::clone(&self.task_manager);
+                let web_fetcher = Arc::clone(web_fetcher);
+                let pipeline = Arc::clone(&self.ingestion_pipeline);
+                let storage = Arc::clone(storage);
+                let embedder = Arc::clone(embedder);
+                let index = Arc::clone(index);
+                let budget = Arc::clone(&self.budget);
+                let url = params.url.clone();
+                let tid = task_id.clone();
+
+                tokio::spawn(async move {
+                    match web_fetcher
+                        .fetch_and_ingest_with_embeddings(
+                            &url,
+                            &pipeline,
+                            storage.as_ref(),
+                            embedder.as_ref(),
+                            index.as_ref(),
+                        )
+                        .await
+                    {
+                        Ok(result) => {
+                            let budget_status = budget.lock().await.budget_status();
+                            let response = FetchResponse {
+                                pages_fetched: result.pages_fetched(),
+                                sections_indexed: result.sections_indexed,
+                                claims_extracted: result.claims_extracted,
+                                tokens_added: result.tokens_added,
+                                strategy_used: result.strategy.to_string(),
+                            };
+                            let value = serde_json::json!({
+                                "data": response,
+                                "budget_status": budget_status,
+                            });
+                            task_mgr.complete(&tid, value).await;
+                        }
+                        Err(e) => {
+                            task_mgr.fail(&tid, format!("fetch failed: {e}")).await;
+                        }
+                    }
+                });
+
+                let response = AsyncTaskResponse {
+                    task_id,
+                    status: "running",
+                    message: format!(
+                        "Fetching {} in background. Poll with iris_task.",
+                        params.url
+                    ),
+                };
+                let json = serde_json::to_string_pretty(&response)
+                    .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
+                return Ok(CallToolResult::success(vec![Content::text(json)]));
+            }
+
             match web_fetcher
                 .fetch_and_ingest_with_embeddings(
                     &params.url,
@@ -1520,6 +1617,100 @@ impl IrisServer {
                 )]));
             };
 
+            // Async mode: spawn background task and return handle immediately.
+            if params.async_task {
+                let task_id = self
+                    .task_manager
+                    .create(&format!("cloning {}", params.repo))
+                    .await;
+                let task_mgr = Arc::clone(&self.task_manager);
+                let git_fetcher = Arc::clone(git_fetcher);
+                let pipeline = Arc::clone(&self.ingestion_pipeline);
+                let storage = Arc::clone(storage);
+                let embedder = Arc::clone(embedder);
+                let index = Arc::clone(index);
+                let budget = Arc::clone(&self.budget);
+                let tid = task_id.clone();
+                let repo_name = params.repo.clone();
+
+                tokio::spawn(async move {
+                    let clone_start = std::time::Instant::now();
+                    let clone_result = match GitFetcher::clone(
+                        &git_fetcher,
+                        &params.repo,
+                        params.paths.as_deref(),
+                        params.branch.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            task_mgr.fail(&tid, format!("clone failed: {e}")).await;
+                            return;
+                        }
+                    };
+                    let clone_time_ms = elapsed_millis(clone_start);
+                    task_mgr
+                        .update_progress(&tid, "indexing cloned content…")
+                        .await;
+
+                    let ingest_start = std::time::Instant::now();
+                    let ingest_result = pipeline
+                        .ingest_directory_with_embeddings(
+                            &clone_result.clone_dir,
+                            storage.as_ref(),
+                            embedder.as_ref(),
+                            index.as_ref(),
+                        )
+                        .await;
+                    let index_time_ms = elapsed_millis(ingest_start);
+
+                    match ingest_result {
+                        Ok(stats) => {
+                            // Record git cache (best-effort).
+                            let git_cache_record = iris_core::storage::GitCacheRecord {
+                                repo_url: params.repo.clone(),
+                                branch: params.branch.clone(),
+                                commit_sha: clone_result.metadata.commit_sha.clone(),
+                                clone_timestamp: clone_result.metadata.clone_timestamp.clone(),
+                                clone_dir: clone_result.clone_dir.to_string_lossy().to_string(),
+                                checked_out_paths: clone_result.metadata.checked_out_paths.clone(),
+                            };
+                            let _ = storage.upsert_git_cache(&git_cache_record).await;
+
+                            let budget_status = budget.lock().await.budget_status();
+                            let response = CloneResponse {
+                                files_discovered: clone_result.files.len(),
+                                files_indexed: stats.files_indexed,
+                                sections_extracted: stats.total_sections,
+                                clone_time_ms,
+                                index_time_ms,
+                                from_cache: clone_result.from_cache,
+                            };
+                            let value = serde_json::json!({
+                                "data": response,
+                                "budget_status": budget_status,
+                            });
+                            task_mgr.complete(&tid, value).await;
+                        }
+                        Err(e) => {
+                            task_mgr
+                                .fail(&tid, format!("clone succeeded but ingestion failed: {e}"))
+                                .await;
+                        }
+                    }
+                });
+
+                let response = AsyncTaskResponse {
+                    task_id,
+                    status: "running",
+                    message: format!("Cloning {repo_name} in background. Poll with iris_task.",),
+                };
+                let json = serde_json::to_string_pretty(&response)
+                    .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
+                return Ok(CallToolResult::success(vec![Content::text(json)]));
+            }
+
             self.clone_and_ingest(
                 &params,
                 git_fetcher,
@@ -1528,6 +1719,41 @@ impl IrisServer {
                 storage.as_ref(),
             )
             .await
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Poll the status of a background task spawned by `iris_fetch` or `iris_clone`.
+    ///
+    /// Returns the current status (`running`, `completed`, or `failed`) and,
+    /// when complete, the same result payload the synchronous tool would have
+    /// returned.
+    #[tool(
+        name = "iris_task",
+        description = "Poll a background task spawned by iris_fetch or iris_clone with async_task=true. Returns status and result when complete."
+    )]
+    async fn task_status(
+        &self,
+        Parameters(params): Parameters<TaskParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let span = info_span!("iris_task", task_id = %params.task_id);
+
+        async {
+            debug!(task_id = %params.task_id, "iris_task request");
+
+            match self.task_manager.get(&params.task_id).await {
+                Some(status) => {
+                    let json = serde_json::to_string_pretty(&status).unwrap_or_else(|e| {
+                        format!("{{\"error\": \"serialization failed: {e}\"}}")
+                    });
+                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                }
+                None => Ok(CallToolResult::error(vec![Content::text(format!(
+                    "unknown task ID: {}. Tasks expire 5 minutes after completion.",
+                    params.task_id
+                ))])),
+            }
         }
         .instrument(span)
         .await
@@ -1756,6 +1982,7 @@ impl IrisServer {
             embedder: None,
             index: None,
             ingestion_progress: Arc::new(IngestionProgress::new()),
+            task_manager: Arc::new(TaskManager::new()),
             peer: Arc::new(Mutex::new(None)),
             subscriptions: Arc::new(Mutex::new(HashSet::new())),
             coherence_rx: Arc::new(Mutex::new(None)),
@@ -1808,6 +2035,7 @@ impl IrisServer {
             embedder: None,
             index: None,
             ingestion_progress: Arc::new(IngestionProgress::new()),
+            task_manager: Arc::new(TaskManager::new()),
             peer: Arc::new(Mutex::new(None)),
             subscriptions: Arc::new(Mutex::new(HashSet::new())),
             coherence_rx: Arc::new(Mutex::new(None)),
@@ -2218,6 +2446,7 @@ impl IrisServer {
                         repo: record.repo_url.clone(),
                         paths: paths_opt,
                         branch: record.branch.clone(),
+                        async_task: false,
                     };
                     match self
                         .clone_and_ingest(&params, git_fetcher, embedder, index, storage.as_ref())
@@ -3768,6 +3997,7 @@ mod tests {
                 repo: "https://github.com/octocat/Hello-World.git".to_string(),
                 paths: None,
                 branch: None,
+                async_task: false,
             }))
             .await
             .unwrap();
@@ -3806,6 +4036,7 @@ mod tests {
                 repo: String::new(),
                 paths: None,
                 branch: None,
+                async_task: false,
             }))
             .await
             .unwrap();
@@ -4086,5 +4317,93 @@ mod tests {
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
         assert!(result.is_ok(), "notifier should exit when channel closes");
+    }
+
+    // --- iris_task tests ---
+
+    #[tokio::test]
+    async fn task_status_unknown_id_returns_error() {
+        let server = setup_server().await;
+        let result = server
+            .task_status(Parameters(TaskParams {
+                task_id: "nonexistent-task-id".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error.unwrap_or(false));
+        let text = extract_text(&result.content);
+        assert!(
+            text.contains("unknown task ID"),
+            "should say unknown task: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn task_status_returns_running_task() {
+        let server = setup_server().await;
+        let task_id = server.task_manager.create("test task").await;
+
+        let result = server
+            .task_status(Parameters(TaskParams {
+                task_id: task_id.clone(),
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error.is_none() || !result.is_error.unwrap());
+        let text = extract_text(&result.content);
+        assert!(text.contains("running"), "should show running: {text}");
+        assert!(text.contains("test task"), "should show message: {text}");
+    }
+
+    #[tokio::test]
+    async fn task_status_returns_completed_task() {
+        let server = setup_server().await;
+        let task_id = server.task_manager.create("test task").await;
+        server
+            .task_manager
+            .complete(&task_id, serde_json::json!({"pages": 5}))
+            .await;
+
+        let result = server
+            .task_status(Parameters(TaskParams {
+                task_id: task_id.clone(),
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error.is_none() || !result.is_error.unwrap());
+        let text = extract_text(&result.content);
+        assert!(text.contains("completed"), "should show completed: {text}");
+        assert!(
+            text.contains("\"pages\": 5"),
+            "should include result: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn task_status_returns_failed_task() {
+        let server = setup_server().await;
+        let task_id = server.task_manager.create("test task").await;
+        server
+            .task_manager
+            .fail(&task_id, "something broke".to_string())
+            .await;
+
+        let result = server
+            .task_status(Parameters(TaskParams {
+                task_id: task_id.clone(),
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error.is_none() || !result.is_error.unwrap());
+        let text = extract_text(&result.content);
+        assert!(text.contains("failed"), "should show failed: {text}");
+        assert!(
+            text.contains("something broke"),
+            "should include error: {text}"
+        );
     }
 }

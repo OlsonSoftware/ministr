@@ -820,7 +820,7 @@ phases:
 - id: M1
   name: MCP Protocol Evolution
   tagline: Adopt MCP 2025 spec features for richer agent interaction
-  status: in_progress
+  status: done
   problem: iris uses stdio-only transport with no push notifications, resource subscriptions, or async task support
   solution: Add progress notifications, Streamable HTTP transport, resource subscriptions for coherence, async tasks for long ops
   tasks:
@@ -831,7 +831,7 @@ phases:
   - text: Implement resource subscriptions for iris://status — push coherence alerts when files change
     checked: true
   - text: Async task support for iris_fetch and iris_clone — return task handle, poll for completion
-    checked: false
+    checked: true
 - id: C8
   name: Code Intelligence Depth
   tagline: From import tracking to full call graph and cross-language refs
