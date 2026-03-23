@@ -1245,4 +1245,612 @@ await listen("download-progress", (event) => {
         assert_eq!(strip_quotes("`hello`"), "hello");
         assert_eq!(strip_quotes("noquotes"), "noquotes");
     }
+
+    // -- Edge cases: rename_all, async, command modules, v1/v2 patterns --
+
+    #[test]
+    fn rust_command_export_with_rename_all_attribute() {
+        // #[tauri::command(rename_all = "snake_case")] is still detected as a command
+        let source = r#"
+#[tauri::command(rename_all = "snake_case")]
+fn get_user_data(user_id: i32) -> String {
+    format!("user_{user_id}")
+}
+"#;
+        let tree = parse_rust(source);
+        let extractor = TauriCommandExtractor;
+        let endpoints =
+            extractor.extract_endpoints(&tree, source.as_bytes(), "src-tauri/src/lib.rs", "rust");
+
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(endpoints[0].binding_key, "get_user_data");
+        assert_eq!(endpoints[0].role, EndpointRole::Export);
+    }
+
+    #[test]
+    fn rust_command_export_with_async_attribute() {
+        // #[tauri::command(async)] on a sync fn — should still be detected
+        let source = r"
+#[tauri::command(async)]
+fn heavy_computation(input: String) -> String {
+    input.to_uppercase()
+}
+";
+        let tree = parse_rust(source);
+        let extractor = TauriCommandExtractor;
+        let endpoints =
+            extractor.extract_endpoints(&tree, source.as_bytes(), "src-tauri/src/lib.rs", "rust");
+
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(endpoints[0].binding_key, "heavy_computation");
+    }
+
+    #[test]
+    fn rust_command_export_in_module() {
+        // Commands defined inside a mod block
+        let source = r"
+mod commands {
+    #[tauri::command]
+    fn list_items() -> Vec<String> {
+        vec![]
+    }
+
+    #[tauri::command]
+    async fn delete_item(id: i32) -> Result<(), String> {
+        Ok(())
+    }
+}
+";
+        let tree = parse_rust(source);
+        let extractor = TauriCommandExtractor;
+        let endpoints = extractor.extract_endpoints(
+            &tree,
+            source.as_bytes(),
+            "src-tauri/src/commands.rs",
+            "rust",
+        );
+
+        assert_eq!(endpoints.len(), 2);
+        assert_eq!(endpoints[0].binding_key, "list_items");
+        assert_eq!(endpoints[1].binding_key, "delete_item");
+    }
+
+    #[cfg(feature = "lang-javascript")]
+    #[test]
+    fn js_invoke_v1_import_path() {
+        // Tauri v1 uses @tauri-apps/api/tauri, v2 uses @tauri-apps/api/core
+        // Both should be detected
+        let source = r#"
+import { invoke } from "@tauri-apps/api/tauri";
+
+async function loadData() {
+    const data = await invoke("fetch_records");
+    return data;
+}
+"#;
+        let tree = parse_js(source);
+        let extractor = TauriCommandExtractor;
+        let endpoints =
+            extractor.extract_endpoints(&tree, source.as_bytes(), "src/App.jsx", "javascript");
+
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(endpoints[0].binding_key, "fetch_records");
+        assert_eq!(endpoints[0].role, EndpointRole::Import);
+    }
+
+    #[cfg(feature = "lang-javascript")]
+    #[test]
+    fn js_invoke_tauri_global() {
+        // window.__TAURI__.core.invoke() — Tauri v2 global access
+        let source = r#"
+async function callCommand() {
+    const result = await window.__TAURI__.core.invoke("get_status");
+    return result;
+}
+"#;
+        let tree = parse_js(source);
+        let extractor = TauriCommandExtractor;
+        let endpoints =
+            extractor.extract_endpoints(&tree, source.as_bytes(), "src/legacy.js", "javascript");
+
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(endpoints[0].binding_key, "get_status");
+        assert_eq!(endpoints[0].role, EndpointRole::Import);
+    }
+
+    #[cfg(feature = "lang-javascript")]
+    #[test]
+    fn js_invoke_tauri_v1_global() {
+        // window.__TAURI__.tauri.invoke() — Tauri v1 global access
+        let source = r#"
+async function callCommand() {
+    const result = await window.__TAURI__.tauri.invoke("get_config");
+    return result;
+}
+"#;
+        let tree = parse_js(source);
+        let extractor = TauriCommandExtractor;
+        let endpoints =
+            extractor.extract_endpoints(&tree, source.as_bytes(), "src/legacy.js", "javascript");
+
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(endpoints[0].binding_key, "get_config");
+        assert_eq!(endpoints[0].role, EndpointRole::Import);
+    }
+
+    #[test]
+    fn generate_handler_with_nested_module_paths() {
+        // Deep module paths: a::b::c::command_name
+        let source = r#"
+fn main() {
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            api::v1::commands::list_users,
+            api::v1::commands::get_user
+        ])
+        .run(tauri::generate_context!())
+        .expect("error");
+}
+"#;
+        let tree = parse_rust(source);
+        let commands = extract_registered_commands(&tree, source.as_bytes());
+
+        assert_eq!(commands.len(), 2);
+        assert!(commands.contains(&"list_users".to_string()));
+        assert!(commands.contains(&"get_user".to_string()));
+    }
+
+    /// Test that case-normalized matching works for Tauri commands
+    /// where Rust uses `snake_case` and JS uses `camelCase`.
+    #[cfg(feature = "lang-javascript")]
+    #[test]
+    fn case_normalized_command_linking() {
+        use super::super::linker::{BridgeLinker, SourceFile};
+
+        let rust_source = r#"
+#[tauri::command]
+fn get_user_data(id: i32) -> String {
+    format!("user_{id}")
+}
+"#;
+        // JS side uses camelCase (hypothetical user mistake or convention)
+        let js_source = r#"
+import { invoke } from "@tauri-apps/api/core";
+const data = await invoke("getUserData", { id: 42 });
+"#;
+        let rust_tree = parse_rust(rust_source);
+        let js_tree = parse_js(js_source);
+
+        let mut linker = BridgeLinker::new();
+        linker.register(Box::new(TauriCommandExtractor));
+
+        let files = [
+            SourceFile {
+                file_path: "src-tauri/src/main.rs",
+                language: "rust",
+                tree: &rust_tree,
+                source: rust_source.as_bytes(),
+            },
+            SourceFile {
+                file_path: "src/App.jsx",
+                language: "javascript",
+                tree: &js_tree,
+                source: js_source.as_bytes(),
+            },
+        ];
+
+        let links = linker.extract_and_link(&files);
+        assert_eq!(
+            links.len(),
+            1,
+            "case-normalized match should produce a link"
+        );
+        assert_eq!(links[0].kind, BridgeKind::TauriCommand);
+        // Confidence should be capped at CaseTransformed level
+        assert!(
+            links[0].confidence <= ConfidenceLevel::CaseTransformed.score(),
+            "case-normalized link should have CaseTransformed confidence"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // L3.4 — Comprehensive Tauri app test fixture
+    // -----------------------------------------------------------------------
+    //
+    // Exercises: 5+ commands (basic, async, state, rename_all, module),
+    // events, state management, plugin usage, and both v1/v2 JS patterns.
+
+    /// Realistic Rust backend fixture for a minimal Tauri app.
+    const FIXTURE_RUST_COMMANDS: &str = r#"
+use tauri::State;
+
+struct AppState {
+    db: Database,
+}
+
+// Basic command
+#[tauri::command]
+fn greet(name: &str) -> String {
+    format!("Hello, {name}!")
+}
+
+// Async command with state
+#[tauri::command]
+async fn fetch_records(state: State<'_, AppState>, limit: usize) -> Result<Vec<String>, String> {
+    Ok(vec!["record1".into()])
+}
+
+// Command with rename_all attribute
+#[tauri::command(rename_all = "snake_case")]
+fn get_app_config() -> Config {
+    Config::default()
+}
+
+// Sync command forced async via attribute
+#[tauri::command(async)]
+fn compute_hash(data: String) -> String {
+    format!("hash_{data}")
+}
+
+// Command returning Result
+#[tauri::command]
+async fn save_document(title: String, content: String) -> Result<bool, String> {
+    Ok(true)
+}
+
+// Command in a module
+mod admin {
+    use tauri::State;
+
+    #[tauri::command]
+    fn reset_database(state: State<'_, super::AppState>) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+// Registration
+fn main() {
+    tauri::Builder::default()
+        .manage(AppState { db: Database::new() })
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            fetch_records,
+            get_app_config,
+            compute_hash,
+            save_document,
+            admin::reset_database
+        ])
+        .run(tauri::generate_context!())
+        .expect("error");
+}
+"#;
+
+    /// Rust event-related fixture.
+    const FIXTURE_RUST_EVENTS: &str = r#"
+use tauri::AppHandle;
+
+fn emit_progress(app: &AppHandle, progress: f64) {
+    app.emit("download-progress", progress);
+}
+
+fn emit_status(app: &AppHandle) {
+    app.emit_to("main", "status-update", "ready");
+}
+
+fn setup_listeners(app: &AppHandle) {
+    app.listen("user-action", |event| {
+        println!("action: {:?}", event);
+    });
+    app.once("app-ready", |_| {
+        println!("app is ready");
+    });
+}
+"#;
+
+    /// JS/TS frontend fixture exercising v2 import paths.
+    const FIXTURE_JS_V2_FRONTEND: &str = r#"
+import { invoke } from "@tauri-apps/api/core";
+import { listen, emit } from "@tauri-apps/api/event";
+
+// Command invocations
+async function loadApp() {
+    const greeting = await invoke("greet", { name: "World" });
+    const records = await invoke("fetch_records", { limit: 10 });
+    const config = await invoke("get_app_config");
+    const hash = await invoke("compute_hash", { data: "hello" });
+    const saved = await invoke("save_document", { title: "Doc", content: "..." });
+    const result = await invoke("reset_database");
+}
+
+// Event listeners
+async function setupEvents() {
+    await listen("download-progress", (event) => {
+        updateProgressBar(event.payload);
+    });
+    await listen("status-update", (event) => {
+        console.log(event.payload);
+    });
+    emit("user-action", { type: "click", target: "button" });
+}
+"#;
+
+    /// JS frontend using Tauri v1 import paths.
+    const FIXTURE_JS_V1_FRONTEND: &str = r#"
+import { invoke } from "@tauri-apps/api/tauri";
+import { listen, emit } from "@tauri-apps/api/event";
+
+async function legacyLoad() {
+    const greeting = await invoke("greet", { name: "Legacy" });
+    await listen("download-progress", (event) => {
+        console.log(event.payload);
+    });
+}
+"#;
+
+    #[test]
+    fn fixture_rust_commands_extraction() {
+        let tree = parse_rust(FIXTURE_RUST_COMMANDS);
+        let extractor = TauriCommandExtractor;
+        let endpoints = extractor.extract_endpoints(
+            &tree,
+            FIXTURE_RUST_COMMANDS.as_bytes(),
+            "src-tauri/src/main.rs",
+            "rust",
+        );
+
+        let names: Vec<&str> = endpoints.iter().map(|e| e.binding_key.as_str()).collect();
+        assert!(names.contains(&"greet"), "should find greet command");
+        assert!(
+            names.contains(&"fetch_records"),
+            "should find async command"
+        );
+        assert!(
+            names.contains(&"get_app_config"),
+            "should find rename_all command"
+        );
+        assert!(
+            names.contains(&"compute_hash"),
+            "should find async-attribute command"
+        );
+        assert!(
+            names.contains(&"save_document"),
+            "should find Result-returning command"
+        );
+        assert!(
+            names.contains(&"reset_database"),
+            "should find command in module"
+        );
+        assert!(endpoints.len() >= 6, "should find at least 6 commands");
+
+        // All should be exports
+        for ep in &endpoints {
+            assert_eq!(ep.role, EndpointRole::Export);
+            assert_eq!(ep.kind, BridgeKind::TauriCommand);
+            assert_eq!(ep.language, "rust");
+        }
+    }
+
+    #[test]
+    fn fixture_rust_command_registration() {
+        let tree = parse_rust(FIXTURE_RUST_COMMANDS);
+        let commands = extract_registered_commands(&tree, FIXTURE_RUST_COMMANDS.as_bytes());
+
+        assert_eq!(commands.len(), 6);
+        assert!(commands.contains(&"greet".to_string()));
+        assert!(commands.contains(&"fetch_records".to_string()));
+        assert!(commands.contains(&"get_app_config".to_string()));
+        assert!(commands.contains(&"compute_hash".to_string()));
+        assert!(commands.contains(&"save_document".to_string()));
+        assert!(commands.contains(&"reset_database".to_string()));
+    }
+
+    #[test]
+    fn fixture_rust_events_extraction() {
+        let tree = parse_rust(FIXTURE_RUST_EVENTS);
+        let extractor = TauriEventExtractor;
+        let endpoints = extractor.extract_endpoints(
+            &tree,
+            FIXTURE_RUST_EVENTS.as_bytes(),
+            "src-tauri/src/events.rs",
+            "rust",
+        );
+
+        assert!(
+            endpoints.len() >= 4,
+            "should find at least 4 event endpoints"
+        );
+
+        let exports: Vec<&BridgeEndpoint> = endpoints
+            .iter()
+            .filter(|e| e.role == EndpointRole::Export)
+            .collect();
+        let imports: Vec<&BridgeEndpoint> = endpoints
+            .iter()
+            .filter(|e| e.role == EndpointRole::Import)
+            .collect();
+
+        assert!(
+            exports.len() >= 2,
+            "should have at least 2 event exports (emit, emit_to)"
+        );
+        assert!(
+            imports.len() >= 2,
+            "should have at least 2 event imports (listen, once)"
+        );
+    }
+
+    #[cfg(feature = "lang-javascript")]
+    #[test]
+    fn fixture_js_v2_command_extraction() {
+        let tree = parse_js(FIXTURE_JS_V2_FRONTEND);
+        let extractor = TauriCommandExtractor;
+        let endpoints = extractor.extract_endpoints(
+            &tree,
+            FIXTURE_JS_V2_FRONTEND.as_bytes(),
+            "src/App.jsx",
+            "javascript",
+        );
+
+        let names: Vec<&str> = endpoints.iter().map(|e| e.binding_key.as_str()).collect();
+        assert_eq!(endpoints.len(), 6, "should find 6 invoke calls");
+        assert!(names.contains(&"greet"));
+        assert!(names.contains(&"fetch_records"));
+        assert!(names.contains(&"get_app_config"));
+        assert!(names.contains(&"compute_hash"));
+        assert!(names.contains(&"save_document"));
+        assert!(names.contains(&"reset_database"));
+    }
+
+    #[cfg(feature = "lang-javascript")]
+    #[test]
+    fn fixture_js_v2_event_extraction() {
+        let tree = parse_js(FIXTURE_JS_V2_FRONTEND);
+        let extractor = TauriEventExtractor;
+        let endpoints = extractor.extract_endpoints(
+            &tree,
+            FIXTURE_JS_V2_FRONTEND.as_bytes(),
+            "src/App.jsx",
+            "javascript",
+        );
+
+        assert!(
+            endpoints.len() >= 3,
+            "should find at least 3 event endpoints"
+        );
+
+        let event_names: Vec<&str> = endpoints.iter().map(|e| e.binding_key.as_str()).collect();
+        assert!(event_names.contains(&"download-progress"));
+        assert!(event_names.contains(&"status-update"));
+        assert!(event_names.contains(&"user-action"));
+    }
+
+    #[cfg(feature = "lang-javascript")]
+    #[test]
+    fn fixture_js_v1_extraction() {
+        let tree = parse_js(FIXTURE_JS_V1_FRONTEND);
+        let extractor = TauriCommandExtractor;
+        let cmd_endpoints = extractor.extract_endpoints(
+            &tree,
+            FIXTURE_JS_V1_FRONTEND.as_bytes(),
+            "src/legacy.js",
+            "javascript",
+        );
+        assert_eq!(cmd_endpoints.len(), 1);
+        assert_eq!(cmd_endpoints[0].binding_key, "greet");
+
+        let event_extractor = TauriEventExtractor;
+        let event_endpoints = event_extractor.extract_endpoints(
+            &tree,
+            FIXTURE_JS_V1_FRONTEND.as_bytes(),
+            "src/legacy.js",
+            "javascript",
+        );
+        assert_eq!(event_endpoints.len(), 1);
+        assert_eq!(event_endpoints[0].binding_key, "download-progress");
+    }
+
+    /// End-to-end integration: link the full Rust backend with JS v2 frontend.
+    #[cfg(feature = "lang-javascript")]
+    #[test]
+    fn fixture_full_app_linking() {
+        use super::super::linker::{BridgeLinker, SourceFile};
+
+        let rust_cmd_tree = parse_rust(FIXTURE_RUST_COMMANDS);
+        let rust_evt_tree = parse_rust(FIXTURE_RUST_EVENTS);
+        let js_tree = parse_js(FIXTURE_JS_V2_FRONTEND);
+
+        let mut linker = BridgeLinker::new();
+        linker.register(Box::new(TauriCommandExtractor));
+        linker.register(Box::new(TauriEventExtractor));
+
+        let files = [
+            SourceFile {
+                file_path: "src-tauri/src/main.rs",
+                language: "rust",
+                tree: &rust_cmd_tree,
+                source: FIXTURE_RUST_COMMANDS.as_bytes(),
+            },
+            SourceFile {
+                file_path: "src-tauri/src/events.rs",
+                language: "rust",
+                tree: &rust_evt_tree,
+                source: FIXTURE_RUST_EVENTS.as_bytes(),
+            },
+            SourceFile {
+                file_path: "src/App.jsx",
+                language: "javascript",
+                tree: &js_tree,
+                source: FIXTURE_JS_V2_FRONTEND.as_bytes(),
+            },
+        ];
+
+        let links = linker.extract_and_link(&files);
+
+        // Separate command and event links
+        let cmd_links: Vec<_> = links
+            .iter()
+            .filter(|l| l.kind == BridgeKind::TauriCommand)
+            .collect();
+        let evt_links: Vec<_> = links
+            .iter()
+            .filter(|l| l.kind == BridgeKind::TauriEvent)
+            .collect();
+
+        assert!(
+            cmd_links.len() >= 5,
+            "should link at least 5 commands, got {}",
+            cmd_links.len()
+        );
+        assert!(
+            evt_links.len() >= 2,
+            "should link at least 2 events, got {}",
+            evt_links.len()
+        );
+
+        // Verify specific command links
+        let cmd_keys: Vec<&str> = cmd_links
+            .iter()
+            .map(|l| l.export.binding_key.as_str())
+            .collect();
+        assert!(cmd_keys.contains(&"greet"), "greet should be linked");
+        assert!(
+            cmd_keys.contains(&"fetch_records"),
+            "fetch_records should be linked"
+        );
+
+        // Verify all links have cross-language pairs
+        for link in &links {
+            assert_ne!(
+                link.export.language, link.import.language,
+                "links should connect different languages"
+            );
+        }
+    }
+
+    /// Registration validation: boost commands that appear in `generate_handler!`
+    #[test]
+    fn fixture_registration_boost() {
+        let tree = parse_rust(FIXTURE_RUST_COMMANDS);
+        let extractor = TauriCommandExtractor;
+        let mut endpoints = extractor.extract_endpoints(
+            &tree,
+            FIXTURE_RUST_COMMANDS.as_bytes(),
+            "src-tauri/src/main.rs",
+            "rust",
+        );
+        let registered = extract_registered_commands(&tree, FIXTURE_RUST_COMMANDS.as_bytes());
+
+        boost_registered_commands(&mut endpoints, &registered);
+
+        // All commands should be boosted to RegistrationValidated
+        for ep in &endpoints {
+            assert!(
+                (ep.confidence - ConfidenceLevel::RegistrationValidated.score()).abs()
+                    < f32::EPSILON,
+                "command '{}' should be registration-validated",
+                ep.binding_key
+            );
+        }
+    }
 }

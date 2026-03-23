@@ -368,6 +368,92 @@ pub trait BridgeExtractor: Send + Sync {
     ) -> Vec<BridgeEndpoint>;
 }
 
+// ---------------------------------------------------------------------------
+// Case conversion helpers
+// ---------------------------------------------------------------------------
+
+/// Convert a `snake_case` string to `camelCase`.
+///
+/// Splits on `_`, keeps the first segment lowercase, and capitalizes the
+/// first letter of subsequent segments.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::code::bridge::snake_to_camel;
+///
+/// assert_eq!(snake_to_camel("get_user_name"), "getUserName");
+/// assert_eq!(snake_to_camel("already"), "already");
+/// assert_eq!(snake_to_camel(""), "");
+/// ```
+#[must_use]
+pub fn snake_to_camel(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut capitalize_next = false;
+
+    for (i, segment) in s.split('_').enumerate() {
+        if segment.is_empty() {
+            continue;
+        }
+        if i == 0 {
+            result.push_str(segment);
+        } else if capitalize_next || i > 0 {
+            let mut chars = segment.chars();
+            if let Some(first) = chars.next() {
+                result.extend(first.to_uppercase());
+                result.push_str(chars.as_str());
+            }
+        }
+        capitalize_next = true;
+    }
+
+    result
+}
+
+/// Convert a `camelCase` string to `snake_case`.
+///
+/// Inserts `_` before each uppercase letter (that follows a lowercase letter)
+/// and lowercases the result.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::code::bridge::camel_to_snake;
+///
+/// assert_eq!(camel_to_snake("getUserName"), "get_user_name");
+/// assert_eq!(camel_to_snake("fetchData"), "fetch_data");
+/// assert_eq!(camel_to_snake("already"), "already");
+/// assert_eq!(camel_to_snake(""), "");
+/// ```
+#[must_use]
+pub fn camel_to_snake(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 4);
+    let mut prev_lower = false;
+
+    for ch in s.chars() {
+        if ch.is_uppercase() && prev_lower {
+            result.push('_');
+        }
+        result.extend(ch.to_lowercase());
+        prev_lower = ch.is_lowercase();
+    }
+
+    result
+}
+
+/// Normalize a binding key to `snake_case` for case-insensitive matching.
+///
+/// If the key contains underscores, it's already in `snake_case` and returned as-is.
+/// Otherwise, it's treated as camelCase and converted.
+#[must_use]
+pub fn normalize_binding_key(key: &str) -> String {
+    if key.contains('_') {
+        key.to_string()
+    } else {
+        camel_to_snake(key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,5 +629,58 @@ mod tests {
         kinds.sort();
         // Just verify it doesn't panic and produces a deterministic order
         assert_eq!(kinds.len(), 3);
+    }
+
+    // -- Case conversion helpers --
+
+    #[test]
+    fn snake_to_camel_basic() {
+        assert_eq!(snake_to_camel("get_user_name"), "getUserName");
+        assert_eq!(snake_to_camel("fetch_data"), "fetchData");
+        assert_eq!(snake_to_camel("save"), "save");
+        assert_eq!(snake_to_camel(""), "");
+    }
+
+    #[test]
+    fn snake_to_camel_edge_cases() {
+        assert_eq!(snake_to_camel("a_b_c"), "aBC");
+        assert_eq!(snake_to_camel("_leading"), "Leading");
+        assert_eq!(snake_to_camel("trailing_"), "trailing");
+        assert_eq!(snake_to_camel("double__underscore"), "doubleUnderscore");
+    }
+
+    #[test]
+    fn camel_to_snake_basic() {
+        assert_eq!(camel_to_snake("getUserName"), "get_user_name");
+        assert_eq!(camel_to_snake("fetchData"), "fetch_data");
+        assert_eq!(camel_to_snake("save"), "save");
+        assert_eq!(camel_to_snake(""), "");
+    }
+
+    #[test]
+    fn camel_to_snake_edge_cases() {
+        assert_eq!(camel_to_snake("URL"), "url");
+        assert_eq!(camel_to_snake("getURL"), "get_url");
+        assert_eq!(camel_to_snake("a"), "a");
+    }
+
+    #[test]
+    fn normalize_binding_key_snake() {
+        assert_eq!(normalize_binding_key("get_user"), "get_user");
+    }
+
+    #[test]
+    fn normalize_binding_key_camel() {
+        assert_eq!(normalize_binding_key("getUser"), "get_user");
+    }
+
+    #[test]
+    fn case_conversion_roundtrip() {
+        // snake → camel → snake roundtrip
+        let original = "fetch_all_data";
+        let camel = snake_to_camel(original);
+        assert_eq!(camel, "fetchAllData");
+        let back = camel_to_snake(&camel);
+        assert_eq!(back, original);
     }
 }

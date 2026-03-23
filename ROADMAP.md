@@ -971,12 +971,12 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] TauriCommandExtractor: tree-sitter queries for invoke("name") in JS/TS and #[tauri::command] fn name() in Rust
-- [ ] TauriEventExtractor: emit/listen pattern detection across JS/TS and Rust boundaries
-- [ ] Command registration validation: cross-reference with tauri::generate_handler![] for confidence boost
-- [ ] Edge cases: rename_all/camelCase transforms, async commands, command modules, Tauri v1 vs v2 invoke patterns
-- [ ] Test fixture: minimal Tauri app with 5+ commands, events, state management, and plugin usage
-- [ ] iris_bridge MCP tool: dedicated cross-language navigation with query, bridge_kind, and language filters
+- [x] TauriCommandExtractor: tree-sitter queries for invoke("name") in JS/TS and #[tauri::command] fn name() in Rust
+- [x] TauriEventExtractor: emit/listen pattern detection across JS/TS and Rust boundaries
+- [x] Command registration validation: cross-reference with tauri::generate_handler![] for confidence boost
+- [x] Edge cases: rename_all/camelCase transforms, async commands, command modules, Tauri v1 vs v2 invoke patterns
+- [x] Test fixture: minimal Tauri app with 5+ commands, events, state management, and plugin usage
+- [x] iris_bridge MCP tool: dedicated cross-language navigation with query, bridge_kind, and language filters
 
 ---
 
