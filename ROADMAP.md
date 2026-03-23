@@ -734,9 +734,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Create curated retrieval benchmark: 50+ queries with gold-standard relevant section IDs
-- [ ] Implement automated retrieval metrics: precision@k, MRR, nDCG in eval_retrieval test
-- [ ] Add CI regression gate: fail build if retrieval quality drops below threshold
+- [x] Create curated retrieval benchmark: 50+ queries with gold-standard relevant section IDs
+- [x] Implement automated retrieval metrics: precision@k, MRR, nDCG in eval_retrieval test
+- [x] Add CI regression gate: fail build if retrieval quality drops below threshold
 
 ---
 

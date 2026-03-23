@@ -1826,11 +1826,11 @@ impl IrisServer {
         let alerts = session.drain_alerts();
 
         // Compute eviction recommendations when under pressure
-        let eviction_recommendations = if budget_status.pressure_level != PressureLevel::Normal {
+        let eviction_recommendations = if budget_status.pressure_level == PressureLevel::Normal {
+            Vec::new()
+        } else {
             let budget = self.budget.lock().await;
             budget.eviction_candidates(&session, 3)
-        } else {
-            Vec::new()
         };
         drop(session);
 
