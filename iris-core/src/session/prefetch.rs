@@ -85,7 +85,7 @@ pub struct CacheEntry {
 }
 
 /// Hit/miss metrics for the prefetch cache, broken down by strategy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, schemars::JsonSchema)]
 pub struct PrefetchMetrics {
     /// Total number of cache hits (warm responses).
     pub hits: u64,

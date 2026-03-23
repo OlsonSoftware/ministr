@@ -26,10 +26,10 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData as McpError;
 use rmcp::model::{
     CallToolResult, Content, Implementation, ListResourceTemplatesResult, ListResourcesResult,
-    NumberOrString, PaginatedRequestParams, ProgressNotificationParam, ProtocolVersion,
-    RawResource, RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, Resource,
-    ResourceContents, ResourceTemplate, ResourceUpdatedNotificationParam, ServerCapabilities,
-    ServerInfo, SubscribeRequestParams, UnsubscribeRequestParams,
+    NumberOrString, PaginatedRequestParams, ProgressNotificationParam, RawResource,
+    RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents,
+    ResourceTemplate, ResourceUpdatedNotificationParam, ServerCapabilities, ServerInfo,
+    SubscribeRequestParams, UnsubscribeRequestParams,
 };
 use rmcp::schemars;
 use rmcp::service::{NotificationContext, Peer, RequestContext};
@@ -100,8 +100,8 @@ pub struct IrisServer {
 /// Every tool response is serialized as a JSON object with a `data` field
 /// containing the tool-specific result and a `budget_status` field with
 /// the current token budget snapshot.
-#[derive(Debug, Serialize)]
-struct ToolResponse<T: Serialize> {
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct ToolResponse<T: Serialize + schemars::JsonSchema> {
     /// The tool-specific result data.
     #[serde(flatten)]
     data: T,
@@ -122,7 +122,7 @@ struct ToolResponse<T: Serialize> {
 }
 
 /// Wrapper for survey responses that includes both results and dedup metadata.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct SurveyResponse {
     /// The survey results after deduplication.
     results: Vec<SurveyResult>,
@@ -131,7 +131,7 @@ struct SurveyResponse {
 }
 
 /// Wrapper for extract responses.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ExtractResponse {
     /// The extracted claims.
     claims: Vec<iris_core::service::ClaimResult>,
@@ -141,7 +141,7 @@ struct ExtractResponse {
 ///
 /// Returned instead of full text to avoid wasting context tokens on
 /// content the agent already has.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct AlreadyDeliveredResponse {
     /// The requested section ID.
     section_id: String,
@@ -152,7 +152,7 @@ struct AlreadyDeliveredResponse {
 }
 
 /// Response from the `iris_evicted` tool.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct EvictedResponse {
     /// Content IDs that were successfully removed.
     evicted: Vec<String>,
@@ -211,7 +211,7 @@ pub struct CompressParams {
 }
 
 /// Response from the `iris_budget` tool.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct BudgetResponse {
     /// Total context window budget in tokens.
     total_budget: usize,
@@ -245,14 +245,14 @@ pub struct RelatedParams {
 }
 
 /// Response from the `iris_related` tool.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct RelatedResponse {
     /// Related claims with relationship metadata.
     related: Vec<RelatedClaimResult>,
 }
 
 /// Response from the `iris_compress` tool.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct CompressResponse {
     /// Compressed summaries for the requested content.
     summaries: Vec<CompressedItem>,
@@ -296,7 +296,7 @@ pub struct FetchParams {
 }
 
 /// Response from the `iris_fetch` tool.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct FetchResponse {
     /// Number of pages successfully fetched.
     pages_fetched: usize,
@@ -322,7 +322,7 @@ pub struct RefreshParams {
 }
 
 /// Per-URL refresh detail for the response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct RefreshUrlDetailResponse {
     /// The URL that was checked.
     url: String,
@@ -331,7 +331,7 @@ struct RefreshUrlDetailResponse {
 }
 
 /// Per-repo refresh detail for the response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct RefreshGitDetailResponse {
     /// The repository URL that was checked.
     repo_url: String,
@@ -340,7 +340,7 @@ struct RefreshGitDetailResponse {
 }
 
 /// Response from the `iris_refresh` tool.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct RefreshResponse {
     /// Number of web URLs checked.
     urls_checked: usize,
@@ -406,7 +406,7 @@ pub struct CloneParams {
 }
 
 /// Response from the `iris_clone` tool.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct CloneResponse {
     /// Number of files discovered in the clone checkout.
     files_discovered: usize,
@@ -431,7 +431,7 @@ pub struct TaskParams {
 }
 
 /// Response returned when an async task is spawned.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct AsyncTaskResponse {
     /// The task ID to poll with `iris_task`.
     task_id: String,
@@ -486,7 +486,7 @@ pub struct ReferencesParams {
 }
 
 /// Response from the `iris_symbols` tool.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct SymbolsResponse {
     /// Matching symbols.
     symbols: Vec<SymbolSummary>,
@@ -495,7 +495,7 @@ struct SymbolsResponse {
 }
 
 /// A compact symbol summary for search results.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct SymbolSummary {
     /// Symbol ID (use with `iris_definition` / `iris_references`).
     id: String,
@@ -521,7 +521,7 @@ struct SymbolSummary {
 }
 
 /// Response from the `iris_references` tool.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ReferencesResponse {
     /// Cross-references for the symbol.
     references: Vec<SymbolRefResult>,
@@ -530,7 +530,7 @@ struct ReferencesResponse {
 }
 
 /// Corpus-level statistics returned in the `iris_toc` response header.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct CorpusStatsHeader {
     /// Number of documents in the corpus.
     documents: usize,
@@ -544,7 +544,7 @@ struct CorpusStatsHeader {
 }
 
 /// Response from the `iris_toc` tool.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct TocResponse {
     /// Corpus-level statistics for quick orientation.
     corpus_stats: CorpusStatsHeader,
@@ -555,37 +555,36 @@ struct TocResponse {
 #[tool_handler]
 impl ServerHandler for IrisServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::LATEST,
-            capabilities: ServerCapabilities::builder()
+        ServerInfo::new(
+            ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
                 .enable_resources_subscribe()
                 .build(),
-            server_info: Implementation {
-                name: "iris".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                ..Default::default()
-            },
-            instructions: Some(
-                "iris is a context cache controller for LLM agents. Use iris_toc to get \
-                 a structural overview of the indexed corpus, iris_survey to search for \
-                 relevant content, iris_read to retrieve full section text, iris_extract \
-                 to get atomic claims from a section, iris_related to follow dependency \
-                 chains between claims, iris_budget to check context budget status and \
-                 get eviction recommendations, iris_compress to generate compressed \
-                 summaries of content you want to evict, iris_evicted to signal when \
-                 content has been dropped from your context window, iris_fetch to \
-                 fetch web content by URL and add it to the corpus, iris_refresh \
-                 to check cached web sources for staleness and re-fetch changed content, \
-                 iris_clone to clone a git repository and index its content, \
-                 iris_task to poll background fetch/clone tasks, \
-                 iris_symbols to search the code symbol index, \
-                 iris_definition to get the full source definition of a symbol, \
-                 and iris_references to find all references to a symbol."
-                    .to_string(),
+        )
+        .with_server_info(
+            Implementation::new("iris", env!("CARGO_PKG_VERSION")).with_description(
+                "A context cache controller for LLM agents — session tracking, \
+                     predictive prefetching, budget management, and coherence.",
             ),
-        }
+        )
+        .with_instructions(
+            "iris is a context cache controller for LLM agents. Use iris_toc to get \
+             a structural overview of the indexed corpus, iris_survey to search for \
+             relevant content, iris_read to retrieve full section text, iris_extract \
+             to get atomic claims from a section, iris_related to follow dependency \
+             chains between claims, iris_budget to check context budget status and \
+             get eviction recommendations, iris_compress to generate compressed \
+             summaries of content you want to evict, iris_evicted to signal when \
+             content has been dropped from your context window, iris_fetch to \
+             fetch web content by URL and add it to the corpus, iris_refresh \
+             to check cached web sources for staleness and re-fetch changed content, \
+             iris_clone to clone a git repository and index its content, \
+             iris_task to poll background fetch/clone tasks, \
+             iris_symbols to search the code symbol index, \
+             iris_definition to get the full source definition of a symbol, \
+             and iris_references to find all references to a symbol.",
+        )
     }
 
     async fn list_resources(
@@ -2163,7 +2162,7 @@ impl IrisServer {
     /// When budget pressure is elevated or critical, proactively includes
     /// eviction recommendations so the agent can free context tokens without
     /// having to call `iris_budget` explicitly.
-    async fn build_response<T: Serialize>(
+    async fn build_response<T: Serialize + schemars::JsonSchema>(
         &self,
         data: T,
         budget_status: BudgetStatus,
@@ -2701,14 +2700,14 @@ impl IrisServer {
         }
 
         let text = serde_json::to_string_pretty(&status).unwrap_or_default();
-        Ok(ReadResourceResult {
-            contents: vec![ResourceContents::TextResourceContents {
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::TextResourceContents {
                 meta: None,
                 uri: "iris://status".to_string(),
                 mime_type: Some("application/json".to_string()),
                 text,
-            }],
-        })
+            },
+        ]))
     }
 
     /// Build the `iris://corpus/{path}` resource content.
@@ -2751,14 +2750,14 @@ impl IrisServer {
 
         let uri = format!("iris://corpus/{path}");
         let text = serde_json::to_string_pretty(&metadata).unwrap_or_default();
-        Ok(ReadResourceResult {
-            contents: vec![ResourceContents::TextResourceContents {
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::TextResourceContents {
                 meta: None,
                 uri,
                 mime_type: Some("application/json".to_string()),
                 text,
-            }],
-        })
+            },
+        ]))
     }
 }
 
@@ -2961,6 +2960,7 @@ mod tests {
     use iris_core::index::{HnswIndex, VectorIndex};
     use iris_core::storage::{SqliteStorage, Storage};
     use iris_core::types::{Claim, ClaimId, ContentId, DocumentTree, Section, SectionId};
+    use rmcp::model::ProtocolVersion;
 
     /// Extract the text string from the first Content item.
     fn extract_text(content: &[Content]) -> &str {
@@ -3965,10 +3965,7 @@ mod tests {
         let (client, _server) = wrap_test_client(setup_server().await).await;
         let result = client
             .peer()
-            .read_resource(ReadResourceRequestParams {
-                uri: "iris://status".to_string(),
-                meta: None,
-            })
+            .read_resource(ReadResourceRequestParams::new("iris://status"))
             .await
             .unwrap();
 
@@ -3980,10 +3977,7 @@ mod tests {
         let (client, _server) = wrap_test_client(setup_server().await).await;
         let result = client
             .peer()
-            .read_resource(ReadResourceRequestParams {
-                uri: "iris://corpus/docs/auth.md".to_string(),
-                meta: None,
-            })
+            .read_resource(ReadResourceRequestParams::new("iris://corpus/docs/auth.md"))
             .await
             .unwrap();
 
@@ -3995,10 +3989,7 @@ mod tests {
         let (client, _server) = wrap_test_client(setup_server().await).await;
         let result = client
             .peer()
-            .read_resource(ReadResourceRequestParams {
-                uri: "iris://unknown".to_string(),
-                meta: None,
-            })
+            .read_resource(ReadResourceRequestParams::new("iris://unknown"))
             .await;
 
         assert!(result.is_err());

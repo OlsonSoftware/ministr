@@ -16,7 +16,7 @@ use serde::Serialize;
 use super::types::{DeliveredItem, Session};
 
 /// A candidate for eviction from the agent's context window.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct EvictionCandidate {
     /// The content ID of the item to evict.
     pub content_id: String,

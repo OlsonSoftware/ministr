@@ -12,7 +12,7 @@ use super::types::Session;
 use super::window::WindowEstimator;
 
 /// Pressure level indicating how close the agent is to its context budget.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PressureLevel {
     /// Usage below pressure threshold — deliver at requested resolution.
@@ -45,7 +45,7 @@ pub enum PressureLevel {
 ///
 /// assert_eq!(status.pressure_level, PressureLevel::Normal);
 /// ```
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BudgetStatus {
     /// Estimated tokens currently consumed in the agent's context.
     pub tokens_used: usize,

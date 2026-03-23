@@ -24,7 +24,7 @@ use crate::types::{
 };
 
 /// A ranked result from a corpus survey search.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SurveyResult {
     /// The content ID from the vector index.
     pub content_id: String,
@@ -41,7 +41,7 @@ pub struct SurveyResult {
 }
 
 /// Detailed section content returned by `read_section`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SectionDetail {
     /// Section identifier.
     pub section_id: String,
@@ -57,7 +57,7 @@ pub struct SectionDetail {
 }
 
 /// A claim result from extraction.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ClaimResult {
     /// Claim identifier.
     pub claim_id: String,
@@ -72,7 +72,7 @@ pub struct ClaimResult {
 ///
 /// When an agent wants to free budget, it can compress sections into shorter
 /// summaries that preserve the gist while reducing token count.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct CompressedItem {
     /// The original content ID that was compressed.
     pub original_id: String,
@@ -87,7 +87,7 @@ pub struct CompressedItem {
 }
 
 /// A related claim returned by `related_claims`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct RelatedClaimResult {
     /// The related claim's ID.
     pub claim_id: String,
@@ -102,7 +102,7 @@ pub struct RelatedClaimResult {
 }
 
 /// A symbol definition with source context and module hierarchy.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SymbolDefinition {
     /// The symbol record from storage.
     pub id: String,
@@ -130,7 +130,7 @@ pub struct SymbolDefinition {
 }
 
 /// A symbol reference result from cross-reference queries.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SymbolRefResult {
     /// The symbol that holds the reference.
     pub from_symbol_id: String,
