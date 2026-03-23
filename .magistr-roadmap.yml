@@ -1093,12 +1093,12 @@ phases:
 - id: L5
   name: Multi-Project Workspace Intelligence
   tagline: One project, many packages, unified intelligence
-  status: pending
+  status: in_progress
   problem: Real projects span multiple packages, crates, and workspaces — iris indexes one directory at a time
   solution: Workspace auto-detection, multi-root corpus indexing, cross-package import graph, and cross-crate reference resolution
   tasks:
   - text: 'Workspace detection: auto-discover Cargo workspaces, npm/pnpm/yarn workspaces, monorepo layouts (turborepo, nx)'
-    checked: false
+    checked: true
   - text: 'Multi-root corpus: index multiple directories as a unified project, maintaining per-directory metadata and language stats'
     checked: false
   - text: 'Cross-package import graph: track imports/dependencies between packages in a workspace'
