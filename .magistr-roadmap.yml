@@ -1153,7 +1153,7 @@ phases:
   - text: Persist cloned/fetched roots in the roots registry alongside local corpus roots — each clone gets a named, tracked root entry
     checked: true
   - text: Namespace section and symbol IDs by root ID to prevent path collisions between repos with identical file paths
-    checked: false
+    checked: true
   - text: Make vector index and section registry append-only per root — adding a new root must never evict or replace existing roots' content
     checked: true
   - text: 'Diagnose and fix Python/TypeScript clone invisibility: clone reports "110 files indexed, 1925 sections" but zero searchable content — likely same root cause as corpus replacement'
@@ -1165,14 +1165,14 @@ phases:
 - id: CL1
   name: Clone Lifecycle and Incremental Index
   tagline: Fast warm starts, readable clone sources, cancellable tasks
-  status: pending
+  status: in_progress
   problem: iris_definition returns [source unavailable] for cloned repos. Indexing runs from scratch every session. MCP tool cancellations don't stop server-side work (50+ min CPU wasted).
   solution: Persist clone caches with source path mapping. Content-hash-based embedding cache for incremental indexing. Implement MCP notifications/cancelled with CancellationToken threading.
   tasks:
   - text: Persist clone cache directories with root metadata — clone source trees are read-only assets, not temp artifacts to be cleaned up
     checked: false
   - text: Map clone source paths in the symbol index so iris_definition resolves to cached clone files instead of returning [source unavailable]
-    checked: false
+    checked: true
   - text: Implement MCP notifications/cancelled handler — listen for client cancellation and propagate to in-flight operations
     checked: false
   - text: Thread tokio_util::sync::CancellationToken through clone, fetch, and index pipelines — abort on cancellation, clean up partial state

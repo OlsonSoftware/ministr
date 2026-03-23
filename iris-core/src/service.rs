@@ -1032,12 +1032,32 @@ impl QueryService {
         Ok(links)
     }
 
+    /// Resolve a stored file path to an absolute filesystem path.
+    ///
+    /// Paths from cloned repos are namespaced as `{root_id}/{relative_path}`.
+    /// This method detects the root prefix, looks up the corpus root's
+    /// absolute directory, and joins with the relative path. For local
+    /// (un-namespaced) paths, returns the path as-is.
+    async fn resolve_source_path(&self, file_path: &str) -> String {
+        if let Some(relative) = crate::ingestion::strip_root_prefix(file_path) {
+            // Extract root ID (everything before the first '/')
+            let root_id = &file_path[..file_path.len() - relative.len() - 1];
+            if let Ok(Some(root)) = self.storage.get_corpus_root(root_id).await {
+                let mut resolved = std::path::PathBuf::from(&root.path);
+                resolved.push(relative);
+                return resolved.to_string_lossy().to_string();
+            }
+        }
+        file_path.to_string()
+    }
+
     /// Read source file lines for symbol context display.
     ///
     /// Returns the symbol's source lines with 3 lines of surrounding context.
     /// Falls back to a placeholder if the file cannot be read.
     async fn read_source_context(&self, file_path: &str, line_start: u32, line_end: u32) -> String {
-        let Ok(content) = tokio::fs::read_to_string(file_path).await else {
+        let resolved = self.resolve_source_path(file_path).await;
+        let Ok(content) = tokio::fs::read_to_string(&resolved).await else {
             return format!("[source unavailable: {file_path}]");
         };
 
