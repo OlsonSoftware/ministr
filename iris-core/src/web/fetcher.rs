@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 use url::Url;
 
@@ -567,7 +568,7 @@ impl WebFetcher {
     ///
     /// Returns [`WebError`] if fetching fails, or [`WebError::IngestionFailed`]
     /// if ingestion or embedding fails.
-    #[instrument(skip(self, pipeline, storage, embedder, index), fields(url = %url))]
+    #[instrument(skip(self, pipeline, storage, embedder, index, ct), fields(url = %url))]
     pub async fn fetch_and_ingest_with_embeddings<S, E, I>(
         &self,
         url: &str,
@@ -575,12 +576,18 @@ impl WebFetcher {
         storage: &S,
         embedder: &E,
         index: &I,
+        ct: Option<&CancellationToken>,
     ) -> Result<FetchResult, WebError>
     where
         S: Storage + ?Sized,
         E: crate::embedding::Embedder + ?Sized,
         I: crate::index::VectorIndex + ?Sized,
     {
+        // Check cancellation before starting the fetch.
+        if ct.is_some_and(CancellationToken::is_cancelled) {
+            return Err(WebError::Cancelled);
+        }
+
         let mut result = self.fetch(url).await?;
 
         let mut total_sections = 0;
@@ -588,6 +595,10 @@ impl WebFetcher {
         let mut total_tokens = 0;
 
         for page in &result.pages {
+            // Check cancellation between page ingestions.
+            if ct.is_some_and(CancellationToken::is_cancelled) {
+                return Err(WebError::Cancelled);
+            }
             let source_path = web_source_path(&page.url);
             total_tokens += count_tokens(&page.markdown);
             let stats = pipeline
@@ -723,7 +734,7 @@ impl WebFetcher {
             Ok(StalenessResult::Stale { .. }) => {
                 // Re-fetch and re-ingest
                 match self
-                    .fetch_and_ingest_with_embeddings(url, pipeline, storage, embedder, index)
+                    .fetch_and_ingest_with_embeddings(url, pipeline, storage, embedder, index, None)
                     .await
                 {
                     Ok(result) => {

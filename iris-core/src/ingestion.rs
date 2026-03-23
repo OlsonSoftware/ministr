@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 
 use crate::code::package_graph::PackageGraph;
@@ -793,7 +794,7 @@ impl IngestionPipeline {
         E: Embedder + ?Sized,
         I: VectorIndex + ?Sized,
     {
-        self.ingest_directory_with_embeddings_rooted(dir, storage, embedder, index, None)
+        self.ingest_directory_with_embeddings_rooted(dir, storage, embedder, index, None, None)
             .await
     }
 
@@ -814,6 +815,7 @@ impl IngestionPipeline {
         embedder: &E,
         index: &I,
         root_id: Option<&str>,
+        ct: Option<&CancellationToken>,
     ) -> Result<IngestionStats, IngestionError>
     where
         S: Storage + ?Sized,
@@ -867,6 +869,19 @@ impl IngestionPipeline {
         }
 
         for file_path in &files {
+            // Check cancellation at the top of each file iteration.
+            if ct.is_some_and(CancellationToken::is_cancelled) {
+                info!(
+                    indexed = stats.files_indexed,
+                    remaining = files.len()
+                        - stats.files_indexed
+                        - stats.files_skipped
+                        - stats.files_failed,
+                    "ingestion cancelled"
+                );
+                return Err(IngestionError::Cancelled);
+            }
+
             let raw_relative = file_path
                 .strip_prefix(dir)
                 .unwrap_or(file_path)
@@ -4456,6 +4471,7 @@ pub fn compute_hash(content: &str) -> String {
                 &embedder,
                 &index,
                 Some(&root_id),
+                None,
             )
             .await
             .unwrap();
@@ -4512,6 +4528,7 @@ pub fn compute_hash(content: &str) -> String {
                 &embedder,
                 &index,
                 Some(&root_a),
+                None,
             )
             .await
             .unwrap();
@@ -4523,6 +4540,7 @@ pub fn compute_hash(content: &str) -> String {
                 &embedder,
                 &index,
                 Some(&root_b),
+                None,
             )
             .await
             .unwrap();
@@ -4543,5 +4561,45 @@ pub fn compute_hash(content: &str) -> String {
                 "document ID '{id}' should not appear in both roots"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn ingestion_cancelled_stops_early() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create several files so the loop has work to do.
+        for i in 0..5 {
+            std::fs::write(
+                tmp.path().join(format!("file{i}.md")),
+                format!("# File {i}\n\nContent for file {i}.\n"),
+            )
+            .unwrap();
+        }
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let embedder = StubEmbedder;
+        let index = StubVectorIndex;
+        let pipeline = IngestionPipeline::new();
+
+        // Pre-cancel the token before starting ingestion.
+        let ct = tokio_util::sync::CancellationToken::new();
+        ct.cancel();
+
+        let result = pipeline
+            .ingest_directory_with_embeddings_rooted(
+                tmp.path(),
+                &storage,
+                &embedder,
+                &index,
+                None,
+                Some(&ct),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), IngestionError::Cancelled),
+            "should return Cancelled error"
+        );
     }
 }

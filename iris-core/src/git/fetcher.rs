@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 
 use crate::error::GitError;
@@ -160,17 +161,23 @@ impl GitFetcher {
     ///
     /// Returns [`GitError`] if git is not installed, the clone fails,
     /// or metadata cannot be written.
-    #[instrument(skip(self), fields(repo = %repo_url))]
+    #[instrument(skip(self, ct), fields(repo = %repo_url))]
     pub async fn clone(
         &self,
         repo_url: &str,
         paths: Option<&[String]>,
         branch: Option<&str>,
+        ct: Option<&CancellationToken>,
     ) -> Result<CloneResult, GitError> {
         if repo_url.is_empty() {
             return Err(GitError::InvalidRepo {
                 url: repo_url.to_owned(),
             });
+        }
+
+        // Check for cancellation before starting.
+        if ct.is_some_and(CancellationToken::is_cancelled) {
+            return Err(GitError::Cancelled);
         }
 
         // Verify git is installed.
@@ -180,14 +187,15 @@ impl GitFetcher {
 
         // Check for cached clone.
         if let Some(result) = self
-            .try_cached_clone(&clone_dir, repo_url, paths, branch)
+            .try_cached_clone(&clone_dir, repo_url, paths, branch, ct)
             .await?
         {
             return Ok(result);
         }
 
         // Fresh clone.
-        self.fresh_clone(&clone_dir, repo_url, paths, branch).await
+        self.fresh_clone(&clone_dir, repo_url, paths, branch, ct)
+            .await
     }
 
     /// Get the remote HEAD commit SHA without cloning.
@@ -263,7 +271,7 @@ impl GitFetcher {
             }
             GitStalenessResult::Stale { remote_sha, .. } => {
                 info!(repo = %repo_url, remote_sha = %remote_sha, "clone is stale, re-cloning");
-                let result = self.clone(repo_url, paths, branch).await?;
+                let result = self.clone(repo_url, paths, branch, None).await?;
                 Ok(Some(result))
             }
         }
@@ -312,6 +320,7 @@ impl GitFetcher {
         repo_url: &str,
         paths: Option<&[String]>,
         branch: Option<&str>,
+        ct: Option<&CancellationToken>,
     ) -> Result<Option<CloneResult>, GitError> {
         let Some(meta) = Self::load_metadata(clone_dir).await? else {
             return Ok(None);
@@ -356,7 +365,9 @@ impl GitFetcher {
         }
 
         // Re-clone from scratch.
-        let result = self.fresh_clone(clone_dir, repo_url, paths, branch).await?;
+        let result = self
+            .fresh_clone(clone_dir, repo_url, paths, branch, ct)
+            .await?;
         Ok(Some(result))
     }
 
@@ -367,6 +378,7 @@ impl GitFetcher {
         repo_url: &str,
         paths: Option<&[String]>,
         branch: Option<&str>,
+        ct: Option<&CancellationToken>,
     ) -> Result<CloneResult, GitError> {
         let start = std::time::Instant::now();
 
@@ -408,6 +420,13 @@ impl GitFetcher {
 
         run_git(&args).await?;
 
+        // Check cancellation after clone completes.
+        if ct.is_some_and(CancellationToken::is_cancelled) {
+            // Clean up the partial clone directory.
+            let _ = tokio::fs::remove_dir_all(clone_dir).await;
+            return Err(GitError::Cancelled);
+        }
+
         // Set up sparse checkout if paths are specified.
         let sparse_paths: Vec<String> = paths.map(<[String]>::to_vec).unwrap_or_default();
 
@@ -416,6 +435,12 @@ impl GitFetcher {
             let path_refs: Vec<&str> = sparse_paths.iter().map(String::as_str).collect();
             sparse_args.extend(path_refs);
             run_git_in_dir(clone_dir, &sparse_args).await?;
+        }
+
+        // Check cancellation before checkout.
+        if ct.is_some_and(CancellationToken::is_cancelled) {
+            let _ = tokio::fs::remove_dir_all(clone_dir).await;
+            return Err(GitError::Cancelled);
         }
 
         // Checkout the content.
@@ -667,9 +692,24 @@ mod tests {
         let fetcher = GitFetcher::new(GitFetcherConfig {
             remote_dir: PathBuf::from("/tmp/iris-test-git"),
         });
-        let result = fetcher.clone("", None, None).await;
+        let result = fetcher.clone("", None, None, None).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), GitError::InvalidRepo { .. }));
+    }
+
+    #[tokio::test]
+    async fn clone_with_cancelled_token_returns_error() {
+        let ct = CancellationToken::new();
+        ct.cancel();
+
+        let fetcher = GitFetcher::new(GitFetcherConfig {
+            remote_dir: PathBuf::from("/tmp/iris-test-git-cancel"),
+        });
+        let result = fetcher
+            .clone("https://example.com/repo.git", None, None, Some(&ct))
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), GitError::Cancelled));
     }
 
     #[tokio::test]
@@ -731,7 +771,7 @@ mod tests {
 
         // Use a well-known tiny repo.
         let repo_url = "https://github.com/octocat/Hello-World.git";
-        let result = fetcher.clone(repo_url, None, None).await;
+        let result = fetcher.clone(repo_url, None, None, None).await;
 
         match result {
             Ok(clone_result) => {
@@ -749,7 +789,7 @@ mod tests {
                 assert_eq!(loaded.unwrap().commit_sha, clone_result.metadata.commit_sha);
 
                 // Clone again — should reuse cache.
-                let cached_result = fetcher.clone(repo_url, None, None).await.unwrap();
+                let cached_result = fetcher.clone(repo_url, None, None, None).await.unwrap();
                 assert!(cached_result.from_cache);
                 assert_eq!(
                     cached_result.metadata.commit_sha,

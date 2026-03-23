@@ -43,6 +43,7 @@ use rmcp::{prompt, prompt_handler, prompt_router, tool, tool_handler, tool_route
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info_span, warn};
 
 use iris_core::analytics::Analytics;
@@ -917,10 +918,15 @@ impl ServerHandler for IrisServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CreateTaskResult, McpError> {
+        // Capture the cancellation token from the request context so that both
+        // `notifications/cancelled` (rmcp transport-level) and `tasks/cancel`
+        // (MCP task-level) can signal the same token.
+        let ct = context.ct.clone();
+
         // Create the task record first, then dispatch to the tool.
         let task = self
             .task_manager
-            .create(&format!("starting {}", request.name), None)
+            .create(&format!("starting {}", request.name), None, Some(ct))
             .await;
         let task_id = task.task_id.clone();
         let task_mgr = Arc::clone(&self.task_manager);
@@ -2071,6 +2077,7 @@ impl IrisServer {
     async fn fetch(
         &self,
         Parameters(params): Parameters<FetchParams>,
+        ct: CancellationToken,
     ) -> Result<CallToolResult, McpError> {
         let span = info_span!("iris_fetch", url = %params.url);
 
@@ -2118,6 +2125,7 @@ impl IrisServer {
                     storage.as_ref(),
                     embedder.as_ref(),
                     index.as_ref(),
+                    Some(&ct),
                 )
                 .await
             {
@@ -2227,6 +2235,7 @@ impl IrisServer {
     async fn clone_repo(
         &self,
         Parameters(params): Parameters<CloneParams>,
+        ct: CancellationToken,
     ) -> Result<CallToolResult, McpError> {
         let span = info_span!("iris_clone", repo = %params.repo);
 
@@ -2272,6 +2281,7 @@ impl IrisServer {
                 embedder.as_ref(),
                 index.as_ref(),
                 storage.as_ref(),
+                Some(&ct),
             )
             .await
         }
@@ -3093,6 +3103,7 @@ impl IrisServer {
         embedder: &dyn Embedder,
         index: &dyn VectorIndex,
         storage: &SqliteStorage,
+        ct: Option<&CancellationToken>,
     ) -> Result<CallToolResult, McpError> {
         // Phase 1: Clone the repository.
         let clone_start = std::time::Instant::now();
@@ -3101,6 +3112,7 @@ impl IrisServer {
             &params.repo,
             params.paths.as_deref(),
             params.branch.as_deref(),
+            ct,
         )
         .await
         {
@@ -3143,6 +3155,7 @@ impl IrisServer {
                 embedder,
                 index,
                 Some(&root_id),
+                ct,
             )
             .await;
         let index_time_ms = elapsed_millis(ingest_start);
@@ -3360,6 +3373,7 @@ impl IrisServer {
     /// Refresh all cached git clones, or a single repo if `url_filter` matches.
     ///
     /// Returns `(checked, refreshed, unchanged, failed, details)`.
+    #[allow(clippy::too_many_lines)]
     async fn refresh_git_sources(
         &self,
         url_filter: Option<&str>,
@@ -3428,7 +3442,14 @@ impl IrisServer {
                         branch: record.branch.clone(),
                     };
                     match self
-                        .clone_and_ingest(&params, git_fetcher, embedder, index, storage.as_ref())
+                        .clone_and_ingest(
+                            &params,
+                            git_fetcher,
+                            embedder,
+                            index,
+                            storage.as_ref(),
+                            None,
+                        )
                         .await
                     {
                         Ok(_) => {
@@ -5225,11 +5246,14 @@ mod tests {
     async fn clone_without_git_fetcher_returns_error() {
         let server = setup_server().await;
         let result = server
-            .clone_repo(Parameters(CloneParams {
-                repo: "https://github.com/octocat/Hello-World.git".to_string(),
-                paths: None,
-                branch: None,
-            }))
+            .clone_repo(
+                Parameters(CloneParams {
+                    repo: "https://github.com/octocat/Hello-World.git".to_string(),
+                    paths: None,
+                    branch: None,
+                }),
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
 
@@ -5263,11 +5287,14 @@ mod tests {
             .with_git_fetcher(git_fetcher, embedder, index);
 
         let result = server
-            .clone_repo(Parameters(CloneParams {
-                repo: String::new(),
-                paths: None,
-                branch: None,
-            }))
+            .clone_repo(
+                Parameters(CloneParams {
+                    repo: String::new(),
+                    paths: None,
+                    branch: None,
+                }),
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
 
@@ -5580,7 +5607,7 @@ mod tests {
     #[tokio::test]
     async fn task_status_returns_working_task() {
         let server = setup_server().await;
-        let task = server.task_manager.create("test task", None).await;
+        let task = server.task_manager.create("test task", None, None).await;
 
         let result = server
             .task_status(Parameters(TaskParams {
@@ -5598,7 +5625,7 @@ mod tests {
     #[tokio::test]
     async fn task_status_returns_completed_task() {
         let server = setup_server().await;
-        let task = server.task_manager.create("test task", None).await;
+        let task = server.task_manager.create("test task", None, None).await;
         let tool_result = CallToolResult::success(vec![Content::text(
             serde_json::json!({"pages": 5}).to_string(),
         )]);
@@ -5622,7 +5649,7 @@ mod tests {
     #[tokio::test]
     async fn task_status_returns_failed_task() {
         let server = setup_server().await;
-        let task = server.task_manager.create("test task", None).await;
+        let task = server.task_manager.create("test task", None, None).await;
         server
             .task_manager
             .fail(&task.task_id, "something broke")
@@ -5873,8 +5900,8 @@ mod tests {
     #[tokio::test]
     async fn mcp_task_list_returns_active_tasks() {
         let server = setup_server().await;
-        server.task_manager.create("task 1", None).await;
-        server.task_manager.create("task 2", None).await;
+        server.task_manager.create("task 1", None, None).await;
+        server.task_manager.create("task 2", None, None).await;
 
         let task_list = server.task_manager.list_tasks().await;
         assert_eq!(task_list.tasks.len(), 2);
@@ -5883,7 +5910,7 @@ mod tests {
     #[tokio::test]
     async fn mcp_task_get_returns_metadata() {
         let server = setup_server().await;
-        let task = server.task_manager.create("indexing…", None).await;
+        let task = server.task_manager.create("indexing…", None, None).await;
 
         let info = server.task_manager.get_task(&task.task_id).await.unwrap();
 
@@ -5895,7 +5922,7 @@ mod tests {
     #[tokio::test]
     async fn mcp_task_result_available_after_completion() {
         let server = setup_server().await;
-        let task = server.task_manager.create("test", None).await;
+        let task = server.task_manager.create("test", None, None).await;
         let tool_result = CallToolResult::success(vec![Content::text("hello")]);
         server
             .task_manager
@@ -5912,7 +5939,7 @@ mod tests {
     #[tokio::test]
     async fn mcp_task_result_unavailable_when_working() {
         let server = setup_server().await;
-        let task = server.task_manager.create("test", None).await;
+        let task = server.task_manager.create("test", None, None).await;
 
         let result = server.task_manager.get_result(&task.task_id).await;
         assert!(result.is_none(), "result should be None while working");
@@ -5924,7 +5951,10 @@ mod tests {
         let handle = tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
         });
-        let task = server.task_manager.create("long op", Some(handle)).await;
+        let task = server
+            .task_manager
+            .create("long op", Some(handle), None)
+            .await;
 
         let cancelled = server.task_manager.cancel(&task.task_id).await.unwrap();
         assert_eq!(cancelled.status, rmcp::model::TaskStatus::Cancelled);

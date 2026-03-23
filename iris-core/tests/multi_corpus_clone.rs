@@ -117,7 +117,14 @@ async fn clone_and_ingest_mock(
 
     // Ingest with root-scoped pipeline.
     let stats = pipeline
-        .ingest_directory_with_embeddings_rooted(dir, storage, embedder, index, Some(&root_id))
+        .ingest_directory_with_embeddings_rooted(
+            dir,
+            storage,
+            embedder,
+            index,
+            Some(&root_id),
+            None,
+        )
         .await
         .unwrap();
 

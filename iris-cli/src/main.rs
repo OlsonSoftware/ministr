@@ -670,7 +670,7 @@ async fn ingest_web_sources(
 
     for url in urls {
         match web_fetcher
-            .fetch_and_ingest_with_embeddings(url, pipeline, storage, embedder, index)
+            .fetch_and_ingest_with_embeddings(url, pipeline, storage, embedder, index, None)
             .await
         {
             Ok(result) => {
@@ -705,7 +705,7 @@ async fn ingest_git_sources(
     let git_fetcher = iris_core::git::GitFetcher::with_defaults();
 
     for url in urls {
-        match git_fetcher.clone(url, None, None).await {
+        match git_fetcher.clone(url, None, None, None).await {
             Ok(clone_result) => {
                 // Register a corpus root for the clone so it persists across sessions.
                 let root_id = iris_core::ingestion::compute_root_id(&clone_result.clone_dir);
@@ -738,6 +738,7 @@ async fn ingest_git_sources(
                         embedder,
                         index,
                         Some(&root_id),
+                        None,
                     )
                     .await
                 {
