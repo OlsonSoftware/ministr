@@ -552,6 +552,80 @@ struct TocResponse {
     entries: Vec<iris_core::types::TocEntry>,
 }
 
+// -- Union output types for tools that return different response shapes --
+
+/// Output data for `iris_read`: either full section detail or an "already delivered" skip.
+///
+/// Used only for output schema generation via `schemars::JsonSchema`.
+#[expect(dead_code)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+enum ReadOutputData {
+    /// Section was already delivered and is unchanged.
+    AlreadyDelivered(AlreadyDeliveredResponse),
+    /// Full section detail (new or changed content).
+    Detail(iris_core::service::SectionDetail),
+}
+
+/// Output data for `iris_fetch`: either an async task handle or the full fetch result.
+///
+/// Used only for output schema generation via `schemars::JsonSchema`.
+#[expect(dead_code)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+enum FetchOutputData {
+    /// Async task spawned — poll with `iris_task`.
+    Async(AsyncTaskResponse),
+    /// Synchronous fetch result with budget status.
+    Sync(ToolResponse<FetchResponse>),
+}
+
+/// Output data for `iris_clone`: either an async task handle or the full clone result.
+///
+/// Used only for output schema generation via `schemars::JsonSchema`.
+#[expect(dead_code)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+enum CloneOutputData {
+    /// Async task spawned — poll with `iris_task`.
+    Async(AsyncTaskResponse),
+    /// Synchronous clone result with budget status.
+    Sync(ToolResponse<CloneResponse>),
+}
+
+/// Generate the output schema `Arc<JsonObject>` for a tool response type.
+///
+/// Used in `#[tool(output_schema = ...)]` macro attributes to provide
+/// static output schemas derived from the response types' `JsonSchema` impls.
+///
+/// Handles types with `#[serde(flatten)]` (which produce `allOf` schemas without
+/// a root `type: "object"`) by injecting the required `type` field so the schema
+/// passes rmcp's MCP spec validation.
+fn tool_output_schema<T: schemars::JsonSchema + 'static>() -> std::sync::Arc<rmcp::model::JsonObject>
+{
+    // Try the standard rmcp path first (works for non-flattened types).
+    if let Ok(schema) = rmcp::handler::server::tool::schema_for_output::<T>() {
+        return schema;
+    }
+    // Flattened types produce allOf without a root "type" — generate the raw
+    // schema and add `"type": "object"` so it conforms to the MCP spec.
+    let mut schema = (*rmcp::handler::server::tool::schema_for_type::<T>()).clone();
+    schema
+        .entry("type")
+        .or_insert_with(|| serde_json::Value::String("object".into()));
+    std::sync::Arc::new(schema)
+}
+
+/// Serialize a value into a `CallToolResult` with structured content.
+///
+/// Sets both `structured_content` (JSON object) and `content` (text fallback)
+/// for backward compatibility with clients that don't support structured output.
+fn structured_result(value: &impl Serialize) -> Result<CallToolResult, McpError> {
+    let v = serde_json::to_value(value)
+        .map_err(|e| McpError::internal_error(format!("serialization failed: {e}"), None))?;
+    Ok(CallToolResult::structured(v))
+}
+
 #[tool_handler]
 impl ServerHandler for IrisServer {
     fn get_info(&self) -> ServerInfo {
@@ -728,7 +802,9 @@ impl IrisServer {
     /// Results that were already delivered in this session are filtered out.
     #[tool(
         name = "iris_survey",
-        description = "Search the indexed corpus for sections relevant to a natural language query. Returns ranked summaries with relevance scores. Already-delivered content is filtered out."
+        description = "Search the indexed corpus for sections relevant to a natural language query. Returns ranked summaries with relevance scores. Already-delivered content is filtered out.",
+        output_schema = tool_output_schema::<ToolResponse<SurveyResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn survey(
         &self,
@@ -829,10 +905,7 @@ impl IrisServer {
                             budget_status,
                         )
                         .await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                    structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "iris_survey failed");
@@ -858,7 +931,9 @@ impl IrisServer {
     ///    of re-delivering the full text.
     #[tool(
         name = "iris_read",
-        description = "Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count. Returns deltas for changed content and skips re-delivery of unchanged content."
+        description = "Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count. Returns deltas for changed content and skips re-delivery of unchanged content.",
+        output_schema = tool_output_schema::<ToolResponse<ReadOutputData>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn read(
         &self,
@@ -926,10 +1001,7 @@ impl IrisServer {
                             claims_available: detail.claims_available,
                         };
                         let response = self.build_response(skip, budget_status).await;
-                        let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                            format!("{{\"error\": \"serialization failed: {e}\"}}")
-                        });
-                        return Ok(CallToolResult::success(vec![Content::text(json)]));
+                        return structured_result(&response);
                     }
 
                     // Case 1: New content (or changed) — deliver full text
@@ -940,10 +1012,7 @@ impl IrisServer {
                     self.trigger_prefetch(&params.section_id).await;
 
                     let response = self.build_response(detail, budget_status).await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                    structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, section_id = %params.section_id, "iris_read failed");
@@ -963,7 +1032,9 @@ impl IrisServer {
     /// by relevance to a query.
     #[tool(
         name = "iris_extract",
-        description = "Extract atomic claims from a section, optionally filtered by relevance to a query."
+        description = "Extract atomic claims from a section, optionally filtered by relevance to a query.",
+        output_schema = tool_output_schema::<ToolResponse<ExtractResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn extract(
         &self,
@@ -1019,10 +1090,7 @@ impl IrisServer {
                     let response = self
                         .build_response(ExtractResponse { claims }, budget_status)
                         .await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                    structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, section_id = %params.section_id, "iris_extract failed");
@@ -1043,7 +1111,9 @@ impl IrisServer {
     /// across documents.
     #[tool(
         name = "iris_related",
-        description = "Follow dependency chains between claims. Given a claim ID, returns related claims with relationship type (references, contradicts, depends_on, updates) and source section."
+        description = "Follow dependency chains between claims. Given a claim ID, returns related claims with relationship type (references, contradicts, depends_on, updates) and source section.",
+        output_schema = tool_output_schema::<ToolResponse<RelatedResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn related(
         &self,
@@ -1100,10 +1170,7 @@ impl IrisServer {
                     let response = self
                         .build_response(RelatedResponse { related }, budget_status)
                         .await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                    structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, claim_id = %params.claim_id, "iris_related failed");
@@ -1124,7 +1191,9 @@ impl IrisServer {
     /// of budget tracking and deduplication for subsequent requests.
     #[tool(
         name = "iris_evicted",
-        description = "Signal that content IDs have been evicted from the agent's context window. Updates session tracking for accurate budget and deduplication."
+        description = "Signal that content IDs have been evicted from the agent's context window. Updates session tracking for accurate budget and deduplication.",
+        output_schema = tool_output_schema::<ToolResponse<EvictedResponse>>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn evicted(
         &self,
@@ -1166,9 +1235,7 @@ impl IrisServer {
             let response = self
                 .build_response(EvictedResponse { evicted, not_found }, budget_status)
                 .await;
-            let json = serde_json::to_string_pretty(&response)
-                .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
-            Ok(CallToolResult::success(vec![Content::text(json)]))
+            structured_result(&response)
         }
         .instrument(span)
         .await
@@ -1181,7 +1248,9 @@ impl IrisServer {
     /// to understand budget health and decide what to evict.
     #[tool(
         name = "iris_budget",
-        description = "Get the current context budget status: total budget, estimated usage, pressure level, and eviction recommendations. Call this to understand budget health."
+        description = "Get the current context budget status: total budget, estimated usage, pressure level, and eviction recommendations. Call this to understand budget health.",
+        output_schema = tool_output_schema::<BudgetResponse>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn budget(&self) -> Result<CallToolResult, McpError> {
         let span = info_span!("iris_budget");
@@ -1225,9 +1294,7 @@ impl IrisServer {
                 prefetch_metrics,
                 coherence_alerts: alerts,
             };
-            let json = serde_json::to_string_pretty(&response)
-                .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
-            Ok(CallToolResult::success(vec![Content::text(json)]))
+            structured_result(&response)
         }
         .instrument(span)
         .await
@@ -1240,7 +1307,9 @@ impl IrisServer {
     /// TF-IDF summarization (60–80% reduction) when sampling is unavailable.
     #[tool(
         name = "iris_compress",
-        description = "Generate compressed summaries for sections the agent wants to evict from context. Uses LLM-assisted abstractive compression (90%+ reduction) when sampling is available, falling back to extractive (60-80%). Returns summaries with original/compressed token counts and compression method."
+        description = "Generate compressed summaries for sections the agent wants to evict from context. Uses LLM-assisted abstractive compression (90%+ reduction) when sampling is available, falling back to extractive (60-80%). Returns summaries with original/compressed token counts and compression method.",
+        output_schema = tool_output_schema::<ToolResponse<CompressResponse>>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]
     async fn compress(
         &self,
@@ -1279,10 +1348,7 @@ impl IrisServer {
                     let response = self
                         .build_response(CompressResponse { summaries }, budget_status)
                         .await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                    structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "iris_compress failed");
@@ -1303,7 +1369,9 @@ impl IrisServer {
     /// orientation. Optionally filtered to a single document.
     #[tool(
         name = "iris_toc",
-        description = "Return a table of contents for the indexed corpus. Lists all documents and sections with metadata (heading path, depth, claim count, token count) but no text content. Optionally filter to a single document by ID."
+        description = "Return a table of contents for the indexed corpus. Lists all documents and sections with metadata (heading path, depth, claim count, token count) but no text content. Optionally filter to a single document by ID.",
+        output_schema = tool_output_schema::<ToolResponse<TocResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn toc(
         &self,
@@ -1357,10 +1425,7 @@ impl IrisServer {
                             budget_status,
                         )
                         .await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                    structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "iris_toc failed");
@@ -1382,7 +1447,9 @@ impl IrisServer {
     /// searchable via `iris_survey`.
     #[tool(
         name = "iris_fetch",
-        description = "Fetch web content by URL and add it to the indexed corpus. Tries llms.txt strategies first, then falls back to direct page fetch. Content is immediately searchable after fetching."
+        description = "Fetch web content by URL and add it to the indexed corpus. Tries llms.txt strategies first, then falls back to direct page fetch. Content is immediately searchable after fetching.",
+        output_schema = tool_output_schema::<FetchOutputData>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = true)
     )]
     async fn fetch(
         &self,
@@ -1481,9 +1548,7 @@ impl IrisServer {
                         params.url
                     ),
                 };
-                let json = serde_json::to_string_pretty(&response)
-                    .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
-                return Ok(CallToolResult::success(vec![Content::text(json)]));
+                return structured_result(&response);
             }
 
             match web_fetcher
@@ -1523,10 +1588,7 @@ impl IrisServer {
                             budget_status,
                         )
                         .await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                    structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, url = %params.url, "iris_fetch failed");
@@ -1547,7 +1609,9 @@ impl IrisServer {
     /// re-indexes it with embeddings, and reports what was updated.
     #[tool(
         name = "iris_refresh",
-        description = "Check cached web and git sources for staleness. Re-fetches changed web content and re-clones stale git repos. If url is provided, checks only that source. If omitted, checks all cached sources. Reports what was updated."
+        description = "Check cached web and git sources for staleness. Re-fetches changed web content and re-clones stale git repos. If url is provided, checks only that source. If omitted, checks all cached sources. Reports what was updated.",
+        output_schema = tool_output_schema::<ToolResponse<RefreshResponse>>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
     )]
     async fn refresh(
         &self,
@@ -1591,7 +1655,9 @@ impl IrisServer {
     /// embedded, and immediately searchable via `iris_survey`.
     #[tool(
         name = "iris_clone",
-        description = "Clone a git repository and index its content. Supports sparse checkout via paths parameter. Cached clones are reused when the remote HEAD hasn't changed. Content is immediately searchable after cloning."
+        description = "Clone a git repository and index its content. Supports sparse checkout via paths parameter. Cached clones are reused when the remote HEAD hasn't changed. Content is immediately searchable after cloning.",
+        output_schema = tool_output_schema::<CloneOutputData>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = true)
     )]
     async fn clone_repo(
         &self,
@@ -1722,9 +1788,7 @@ impl IrisServer {
                     status: "running",
                     message: format!("Cloning {repo_name} in background. Poll with iris_task.",),
                 };
-                let json = serde_json::to_string_pretty(&response)
-                    .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
-                return Ok(CallToolResult::success(vec![Content::text(json)]));
+                return structured_result(&response);
             }
 
             self.clone_and_ingest(
@@ -1747,7 +1811,9 @@ impl IrisServer {
     /// returned.
     #[tool(
         name = "iris_task",
-        description = "Poll a background task spawned by iris_fetch or iris_clone with async_task=true. Returns status and result when complete."
+        description = "Poll a background task spawned by iris_fetch or iris_clone with async_task=true. Returns status and result when complete.",
+        output_schema = tool_output_schema::<crate::task::TaskStatus>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn task_status(
         &self,
@@ -1759,12 +1825,7 @@ impl IrisServer {
             debug!(task_id = %params.task_id, "iris_task request");
 
             match self.task_manager.get(&params.task_id).await {
-                Some(status) => {
-                    let json = serde_json::to_string_pretty(&status).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
-                }
+                Some(status) => structured_result(&status),
                 None => Ok(CallToolResult::error(vec![Content::text(format!(
                     "unknown task ID: {}. Tasks expire 5 minutes after completion.",
                     params.task_id
@@ -1782,7 +1843,9 @@ impl IrisServer {
     /// and `iris_references`.
     #[tool(
         name = "iris_symbols",
-        description = "Search the code symbol index. Filter by name (fuzzy), kind, module, or visibility. Returns symbol IDs for use with iris_definition and iris_references."
+        description = "Search the code symbol index. Filter by name (fuzzy), kind, module, or visibility. Returns symbol IDs for use with iris_definition and iris_references.",
+        output_schema = tool_output_schema::<ToolResponse<SymbolsResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn symbols(
         &self,
@@ -1842,10 +1905,7 @@ impl IrisServer {
                     let response = self
                         .build_response(SymbolsResponse { symbols: summaries, total }, budget_status)
                         .await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                    structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "iris_symbols failed");
@@ -1865,7 +1925,9 @@ impl IrisServer {
     /// module hierarchy, and all metadata.
     #[tool(
         name = "iris_definition",
-        description = "Get the full source definition of a code symbol by ID. Returns source code with surrounding context and module hierarchy."
+        description = "Get the full source definition of a code symbol by ID. Returns source code with surrounding context and module hierarchy.",
+        output_schema = tool_output_schema::<ToolResponse<iris_core::service::SymbolDefinition>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn definition(
         &self,
@@ -1887,10 +1949,7 @@ impl IrisServer {
                     debug!(symbol_id = %params.symbol_id, token_count, "iris_definition success");
 
                     let response = self.build_response(def, budget_status).await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                    structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %params.symbol_id, "iris_definition failed");
@@ -1910,7 +1969,9 @@ impl IrisServer {
     /// with source locations.
     #[tool(
         name = "iris_references",
-        description = "Find all references to a code symbol: callers, implementors, importers. Optionally filter by reference kind."
+        description = "Find all references to a code symbol: callers, implementors, importers. Optionally filter by reference kind.",
+        output_schema = tool_output_schema::<ToolResponse<ReferencesResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn references(
         &self,
@@ -1948,10 +2009,7 @@ impl IrisServer {
                             budget_status,
                         )
                         .await;
-                    let json = serde_json::to_string_pretty(&response).unwrap_or_else(|e| {
-                        format!("{{\"error\": \"serialization failed: {e}\"}}")
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(json)]))
+                    structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %params.symbol_id, "iris_references failed");
@@ -2281,9 +2339,7 @@ impl IrisServer {
                         budget_status,
                     )
                     .await;
-                let json = serde_json::to_string_pretty(&response)
-                    .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
-                Ok(CallToolResult::success(vec![Content::text(json)]))
+                structured_result(&response)
             }
             Err(e) => {
                 warn!(error = %e, repo = %params.repo, "iris_clone: ingestion failed");
@@ -2388,9 +2444,7 @@ impl IrisServer {
                 budget_status,
             )
             .await;
-        let json = serde_json::to_string_pretty(&response)
-            .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        structured_result(&response)
     }
 
     /// Refresh all cached git clones, or a single repo if `url_filter` matches.
@@ -4384,8 +4438,9 @@ mod tests {
         assert!(result.is_error.is_none() || !result.is_error.unwrap());
         let text = extract_text(&result.content);
         assert!(text.contains("completed"), "should show completed: {text}");
+        // Structured output uses compact JSON (no spaces after colons)
         assert!(
-            text.contains("\"pages\": 5"),
+            text.contains("pages") && text.contains('5'),
             "should include result: {text}"
         );
     }
@@ -4412,6 +4467,222 @@ mod tests {
         assert!(
             text.contains("something broke"),
             "should include error: {text}"
+        );
+    }
+
+    // -- Structured output and annotation tests --
+
+    /// Verify that `structured_result` produces both `structured_content` and text fallback.
+    #[test]
+    fn structured_result_sets_both_content_and_structured_content() {
+        #[derive(Serialize)]
+        struct Demo {
+            value: u32,
+        }
+        let result = structured_result(&Demo { value: 42 }).unwrap();
+
+        // structured_content must be present
+        let sc = result
+            .structured_content
+            .as_ref()
+            .expect("structured_content missing");
+        assert_eq!(sc["value"], 42);
+
+        // text fallback must also be present for backward compatibility
+        let text = extract_text(&result.content);
+        assert!(
+            text.contains("42"),
+            "text fallback should contain the value"
+        );
+
+        // isError should be false
+        assert_eq!(result.is_error, Some(false));
+    }
+
+    /// Verify that all 15 tool definitions have output schemas.
+    #[tokio::test]
+    async fn all_tools_have_output_schema() {
+        let server = setup_server().await;
+        let (client, _server_handle) = wrap_test_client(server).await;
+
+        let tools = client.list_all_tools().await.unwrap();
+        assert!(
+            tools.len() >= 15,
+            "expected at least 15 tools, got {}",
+            tools.len()
+        );
+
+        let missing: Vec<&str> = tools
+            .iter()
+            .filter(|t| t.output_schema.is_none())
+            .map(|t| t.name.as_ref())
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "tools missing output_schema: {missing:?}"
+        );
+    }
+
+    /// Verify that all 15 tool definitions have annotations.
+    #[tokio::test]
+    async fn all_tools_have_annotations() {
+        let server = setup_server().await;
+        let (client, _server_handle) = wrap_test_client(server).await;
+
+        let tools = client.list_all_tools().await.unwrap();
+
+        let missing: Vec<&str> = tools
+            .iter()
+            .filter(|t| t.annotations.is_none())
+            .map(|t| t.name.as_ref())
+            .collect();
+
+        assert!(missing.is_empty(), "tools missing annotations: {missing:?}");
+    }
+
+    /// Verify specific annotation values for read-only vs mutating tools.
+    #[tokio::test]
+    async fn read_only_tools_have_correct_annotations() {
+        let server = setup_server().await;
+        let (client, _server_handle) = wrap_test_client(server).await;
+
+        let tools = client.list_all_tools().await.unwrap();
+
+        let read_only_tools = [
+            "iris_survey",
+            "iris_read",
+            "iris_extract",
+            "iris_related",
+            "iris_budget",
+            "iris_toc",
+            "iris_task",
+            "iris_symbols",
+            "iris_definition",
+            "iris_references",
+        ];
+
+        let mutating_tools = [
+            "iris_evicted",
+            "iris_compress",
+            "iris_fetch",
+            "iris_refresh",
+            "iris_clone",
+        ];
+
+        for tool in &tools {
+            let name = tool.name.as_ref();
+            let ann = tool
+                .annotations
+                .as_ref()
+                .unwrap_or_else(|| panic!("missing annotations for {name}"));
+
+            if read_only_tools.contains(&name) {
+                assert_eq!(ann.read_only_hint, Some(true), "{name} should be read-only");
+            } else if mutating_tools.contains(&name) {
+                assert_eq!(
+                    ann.read_only_hint,
+                    Some(false),
+                    "{name} should not be read-only"
+                );
+            }
+        }
+    }
+
+    /// Verify `open_world_hint`: fetch/refresh/clone are open, others closed.
+    #[tokio::test]
+    async fn open_world_tools_have_correct_hint() {
+        let server = setup_server().await;
+        let (client, _server_handle) = wrap_test_client(server).await;
+
+        let tools = client.list_all_tools().await.unwrap();
+
+        let open_world = ["iris_fetch", "iris_refresh", "iris_clone"];
+
+        for tool in &tools {
+            let name = tool.name.as_ref();
+            let ann = tool
+                .annotations
+                .as_ref()
+                .unwrap_or_else(|| panic!("missing annotations for {name}"));
+
+            if open_world.contains(&name) {
+                assert_eq!(
+                    ann.open_world_hint,
+                    Some(true),
+                    "{name} should be open-world"
+                );
+            } else {
+                assert_eq!(
+                    ann.open_world_hint,
+                    Some(false),
+                    "{name} should be closed-world"
+                );
+            }
+        }
+    }
+
+    /// Verify that `iris_survey` returns structured content.
+    #[tokio::test]
+    async fn survey_returns_structured_content() {
+        let server = setup_server().await;
+        let (client, _server_handle) = wrap_test_client(server).await;
+
+        let args: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_value(serde_json::json!({"query": "authentication"})).unwrap();
+        let result = client
+            .call_tool(rmcp::model::CallToolRequestParams::new("iris_survey").with_arguments(args))
+            .await
+            .unwrap();
+
+        // Must have structured_content
+        let sc = result
+            .structured_content
+            .as_ref()
+            .expect("iris_survey should return structured_content");
+
+        // The structured content should be a JSON object with expected fields
+        assert!(
+            sc.get("results").is_some() || sc.get("budget_status").is_some(),
+            "structured_content should contain results or budget_status, got: {sc:?}"
+        );
+
+        // Must also have text fallback
+        assert!(
+            !result.content.is_empty(),
+            "should have text fallback content"
+        );
+    }
+
+    /// Verify that the output schema for `ToolResponse<SurveyResponse>` is valid JSON Schema.
+    #[test]
+    fn tool_output_schema_generates_valid_schema() {
+        let schema = tool_output_schema::<ToolResponse<SurveyResponse>>();
+
+        // Must be a JSON object with "type": "object"
+        assert_eq!(
+            schema.get("type").and_then(|v| v.as_str()),
+            Some("object"),
+            "output schema should be type object"
+        );
+
+        // Should have properties or allOf (due to flatten)
+        assert!(
+            schema.contains_key("properties") || schema.contains_key("allOf"),
+            "output schema should define properties: {schema:?}"
+        );
+    }
+
+    /// Verify that `TaskStatus` generates a valid schema.
+    #[test]
+    fn task_status_schema_is_valid() {
+        let schema = tool_output_schema::<crate::task::TaskStatus>();
+        // Tagged enum should produce anyOf or oneOf
+        assert!(
+            schema.contains_key("oneOf")
+                || schema.contains_key("anyOf")
+                || schema.contains_key("properties"),
+            "TaskStatus schema should have variant discriminator: {schema:?}"
         );
     }
 }

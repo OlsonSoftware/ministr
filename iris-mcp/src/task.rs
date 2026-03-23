@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use rmcp::schemars;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
@@ -18,7 +19,7 @@ const TASK_RETENTION: Duration = Duration::from_secs(300); // 5 minutes
 pub type TaskId = String;
 
 /// Current status of a background task.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum TaskStatus {
     /// Task is still running.
