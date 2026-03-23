@@ -209,6 +209,36 @@ impl BridgeLinker {
         let endpoints = self.extract_all(files);
         self.link(&endpoints)
     }
+
+    /// Run exact + case-normalized linking, then apply semantic fallback on
+    /// unmatched endpoints.
+    ///
+    /// This extends [`link`](Self::link) with an additional pass that uses
+    /// embedding co-occurrence to suggest possible links for endpoints that
+    /// were not matched by the deterministic passes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the semantic fallback's embedding function fails.
+    pub fn link_with_fallback(
+        &self,
+        endpoints: &[BridgeEndpoint],
+        fallback: &super::semantic::SemanticBridgeFallback,
+        embedder: &dyn super::semantic::EmbeddingFn,
+    ) -> Result<Vec<BridgeLink>, super::semantic::SemanticFallbackError> {
+        let mut links = self.link(endpoints);
+
+        let (unmatched_exports, unmatched_imports) =
+            super::semantic::collect_unmatched(endpoints, &links);
+
+        if !unmatched_exports.is_empty() && !unmatched_imports.is_empty() {
+            let semantic_links =
+                fallback.find_matches(&unmatched_exports, &unmatched_imports, embedder)?;
+            links.extend(semantic_links);
+        }
+
+        Ok(links)
+    }
 }
 
 impl Default for BridgeLinker {
