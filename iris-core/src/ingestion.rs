@@ -1284,6 +1284,159 @@ impl IngestionPipeline {
             claims: claim_count,
         })
     }
+
+    /// Re-resolve cross-references in local corpus files after a dependency is cloned.
+    ///
+    /// When a dependency repository is cloned and indexed via `iris_clone`, its
+    /// symbols become available in storage. This method re-scans local code files
+    /// to resolve previously-unresolvable `use` imports against the newly-indexed
+    /// dependency symbols.
+    ///
+    /// Only files outside the cloned dependency directories are re-scanned.
+    /// Returns the total number of newly resolved references.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IngestionError`] if storage or file I/O fails.
+    #[allow(clippy::too_many_lines)]
+    #[instrument(skip(self, storage, dependency_graph, corpus_roots))]
+    pub async fn re_resolve_dependency_refs<S: Storage + ?Sized>(
+        &self,
+        dependency_graph: &PackageGraph,
+        dependency_dirs: &[String],
+        corpus_roots: &[PathBuf],
+        storage: &S,
+    ) -> Result<usize, IngestionError> {
+        // Build a combined graph: existing workspace graph + cloned dependency packages.
+        let mut combined_graph = self.package_graph.clone().unwrap_or_default();
+        for pkg in dependency_graph.packages() {
+            combined_graph.add_package(pkg.clone());
+        }
+
+        // List all documents and filter to code files outside the dependency dirs.
+        let documents = storage
+            .list_documents()
+            .await
+            .map_err(IngestionError::from)?;
+
+        let code_extensions = [
+            "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp", "h",
+        ];
+
+        let local_code_docs: Vec<_> = documents
+            .iter()
+            .filter(|doc| {
+                let is_code = code_extensions
+                    .iter()
+                    .any(|ext| doc.source_path.ends_with(&format!(".{ext}")));
+                let is_in_dependency = dependency_dirs
+                    .iter()
+                    .any(|dep_dir| doc.source_path.starts_with(dep_dir));
+                is_code && !is_in_dependency
+            })
+            .collect();
+
+        if local_code_docs.is_empty() {
+            debug!("no local code files to re-resolve");
+            return Ok(0);
+        }
+
+        info!(
+            files = local_code_docs.len(),
+            "re-resolving references against cloned dependency"
+        );
+
+        let mut total_refs = 0;
+
+        for doc in &local_code_docs {
+            let source_path = &doc.source_path;
+
+            // Get existing symbols for this file.
+            let filter = SymbolFilter {
+                file_path: Some(source_path.clone()),
+                ..SymbolFilter::default()
+            };
+            let Ok(local_symbols) = storage.list_symbols(&filter).await else {
+                continue;
+            };
+            if local_symbols.is_empty() {
+                continue;
+            }
+
+            // Read the file content — try each corpus root, then fall back to direct path.
+            let content = {
+                let mut found = None;
+                for root in corpus_roots {
+                    let full_path = root.join(source_path);
+                    if let Ok(bytes) = tokio::fs::read(&full_path).await {
+                        found = Some(bytes);
+                        break;
+                    }
+                }
+                if found.is_none() {
+                    if let Ok(bytes) = tokio::fs::read(source_path).await {
+                        found = Some(bytes);
+                    }
+                }
+                let Some(content) = found else {
+                    continue;
+                };
+                content
+            };
+            let Ok(content_str) = std::str::from_utf8(&content) else {
+                continue;
+            };
+
+            // Parse the file's AST.
+            let mut ast_parser = AstParser::new();
+            let Ok(tree) = ast_parser.parse(content.as_slice()) else {
+                continue;
+            };
+
+            let language = Path::new(source_path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .and_then(|ext| {
+                    crate::code::GrammarRegistry::global().language_name_for_extension(ext)
+                })
+                .unwrap_or("rust");
+
+            match resolve_and_store_refs(
+                &tree,
+                content_str.as_bytes(),
+                source_path,
+                language,
+                &local_symbols,
+                storage,
+                Some(&combined_graph),
+            )
+            .await
+            {
+                Ok(count) => {
+                    if count > 0 {
+                        debug!(
+                            path = %source_path,
+                            refs = count,
+                            "re-resolved dependency references"
+                        );
+                    }
+                    total_refs += count;
+                }
+                Err(e) => {
+                    warn!(path = %source_path, error = %e, "failed to re-resolve refs");
+                }
+            }
+        }
+
+        if total_refs > 0 {
+            info!(
+                refs = total_refs,
+                "dependency reference re-resolution complete"
+            );
+        }
+
+        Ok(total_refs)
+    }
 }
 
 /// Embed a document tree at all three resolution levels.
@@ -3844,6 +3997,87 @@ pub fn compute_hash(content: &str) -> String {
         assert!(
             !refs.is_empty(),
             "the mod symbol should be the from_symbol in the ref"
+        );
+    }
+
+    #[tokio::test]
+    async fn re_resolve_dependency_refs_links_cloned_symbols() {
+        use crate::code::package_graph::{PackageGraph, PackageInfo};
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        // Create a temp dir for the "local" crate file.
+        let tmp = tempfile::tempdir().unwrap();
+        let local_file = tmp.path().join("lib.rs");
+        std::fs::write(
+            &local_file,
+            "use my_dep::Config;\n\npub fn run(c: Config) {}\n",
+        )
+        .unwrap();
+
+        // Ingest the local file to create the document record.
+        let pipeline = IngestionPipeline::new();
+        pipeline
+            .ingest_directory(tmp.path(), &storage)
+            .await
+            .unwrap();
+
+        // Manually insert local symbols — ingest_directory (without embeddings)
+        // doesn't extract code symbols.
+        let local_anchor = SymbolRecord {
+            id: SymbolId("sym-lib.rs::run".into()),
+            file_path: "lib.rs".into(),
+            name: "run".into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: "pub fn run(c: Config)".into(),
+            doc_comment: None,
+            module_path: String::new(),
+            line_start: 3,
+            line_end: 3,
+            cyclomatic_complexity: None,
+        };
+        storage.insert_symbols(&[local_anchor]).await.unwrap();
+
+        // Insert a symbol for the dependency's Config struct,
+        // simulating what clone_and_ingest would do.
+        let dep_symbol = SymbolRecord {
+            id: SymbolId("sym-dep/src/lib.rs::Config".into()),
+            file_path: "dep/src/lib.rs".into(),
+            name: "Config".into(),
+            kind: "struct".into(),
+            visibility: "pub".into(),
+            signature: "pub struct Config".into(),
+            doc_comment: None,
+            module_path: String::new(),
+            line_start: 1,
+            line_end: 5,
+            cyclomatic_complexity: None,
+        };
+        storage.insert_symbols(&[dep_symbol]).await.unwrap();
+
+        // Build a dependency package graph mapping the crate name to its dir prefix.
+        let dep_graph = {
+            let mut g = PackageGraph::empty();
+            g.add_package(PackageInfo {
+                name: "my-dep".into(),
+                crate_name: "my_dep".into(),
+                dir_prefix: "dep/".into(),
+            });
+            g
+        };
+
+        // Re-resolve references.
+        let corpus_roots = vec![tmp.path().to_path_buf()];
+        let count = pipeline
+            .re_resolve_dependency_refs(&dep_graph, &["dep/".into()], &corpus_roots, &storage)
+            .await
+            .unwrap();
+
+        // The `use my_dep::Config` import should now resolve to the dependency symbol.
+        assert!(
+            count > 0,
+            "should resolve at least one dependency reference"
         );
     }
 }
