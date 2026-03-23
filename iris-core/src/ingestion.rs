@@ -867,11 +867,18 @@ impl IngestionPipeline {
         }
 
         for file_path in &files {
-            let relative = file_path
+            let raw_relative = file_path
                 .strip_prefix(dir)
                 .unwrap_or(file_path)
                 .to_string_lossy()
                 .to_string();
+
+            // Namespace the storage path with root ID to prevent collisions
+            // across repos that share identical relative file paths.
+            let relative = match root_id {
+                Some(rid) => namespace_path(rid, &raw_relative),
+                None => raw_relative,
+            };
 
             match self
                 .ingest_file_with_embeddings(
@@ -928,7 +935,10 @@ impl IngestionPipeline {
                 .map_err(IngestionError::from)?
         };
         for doc in &existing_docs {
-            let full_path = dir.join(&doc.source_path);
+            // Strip root prefix from namespaced paths before joining with
+            // the filesystem directory for existence checks.
+            let source_path = strip_root_prefix(&doc.source_path).unwrap_or(&doc.source_path);
+            let full_path = dir.join(source_path);
             if !full_path.exists() {
                 debug!(path = %doc.source_path, "file removed, deleting from index");
                 // Delete embeddings before removing document from storage
@@ -2703,6 +2713,57 @@ pub fn compute_root_id(path: &Path) -> String {
     )
 }
 
+/// Prefix a relative path with a root ID to create a namespaced storage path.
+///
+/// When multiple corpus roots contain files with identical relative paths
+/// (e.g. two cloned repos both have `src/lib.rs`), namespacing prevents
+/// ID collisions in section IDs, symbol IDs, and document IDs.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::ingestion::namespace_path;
+///
+/// assert_eq!(
+///     namespace_path("root-0011223344556677", "src/lib.rs"),
+///     "root-0011223344556677/src/lib.rs"
+/// );
+/// ```
+#[must_use]
+pub fn namespace_path(root_id: &str, relative_path: &str) -> String {
+    format!("{root_id}/{relative_path}")
+}
+
+/// Strip a root ID prefix from a namespaced path, returning the original relative path.
+///
+/// Returns `None` if the path does not have a valid root prefix
+/// (format: `root-{16 hex chars}/`).
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::ingestion::strip_root_prefix;
+///
+/// assert_eq!(
+///     strip_root_prefix("root-0011223344556677/src/lib.rs"),
+///     Some("src/lib.rs")
+/// );
+/// assert_eq!(strip_root_prefix("src/lib.rs"), None);
+/// ```
+#[must_use]
+pub fn strip_root_prefix(path: &str) -> Option<&str> {
+    // Root IDs are exactly "root-" + 16 hex chars = 21 chars
+    if path.len() > 22 && path.starts_with("root-") {
+        let slash_pos = path.find('/')?;
+        let prefix = &path[..slash_pos];
+        // Validate: "root-" (5 chars) + 16 hex chars = 21 chars
+        if prefix.len() == 21 && prefix[5..].chars().all(|c| c.is_ascii_hexdigit()) {
+            return Some(&path[slash_pos + 1..]);
+        }
+    }
+    None
+}
+
 /// Determine which source root a file belongs to (longest prefix match).
 fn find_root_for_file<'a>(file: &Path, roots: &'a [(PathBuf, String)]) -> Option<&'a str> {
     let canonical = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
@@ -4261,5 +4322,226 @@ pub fn compute_hash(content: &str) -> String {
             count > 0,
             "should resolve at least one dependency reference"
         );
+    }
+
+    // --- Root-namespaced path helpers ---
+
+    #[test]
+    fn namespace_path_produces_prefixed_path() {
+        assert_eq!(
+            namespace_path("root-0011223344556677", "src/lib.rs"),
+            "root-0011223344556677/src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn namespace_path_preserves_nested_paths() {
+        assert_eq!(
+            namespace_path("root-aabbccdd00112233", "deep/nested/dir/file.rs"),
+            "root-aabbccdd00112233/deep/nested/dir/file.rs"
+        );
+    }
+
+    #[test]
+    fn strip_root_prefix_extracts_relative_path() {
+        assert_eq!(
+            strip_root_prefix("root-0011223344556677/src/lib.rs"),
+            Some("src/lib.rs")
+        );
+    }
+
+    #[test]
+    fn strip_root_prefix_returns_none_for_unnamespaced() {
+        assert_eq!(strip_root_prefix("src/lib.rs"), None);
+    }
+
+    #[test]
+    fn strip_root_prefix_returns_none_for_wrong_prefix_length() {
+        // Too short — only 10 hex chars instead of 16
+        assert_eq!(strip_root_prefix("root-0011223344/src/lib.rs"), None);
+    }
+
+    #[test]
+    fn strip_root_prefix_returns_none_for_non_hex() {
+        assert_eq!(strip_root_prefix("root-gghhiijjkkllmmnn/src/lib.rs"), None);
+    }
+
+    #[test]
+    fn strip_root_prefix_roundtrips_with_namespace_path() {
+        let root_id = "root-aabbccdd00112233";
+        let relative = "some/path/file.rs";
+        let namespaced = namespace_path(root_id, relative);
+        assert_eq!(strip_root_prefix(&namespaced), Some(relative));
+    }
+
+    /// Stub embedder for integration tests — produces zero vectors.
+    struct StubEmbedder;
+
+    impl crate::embedding::Embedder for StubEmbedder {
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, crate::error::IndexError> {
+            Ok(texts.iter().map(|_| vec![0.0; 4]).collect())
+        }
+        fn dimension(&self) -> usize {
+            4
+        }
+    }
+
+    /// Stub vector index for integration tests — discards all operations.
+    struct StubVectorIndex;
+
+    impl crate::index::VectorIndex for StubVectorIndex {
+        fn insert(&self, _id: &str, _vector: &[f32]) -> Result<(), crate::error::IndexError> {
+            Ok(())
+        }
+        fn search_knn(
+            &self,
+            _query: &[f32],
+            _k: usize,
+        ) -> Result<Vec<crate::index::SearchResult>, crate::error::IndexError> {
+            Ok(Vec::new())
+        }
+        fn delete(&self, _id: &str) -> Result<bool, crate::error::IndexError> {
+            Ok(false)
+        }
+        fn persist(&self, _dir: &Path) -> Result<(), crate::error::IndexError> {
+            Ok(())
+        }
+        fn len(&self) -> usize {
+            0
+        }
+        fn dimension(&self) -> usize {
+            4
+        }
+    }
+
+    /// Register a test corpus root in storage (required for FK constraint on `set_document_root`).
+    async fn register_test_root(storage: &SqliteStorage, root_id: &str, path: &Path) {
+        let root = CorpusRoot {
+            id: root_id.to_string(),
+            path: path.to_string_lossy().to_string(),
+            kind: RootKind::Local,
+            display_name: Some("test".into()),
+            file_count: 0,
+            language_stats: std::collections::HashMap::new(),
+            repo_url: None,
+            branch: None,
+            commit_sha: None,
+            clone_timestamp: None,
+            sparse_paths: Vec::new(),
+        };
+        storage.upsert_corpus_root(&root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rooted_ingestion_namespaces_document_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("readme.md"),
+            "# Hello\n\nThe world is round.\n",
+        )
+        .unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let embedder = StubEmbedder;
+        let index = StubVectorIndex;
+        let pipeline = IngestionPipeline::new();
+
+        let root_id = compute_root_id(tmp.path());
+        register_test_root(&storage, &root_id, tmp.path()).await;
+
+        pipeline
+            .ingest_directory_with_embeddings_rooted(
+                tmp.path(),
+                &storage,
+                &embedder,
+                &index,
+                Some(&root_id),
+            )
+            .await
+            .unwrap();
+
+        // Verify documents are stored with the namespaced path
+        let docs = storage.list_documents_by_root(&root_id).await.unwrap();
+        assert!(!docs.is_empty(), "should have at least one document");
+        for doc in &docs {
+            assert!(
+                doc.source_path.starts_with(&root_id),
+                "document source_path '{}' should be namespaced with root ID '{}'",
+                doc.source_path,
+                root_id
+            );
+            // Verify the original relative path is still recoverable
+            let stripped = strip_root_prefix(&doc.source_path);
+            assert_eq!(stripped, Some("readme.md"));
+        }
+    }
+
+    #[tokio::test]
+    async fn rooted_ingestion_no_collision_across_roots() {
+        // Create two temp dirs with identical relative file structures
+        let tmp_a = tempfile::tempdir().unwrap();
+        let tmp_b = tempfile::tempdir().unwrap();
+
+        // Both have an identical file name "readme.md"
+        std::fs::write(
+            tmp_a.path().join("readme.md"),
+            "# Project A\n\nProject A is about apples.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp_b.path().join("readme.md"),
+            "# Project B\n\nProject B is about bananas.\n",
+        )
+        .unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let embedder = StubEmbedder;
+        let index = StubVectorIndex;
+        let pipeline = IngestionPipeline::new();
+
+        let root_a = compute_root_id(tmp_a.path());
+        let root_b = compute_root_id(tmp_b.path());
+        register_test_root(&storage, &root_a, tmp_a.path()).await;
+        register_test_root(&storage, &root_b, tmp_b.path()).await;
+
+        // Ingest both roots
+        pipeline
+            .ingest_directory_with_embeddings_rooted(
+                tmp_a.path(),
+                &storage,
+                &embedder,
+                &index,
+                Some(&root_a),
+            )
+            .await
+            .unwrap();
+
+        pipeline
+            .ingest_directory_with_embeddings_rooted(
+                tmp_b.path(),
+                &storage,
+                &embedder,
+                &index,
+                Some(&root_b),
+            )
+            .await
+            .unwrap();
+
+        // Both roots should have their documents
+        let docs_a = storage.list_documents_by_root(&root_a).await.unwrap();
+        let docs_b = storage.list_documents_by_root(&root_b).await.unwrap();
+
+        assert!(!docs_a.is_empty(), "root A should have documents");
+        assert!(!docs_b.is_empty(), "root B should have documents");
+
+        // Verify no ID collision — documents should have different IDs
+        let ids_a: Vec<&str> = docs_a.iter().map(|d| d.id.0.as_str()).collect();
+        let ids_b: Vec<&str> = docs_b.iter().map(|d| d.id.0.as_str()).collect();
+        for id in &ids_a {
+            assert!(
+                !ids_b.contains(id),
+                "document ID '{id}' should not appear in both roots"
+            );
+        }
     }
 }
