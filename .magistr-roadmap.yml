@@ -965,14 +965,14 @@ phases:
 - id: V26
   name: Extensions, Discovery & Auth
   tagline: Ecosystem integration and remote deployment readiness
-  status: pending
+  status: in_progress
   problem: iris-specific capabilities (budget protocol, coherence notifications) aren't formally declared; no server discovery for HTTP transport; no auth for remote use
   solution: Declare extensions via the 2025-11-25 framework, publish Server Cards at .well-known/mcp.json, add optional OAuth 2.1 for remote deployment
   tasks:
   - text: Declare iris-specific extensions (budget protocol, coherence notifications, compression tiers)
-    checked: false
+    checked: true
   - text: Extension negotiation during initialization handshake
-    checked: false
+    checked: true
   - text: Server Cards — expose .well-known/mcp.json with tool catalog, capabilities, and version metadata
     checked: false
   - text: OAuth 2.1 framework for remote Streamable HTTP deployment
