@@ -62,6 +62,21 @@ enum Command {
         /// Port for the HTTP server (only used with `--transport http`).
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
+
+        /// Enable OAuth 2.1 authentication for the HTTP transport.
+        ///
+        /// When enabled, the server exposes OAuth discovery endpoints and
+        /// requires Bearer token authentication on the MCP endpoint.
+        /// Only effective with `--transport http`.
+        #[arg(long)]
+        oauth: bool,
+
+        /// OAuth issuer URL (default: `http://<host>:<port>`).
+        ///
+        /// Used in OAuth metadata discovery responses. Set this to the
+        /// public-facing URL when deploying behind a reverse proxy.
+        #[arg(long)]
+        oauth_issuer: Option<String>,
     },
 
     /// Run corpus ingestion synchronously and exit (no MCP server).
@@ -115,15 +130,35 @@ async fn main() -> Result<()> {
         transport: Transport::Stdio,
         host: "127.0.0.1".to_string(),
         port: 8080,
+        oauth: false,
+        oauth_issuer: None,
     }) {
         Command::Serve {
             transport,
             host,
             port,
+            oauth,
+            oauth_issuer,
         } => match transport {
             Transport::Stdio => cmd_serve_stdio(&corpus_paths, &config_path, &config).await,
             Transport::Http => {
-                cmd_serve_http(&corpus_paths, &config_path, &config, &host, port).await
+                let oauth_config = if oauth {
+                    Some(iris_mcp::auth::OAuthConfig {
+                        issuer: oauth_issuer.unwrap_or_else(|| format!("http://{host}:{port}")),
+                        ..iris_mcp::auth::OAuthConfig::default()
+                    })
+                } else {
+                    None
+                };
+                cmd_serve_http(
+                    &corpus_paths,
+                    &config_path,
+                    &config,
+                    &host,
+                    port,
+                    oauth_config,
+                )
+                .await
             }
         },
         Command::Index => cmd_index(&corpus_paths, &config_path, &config).await,
@@ -364,6 +399,7 @@ async fn cmd_serve_http(
     config: &iris_core::config::IrisConfig,
     host: &str,
     port: u16,
+    oauth_config: Option<iris_mcp::auth::OAuthConfig>,
 ) -> Result<()> {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -384,7 +420,15 @@ async fn cmd_serve_http(
         StreamableHttpServerConfig::default(),
     );
 
-    let app = axum::Router::new().nest_service("/mcp", http_service);
+    let mcp_router = axum::Router::new().nest_service("/mcp", http_service);
+
+    let app = if let Some(oauth_cfg) = oauth_config {
+        tracing::info!("OAuth 2.1 authentication enabled");
+        let store = iris_mcp::auth::OAuthStore::new(oauth_cfg);
+        iris_mcp::auth::protected_router(mcp_router, store)
+    } else {
+        mcp_router
+    };
 
     let bind_addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&bind_addr)

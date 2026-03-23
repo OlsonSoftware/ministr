@@ -118,6 +118,52 @@ impl PackageGraph {
             .map(|p| p.name.as_str())
     }
 
+    /// Add a package to the graph.
+    ///
+    /// If a package with the same crate name already exists, it is replaced.
+    /// This is used to register cloned dependency packages so that
+    /// cross-crate reference resolution can link back to consuming code.
+    pub fn add_package(&mut self, info: PackageInfo) {
+        self.packages.retain(|p| p.crate_name != info.crate_name);
+        self.packages.push(info);
+    }
+
+    /// Build a `PackageGraph` entry from a cloned repository directory.
+    ///
+    /// Reads `Cargo.toml` files in the clone directory to discover package
+    /// names. For workspaces, all member packages are added. For single
+    /// crates, the single package is added.
+    ///
+    /// The `dir_prefix` is set to the clone directory path so that symbol
+    /// file paths (which are relative to the clone dir) can be matched.
+    #[must_use]
+    pub fn from_cloned_repo(clone_dir: &Path) -> Self {
+        let mut graph = Self::default();
+
+        // Try workspace detection first.
+        if let Some(ws) = crate::workspace::detect_workspace(clone_dir) {
+            let ws_graph = Self::from_cargo_workspace(clone_dir, &ws.members);
+            for pkg in ws_graph.packages {
+                graph.packages.push(pkg);
+            }
+            return graph;
+        }
+
+        // Single crate: read Cargo.toml directly.
+        let cargo_toml = clone_dir.join("Cargo.toml");
+        if let Some(name) = read_cargo_package_name(&cargo_toml) {
+            let crate_name = name.replace('-', "_");
+            let dir_prefix = clone_dir.to_string_lossy().to_string();
+            graph.packages.push(PackageInfo {
+                name,
+                crate_name,
+                dir_prefix,
+            });
+        }
+
+        graph
+    }
+
     /// Return all packages in the graph.
     #[must_use]
     pub fn packages(&self) -> &[PackageInfo] {
@@ -310,5 +356,59 @@ mod tests {
         assert!(graph.is_empty());
         assert_eq!(graph.dir_prefix_for_crate("foo"), None);
         assert_eq!(graph.package_for_file("foo/src/lib.rs"), None);
+    }
+
+    #[test]
+    fn add_package_registers_new_entry() {
+        let mut graph = PackageGraph::empty();
+        assert!(graph.is_empty());
+
+        graph.add_package(PackageInfo {
+            name: "serde".into(),
+            crate_name: "serde".into(),
+            dir_prefix: "/tmp/clones/serde-abc123".into(),
+        });
+
+        assert!(!graph.is_empty());
+        assert_eq!(graph.packages().len(), 1);
+        assert_eq!(
+            graph.dir_prefix_for_crate("serde"),
+            Some("/tmp/clones/serde-abc123")
+        );
+    }
+
+    #[test]
+    fn add_package_replaces_existing_crate() {
+        let mut graph = PackageGraph::empty();
+        graph.add_package(PackageInfo {
+            name: "serde".into(),
+            crate_name: "serde".into(),
+            dir_prefix: "/old/path".into(),
+        });
+        graph.add_package(PackageInfo {
+            name: "serde".into(),
+            crate_name: "serde".into(),
+            dir_prefix: "/new/path".into(),
+        });
+
+        assert_eq!(graph.packages().len(), 1);
+        assert_eq!(graph.dir_prefix_for_crate("serde"), Some("/new/path"));
+    }
+
+    #[test]
+    fn from_cloned_repo_detects_single_crate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"my-dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+
+        let graph = PackageGraph::from_cloned_repo(root);
+        assert_eq!(graph.packages().len(), 1);
+        assert!(graph.dir_prefix_for_crate("my_dep").is_some());
     }
 }

@@ -891,7 +891,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Declare iris-specific extensions (budget protocol, coherence notifications, compression tiers)
 - [x] Extension negotiation during initialization handshake
 - [x] Server Cards — expose .well-known/mcp.json with tool catalog, capabilities, and version metadata
-- [ ] OAuth 2.1 framework for remote Streamable HTTP deployment
+- [x] OAuth 2.1 framework for remote Streamable HTTP deployment
 
 ---
 
@@ -1009,5 +1009,5 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Multi-root corpus: index multiple directories as a unified project, maintaining per-directory metadata and language stats
 - [x] Cross-package import graph: track imports/dependencies between packages in a workspace
 - [x] Cross-crate Rust references: resolve `use other_crate::Foo` to symbols in sibling workspace crates
-- [ ] iris_clone integration: index cloned dependency source and link references back to consuming code
+- [x] iris_clone integration: index cloned dependency source and link references back to consuming code
 

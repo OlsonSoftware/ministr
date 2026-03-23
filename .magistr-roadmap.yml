@@ -965,7 +965,7 @@ phases:
 - id: V26
   name: Extensions, Discovery & Auth
   tagline: Ecosystem integration and remote deployment readiness
-  status: in_progress
+  status: done
   problem: iris-specific capabilities (budget protocol, coherence notifications) aren't formally declared; no server discovery for HTTP transport; no auth for remote use
   solution: Declare extensions via the 2025-11-25 framework, publish Server Cards at .well-known/mcp.json, add optional OAuth 2.1 for remote deployment
   tasks:
@@ -976,7 +976,7 @@ phases:
   - text: Server Cards — expose .well-known/mcp.json with tool catalog, capabilities, and version metadata
     checked: true
   - text: OAuth 2.1 framework for remote Streamable HTTP deployment
-    checked: false
+    checked: true
 - id: V27
   name: Multi-Agent Context Sharing
   tagline: Shared corpus, independent sessions, coordinated coherence
@@ -1093,7 +1093,7 @@ phases:
 - id: L5
   name: Multi-Project Workspace Intelligence
   tagline: One project, many packages, unified intelligence
-  status: in_progress
+  status: done
   problem: Real projects span multiple packages, crates, and workspaces — iris indexes one directory at a time
   solution: Workspace auto-detection, multi-root corpus indexing, cross-package import graph, and cross-crate reference resolution
   tasks:
@@ -1106,4 +1106,4 @@ phases:
   - text: 'Cross-crate Rust references: resolve `use other_crate::Foo` to symbols in sibling workspace crates'
     checked: true
   - text: 'iris_clone integration: index cloned dependency source and link references back to consuming code'
-    checked: false
+    checked: true

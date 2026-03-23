@@ -46,6 +46,7 @@ use tokio::sync::Mutex;
 use tracing::{Instrument, debug, info_span, warn};
 
 use iris_core::analytics::Analytics;
+use iris_core::code::package_graph::PackageGraph;
 use iris_core::embedding::Embedder;
 use iris_core::git::GitFetcher;
 use iris_core::index::VectorIndex;
@@ -503,6 +504,8 @@ struct CloneResponse {
     index_time_ms: u64,
     /// Whether the clone was served from cache.
     from_cache: bool,
+    /// Number of cross-references linked from local code to the cloned dependency.
+    dependency_refs_linked: usize,
 }
 
 /// Parameters for the `iris_task` tool.
@@ -2995,6 +2998,7 @@ impl IrisServer {
     /// Execute the clone-and-ingest pipeline for `iris_clone`.
     ///
     /// Separated from the tool handler to satisfy the `too_many_lines` lint.
+    #[allow(clippy::too_many_lines)]
     async fn clone_and_ingest(
         &self,
         params: &CloneParams,
@@ -3046,11 +3050,50 @@ impl IrisServer {
                     warn!(error = %e, repo = %params.repo, "failed to record git cache");
                 }
 
+                // Phase 3: Re-resolve local references against newly-indexed dependency.
+                let dep_graph = PackageGraph::from_cloned_repo(&clone_result.clone_dir);
+                let dep_dir_str = clone_result.clone_dir.to_string_lossy().to_string();
+                let dependency_refs_linked = if dep_graph.is_empty() {
+                    0
+                } else {
+                    // Gather local corpus root paths for file resolution.
+                    let corpus_roots: Vec<std::path::PathBuf> = self
+                        .service
+                        .list_corpus_roots()
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|r| r.kind == iris_core::types::RootKind::Local)
+                        .map(|r| std::path::PathBuf::from(r.path))
+                        .collect();
+                    match self
+                        .ingestion_pipeline
+                        .re_resolve_dependency_refs(
+                            &dep_graph,
+                            &[dep_dir_str],
+                            &corpus_roots,
+                            storage,
+                        )
+                        .await
+                    {
+                        Ok(count) => count,
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                repo = %params.repo,
+                                "dependency reference re-resolution failed"
+                            );
+                            0
+                        }
+                    }
+                };
+
                 debug!(
                     repo = %params.repo,
                     files_discovered = clone_result.files.len(),
                     files_indexed = stats.files_indexed,
                     sections = stats.total_sections,
+                    dependency_refs_linked,
                     clone_ms = clone_time_ms,
                     index_ms = index_time_ms,
                     from_cache = clone_result.from_cache,
@@ -3074,6 +3117,7 @@ impl IrisServer {
                             clone_time_ms,
                             index_time_ms,
                             from_cache: clone_result.from_cache,
+                            dependency_refs_linked,
                         },
                         budget_status,
                     )
