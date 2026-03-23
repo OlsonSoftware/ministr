@@ -8,8 +8,10 @@ mod c;
 mod cpp;
 mod go;
 mod java;
+mod kotlin;
 mod python;
 mod rust;
+mod swift;
 mod typescript;
 
 use crate::code::ast_parser::ItemKind;
@@ -46,6 +48,8 @@ pub fn refinement_for(language: &str) -> Option<Box<dyn LanguageRefinement>> {
         "java" => Some(Box::new(java::JavaRefinement)),
         "c" => Some(Box::new(c::CRefinement)),
         "cpp" => Some(Box::new(cpp::CppRefinement)),
+        "swift" => Some(Box::new(swift::SwiftRefinement)),
+        "kotlin" => Some(Box::new(kotlin::KotlinRefinement)),
         _ => None,
     }
 }
