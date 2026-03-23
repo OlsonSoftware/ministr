@@ -22,5 +22,6 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+rmcp = { workspace = true, features = ["client"] }
 tokio-util = "0.7"
 tempfile.workspace = true
