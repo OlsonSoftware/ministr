@@ -54,6 +54,56 @@ const PRIMITIVE_TYPES: &[&str] = &[
     "u32", "u64", "u128", "usize", "Self",
 ];
 
+// ---------------------------------------------------------------------------
+// Shared query helpers
+// ---------------------------------------------------------------------------
+
+/// Extract the 1-based line number from a tree-sitter node.
+///
+/// Centralises the `row + 1` cast so callers don't each need
+/// `#[allow(clippy::cast_possible_truncation)]`.
+#[allow(clippy::cast_possible_truncation)]
+fn node_line(node: &tree_sitter::Node<'_>) -> u32 {
+    node.start_position().row as u32 + 1
+}
+
+/// Construct an import [`RawRef`] with the common defaults.
+///
+/// This is the most-repeated pattern across language extractors: an import
+/// reference with no `from_context` and no `target_crate`.
+fn import_ref(name: String, line: u32) -> RawRef {
+    RawRef {
+        target_name: name,
+        kind: RefKind::Imports,
+        line,
+        from_context: None,
+        target_crate: None,
+    }
+}
+
+/// Language-parameterised import extractor.
+///
+/// Each language provides an implementation that walks root-level children
+/// and extracts import references.  The shared [`extract_imports`] driver
+/// creates the result vec and invokes the language callback, eliminating
+/// the per-language boilerplate.
+trait ImportExtractor {
+    /// Walk the root-level children of a parsed file and push import refs.
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>);
+}
+
+/// Run a language-specific [`ImportExtractor`] on a tree-sitter parse tree.
+fn extract_imports(
+    tree: &tree_sitter::Tree,
+    source: &[u8],
+    extractor: &dyn ImportExtractor,
+) -> Vec<RawRef> {
+    let mut refs = Vec::new();
+    let root = tree.root_node();
+    extractor.walk_imports(&root, source, &mut refs);
+    refs
+}
+
 /// Extract raw cross-reference candidates from a tree-sitter AST.
 ///
 /// Dispatches to language-specific extractors based on the `language` name.
@@ -139,8 +189,7 @@ fn extract_refs_rust_from_node(
 
 /// Extract import references from a `use_declaration` node.
 fn extract_use_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
-    #[allow(clippy::cast_possible_truncation)]
-    let line = node.start_position().row as u32 + 1;
+    let line = node_line(node);
 
     // The argument child contains the use path.
     // It can be a scoped_identifier, use_list, use_as_clause, or identifier.
@@ -205,13 +254,8 @@ fn collect_use_names(
             if let Ok(name) = node.utf8_text(source) {
                 // Skip `self`, `super`, `crate` — these are path prefixes, not symbols
                 if name != "self" && name != "super" && name != "crate" {
-                    refs.push(RawRef {
-                        target_name: name.to_string(),
-                        kind: RefKind::Imports,
-                        line,
-                        from_context: None,
-                        target_crate: None, // set by extract_use_refs after collection
-                    });
+                    refs.push(import_ref(name.to_string(), line));
+                    // Note: target_crate is set by extract_use_refs after collection
                 }
             }
         }
@@ -269,13 +313,10 @@ fn extract_impl_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec
     let trait_name = trait_name.rsplit("::").next().unwrap_or(trait_name);
     let type_name = type_name.rsplit("::").next().unwrap_or(type_name);
 
-    #[allow(clippy::cast_possible_truncation)]
-    let line = node.start_position().row as u32 + 1;
-
     refs.push(RawRef {
         target_name: trait_name.to_string(),
         kind: RefKind::Implements,
-        line,
+        line: node_line(node),
         from_context: Some(type_name.to_string()),
         target_crate: None,
     });
@@ -456,12 +497,10 @@ fn extract_call_ref(
     };
 
     if let Some(name) = callee_name {
-        #[allow(clippy::cast_possible_truncation)]
-        let line = node.start_position().row as u32 + 1;
         refs.push(RawRef {
             target_name: name.to_string(),
             kind: RefKind::Calls,
-            line,
+            line: node_line(node),
             from_context: fn_context.map(String::from),
             target_crate: None,
         });
@@ -483,12 +522,10 @@ fn collect_type_identifiers(
         "type_identifier" => {
             if let Ok(name) = node.utf8_text(source) {
                 if !PRIMITIVE_TYPES.contains(&name) {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let line = node.start_position().row as u32 + 1;
                     refs.push(RawRef {
                         target_name: name.to_string(),
                         kind: RefKind::Uses,
-                        line,
+                        line: node_line(node),
                         from_context: fn_context.map(String::from),
                         target_crate: None,
                     });
@@ -516,7 +553,7 @@ fn collect_type_identifiers(
 // Python
 // ---------------------------------------------------------------------------
 
-/// Extract import references from Python source code.
+/// Python import extractor.
 ///
 /// Handles:
 /// - `import os` → [`RawRef`] for "os"
@@ -525,53 +562,41 @@ fn collect_type_identifiers(
 /// - `from os.path import join, exists` → [`RawRef`] for each name
 /// - `from os.path import join as j` → [`RawRef`] for "join" (original name)
 /// - `from os.path import *` → skipped (wildcard)
-fn extract_refs_python(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    let mut refs = Vec::new();
-    let root = tree.root_node();
+struct PythonImports;
 
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
-        match node.kind() {
-            "import_statement" => extract_python_import(&node, source, &mut refs),
-            "import_from_statement" => extract_python_from_import(&node, source, &mut refs),
-            _ => {}
+impl ImportExtractor for PythonImports {
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            match node.kind() {
+                "import_statement" => extract_python_import(&node, source, refs),
+                "import_from_statement" => extract_python_from_import(&node, source, refs),
+                _ => {}
+            }
         }
     }
+}
 
-    refs
+fn extract_refs_python(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    extract_imports(tree, source, &PythonImports)
 }
 
 /// Extract refs from `import x` or `import x.y.z` statements.
 fn extract_python_import(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
-    #[allow(clippy::cast_possible_truncation)]
-    let line = node.start_position().row as u32 + 1;
+    let line = node_line(node);
 
     let mut child_cursor = node.walk();
     for child in node.children(&mut child_cursor) {
         match child.kind() {
             "dotted_name" => {
-                // `import os.path` — extract the last segment ("path") or top-level ("os")
                 if let Some(name) = last_identifier_text(&child, source) {
-                    refs.push(RawRef {
-                        target_name: name,
-                        kind: RefKind::Imports,
-                        line,
-                        from_context: None,
-                        target_crate: None,
-                    });
+                    refs.push(import_ref(name, line));
                 }
             }
             "aliased_import" => {
-                // `import os.path as osp` — extract original module name
                 if let Some(name_node) = child.child_by_field_name("name") {
                     if let Some(name) = last_identifier_text(&name_node, source) {
-                        refs.push(RawRef {
-                            target_name: name,
-                            kind: RefKind::Imports,
-                            line,
-                            from_context: None,
-                            target_crate: None,
-                        });
+                        refs.push(import_ref(name, line));
                     }
                 }
             }
@@ -582,9 +607,7 @@ fn extract_python_import(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut
 
 /// Extract refs from `from x import y` statements.
 fn extract_python_from_import(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
-    #[allow(clippy::cast_possible_truncation)]
-    let line = node.start_position().row as u32 + 1;
-    collect_python_from_names(node, source, line, refs);
+    collect_python_from_names(node, source, node_line(node), refs);
 }
 
 /// Collect imported names from a `from ... import ...` statement.
@@ -611,13 +634,7 @@ fn collect_python_from_names(
             "dotted_name" | "identifier" => {
                 if let Some(name) = last_identifier_text(&child, source) {
                     if name != "*" {
-                        refs.push(RawRef {
-                            target_name: name,
-                            kind: RefKind::Imports,
-                            line,
-                            from_context: None,
-                            target_crate: None,
-                        });
+                        refs.push(import_ref(name, line));
                     }
                 }
             }
@@ -625,13 +642,7 @@ fn collect_python_from_names(
                 // `from x import foo as bar` — track original "foo"
                 if let Some(name_node) = child.child_by_field_name("name") {
                     if let Some(name) = last_identifier_text(&name_node, source) {
-                        refs.push(RawRef {
-                            target_name: name,
-                            kind: RefKind::Imports,
-                            line,
-                            from_context: None,
-                            target_crate: None,
-                        });
+                        refs.push(import_ref(name, line));
                     }
                 }
             }
@@ -663,7 +674,7 @@ fn last_identifier_text(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<S
 // JavaScript / TypeScript
 // ---------------------------------------------------------------------------
 
-/// Extract import references from JavaScript or TypeScript source code.
+/// JS/TS import extractor.
 ///
 /// Handles:
 /// - `import { foo, bar } from 'module'` → [`RawRef`] for "foo", "bar"
@@ -672,77 +683,55 @@ fn last_identifier_text(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<S
 /// - `import 'module'` → skipped (side-effect import)
 /// - `const x = require('module')` → [`RawRef`] for "x"
 /// - `export { foo } from 'module'` → [`RawRef`] for "foo"
-fn extract_refs_js_ts(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    let mut refs = Vec::new();
-    let root = tree.root_node();
+struct JsTsImports;
 
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
-        match node.kind() {
-            "import_statement" | "import_declaration" => {
-                extract_js_import(&node, source, &mut refs);
+impl ImportExtractor for JsTsImports {
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            match node.kind() {
+                "import_statement" | "import_declaration" | "export_statement" => {
+                    extract_js_import(&node, source, refs);
+                }
+                "lexical_declaration" | "variable_declaration" => {
+                    extract_js_require(&node, source, refs);
+                }
+                _ => {}
             }
-            "export_statement" => {
-                // Re-exports: `export { foo } from 'bar'`
-                extract_js_import(&node, source, &mut refs);
-            }
-            "lexical_declaration" | "variable_declaration" => {
-                // `const x = require('module')`
-                extract_js_require(&node, source, &mut refs);
-            }
-            _ => {}
         }
     }
+}
 
-    refs
+fn extract_refs_js_ts(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    extract_imports(tree, source, &JsTsImports)
 }
 
 /// Extract imported names from a JS/TS import statement.
 fn extract_js_import(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
-    #[allow(clippy::cast_possible_truncation)]
-    let line = node.start_position().row as u32 + 1;
+    let line = node_line(node);
 
     let mut child_cursor = node.walk();
     for child in node.children(&mut child_cursor) {
         match child.kind() {
             "import_specifier" => {
-                // Inside named_imports: `{ foo as bar }` — extract original name
                 extract_js_specifier_name(&child, source, line, refs);
             }
-            "import_clause" | "named_imports" => {
+            "import_clause" | "named_imports" | "export_clause" => {
                 collect_js_import_names(&child, source, line, refs);
             }
             "namespace_import" => {
-                // `import * as ns from 'module'`
                 if let Some(name_node) = child.child_by_field_name("name") {
                     if let Ok(name) = name_node.utf8_text(source) {
-                        refs.push(RawRef {
-                            target_name: name.to_string(),
-                            kind: RefKind::Imports,
-                            line,
-                            from_context: None,
-                            target_crate: None,
-                        });
+                        refs.push(import_ref(name.to_string(), line));
                     }
                 }
             }
             "identifier" => {
-                // Default import: `import foo from 'module'`
                 if let Ok(name) = child.utf8_text(source) {
                     if name != "from" && name != "import" && name != "export" && name != "type" {
-                        refs.push(RawRef {
-                            target_name: name.to_string(),
-                            kind: RefKind::Imports,
-                            line,
-                            from_context: None,
-                            target_crate: None,
-                        });
+                        refs.push(import_ref(name.to_string(), line));
                     }
                 }
-            }
-            "export_clause" => {
-                // `export { foo, bar } from 'module'`
-                collect_js_import_names(&child, source, line, refs);
             }
             _ => {}
         }
@@ -762,13 +751,7 @@ fn collect_js_import_names(
             "identifier" => {
                 if let Ok(name) = child.utf8_text(source) {
                     if name != "from" && name != "type" {
-                        refs.push(RawRef {
-                            target_name: name.to_string(),
-                            kind: RefKind::Imports,
-                            line,
-                            from_context: None,
-                            target_crate: None,
-                        });
+                        refs.push(import_ref(name.to_string(), line));
                     }
                 }
             }
@@ -804,13 +787,7 @@ fn extract_js_specifier_name(
     if let Some(name_node) = name_node {
         if let Ok(name) = name_node.utf8_text(source) {
             if name != "type" {
-                refs.push(RawRef {
-                    target_name: name.to_string(),
-                    kind: RefKind::Imports,
-                    line,
-                    from_context: None,
-                    target_crate: None,
-                });
+                refs.push(import_ref(name.to_string(), line));
             }
         }
     }
@@ -818,10 +795,8 @@ fn extract_js_specifier_name(
 
 /// Extract refs from `const x = require('module')` patterns.
 fn extract_js_require(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
-    #[allow(clippy::cast_possible_truncation)]
-    let line = node.start_position().row as u32 + 1;
+    let line = node_line(node);
 
-    // Walk variable declarators looking for `require(...)` on the right side
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "variable_declarator" {
@@ -832,13 +807,7 @@ fn extract_js_require(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Ve
             if has_require {
                 if let Some(name_node) = child.child_by_field_name("name") {
                     if let Ok(name) = name_node.utf8_text(source) {
-                        refs.push(RawRef {
-                            target_name: name.to_string(),
-                            kind: RefKind::Imports,
-                            line,
-                            from_context: None,
-                            target_crate: None,
-                        });
+                        refs.push(import_ref(name.to_string(), line));
                     }
                 }
             }
@@ -860,7 +829,7 @@ fn is_require_call(node: &tree_sitter::Node<'_>, source: &[u8]) -> bool {
 // Go
 // ---------------------------------------------------------------------------
 
-/// Extract import references from Go source code.
+/// Go import extractor.
 ///
 /// Handles:
 /// - `import "fmt"` → [`RawRef`] for "fmt"
@@ -869,24 +838,26 @@ fn is_require_call(node: &tree_sitter::Node<'_>, source: &[u8]) -> bool {
 /// - `import ( "fmt"; "os" )` → [`RawRef`] for each package
 /// - `import . "fmt"` → skipped (dot import, like wildcard)
 /// - `import _ "net/http/pprof"` → skipped (blank import, side-effect only)
-fn extract_refs_go(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    let mut refs = Vec::new();
-    let root = tree.root_node();
+struct GoImports;
 
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
-        if node.kind() == "import_declaration" {
-            extract_go_imports(&node, source, &mut refs);
+impl ImportExtractor for GoImports {
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            if node.kind() == "import_declaration" {
+                extract_go_imports(&node, source, refs);
+            }
         }
     }
+}
 
-    refs
+fn extract_refs_go(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    extract_imports(tree, source, &GoImports)
 }
 
 /// Extract import names from a Go import declaration.
 fn extract_go_imports(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
-    #[allow(clippy::cast_possible_truncation)]
-    let line = node.start_position().row as u32 + 1;
+    let line = node_line(node);
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -898,22 +869,13 @@ fn extract_go_imports(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Ve
                 let mut inner_cursor = child.walk();
                 for spec in child.children(&mut inner_cursor) {
                     if spec.kind() == "import_spec" {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let spec_line = spec.start_position().row as u32 + 1;
-                        extract_go_import_spec(&spec, source, spec_line, refs);
+                        extract_go_import_spec(&spec, source, node_line(&spec), refs);
                     }
                 }
             }
             "interpreted_string_literal" | "raw_string_literal" => {
-                // Single import without spec wrapper: `import "fmt"`
                 if let Some(name) = extract_go_package_name(&child, source) {
-                    refs.push(RawRef {
-                        target_name: name,
-                        kind: RefKind::Imports,
-                        line,
-                        from_context: None,
-                        target_crate: None,
-                    });
+                    refs.push(import_ref(name, line));
                 }
             }
             _ => {}
@@ -944,13 +906,7 @@ fn extract_go_import_spec(
     let path_node = node.child_by_field_name("path");
     if let Some(path_node) = path_node {
         if let Some(name) = extract_go_package_name(&path_node, source) {
-            refs.push(RawRef {
-                target_name: name,
-                kind: RefKind::Imports,
-                line,
-                from_context: None,
-                target_crate: None,
-            });
+            refs.push(import_ref(name, line));
         }
     }
 }
