@@ -1074,16 +1074,16 @@ phases:
 - id: L4
   name: FFI & Web Bridge Suite
   tagline: Every FFI boundary becomes a navigable link
-  status: pending
+  status: in_progress
   problem: napi-rs, wasm-bindgen, PyO3, and HTTP route patterns create invisible cross-language boundaries
   solution: Framework-specific BridgeExtractors for each FFI pattern plus a semantic fallback using embedding co-occurrence for unknown frameworks
   tasks:
   - text: 'NapiExtractor: #[napi] fn/struct/enum exports ↔ JS/TS import sites'
-    checked: false
+    checked: true
   - text: 'WasmBindgenExtractor: #[wasm_bindgen] exports ↔ JS import/instantiation patterns'
-    checked: false
+    checked: true
   - text: 'PyO3Extractor: #[pyfunction] / #[pyclass] / #[pymethods] ↔ Python call sites'
-    checked: false
+    checked: true
   - text: 'HttpRouteExtractor: framework-agnostic route annotation ↔ fetch/axios/client call string matching'
     checked: false
   - text: Test fixtures for each bridge type with end-to-end linking validation

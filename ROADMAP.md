@@ -988,9 +988,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] NapiExtractor: #[napi] fn/struct/enum exports ↔ JS/TS import sites
-- [ ] WasmBindgenExtractor: #[wasm_bindgen] exports ↔ JS import/instantiation patterns
-- [ ] PyO3Extractor: #[pyfunction] / #[pyclass] / #[pymethods] ↔ Python call sites
+- [x] NapiExtractor: #[napi] fn/struct/enum exports ↔ JS/TS import sites
+- [x] WasmBindgenExtractor: #[wasm_bindgen] exports ↔ JS import/instantiation patterns
+- [x] PyO3Extractor: #[pyfunction] / #[pyclass] / #[pymethods] ↔ Python call sites
 - [ ] HttpRouteExtractor: framework-agnostic route annotation ↔ fetch/axios/client call string matching
 - [ ] Test fixtures for each bridge type with end-to-end linking validation
 - [ ] Semantic bridge fallback: when no explicit extractor matches, use embedding co-occurrence to suggest possible cross-language links
