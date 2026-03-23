@@ -835,7 +835,7 @@ phases:
 - id: C8
   name: Code Intelligence Depth
   tagline: From import tracking to full call graph and cross-language refs
-  status: in_progress
+  status: done
   problem: iris_references only extracts imports — no call graph, type usage, or multi-language support
   solution: Extract call_expression for call graphs, type references from signatures, extend to Python/JS/TS/Go
   tasks:
@@ -844,7 +844,7 @@ phases:
   - text: Extract type usage references from function parameter and return types in signatures
     checked: true
   - text: 'Multi-language ref extraction: Python imports, JS/TS imports/requires, Go imports'
-    checked: false
+    checked: true
   - text: Add cyclomatic complexity metric and impact analysis (transitive caller count) to iris_symbols
     checked: true
 - id: B2
