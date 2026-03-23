@@ -27,7 +27,7 @@ use crate::storage::traits::{
     FileHashRecord, Storage, SymbolFilter, SymbolRecord, SymbolRefRecord,
 };
 use crate::token::count_tokens;
-use crate::types::{Claim, DocumentTree, Section, SymbolId, VectorId};
+use crate::types::{Claim, CorpusRoot, DocumentTree, RootKind, Section, SymbolId, VectorId};
 
 /// Result of ingesting a corpus directory.
 ///
@@ -958,6 +958,41 @@ impl IngestionPipeline {
             );
         }
 
+        // Register corpus roots for each source path (multi-root tracking).
+        let roots: Vec<(PathBuf, String)> = paths
+            .iter()
+            .filter(|p| p.is_dir())
+            .map(|p| {
+                let root_id = compute_root_id(p);
+                (p.clone(), root_id)
+            })
+            .collect();
+
+        for (root_path, root_id) in &roots {
+            let display_name = root_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string());
+            let root = CorpusRoot {
+                id: root_id.clone(),
+                path: root_path.to_string_lossy().to_string(),
+                kind: RootKind::Local,
+                display_name,
+                file_count: 0,
+                language_stats: std::collections::HashMap::new(),
+            };
+            if let Err(e) = storage.upsert_corpus_root(&root).await {
+                warn!(root_id = %root_id, error = %e, "failed to register corpus root");
+            }
+        }
+
+        // Per-root language stats accumulators.
+        let mut root_lang_stats: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, usize>,
+        > = std::collections::HashMap::new();
+        let mut root_file_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+
         // Manifest-level mtime fast skip: if all files have matching mtimes
         // in the database and no files were added/removed, skip the entire
         // ingestion loop. This turns a warm start from "read N files + hash"
@@ -973,6 +1008,14 @@ impl IngestionPipeline {
                     progress.start(files.len());
                     progress.complete();
                 }
+                // Even on fast-skip, compute language stats from discovered files.
+                accumulate_language_stats(
+                    &files,
+                    &roots,
+                    &mut root_lang_stats,
+                    &mut root_file_counts,
+                );
+                update_root_stats(storage, &roots, &root_lang_stats, &root_file_counts).await;
                 return Ok(stats);
             }
         }
@@ -983,6 +1026,18 @@ impl IngestionPipeline {
 
         for file_path in &files {
             let relative = compute_relative_path(file_path, paths);
+
+            // Track language stats per root for this file.
+            if let Some(root_id) = find_root_for_file(file_path, &roots) {
+                let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let lang = language_for_extension(ext);
+                *root_lang_stats
+                    .entry(root_id.to_string())
+                    .or_default()
+                    .entry(lang.to_string())
+                    .or_insert(0) += 1;
+                *root_file_counts.entry(root_id.to_string()).or_insert(0) += 1;
+            }
 
             match self
                 .ingest_file_with_embeddings(
@@ -1004,6 +1059,14 @@ impl IngestionPipeline {
                     stats.files_indexed += 1;
                     stats.total_sections += sections;
                     stats.total_claims += claims;
+
+                    // Tag document with its corpus root.
+                    if let Some(root_id) = find_root_for_file(file_path, &roots) {
+                        let doc_id = crate::types::ContentId(relative.clone());
+                        if let Err(e) = storage.set_document_root(&doc_id, root_id).await {
+                            debug!(path = %relative, error = %e, "failed to set document root");
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!(path = %relative, error = %e, "failed to ingest file");
@@ -1041,6 +1104,9 @@ impl IngestionPipeline {
                 stats.files_removed += 1;
             }
         }
+
+        // Update per-root metadata (file counts and language stats).
+        update_root_stats(storage, &roots, &root_lang_stats, &root_file_counts).await;
 
         info!(
             indexed = stats.files_indexed,
@@ -2306,6 +2372,125 @@ fn merge_into(target: &mut Section, source: Section) {
     target.children.extend(source.children);
 }
 
+/// Accumulate language stats for discovered files without running the full ingest loop.
+fn accumulate_language_stats(
+    files: &[PathBuf],
+    roots: &[(PathBuf, String)],
+    root_lang_stats: &mut std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, usize>,
+    >,
+    root_file_counts: &mut std::collections::HashMap<String, usize>,
+) {
+    for file_path in files {
+        if let Some(root_id) = find_root_for_file(file_path, roots) {
+            let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let lang = language_for_extension(ext);
+            *root_lang_stats
+                .entry(root_id.to_string())
+                .or_default()
+                .entry(lang.to_string())
+                .or_insert(0) += 1;
+            *root_file_counts.entry(root_id.to_string()).or_insert(0) += 1;
+        }
+    }
+}
+
+/// Update each corpus root's `file_count` and `language_stats` in storage.
+async fn update_root_stats<S: Storage + ?Sized>(
+    storage: &S,
+    roots: &[(PathBuf, String)],
+    root_lang_stats: &std::collections::HashMap<String, std::collections::HashMap<String, usize>>,
+    root_file_counts: &std::collections::HashMap<String, usize>,
+) {
+    for (root_path, root_id) in roots {
+        let file_count = root_file_counts.get(root_id).copied().unwrap_or(0);
+        let lang_stats = root_lang_stats.get(root_id).cloned().unwrap_or_default();
+        let display_name = root_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string());
+        let root = CorpusRoot {
+            id: root_id.clone(),
+            path: root_path.to_string_lossy().to_string(),
+            kind: RootKind::Local,
+            display_name,
+            file_count,
+            language_stats: lang_stats,
+        };
+        if let Err(e) = storage.upsert_corpus_root(&root).await {
+            warn!(root_id = %root_id, error = %e, "failed to update corpus root stats");
+        }
+    }
+}
+
+/// Compute a stable root ID from a path by hashing it.
+fn compute_root_id(path: &Path) -> String {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.to_string_lossy().as_bytes());
+    let hash = hasher.finalize();
+    format!(
+        "root-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7]
+    )
+}
+
+/// Determine which source root a file belongs to (longest prefix match).
+fn find_root_for_file<'a>(file: &Path, roots: &'a [(PathBuf, String)]) -> Option<&'a str> {
+    let canonical = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+    let mut best: Option<(&str, usize)> = None;
+    for (root_path, root_id) in roots {
+        let root_canonical = root_path
+            .canonicalize()
+            .unwrap_or_else(|_| root_path.clone());
+        if canonical.starts_with(&root_canonical) {
+            let depth = root_canonical.as_os_str().len();
+            if best.is_none() || depth > best.unwrap().1 {
+                best = Some((root_id.as_str(), depth));
+            }
+        }
+    }
+    best.map(|(id, _)| id)
+}
+
+/// Map a file extension to a human-readable language name for stats.
+fn language_for_extension(ext: &str) -> &'static str {
+    match ext {
+        "rs" => "rust",
+        "py" | "pyi" => "python",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" | "mts" | "cts" => "typescript",
+        "jsx" => "jsx",
+        "tsx" => "tsx",
+        "go" => "go",
+        "rb" => "ruby",
+        "java" => "java",
+        "kt" | "kts" => "kotlin",
+        "c" | "h" => "c",
+        "cpp" | "cc" | "cxx" | "hpp" | "hxx" => "cpp",
+        "cs" => "csharp",
+        "swift" => "swift",
+        "lua" => "lua",
+        "sh" | "bash" | "zsh" => "shell",
+        "php" => "php",
+        "scala" => "scala",
+        "r" => "r",
+        "ex" | "exs" => "elixir",
+        "zig" => "zig",
+        "md" | "markdown" | "mdx" => "markdown",
+        "html" | "htm" | "xhtml" => "html",
+        "css" | "scss" | "sass" | "less" => "css",
+        "json" => "json",
+        "yaml" | "yml" => "yaml",
+        "toml" => "toml",
+        "xml" | "svg" => "xml",
+        "sql" => "sql",
+        "pdf" => "pdf",
+        "txt" | "text" => "text",
+        _ => "other",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3288,6 +3473,115 @@ mod tests {
         assert_ne!(rel1, rel2, "paths from different crates must not collide");
         assert_eq!(rel1, "iris-core/src/lib.rs");
         assert_eq!(rel2, "iris-mcp/src/lib.rs");
+    }
+
+    #[test]
+    fn compute_root_id_is_stable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id1 = compute_root_id(tmp.path());
+        let id2 = compute_root_id(tmp.path());
+        assert_eq!(id1, id2);
+        assert!(id1.starts_with("root-"));
+    }
+
+    #[test]
+    fn compute_root_id_differs_for_different_paths() {
+        let tmp1 = tempfile::tempdir().unwrap();
+        let tmp2 = tempfile::tempdir().unwrap();
+        let id1 = compute_root_id(tmp1.path());
+        let id2 = compute_root_id(tmp2.path());
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn find_root_for_file_picks_longest_prefix() {
+        let parent = PathBuf::from("/project");
+        let child = PathBuf::from("/project/src");
+        let roots = vec![
+            (parent.clone(), "root-parent".to_string()),
+            (child.clone(), "root-child".to_string()),
+        ];
+
+        // File under /project/src should match root-child (longer prefix)
+        let result = find_root_for_file(Path::new("/project/src/main.rs"), &roots);
+        assert_eq!(result, Some("root-child"));
+
+        // File under /project/docs should match root-parent
+        let result = find_root_for_file(Path::new("/project/docs/readme.md"), &roots);
+        assert_eq!(result, Some("root-parent"));
+    }
+
+    #[test]
+    fn find_root_for_file_returns_none_for_unmatched() {
+        let roots = vec![(PathBuf::from("/project"), "root-1".to_string())];
+        let result = find_root_for_file(Path::new("/other/file.rs"), &roots);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn language_for_extension_covers_common_languages() {
+        assert_eq!(language_for_extension("rs"), "rust");
+        assert_eq!(language_for_extension("py"), "python");
+        assert_eq!(language_for_extension("ts"), "typescript");
+        assert_eq!(language_for_extension("js"), "javascript");
+        assert_eq!(language_for_extension("go"), "go");
+        assert_eq!(language_for_extension("md"), "markdown");
+        assert_eq!(language_for_extension("html"), "html");
+        assert_eq!(language_for_extension("toml"), "toml");
+        assert_eq!(language_for_extension("unknown"), "other");
+    }
+
+    #[tokio::test]
+    async fn multi_root_ingestion_registers_roots_and_tags_documents() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create two corpus root directories
+        let root_a = tmp.path().join("crate-a");
+        let root_b = tmp.path().join("crate-b");
+        std::fs::create_dir_all(&root_a).unwrap();
+        std::fs::create_dir_all(&root_b).unwrap();
+
+        std::fs::write(root_a.join("lib.rs"), "pub fn hello() {}").unwrap();
+        std::fs::write(root_b.join("main.py"), "def main(): pass").unwrap();
+
+        let storage = crate::storage::SqliteStorage::open_in_memory().unwrap();
+        let pipeline = IngestionPipeline::new();
+
+        let paths = vec![root_a.clone(), root_b.clone()];
+        let stats = pipeline.ingest_directory(&root_a, &storage).await.unwrap();
+        assert!(stats.files_indexed > 0 || stats.files_skipped > 0);
+
+        // Use ingest_paths_with_embeddings for multi-root
+        let embedder = crate::embedding::FastEmbedder::new("all-MiniLM-L6-v2", None).unwrap();
+        let index = crate::index::HnswIndex::new(embedder.dimension(), 1000).unwrap();
+
+        let stats = pipeline
+            .ingest_paths_with_embeddings(&paths, &storage, &embedder, &index)
+            .await
+            .unwrap();
+
+        assert!(
+            stats.files_discovered >= 2,
+            "should discover files from both roots"
+        );
+
+        // Check that corpus roots were registered
+        let roots = storage.list_corpus_roots().await.unwrap();
+        assert_eq!(roots.len(), 2, "should have two corpus roots");
+
+        // Verify at least one root has language stats
+        let total_files: usize = roots.iter().map(|r| r.file_count).sum();
+        assert!(total_files >= 2, "total file count should be >= 2");
+
+        // Check language stats exist
+        let has_rust = roots
+            .iter()
+            .any(|r| r.language_stats.get("rust").copied().unwrap_or(0) > 0);
+        let has_python = roots
+            .iter()
+            .any(|r| r.language_stats.get("python").copied().unwrap_or(0) > 0);
+        assert!(has_rust, "should have rust in language stats");
+        assert!(has_python, "should have python in language stats");
     }
 
     // --- C6.2: E2E unified code + doc search ---

@@ -1100,7 +1100,7 @@ phases:
   - text: 'Workspace detection: auto-discover Cargo workspaces, npm/pnpm/yarn workspaces, monorepo layouts (turborepo, nx)'
     checked: true
   - text: 'Multi-root corpus: index multiple directories as a unified project, maintaining per-directory metadata and language stats'
-    checked: false
+    checked: true
   - text: 'Cross-package import graph: track imports/dependencies between packages in a workspace'
     checked: true
   - text: 'Cross-crate Rust references: resolve `use other_crate::Foo` to symbols in sibling workspace crates'

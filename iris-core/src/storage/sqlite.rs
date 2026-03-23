@@ -20,8 +20,8 @@ use super::traits::{
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
 use crate::types::{
-    ClaimId, ClaimRelationship, ContentId, DocumentTree, RefKind, RelationType, Resolution,
-    Section, SectionId, SymbolId,
+    ClaimId, ClaimRelationship, ContentId, CorpusRoot, DocumentTree, RefKind, RelationType,
+    Resolution, RootKind, Section, SectionId, SymbolId,
 };
 
 /// SQLite-backed storage for a single corpus.
@@ -216,7 +216,9 @@ impl Storage for SqliteStorage {
         let id = id.clone();
         self.with_conn(move |conn| {
             let mut stmt = conn
-                .prepare("SELECT id, title, source_path, summary FROM documents WHERE id = ?1")
+                .prepare(
+                    "SELECT id, title, source_path, summary, root_id FROM documents WHERE id = ?1",
+                )
                 .map_err(|e| StorageError::Database {
                     reason: e.to_string(),
                 })?;
@@ -228,6 +230,7 @@ impl Storage for SqliteStorage {
                         title: row.get(1)?,
                         source_path: row.get(2)?,
                         summary: row.get(3)?,
+                        root_id: row.get(4)?,
                     })
                 })
                 .optional()
@@ -255,7 +258,9 @@ impl Storage for SqliteStorage {
     async fn list_documents(&self) -> Result<Vec<DocumentRecord>, StorageError> {
         self.with_conn(|conn| {
             let mut stmt = conn
-                .prepare("SELECT id, title, source_path, summary FROM documents ORDER BY title")
+                .prepare(
+                    "SELECT id, title, source_path, summary, root_id FROM documents ORDER BY title",
+                )
                 .map_err(|e| StorageError::Database {
                     reason: e.to_string(),
                 })?;
@@ -267,6 +272,7 @@ impl Storage for SqliteStorage {
                         title: row.get(1)?,
                         source_path: row.get(2)?,
                         summary: row.get(3)?,
+                        root_id: row.get(4)?,
                     })
                 })
                 .map_err(|e| StorageError::Database {
@@ -422,7 +428,7 @@ impl Storage for SqliteStorage {
         self.with_conn(move |conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT d.id, d.title, d.source_path, d.summary
+                    "SELECT d.id, d.title, d.source_path, d.summary, d.root_id
                      FROM documents d
                      JOIN sections s ON s.document_id = d.id
                      WHERE s.id = ?1",
@@ -438,6 +444,7 @@ impl Storage for SqliteStorage {
                         title: row.get(1)?,
                         source_path: row.get(2)?,
                         summary: row.get(3)?,
+                        root_id: row.get(4)?,
                     })
                 })
                 .optional()
@@ -1815,6 +1822,140 @@ impl Storage for SqliteStorage {
             Ok(())
         })
         .await
+    }
+
+    // -- Corpus roots --
+
+    async fn upsert_corpus_root(&self, root: &CorpusRoot) -> Result<(), StorageError> {
+        let root = root.clone();
+        self.with_conn(move |conn| {
+            let lang_json = serde_json::to_string(&root.language_stats).unwrap_or_default();
+            conn.execute(
+                "INSERT INTO corpus_roots (id, path, kind, display_name, file_count, language_stats, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                 ON CONFLICT(id) DO UPDATE SET
+                     path = excluded.path,
+                     kind = excluded.kind,
+                     display_name = excluded.display_name,
+                     file_count = excluded.file_count,
+                     language_stats = excluded.language_stats,
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+                rusqlite::params![
+                    root.id,
+                    root.path,
+                    root.kind.as_str(),
+                    root.display_name,
+                    i64::try_from(root.file_count).unwrap_or(i64::MAX),
+                    lang_json,
+                ],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_corpus_root(&self, id: &str) -> Result<Option<CorpusRoot>, StorageError> {
+        let id = id.to_string();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, path, kind, display_name, file_count, language_stats
+                     FROM corpus_roots WHERE id = ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let result = stmt
+                .query_row(rusqlite::params![id], |row| Ok(parse_corpus_root_row(row)))
+                .optional()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            Ok(result)
+        })
+        .await
+    }
+
+    async fn list_corpus_roots(&self) -> Result<Vec<CorpusRoot>, StorageError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, path, kind, display_name, file_count, language_stats
+                     FROM corpus_roots ORDER BY path",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let rows = stmt
+                .query_map([], |row| Ok(parse_corpus_root_row(row)))
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })
+        })
+        .await
+    }
+
+    async fn delete_corpus_root(&self, id: &str) -> Result<bool, StorageError> {
+        let id = id.to_string();
+        self.with_conn(move |conn| {
+            let changes = conn
+                .execute(
+                    "DELETE FROM corpus_roots WHERE id = ?1",
+                    rusqlite::params![id],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            Ok(changes > 0)
+        })
+        .await
+    }
+
+    async fn set_document_root(
+        &self,
+        doc_id: &ContentId,
+        root_id: &str,
+    ) -> Result<(), StorageError> {
+        let doc_id = doc_id.clone();
+        let root_id = root_id.to_string();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "UPDATE documents SET root_id = ?1 WHERE id = ?2",
+                rusqlite::params![root_id, doc_id.as_ref()],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+            Ok(())
+        })
+        .await
+    }
+}
+
+/// Parse a `corpus_roots` row into a [`CorpusRoot`].
+fn parse_corpus_root_row(row: &rusqlite::Row<'_>) -> CorpusRoot {
+    let lang_json: String = row.get(5).unwrap_or_default();
+    let language_stats: std::collections::HashMap<String, usize> =
+        serde_json::from_str(&lang_json).unwrap_or_default();
+
+    CorpusRoot {
+        id: row.get(0).unwrap_or_default(),
+        path: row.get(1).unwrap_or_default(),
+        kind: RootKind::parse(&row.get::<_, String>(2).unwrap_or_default()),
+        display_name: row.get(3).unwrap_or_default(),
+        file_count: row.get::<_, i64>(4).unwrap_or(0).try_into().unwrap_or(0),
+        language_stats,
     }
 }
 

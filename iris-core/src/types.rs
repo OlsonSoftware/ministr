@@ -580,6 +580,94 @@ pub struct TocEntry {
     pub token_count: usize,
 }
 
+/// The kind of a corpus root source.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::RootKind;
+///
+/// let kind = RootKind::Local;
+/// assert_eq!(kind.as_str(), "local");
+/// assert_eq!(RootKind::parse("git"), RootKind::Git);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RootKind {
+    /// A local filesystem directory.
+    Local,
+    /// A web URL fetched via `WebFetcher`.
+    Web,
+    /// A git repository cloned via `GitFetcher`.
+    Git,
+}
+
+impl RootKind {
+    /// Return the string representation.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Web => "web",
+            Self::Git => "git",
+        }
+    }
+
+    /// Parse from a string, defaulting to `Local` for unknown values.
+    #[must_use]
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "web" => Self::Web,
+            "git" => Self::Git,
+            _ => Self::Local,
+        }
+    }
+}
+
+impl fmt::Display for RootKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A registered corpus root directory with per-root metadata.
+///
+/// Each root represents one source directory (or URL) in a multi-root corpus.
+/// Roots track per-directory file counts and language statistics.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::types::{CorpusRoot, RootKind};
+/// use std::collections::HashMap;
+///
+/// let root = CorpusRoot {
+///     id: "abc123".into(),
+///     path: "/home/user/project/src".into(),
+///     kind: RootKind::Local,
+///     display_name: Some("src".into()),
+///     file_count: 42,
+///     language_stats: HashMap::from([("rust".into(), 30), ("toml".into(), 12)]),
+/// };
+/// assert_eq!(root.file_count, 42);
+/// assert_eq!(root.language_stats["rust"], 30);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CorpusRoot {
+    /// Stable identifier derived from the root path.
+    pub id: String,
+    /// Canonical path (or URL) for this root.
+    pub path: String,
+    /// Source kind: local, web, or git.
+    pub kind: RootKind,
+    /// Human-readable display name (typically the directory basename).
+    pub display_name: Option<String>,
+    /// Number of files indexed from this root.
+    pub file_count: usize,
+    /// Language → file count mapping for this root.
+    pub language_stats: std::collections::HashMap<String, usize>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,6 +699,31 @@ mod tests {
         assert_eq!(Resolution::Claim.to_string(), "claim");
         assert_eq!(Resolution::SymbolStub.to_string(), "symbol_stub");
         assert_eq!(Resolution::SymbolFull.to_string(), "symbol_full");
+    }
+
+    #[test]
+    fn root_kind_roundtrip() {
+        assert_eq!(RootKind::Local.as_str(), "local");
+        assert_eq!(RootKind::Web.as_str(), "web");
+        assert_eq!(RootKind::Git.as_str(), "git");
+        assert_eq!(RootKind::parse("local"), RootKind::Local);
+        assert_eq!(RootKind::parse("web"), RootKind::Web);
+        assert_eq!(RootKind::parse("git"), RootKind::Git);
+        assert_eq!(RootKind::parse("unknown"), RootKind::Local);
+    }
+
+    #[test]
+    fn corpus_root_construction() {
+        let root = CorpusRoot {
+            id: "r1".into(),
+            path: "/home/user/project".into(),
+            kind: RootKind::Local,
+            display_name: Some("project".into()),
+            file_count: 5,
+            language_stats: std::collections::HashMap::from([("rust".into(), 5)]),
+        };
+        assert_eq!(root.file_count, 5);
+        assert_eq!(root.kind, RootKind::Local);
     }
 
     #[test]
