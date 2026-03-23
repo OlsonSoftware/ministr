@@ -841,10 +841,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Implement MCP Tasks primitive in iris-mcp (task lifecycle: created → running → completed/failed/canceled)
-- [ ] Migrate iris_fetch async mode from custom TaskManager to MCP Tasks
-- [ ] Migrate iris_clone async mode from custom TaskManager to MCP Tasks
-- [ ] Update iris_task tool to delegate to MCP task polling; deprecate custom TaskManager
+- [x] Implement MCP Tasks primitive in iris-mcp (task lifecycle: created → running → completed/failed/canceled)
+- [x] Migrate iris_fetch async mode from custom TaskManager to MCP Tasks
+- [x] Migrate iris_clone async mode from custom TaskManager to MCP Tasks
+- [x] Update iris_task tool to delegate to MCP task polling; deprecate custom TaskManager
 
 ---
 

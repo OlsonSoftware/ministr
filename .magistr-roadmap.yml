@@ -916,18 +916,18 @@ phases:
 - id: V23
   name: Protocol-Native Async Tasks
   tagline: Replace custom TaskManager with MCP Tasks primitive
-  status: pending
+  status: done
   problem: iris_fetch and iris_clone use a custom task system that doesn't interoperate with MCP clients' native task UIs or other MCP servers
   solution: Adopt the 2025-11-25 Tasks primitive for call-now-fetch-later semantics; migrate existing async operations; deprecate custom TaskManager
   tasks:
   - text: 'Implement MCP Tasks primitive in iris-mcp (task lifecycle: created → running → completed/failed/canceled)'
-    checked: false
+    checked: true
   - text: Migrate iris_fetch async mode from custom TaskManager to MCP Tasks
-    checked: false
+    checked: true
   - text: Migrate iris_clone async mode from custom TaskManager to MCP Tasks
-    checked: false
+    checked: true
   - text: Update iris_task tool to delegate to MCP task polling; deprecate custom TaskManager
-    checked: false
+    checked: true
 - id: V24
   name: Elicitation & Interactive Budget
   tagline: Cache controller that negotiates with the agent
