@@ -1340,8 +1340,21 @@ where
         .map_err(IngestionError::from)?;
 
     // Extract and resolve cross-references (use imports, impl relationships)
-    if let Err(e) =
-        resolve_and_store_refs(&tree, source, relative_path, &symbol_records, storage).await
+    // Derive language from file extension for multi-language ref extraction.
+    let language = Path::new(relative_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .and_then(|ext| crate::code::GrammarRegistry::global().language_name_for_extension(ext))
+        .unwrap_or("rust");
+    if let Err(e) = resolve_and_store_refs(
+        &tree,
+        source,
+        relative_path,
+        language,
+        &symbol_records,
+        storage,
+    )
+    .await
     {
         warn!(path = %relative_path, error = %e, "failed to extract symbol refs");
     }
@@ -1408,10 +1421,11 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
     tree: &tree_sitter::Tree,
     source: &[u8],
     file_path: &str,
+    language: &str,
     local_symbols: &[SymbolRecord],
     storage: &S,
 ) -> Result<usize, IngestionError> {
-    let raw_refs = extract_refs(tree, source);
+    let raw_refs = extract_refs(tree, source, language);
     if raw_refs.is_empty() {
         return Ok(0);
     }
@@ -3299,9 +3313,10 @@ pub fn compute_hash(content: &str) -> String {
         let tree = parser.parse(source, None).unwrap();
 
         let local_symbols = vec![mod_sym.clone(), struct_sym];
-        let inserted = resolve_and_store_refs(&tree, source, "test.rs", &local_symbols, &storage)
-            .await
-            .unwrap();
+        let inserted =
+            resolve_and_store_refs(&tree, source, "test.rs", "rust", &local_symbols, &storage)
+                .await
+                .unwrap();
 
         assert_eq!(inserted, 1, "should resolve one import ref");
 
