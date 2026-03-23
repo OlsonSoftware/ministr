@@ -248,6 +248,10 @@ pub enum GitError {
     /// The operation was cancelled via a cancellation token.
     #[error("git operation cancelled")]
     Cancelled,
+
+    /// A git subprocess exceeded its timeout.
+    #[error("git command timed out after {timeout_secs}s")]
+    Timeout { timeout_secs: u64 },
 }
 
 #[cfg(test)]

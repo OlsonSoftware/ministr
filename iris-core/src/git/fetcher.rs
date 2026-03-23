@@ -5,6 +5,7 @@
 //! materialize only requested directories/files.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -66,6 +67,10 @@ pub enum GitStalenessResult {
 pub struct GitFetcherConfig {
     /// Root directory for cloned repositories (default: `~/.iris/remote`).
     pub remote_dir: PathBuf,
+    /// Timeout for git subprocess commands (default: 30s).
+    pub command_timeout: Duration,
+    /// Maximum concurrent staleness checks during refresh (default: 4).
+    pub refresh_concurrency: usize,
 }
 
 impl Default for GitFetcherConfig {
@@ -73,6 +78,8 @@ impl Default for GitFetcherConfig {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         Self {
             remote_dir: home.join(".iris").join("remote"),
+            command_timeout: Duration::from_secs(30),
+            refresh_concurrency: 4,
         }
     }
 }
@@ -210,7 +217,11 @@ impl GitFetcher {
         branch: Option<&str>,
     ) -> Result<String, GitError> {
         let ref_name = branch.unwrap_or("HEAD");
-        let output = run_git(&["ls-remote", repo_url, ref_name]).await?;
+        let output = run_git(
+            &["ls-remote", repo_url, ref_name],
+            self.config.command_timeout,
+        )
+        .await?;
         let sha = output
             .lines()
             .next()
@@ -418,7 +429,7 @@ impl GitFetcher {
         args.push(repo_url);
         args.push(&clone_dir_str);
 
-        run_git(&args).await?;
+        run_git(&args, self.config.command_timeout).await?;
 
         // Check cancellation after clone completes.
         if ct.is_some_and(CancellationToken::is_cancelled) {
@@ -434,7 +445,7 @@ impl GitFetcher {
             let mut sparse_args = vec!["sparse-checkout", "set", "--cone"];
             let path_refs: Vec<&str> = sparse_paths.iter().map(String::as_str).collect();
             sparse_args.extend(path_refs);
-            run_git_in_dir(clone_dir, &sparse_args).await?;
+            run_git_in_dir(clone_dir, &sparse_args, self.config.command_timeout).await?;
         }
 
         // Check cancellation before checkout.
@@ -444,10 +455,15 @@ impl GitFetcher {
         }
 
         // Checkout the content.
-        run_git_in_dir(clone_dir, &["checkout"]).await?;
+        run_git_in_dir(clone_dir, &["checkout"], self.config.command_timeout).await?;
 
         // Get the checked-out commit SHA.
-        let sha_output = run_git_in_dir(clone_dir, &["rev-parse", "HEAD"]).await?;
+        let sha_output = run_git_in_dir(
+            clone_dir,
+            &["rev-parse", "HEAD"],
+            self.config.command_timeout,
+        )
+        .await?;
         let commit_sha = sha_output.trim().to_owned();
 
         let elapsed_ms = start.elapsed().as_millis();
@@ -515,12 +531,15 @@ async fn check_git_installed() -> Result<(), GitError> {
 }
 
 /// Run a git command and return stdout as a string.
-async fn run_git(args: &[&str]) -> Result<String, GitError> {
+///
+/// The command is killed if it exceeds `timeout`.
+async fn run_git(args: &[&str], timeout: Duration) -> Result<String, GitError> {
     debug!(args = ?args, "running git command");
-    let output = Command::new("git")
-        .args(args)
-        .output()
+    let output = tokio::time::timeout(timeout, Command::new("git").args(args).output())
         .await
+        .map_err(|_| GitError::Timeout {
+            timeout_secs: timeout.as_secs(),
+        })?
         .map_err(|_| GitError::NotInstalled)?;
 
     if !output.status.success() {
@@ -536,14 +555,19 @@ async fn run_git(args: &[&str]) -> Result<String, GitError> {
 }
 
 /// Run a git command in a specific working directory.
-async fn run_git_in_dir(dir: &Path, args: &[&str]) -> Result<String, GitError> {
+///
+/// The command is killed if it exceeds `timeout`.
+async fn run_git_in_dir(dir: &Path, args: &[&str], timeout: Duration) -> Result<String, GitError> {
     debug!(dir = %dir.display(), args = ?args, "running git command in dir");
-    let output = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .await
-        .map_err(|_| GitError::NotInstalled)?;
+    let output = tokio::time::timeout(
+        timeout,
+        Command::new("git").current_dir(dir).args(args).output(),
+    )
+    .await
+    .map_err(|_| GitError::Timeout {
+        timeout_secs: timeout.as_secs(),
+    })?
+    .map_err(|_| GitError::NotInstalled)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -674,6 +698,7 @@ mod tests {
     fn clone_dir_uses_repo_hash() {
         let config = GitFetcherConfig {
             remote_dir: PathBuf::from("/tmp/test-remote"),
+            ..GitFetcherConfig::default()
         };
         let fetcher = GitFetcher::new(config);
         let dir = fetcher.clone_dir("https://github.com/user/repo.git");
@@ -691,6 +716,7 @@ mod tests {
     async fn clone_empty_url_returns_error() {
         let fetcher = GitFetcher::new(GitFetcherConfig {
             remote_dir: PathBuf::from("/tmp/iris-test-git"),
+            ..GitFetcherConfig::default()
         });
         let result = fetcher.clone("", None, None, None).await;
         assert!(result.is_err());
@@ -704,6 +730,7 @@ mod tests {
 
         let fetcher = GitFetcher::new(GitFetcherConfig {
             remote_dir: PathBuf::from("/tmp/iris-test-git-cancel"),
+            ..GitFetcherConfig::default()
         });
         let result = fetcher
             .clone("https://example.com/repo.git", None, None, Some(&ct))
@@ -766,6 +793,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let config = GitFetcherConfig {
             remote_dir: tmp.path().to_path_buf(),
+            ..GitFetcherConfig::default()
         };
         let fetcher = GitFetcher::new(config);
 
@@ -840,6 +868,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let config = GitFetcherConfig {
             remote_dir: tmp.path().to_path_buf(),
+            ..GitFetcherConfig::default()
         };
         let fetcher = GitFetcher::new(config);
         let repo_url = "https://github.com/octocat/Hello-World.git";
@@ -884,6 +913,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let config = GitFetcherConfig {
             remote_dir: tmp.path().to_path_buf(),
+            ..GitFetcherConfig::default()
         };
         let fetcher = GitFetcher::new(config);
         let repo_url = "https://github.com/octocat/Hello-World.git";

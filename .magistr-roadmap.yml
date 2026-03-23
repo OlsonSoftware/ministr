@@ -1202,3 +1202,5 @@ phases:
     checked: true
   - text: 'Integration tests: clone pydantic (Python), MCP TypeScript SDK, and bubbletea (Go) — verify iris_symbols, iris_definition, and iris_references return correct results for each language'
     checked: true
+  - text: 'Concurrent refresh pipeline: bounded-parallel staleness checks for git and web sources, git subprocess timeouts, tokio::join! for web+git overlap'
+    checked: true

@@ -2625,6 +2625,7 @@ async fn setup_server_with_git_fetcher(
 
     let git_config = iris_core::git::GitFetcherConfig {
         remote_dir: remote_dir.to_path_buf(),
+        ..iris_core::git::GitFetcherConfig::default()
     };
     let git_fetcher = iris_core::git::GitFetcher::new(git_config);
 
@@ -2793,6 +2794,7 @@ async fn e2e_clone_and_fetch_unified_survey_results() {
 
     let git_config = iris_core::git::GitFetcherConfig {
         remote_dir: clone_cache,
+        ..iris_core::git::GitFetcherConfig::default()
     };
     let git_fetcher = iris_core::git::GitFetcher::new(git_config);
     let server = server.with_git_fetcher(git_fetcher, Arc::clone(&embedder), Arc::clone(&index));
