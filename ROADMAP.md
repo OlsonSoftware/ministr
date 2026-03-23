@@ -809,11 +809,11 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Define Rust output schema types (schemars) for all 15 tool responses
-- [ ] Return structuredContent alongside text content in all tool handlers
-- [ ] Add outputSchema to all tool definitions via #[tool] macro attributes
-- [ ] Add tool annotations (readOnlyHint, destructiveHint, idempotentHint, openWorldHint) to all tools
-- [ ] Tests for structured output serialization and annotation correctness
+- [x] Define Rust output schema types (schemars) for all 15 tool responses
+- [x] Return structuredContent alongside text content in all tool handlers
+- [x] Add outputSchema to all tool definitions via #[tool] macro attributes
+- [x] Add tool annotations (readOnlyHint, destructiveHint, idempotentHint, openWorldHint) to all tools
+- [x] Tests for structured output serialization and annotation correctness
 
 ---
 
@@ -908,4 +908,89 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [ ] Cross-agent coherence notifications via MCP resource subscriptions
 - [ ] Session isolation policies — read-only vs read-write session access modes
 - [ ] Tests for concurrent multi-session access and coherence propagation
+
+---
+
+## Phase L1: Extended Language Refinements ✦ "First-class symbol extraction for the languages developers actually use"
+
+**Problem:** Generic extractor misclassifies symbols in common languages; only 4 of 30+ supported grammars have dedicated refinements
+
+**Solution:** Add LanguageRefinement implementations for high-impact languages (Java, C/C++, Swift, Kotlin), improve generic fallback heuristics, validate with cross-language test matrix
+
+### Tasks
+
+- [ ] Java refinement: class, interface, enum, annotation types, method visibility modifiers, generics
+- [ ] C/C++ refinement: namespace, class, struct, template, function, header/impl split (.h/.c/.cpp/.hpp)
+- [ ] Swift refinement: protocol, extension, struct, class, func, @objc annotations (Tauri mobile plugins)
+- [ ] Kotlin refinement: data class, object, companion object, fun, annotations (Tauri mobile plugins)
+- [ ] Generic extractor improvements: decorator/annotation extraction, nested type support, better visibility inference for class-based languages
+- [ ] Cross-language test matrix: fixture files for 15+ languages validating symbol extraction quality against expected output
+
+---
+
+## Phase L2: Cross-Language Bridge Framework ✦ "Follow the call across the language boundary"
+
+**Problem:** No way to trace calls across language boundaries — invoke() in JS disappears at the Rust border
+
+**Solution:** BridgeExtractor trait with two-pass pipeline (extract endpoints per-file, then join on binding_key), SQLite storage, confidence scoring, and integration with iris_references
+
+### Tasks
+
+- [ ] Core types: BridgeEndpoint, BridgeLink, BridgeKind in iris-core/src/code/bridge/mod.rs
+- [ ] BridgeExtractor trait: extract_endpoints(), bridge_kind(), applicable_languages()
+- [ ] BridgeLinker: two-pass pipeline — extract endpoints per-file, then join on binding_key to form BridgeLinks
+- [ ] SQLite schema: bridge_endpoints and bridge_links tables with file_path, binding_key, language, confidence columns
+- [ ] Framework auto-detection: scan Cargo.toml, package.json, tauri.conf.json, pyproject.toml to activate relevant bridge extractors
+- [ ] Confidence scoring: exact string match (1.0), case-transformed (0.9), registration-validated (1.0), fuzzy/semantic (0.7)
+- [ ] Integration: surface bridge links in iris_references with ref_kind "bridge", including cross-language file path and symbol info
+
+---
+
+## Phase L3: Tauri Bridge Implementation ✦ "Trace from React component to Rust command handler in one hop"
+
+**Problem:** Tauri apps split logic across JS/TS frontend and Rust backend with string-based invoke() IPC — invisible to symbol tracing
+
+**Solution:** Tree-sitter queries to detect invoke() ↔ #[tauri::command] and emit/listen event bridges, with generate_handler! cross-validation and a dedicated iris_bridge MCP tool
+
+### Tasks
+
+- [ ] TauriCommandExtractor: tree-sitter queries for invoke("name") in JS/TS and #[tauri::command] fn name() in Rust
+- [ ] TauriEventExtractor: emit/listen pattern detection across JS/TS and Rust boundaries
+- [ ] Command registration validation: cross-reference with tauri::generate_handler![] for confidence boost
+- [ ] Edge cases: rename_all/camelCase transforms, async commands, command modules, Tauri v1 vs v2 invoke patterns
+- [ ] Test fixture: minimal Tauri app with 5+ commands, events, state management, and plugin usage
+- [ ] iris_bridge MCP tool: dedicated cross-language navigation with query, bridge_kind, and language filters
+
+---
+
+## Phase L4: FFI & Web Bridge Suite ✦ "Every FFI boundary becomes a navigable link"
+
+**Problem:** napi-rs, wasm-bindgen, PyO3, and HTTP route patterns create invisible cross-language boundaries
+
+**Solution:** Framework-specific BridgeExtractors for each FFI pattern plus a semantic fallback using embedding co-occurrence for unknown frameworks
+
+### Tasks
+
+- [ ] NapiExtractor: #[napi] fn/struct/enum exports ↔ JS/TS import sites
+- [ ] WasmBindgenExtractor: #[wasm_bindgen] exports ↔ JS import/instantiation patterns
+- [ ] PyO3Extractor: #[pyfunction] / #[pyclass] / #[pymethods] ↔ Python call sites
+- [ ] HttpRouteExtractor: framework-agnostic route annotation ↔ fetch/axios/client call string matching
+- [ ] Test fixtures for each bridge type with end-to-end linking validation
+- [ ] Semantic bridge fallback: when no explicit extractor matches, use embedding co-occurrence to suggest possible cross-language links
+
+---
+
+## Phase L5: Multi-Project Workspace Intelligence ✦ "One project, many packages, unified intelligence"
+
+**Problem:** Real projects span multiple packages, crates, and workspaces — iris indexes one directory at a time
+
+**Solution:** Workspace auto-detection, multi-root corpus indexing, cross-package import graph, and cross-crate reference resolution
+
+### Tasks
+
+- [ ] Workspace detection: auto-discover Cargo workspaces, npm/pnpm/yarn workspaces, monorepo layouts (turborepo, nx)
+- [ ] Multi-root corpus: index multiple directories as a unified project, maintaining per-directory metadata and language stats
+- [ ] Cross-package import graph: track imports/dependencies between packages in a workspace
+- [ ] Cross-crate Rust references: resolve `use other_crate::Foo` to symbols in sibling workspace crates
+- [ ] iris_clone integration: index cloned dependency source and link references back to consuming code
 

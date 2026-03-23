@@ -882,20 +882,20 @@ phases:
 - id: V21
   name: Tool Metadata Modernization
   tagline: Structured outputs and tool annotations for all 15 tools
-  status: pending
+  status: done
   problem: Tool responses are untyped JSON text blobs — agents must parse free-form text; no behavioral metadata for trust/safety decisions
   solution: Add outputSchema + structuredContent to every tool, annotate all tools with readOnlyHint/destructiveHint/idempotentHint/openWorldHint
   tasks:
   - text: Define Rust output schema types (schemars) for all 15 tool responses
-    checked: false
+    checked: true
   - text: Return structuredContent alongside text content in all tool handlers
-    checked: false
+    checked: true
   - text: 'Add outputSchema to all tool definitions via #[tool] macro attributes'
-    checked: false
+    checked: true
   - text: Add tool annotations (readOnlyHint, destructiveHint, idempotentHint, openWorldHint) to all tools
-    checked: false
+    checked: true
   - text: Tests for structured output serialization and annotation correctness
-    checked: false
+    checked: true
 - id: V22
   name: Advanced Eviction & Compression
   tagline: Research-backed eviction intelligence and multi-tier compression pipeline
@@ -993,4 +993,99 @@ phases:
   - text: Session isolation policies — read-only vs read-write session access modes
     checked: false
   - text: Tests for concurrent multi-session access and coherence propagation
+    checked: false
+- id: L1
+  name: Extended Language Refinements
+  tagline: First-class symbol extraction for the languages developers actually use
+  status: pending
+  problem: Generic extractor misclassifies symbols in common languages; only 4 of 30+ supported grammars have dedicated refinements
+  solution: Add LanguageRefinement implementations for high-impact languages (Java, C/C++, Swift, Kotlin), improve generic fallback heuristics, validate with cross-language test matrix
+  tasks:
+  - text: 'Java refinement: class, interface, enum, annotation types, method visibility modifiers, generics'
+    checked: false
+  - text: 'C/C++ refinement: namespace, class, struct, template, function, header/impl split (.h/.c/.cpp/.hpp)'
+    checked: false
+  - text: 'Swift refinement: protocol, extension, struct, class, func, @objc annotations (Tauri mobile plugins)'
+    checked: false
+  - text: 'Kotlin refinement: data class, object, companion object, fun, annotations (Tauri mobile plugins)'
+    checked: false
+  - text: 'Generic extractor improvements: decorator/annotation extraction, nested type support, better visibility inference for class-based languages'
+    checked: false
+  - text: 'Cross-language test matrix: fixture files for 15+ languages validating symbol extraction quality against expected output'
+    checked: false
+- id: L2
+  name: Cross-Language Bridge Framework
+  tagline: Follow the call across the language boundary
+  status: pending
+  problem: No way to trace calls across language boundaries — invoke() in JS disappears at the Rust border
+  solution: BridgeExtractor trait with two-pass pipeline (extract endpoints per-file, then join on binding_key), SQLite storage, confidence scoring, and integration with iris_references
+  tasks:
+  - text: 'Core types: BridgeEndpoint, BridgeLink, BridgeKind in iris-core/src/code/bridge/mod.rs'
+    checked: false
+  - text: 'BridgeExtractor trait: extract_endpoints(), bridge_kind(), applicable_languages()'
+    checked: false
+  - text: 'BridgeLinker: two-pass pipeline — extract endpoints per-file, then join on binding_key to form BridgeLinks'
+    checked: false
+  - text: 'SQLite schema: bridge_endpoints and bridge_links tables with file_path, binding_key, language, confidence columns'
+    checked: false
+  - text: 'Framework auto-detection: scan Cargo.toml, package.json, tauri.conf.json, pyproject.toml to activate relevant bridge extractors'
+    checked: false
+  - text: 'Confidence scoring: exact string match (1.0), case-transformed (0.9), registration-validated (1.0), fuzzy/semantic (0.7)'
+    checked: false
+  - text: 'Integration: surface bridge links in iris_references with ref_kind "bridge", including cross-language file path and symbol info'
+    checked: false
+- id: L3
+  name: Tauri Bridge Implementation
+  tagline: Trace from React component to Rust command handler in one hop
+  status: pending
+  problem: Tauri apps split logic across JS/TS frontend and Rust backend with string-based invoke() IPC — invisible to symbol tracing
+  solution: 'Tree-sitter queries to detect invoke() ↔ #[tauri::command] and emit/listen event bridges, with generate_handler! cross-validation and a dedicated iris_bridge MCP tool'
+  tasks:
+  - text: 'TauriCommandExtractor: tree-sitter queries for invoke("name") in JS/TS and #[tauri::command] fn name() in Rust'
+    checked: false
+  - text: 'TauriEventExtractor: emit/listen pattern detection across JS/TS and Rust boundaries'
+    checked: false
+  - text: 'Command registration validation: cross-reference with tauri::generate_handler![] for confidence boost'
+    checked: false
+  - text: 'Edge cases: rename_all/camelCase transforms, async commands, command modules, Tauri v1 vs v2 invoke patterns'
+    checked: false
+  - text: 'Test fixture: minimal Tauri app with 5+ commands, events, state management, and plugin usage'
+    checked: false
+  - text: 'iris_bridge MCP tool: dedicated cross-language navigation with query, bridge_kind, and language filters'
+    checked: false
+- id: L4
+  name: FFI & Web Bridge Suite
+  tagline: Every FFI boundary becomes a navigable link
+  status: pending
+  problem: napi-rs, wasm-bindgen, PyO3, and HTTP route patterns create invisible cross-language boundaries
+  solution: Framework-specific BridgeExtractors for each FFI pattern plus a semantic fallback using embedding co-occurrence for unknown frameworks
+  tasks:
+  - text: 'NapiExtractor: #[napi] fn/struct/enum exports ↔ JS/TS import sites'
+    checked: false
+  - text: 'WasmBindgenExtractor: #[wasm_bindgen] exports ↔ JS import/instantiation patterns'
+    checked: false
+  - text: 'PyO3Extractor: #[pyfunction] / #[pyclass] / #[pymethods] ↔ Python call sites'
+    checked: false
+  - text: 'HttpRouteExtractor: framework-agnostic route annotation ↔ fetch/axios/client call string matching'
+    checked: false
+  - text: Test fixtures for each bridge type with end-to-end linking validation
+    checked: false
+  - text: 'Semantic bridge fallback: when no explicit extractor matches, use embedding co-occurrence to suggest possible cross-language links'
+    checked: false
+- id: L5
+  name: Multi-Project Workspace Intelligence
+  tagline: One project, many packages, unified intelligence
+  status: pending
+  problem: Real projects span multiple packages, crates, and workspaces — iris indexes one directory at a time
+  solution: Workspace auto-detection, multi-root corpus indexing, cross-package import graph, and cross-crate reference resolution
+  tasks:
+  - text: 'Workspace detection: auto-discover Cargo workspaces, npm/pnpm/yarn workspaces, monorepo layouts (turborepo, nx)'
+    checked: false
+  - text: 'Multi-root corpus: index multiple directories as a unified project, maintaining per-directory metadata and language stats'
+    checked: false
+  - text: 'Cross-package import graph: track imports/dependencies between packages in a workspace'
+    checked: false
+  - text: 'Cross-crate Rust references: resolve `use other_crate::Foo` to symbols in sibling workspace crates'
+    checked: false
+  - text: 'iris_clone integration: index cloned dependency source and link references back to consuming code'
     checked: false
