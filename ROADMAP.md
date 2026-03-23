@@ -1011,3 +1011,21 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Cross-crate Rust references: resolve `use other_crate::Foo` to symbols in sibling workspace crates
 - [x] iris_clone integration: index cloned dependency source and link references back to consuming code
 
+---
+
+## Phase FIX1: Agent-Facing Reliability ✦ "Make every iris tool reliable for the agent that actually uses it"
+
+**Problem:** Field testing revealed that several iris tools return empty/broken results or overflow the agent's tool result buffer, undermining trust in the system the agent relies on for codebase navigation.
+
+**Solution:** Fix the six concrete issues found during live agent testing: TOC pagination, module filter, reference graph gaps, compress pipeline, code claim extraction, and indexing-in-progress graceful degradation.
+
+### Tasks
+
+- [x] iris_toc pagination: add offset/limit params or max-size cap — unfiltered TOC returns 392K chars, overflowing Claude Code's tool result limit and getting dumped to a temp file
+- [ ] iris_references graph completeness: Session (central struct) and Embedder (widely implemented trait) both return 0 references — cross-file import/usage graph is not fully populated
+- [ ] iris_references misclassification: BudgetConfig→DEFAULT_TOP_LIMIT tagged as "implements" instead of the correct relationship — reference kind assignment needs review
+- [x] iris_symbols module filter broken: query "Session" + kind "struct" + module "session" returns 0, but dropping module filter returns 4 results all in session/ — module prefix matching is not working
+- [ ] iris_compress returns empty summaries: called with two valid delivered content IDs, got `"summaries": []` with no error — extractive fallback should always produce output for delivered content
+- [ ] iris_extract empty for code sections: claims extracted from DESIGN.md prose but returned empty for code sections like SessionEntry struct — either generate claims during code ingestion or document this as prose-only
+- [x] Indexing-in-progress graceful degradation: during first-session indexing, survey returns "[claim not found]" and "[symbol not found]" placeholders — either block results until index is ready or filter out unresolvable entries
+

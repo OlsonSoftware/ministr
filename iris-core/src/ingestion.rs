@@ -1610,16 +1610,8 @@ where
         return Ok(0); // Unparseable code — skip symbol embedding
     };
 
-    let file_stem = Path::new(relative_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown");
-    let module_path: Vec<&str> = if file_stem == "lib" || file_stem == "main" || file_stem == "mod"
-    {
-        vec![]
-    } else {
-        vec![file_stem]
-    };
+    let module_parts = module_path_from_file(relative_path);
+    let module_path: Vec<&str> = module_parts.iter().map(String::as_str).collect();
 
     let symbols = extract_symbols(&tree, source, relative_path, &module_path);
 
@@ -2252,6 +2244,66 @@ fn collect_path_entry(
 fn compute_relative_path(file: &Path, _sources: &[PathBuf]) -> String {
     let s = file.to_string_lossy();
     s.strip_prefix("./").unwrap_or(&s).to_string()
+}
+
+/// Derive a module path from a relative file path.
+///
+/// Extracts directory components after `src/` (or the full directory path if
+/// no `src/` segment exists) and appends the file stem unless it is a
+/// module-root name (`lib`, `main`, `mod`, `index`).
+///
+/// # Examples
+///
+/// ```ignore
+/// // "session/mod.rs" → ["session"]
+/// // "session/budget.rs" → ["session", "budget"]
+/// // "iris-core/src/config.rs" → ["config"]
+/// // "iris-core/src/lib.rs" → []
+/// // "utils.rs" → ["utils"]
+/// ```
+fn module_path_from_file(relative_path: &str) -> Vec<String> {
+    let path = Path::new(relative_path);
+
+    // Collect all normal path components
+    let components: Vec<&str> = path
+        .components()
+        .filter_map(|c| {
+            if let std::path::Component::Normal(s) = c {
+                s.to_str()
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Find the last "src" segment and take everything after it.
+    // If no "src" exists, use all components (the whole relative path).
+    let start = components
+        .iter()
+        .rposition(|&c| c == "src")
+        .map_or(0, |i| i + 1);
+
+    // Directory components (everything except the filename)
+    let dir_and_file = &components[start..];
+    let mut parts: Vec<String> = if dir_and_file.len() > 1 {
+        dir_and_file[..dir_and_file.len() - 1]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Append file stem unless it's a module-root name
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    if !matches!(stem, "lib" | "main" | "mod" | "index") {
+        parts.push(stem.to_string());
+    }
+
+    parts
 }
 
 /// Check if a file has a supported extension.
@@ -3626,6 +3678,73 @@ mod tests {
         assert_ne!(rel1, rel2, "paths from different crates must not collide");
         assert_eq!(rel1, "iris-core/src/lib.rs");
         assert_eq!(rel2, "iris-mcp/src/lib.rs");
+    }
+
+    #[test]
+    fn module_path_from_file_mod_rs() {
+        // session/mod.rs → ["session"]
+        assert_eq!(
+            module_path_from_file("iris-core/src/session/mod.rs"),
+            vec!["session"]
+        );
+    }
+
+    #[test]
+    fn module_path_from_file_nested() {
+        // session/budget.rs → ["session", "budget"]
+        assert_eq!(
+            module_path_from_file("iris-core/src/session/budget.rs"),
+            vec!["session", "budget"]
+        );
+    }
+
+    #[test]
+    fn module_path_from_file_top_level() {
+        // config.rs (under src/) → ["config"]
+        assert_eq!(
+            module_path_from_file("iris-core/src/config.rs"),
+            vec!["config"]
+        );
+    }
+
+    #[test]
+    fn module_path_from_file_lib_rs() {
+        // lib.rs → []
+        assert_eq!(
+            module_path_from_file("iris-core/src/lib.rs"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn module_path_from_file_no_src_dir() {
+        // Paths without a src/ segment use the full directory hierarchy
+        assert_eq!(
+            module_path_from_file("session/budget.rs"),
+            vec!["session", "budget"]
+        );
+        assert_eq!(module_path_from_file("utils.rs"), vec!["utils"]);
+    }
+
+    #[test]
+    fn module_path_from_file_index_js() {
+        // index.ts treated like mod.rs — omit stem, keep directory
+        assert_eq!(
+            module_path_from_file("src/components/index.ts"),
+            vec!["components"]
+        );
+    }
+
+    #[test]
+    fn module_path_from_file_deeply_nested() {
+        assert_eq!(
+            module_path_from_file("crate/src/a/b/c/mod.rs"),
+            vec!["a", "b", "c"]
+        );
+        assert_eq!(
+            module_path_from_file("crate/src/a/b/c/widget.rs"),
+            vec!["a", "b", "c", "widget"]
+        );
     }
 
     #[test]

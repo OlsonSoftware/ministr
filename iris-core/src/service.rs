@@ -343,6 +343,11 @@ impl QueryService {
                 .await
                 .unwrap_or_else(|_| (format!("[content unavailable: {content_id}]"), None));
 
+            // Skip unresolved placeholders (e.g. during indexing)
+            if is_unresolved_placeholder(&text) {
+                continue;
+            }
+
             results.push(SurveyResult {
                 content_id,
                 resolution: resolution.to_string(),
@@ -424,6 +429,11 @@ impl QueryService {
                 .resolve_content(&sr.vector_id, resolution)
                 .await
                 .unwrap_or_else(|_| (format!("[content unavailable: {content_id}]"), None));
+
+            // Skip unresolved placeholders (e.g. during indexing)
+            if is_unresolved_placeholder(&text) {
+                continue;
+            }
 
             results.push(SurveyResult {
                 content_id,
@@ -1059,6 +1069,16 @@ impl QueryService {
             }
         }
     }
+}
+
+/// Check if resolved text is an unresolved placeholder from indexing.
+///
+/// During indexing, `resolve_content` returns bracket-delimited placeholders
+/// like `[claim not found: ...]` or `[symbol not found: ...]` when the
+/// underlying content hasn't been indexed yet. These should be filtered
+/// out of survey results rather than surfaced to the agent.
+fn is_unresolved_placeholder(text: &str) -> bool {
+    text.starts_with('[') && (text.contains("not found:") || text.contains("unavailable:"))
 }
 
 /// Compute cosine similarity between two vectors.
@@ -1873,5 +1893,20 @@ mod tests {
         for window in results.windows(2) {
             assert!(window[0].score >= window[1].score);
         }
+    }
+
+    #[test]
+    fn unresolved_placeholder_detection() {
+        assert!(is_unresolved_placeholder("[claim not found: foo:c0]"));
+        assert!(is_unresolved_placeholder("[symbol not found: sym-bar]"));
+        assert!(is_unresolved_placeholder("[section not found: baz#qux]"));
+        assert!(is_unresolved_placeholder(
+            "[content unavailable: something]"
+        ));
+        // Normal content should not match
+        assert!(!is_unresolved_placeholder("JWT tokens use RS256 signing."));
+        assert!(!is_unresolved_placeholder(""));
+        // Bracketed text that doesn't contain the marker
+        assert!(!is_unresolved_placeholder("[some other bracket text]"));
     }
 }
