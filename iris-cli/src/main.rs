@@ -2,7 +2,8 @@
 //!
 //! Provides two subcommands:
 //!
-//! - `iris serve` (default) — starts the MCP server over stdio with background ingestion.
+//! - `iris serve` (default) — starts the MCP server with background ingestion.
+//!   Supports `--transport stdio` (default) and `--transport http` (Streamable HTTP).
 //! - `iris index` — runs ingestion synchronously and exits (no MCP server).
 //!
 //! When invoked without a subcommand (`iris --corpus ./docs`), defaults to `serve`.
@@ -22,8 +23,9 @@ use iris_core::storage::Storage as _;
 
 /// iris — a context cache controller for LLM agents.
 ///
-/// Runs an MCP server over stdio that provides intelligent context retrieval
+/// Runs an MCP server that provides intelligent context retrieval
 /// tools (survey, read, extract) for a local document corpus.
+/// Supports stdio and Streamable HTTP transports.
 #[derive(Parser, Debug)]
 #[command(name = "iris", version, about)]
 struct Cli {
@@ -44,14 +46,38 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Start the MCP server over stdio (default when no subcommand is given).
-    Serve,
+    /// Start the MCP server (default when no subcommand is given).
+    ///
+    /// By default uses stdio transport. Use `--transport http` to start
+    /// a Streamable HTTP server for remote/multi-client deployments.
+    Serve {
+        /// Transport: `stdio` (default) or `http` (Streamable HTTP).
+        #[arg(short, long, default_value = "stdio")]
+        transport: Transport,
+
+        /// Host to bind the HTTP server to (only used with `--transport http`).
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Port for the HTTP server (only used with `--transport http`).
+        #[arg(short, long, default_value_t = 8080)]
+        port: u16,
+    },
 
     /// Run corpus ingestion synchronously and exit (no MCP server).
     ///
     /// Useful for pre-warming the index, debugging ingestion issues,
     /// or running in CI pipelines.
     Index,
+}
+
+/// MCP transport mode.
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum Transport {
+    /// JSON-RPC over stdin/stdout (default for local MCP clients).
+    Stdio,
+    /// Streamable HTTP (MCP spec 2025-03-26) for remote/multi-client deployments.
+    Http,
 }
 
 #[tokio::main]
@@ -84,9 +110,22 @@ async fn main() -> Result<()> {
         cli.corpus.clone()
     };
 
-    // Dispatch to the appropriate subcommand (default: serve).
-    match cli.command.unwrap_or(Command::Serve) {
-        Command::Serve => cmd_serve(&corpus_paths, &config_path, &config).await,
+    // Dispatch to the appropriate subcommand (default: serve over stdio).
+    match cli.command.unwrap_or(Command::Serve {
+        transport: Transport::Stdio,
+        host: "127.0.0.1".to_string(),
+        port: 8080,
+    }) {
+        Command::Serve {
+            transport,
+            host,
+            port,
+        } => match transport {
+            Transport::Stdio => cmd_serve_stdio(&corpus_paths, &config_path, &config).await,
+            Transport::Http => {
+                cmd_serve_http(&corpus_paths, &config_path, &config, &host, port).await
+            }
+        },
         Command::Index => cmd_index(&corpus_paths, &config_path, &config).await,
     }
 }
@@ -179,24 +218,27 @@ struct InfrastructureContext {
     index: Arc<dyn iris_core::index::VectorIndex>,
 }
 
-/// `iris serve` — start the MCP server with background ingestion.
+/// Build a fully configured `IrisServer` with web fetcher, git fetcher, and coherence watcher.
+///
+/// Returns the server and a coherence handle that must be kept alive.
 #[allow(clippy::too_many_lines)]
-async fn cmd_serve(
+async fn build_server(
     corpus_paths: &[String],
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
-) -> Result<()> {
+) -> Result<(
+    iris_mcp::server::IrisServer,
+    InfrastructureContext,
+    Option<tokio::task::JoinHandle<()>>,
+)> {
     tracing::info!(
         corpus = ?corpus_paths,
         config = %config_path.display(),
-        "iris starting (serve mode)"
+        "iris starting"
     );
 
     let ctx = init_infrastructure(corpus_paths, config).await?;
 
-    // Build the query service and start the MCP server FIRST, before ingestion.
-    // This ensures the MCP handshake completes immediately so Claude Code
-    // doesn't time out waiting for the server to start.
     let service = Arc::new(iris_core::service::QueryService::new(
         (*ctx.storage).clone(),
         Arc::clone(&ctx.embedder),
@@ -217,13 +259,10 @@ async fn cmd_serve(
     )
     .await;
 
-    // Enable web fetching for iris_fetch tool.
     let server = enable_web_fetcher(server, &ctx.corpus_dir, &ctx.embedder, &ctx.index)?;
-
-    // Enable git cloning for iris_clone tool.
     let server = enable_git_fetcher(server, &ctx.embedder, &ctx.index);
 
-    // Spawn coherence file watcher BEFORE serving (needs server reference).
+    // Spawn coherence file watcher.
     let local_paths: Vec<PathBuf> = corpus_paths
         .iter()
         .filter_map(|p| {
@@ -236,7 +275,7 @@ async fn cmd_serve(
             }
         })
         .collect();
-    let _coherence_handle = if local_paths.is_empty() {
+    let coherence_handle = if local_paths.is_empty() {
         None
     } else {
         spawn_coherence(
@@ -248,52 +287,120 @@ async fn cmd_serve(
         )?
     };
 
-    // Grab the ingestion progress arc before .serve() consumes the server.
+    Ok((server, ctx, coherence_handle))
+}
+
+/// Spawn background corpus ingestion, returning when the MCP transport finishes.
+fn spawn_background_ingestion(
+    corpus_paths: &[String],
+    ctx: &InfrastructureContext,
+    ingestion_progress: &Arc<iris_core::ingestion::IngestionProgress>,
+) {
+    if corpus_paths.is_empty() {
+        return;
+    }
+    let bg_corpus_paths = corpus_paths.to_vec();
+    let bg_corpus_dir = ctx.corpus_dir.clone();
+    let bg_storage = Arc::clone(&ctx.storage);
+    let bg_embedder = Arc::clone(&ctx.embedder);
+    let bg_index = Arc::clone(&ctx.index);
+    let bg_index_dir = ctx.index_dir.clone();
+    let bg_progress = Arc::clone(ingestion_progress);
+    tokio::spawn(async move {
+        match run_corpus_ingestion(
+            &bg_corpus_paths,
+            &bg_corpus_dir,
+            &bg_storage,
+            &*bg_embedder,
+            &*bg_index,
+            &bg_index_dir,
+            &bg_progress,
+        )
+        .await
+        {
+            Ok(()) => tracing::info!("background corpus ingestion complete"),
+            Err(e) => {
+                tracing::error!(error = %e, "background corpus ingestion failed");
+                bg_progress.complete();
+            }
+        }
+    });
+}
+
+/// `iris serve --transport stdio` — MCP server over stdin/stdout.
+async fn cmd_serve_stdio(
+    corpus_paths: &[String],
+    config_path: &Path,
+    config: &iris_core::config::IrisConfig,
+) -> Result<()> {
+    let (server, ctx, _coherence_handle) = build_server(corpus_paths, config_path, config).await?;
+
     let ingestion_progress = server.ingestion_progress_arc();
 
     // Start MCP server FIRST so Claude Code doesn't time out.
-    // Ingestion runs in background — tools return partial results until done.
     let mcp_service = server
         .serve(rmcp::transport::stdio())
         .await
         .into_diagnostic()
         .wrap_err("failed to start MCP stdio transport")?;
 
-    // Ingest corpus sources in background AFTER the MCP server is running.
-    if !corpus_paths.is_empty() {
-        let bg_corpus_paths = corpus_paths.to_vec();
-        let bg_corpus_dir = ctx.corpus_dir.clone();
-        let bg_storage = Arc::clone(&ctx.storage);
-        let bg_embedder = Arc::clone(&ctx.embedder);
-        let bg_index = Arc::clone(&ctx.index);
-        let bg_index_dir = ctx.index_dir.clone();
-        let bg_progress = Arc::clone(&ingestion_progress);
-        tokio::spawn(async move {
-            match run_corpus_ingestion(
-                &bg_corpus_paths,
-                &bg_corpus_dir,
-                &bg_storage,
-                &*bg_embedder,
-                &*bg_index,
-                &bg_index_dir,
-                &bg_progress,
-            )
-            .await
-            {
-                Ok(()) => tracing::info!("background corpus ingestion complete"),
-                Err(e) => {
-                    tracing::error!(error = %e, "background corpus ingestion failed");
-                    bg_progress.complete();
-                }
-            }
-        });
-    }
+    // Ingest in background AFTER the MCP server is running.
+    spawn_background_ingestion(corpus_paths, &ctx, &ingestion_progress);
 
     mcp_service
         .waiting()
         .await
         .into_diagnostic()
         .wrap_err("MCP server exited with error")?;
+
+    tracing::info!("iris shutting down");
+    Ok(())
+}
+
+/// `iris serve --transport http` — Streamable HTTP MCP server.
+async fn cmd_serve_http(
+    corpus_paths: &[String],
+    config_path: &Path,
+    config: &iris_core::config::IrisConfig,
+    host: &str,
+    port: u16,
+) -> Result<()> {
+    use rmcp::transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    };
+
+    let (server, ctx, _coherence_handle) = build_server(corpus_paths, config_path, config).await?;
+
+    let ingestion_progress = server.ingestion_progress_arc();
+
+    // Each HTTP session gets its own IrisServer clone.
+    // All clones share the same Arc'd infrastructure.
+    let server_factory = move || Ok(server.clone());
+
+    let session_manager = Arc::new(LocalSessionManager::default());
+    let http_service = StreamableHttpService::new(
+        server_factory,
+        session_manager,
+        StreamableHttpServerConfig::default(),
+    );
+
+    let app = axum::Router::new().nest_service("/mcp", http_service);
+
+    let bind_addr = format!("{host}:{port}");
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to bind HTTP server to {bind_addr}"))?;
+
+    tracing::info!(address = %bind_addr, "iris HTTP server listening");
+
+    // Ingest in background AFTER the HTTP server is bound.
+    spawn_background_ingestion(corpus_paths, &ctx, &ingestion_progress);
+
+    axum::serve(listener, app)
+        .await
+        .into_diagnostic()
+        .wrap_err("HTTP server exited with error")?;
 
     tracing::info!("iris shutting down");
     Ok(())

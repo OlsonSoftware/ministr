@@ -27,14 +27,9 @@ use iris_core::types::{
     SectionId, SymbolId,
 };
 use iris_mcp::server::IrisServer;
-use rmcp::ServerHandler;
-use rmcp::model::{
-    CallToolRequestParam, CallToolResult, ClientInfo, Content, Implementation,
-    PaginatedRequestParam, ResourceContents,
-};
-use rmcp::service::{Peer, RequestContext, RoleServer};
+use rmcp::ServiceExt;
+use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ResourceContents};
 use serde_json::json;
-use tokio_util::sync::CancellationToken;
 
 /// Deterministic mock embedder that produces consistent vectors from text bytes.
 struct MockEmbedder {
@@ -243,38 +238,42 @@ async fn setup_server() -> IrisServer {
     IrisServer::new(service)
 }
 
-/// Create a dummy `RequestContext` for testing `call_tool` through the protocol layer.
-fn test_context() -> RequestContext<RoleServer> {
-    let ct = CancellationToken::new();
-    let client_info = ClientInfo {
-        protocol_version: rmcp::model::ProtocolVersion::default(),
-        capabilities: rmcp::model::ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "test-client".into(),
-            version: "0.0.0".into(),
-        },
-    };
-    let (peer, _rx) = Peer::<RoleServer>::new(
-        Arc::new(rmcp::service::AtomicU32RequestIdProvider::default()),
-        client_info,
-    );
-    RequestContext {
-        ct,
-        id: rmcp::model::NumberOrString::Number(1),
-        peer,
-    }
+/// MCP client connected to an in-process server via duplex streams.
+type McpClient = rmcp::service::RunningService<rmcp::RoleClient, ()>;
+/// Server handle kept alive so the server doesn't shut down when dropped.
+type McpServerHandle = rmcp::service::RunningService<rmcp::RoleServer, IrisServer>;
+
+/// Wrap an `IrisServer` into an in-process MCP client/server pair.
+///
+/// Returns both the client handle and the server handle. The server handle
+/// must be kept alive for the duration of the test — dropping it shuts down
+/// the server and causes the client to hang.
+async fn wrap_as_client(server: IrisServer) -> (McpClient, McpServerHandle) {
+    let (c2s_w, c2s_r) = tokio::io::duplex(65_536);
+    let (s2c_w, s2c_r) = tokio::io::duplex(65_536);
+    // Spawn server in a separate task — serve().await blocks until the
+    // client sends `initialize`, so both must progress concurrently.
+    let server_task = tokio::spawn(async move { server.serve((c2s_r, s2c_w)).await.unwrap() });
+    let client = ().serve((s2c_r, c2s_w)).await.unwrap();
+    let server_handle = server_task.await.unwrap();
+    (client, server_handle)
 }
 
 /// Helper to call a tool by name with JSON arguments through the MCP protocol layer.
-async fn call_tool(server: &IrisServer, name: &str, args: serde_json::Value) -> CallToolResult {
+async fn call_tool(client: &McpClient, name: &str, args: serde_json::Value) -> CallToolResult {
     let arguments = args
         .as_object()
         .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
-    let param = CallToolRequestParam {
-        name: Cow::Owned(name.to_string()),
-        arguments,
-    };
-    server.call_tool(param, test_context()).await.unwrap()
+    client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            name: Cow::Owned(name.to_string()),
+            arguments,
+            meta: None,
+            task: None,
+        })
+        .await
+        .unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -283,13 +282,10 @@ async fn call_tool(server: &IrisServer, name: &str, args: serde_json::Value) -> 
 
 #[tokio::test]
 async fn list_tools_returns_all_iris_tools() {
-    let server = setup_server().await;
-    let result = server
-        .list_tools(PaginatedRequestParam::default(), test_context())
-        .await
-        .unwrap();
+    let (client, _server) = wrap_as_client(setup_server().await).await;
+    let tools = client.list_all_tools().await.unwrap();
 
-    let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(
         tool_names.contains(&"iris_survey"),
         "should list iris_survey, got: {tool_names:?}"
@@ -330,11 +326,11 @@ async fn list_tools_returns_all_iris_tools() {
 
 #[tokio::test]
 async fn full_flow_survey_read_extract_via_call_tool() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     // Step 1: Survey for JWT-related content
     let survey_result = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "JWT authentication tokens signing", "top_k": 10}),
     )
@@ -369,7 +365,7 @@ async fn full_flow_survey_read_extract_via_call_tool() {
     // claim level. If the section itself was delivered, iris_read returns
     // "already_delivered" instead of full text — which is correct behavior.
     let read_result = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -410,7 +406,7 @@ async fn full_flow_survey_read_extract_via_call_tool() {
 
     // Step 3: Extract claims
     let extract_result = call_tool(
-        &server,
+        &client,
         "iris_extract",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -441,11 +437,11 @@ async fn full_flow_survey_read_extract_via_call_tool() {
 
 #[tokio::test]
 async fn survey_deduplicates_already_delivered_content() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     // First survey delivers results
     let r1 = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "JWT authentication tokens signing", "top_k": 10}),
     )
@@ -456,7 +452,7 @@ async fn survey_deduplicates_already_delivered_content() {
 
     // Second survey with same query — delivered content filtered out
     let r2 = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "JWT authentication tokens signing", "top_k": 10}),
     )
@@ -474,11 +470,11 @@ async fn survey_deduplicates_already_delivered_content() {
 
 #[tokio::test]
 async fn read_re_request_skips_unchanged_with_fault_correction() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     // First read — full content
     let r1 = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -489,7 +485,7 @@ async fn read_re_request_skips_unchanged_with_fault_correction() {
     // Second read — already delivered and unchanged, skips re-delivery
     // to save context tokens. Fault correction evicts the budget entry.
     let r2 = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -513,10 +509,10 @@ async fn read_re_request_skips_unchanged_with_fault_correction() {
 
 #[tokio::test]
 async fn survey_finds_content_across_documents() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     let result = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "rate limits API key requests", "top_k": 10}),
     )
@@ -535,11 +531,11 @@ async fn survey_finds_content_across_documents() {
 
 #[tokio::test]
 async fn read_sections_from_different_documents() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     // Read from auth doc
     let auth = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#oauth"}),
     )
@@ -549,7 +545,7 @@ async fn read_sections_from_different_documents() {
 
     // Read from API doc
     let api = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/api.md#rate-limits"}),
     )
@@ -567,10 +563,10 @@ async fn read_sections_from_different_documents() {
 
 #[tokio::test]
 async fn extract_with_query_scores_and_ranks_claims() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     let result = call_tool(
-        &server,
+        &client,
         "iris_extract",
         json!({"section_id": "docs/auth.md#tokens", "query": "signing algorithm"}),
     )
@@ -598,10 +594,10 @@ async fn extract_with_query_scores_and_ranks_claims() {
 
 #[tokio::test]
 async fn read_nonexistent_section_returns_user_friendly_error() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     let result = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/nonexistent.md#missing"}),
     )
@@ -618,10 +614,10 @@ async fn read_nonexistent_section_returns_user_friendly_error() {
 
 #[tokio::test]
 async fn extract_nonexistent_section_returns_user_friendly_error() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     let result = call_tool(
-        &server,
+        &client,
         "iris_extract",
         json!({"section_id": "docs/nonexistent.md#missing"}),
     )
@@ -638,11 +634,11 @@ async fn extract_nonexistent_section_returns_user_friendly_error() {
 
 #[tokio::test]
 async fn budget_monotonically_increases_across_tool_types() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     // Survey
     let r1 = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "tokens", "top_k": 5}),
     )
@@ -652,7 +648,7 @@ async fn budget_monotonically_increases_across_tool_types() {
 
     // Read
     let r2 = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/api.md#rate-limits"}),
     )
@@ -662,7 +658,7 @@ async fn budget_monotonically_increases_across_tool_types() {
 
     // Extract from a section NOT previously delivered (auth tokens)
     let r3 = call_tool(
-        &server,
+        &client,
         "iris_extract",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -687,17 +683,17 @@ async fn budget_monotonically_increases_across_tool_types() {
 
 #[tokio::test]
 async fn evicted_removes_content_from_session_and_budget() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     // Deliver content first via read
     let _ = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
     .await;
 
-    let budget_before = call_tool(&server, "iris_budget", json!({})).await;
+    let budget_before = call_tool(&client, "iris_budget", json!({})).await;
     let j_before: serde_json::Value =
         serde_json::from_str(extract_text(&budget_before.content)).unwrap();
     let used_before = j_before["estimated_used"].as_u64().unwrap();
@@ -705,7 +701,7 @@ async fn evicted_removes_content_from_session_and_budget() {
 
     // Evict the delivered content
     let evict_result = call_tool(
-        &server,
+        &client,
         "iris_evicted",
         json!({"content_ids": ["docs/auth.md#tokens"]}),
     )
@@ -731,10 +727,10 @@ async fn evicted_removes_content_from_session_and_budget() {
 
 #[tokio::test]
 async fn evicted_reports_not_found_for_unknown_ids() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     let result = call_tool(
-        &server,
+        &client,
         "iris_evicted",
         json!({"content_ids": ["nonexistent-id"]}),
     )
@@ -751,9 +747,9 @@ async fn evicted_reports_not_found_for_unknown_ids() {
 
 #[tokio::test]
 async fn budget_returns_complete_status() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
-    let result = call_tool(&server, "iris_budget", json!({})).await;
+    let result = call_tool(&client, "iris_budget", json!({})).await;
 
     assert!(
         result.is_error.is_none() || result.is_error == Some(false),
@@ -779,10 +775,10 @@ async fn budget_returns_complete_status() {
 
 #[tokio::test]
 async fn compress_returns_summaries_for_sections() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     let result = call_tool(
-        &server,
+        &client,
         "iris_compress",
         json!({"content_ids": ["docs/auth.md#tokens", "docs/api.md#rate-limits"]}),
     )
@@ -819,9 +815,9 @@ async fn compress_returns_summaries_for_sections() {
 
 #[tokio::test]
 async fn related_returns_linked_claims() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
-    let result = call_tool(&server, "iris_related", json!({"claim_id": "auth-c1"})).await;
+    let result = call_tool(&client, "iris_related", json!({"claim_id": "auth-c1"})).await;
 
     assert!(
         result.is_error.is_none() || result.is_error == Some(false),
@@ -846,10 +842,10 @@ async fn related_returns_linked_claims() {
 
 #[tokio::test]
 async fn related_with_type_filter() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     let result = call_tool(
-        &server,
+        &client,
         "iris_related",
         json!({"claim_id": "auth-c1", "relation_types": ["references"]}),
     )
@@ -874,12 +870,9 @@ async fn related_with_type_filter() {
 
 #[tokio::test]
 async fn list_resources_includes_status() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
-    let result = server
-        .list_resources(PaginatedRequestParam::default(), test_context())
-        .await
-        .unwrap();
+    let result = client.peer().list_resources(None).await.unwrap();
 
     assert!(
         !result.resources.is_empty(),
@@ -899,12 +892,9 @@ async fn list_resources_includes_status() {
 
 #[tokio::test]
 async fn list_resource_templates_includes_corpus() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
-    let result = server
-        .list_resource_templates(PaginatedRequestParam::default(), test_context())
-        .await
-        .unwrap();
+    let result = client.peer().list_resource_templates(None).await.unwrap();
 
     assert!(
         !result.resource_templates.is_empty(),
@@ -924,17 +914,16 @@ async fn list_resource_templates_includes_corpus() {
 
 #[tokio::test]
 async fn read_status_resource() {
-    use rmcp::model::ReadResourceRequestParam;
+    use rmcp::model::ReadResourceRequestParams;
 
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
-    let result = server
-        .read_resource(
-            ReadResourceRequestParam {
-                uri: "iris://status".to_string(),
-            },
-            test_context(),
-        )
+    let result = client
+        .peer()
+        .read_resource(ReadResourceRequestParams {
+            uri: "iris://status".to_string(),
+            meta: None,
+        })
         .await
         .unwrap();
 
@@ -963,22 +952,19 @@ async fn read_status_resource() {
 
 #[tokio::test]
 async fn list_tools_returns_seven_tools_including_related() {
-    let server = setup_server().await;
-    let result = server
-        .list_tools(PaginatedRequestParam::default(), test_context())
-        .await
-        .unwrap();
+    let (client, _server) = wrap_as_client(setup_server().await).await;
+    let tools = client.list_all_tools().await.unwrap();
 
-    let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(
         tool_names.contains(&"iris_related"),
         "should list iris_related, got: {tool_names:?}"
     );
 
     assert!(
-        result.tools.len() >= 7,
+        tools.len() >= 7,
         "should have at least 7 tools, got: {}",
-        result.tools.len()
+        tools.len()
     );
 }
 
@@ -989,10 +975,11 @@ async fn list_tools_returns_seven_tools_including_related() {
 #[tokio::test]
 async fn coherence_alerts_surface_in_iris_read_response() {
     let server = setup_server().await;
+    let (client, _server) = wrap_as_client(server.clone()).await;
 
     // Read a section to populate the session shadow
     let result = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -1008,7 +995,7 @@ async fn coherence_alerts_surface_in_iris_read_response() {
 
     // Next tool call should surface the coherence alert
     let result = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -1038,10 +1025,11 @@ async fn coherence_alerts_surface_in_iris_read_response() {
 #[tokio::test]
 async fn coherence_alerts_surface_in_iris_budget_response() {
     let server = setup_server().await;
+    let (client, _server) = wrap_as_client(server.clone()).await;
 
     // Deliver a section
     call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -1055,7 +1043,7 @@ async fn coherence_alerts_surface_in_iris_budget_response() {
     }
 
     // Budget tool should surface the alert
-    let result = call_tool(&server, "iris_budget", json!({})).await;
+    let result = call_tool(&client, "iris_budget", json!({})).await;
     let text = extract_text(&result.content);
     let json: serde_json::Value = serde_json::from_str(text).unwrap();
 
@@ -1154,22 +1142,23 @@ async fn setup_server_with_persistence() -> IrisServer {
 #[tokio::test]
 async fn analytics_co_access_patterns_recorded_and_served_via_prefetch_metrics() {
     let server = setup_server_with_persistence().await;
+    let (client, _server) = wrap_as_client(server.clone()).await;
 
     // Read multiple sections to build a co-access trajectory
     call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
     .await;
     call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#oauth"}),
     )
     .await;
     call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/api.md#rate-limits"}),
     )
@@ -1177,14 +1166,14 @@ async fn analytics_co_access_patterns_recorded_and_served_via_prefetch_metrics()
 
     // Re-read a section to trigger cross-session prefetch via co-access data
     call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
     .await;
 
     // Check budget response includes prefetch_metrics
-    let result = call_tool(&server, "iris_budget", json!({})).await;
+    let result = call_tool(&client, "iris_budget", json!({})).await;
     let text = extract_text(&result.content);
     let json: serde_json::Value = serde_json::from_str(text).unwrap();
 
@@ -1307,9 +1296,10 @@ Use the Retry-After header to determine when to retry.
 #[tokio::test]
 async fn e2e_survey_from_corpus_dir_returns_ranked_results() {
     let (server, _dir) = setup_server_from_corpus_dir().await;
+    let (client, _server) = wrap_as_client(server).await;
 
     let result = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "JWT authentication tokens", "top_k": 10}),
     )
@@ -1355,10 +1345,11 @@ async fn e2e_survey_from_corpus_dir_returns_ranked_results() {
 #[tokio::test]
 async fn e2e_read_returns_heading_paths_and_content_hash() {
     let (server, _dir) = setup_server_from_corpus_dir().await;
+    let (client, _server) = wrap_as_client(server.clone()).await;
 
     // Read a section directly (before any survey, so it's a fresh delivery)
     let section_id = "api.md#api-reference/rate-limits";
-    let read = call_tool(&server, "iris_read", json!({"section_id": section_id})).await;
+    let read = call_tool(&client, "iris_read", json!({"section_id": section_id})).await;
 
     assert!(
         read.is_error.is_none() || read.is_error == Some(false),
@@ -1404,10 +1395,11 @@ async fn e2e_read_returns_heading_paths_and_content_hash() {
 #[tokio::test]
 async fn e2e_extract_returns_claims_from_ingested_content() {
     let (server, _dir) = setup_server_from_corpus_dir().await;
+    let (client, _server) = wrap_as_client(server).await;
 
     // Discover a section with claims
     let survey = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "tokens JWT signing expire", "top_k": 10}),
     )
@@ -1423,7 +1415,7 @@ async fn e2e_extract_returns_claims_from_ingested_content() {
     let section_id = section_result["content_id"].as_str().unwrap();
 
     // Extract claims
-    let extract = call_tool(&server, "iris_extract", json!({"section_id": section_id})).await;
+    let extract = call_tool(&client, "iris_extract", json!({"section_id": section_id})).await;
 
     assert!(
         extract.is_error.is_none() || extract.is_error == Some(false),
@@ -1465,10 +1457,11 @@ async fn e2e_extract_returns_claims_from_ingested_content() {
 #[tokio::test]
 async fn e2e_related_follows_claim_dependency_chains() {
     let (server, _dir) = setup_server_from_corpus_dir().await;
+    let (client, _server) = wrap_as_client(server).await;
 
     // Find claim IDs via extract
     let survey = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "tokens JWT signing expire", "top_k": 10}),
     )
@@ -1486,7 +1479,7 @@ async fn e2e_related_follows_claim_dependency_chains() {
     if let Some(claim) = claim_result {
         let claim_id = claim["content_id"].as_str().unwrap();
 
-        let related = call_tool(&server, "iris_related", json!({"claim_id": claim_id})).await;
+        let related = call_tool(&client, "iris_related", json!({"claim_id": claim_id})).await;
 
         assert!(
             related.is_error.is_none() || related.is_error == Some(false),
@@ -1523,8 +1516,8 @@ async fn e2e_related_follows_claim_dependency_chains() {
     }
 
     // Also verify with the programmatic corpus that has guaranteed relationships
-    let server2 = setup_server().await;
-    let result = call_tool(&server2, "iris_related", json!({"claim_id": "auth-c1"})).await;
+    let (client2, _server2) = wrap_as_client(setup_server().await).await;
+    let result = call_tool(&client2, "iris_related", json!({"claim_id": "auth-c1"})).await;
     let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
     let related = json["related"].as_array().unwrap();
     assert!(
@@ -1543,10 +1536,11 @@ async fn e2e_related_follows_claim_dependency_chains() {
 #[tokio::test]
 async fn e2e_read_session_dedup_on_second_request() {
     let server = setup_server().await;
+    let (client, _server) = wrap_as_client(server.clone()).await;
 
     // First read — full content delivered
     let r1 = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -1576,7 +1570,7 @@ async fn e2e_read_session_dedup_on_second_request() {
     // Second read — same section, unchanged content
     // Should return "already_delivered" to save context tokens
     let r2 = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -1596,7 +1590,7 @@ async fn e2e_read_session_dedup_on_second_request() {
 
     // Verify survey deduplication works — same query returns fewer results
     let s1 = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "JWT authentication tokens signing", "top_k": 10}),
     )
@@ -1605,7 +1599,7 @@ async fn e2e_read_session_dedup_on_second_request() {
     let first_count = sj1["results"].as_array().unwrap().len();
 
     let s2 = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "JWT authentication tokens signing", "top_k": 10}),
     )
@@ -1628,30 +1622,31 @@ async fn e2e_read_session_dedup_on_second_request() {
 #[tokio::test]
 async fn e2e_compress_evict_cycle_updates_budget() {
     let server = setup_server().await;
+    let (client, _server) = wrap_as_client(server.clone()).await;
 
     // Step 1: Deliver content to build up budget usage
     let _ = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
     .await;
     let _ = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/api.md#rate-limits"}),
     )
     .await;
 
     // Check budget after reads
-    let budget_before = call_tool(&server, "iris_budget", json!({})).await;
+    let budget_before = call_tool(&client, "iris_budget", json!({})).await;
     let jb: serde_json::Value = serde_json::from_str(extract_text(&budget_before.content)).unwrap();
     let used_before = jb["estimated_used"].as_u64().unwrap();
     assert!(used_before > 0, "should have budget usage after reads");
 
     // Step 2: Compress the sections
     let compress = call_tool(
-        &server,
+        &client,
         "iris_compress",
         json!({"content_ids": ["docs/auth.md#tokens", "docs/api.md#rate-limits"]}),
     )
@@ -1674,7 +1669,7 @@ async fn e2e_compress_evict_cycle_updates_budget() {
 
     // Step 3: Evict the content after compression
     let evict = call_tool(
-        &server,
+        &client,
         "iris_evicted",
         json!({"content_ids": ["docs/auth.md#tokens", "docs/api.md#rate-limits"]}),
     )
@@ -1696,7 +1691,7 @@ async fn e2e_compress_evict_cycle_updates_budget() {
     );
 
     // Step 4: Verify budget decreased after eviction
-    let budget_after = call_tool(&server, "iris_budget", json!({})).await;
+    let budget_after = call_tool(&client, "iris_budget", json!({})).await;
     let ja: serde_json::Value = serde_json::from_str(extract_text(&budget_after.content)).unwrap();
     let used_after = ja["estimated_used"].as_u64().unwrap();
 
@@ -1779,11 +1774,12 @@ JWT tokens use RS256 signing. Tokens expire after 24 hours.
 #[tokio::test]
 async fn e2e_coherence_detects_file_change_and_read_returns_updated() {
     let (server, dir, embedder, index, storage) = setup_coherence_server().await;
+    let (client, _server) = wrap_as_client(server.clone()).await;
     let auth_path = dir.path().join("auth.md");
 
     // Read the original section
     let r1 = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "auth.md#authentication/tokens"}),
     )
@@ -1838,7 +1834,7 @@ JWT tokens use RS256 signing. Tokens now expire after 12 hours for improved secu
 
     // Read the section again — should get updated content
     let r2 = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "auth.md#authentication/tokens"}),
     )
@@ -1877,10 +1873,10 @@ JWT tokens use RS256 signing. Tokens now expire after 12 hours for improved secu
 
 #[tokio::test]
 async fn iris_toc_returns_all_documents_and_sections() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
     // Full corpus TOC (no filter)
-    let result = call_tool(&server, "iris_toc", json!({})).await;
+    let result = call_tool(&client, "iris_toc", json!({})).await;
     assert!(
         result.is_error.is_none() || result.is_error == Some(false),
         "iris_toc should succeed"
@@ -1935,9 +1931,9 @@ async fn iris_toc_returns_all_documents_and_sections() {
 
 #[tokio::test]
 async fn iris_toc_filters_by_document_id() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
 
-    let result = call_tool(&server, "iris_toc", json!({"document_id": "docs/api.md"})).await;
+    let result = call_tool(&client, "iris_toc", json!({"document_id": "docs/api.md"})).await;
     assert!(
         result.is_error.is_none() || result.is_error == Some(false),
         "filtered iris_toc should succeed"
@@ -2055,11 +2051,11 @@ async fn setup_survey_prefetch_server() -> IrisServer {
 
 #[tokio::test]
 async fn survey_prewarms_parent_sections_of_claim_hits() {
-    let server = setup_survey_prefetch_server().await;
+    let (client, _server) = wrap_as_client(setup_survey_prefetch_server().await).await;
 
     // Survey for a query that should return claim-level hits
     let survey_result = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "JWT RS256 signing tokens", "top_k": 10}),
     )
@@ -2081,7 +2077,7 @@ async fn survey_prewarms_parent_sections_of_claim_hits() {
 
     // Now read a parent section — should hit the prefetch cache
     let read_result = call_tool(
-        &server,
+        &client,
         "iris_read",
         json!({"section_id": "docs/auth.md#tokens"}),
     )
@@ -2092,7 +2088,7 @@ async fn survey_prewarms_parent_sections_of_claim_hits() {
     );
 
     // Check prefetch metrics via iris_budget
-    let budget_result = call_tool(&server, "iris_budget", json!({})).await;
+    let budget_result = call_tool(&client, "iris_budget", json!({})).await;
     let budget_body: serde_json::Value =
         serde_json::from_str(extract_text(&budget_result.content)).unwrap();
 
@@ -2203,8 +2199,9 @@ and individual files in a single iris session.
 #[tokio::test]
 async fn e2e_multi_path_toc_shows_all_sources() {
     let (server, _dir) = setup_server_from_multi_path_corpus().await;
+    let (client, _server) = wrap_as_client(server).await;
 
-    let result = call_tool(&server, "iris_toc", json!({})).await;
+    let result = call_tool(&client, "iris_toc", json!({})).await;
     assert!(!result.is_error.unwrap_or(false), "iris_toc should succeed");
 
     let text = extract_text(&result.content);
@@ -2229,10 +2226,11 @@ async fn e2e_multi_path_toc_shows_all_sources() {
 #[tokio::test]
 async fn e2e_multi_path_survey_finds_content_from_individual_file() {
     let (server, _dir) = setup_server_from_multi_path_corpus().await;
+    let (client, _server) = wrap_as_client(server).await;
 
     // Search for content that exists in the individual DESIGN.md file
     let result = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "layered architecture transport service storage"}),
     )
@@ -2252,10 +2250,11 @@ async fn e2e_multi_path_survey_finds_content_from_individual_file() {
 #[tokio::test]
 async fn e2e_multi_path_survey_finds_content_from_directory() {
     let (server, _dir) = setup_server_from_multi_path_corpus().await;
+    let (client, _server) = wrap_as_client(server).await;
 
     // Search for content from the docs directory
     let result = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "install CLI cargo configuration"}),
     )
@@ -2351,9 +2350,9 @@ async fn setup_server_with_web_fetcher(
 
 #[tokio::test]
 async fn iris_fetch_not_configured_returns_error() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
     let result = call_tool(
-        &server,
+        &client,
         "iris_fetch",
         json!({"url": "https://example.com/docs/"}),
     )
@@ -2373,13 +2372,10 @@ async fn iris_fetch_not_configured_returns_error() {
 
 #[tokio::test]
 async fn iris_fetch_lists_in_tools() {
-    let server = setup_server().await;
-    let result = server
-        .list_tools(PaginatedRequestParam::default(), test_context())
-        .await
-        .unwrap();
+    let (client, _server) = wrap_as_client(setup_server().await).await;
+    let tools = client.list_all_tools().await.unwrap();
 
-    let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(
         tool_names.contains(&"iris_fetch"),
         "should list iris_fetch, got: {tool_names:?}"
@@ -2405,10 +2401,11 @@ async fn e2e_iris_fetch_then_survey_and_toc() {
     let (addr, server_handle) = start_test_http_server(test_html).await;
     let tmp = tempfile::tempdir().unwrap();
     let (server, _embedder, _index) = setup_server_with_web_fetcher(tmp.path()).await;
+    let (client, _server) = wrap_as_client(server).await;
 
     // Step 1: Call iris_fetch to fetch the test page
     let fetch_result = call_tool(
-        &server,
+        &client,
         "iris_fetch",
         json!({"url": format!("http://{addr}/")}),
     )
@@ -2448,7 +2445,7 @@ async fn e2e_iris_fetch_then_survey_and_toc() {
 
     // Step 2: Verify iris_survey finds the fetched content
     let survey_result = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "widget API creating widgets endpoints", "top_k": 10}),
     )
@@ -2474,7 +2471,7 @@ async fn e2e_iris_fetch_then_survey_and_toc() {
     );
 
     // Step 3: Verify iris_toc lists the fetched document
-    let toc_result = call_tool(&server, "iris_toc", json!({})).await;
+    let toc_result = call_tool(&client, "iris_toc", json!({})).await;
 
     assert!(
         toc_result.is_error.is_none() || toc_result.is_error == Some(false),
@@ -2660,9 +2657,10 @@ async fn e2e_iris_clone_then_survey_and_toc() {
     let clone_cache = tmp.path().join("clone-cache");
     std::fs::create_dir_all(&clone_cache).unwrap();
     let (server, _embedder, _index) = setup_server_with_git_fetcher(&clone_cache).await;
+    let (client, _server) = wrap_as_client(server).await;
 
     // Step 1: Clone the local test repo
-    let clone_result = call_tool(&server, "iris_clone", json!({"repo": repo_url})).await;
+    let clone_result = call_tool(&client, "iris_clone", json!({"repo": repo_url})).await;
 
     let clone_text = extract_text(&clone_result.content);
     assert!(
@@ -2683,7 +2681,7 @@ async fn e2e_iris_clone_then_survey_and_toc() {
 
     // Step 2: Verify iris_survey finds content from the cloned repo
     let survey_result = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "survey command search indexed documents", "top_k": 10}),
     )
@@ -2700,7 +2698,7 @@ async fn e2e_iris_clone_then_survey_and_toc() {
     assert!(!results.is_empty(), "survey should find cloned content");
 
     // Step 3: Verify iris_toc lists the cloned documents
-    let toc_result = call_tool(&server, "iris_toc", json!({})).await;
+    let toc_result = call_tool(&client, "iris_toc", json!({})).await;
 
     assert!(
         toc_result.is_error.is_none() || toc_result.is_error == Some(false),
@@ -2797,10 +2795,11 @@ async fn e2e_clone_and_fetch_unified_survey_results() {
     };
     let git_fetcher = iris_core::git::GitFetcher::new(git_config);
     let server = server.with_git_fetcher(git_fetcher, Arc::clone(&embedder), Arc::clone(&index));
+    let (client, _server) = wrap_as_client(server).await;
 
     // Step 1: Fetch web content
     let fetch_result = call_tool(
-        &server,
+        &client,
         "iris_fetch",
         json!({"url": format!("http://{addr}/")}),
     )
@@ -2823,7 +2822,7 @@ async fn e2e_clone_and_fetch_unified_survey_results() {
     );
 
     // Step 2: Clone the local test git repo
-    let clone_result = call_tool(&server, "iris_clone", json!({"repo": repo_url})).await;
+    let clone_result = call_tool(&client, "iris_clone", json!({"repo": repo_url})).await;
 
     let clone_text = extract_text(&clone_result.content);
     assert!(
@@ -2833,7 +2832,7 @@ async fn e2e_clone_and_fetch_unified_survey_results() {
 
     // Step 3: Survey should return results from BOTH sources
     let survey_result = call_tool(
-        &server,
+        &client,
         "iris_survey",
         json!({"query": "deployment guide install configure survey search", "top_k": 20}),
     )
@@ -2869,7 +2868,7 @@ async fn e2e_clone_and_fetch_unified_survey_results() {
     );
 
     // Step 4: ToC should list cloned documents at minimum
-    let toc_result = call_tool(&server, "iris_toc", json!({})).await;
+    let toc_result = call_tool(&client, "iris_toc", json!({})).await;
     let toc_json: serde_json::Value =
         serde_json::from_str(extract_text(&toc_result.content)).unwrap();
     let entries = toc_json["entries"].as_array().unwrap();
@@ -2902,9 +2901,9 @@ async fn e2e_clone_and_fetch_unified_survey_results() {
 
 #[tokio::test]
 async fn iris_clone_not_configured_returns_error() {
-    let server = setup_server().await;
+    let (client, _server) = wrap_as_client(setup_server().await).await;
     let result = call_tool(
-        &server,
+        &client,
         "iris_clone",
         json!({"repo": "https://github.com/octocat/Hello-World.git"}),
     )
@@ -2936,9 +2935,10 @@ async fn iris_clone_nonexistent_repo_returns_user_friendly_error() {
 
     let tmp = tempfile::tempdir().unwrap();
     let (server, _embedder, _index) = setup_server_with_git_fetcher(tmp.path()).await;
+    let (client, _server) = wrap_as_client(server).await;
 
     let result = call_tool(
-        &server,
+        &client,
         "iris_clone",
         json!({"repo": "/tmp/iris-test-nonexistent-repo-that-does-not-exist-xyz789.git"}),
     )
@@ -2971,8 +2971,9 @@ async fn iris_clone_empty_repo_url_returns_error() {
 
     let tmp = tempfile::tempdir().unwrap();
     let (server, _embedder, _index) = setup_server_with_git_fetcher(tmp.path()).await;
+    let (client, _server) = wrap_as_client(server).await;
 
-    let result = call_tool(&server, "iris_clone", json!({"repo": ""})).await;
+    let result = call_tool(&client, "iris_clone", json!({"repo": ""})).await;
 
     assert!(
         result.is_error == Some(true),
@@ -3120,8 +3121,8 @@ async fn setup_server_with_symbols() -> IrisServer {
 
 #[tokio::test]
 async fn iris_symbols_finds_struct_by_name() {
-    let server = setup_server_with_symbols().await;
-    let result = call_tool(&server, "iris_symbols", json!({"query": "IrisConfig"})).await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(&client, "iris_symbols", json!({"query": "IrisConfig"})).await;
 
     assert!(result.is_error.is_none() || result.is_error == Some(false));
     let text = extract_text(&result.content);
@@ -3134,8 +3135,8 @@ async fn iris_symbols_finds_struct_by_name() {
 
 #[tokio::test]
 async fn iris_symbols_filters_by_kind() {
-    let server = setup_server_with_symbols().await;
-    let result = call_tool(&server, "iris_symbols", json!({"kind": "function"})).await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(&client, "iris_symbols", json!({"kind": "function"})).await;
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -3148,8 +3149,8 @@ async fn iris_symbols_filters_by_kind() {
 
 #[tokio::test]
 async fn iris_symbols_filters_by_module() {
-    let server = setup_server_with_symbols().await;
-    let result = call_tool(&server, "iris_symbols", json!({"module": "config"})).await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(&client, "iris_symbols", json!({"module": "config"})).await;
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -3161,8 +3162,8 @@ async fn iris_symbols_filters_by_module() {
 
 #[tokio::test]
 async fn iris_symbols_returns_all_when_no_filter() {
-    let server = setup_server_with_symbols().await;
-    let result = call_tool(&server, "iris_symbols", json!({})).await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(&client, "iris_symbols", json!({})).await;
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -3173,8 +3174,8 @@ async fn iris_symbols_returns_all_when_no_filter() {
 
 #[tokio::test]
 async fn iris_symbols_includes_doc_preview() {
-    let server = setup_server_with_symbols().await;
-    let result = call_tool(&server, "iris_symbols", json!({"query": "Storage"})).await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(&client, "iris_symbols", json!({"query": "Storage"})).await;
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -3192,9 +3193,9 @@ async fn iris_symbols_includes_doc_preview() {
 
 #[tokio::test]
 async fn iris_definition_returns_symbol_metadata() {
-    let server = setup_server_with_symbols().await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
     let result = call_tool(
-        &server,
+        &client,
         "iris_definition",
         json!({"symbol_id": "sym-config::IrisConfig"}),
     )
@@ -3219,9 +3220,9 @@ async fn iris_definition_returns_symbol_metadata() {
 
 #[tokio::test]
 async fn iris_definition_returns_budget_status() {
-    let server = setup_server_with_symbols().await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
     let result = call_tool(
-        &server,
+        &client,
         "iris_definition",
         json!({"symbol_id": "sym-config::IrisConfig"}),
     )
@@ -3238,9 +3239,9 @@ async fn iris_definition_returns_budget_status() {
 
 #[tokio::test]
 async fn iris_definition_not_found() {
-    let server = setup_server_with_symbols().await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
     let result = call_tool(
-        &server,
+        &client,
         "iris_definition",
         json!({"symbol_id": "nonexistent"}),
     )
@@ -3256,9 +3257,9 @@ async fn iris_definition_not_found() {
 
 #[tokio::test]
 async fn iris_references_finds_callers() {
-    let server = setup_server_with_symbols().await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
     let result = call_tool(
-        &server,
+        &client,
         "iris_references",
         json!({"symbol_id": "sym-storage::Storage"}),
     )
@@ -3279,10 +3280,10 @@ async fn iris_references_finds_callers() {
 
 #[tokio::test]
 async fn iris_references_filters_by_ref_kind() {
-    let server = setup_server_with_symbols().await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
     // IrisConfig is referenced via "uses" only
     let result = call_tool(
-        &server,
+        &client,
         "iris_references",
         json!({"symbol_id": "sym-config::IrisConfig", "ref_kind": "calls"}),
     )
@@ -3299,7 +3300,7 @@ async fn iris_references_filters_by_ref_kind() {
 
     // Now check with "uses"
     let result = call_tool(
-        &server,
+        &client,
         "iris_references",
         json!({"symbol_id": "sym-config::IrisConfig", "ref_kind": "uses"}),
     )
@@ -3315,9 +3316,9 @@ async fn iris_references_filters_by_ref_kind() {
 
 #[tokio::test]
 async fn iris_references_not_found() {
-    let server = setup_server_with_symbols().await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
     let result = call_tool(
-        &server,
+        &client,
         "iris_references",
         json!({"symbol_id": "nonexistent"}),
     )
@@ -3333,8 +3334,8 @@ async fn iris_references_not_found() {
 
 #[tokio::test]
 async fn iris_symbols_includes_budget_status() {
-    let server = setup_server_with_symbols().await;
-    let result = call_tool(&server, "iris_symbols", json!({"query": "Config"})).await;
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(&client, "iris_symbols", json!({"query": "Config"})).await;
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();

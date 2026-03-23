@@ -827,7 +827,7 @@ phases:
   - text: Send progress notifications during background ingestion (notifications/progress with file count)
     checked: true
   - text: Add Streamable HTTP (SSE) transport alongside stdio via rmcp for remote/multi-client deployments
-    checked: false
+    checked: true
   - text: Implement resource subscriptions for iris://status — push coherence alerts when files change
     checked: false
   - text: Async task support for iris_fetch and iris_clone — return task handle, poll for completion
