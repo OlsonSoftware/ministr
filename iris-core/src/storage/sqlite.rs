@@ -287,6 +287,43 @@ impl Storage for SqliteStorage {
         .await
     }
 
+    async fn list_documents_by_root(
+        &self,
+        root_id: &str,
+    ) -> Result<Vec<DocumentRecord>, StorageError> {
+        let root_id = root_id.to_string();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, title, source_path, summary, root_id
+                     FROM documents WHERE root_id = ?1 ORDER BY title",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let rows = stmt
+                .query_map(rusqlite::params![root_id], |row| {
+                    Ok(DocumentRecord {
+                        id: ContentId(row.get(0)?),
+                        title: row.get(1)?,
+                        source_path: row.get(2)?,
+                        summary: row.get(3)?,
+                        root_id: row.get(4)?,
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })
+        })
+        .await
+    }
+
     async fn delete_document(&self, id: &ContentId) -> Result<bool, StorageError> {
         let id = id.clone();
         self.with_conn(move |conn| {
@@ -1833,15 +1870,22 @@ impl Storage for SqliteStorage {
         let root = root.clone();
         self.with_conn(move |conn| {
             let lang_json = serde_json::to_string(&root.language_stats).unwrap_or_default();
+            let sparse_json = serde_json::to_string(&root.sparse_paths).unwrap_or_default();
             conn.execute(
-                "INSERT INTO corpus_roots (id, path, kind, display_name, file_count, language_stats, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                "INSERT INTO corpus_roots (id, path, kind, display_name, file_count, language_stats,
+                     repo_url, branch, commit_sha, clone_timestamp, sparse_paths, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
                  ON CONFLICT(id) DO UPDATE SET
                      path = excluded.path,
                      kind = excluded.kind,
                      display_name = excluded.display_name,
                      file_count = excluded.file_count,
                      language_stats = excluded.language_stats,
+                     repo_url = excluded.repo_url,
+                     branch = excluded.branch,
+                     commit_sha = excluded.commit_sha,
+                     clone_timestamp = excluded.clone_timestamp,
+                     sparse_paths = excluded.sparse_paths,
                      updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
                 rusqlite::params![
                     root.id,
@@ -1850,6 +1894,11 @@ impl Storage for SqliteStorage {
                     root.display_name,
                     i64::try_from(root.file_count).unwrap_or(i64::MAX),
                     lang_json,
+                    root.repo_url,
+                    root.branch,
+                    root.commit_sha,
+                    root.clone_timestamp,
+                    sparse_json,
                 ],
             )
             .map_err(|e| StorageError::Database {
@@ -1865,7 +1914,8 @@ impl Storage for SqliteStorage {
         self.with_conn(move |conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, path, kind, display_name, file_count, language_stats
+                    "SELECT id, path, kind, display_name, file_count, language_stats,
+                            repo_url, branch, commit_sha, clone_timestamp, sparse_paths
                      FROM corpus_roots WHERE id = ?1",
                 )
                 .map_err(|e| StorageError::Database {
@@ -1888,7 +1938,8 @@ impl Storage for SqliteStorage {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, path, kind, display_name, file_count, language_stats
+                    "SELECT id, path, kind, display_name, file_count, language_stats,
+                            repo_url, branch, commit_sha, clone_timestamp, sparse_paths
                      FROM corpus_roots ORDER BY path",
                 )
                 .map_err(|e| StorageError::Database {
@@ -1947,10 +1998,15 @@ impl Storage for SqliteStorage {
 }
 
 /// Parse a `corpus_roots` row into a [`CorpusRoot`].
+///
+/// Expected column order: `id`, `path`, `kind`, `display_name`, `file_count`,
+/// `language_stats`, `repo_url`, `branch`, `commit_sha`, `clone_timestamp`, `sparse_paths`.
 fn parse_corpus_root_row(row: &rusqlite::Row<'_>) -> CorpusRoot {
     let lang_json: String = row.get(5).unwrap_or_default();
     let language_stats: std::collections::HashMap<String, usize> =
         serde_json::from_str(&lang_json).unwrap_or_default();
+    let sparse_json: String = row.get(10).unwrap_or_default();
+    let sparse_paths: Vec<String> = serde_json::from_str(&sparse_json).unwrap_or_default();
 
     CorpusRoot {
         id: row.get(0).unwrap_or_default(),
@@ -1959,6 +2015,11 @@ fn parse_corpus_root_row(row: &rusqlite::Row<'_>) -> CorpusRoot {
         display_name: row.get(3).unwrap_or_default(),
         file_count: row.get::<_, i64>(4).unwrap_or(0).try_into().unwrap_or(0),
         language_stats,
+        repo_url: row.get(6).unwrap_or_default(),
+        branch: row.get(7).unwrap_or_default(),
+        commit_sha: row.get(8).unwrap_or_default(),
+        clone_timestamp: row.get(9).unwrap_or_default(),
+        sparse_paths,
     }
 }
 

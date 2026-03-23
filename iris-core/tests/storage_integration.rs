@@ -359,7 +359,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 11);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 12);
 }
 
 #[tokio::test]
@@ -1976,6 +1976,11 @@ async fn corpus_root_upsert_and_get() {
         display_name: Some("src".into()),
         file_count: 42,
         language_stats: HashMap::from([("rust".into(), 30), ("toml".into(), 12)]),
+        repo_url: None,
+        branch: None,
+        commit_sha: None,
+        clone_timestamp: None,
+        sparse_paths: Vec::new(),
     };
 
     storage.upsert_corpus_root(&root).await.unwrap();
@@ -2006,6 +2011,11 @@ async fn corpus_root_upsert_updates_existing() {
         display_name: Some("project".into()),
         file_count: 10,
         language_stats: HashMap::from([("rust".into(), 10)]),
+        repo_url: None,
+        branch: None,
+        commit_sha: None,
+        clone_timestamp: None,
+        sparse_paths: Vec::new(),
     };
     storage.upsert_corpus_root(&root).await.unwrap();
 
@@ -2017,6 +2027,11 @@ async fn corpus_root_upsert_updates_existing() {
         display_name: Some("project".into()),
         file_count: 25,
         language_stats: HashMap::from([("rust".into(), 15), ("python".into(), 10)]),
+        repo_url: None,
+        branch: None,
+        commit_sha: None,
+        clone_timestamp: None,
+        sparse_paths: Vec::new(),
     };
     storage.upsert_corpus_root(&updated).await.unwrap();
 
@@ -2045,6 +2060,11 @@ async fn corpus_root_list_and_delete() {
             display_name: None,
             file_count: 0,
             language_stats: HashMap::new(),
+            repo_url: None,
+            branch: None,
+            commit_sha: None,
+            clone_timestamp: None,
+            sparse_paths: Vec::new(),
         };
         storage.upsert_corpus_root(&root).await.unwrap();
     }
@@ -2086,6 +2106,11 @@ async fn set_document_root_tags_document() {
         display_name: None,
         file_count: 0,
         language_stats: HashMap::new(),
+        repo_url: None,
+        branch: None,
+        commit_sha: None,
+        clone_timestamp: None,
+        sparse_paths: Vec::new(),
     };
     storage.upsert_corpus_root(&root).await.unwrap();
 
@@ -2112,4 +2137,92 @@ async fn document_root_id_defaults_to_none() {
 
     let loaded = storage.get_document(&doc.id).await.unwrap().unwrap();
     assert!(loaded.root_id.is_none(), "root_id should default to None");
+}
+
+#[tokio::test]
+async fn list_documents_by_root_filters_correctly() {
+    use iris_core::types::{CorpusRoot, RootKind};
+    use std::collections::HashMap;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Create two roots
+    for (id, path) in [("root-a", "/a"), ("root-b", "/b")] {
+        let root = CorpusRoot {
+            id: id.into(),
+            path: path.into(),
+            kind: RootKind::Local,
+            display_name: None,
+            file_count: 0,
+            language_stats: HashMap::new(),
+            repo_url: None,
+            branch: None,
+            commit_sha: None,
+            clone_timestamp: None,
+            sparse_paths: Vec::new(),
+        };
+        storage.upsert_corpus_root(&root).await.unwrap();
+    }
+
+    // Insert documents and tag them to different roots
+    let doc1 = sample_document();
+    storage.insert_document(&doc1).await.unwrap();
+    storage.set_document_root(&doc1.id, "root-a").await.unwrap();
+
+    let doc2 = iris_core::types::DocumentTree {
+        id: iris_core::types::ContentId("doc-second".into()),
+        title: "Second Doc".into(),
+        source_path: "second.md".into(),
+        sections: vec![],
+        summary: None,
+    };
+    storage.insert_document(&doc2).await.unwrap();
+    storage.set_document_root(&doc2.id, "root-b").await.unwrap();
+
+    // list_documents_by_root returns only matching docs
+    let docs_a = storage.list_documents_by_root("root-a").await.unwrap();
+    assert_eq!(docs_a.len(), 1);
+    assert_eq!(docs_a[0].id.0, doc1.id.0);
+
+    let docs_b = storage.list_documents_by_root("root-b").await.unwrap();
+    assert_eq!(docs_b.len(), 1);
+    assert_eq!(docs_b[0].id.0, "doc-second");
+
+    // Non-existent root returns empty
+    let empty = storage.list_documents_by_root("root-z").await.unwrap();
+    assert!(empty.is_empty());
+}
+
+#[tokio::test]
+async fn corpus_root_provenance_roundtrip() {
+    use iris_core::types::{CorpusRoot, RootKind};
+    use std::collections::HashMap;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let root = CorpusRoot {
+        id: "root-git1".into(),
+        path: "/home/user/.iris/remote/abc".into(),
+        kind: RootKind::Git,
+        display_name: Some("owner/repo".into()),
+        file_count: 110,
+        language_stats: HashMap::from([("python".into(), 80), ("markdown".into(), 30)]),
+        repo_url: Some("https://github.com/owner/repo.git".into()),
+        branch: Some("main".into()),
+        commit_sha: Some("abc123def456".into()),
+        clone_timestamp: Some("1711036800".into()),
+        sparse_paths: vec!["docs".into(), "src".into()],
+    };
+    storage.upsert_corpus_root(&root).await.unwrap();
+
+    let loaded = storage.get_corpus_root("root-git1").await.unwrap().unwrap();
+    assert_eq!(loaded.kind, RootKind::Git);
+    assert_eq!(
+        loaded.repo_url.as_deref(),
+        Some("https://github.com/owner/repo.git")
+    );
+    assert_eq!(loaded.branch.as_deref(), Some("main"));
+    assert_eq!(loaded.commit_sha.as_deref(), Some("abc123def456"));
+    assert_eq!(loaded.clone_timestamp.as_deref(), Some("1711036800"));
+    assert_eq!(loaded.sparse_paths, vec!["docs", "src"]);
 }

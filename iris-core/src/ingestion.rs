@@ -776,12 +776,44 @@ impl IngestionPipeline {
     /// Returns [`IngestionError`] if directory traversal, storage, or embedding fails.
     #[allow(clippy::too_many_lines)]
     #[instrument(skip(self, storage, embedder, index), fields(dir = %dir.display()))]
+    /// Ingest all supported files from a directory with embedding generation.
+    ///
+    /// When `root_id` is provided, all ingested documents are tagged with that root
+    /// and the cleanup phase only removes stale documents from the same root. This
+    /// prevents adding a new root from evicting existing roots' content.
     pub async fn ingest_directory_with_embeddings<S, E, I>(
         &self,
         dir: &Path,
         storage: &S,
         embedder: &E,
         index: &I,
+    ) -> Result<IngestionStats, IngestionError>
+    where
+        S: Storage + ?Sized,
+        E: Embedder + ?Sized,
+        I: VectorIndex + ?Sized,
+    {
+        self.ingest_directory_with_embeddings_rooted(dir, storage, embedder, index, None)
+            .await
+    }
+
+    /// Ingest a directory with embedding generation and root tracking.
+    ///
+    /// When `root_id` is `Some`, documents are tagged with that root and cleanup
+    /// is scoped to only that root's documents. When `None`, behaves like
+    /// [`ingest_directory_with_embeddings`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IngestionError`] if file discovery, parsing, storage, or embedding fails.
+    #[allow(clippy::too_many_lines)]
+    pub async fn ingest_directory_with_embeddings_rooted<S, E, I>(
+        &self,
+        dir: &Path,
+        storage: &S,
+        embedder: &E,
+        index: &I,
+        root_id: Option<&str>,
     ) -> Result<IngestionStats, IngestionError>
     where
         S: Storage + ?Sized,
@@ -861,6 +893,14 @@ impl IngestionPipeline {
                     stats.files_indexed += 1;
                     stats.total_sections += sections;
                     stats.total_claims += claims;
+
+                    // Tag the document with its corpus root.
+                    if let Some(rid) = root_id {
+                        let doc_id = crate::types::ContentId(relative.clone());
+                        if let Err(e) = storage.set_document_root(&doc_id, rid).await {
+                            debug!(path = %relative, error = %e, "failed to set document root");
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!(path = %relative, error = %e, "failed to ingest file");
@@ -873,11 +913,20 @@ impl IngestionPipeline {
             }
         }
 
-        // Remove documents for files that no longer exist
-        let existing_docs = storage
-            .list_documents()
-            .await
-            .map_err(IngestionError::from)?;
+        // Remove documents for files that no longer exist.
+        // When a root_id is set, only clean up documents belonging to this root
+        // so that adding a new root never evicts another root's content.
+        let existing_docs = if let Some(rid) = root_id {
+            storage
+                .list_documents_by_root(rid)
+                .await
+                .map_err(IngestionError::from)?
+        } else {
+            storage
+                .list_documents()
+                .await
+                .map_err(IngestionError::from)?
+        };
         for doc in &existing_docs {
             let full_path = dir.join(&doc.source_path);
             if !full_path.exists() {
@@ -979,6 +1028,11 @@ impl IngestionPipeline {
                 display_name,
                 file_count: 0,
                 language_stats: std::collections::HashMap::new(),
+                repo_url: None,
+                branch: None,
+                commit_sha: None,
+                clone_timestamp: None,
+                sparse_paths: Vec::new(),
             };
             if let Err(e) = storage.upsert_corpus_root(&root).await {
                 warn!(root_id = %root_id, error = %e, "failed to register corpus root");
@@ -2621,6 +2675,11 @@ async fn update_root_stats<S: Storage + ?Sized>(
             display_name,
             file_count,
             language_stats: lang_stats,
+            repo_url: None,
+            branch: None,
+            commit_sha: None,
+            clone_timestamp: None,
+            sparse_paths: Vec::new(),
         };
         if let Err(e) = storage.upsert_corpus_root(&root).await {
             warn!(root_id = %root_id, error = %e, "failed to update corpus root stats");
@@ -2629,7 +2688,11 @@ async fn update_root_stats<S: Storage + ?Sized>(
 }
 
 /// Compute a stable root ID from a path by hashing it.
-fn compute_root_id(path: &Path) -> String {
+///
+/// The ID is deterministic: the same canonical path always produces the same ID.
+/// Used to generate root identifiers for both local and cloned corpus roots.
+#[must_use]
+pub fn compute_root_id(path: &Path) -> String {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut hasher = Sha256::new();
     hasher.update(canonical.to_string_lossy().as_bytes());

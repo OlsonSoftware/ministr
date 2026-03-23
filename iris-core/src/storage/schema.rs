@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 11;
+pub const CURRENT_SCHEMA_VERSION: usize = 12;
 
 /// Returns the migration set for the content database.
 ///
@@ -235,6 +235,16 @@ fn migrations() -> Migrations<'static> {
 
             ALTER TABLE documents ADD COLUMN root_id TEXT REFERENCES corpus_roots(id);
             CREATE INDEX idx_documents_root ON documents(root_id);
+            ",
+        ),
+        // V12: Git provenance metadata on corpus_roots
+        M::up(
+            "
+            ALTER TABLE corpus_roots ADD COLUMN repo_url TEXT;
+            ALTER TABLE corpus_roots ADD COLUMN branch TEXT;
+            ALTER TABLE corpus_roots ADD COLUMN commit_sha TEXT;
+            ALTER TABLE corpus_roots ADD COLUMN clone_timestamp TEXT;
+            ALTER TABLE corpus_roots ADD COLUMN sparse_paths TEXT NOT NULL DEFAULT '[]';
             ",
         ),
     ])
