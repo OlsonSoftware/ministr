@@ -25,11 +25,13 @@ use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData as McpError;
 use rmcp::model::{
-    CallToolResult, Content, Implementation, ListResourceTemplatesResult, ListResourcesResult,
-    NumberOrString, PaginatedRequestParams, ProgressNotificationParam, RawResource,
-    RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents,
-    ResourceTemplate, ResourceUpdatedNotificationParam, ServerCapabilities, ServerInfo,
-    SubscribeRequestParams, UnsubscribeRequestParams,
+    CallToolRequestParams, CallToolResult, CancelTaskParams, Content, CreateTaskResult,
+    GetTaskInfoParams, GetTaskPayloadResult, GetTaskResult, GetTaskResultParams, Implementation,
+    ListResourceTemplatesResult, ListResourcesResult, ListTasksResult, NumberOrString,
+    PaginatedRequestParams, ProgressNotificationParam, RawResource, RawResourceTemplate,
+    ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
+    ResourceUpdatedNotificationParam, ServerCapabilities, ServerInfo, SubscribeRequestParams,
+    UnsubscribeRequestParams,
 };
 use rmcp::schemars;
 use rmcp::service::{NotificationContext, Peer, RequestContext};
@@ -60,7 +62,7 @@ use iris_core::types::{
 };
 use iris_core::web::fetcher::WebFetcher;
 
-use crate::task::TaskManager;
+use crate::task::{McpTaskManager, task_to_cancel_result, task_to_get_result};
 
 /// MCP server that exposes iris context-cache tools to LLM agents.
 ///
@@ -89,8 +91,8 @@ pub struct IrisServer {
     /// Receiver for coherence change notifications from the file watcher task.
     /// Consumed once in `on_initialized` to spawn the notification dispatcher.
     coherence_rx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Vec<String>>>>>,
-    /// Background task manager for async fetch/clone operations.
-    task_manager: Arc<TaskManager>,
+    /// MCP Tasks manager for async fetch/clone operations (SEP-1686).
+    task_manager: Arc<McpTaskManager>,
     /// Macro-generated tool router for dispatching tool calls.
     tool_router: ToolRouter<Self>,
 }
@@ -287,12 +289,6 @@ pub struct FetchParams {
     /// Only fetch URLs whose path starts with this prefix (e.g. '/docs/').
     #[schemars(description = "Only fetch URLs whose path starts with this prefix (e.g. '/docs/')")]
     pub path_filter: Option<String>,
-
-    /// Run the fetch in the background and return a task handle immediately.
-    /// Use `iris_task` to poll for completion. Default: false (synchronous).
-    #[schemars(description = "Run in background and return a task handle (default: false)")]
-    #[serde(default)]
-    pub async_task: bool,
 }
 
 /// Response from the `iris_fetch` tool.
@@ -397,12 +393,6 @@ pub struct CloneParams {
     /// Optional branch to clone (defaults to the repository's default branch).
     #[schemars(description = "Optional branch to clone (defaults to repository default)")]
     pub branch: Option<String>,
-
-    /// Run the clone in the background and return a task handle immediately.
-    /// Use `iris_task` to poll for completion. Default: false (synchronous).
-    #[schemars(description = "Run in background and return a task handle (default: false)")]
-    #[serde(default)]
-    pub async_task: bool,
 }
 
 /// Response from the `iris_clone` tool.
@@ -425,20 +415,35 @@ struct CloneResponse {
 /// Parameters for the `iris_task` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TaskParams {
-    /// Task ID returned by a previous async `iris_fetch` or `iris_clone` call.
+    /// Task ID to check status for.
     #[schemars(description = "Task ID to check status for")]
     pub task_id: String,
 }
 
-/// Response returned when an async task is spawned.
+/// Output schema for the `iris_task` tool response.
+///
+/// Mirrors the MCP Task object shape for schema generation purposes.
+/// The actual response is serialized from `rmcp::model::Task`.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-struct AsyncTaskResponse {
-    /// The task ID to poll with `iris_task`.
+#[serde(rename_all = "camelCase")]
+struct TaskStatusResponse {
+    /// Unique task identifier.
     task_id: String,
-    /// Always `"running"` for a newly spawned task.
-    status: &'static str,
-    /// Hint for the agent.
-    message: String,
+    /// Current status: `working`, `completed`, `failed`, `cancelled`, or `input_required`.
+    status: String,
+    /// Human-readable status message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status_message: Option<String>,
+    /// ISO-8601 creation timestamp.
+    created_at: String,
+    /// ISO-8601 timestamp for the most recent status change.
+    last_updated_at: String,
+    /// Retention window in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl: Option<u64>,
+    /// Suggested polling interval in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    poll_interval: Option<u64>,
 }
 
 /// Parameters for the `iris_symbols` tool.
@@ -567,31 +572,17 @@ enum ReadOutputData {
     Detail(iris_core::service::SectionDetail),
 }
 
-/// Output data for `iris_fetch`: either an async task handle or the full fetch result.
+/// Output data for `iris_fetch`.
 ///
-/// Used only for output schema generation via `schemars::JsonSchema`.
-#[expect(dead_code)]
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-#[serde(untagged)]
-enum FetchOutputData {
-    /// Async task spawned — poll with `iris_task`.
-    Async(AsyncTaskResponse),
-    /// Synchronous fetch result with budget status.
-    Sync(ToolResponse<FetchResponse>),
-}
+/// Used for output schema generation via `schemars::JsonSchema`.
+/// When invoked as an MCP Task, the result is delivered via `tasks/result`.
+type FetchOutputData = ToolResponse<FetchResponse>;
 
-/// Output data for `iris_clone`: either an async task handle or the full clone result.
+/// Output data for `iris_clone`.
 ///
-/// Used only for output schema generation via `schemars::JsonSchema`.
-#[expect(dead_code)]
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-#[serde(untagged)]
-enum CloneOutputData {
-    /// Async task spawned — poll with `iris_task`.
-    Async(AsyncTaskResponse),
-    /// Synchronous clone result with budget status.
-    Sync(ToolResponse<CloneResponse>),
-}
+/// Used for output schema generation via `schemars::JsonSchema`.
+/// When invoked as an MCP Task, the result is delivered via `tasks/result`.
+type CloneOutputData = ToolResponse<CloneResponse>;
 
 /// Generate the output schema `Arc<JsonObject>` for a tool response type.
 ///
@@ -634,6 +625,7 @@ impl ServerHandler for IrisServer {
                 .enable_tools()
                 .enable_resources()
                 .enable_resources_subscribe()
+                .enable_tasks()
                 .build(),
         )
         .with_server_info(
@@ -654,12 +646,141 @@ impl ServerHandler for IrisServer {
              fetch web content by URL and add it to the corpus, iris_refresh \
              to check cached web sources for staleness and re-fetch changed content, \
              iris_clone to clone a git repository and index its content, \
-             iris_task to poll background fetch/clone tasks, \
+             iris_task to poll background fetch/clone tasks (deprecated — prefer MCP tasks/get), \
              iris_symbols to search the code symbol index, \
              iris_definition to get the full source definition of a symbol, \
              and iris_references to find all references to a symbol.",
         )
     }
+
+    // ── MCP Tasks (SEP-1686) ────────────────────────────────────────
+
+    async fn enqueue_task(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CreateTaskResult, McpError> {
+        // Create the task record first, then dispatch to the tool.
+        let task = self
+            .task_manager
+            .create(&format!("starting {}", request.name), None)
+            .await;
+        let task_id = task.task_id.clone();
+        let task_mgr = Arc::clone(&self.task_manager);
+
+        // Clone self for the spawned closure.
+        let server = self.clone();
+        let handle = tokio::spawn(async move {
+            // Execute the tool call synchronously in the background.
+            match server.call_tool(request, context).await {
+                Ok(result) => {
+                    task_mgr.complete(&task_id, result).await;
+                }
+                Err(e) => {
+                    task_mgr
+                        .fail(&task_id, &format!("tool call failed: {e}"))
+                        .await;
+                }
+            }
+        });
+
+        // Attach the join handle so cancellation works.
+        self.task_manager
+            .set_join_handle(&task.task_id, handle)
+            .await;
+
+        Ok(CreateTaskResult::new(task))
+    }
+
+    async fn list_tasks(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListTasksResult, McpError> {
+        let task_list = self.task_manager.list_tasks().await;
+        Ok(ListTasksResult::new(task_list.tasks))
+    }
+
+    async fn get_task_info(
+        &self,
+        request: GetTaskInfoParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetTaskResult, McpError> {
+        self.task_manager
+            .get_task(&request.task_id)
+            .await
+            .map(task_to_get_result)
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "unknown task ID: {}. Tasks expire 5 minutes after completion.",
+                        request.task_id
+                    ),
+                    None,
+                )
+            })
+    }
+
+    async fn get_task_result(
+        &self,
+        request: GetTaskResultParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetTaskPayloadResult, McpError> {
+        // First check the task exists and is complete.
+        let task = self
+            .task_manager
+            .get_task(&request.task_id)
+            .await
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "unknown task ID: {}. Tasks expire 5 minutes after completion.",
+                        request.task_id
+                    ),
+                    None,
+                )
+            })?;
+
+        if task.status != rmcp::model::TaskStatus::Completed {
+            return Err(McpError::invalid_params(
+                format!(
+                    "task {} has status {:?}, result is only available when completed",
+                    request.task_id, task.status
+                ),
+                None,
+            ));
+        }
+
+        self.task_manager
+            .get_result(&request.task_id)
+            .await
+            .map(|r| GetTaskPayloadResult::new(serde_json::to_value(r).unwrap_or_default()))
+            .ok_or_else(|| {
+                McpError::internal_error("task completed but result not found".to_string(), None)
+            })
+    }
+
+    async fn cancel_task(
+        &self,
+        request: CancelTaskParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<rmcp::model::CancelTaskResult, McpError> {
+        self.task_manager
+            .cancel(&request.task_id)
+            .await
+            .map(task_to_cancel_result)
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "unknown task ID: {}. Tasks expire 5 minutes after completion.",
+                        request.task_id
+                    ),
+                    None,
+                )
+            })
+    }
+
+    // ── Resources ───────────────────────────────────────────────────
 
     async fn list_resources(
         &self,
@@ -1447,9 +1568,10 @@ impl IrisServer {
     /// searchable via `iris_survey`.
     #[tool(
         name = "iris_fetch",
-        description = "Fetch web content by URL and add it to the indexed corpus. Tries llms.txt strategies first, then falls back to direct page fetch. Content is immediately searchable after fetching.",
+        description = "Fetch web content by URL and add it to the indexed corpus. Tries llms.txt strategies first, then falls back to direct page fetch. Content is immediately searchable after fetching. Supports MCP Tasks for async execution.",
         output_schema = tool_output_schema::<FetchOutputData>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = true)
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = true),
+        execution(task_support = "optional")
     )]
     async fn fetch(
         &self,
@@ -1492,65 +1614,8 @@ impl IrisServer {
                 )]));
             };
 
-            // Async mode: spawn background task and return handle immediately.
-            if params.async_task {
-                let task_id = self
-                    .task_manager
-                    .create(&format!("fetching {}", params.url))
-                    .await;
-                let task_mgr = Arc::clone(&self.task_manager);
-                let web_fetcher = Arc::clone(web_fetcher);
-                let pipeline = Arc::clone(&self.ingestion_pipeline);
-                let storage = Arc::clone(storage);
-                let embedder = Arc::clone(embedder);
-                let index = Arc::clone(index);
-                let budget = Arc::clone(&self.budget);
-                let url = params.url.clone();
-                let tid = task_id.clone();
-
-                tokio::spawn(async move {
-                    match web_fetcher
-                        .fetch_and_ingest_with_embeddings(
-                            &url,
-                            &pipeline,
-                            storage.as_ref(),
-                            embedder.as_ref(),
-                            index.as_ref(),
-                        )
-                        .await
-                    {
-                        Ok(result) => {
-                            let budget_status = budget.lock().await.budget_status();
-                            let response = FetchResponse {
-                                pages_fetched: result.pages_fetched(),
-                                sections_indexed: result.sections_indexed,
-                                claims_extracted: result.claims_extracted,
-                                tokens_added: result.tokens_added,
-                                strategy_used: result.strategy.to_string(),
-                            };
-                            let value = serde_json::json!({
-                                "data": response,
-                                "budget_status": budget_status,
-                            });
-                            task_mgr.complete(&tid, value).await;
-                        }
-                        Err(e) => {
-                            task_mgr.fail(&tid, format!("fetch failed: {e}")).await;
-                        }
-                    }
-                });
-
-                let response = AsyncTaskResponse {
-                    task_id,
-                    status: "running",
-                    message: format!(
-                        "Fetching {} in background. Poll with iris_task.",
-                        params.url
-                    ),
-                };
-                return structured_result(&response);
-            }
-
+            // When invoked as an MCP Task, rmcp's enqueue_task handles the
+            // async lifecycle. This code path always runs synchronously.
             match web_fetcher
                 .fetch_and_ingest_with_embeddings(
                     &params.url,
@@ -1655,9 +1720,10 @@ impl IrisServer {
     /// embedded, and immediately searchable via `iris_survey`.
     #[tool(
         name = "iris_clone",
-        description = "Clone a git repository and index its content. Supports sparse checkout via paths parameter. Cached clones are reused when the remote HEAD hasn't changed. Content is immediately searchable after cloning.",
+        description = "Clone a git repository and index its content. Supports sparse checkout via paths parameter. Cached clones are reused when the remote HEAD hasn't changed. Content is immediately searchable after cloning. Supports MCP Tasks for async execution.",
         output_schema = tool_output_schema::<CloneOutputData>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = true)
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = true),
+        execution(task_support = "optional")
     )]
     async fn clone_repo(
         &self,
@@ -1699,98 +1765,8 @@ impl IrisServer {
                 )]));
             };
 
-            // Async mode: spawn background task and return handle immediately.
-            if params.async_task {
-                let task_id = self
-                    .task_manager
-                    .create(&format!("cloning {}", params.repo))
-                    .await;
-                let task_mgr = Arc::clone(&self.task_manager);
-                let git_fetcher = Arc::clone(git_fetcher);
-                let pipeline = Arc::clone(&self.ingestion_pipeline);
-                let storage = Arc::clone(storage);
-                let embedder = Arc::clone(embedder);
-                let index = Arc::clone(index);
-                let budget = Arc::clone(&self.budget);
-                let tid = task_id.clone();
-                let repo_name = params.repo.clone();
-
-                tokio::spawn(async move {
-                    let clone_start = std::time::Instant::now();
-                    let clone_result = match GitFetcher::clone(
-                        &git_fetcher,
-                        &params.repo,
-                        params.paths.as_deref(),
-                        params.branch.as_deref(),
-                    )
-                    .await
-                    {
-                        Ok(r) => r,
-                        Err(e) => {
-                            task_mgr.fail(&tid, format!("clone failed: {e}")).await;
-                            return;
-                        }
-                    };
-                    let clone_time_ms = elapsed_millis(clone_start);
-                    task_mgr
-                        .update_progress(&tid, "indexing cloned content…")
-                        .await;
-
-                    let ingest_start = std::time::Instant::now();
-                    let ingest_result = pipeline
-                        .ingest_directory_with_embeddings(
-                            &clone_result.clone_dir,
-                            storage.as_ref(),
-                            embedder.as_ref(),
-                            index.as_ref(),
-                        )
-                        .await;
-                    let index_time_ms = elapsed_millis(ingest_start);
-
-                    match ingest_result {
-                        Ok(stats) => {
-                            // Record git cache (best-effort).
-                            let git_cache_record = iris_core::storage::GitCacheRecord {
-                                repo_url: params.repo.clone(),
-                                branch: params.branch.clone(),
-                                commit_sha: clone_result.metadata.commit_sha.clone(),
-                                clone_timestamp: clone_result.metadata.clone_timestamp.clone(),
-                                clone_dir: clone_result.clone_dir.to_string_lossy().to_string(),
-                                checked_out_paths: clone_result.metadata.checked_out_paths.clone(),
-                            };
-                            let _ = storage.upsert_git_cache(&git_cache_record).await;
-
-                            let budget_status = budget.lock().await.budget_status();
-                            let response = CloneResponse {
-                                files_discovered: clone_result.files.len(),
-                                files_indexed: stats.files_indexed,
-                                sections_extracted: stats.total_sections,
-                                clone_time_ms,
-                                index_time_ms,
-                                from_cache: clone_result.from_cache,
-                            };
-                            let value = serde_json::json!({
-                                "data": response,
-                                "budget_status": budget_status,
-                            });
-                            task_mgr.complete(&tid, value).await;
-                        }
-                        Err(e) => {
-                            task_mgr
-                                .fail(&tid, format!("clone succeeded but ingestion failed: {e}"))
-                                .await;
-                        }
-                    }
-                });
-
-                let response = AsyncTaskResponse {
-                    task_id,
-                    status: "running",
-                    message: format!("Cloning {repo_name} in background. Poll with iris_task.",),
-                };
-                return structured_result(&response);
-            }
-
+            // When invoked as an MCP Task, rmcp's enqueue_task handles the
+            // async lifecycle. This code path always runs synchronously.
             self.clone_and_ingest(
                 &params,
                 git_fetcher,
@@ -1804,15 +1780,15 @@ impl IrisServer {
         .await
     }
 
-    /// Poll the status of a background task spawned by `iris_fetch` or `iris_clone`.
+    /// Poll the status of a background task.
     ///
-    /// Returns the current status (`running`, `completed`, or `failed`) and,
-    /// when complete, the same result payload the synchronous tool would have
-    /// returned.
+    /// Delegates to the MCP task manager. Prefer using the protocol-native
+    /// `tasks/get` and `tasks/result` methods instead. This tool is retained
+    /// for backward compatibility.
     #[tool(
         name = "iris_task",
-        description = "Poll a background task spawned by iris_fetch or iris_clone with async_task=true. Returns status and result when complete.",
-        output_schema = tool_output_schema::<crate::task::TaskStatus>(),
+        description = "Poll a background task. Deprecated: prefer the MCP tasks/get protocol method. Returns task status (working, completed, failed, cancelled).",
+        output_schema = tool_output_schema::<TaskStatusResponse>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn task_status(
@@ -1824,8 +1800,8 @@ impl IrisServer {
         async {
             debug!(task_id = %params.task_id, "iris_task request");
 
-            match self.task_manager.get(&params.task_id).await {
-                Some(status) => structured_result(&status),
+            match self.task_manager.get_task(&params.task_id).await {
+                Some(task) => structured_result(&task),
                 None => Ok(CallToolResult::error(vec![Content::text(format!(
                     "unknown task ID: {}. Tasks expire 5 minutes after completion.",
                     params.task_id
@@ -2056,7 +2032,7 @@ impl IrisServer {
             embedder: None,
             index: None,
             ingestion_progress: Arc::new(IngestionProgress::new()),
-            task_manager: Arc::new(TaskManager::new()),
+            task_manager: Arc::new(McpTaskManager::new()),
             peer: Arc::new(Mutex::new(None)),
             subscriptions: Arc::new(Mutex::new(HashSet::new())),
             coherence_rx: Arc::new(Mutex::new(None)),
@@ -2109,7 +2085,7 @@ impl IrisServer {
             embedder: None,
             index: None,
             ingestion_progress: Arc::new(IngestionProgress::new()),
-            task_manager: Arc::new(TaskManager::new()),
+            task_manager: Arc::new(McpTaskManager::new()),
             peer: Arc::new(Mutex::new(None)),
             subscriptions: Arc::new(Mutex::new(HashSet::new())),
             coherence_rx: Arc::new(Mutex::new(None)),
@@ -2516,7 +2492,6 @@ impl IrisServer {
                         repo: record.repo_url.clone(),
                         paths: paths_opt,
                         branch: record.branch.clone(),
-                        async_task: false,
                     };
                     match self
                         .clone_and_ingest(&params, git_fetcher, embedder, index, storage.as_ref())
@@ -4059,7 +4034,6 @@ mod tests {
                 repo: "https://github.com/octocat/Hello-World.git".to_string(),
                 paths: None,
                 branch: None,
-                async_task: false,
             }))
             .await
             .unwrap();
@@ -4098,7 +4072,6 @@ mod tests {
                 repo: String::new(),
                 paths: None,
                 branch: None,
-                async_task: false,
             }))
             .await
             .unwrap();
@@ -4402,35 +4375,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_status_returns_running_task() {
+    async fn task_status_returns_working_task() {
         let server = setup_server().await;
-        let task_id = server.task_manager.create("test task").await;
+        let task = server.task_manager.create("test task", None).await;
 
         let result = server
             .task_status(Parameters(TaskParams {
-                task_id: task_id.clone(),
+                task_id: task.task_id.clone(),
             }))
             .await
             .unwrap();
 
         assert!(result.is_error.is_none() || !result.is_error.unwrap());
         let text = extract_text(&result.content);
-        assert!(text.contains("running"), "should show running: {text}");
+        assert!(text.contains("working"), "should show working: {text}");
         assert!(text.contains("test task"), "should show message: {text}");
     }
 
     #[tokio::test]
     async fn task_status_returns_completed_task() {
         let server = setup_server().await;
-        let task_id = server.task_manager.create("test task").await;
+        let task = server.task_manager.create("test task", None).await;
+        let tool_result = CallToolResult::success(vec![Content::text(
+            serde_json::json!({"pages": 5}).to_string(),
+        )]);
         server
             .task_manager
-            .complete(&task_id, serde_json::json!({"pages": 5}))
+            .complete(&task.task_id, tool_result)
             .await;
 
         let result = server
             .task_status(Parameters(TaskParams {
-                task_id: task_id.clone(),
+                task_id: task.task_id.clone(),
             }))
             .await
             .unwrap();
@@ -4438,25 +4414,20 @@ mod tests {
         assert!(result.is_error.is_none() || !result.is_error.unwrap());
         let text = extract_text(&result.content);
         assert!(text.contains("completed"), "should show completed: {text}");
-        // Structured output uses compact JSON (no spaces after colons)
-        assert!(
-            text.contains("pages") && text.contains('5'),
-            "should include result: {text}"
-        );
     }
 
     #[tokio::test]
     async fn task_status_returns_failed_task() {
         let server = setup_server().await;
-        let task_id = server.task_manager.create("test task").await;
+        let task = server.task_manager.create("test task", None).await;
         server
             .task_manager
-            .fail(&task_id, "something broke".to_string())
+            .fail(&task.task_id, "something broke")
             .await;
 
         let result = server
             .task_status(Parameters(TaskParams {
-                task_id: task_id.clone(),
+                task_id: task.task_id.clone(),
             }))
             .await
             .unwrap();
@@ -4673,16 +4644,112 @@ mod tests {
         );
     }
 
-    /// Verify that `TaskStatus` generates a valid schema.
+    /// Verify that `TaskStatusResponse` generates a valid schema.
     #[test]
     fn task_status_schema_is_valid() {
-        let schema = tool_output_schema::<crate::task::TaskStatus>();
-        // Tagged enum should produce anyOf or oneOf
+        let schema = tool_output_schema::<TaskStatusResponse>();
         assert!(
-            schema.contains_key("oneOf")
-                || schema.contains_key("anyOf")
-                || schema.contains_key("properties"),
-            "TaskStatus schema should have variant discriminator: {schema:?}"
+            schema.contains_key("properties"),
+            "TaskStatusResponse schema should have properties: {schema:?}"
+        );
+    }
+
+    /// Verify that tasks capability is declared.
+    #[tokio::test]
+    async fn capabilities_include_tasks() {
+        let server = setup_server().await;
+        let info = server.get_info();
+        assert!(
+            info.capabilities.tasks.is_some(),
+            "server should declare tasks capability"
+        );
+    }
+
+    // --- MCP Task manager integration tests ---
+
+    #[tokio::test]
+    async fn mcp_task_list_returns_active_tasks() {
+        let server = setup_server().await;
+        server.task_manager.create("task 1", None).await;
+        server.task_manager.create("task 2", None).await;
+
+        let task_list = server.task_manager.list_tasks().await;
+        assert_eq!(task_list.tasks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn mcp_task_get_returns_metadata() {
+        let server = setup_server().await;
+        let task = server.task_manager.create("indexing…", None).await;
+
+        let info = server.task_manager.get_task(&task.task_id).await.unwrap();
+
+        assert_eq!(info.status, rmcp::model::TaskStatus::Working);
+        assert_eq!(info.status_message.as_deref(), Some("indexing…"));
+        assert!(info.poll_interval.is_some());
+    }
+
+    #[tokio::test]
+    async fn mcp_task_result_available_after_completion() {
+        let server = setup_server().await;
+        let task = server.task_manager.create("test", None).await;
+        let tool_result = CallToolResult::success(vec![Content::text("hello")]);
+        server
+            .task_manager
+            .complete(&task.task_id, tool_result)
+            .await;
+
+        let result = server.task_manager.get_result(&task.task_id).await;
+        assert!(
+            result.is_some(),
+            "result should be available after completion"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_task_result_unavailable_when_working() {
+        let server = setup_server().await;
+        let task = server.task_manager.create("test", None).await;
+
+        let result = server.task_manager.get_result(&task.task_id).await;
+        assert!(result.is_none(), "result should be None while working");
+    }
+
+    #[tokio::test]
+    async fn mcp_task_cancel_transitions_state() {
+        let server = setup_server().await;
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        });
+        let task = server.task_manager.create("long op", Some(handle)).await;
+
+        let cancelled = server.task_manager.cancel(&task.task_id).await.unwrap();
+        assert_eq!(cancelled.status, rmcp::model::TaskStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn fetch_tool_has_optional_task_support() {
+        let server = setup_server().await;
+        let fetch_tool = server
+            .get_tool("iris_fetch")
+            .expect("iris_fetch tool not found");
+        assert_eq!(
+            fetch_tool.task_support(),
+            rmcp::model::TaskSupport::Optional,
+            "iris_fetch should support optional task mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn clone_tool_has_optional_task_support() {
+        let server = setup_server().await;
+        let clone_tool = server
+            .get_tool("iris_clone")
+            .expect("iris_clone tool not found");
+        assert_eq!(
+            clone_tool.task_support(),
+            rmcp::model::TaskSupport::Optional,
+            "iris_clone should support optional task mode"
         );
     }
 }
