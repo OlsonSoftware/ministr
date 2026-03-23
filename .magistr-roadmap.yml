@@ -1208,3 +1208,5 @@ phases:
     checked: true
   - text: 'Fix missing implements refs: second-pass reference resolution after ingestion loop resolves refs whose target symbols were indexed after the referencing file'
     checked: true
+  - text: 'Wire bridge extraction pipeline into ingestion: framework detection, per-file endpoint extraction reusing tree-sitter ASTs, post-loop linking, SQLite storage — enables iris_bridge for PyO3, Tauri, NAPI, WasmBindgen, HttpRoute'
+    checked: true

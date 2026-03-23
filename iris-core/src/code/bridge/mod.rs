@@ -373,6 +373,32 @@ pub trait BridgeExtractor: Send + Sync {
     ) -> Vec<BridgeEndpoint>;
 }
 
+/// Create a [`BridgeLinker`] pre-configured with extractors for the given bridge kinds.
+///
+/// Typically called with the output of [`FrameworkDetector::detect`](detector::FrameworkDetector::detect).
+/// Returns `None` if `kinds` is empty (no bridge frameworks detected).
+#[must_use]
+pub fn create_linker_for_kinds(kinds: &[BridgeKind]) -> Option<linker::BridgeLinker> {
+    if kinds.is_empty() {
+        return None;
+    }
+    let mut linker = linker::BridgeLinker::new();
+    for kind in kinds {
+        match kind {
+            BridgeKind::PyO3 => linker.register(Box::new(pyo3::PyO3Extractor)),
+            BridgeKind::TauriCommand => linker.register(Box::new(tauri::TauriCommandExtractor)),
+            BridgeKind::TauriEvent => linker.register(Box::new(tauri::TauriEventExtractor)),
+            BridgeKind::Napi => linker.register(Box::new(napi::NapiExtractor)),
+            BridgeKind::WasmBindgen => {
+                linker.register(Box::new(wasm_bindgen::WasmBindgenExtractor));
+            }
+            BridgeKind::HttpRoute => linker.register(Box::new(http_route::HttpRouteExtractor)),
+            BridgeKind::Ffi => {} // No extractor yet
+        }
+    }
+    Some(linker)
+}
+
 // ---------------------------------------------------------------------------
 // Case conversion helpers
 // ---------------------------------------------------------------------------
