@@ -1005,7 +1005,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Workspace detection: auto-discover Cargo workspaces, npm/pnpm/yarn workspaces, monorepo layouts (turborepo, nx)
+- [x] Workspace detection: auto-discover Cargo workspaces, npm/pnpm/yarn workspaces, monorepo layouts (turborepo, nx)
 - [ ] Multi-root corpus: index multiple directories as a unified project, maintaining per-directory metadata and language stats
 - [ ] Cross-package import graph: track imports/dependencies between packages in a workspace
 - [ ] Cross-crate Rust references: resolve `use other_crate::Foo` to symbols in sibling workspace crates
