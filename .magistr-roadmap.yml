@@ -860,3 +860,5 @@ phases:
     checked: false
   - text: 'Attention-position-aware eviction scoring: weight mid-conversation content higher for eviction candidates'
     checked: false
+  - text: iris_compress returns identity (0% compression) for small sections — extractive compressor needs minimum-length threshold or skip logic
+    checked: true
