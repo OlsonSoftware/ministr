@@ -931,20 +931,20 @@ phases:
 - id: V24
   name: Elicitation & Interactive Budget
   tagline: Cache controller that negotiates with the agent
-  status: pending
+  status: done
   problem: Budget management is passive — iris can only recommend eviction in responses; agents must manually decide what to drop
   solution: Use MCP elicitation to proactively negotiate eviction under pressure, confirm expensive compression, and disambiguate search queries
   tasks:
   - text: Declare elicitation capability in ServerCapabilities
-    checked: false
+    checked: true
   - text: Budget pressure elicitation — when pressure ≥ elevated, ask agent which sections to evict
-    checked: false
+    checked: true
   - text: Compression mode elicitation — confirm before expensive abstractive compression via sampling
-    checked: false
+    checked: true
   - text: Search disambiguation — elicit to refine ambiguous iris_survey queries with follow-up
-    checked: false
+    checked: true
   - text: Tests for elicitation request/response flow with mock client
-    checked: false
+    checked: true
 - id: V25
   name: MCP Prompts & Completions
   tagline: Predefined workflows and tab-completion for IDs

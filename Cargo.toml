@@ -91,7 +91,7 @@ tree-sitter-c-sharp = "0.23"
 clap = { version = "4", features = ["derive"] }
 
 # MCP
-rmcp = { version = "1.2", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "1.2", features = ["server", "transport-io", "transport-streamable-http-server", "elicitation", "schemars"] }
 axum = "0.8"
 
 # Testing
