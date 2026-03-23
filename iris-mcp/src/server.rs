@@ -570,6 +570,14 @@ pub struct SymbolsParams {
     /// Exact visibility filter (e.g. "pub", "pub(crate)", "").
     #[schemars(description = "Exact visibility filter: 'pub', 'pub(crate)', 'pub(super)', ''")]
     pub visibility: Option<String>,
+
+    /// Number of entries to skip (default: 0). Use with `limit` for pagination.
+    #[schemars(description = "Number of entries to skip (default: 0)")]
+    pub offset: Option<usize>,
+
+    /// Maximum number of entries to return (default: 100).
+    #[schemars(description = "Maximum number of entries to return (default: 100)")]
+    pub limit: Option<usize>,
 }
 
 /// Parameters for the `iris_definition` tool.
@@ -592,6 +600,14 @@ pub struct ReferencesParams {
         description = "Optional reference kind filter: 'calls', 'implements', 'imports', 'uses', 'bridge'"
     )]
     pub ref_kind: Option<String>,
+
+    /// Number of entries to skip (default: 0). Use with `limit` for pagination.
+    #[schemars(description = "Number of entries to skip (default: 0)")]
+    pub offset: Option<usize>,
+
+    /// Maximum number of entries to return (default: 100).
+    #[schemars(description = "Maximum number of entries to return (default: 100)")]
+    pub limit: Option<usize>,
 }
 
 /// Response from the `iris_symbols` tool.
@@ -599,8 +615,10 @@ pub struct ReferencesParams {
 struct SymbolsResponse {
     /// Matching symbols.
     symbols: Vec<SymbolSummary>,
-    /// Total number of matches.
+    /// Total number of matches (before pagination).
     total: usize,
+    /// Offset of the first returned entry within the full list.
+    offset: usize,
 }
 
 /// A compact symbol summary for search results.
@@ -634,8 +652,10 @@ struct SymbolSummary {
 struct ReferencesResponse {
     /// Cross-references for the symbol.
     references: Vec<SymbolRefResult>,
-    /// Total number of references.
+    /// Total number of references (before pagination).
     total: usize,
+    /// Offset of the first returned entry within the full list.
+    offset: usize,
 }
 
 /// Parameters for the `iris_bridge` tool.
@@ -782,14 +802,46 @@ fn tool_output_schema<T: schemars::JsonSchema + 'static>() -> std::sync::Arc<rmc
     std::sync::Arc::new(schema)
 }
 
+/// Maximum serialized response size in bytes before the guard injects a warning.
+const MAX_RESPONSE_BYTES: usize = 100_000;
+
 /// Serialize a value into a `CallToolResult` with structured content.
 ///
 /// Sets both `structured_content` (JSON object) and `content` (text fallback)
 /// for backward compatibility with clients that don't support structured output.
+///
+/// Includes a response size guard: if the serialized JSON exceeds
+/// [`MAX_RESPONSE_BYTES`], a `_truncation_warning` is injected into the
+/// response object advising the caller to use pagination parameters.
 fn structured_result(value: &impl Serialize) -> Result<CallToolResult, McpError> {
     let v = serde_json::to_value(value)
         .map_err(|e| McpError::internal_error(format!("serialization failed: {e}"), None))?;
+
+    // Response size guard: warn (but still deliver) when the payload is large.
+    let v = apply_response_size_guard(v);
+
     Ok(CallToolResult::structured(v))
+}
+
+/// If the serialized JSON exceeds [`MAX_RESPONSE_BYTES`], inject a
+/// `_truncation_warning` field advising the caller to paginate.
+fn apply_response_size_guard(mut v: serde_json::Value) -> serde_json::Value {
+    // Only measure object responses (all tool responses are objects).
+    if let Some(obj) = v.as_object_mut() {
+        // Fast byte-length estimate: serde_json::to_string length.
+        let size = serde_json::to_string(obj).map_or(0, |s| s.len());
+        if size > MAX_RESPONSE_BYTES {
+            obj.insert(
+                "_truncation_warning".to_string(),
+                serde_json::json!({
+                    "message": "Response exceeds size threshold. Use offset/limit parameters to paginate.",
+                    "response_bytes": size,
+                    "threshold_bytes": MAX_RESPONSE_BYTES,
+                }),
+            );
+        }
+    }
+    v
 }
 
 #[tool_handler]
@@ -2266,7 +2318,7 @@ impl IrisServer {
     /// and `iris_references`.
     #[tool(
         name = "iris_symbols",
-        description = "Search the code symbol index. Filter by name (fuzzy), kind, module, or visibility. Returns symbol IDs for use with iris_definition and iris_references.",
+        description = "Search the code symbol index. Filter by name (fuzzy), kind, module, or visibility. Returns symbol IDs for use with iris_definition and iris_references. Paginated: returns up to `limit` entries (default 100) starting at `offset` (default 0). Use `total` to know the full count.",
         output_schema = tool_output_schema::<ToolResponse<SymbolsResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2320,7 +2372,13 @@ impl IrisServer {
                         })
                         .collect();
 
-                    debug!(total, "iris_symbols success");
+                    // Apply pagination
+                    let offset = params.offset.unwrap_or(0);
+                    let limit = params.limit.unwrap_or(100);
+                    let paginated: Vec<_> =
+                        summaries.into_iter().skip(offset).take(limit).collect();
+
+                    debug!(total, offset, returned = paginated.len(), "iris_symbols success");
 
                     let reg = self.registry.lock().await;
                     let budget_status = reg
@@ -2331,7 +2389,7 @@ impl IrisServer {
                     drop(reg);
 
                     let response = self
-                        .build_response(SymbolsResponse { symbols: summaries, total }, budget_status)
+                        .build_response(SymbolsResponse { symbols: paginated, total, offset }, budget_status)
                         .await;
                     structured_result(&response)
                 }
@@ -2400,7 +2458,7 @@ impl IrisServer {
     /// with source locations.
     #[tool(
         name = "iris_references",
-        description = "Find all references to a code symbol: callers, implementors, importers, and cross-language bridge links. Optionally filter by reference kind.",
+        description = "Find all references to a code symbol: callers, implementors, importers, and cross-language bridge links. Optionally filter by reference kind. Paginated: returns up to `limit` entries (default 100) starting at `offset` (default 0). Use `total` to know the full count.",
         output_schema = tool_output_schema::<ToolResponse<ReferencesResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2425,7 +2483,14 @@ impl IrisServer {
             {
                 Ok(refs) => {
                     let total = refs.len();
-                    debug!(symbol_id = %params.symbol_id, total, "iris_references success");
+
+                    // Apply pagination
+                    let offset = params.offset.unwrap_or(0);
+                    let limit = params.limit.unwrap_or(100);
+                    let paginated: Vec<_> =
+                        refs.into_iter().skip(offset).take(limit).collect();
+
+                    debug!(symbol_id = %params.symbol_id, total, offset, returned = paginated.len(), "iris_references success");
 
                     let reg = self.registry.lock().await;
                     let budget_status = reg
@@ -2438,8 +2503,9 @@ impl IrisServer {
                     let response = self
                         .build_response(
                             ReferencesResponse {
-                                references: refs,
+                                references: paginated,
                                 total,
+                                offset,
                             },
                             budget_status,
                         )
@@ -6176,5 +6242,122 @@ mod tests {
         assert_eq!(parsed["corpus_stats"]["offset"], 100);
         assert_eq!(parsed["corpus_stats"]["returned"], 0);
         assert!(parsed["entries"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn symbols_pagination_defaults() {
+        let server = setup_server().await;
+        let result = server
+            .symbols(Parameters(SymbolsParams {
+                query: None,
+                kind: None,
+                module: None,
+                visibility: None,
+                offset: None,
+                limit: None,
+            }))
+            .await
+            .unwrap();
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        // Test corpus has no symbols — verify pagination metadata defaults
+        assert_eq!(parsed["total"], 0);
+        assert_eq!(parsed["offset"], 0);
+        assert!(parsed["symbols"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn symbols_pagination_with_offset_and_limit() {
+        let server = setup_server().await;
+        let result = server
+            .symbols(Parameters(SymbolsParams {
+                query: None,
+                kind: None,
+                module: None,
+                visibility: None,
+                offset: Some(50),
+                limit: Some(10),
+            }))
+            .await
+            .unwrap();
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(parsed["total"], 0);
+        assert_eq!(parsed["offset"], 50);
+        assert!(parsed["symbols"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn references_pagination_defaults() {
+        let server = setup_server().await;
+        // Non-existent symbol returns an error (no symbol table in test corpus).
+        // Verify the handler doesn't panic and returns a valid CallToolResult.
+        let result = server
+            .references(Parameters(ReferencesParams {
+                symbol_id: "nonexistent::symbol".into(),
+                ref_kind: None,
+                offset: None,
+                limit: None,
+            }))
+            .await
+            .unwrap();
+        // Error path returns plain text, not JSON — just verify it completes.
+        assert!(!result.content.is_empty());
+    }
+
+    #[test]
+    fn references_response_includes_offset_and_total() {
+        let response = ReferencesResponse {
+            references: vec![],
+            total: 42,
+            offset: 10,
+        };
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["total"], 42);
+        assert_eq!(json["offset"], 10);
+        assert!(json["references"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn symbols_response_includes_offset_and_total() {
+        let response = SymbolsResponse {
+            symbols: vec![],
+            total: 99,
+            offset: 20,
+        };
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["total"], 99);
+        assert_eq!(json["offset"], 20);
+        assert!(json["symbols"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn response_size_guard_injects_warning_for_large_payloads() {
+        // Create a JSON object larger than MAX_RESPONSE_BYTES
+        let big_string = "x".repeat(MAX_RESPONSE_BYTES + 1);
+        let v = serde_json::json!({ "data": big_string });
+        let result = apply_response_size_guard(v);
+        assert!(
+            result.get("_truncation_warning").is_some(),
+            "expected _truncation_warning for large payload"
+        );
+        let warning = &result["_truncation_warning"];
+        assert!(warning["response_bytes"].as_u64().unwrap() > MAX_RESPONSE_BYTES as u64);
+        assert_eq!(
+            warning["threshold_bytes"].as_u64().unwrap(),
+            MAX_RESPONSE_BYTES as u64
+        );
+    }
+
+    #[test]
+    fn response_size_guard_skips_small_payloads() {
+        let v = serde_json::json!({ "data": "small" });
+        let result = apply_response_size_guard(v);
+        assert!(
+            result.get("_truncation_warning").is_none(),
+            "should not inject warning for small payload"
+        );
     }
 }

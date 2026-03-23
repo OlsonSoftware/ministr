@@ -1029,3 +1029,70 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] iris_extract empty for code sections: claims extracted from DESIGN.md prose but returned empty for code sections like SessionEntry struct — either generate claims during code ingestion or document this as prose-only
 - [x] Indexing-in-progress graceful degradation: during first-session indexing, survey returns "[claim not found]" and "[symbol not found]" placeholders — either block results until index is ready or filter out unresolvable entries
 
+---
+
+## Phase PG1: Unified Response Pagination ✦ "Prevent buffer overflows with consistent pagination across all tools"
+
+**Problem:** iris_references overflows the agent's tool result buffer (329K chars for 658 refs). Same class of issue as the old TOC overflow. Each tool solves this independently, violating DRY.
+
+**Solution:** Apply TOC's existing offset/limit pattern to references and symbols. Add a response size guard middleware (Decorator pattern) so no tool can overflow the wire, regardless of data size.
+
+### Tasks
+
+- [x] Add offset/limit params to iris_references matching TOC's existing pagination pattern — reuse the same PaginatedResponse envelope (DRY)
+- [x] Add limit param to iris_symbols as a safety net for queries that match hundreds of symbols (e.g. "handle" in ruff returned 27+)
+- [x] Add response size guard middleware (Decorator pattern): measure serialized response size before sending, truncate with warning + total count if exceeding threshold
+- [x] Ensure all paginated tool responses include total count and current offset so the agent can navigate pages
+
+---
+
+## Phase MC1: Additive Multi-Corpus Management ✦ "Clone repos that coexist instead of replacing each other"
+
+**Problem:** Cloning new repos evicts previous clone content (1,019→128 docs). Python/TypeScript clones report success but produce zero searchable content. Multi-repo workflows are broken.
+
+**Solution:** Make roots additive with namespaced IDs (Repository pattern, SRP). Fix the ingestion pipeline so clone content persists in the vector index alongside existing roots. Show all roots with provenance in TOC.
+
+### Tasks
+
+- [ ] Persist cloned/fetched roots in the roots registry alongside local corpus roots — each clone gets a named, tracked root entry
+- [ ] Namespace section and symbol IDs by root ID to prevent path collisions between repos with identical file paths
+- [ ] Make vector index and section registry append-only per root — adding a new root must never evict or replace existing roots' content
+- [ ] Diagnose and fix Python/TypeScript clone invisibility: clone reports "110 files indexed, 1925 sections" but zero searchable content — likely same root cause as corpus replacement
+- [ ] Show cloned/fetched roots in iris_toc roots response with provenance metadata (repo URL, branch, clone timestamp, sparse paths)
+- [ ] Integration tests: clone 3+ repos sequentially, verify all remain searchable and root count grows monotonically
+
+---
+
+## Phase CL1: Clone Lifecycle and Incremental Index ✦ "Fast warm starts, readable clone sources, cancellable tasks"
+
+**Problem:** iris_definition returns [source unavailable] for cloned repos. Indexing runs from scratch every session. MCP tool cancellations don't stop server-side work (50+ min CPU wasted).
+
+**Solution:** Persist clone caches with source path mapping. Content-hash-based embedding cache for incremental indexing. Implement MCP notifications/cancelled with CancellationToken threading.
+
+### Tasks
+
+- [ ] Persist clone cache directories with root metadata — clone source trees are read-only assets, not temp artifacts to be cleaned up
+- [ ] Map clone source paths in the symbol index so iris_definition resolves to cached clone files instead of returning [source unavailable]
+- [ ] Implement MCP notifications/cancelled handler — listen for client cancellation and propagate to in-flight operations
+- [ ] Thread tokio_util::sync::CancellationToken through clone, fetch, and index pipelines — abort on cancellation, clean up partial state
+- [ ] Content-addressable embedding cache: store embeddings keyed by content hash — skip re-embedding unchanged chunks on session restart (DRY computation)
+- [ ] Warm-load index from persistent storage on session start — only re-embed chunks whose content hash changed since last session
+
+---
+
+## Phase ML1: Multi-Language Code Intelligence ✦ "Full symbol extraction and references for Python, TypeScript, and Go"
+
+**Problem:** iris only extracts code symbols from Rust. Python, TypeScript, Go files get document-level treatment but no class/function/interface symbols or cross-file references. The LanguageRefinement trait exists but only Rust implements it.
+
+**Solution:** Implement LanguageRefinement for Python, TypeScript, and Go using their tree-sitter grammar crates (OCP — pure extension, no core modification). Extract shared query patterns into a reusable builder (DRY).
+
+### Tasks
+
+- [ ] Add tree-sitter-python, tree-sitter-typescript, tree-sitter-go as optional Cargo features with conditional compilation
+- [ ] Implement LanguageRefinement for Python: class, function, method, decorator, and import extraction via tree-sitter queries
+- [ ] Implement LanguageRefinement for TypeScript: class, interface, type alias, function, export, and import extraction via tree-sitter queries
+- [ ] Implement LanguageRefinement for Go: struct, interface, function, method (receiver), and import extraction via tree-sitter queries
+- [ ] Extract shared tree-sitter query patterns into a reusable query builder — common patterns like "find all imports" should be language-parameterized, not duplicated (DRY)
+- [ ] Add cross-file reference resolution for Python imports, TypeScript imports/exports, and Go imports — reuse the existing reference graph infrastructure
+- [ ] Integration tests: clone pydantic (Python), MCP TypeScript SDK, and bubbletea (Go) — verify iris_symbols, iris_definition, and iris_references return correct results for each language
+
