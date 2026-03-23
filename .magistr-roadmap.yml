@@ -974,7 +974,7 @@ phases:
   - text: Extension negotiation during initialization handshake
     checked: true
   - text: Server Cards — expose .well-known/mcp.json with tool catalog, capabilities, and version metadata
-    checked: false
+    checked: true
   - text: OAuth 2.1 framework for remote Streamable HTTP deployment
     checked: false
 - id: V27
