@@ -35,6 +35,15 @@ iris index --corpus ./iris-core/src  # pre-warm the index
 
 Always use `--release` when running iris (debug mode is unusably slow due to ONNX + XProtect).
 
+## Testing iris Changes
+
+**NEVER spin up a second iris instance against this repo.** The iris MCP server is already running on this codebase. A second instance causes conflicts — shared SQLite, shared HNSW indexes, shared session state — leading to corrupted results and false conclusions.
+
+- **Using the live MCP tools** (iris_survey, iris_symbols, etc.) in a session is fine — that's what they're for
+- **After implementing changes to iris**, run `cargo install --path iris-cli` to rebuild, then ask the user to restart the session so the new binary is picked up by the MCP server. **Wait for explicit go-ahead** before continuing — do not proceed until the user confirms the new session is ready
+- For automated tests: use `cargo test` with `tempdir()` fixtures — never point test harnesses at the live working directory
+- Never run `iris index --corpus ./iris-core/src` or spin up a CLI instance against this repo while the MCP server is running
+
 ## Key Conventions
 
 - See `.claude/rules/conventions.md` for full coding conventions

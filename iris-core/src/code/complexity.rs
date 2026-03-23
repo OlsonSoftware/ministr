@@ -48,10 +48,7 @@ fn count_decision_points(node: &tree_sitter::Node, source: &[u8]) -> u32 {
         // Each `if` is a decision point (covers both `if` and `else if`).
         // Loops are decision points (enter vs skip/exit).
         // `?` operator — early return on error.
-        "if_expression"
-        | "while_expression"
-        | "for_expression"
-        | "loop_expression"
+        "if_expression" | "while_expression" | "for_expression" | "loop_expression"
         | "try_expression" => count += 1,
 
         // Each match arm beyond the first is a decision point.
