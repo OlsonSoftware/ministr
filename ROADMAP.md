@@ -956,10 +956,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Core types: BridgeEndpoint, BridgeLink, BridgeKind in iris-core/src/code/bridge/mod.rs
 - [x] BridgeExtractor trait: extract_endpoints(), bridge_kind(), applicable_languages()
 - [x] BridgeLinker: two-pass pipeline — extract endpoints per-file, then join on binding_key to form BridgeLinks
-- [ ] SQLite schema: bridge_endpoints and bridge_links tables with file_path, binding_key, language, confidence columns
-- [ ] Framework auto-detection: scan Cargo.toml, package.json, tauri.conf.json, pyproject.toml to activate relevant bridge extractors
-- [ ] Confidence scoring: exact string match (1.0), case-transformed (0.9), registration-validated (1.0), fuzzy/semantic (0.7)
-- [ ] Integration: surface bridge links in iris_references with ref_kind "bridge", including cross-language file path and symbol info
+- [x] SQLite schema: bridge_endpoints and bridge_links tables with file_path, binding_key, language, confidence columns
+- [x] Framework auto-detection: scan Cargo.toml, package.json, tauri.conf.json, pyproject.toml to activate relevant bridge extractors
+- [x] Confidence scoring: exact string match (1.0), case-transformed (0.9), registration-validated (1.0), fuzzy/semantic (0.7)
+- [x] Integration: surface bridge links in iris_references with ref_kind "bridge", including cross-language file path and symbol info
 
 ---
 

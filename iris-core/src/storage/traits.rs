@@ -236,6 +236,71 @@ pub struct SymbolRefRecord {
     pub ref_kind: RefKind,
 }
 
+/// A stored bridge endpoint record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeEndpointRecord {
+    /// Auto-generated row ID (set after insert).
+    pub id: Option<i64>,
+    /// Source file path relative to corpus root.
+    pub file_path: String,
+    /// Canonical binding key for cross-language joining.
+    pub binding_key: String,
+    /// Bridge mechanism kind (e.g. `"tauri_command"`).
+    pub kind: String,
+    /// Endpoint role: `"export"` or `"import"`.
+    pub role: String,
+    /// Source language (e.g. `"rust"`, `"typescript"`).
+    pub language: String,
+    /// Source line number.
+    pub line: u32,
+    /// Symbol name as it appears in source.
+    pub symbol_name: String,
+    /// Confidence score in the range `0.0..=1.0`.
+    pub confidence: f32,
+}
+
+/// A stored bridge link joining an export and import endpoint.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeLinkRecord {
+    /// Export endpoint row ID.
+    pub export_ep_id: i64,
+    /// Import endpoint row ID.
+    pub import_ep_id: i64,
+    /// Bridge mechanism kind.
+    pub kind: String,
+    /// Combined confidence: `min(export, import)`.
+    pub confidence: f32,
+}
+
+/// A detailed bridge link result with endpoint information inlined.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeLinkDetail {
+    /// Bridge mechanism kind.
+    pub kind: String,
+    /// Combined confidence.
+    pub confidence: f32,
+    /// Export endpoint file path.
+    pub export_file: String,
+    /// Export binding key.
+    pub export_binding_key: String,
+    /// Export symbol name.
+    pub export_symbol: String,
+    /// Export language.
+    pub export_language: String,
+    /// Export line number.
+    pub export_line: u32,
+    /// Import endpoint file path.
+    pub import_file: String,
+    /// Import binding key.
+    pub import_binding_key: String,
+    /// Import symbol name.
+    pub import_symbol: String,
+    /// Import language.
+    pub import_language: String,
+    /// Import line number.
+    pub import_line: u32,
+}
+
 /// Filter criteria for querying the symbol index.
 ///
 /// All fields are optional — `None` means "no filter" for that field.
@@ -543,4 +608,37 @@ pub trait Storage: Send + Sync {
         &self,
         symbol_ids: &[SymbolId],
     ) -> impl Future<Output = Result<std::collections::HashMap<SymbolId, u32>, StorageError>> + Send;
+
+    // -- Bridge endpoints & links --
+
+    /// Insert a batch of bridge endpoints, returning their auto-generated row IDs.
+    fn insert_bridge_endpoints(
+        &self,
+        endpoints: &[BridgeEndpointRecord],
+    ) -> impl Future<Output = Result<Vec<i64>, StorageError>> + Send;
+
+    /// Insert a batch of bridge links between previously inserted endpoints.
+    fn insert_bridge_links(
+        &self,
+        links: &[BridgeLinkRecord],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Query bridge links with optional filters.
+    ///
+    /// When `file_path` is provided, returns links where either the export
+    /// or import endpoint is in that file. When `kind` is provided, filters
+    /// to that bridge mechanism.
+    fn query_bridge_links(
+        &self,
+        file_path: Option<&str>,
+        kind: Option<&str>,
+    ) -> impl Future<Output = Result<Vec<BridgeLinkDetail>, StorageError>> + Send;
+
+    /// Delete all bridge endpoints and links for a given file path.
+    ///
+    /// Used during re-indexing to clean up stale bridge data.
+    fn delete_bridge_data_for_file(
+        &self,
+        file_path: &str,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
 }

@@ -11,10 +11,15 @@
 //! - [`BridgeEndpoint`] — one side of a bridge (a definition or a call site)
 //! - [`BridgeLink`] — a matched export↔import pair
 //! - [`BridgeExtractor`] — trait that concrete extractors implement
+//! - [`ConfidenceLevel`] — standardized confidence scores for matching
 //!
 //! The [`linker`] submodule provides [`BridgeLinker`], a two-pass pipeline that
 //! collects endpoints from all extractors and joins them by binding key.
+//!
+//! The [`detector`] submodule provides [`FrameworkDetector`] for auto-detecting
+//! which bridge frameworks are present in a project.
 
+pub mod detector;
 pub mod linker;
 
 use std::fmt;
@@ -39,7 +44,7 @@ use serde::{Deserialize, Serialize};
 /// let parsed = BridgeKind::parse("wasm_bindgen");
 /// assert_eq!(parsed, Some(BridgeKind::WasmBindgen));
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BridgeKind {
     /// Tauri `#[tauri::command]` ↔ `invoke("name")` IPC calls.
@@ -139,6 +144,57 @@ impl EndpointRole {
 impl fmt::Display for EndpointRole {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// Standardized confidence levels for bridge endpoint matching.
+///
+/// Each level corresponds to a fixed numeric score. Use these when
+/// constructing [`BridgeEndpoint`]s to ensure consistent confidence
+/// values across all extractors.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::code::bridge::ConfidenceLevel;
+///
+/// assert!((ConfidenceLevel::Exact.score() - 1.0).abs() < f32::EPSILON);
+/// assert!((ConfidenceLevel::CaseTransformed.score() - 0.9).abs() < f32::EPSILON);
+/// assert!((ConfidenceLevel::Fuzzy.score() - 0.7).abs() < f32::EPSILON);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConfidenceLevel {
+    /// Exact string match between export and import binding keys.
+    Exact,
+    /// Cross-referenced with a handler registration macro (e.g.
+    /// `tauri::generate_handler![]`), confirming the binding is valid.
+    RegistrationValidated,
+    /// Name matched after case transformation (e.g. `snake_case` → `camelCase`).
+    CaseTransformed,
+    /// Fuzzy or semantic match (e.g. embedding similarity, heuristic).
+    Fuzzy,
+}
+
+impl ConfidenceLevel {
+    /// Returns the numeric confidence score for this level.
+    #[must_use]
+    pub fn score(self) -> f32 {
+        match self {
+            Self::Exact | Self::RegistrationValidated => 1.0,
+            Self::CaseTransformed => 0.9,
+            Self::Fuzzy => 0.7,
+        }
+    }
+}
+
+impl fmt::Display for ConfidenceLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Exact => f.write_str("exact"),
+            Self::RegistrationValidated => f.write_str("registration_validated"),
+            Self::CaseTransformed => f.write_str("case_transformed"),
+            Self::Fuzzy => f.write_str("fuzzy"),
+        }
     }
 }
 
@@ -455,5 +511,36 @@ mod tests {
         let back: BridgeLink = serde_json::from_str(&json).unwrap();
         assert_eq!(back.kind, link.kind);
         assert!((back.confidence - link.confidence).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn confidence_level_scores() {
+        assert!((ConfidenceLevel::Exact.score() - 1.0).abs() < f32::EPSILON);
+        assert!((ConfidenceLevel::RegistrationValidated.score() - 1.0).abs() < f32::EPSILON);
+        assert!((ConfidenceLevel::CaseTransformed.score() - 0.9).abs() < f32::EPSILON);
+        assert!((ConfidenceLevel::Fuzzy.score() - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn confidence_level_display() {
+        assert_eq!(ConfidenceLevel::Exact.to_string(), "exact");
+        assert_eq!(
+            ConfidenceLevel::RegistrationValidated.to_string(),
+            "registration_validated"
+        );
+        assert_eq!(
+            ConfidenceLevel::CaseTransformed.to_string(),
+            "case_transformed"
+        );
+        assert_eq!(ConfidenceLevel::Fuzzy.to_string(), "fuzzy");
+    }
+
+    #[test]
+    fn bridge_kind_ordering() {
+        // BridgeKind should be Ord for use in BTreeSet
+        let mut kinds = [BridgeKind::Ffi, BridgeKind::TauriCommand, BridgeKind::Napi];
+        kinds.sort();
+        // Just verify it doesn't panic and produces a deterministic order
+        assert_eq!(kinds.len(), 3);
     }
 }

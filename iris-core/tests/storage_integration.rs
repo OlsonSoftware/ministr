@@ -4,7 +4,10 @@
 //! CRUD operations, concurrent access, WAL behavior, and migrations.
 
 use iris_core::session::{EvictionPolicy, Session, SessionId};
-use iris_core::storage::{SqliteStorage, Storage, SymbolFilter, SymbolRecord, SymbolRefRecord};
+use iris_core::storage::{
+    BridgeEndpointRecord, BridgeLinkRecord, SqliteStorage, Storage, SymbolFilter, SymbolRecord,
+    SymbolRefRecord,
+};
 use iris_core::types::{
     Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RefKind, RelationType, Resolution,
     Section, SectionId, SymbolId,
@@ -356,7 +359,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 9);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 10);
 }
 
 #[tokio::test]
@@ -1797,4 +1800,162 @@ async fn cyclomatic_complexity_stored_and_retrieved() {
         .unwrap()
         .unwrap();
     assert_eq!(struc.cyclomatic_complexity, None);
+}
+
+// ── Bridge endpoint & link tests ─────────────────────────────────────
+
+fn sample_bridge_endpoints() -> Vec<BridgeEndpointRecord> {
+    vec![
+        BridgeEndpointRecord {
+            id: None,
+            file_path: "src-tauri/src/main.rs".into(),
+            binding_key: "greet".into(),
+            kind: "tauri_command".into(),
+            role: "export".into(),
+            language: "rust".into(),
+            line: 10,
+            symbol_name: "greet".into(),
+            confidence: 1.0,
+        },
+        BridgeEndpointRecord {
+            id: None,
+            file_path: "src/App.tsx".into(),
+            binding_key: "greet".into(),
+            kind: "tauri_command".into(),
+            role: "import".into(),
+            language: "typescript".into(),
+            line: 25,
+            symbol_name: "greet".into(),
+            confidence: 0.9,
+        },
+    ]
+}
+
+#[tokio::test]
+async fn bridge_insert_and_query_endpoints() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let eps = sample_bridge_endpoints();
+    let ids = storage.insert_bridge_endpoints(&eps).await.unwrap();
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1]);
+}
+
+#[tokio::test]
+async fn bridge_insert_and_query_links() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let eps = sample_bridge_endpoints();
+    let ids = storage.insert_bridge_endpoints(&eps).await.unwrap();
+
+    let links = vec![BridgeLinkRecord {
+        export_ep_id: ids[0],
+        import_ep_id: ids[1],
+        kind: "tauri_command".into(),
+        confidence: 0.9,
+    }];
+    storage.insert_bridge_links(&links).await.unwrap();
+
+    // Query all links
+    let all = storage.query_bridge_links(None, None).await.unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].kind, "tauri_command");
+    assert!((all[0].confidence - 0.9).abs() < f32::EPSILON);
+    assert_eq!(all[0].export_file, "src-tauri/src/main.rs");
+    assert_eq!(all[0].import_file, "src/App.tsx");
+    assert_eq!(all[0].export_symbol, "greet");
+    assert_eq!(all[0].import_symbol, "greet");
+    assert_eq!(all[0].export_language, "rust");
+    assert_eq!(all[0].import_language, "typescript");
+}
+
+#[tokio::test]
+async fn bridge_query_filter_by_file() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let eps = sample_bridge_endpoints();
+    let ids = storage.insert_bridge_endpoints(&eps).await.unwrap();
+    storage
+        .insert_bridge_links(&[BridgeLinkRecord {
+            export_ep_id: ids[0],
+            import_ep_id: ids[1],
+            kind: "tauri_command".into(),
+            confidence: 0.9,
+        }])
+        .await
+        .unwrap();
+
+    // Filter by export file
+    let by_rust = storage
+        .query_bridge_links(Some("src-tauri/src/main.rs"), None)
+        .await
+        .unwrap();
+    assert_eq!(by_rust.len(), 1);
+
+    // Filter by import file
+    let by_ts = storage
+        .query_bridge_links(Some("src/App.tsx"), None)
+        .await
+        .unwrap();
+    assert_eq!(by_ts.len(), 1);
+
+    // Filter by unrelated file
+    let by_other = storage
+        .query_bridge_links(Some("src/other.rs"), None)
+        .await
+        .unwrap();
+    assert!(by_other.is_empty());
+}
+
+#[tokio::test]
+async fn bridge_query_filter_by_kind() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let eps = sample_bridge_endpoints();
+    let ids = storage.insert_bridge_endpoints(&eps).await.unwrap();
+    storage
+        .insert_bridge_links(&[BridgeLinkRecord {
+            export_ep_id: ids[0],
+            import_ep_id: ids[1],
+            kind: "tauri_command".into(),
+            confidence: 0.9,
+        }])
+        .await
+        .unwrap();
+
+    let tauri = storage
+        .query_bridge_links(None, Some("tauri_command"))
+        .await
+        .unwrap();
+    assert_eq!(tauri.len(), 1);
+
+    let napi = storage
+        .query_bridge_links(None, Some("napi"))
+        .await
+        .unwrap();
+    assert!(napi.is_empty());
+}
+
+#[tokio::test]
+async fn bridge_delete_data_for_file() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let eps = sample_bridge_endpoints();
+    let ids = storage.insert_bridge_endpoints(&eps).await.unwrap();
+    storage
+        .insert_bridge_links(&[BridgeLinkRecord {
+            export_ep_id: ids[0],
+            import_ep_id: ids[1],
+            kind: "tauri_command".into(),
+            confidence: 0.9,
+        }])
+        .await
+        .unwrap();
+
+    // Delete data for the Rust file — should cascade to the link
+    storage
+        .delete_bridge_data_for_file("src-tauri/src/main.rs")
+        .await
+        .unwrap();
+
+    let remaining = storage.query_bridge_links(None, None).await.unwrap();
+    assert!(
+        remaining.is_empty(),
+        "link should be deleted when its export endpoint is removed"
+    );
 }

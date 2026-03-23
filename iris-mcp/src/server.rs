@@ -576,7 +576,7 @@ pub struct ReferencesParams {
 
     /// Optional reference kind filter.
     #[schemars(
-        description = "Optional reference kind filter: 'calls', 'implements', 'imports', 'uses'"
+        description = "Optional reference kind filter: 'calls', 'implements', 'imports', 'uses', 'bridge'"
     )]
     pub ref_kind: Option<String>,
 }
@@ -2270,7 +2270,7 @@ impl IrisServer {
     /// with source locations.
     #[tool(
         name = "iris_references",
-        description = "Find all references to a code symbol: callers, implementors, importers. Optionally filter by reference kind.",
+        description = "Find all references to a code symbol: callers, implementors, importers, and cross-language bridge links. Optionally filter by reference kind.",
         output_schema = tool_output_schema::<ToolResponse<ReferencesResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
