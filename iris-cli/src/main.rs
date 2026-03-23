@@ -489,8 +489,18 @@ fn spawn_coherence(
 
     let session = server.session_arc();
 
-    let handle =
-        iris_core::coherence::spawn_coherence_task(watcher, engine, Arc::clone(storage), session);
+    // Create a channel for pushing coherence change notifications to MCP
+    // resource subscribers (e.g. iris://status).
+    let (notify_tx, notify_rx) = tokio::sync::mpsc::unbounded_channel();
+    server.set_coherence_receiver(notify_rx);
+
+    let handle = iris_core::coherence::spawn_coherence_task(
+        watcher,
+        engine,
+        Arc::clone(storage),
+        session,
+        Some(notify_tx),
+    );
 
     tracing::info!(
         corpus = ?corpus_paths,
