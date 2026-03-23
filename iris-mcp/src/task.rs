@@ -251,8 +251,11 @@ mod tests {
         {
             let mut tasks = mgr.tasks.lock().await;
             if let Some(entry) = tasks.get_mut(&id) {
-                entry.finished_at =
-                    Some(Instant::now().checked_sub(Duration::from_secs(600)).unwrap());
+                entry.finished_at = Some(
+                    Instant::now()
+                        .checked_sub(Duration::from_secs(600))
+                        .unwrap(),
+                );
             }
         }
 

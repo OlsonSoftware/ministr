@@ -13,6 +13,7 @@ use tracing::instrument;
 
 use crate::embedding::{Embedder, Reranker, SparseEmbedder};
 use crate::error::{IndexError, StorageError};
+use crate::extraction::abstractive::AbstractiveCompressor;
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
 use crate::index::{SparseIndex, VectorIndex};
 use crate::search::{MultiResolutionSearch, SearchConfig};
@@ -81,6 +82,8 @@ pub struct CompressedItem {
     pub original_tokens: usize,
     /// Token count of the compressed summary.
     pub compressed_tokens: usize,
+    /// Compression method used: `"extractive"` or `"abstractive"`.
+    pub method: String,
 }
 
 /// A related claim returned by `related_claims`.
@@ -590,9 +593,73 @@ impl QueryService {
                     summary,
                     original_tokens,
                     compressed_tokens,
+                    method: "extractive".to_string(),
                 });
             }
             // Silently skip unknown content IDs and uncompressible sections
+        }
+
+        Ok(results)
+    }
+
+    /// Compress content using LLM-assisted abstractive compression.
+    ///
+    /// For each content ID, attempts abstractive compression via the given
+    /// [`AbstractiveCompressor`] (typically backed by MCP sampling). Falls
+    /// back to extractive compression if the abstractive attempt fails.
+    ///
+    /// Abstractive compression typically achieves 90%+ token reduction
+    /// compared to 60–80% for extractive methods.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] if a database operation fails.
+    /// Abstractive compression errors are handled internally by falling
+    /// back to extractive — they do not propagate.
+    #[instrument(skip(self, compressor))]
+    pub async fn compress_content_abstractive<C: AbstractiveCompressor>(
+        &self,
+        content_ids: &[String],
+        compressor: &C,
+    ) -> Result<Vec<CompressedItem>, QueryError> {
+        let extractive = ExtractiveSummaryGenerator::new();
+        let mut results = Vec::with_capacity(content_ids.len());
+
+        for id in content_ids {
+            let sid = SectionId(id.clone());
+            let Some(section) = self.storage.get_section(&sid).await? else {
+                continue;
+            };
+
+            let original_tokens = count_tokens(&section.text);
+            let context_hint = section.heading_path.join(" > ");
+
+            // Try abstractive compression first
+            let (summary, method) = match compressor.compress(&section.text, &context_hint).await {
+                Ok(abs_summary) if !abs_summary.trim().is_empty() => (abs_summary, "abstractive"),
+                _ => {
+                    // Fall back to extractive
+                    let ext_summary = section
+                        .summary
+                        .unwrap_or_else(|| extractive.summarize(&section.text, 2));
+                    (ext_summary, "extractive")
+                }
+            };
+
+            let compressed_tokens = count_tokens(&summary);
+
+            // Skip if no compression achieved
+            if compressed_tokens >= original_tokens {
+                continue;
+            }
+
+            results.push(CompressedItem {
+                original_id: id.clone(),
+                summary,
+                original_tokens,
+                compressed_tokens,
+                method: method.to_string(),
+            });
         }
 
         Ok(results)
@@ -1273,6 +1340,112 @@ mod tests {
             results.first().map(|r| r.compressed_tokens),
             results.first().map(|r| r.original_tokens),
         );
+    }
+
+    // --- compress_content_abstractive tests ---
+
+    /// A mock abstractive compressor that returns a canned short summary.
+    struct MockAbstractiveCompressor {
+        response: String,
+    }
+
+    impl MockAbstractiveCompressor {
+        fn succeeding(response: &str) -> Self {
+            Self {
+                response: response.to_string(),
+            }
+        }
+    }
+
+    impl AbstractiveCompressor for MockAbstractiveCompressor {
+        async fn compress(
+            &self,
+            _text: &str,
+            _context_hint: &str,
+        ) -> Result<String, crate::extraction::abstractive::CompressError> {
+            Ok(self.response.clone())
+        }
+    }
+
+    /// A mock compressor that always fails, triggering extractive fallback.
+    struct FailingAbstractiveCompressor;
+
+    impl AbstractiveCompressor for FailingAbstractiveCompressor {
+        async fn compress(
+            &self,
+            _text: &str,
+            _context_hint: &str,
+        ) -> Result<String, crate::extraction::abstractive::CompressError> {
+            Err(crate::extraction::abstractive::CompressError::Unavailable(
+                "test: no peer".into(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn abstractive_compress_uses_compressor_when_available() {
+        let service = setup_service().await;
+        let compressor = MockAbstractiveCompressor::succeeding("Dense summary.");
+        let results = service
+            .compress_content_abstractive(&["docs/auth.md#tokens".to_string()], &compressor)
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].summary, "Dense summary.");
+        assert_eq!(results[0].method, "abstractive");
+        assert!(results[0].compressed_tokens < results[0].original_tokens);
+    }
+
+    #[tokio::test]
+    async fn abstractive_compress_falls_back_on_failure() {
+        let service = setup_service().await;
+        let compressor = FailingAbstractiveCompressor;
+        let results = service
+            .compress_content_abstractive(&["docs/auth.md#tokens".to_string()], &compressor)
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].method, "extractive");
+        // Should use the pre-existing summary as extractive fallback
+        assert_eq!(results[0].summary, "Token authentication details.");
+    }
+
+    #[tokio::test]
+    async fn abstractive_compress_falls_back_on_empty_response() {
+        let service = setup_service().await;
+        let compressor = MockAbstractiveCompressor::succeeding("  "); // whitespace-only
+        let results = service
+            .compress_content_abstractive(&["docs/auth.md#tokens".to_string()], &compressor)
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].method, "extractive");
+    }
+
+    #[tokio::test]
+    async fn abstractive_compress_skips_unknown_sections() {
+        let service = setup_service().await;
+        let compressor = MockAbstractiveCompressor::succeeding("Dense.");
+        let results = service
+            .compress_content_abstractive(&["nonexistent#section".to_string()], &compressor)
+            .await
+            .unwrap();
+
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn abstractive_compress_reports_method_field() {
+        let service = setup_service().await;
+        // Extractive path
+        let results = service
+            .compress_content(&["docs/auth.md#tokens".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(results[0].method, "extractive");
     }
 
     // --- cosine_similarity tests ---

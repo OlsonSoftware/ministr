@@ -850,14 +850,14 @@ phases:
 - id: B2
   name: Budget Intelligence
   tagline: Proactive budget management that anticipates context pressure
-  status: in_progress
+  status: done
   problem: Budget management is reactive — agent must explicitly call iris_budget to get eviction recommendations
   solution: Proactive eviction recommendations, LLM-assisted abstractive compression via sampling, attention-position-aware scoring
   tasks:
   - text: 'Proactive eviction recommendations: attach suggestions to every tool response when budget pressure > elevated'
     checked: true
   - text: LLM-assisted abstractive compression via MCP sampling — 90%+ compression ratios vs extractive 60-80%
-    checked: false
+    checked: true
   - text: 'Attention-position-aware eviction scoring: weight mid-conversation content higher for eviction candidates'
     checked: true
   - text: iris_compress returns identity (0% compression) for small sections — extractive compressor needs minimum-length threshold or skip logic
