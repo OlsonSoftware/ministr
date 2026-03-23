@@ -180,6 +180,28 @@ impl GrammarRegistry {
             tree_sitter_c_sharp::LANGUAGE.into(),
         );
 
+        // Swift
+        #[cfg(feature = "lang-swift")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "swift",
+            &["swift"],
+            tree_sitter_swift::LANGUAGE.into(),
+        );
+
+        // Kotlin
+        #[cfg(feature = "lang-kotlin")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "kotlin",
+            &["kt", "kts"],
+            tree_sitter_kotlin_ng::LANGUAGE.into(),
+        );
+
         Self {
             ext_to_lang,
             languages,

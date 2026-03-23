@@ -1024,9 +1024,9 @@ phases:
   - text: 'C/C++ refinement: namespace, class, struct, template, function, header/impl split (.h/.c/.cpp/.hpp)'
     checked: true
   - text: 'Swift refinement: protocol, extension, struct, class, func, @objc annotations (Tauri mobile plugins)'
-    checked: false
+    checked: true
   - text: 'Kotlin refinement: data class, object, companion object, fun, annotations (Tauri mobile plugins)'
-    checked: false
+    checked: true
   - text: 'Generic extractor improvements: decorator/annotation extraction, nested type support, better visibility inference for class-based languages'
     checked: false
   - text: 'Cross-language test matrix: fixture files for 15+ languages validating symbol extraction quality against expected output'
