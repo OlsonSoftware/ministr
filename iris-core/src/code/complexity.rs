@@ -5,7 +5,7 @@
 //! `loop`), short-circuit operators (`&&`, `||`), and early-return error
 //! handling (`?`).
 //!
-//! The formula is: **CC = 1 + decision_points**.
+//! The formula is: **CC = 1 + `decision_points`**.
 
 /// Compute the cyclomatic complexity of a function node.
 ///
@@ -45,8 +45,14 @@ fn count_decision_points(node: &tree_sitter::Node, source: &[u8]) -> u32 {
     let mut count = 0;
 
     match node.kind() {
-        // Each `if` is a decision point (covers both `if` and `else if`)
-        "if_expression" => count += 1,
+        // Each `if` is a decision point (covers both `if` and `else if`).
+        // Loops are decision points (enter vs skip/exit).
+        // `?` operator — early return on error.
+        "if_expression"
+        | "while_expression"
+        | "for_expression"
+        | "loop_expression"
+        | "try_expression" => count += 1,
 
         // Each match arm beyond the first is a decision point.
         // Arms live inside a `match_block` child, so we count them there.
@@ -54,9 +60,6 @@ fn count_decision_points(node: &tree_sitter::Node, source: &[u8]) -> u32 {
             let arm_count = count_children_of_kind(node, "match_arm");
             count += arm_count.saturating_sub(1);
         }
-
-        // Loops are decision points (enter vs skip/exit)
-        "while_expression" | "for_expression" | "loop_expression" => count += 1,
 
         // Short-circuit boolean operators
         "binary_expression" => {
@@ -67,9 +70,6 @@ fn count_decision_points(node: &tree_sitter::Node, source: &[u8]) -> u32 {
                 }
             }
         }
-
-        // `?` operator — early return on error
-        "try_expression" => count += 1,
 
         _ => {}
     }
@@ -154,14 +154,14 @@ mod tests {
 
     #[test]
     fn match_two_arms() {
-        let src = r#"fn f(x: i32) { match x { 0 => {}, _ => {} } }"#;
+        let src = r"fn f(x: i32) { match x { 0 => {}, _ => {} } }";
         // 2 arms → 1 decision point → CC = 2
         assert_eq!(complexity_of(src), 2);
     }
 
     #[test]
     fn match_four_arms() {
-        let src = r#"fn f(x: i32) { match x { 0 => {}, 1 => {}, 2 => {}, _ => {} } }"#;
+        let src = r"fn f(x: i32) { match x { 0 => {}, 1 => {}, 2 => {}, _ => {} } }";
         // 4 arms → 3 decision points → CC = 4
         assert_eq!(complexity_of(src), 4);
     }
@@ -175,14 +175,14 @@ mod tests {
 
     #[test]
     fn try_operator() {
-        let src = r#"fn f() -> Result<(), ()> { let x = something()?; Ok(()) }"#;
+        let src = r"fn f() -> Result<(), ()> { let x = something()?; Ok(()) }";
         // 1 `?` → CC = 2
         assert_eq!(complexity_of(src), 2);
     }
 
     #[test]
     fn nested_control_flow() {
-        let src = r#"
+        let src = r"
 fn f(items: Vec<i32>) {
     for item in items {
         if item > 0 {
@@ -194,7 +194,7 @@ fn f(items: Vec<i32>) {
         }
     }
 }
-"#;
+";
         // for (1) + if (1) + match 3 arms (2) = 4 → CC = 5
         assert_eq!(complexity_of(src), 5);
     }
@@ -226,7 +226,7 @@ fn f(items: Vec<i32>) {
 
     #[test]
     fn complex_real_world_function() {
-        let src = r#"
+        let src = r"
 fn process(data: &[u8]) -> Result<String, Error> {
     if data.is_empty() {
         return Err(Error::Empty);
@@ -248,7 +248,7 @@ fn process(data: &[u8]) -> Result<String, Error> {
     }
     Ok(result)
 }
-"#;
+";
         // if (1) + ? (1) + for (1) + if (1) + && (1) + match 3 arms (2)
         // + else if (1) + || (1) = 9 → CC = 10
         assert_eq!(complexity_of(src), 10);

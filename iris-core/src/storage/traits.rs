@@ -531,7 +531,7 @@ pub trait Storage: Send + Sync {
     /// Compute transitive caller counts for a batch of symbols.
     ///
     /// Returns a map from symbol ID to the number of unique symbols that
-    /// transitively call into it (following `Calls` ref_kind edges).
+    /// transitively call into it (following `Calls` `ref_kind` edges).
     fn transitive_caller_counts(
         &self,
         symbol_ids: &[SymbolId],

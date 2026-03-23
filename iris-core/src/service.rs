@@ -554,6 +554,8 @@ impl QueryService {
     /// token counts so the agent knows how much budget it saves.
     ///
     /// Content IDs that don't match any section are silently skipped.
+    /// Sections too small to compress (where the summary would be as long
+    /// as the original) are also skipped.
     ///
     /// # Errors
     ///
@@ -576,6 +578,13 @@ impl QueryService {
                 let original_tokens = count_tokens(&section.text);
                 let compressed_tokens = count_tokens(&summary);
 
+                // Skip sections where compression achieves no reduction —
+                // the extractive summarizer returns identity for sections
+                // with fewer sentences than max_sentences.
+                if compressed_tokens >= original_tokens {
+                    continue;
+                }
+
                 results.push(CompressedItem {
                     original_id: id.clone(),
                     summary,
@@ -583,7 +592,7 @@ impl QueryService {
                     compressed_tokens,
                 });
             }
-            // Silently skip unknown content IDs
+            // Silently skip unknown content IDs and uncompressible sections
         }
 
         Ok(results)
@@ -1216,6 +1225,54 @@ mod tests {
 
         // The test section has a pre-generated summary "Token authentication details."
         assert_eq!(results[0].summary, "Token authentication details.");
+    }
+
+    #[tokio::test]
+    async fn compress_skips_small_sections_without_summary() {
+        // A section with only 1-2 sentences and no pre-existing summary
+        // cannot be compressed — the extractive summarizer returns identity.
+        // compress_content should skip such sections rather than returning
+        // a 0%-compression result.
+        let dim = 8;
+        let embedder = Arc::new(MockEmbedder { dim });
+        let index = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let small_section = Section {
+            id: SectionId("docs/tiny.md#intro".into()),
+            heading_path: vec!["Tiny".into(), "Intro".into()],
+            depth: 2,
+            text: "This is a short section.".into(),
+            structural_nodes: vec![],
+            children: vec![],
+            claims: vec![],
+            summary: None, // No pre-existing summary
+        };
+
+        let doc = DocumentTree {
+            id: ContentId("docs/tiny.md".into()),
+            title: "Tiny Doc".into(),
+            source_path: "docs/tiny.md".into(),
+            sections: vec![small_section],
+            summary: None,
+        };
+
+        storage.insert_document(&doc).await.unwrap();
+        let service = QueryService::new(storage, embedder, index);
+
+        let results = service
+            .compress_content(&["docs/tiny.md#intro".to_string()])
+            .await
+            .unwrap();
+
+        // Small section should be skipped — no point returning identity compression
+        assert!(
+            results.is_empty(),
+            "expected small section to be skipped, got {} results with compressed_tokens={:?} vs original_tokens={:?}",
+            results.len(),
+            results.first().map(|r| r.compressed_tokens),
+            results.first().map(|r| r.original_tokens),
+        );
     }
 
     // --- cosine_similarity tests ---
