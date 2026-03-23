@@ -359,7 +359,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 10);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 11);
 }
 
 #[tokio::test]
@@ -1958,4 +1958,158 @@ async fn bridge_delete_data_for_file() {
         remaining.is_empty(),
         "link should be deleted when its export endpoint is removed"
     );
+}
+
+// ---------- Corpus Root CRUD ----------
+
+#[tokio::test]
+async fn corpus_root_upsert_and_get() {
+    use iris_core::types::{CorpusRoot, RootKind};
+    use std::collections::HashMap;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let root = CorpusRoot {
+        id: "root-abc123".into(),
+        path: "/home/user/project/src".into(),
+        kind: RootKind::Local,
+        display_name: Some("src".into()),
+        file_count: 42,
+        language_stats: HashMap::from([("rust".into(), 30), ("toml".into(), 12)]),
+    };
+
+    storage.upsert_corpus_root(&root).await.unwrap();
+
+    let loaded = storage.get_corpus_root("root-abc123").await.unwrap();
+    assert!(loaded.is_some(), "root should exist after upsert");
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded.id, "root-abc123");
+    assert_eq!(loaded.path, "/home/user/project/src");
+    assert_eq!(loaded.kind, RootKind::Local);
+    assert_eq!(loaded.display_name.as_deref(), Some("src"));
+    assert_eq!(loaded.file_count, 42);
+    assert_eq!(loaded.language_stats["rust"], 30);
+    assert_eq!(loaded.language_stats["toml"], 12);
+}
+
+#[tokio::test]
+async fn corpus_root_upsert_updates_existing() {
+    use iris_core::types::{CorpusRoot, RootKind};
+    use std::collections::HashMap;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let root = CorpusRoot {
+        id: "root-update".into(),
+        path: "/tmp/project".into(),
+        kind: RootKind::Local,
+        display_name: Some("project".into()),
+        file_count: 10,
+        language_stats: HashMap::from([("rust".into(), 10)]),
+    };
+    storage.upsert_corpus_root(&root).await.unwrap();
+
+    // Update with new stats
+    let updated = CorpusRoot {
+        id: "root-update".into(),
+        path: "/tmp/project".into(),
+        kind: RootKind::Local,
+        display_name: Some("project".into()),
+        file_count: 25,
+        language_stats: HashMap::from([("rust".into(), 15), ("python".into(), 10)]),
+    };
+    storage.upsert_corpus_root(&updated).await.unwrap();
+
+    let loaded = storage
+        .get_corpus_root("root-update")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.file_count, 25);
+    assert_eq!(loaded.language_stats.len(), 2);
+    assert_eq!(loaded.language_stats["python"], 10);
+}
+
+#[tokio::test]
+async fn corpus_root_list_and_delete() {
+    use iris_core::types::{CorpusRoot, RootKind};
+    use std::collections::HashMap;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    for (id, path) in [("r1", "/a"), ("r2", "/b"), ("r3", "/c")] {
+        let root = CorpusRoot {
+            id: id.into(),
+            path: path.into(),
+            kind: RootKind::Local,
+            display_name: None,
+            file_count: 0,
+            language_stats: HashMap::new(),
+        };
+        storage.upsert_corpus_root(&root).await.unwrap();
+    }
+
+    let all = storage.list_corpus_roots().await.unwrap();
+    assert_eq!(all.len(), 3);
+
+    let deleted = storage.delete_corpus_root("r2").await.unwrap();
+    assert!(deleted);
+
+    let remaining = storage.list_corpus_roots().await.unwrap();
+    assert_eq!(remaining.len(), 2);
+    assert!(remaining.iter().all(|r| r.id != "r2"));
+
+    // Deleting non-existent root returns false
+    let not_found = storage.delete_corpus_root("nonexistent").await.unwrap();
+    assert!(!not_found);
+}
+
+#[tokio::test]
+async fn corpus_root_get_nonexistent_returns_none() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let result = storage.get_corpus_root("does-not-exist").await.unwrap();
+    assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn set_document_root_tags_document() {
+    use iris_core::types::{CorpusRoot, RootKind};
+    use std::collections::HashMap;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Insert a corpus root first (FK constraint)
+    let root = CorpusRoot {
+        id: "root-tag".into(),
+        path: "/project".into(),
+        kind: RootKind::Local,
+        display_name: None,
+        file_count: 0,
+        language_stats: HashMap::new(),
+    };
+    storage.upsert_corpus_root(&root).await.unwrap();
+
+    // Insert a document
+    let doc = sample_document();
+    storage.insert_document(&doc).await.unwrap();
+
+    // Tag it with a root
+    storage
+        .set_document_root(&doc.id, "root-tag")
+        .await
+        .unwrap();
+
+    // Verify the root_id is set
+    let loaded = storage.get_document(&doc.id).await.unwrap().unwrap();
+    assert_eq!(loaded.root_id.as_deref(), Some("root-tag"));
+}
+
+#[tokio::test]
+async fn document_root_id_defaults_to_none() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let doc = sample_document();
+    storage.insert_document(&doc).await.unwrap();
+
+    let loaded = storage.get_document(&doc.id).await.unwrap().unwrap();
+    assert!(loaded.root_id.is_none(), "root_id should default to None");
 }

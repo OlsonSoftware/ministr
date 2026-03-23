@@ -710,6 +710,9 @@ struct CorpusStatsHeader {
 struct TocResponse {
     /// Corpus-level statistics for quick orientation.
     corpus_stats: CorpusStatsHeader,
+    /// Registered corpus roots with per-directory metadata and language stats.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    roots: Vec<iris_core::types::CorpusRoot>,
     /// Table of contents entries (metadata only, no text).
     entries: Vec<iris_core::types::TocEntry>,
 }
@@ -1941,6 +1944,13 @@ impl IrisServer {
                         _ => None, // Don't clutter the response when complete
                     };
 
+                    // Include corpus roots when not filtered to a single document.
+                    let roots = if params.document_id.is_none() {
+                        self.service.list_corpus_roots().await.unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+
                     let response = self
                         .build_response(
                             TocResponse {
@@ -1950,6 +1960,7 @@ impl IrisServer {
                                     claims: total_claims,
                                     ingestion_status,
                                 },
+                                roots,
                                 entries,
                             },
                             budget_status,

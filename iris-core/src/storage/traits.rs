@@ -8,7 +8,8 @@ use std::future::Future;
 use crate::error::StorageError;
 use crate::session::{Session, SessionId};
 use crate::types::{
-    ClaimId, ClaimRelationship, ContentId, DocumentTree, RefKind, RelationType, SectionId, SymbolId,
+    ClaimId, ClaimRelationship, ContentId, CorpusRoot, DocumentTree, RefKind, RelationType,
+    SectionId, SymbolId,
 };
 
 /// Stored document metadata (without the full section tree).
@@ -24,6 +25,7 @@ use crate::types::{
 ///     title: "API Reference".into(),
 ///     source_path: "docs/api.md".into(),
 ///     summary: Some("Full API reference.".into()),
+///     root_id: None,
 /// };
 /// assert_eq!(record.title, "API Reference");
 /// ```
@@ -37,6 +39,8 @@ pub struct DocumentRecord {
     pub source_path: String,
     /// Document-level summary.
     pub summary: Option<String>,
+    /// Corpus root this document belongs to (if multi-root indexing is active).
+    pub root_id: Option<String>,
 }
 
 /// Stored section with its metadata.
@@ -640,5 +644,37 @@ pub trait Storage: Send + Sync {
     fn delete_bridge_data_for_file(
         &self,
         file_path: &str,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    // -- Corpus roots --
+
+    /// Upsert a corpus root (insert or update on conflict).
+    fn upsert_corpus_root(
+        &self,
+        root: &CorpusRoot,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Get a corpus root by ID.
+    fn get_corpus_root(
+        &self,
+        id: &str,
+    ) -> impl Future<Output = Result<Option<CorpusRoot>, StorageError>> + Send;
+
+    /// List all registered corpus roots.
+    fn list_corpus_roots(
+        &self,
+    ) -> impl Future<Output = Result<Vec<CorpusRoot>, StorageError>> + Send;
+
+    /// Delete a corpus root by ID.
+    fn delete_corpus_root(
+        &self,
+        id: &str,
+    ) -> impl Future<Output = Result<bool, StorageError>> + Send;
+
+    /// Tag a document with its corpus root.
+    fn set_document_root(
+        &self,
+        doc_id: &ContentId,
+        root_id: &str,
     ) -> impl Future<Output = Result<(), StorageError>> + Send;
 }

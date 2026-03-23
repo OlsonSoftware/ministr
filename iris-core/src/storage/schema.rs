@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 10;
+pub const CURRENT_SCHEMA_VERSION: usize = 11;
 
 /// Returns the migration set for the content database.
 ///
@@ -219,6 +219,24 @@ fn migrations() -> Migrations<'static> {
             CREATE INDEX idx_bridge_links_kind ON bridge_links(kind);
             ",
         ),
+        // V11: Multi-root corpus — per-directory metadata and language stats
+        M::up(
+            "
+            CREATE TABLE corpus_roots (
+                id           TEXT PRIMARY KEY NOT NULL,
+                path         TEXT NOT NULL UNIQUE,
+                kind         TEXT NOT NULL DEFAULT 'local',
+                display_name TEXT,
+                file_count   INTEGER NOT NULL DEFAULT 0,
+                language_stats TEXT NOT NULL DEFAULT '{}',
+                created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+
+            ALTER TABLE documents ADD COLUMN root_id TEXT REFERENCES corpus_roots(id);
+            CREATE INDEX idx_documents_root ON documents(root_id);
+            ",
+        ),
     ])
 }
 
@@ -323,6 +341,7 @@ mod tests {
         assert!(tables.contains(&"symbol_refs".to_string()));
         assert!(tables.contains(&"bridge_endpoints".to_string()));
         assert!(tables.contains(&"bridge_links".to_string()));
+        assert!(tables.contains(&"corpus_roots".to_string()));
     }
 
     #[test]

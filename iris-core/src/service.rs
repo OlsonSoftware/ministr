@@ -20,7 +20,8 @@ use crate::search::{MultiResolutionSearch, SearchConfig};
 use crate::storage::{BridgeLinkDetail, SqliteStorage, Storage, SymbolFilter, SymbolRecord};
 use crate::token::count_tokens;
 use crate::types::{
-    ClaimId, ContentId, RefKind, RelationType, Resolution, SectionId, SymbolId, TocEntry, VectorId,
+    ClaimId, ContentId, CorpusRoot, RefKind, RelationType, Resolution, SectionId, SymbolId,
+    TocEntry, VectorId,
 };
 
 /// A ranked result from a corpus survey search.
@@ -289,6 +290,15 @@ impl QueryService {
         }
 
         Ok(entries)
+    }
+
+    /// List all registered corpus roots with their metadata and language stats.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] if the database operation fails.
+    pub async fn list_corpus_roots(&self) -> Result<Vec<CorpusRoot>, QueryError> {
+        Ok(self.storage.list_corpus_roots().await?)
     }
 
     /// Search the corpus for content relevant to a natural language query.
