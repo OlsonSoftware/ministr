@@ -980,20 +980,20 @@ phases:
 - id: V27
   name: Multi-Agent Context Sharing
   tagline: Shared corpus, independent sessions, coordinated coherence
-  status: pending
+  status: done
   problem: iris supports one session at a time — no way for multiple agents to share a corpus with independent budgets and coordinated change notifications
   solution: Session federation with per-agent budgets, cross-session coherence via resource subscriptions, and configurable isolation policies
   tasks:
   - text: Session federation — multiple named sessions sharing a single indexed corpus
-    checked: false
+    checked: true
   - text: Cross-session budget coordination — shared corpus with independent per-agent budgets
-    checked: false
+    checked: true
   - text: Cross-agent coherence notifications via MCP resource subscriptions
-    checked: false
+    checked: true
   - text: Session isolation policies — read-only vs read-write session access modes
-    checked: false
+    checked: true
   - text: Tests for concurrent multi-session access and coherence propagation
-    checked: false
+    checked: true
 - id: PF1
   name: Indexing Performance & Persistence
   status: done

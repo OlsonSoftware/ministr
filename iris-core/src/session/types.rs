@@ -47,6 +47,20 @@ impl AsRef<str> for SessionId {
     }
 }
 
+/// Access mode for a session within a federated session registry.
+///
+/// Controls what operations are permitted for a session. Read-only sessions
+/// can query, survey, and read content but cannot trigger mutations like
+/// fetching web content, cloning repositories, or explicitly evicting items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessMode {
+    /// Full access — the session can read, write, fetch, clone, and evict.
+    ReadWrite,
+    /// Read-only access — the session can query and read but not mutate.
+    ReadOnly,
+}
+
 /// Eviction policy that models how the agent's context window discards old content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

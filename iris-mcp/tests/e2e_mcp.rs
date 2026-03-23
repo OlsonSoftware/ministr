@@ -979,9 +979,9 @@ async fn coherence_alerts_surface_in_iris_read_response() {
 
     // Manually invalidate a section via the session to simulate coherence
     {
-        let session = server.session_arc();
-        let mut session = session.lock().await;
-        session.invalidate_sections(&["docs/auth.md#tokens".to_string()]);
+        let registry = server.registry_arc();
+        let mut reg = registry.lock().await;
+        reg.invalidate_all(&["docs/auth.md#tokens".to_string()]);
     }
 
     // Next tool call should surface the coherence alert
@@ -1028,9 +1028,9 @@ async fn coherence_alerts_surface_in_iris_budget_response() {
 
     // Invalidate it
     {
-        let session = server.session_arc();
-        let mut session = session.lock().await;
-        session.invalidate_sections(&["docs/auth.md#tokens".to_string()]);
+        let registry = server.registry_arc();
+        let mut reg = registry.lock().await;
+        reg.invalidate_all(&["docs/auth.md#tokens".to_string()]);
     }
 
     // Budget tool should surface the alert
@@ -1370,11 +1370,14 @@ async fn e2e_read_returns_heading_paths_and_content_hash() {
     );
 
     // Verify the session recorded delivery (content hash tracked for dedup)
-    let session = server.session_arc();
-    let session = session.lock().await;
+    let registry = server.registry_arc();
+    let reg = registry.lock().await;
+    let entry = reg
+        .get_session(server.active_session_id())
+        .expect("active session exists");
     let content_id = iris_core::types::ContentId(section_id.to_string());
     assert!(
-        session.is_delivered(&content_id),
+        entry.session.is_delivered(&content_id),
         "session should track delivered content with its hash"
     );
 }
@@ -1549,11 +1552,14 @@ async fn e2e_read_session_dedup_on_second_request() {
 
     // Verify session tracks the delivery
     {
-        let session = server.session_arc();
-        let session = session.lock().await;
+        let registry = server.registry_arc();
+        let reg = registry.lock().await;
+        let entry = reg
+            .get_session(server.active_session_id())
+            .expect("active session exists");
         let content_id = iris_core::types::ContentId("docs/auth.md#tokens".into());
         assert!(
-            session.is_delivered(&content_id),
+            entry.session.is_delivered(&content_id),
             "session should mark content as delivered after first read"
         );
     }
@@ -1693,10 +1699,15 @@ async fn e2e_compress_evict_cycle_updates_budget() {
 
     // Step 5: Verify evicted content is no longer in the session
     {
-        let session = server.session_arc();
-        let session = session.lock().await;
+        let registry = server.registry_arc();
+        let reg = registry.lock().await;
+        let entry = reg
+            .get_session(server.active_session_id())
+            .expect("active session exists");
         assert!(
-            !session.is_delivered(&iris_core::types::ContentId("docs/auth.md#tokens".into())),
+            !entry
+                .session
+                .is_delivered(&iris_core::types::ContentId("docs/auth.md#tokens".into())),
             "evicted content should not be marked as delivered"
         );
     }
@@ -1814,12 +1825,11 @@ JWT tokens use RS256 signing. Tokens now expire after 12 hours for improved secu
         "coherence should detect affected sections"
     );
 
-    // Invalidate the session
+    // Invalidate all sessions in the registry
     {
-        let session = server.session_arc();
-        let mut session = session.lock().await;
-        let invalidated =
-            iris_core::coherence::CoherenceEngine::invalidate_session(&mut session, &affected);
+        let registry = server.registry_arc();
+        let mut reg = registry.lock().await;
+        let invalidated = reg.invalidate_all(&affected);
         assert!(invalidated > 0, "should invalidate delivered sections");
     }
 

@@ -487,7 +487,7 @@ fn spawn_coherence(
         Arc::clone(index),
     ));
 
-    let session = server.session_arc();
+    let registry = server.registry_arc();
 
     // Create a channel for pushing coherence change notifications to MCP
     // resource subscribers (e.g. iris://status).
@@ -498,7 +498,7 @@ fn spawn_coherence(
         watcher,
         engine,
         Arc::clone(storage),
-        session,
+        registry,
         Some(notify_tx),
     );
 
