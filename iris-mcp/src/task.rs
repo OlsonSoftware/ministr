@@ -17,6 +17,7 @@ use rmcp::model::{
 };
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 /// How long completed/failed/cancelled tasks are retained before pruning.
 const TASK_RETENTION: Duration = Duration::from_secs(300); // 5 minutes
@@ -35,6 +36,8 @@ struct TaskEntry {
     finished_at: Option<Instant>,
     /// Handle to the spawned tokio task, used for cancellation.
     join_handle: Option<JoinHandle<()>>,
+    /// Cancellation token for graceful shutdown of the pipeline.
+    cancellation_token: Option<CancellationToken>,
 }
 
 /// Manages MCP Tasks with automatic pruning of stale entries.
@@ -49,7 +52,7 @@ struct TaskEntry {
 ///
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
 /// let mgr = McpTaskManager::new();
-/// let task = mgr.create("fetching content…", None).await;
+/// let task = mgr.create("fetching content…", None, None).await;
 /// assert_eq!(task.status, TaskStatus::Working);
 ///
 /// // Complete the task
@@ -78,8 +81,14 @@ impl McpTaskManager {
     /// Register a new working task and return its [`Task`] metadata.
     ///
     /// The returned `Task` has status `Working` and includes a poll interval
-    /// hint. Optionally attach a `JoinHandle` for cancellation support.
-    pub async fn create(&self, status_message: &str, join_handle: Option<JoinHandle<()>>) -> Task {
+    /// hint. Optionally attach a `JoinHandle` and `CancellationToken` for
+    /// graceful cancellation support.
+    pub async fn create(
+        &self,
+        status_message: &str,
+        join_handle: Option<JoinHandle<()>>,
+        cancellation_token: Option<CancellationToken>,
+    ) -> Task {
         let task_id = generate_task_id();
         let now = iso8601_now();
         let task = Task::new(task_id.clone(), McpTaskStatus::Working, now.clone(), now)
@@ -91,6 +100,7 @@ impl McpTaskManager {
             result: None,
             finished_at: None,
             join_handle,
+            cancellation_token,
         };
 
         let mut tasks = self.tasks.lock().await;
@@ -157,7 +167,10 @@ impl McpTaskManager {
             return Some(entry.task.clone());
         }
 
-        // Abort the background work.
+        // Signal graceful cancellation first, then abort the handle as fallback.
+        if let Some(token) = entry.cancellation_token.take() {
+            token.cancel();
+        }
         if let Some(handle) = entry.join_handle.take() {
             handle.abort();
         }
@@ -304,7 +317,7 @@ mod tests {
     #[tokio::test]
     async fn task_lifecycle_create_complete() {
         let mgr = McpTaskManager::new();
-        let task = mgr.create("fetching…", None).await;
+        let task = mgr.create("fetching…", None, None).await;
 
         // Should be working
         let info = mgr.get_task(&task.task_id).await.unwrap();
@@ -325,7 +338,7 @@ mod tests {
     #[tokio::test]
     async fn task_lifecycle_create_fail() {
         let mgr = McpTaskManager::new();
-        let task = mgr.create("cloning…", None).await;
+        let task = mgr.create("cloning…", None, None).await;
 
         mgr.fail(&task.task_id, "connection refused").await;
         let info = mgr.get_task(&task.task_id).await.unwrap();
@@ -343,7 +356,7 @@ mod tests {
         let handle = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(3600)).await;
         });
-        let task = mgr.create("long operation", Some(handle)).await;
+        let task = mgr.create("long operation", Some(handle), None).await;
 
         let cancelled = mgr.cancel(&task.task_id).await.unwrap();
         assert_eq!(cancelled.status, McpTaskStatus::Cancelled);
@@ -351,6 +364,29 @@ mod tests {
         // Cancelling again is a no-op (returns current state)
         let again = mgr.cancel(&task.task_id).await.unwrap();
         assert_eq!(again.status, McpTaskStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn task_cancellation_signals_token() {
+        let mgr = McpTaskManager::new();
+        let ct = CancellationToken::new();
+
+        // Spawn a task that watches the cancellation token.
+        let ct_clone = ct.clone();
+        let handle = tokio::spawn(async move {
+            ct_clone.cancelled().await;
+        });
+        let task = mgr
+            .create("with token", Some(handle), Some(ct.clone()))
+            .await;
+
+        // Token should not be cancelled yet.
+        assert!(!ct.is_cancelled());
+
+        // Cancel the task — should signal the token.
+        let cancelled = mgr.cancel(&task.task_id).await.unwrap();
+        assert_eq!(cancelled.status, McpTaskStatus::Cancelled);
+        assert!(ct.is_cancelled());
     }
 
     #[tokio::test]
@@ -363,7 +399,7 @@ mod tests {
     #[tokio::test]
     async fn update_progress() {
         let mgr = McpTaskManager::new();
-        let task = mgr.create("phase 1", None).await;
+        let task = mgr.create("phase 1", None, None).await;
 
         mgr.update_progress(&task.task_id, "phase 2").await;
         let info = mgr.get_task(&task.task_id).await.unwrap();
@@ -381,8 +417,8 @@ mod tests {
     #[tokio::test]
     async fn list_tasks_returns_all() {
         let mgr = McpTaskManager::new();
-        mgr.create("task 1", None).await;
-        mgr.create("task 2", None).await;
+        mgr.create("task 1", None, None).await;
+        mgr.create("task 2", None, None).await;
 
         let list = mgr.list_tasks().await;
         assert_eq!(list.tasks.len(), 2);
@@ -391,7 +427,7 @@ mod tests {
     #[tokio::test]
     async fn prune_removes_expired_tasks() {
         let mgr = McpTaskManager::new();
-        let task = mgr.create("temp", None).await;
+        let task = mgr.create("temp", None, None).await;
         let result = CallToolResult::success(vec![Content::text("done")]);
         mgr.complete(&task.task_id, result).await;
 
@@ -415,7 +451,7 @@ mod tests {
     #[tokio::test]
     async fn running_tasks_not_pruned() {
         let mgr = McpTaskManager::new();
-        let task = mgr.create("long running", None).await;
+        let task = mgr.create("long running", None, None).await;
 
         let info = mgr.get_task(&task.task_id).await;
         assert!(info.is_some());
@@ -432,8 +468,8 @@ mod tests {
     #[tokio::test]
     async fn task_ids_are_unique() {
         let mgr = McpTaskManager::new();
-        let t1 = mgr.create("a", None).await;
-        let t2 = mgr.create("b", None).await;
+        let t1 = mgr.create("a", None, None).await;
+        let t2 = mgr.create("b", None, None).await;
         assert_ne!(t1.task_id, t2.task_id);
     }
 }

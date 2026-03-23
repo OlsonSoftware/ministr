@@ -33,6 +33,7 @@ quick-xml.workspace = true
 fastembed.workspace = true
 hnsw_rs.workspace = true
 notify.workspace = true
+tokio-util = "0.7"
 glob.workspace = true
 ignore.workspace = true
 tree-sitter.workspace = true

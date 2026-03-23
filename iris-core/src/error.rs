@@ -162,6 +162,10 @@ pub enum IngestionError {
     /// Embedding or vector index operation failed.
     #[error("embedding error: {reason}")]
     Embedding { reason: String },
+
+    /// The operation was cancelled via a cancellation token.
+    #[error("ingestion cancelled")]
+    Cancelled,
 }
 
 /// Errors from HTTP fetching and URL handling.
@@ -208,6 +212,10 @@ pub enum WebError {
     /// Sitemap XML parsing failed.
     #[error("sitemap parse error: {reason}")]
     SitemapParse { reason: String },
+
+    /// The operation was cancelled via a cancellation token.
+    #[error("web fetch cancelled")]
+    Cancelled,
 }
 
 /// Errors from git clone and repository operations.
@@ -236,6 +244,10 @@ pub enum GitError {
     /// The repository URL is invalid or empty.
     #[error("invalid repository URL: {url}")]
     InvalidRepo { url: String },
+
+    /// The operation was cancelled via a cancellation token.
+    #[error("git operation cancelled")]
+    Cancelled,
 }
 
 #[cfg(test)]
