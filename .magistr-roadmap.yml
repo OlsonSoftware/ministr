@@ -1146,7 +1146,7 @@ phases:
 - id: MC1
   name: Additive Multi-Corpus Management
   tagline: Clone repos that coexist instead of replacing each other
-  status: in_progress
+  status: done
   problem: Cloning new repos evicts previous clone content (1,019→128 docs). Python/TypeScript clones report success but produce zero searchable content. Multi-repo workflows are broken.
   solution: Make roots additive with namespaced IDs (Repository pattern, SRP). Fix the ingestion pipeline so clone content persists in the vector index alongside existing roots. Show all roots with provenance in TOC.
   tasks:
@@ -1161,7 +1161,7 @@ phases:
   - text: Show cloned/fetched roots in iris_toc roots response with provenance metadata (repo URL, branch, clone timestamp, sparse paths)
     checked: true
   - text: 'Integration tests: clone 3+ repos sequentially, verify all remain searchable and root count grows monotonically'
-    checked: false
+    checked: true
 - id: CL1
   name: Clone Lifecycle and Incremental Index
   tagline: Fast warm starts, readable clone sources, cancellable tasks
@@ -1170,7 +1170,7 @@ phases:
   solution: Persist clone caches with source path mapping. Content-hash-based embedding cache for incremental indexing. Implement MCP notifications/cancelled with CancellationToken threading.
   tasks:
   - text: Persist clone cache directories with root metadata — clone source trees are read-only assets, not temp artifacts to be cleaned up
-    checked: false
+    checked: true
   - text: Map clone source paths in the symbol index so iris_definition resolves to cached clone files instead of returning [source unavailable]
     checked: true
   - text: Implement MCP notifications/cancelled handler — listen for client cancellation and propagate to in-flight operations

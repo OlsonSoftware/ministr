@@ -1059,7 +1059,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Make vector index and section registry append-only per root — adding a new root must never evict or replace existing roots' content
 - [x] Diagnose and fix Python/TypeScript clone invisibility: clone reports "110 files indexed, 1925 sections" but zero searchable content — likely same root cause as corpus replacement
 - [x] Show cloned/fetched roots in iris_toc roots response with provenance metadata (repo URL, branch, clone timestamp, sparse paths)
-- [ ] Integration tests: clone 3+ repos sequentially, verify all remain searchable and root count grows monotonically
+- [x] Integration tests: clone 3+ repos sequentially, verify all remain searchable and root count grows monotonically
 
 ---
 
@@ -1071,7 +1071,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Persist clone cache directories with root metadata — clone source trees are read-only assets, not temp artifacts to be cleaned up
+- [x] Persist clone cache directories with root metadata — clone source trees are read-only assets, not temp artifacts to be cleaned up
 - [x] Map clone source paths in the symbol index so iris_definition resolves to cached clone files instead of returning [source unavailable]
 - [ ] Implement MCP notifications/cancelled handler — listen for client cancellation and propagate to in-flight operations
 - [ ] Thread tokio_util::sync::CancellationToken through clone, fetch, and index pipelines — abort on cancellation, clean up partial state

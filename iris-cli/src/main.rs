@@ -691,6 +691,10 @@ async fn ingest_web_sources(
 }
 
 /// Clone and ingest git repositories via `GitFetcher`.
+///
+/// Registers each clone as a persistent corpus root with git provenance
+/// metadata, ensuring clone directories are treated as read-only assets
+/// rather than temporary artifacts.
 async fn ingest_git_sources(
     urls: &[String],
     pipeline: &iris_core::ingestion::IngestionPipeline,
@@ -703,17 +707,77 @@ async fn ingest_git_sources(
     for url in urls {
         match git_fetcher.clone(url, None, None).await {
             Ok(clone_result) => {
-                let clone_paths = vec![clone_result.clone_dir.clone()];
+                // Register a corpus root for the clone so it persists across sessions.
+                let root_id = iris_core::ingestion::compute_root_id(&clone_result.clone_dir);
+                let clone_root = iris_core::types::CorpusRoot {
+                    id: root_id.clone(),
+                    path: clone_result.clone_dir.to_string_lossy().to_string(),
+                    kind: iris_core::types::RootKind::Git,
+                    display_name: Some(git_repo_display_name(url)),
+                    file_count: 0,
+                    language_stats: std::collections::HashMap::new(),
+                    repo_url: Some(url.clone()),
+                    branch: clone_result.metadata.branch.clone(),
+                    commit_sha: Some(clone_result.metadata.commit_sha.clone()),
+                    clone_timestamp: Some(clone_result.metadata.clone_timestamp.clone()),
+                    sparse_paths: clone_result.metadata.checked_out_paths.clone(),
+                };
+                if let Err(e) = storage.upsert_corpus_root(&clone_root).await {
+                    tracing::warn!(
+                        url = %url,
+                        error = %e,
+                        "failed to register clone corpus root"
+                    );
+                }
+
+                // Ingest with root-scoped ingestion to namespace documents.
                 match pipeline
-                    .ingest_paths_with_embeddings(&clone_paths, storage, embedder, index)
+                    .ingest_directory_with_embeddings_rooted(
+                        &clone_result.clone_dir,
+                        storage,
+                        embedder,
+                        index,
+                        Some(&root_id),
+                    )
                     .await
                 {
                     Ok(stats) => {
+                        // Update the root's file count after ingestion.
+                        let updated_root = iris_core::types::CorpusRoot {
+                            file_count: stats.files_indexed,
+                            ..clone_root
+                        };
+                        if let Err(e) = storage.upsert_corpus_root(&updated_root).await {
+                            tracing::warn!(
+                                url = %url,
+                                error = %e,
+                                "failed to update clone root stats"
+                            );
+                        }
+
+                        // Record in git cache for staleness tracking.
+                        let git_cache_record = iris_core::storage::GitCacheRecord {
+                            repo_url: url.clone(),
+                            branch: clone_result.metadata.branch.clone(),
+                            commit_sha: clone_result.metadata.commit_sha.clone(),
+                            clone_timestamp: clone_result.metadata.clone_timestamp.clone(),
+                            clone_dir: clone_result.clone_dir.to_string_lossy().to_string(),
+                            checked_out_paths: clone_result.metadata.checked_out_paths.clone(),
+                        };
+                        if let Err(e) = storage.upsert_git_cache(&git_cache_record).await {
+                            tracing::warn!(
+                                url = %url,
+                                error = %e,
+                                "failed to record git cache"
+                            );
+                        }
+
                         tracing::info!(
                             url = %url,
                             clone_dir = %clone_result.clone_dir.display(),
                             files_indexed = stats.files_indexed,
                             sections = stats.total_sections,
+                            root_id = %root_id,
                             "git corpus ingestion complete"
                         );
                     }
@@ -730,6 +794,22 @@ async fn ingest_git_sources(
                 tracing::warn!(url = %url, error = %e, "git corpus clone failed");
             }
         }
+    }
+}
+
+/// Derive a human-readable display name from a git repository URL.
+///
+/// Extracts the `owner/repo` portion from common URL formats, falling
+/// back to the full URL if parsing fails.
+fn git_repo_display_name(url: &str) -> String {
+    // Strip trailing .git
+    let cleaned = url.strip_suffix(".git").unwrap_or(url);
+    // Try to extract owner/repo from the last two path segments.
+    let segments: Vec<&str> = cleaned.rsplit('/').take(2).collect();
+    if segments.len() == 2 {
+        format!("{}/{}", segments[1], segments[0])
+    } else {
+        cleaned.to_string()
     }
 }
 
