@@ -381,11 +381,16 @@ impl CoherenceEngine {
 /// * `session` - Session to invalidate on changes
 /// * `notify_tx` - Optional sender to push affected section IDs to subscribers
 ///   (e.g. MCP resource subscription notifications)
+///
+/// Spawn a coherence task that invalidates all sessions in a registry.
+///
+/// When files change, the task re-indexes them and propagates invalidation
+/// to every session in the registry via [`SessionRegistry::invalidate_all`].
 pub fn spawn_coherence_task<S: Storage + 'static>(
     mut watcher: FileWatcher,
     engine: Arc<CoherenceEngine>,
     storage: Arc<S>,
-    session: Arc<tokio::sync::Mutex<Session>>,
+    registry: Arc<tokio::sync::Mutex<crate::session::SessionRegistry>>,
     notify_tx: Option<mpsc::UnboundedSender<Vec<String>>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -408,13 +413,15 @@ pub fn spawn_coherence_task<S: Storage + 'static>(
             // Process events
             match engine.process_events(&events, storage.as_ref()).await {
                 Ok(affected_sections) if !affected_sections.is_empty() => {
-                    let mut session = session.lock().await;
-                    let invalidated =
-                        CoherenceEngine::invalidate_session(&mut session, &affected_sections);
+                    let mut reg = registry.lock().await;
+                    let invalidated = reg.invalidate_all(&affected_sections);
                     info!(
                         affected = affected_sections.len(),
-                        invalidated, "coherence: sections updated, session entries invalidated"
+                        invalidated,
+                        sessions = reg.session_count(),
+                        "coherence: sections updated, entries invalidated across all sessions"
                     );
+                    drop(reg);
                     // Notify subscribers (e.g. MCP resource subscriptions) about changes.
                     if let Some(ref tx) = notify_tx {
                         let _ = tx.send(affected_sections);
@@ -843,17 +850,16 @@ mod tests {
             .await
             .unwrap();
 
-        let session = Arc::new(tokio::sync::Mutex::new(Session::new(
-            SessionId::from("test-session".to_string()),
-            100_000,
-            EvictionPolicy::Fifo,
-        )));
+        let mut registry =
+            crate::session::SessionRegistry::new(crate::session::BudgetConfig::default());
+        registry.create_session("test-session", None, crate::session::AccessMode::ReadWrite);
+        let registry = Arc::new(tokio::sync::Mutex::new(registry));
 
         let engine = Arc::new(CoherenceEngine::new(dir.path().to_path_buf()));
         let watcher = FileWatcher::new(&[dir.path().to_path_buf()]).unwrap();
 
         // Pass None — should compile and run without panicking.
-        let handle = spawn_coherence_task(watcher, engine, Arc::clone(&storage), session, None);
+        let handle = spawn_coherence_task(watcher, engine, Arc::clone(&storage), registry, None);
 
         // Give a moment, then abort — no crash means success.
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;

@@ -56,8 +56,8 @@ use iris_core::service::{
 use iris_core::session::eviction::EvictionCandidate;
 use iris_core::session::prefetch::PrefetchEngine;
 use iris_core::session::{
-    BudgetConfig, BudgetStatus, BudgetTracker, CoherenceAlert, EvictionPolicy, PressureLevel,
-    Session, SessionId,
+    AccessMode, BudgetConfig, BudgetStatus, CoherenceAlert, PressureLevel, SessionId,
+    SessionRegistry,
 };
 use iris_core::storage::{SqliteStorage, Storage, SymbolFilter};
 use iris_core::token::count_tokens;
@@ -152,8 +152,10 @@ impl NegotiatedExtensions {
 #[derive(Clone)]
 pub struct IrisServer {
     service: Arc<QueryService>,
-    session: Arc<Mutex<Session>>,
-    budget: Arc<Mutex<BudgetTracker>>,
+    /// Federated session registry managing all agent sessions.
+    registry: Arc<Mutex<SessionRegistry>>,
+    /// ID of the active session for this MCP connection.
+    active_session_id: String,
     prefetch: Arc<Mutex<PrefetchEngine>>,
     storage: Option<Arc<SqliteStorage>>,
     analytics: Option<Arc<Analytics>>,
@@ -1180,8 +1182,11 @@ impl IrisServer {
             // before truncating to top_k (prevents the over-fetch buffer
             // from being wasted by premature truncation).
             let exclude_ids = {
-                let session = self.session.lock().await;
-                session.delivered_ids()
+                let reg = self.registry.lock().await;
+                let entry = reg
+                    .get_session(&self.active_session_id)
+                    .expect("active session exists");
+                entry.session.delivered_ids()
             };
 
             // Run the survey; if results are ambiguous, try eliciting a refined query.
@@ -1270,24 +1275,25 @@ impl IrisServer {
                     );
 
                     // Record delivered content in session and budget
-                    let mut session = self.session.lock().await;
-                    let mut budget = self.budget.lock().await;
-                    let turn = session.current_turn() + 1;
+                    let mut reg = self.registry.lock().await;
+                    let entry = reg
+                        .get_session_mut(&self.active_session_id)
+                        .expect("active session exists");
+                    let turn = entry.session.current_turn() + 1;
                     for r in &results {
                         let token_count = count_tokens(&r.text);
                         let hash = content_hash(&r.text);
                         let resolution = parse_resolution(&r.resolution);
-                        session.record_delivery(
+                        entry.session.record_delivery(
                             &ContentId(r.content_id.clone()),
                             resolution,
                             token_count,
                             turn,
                             hash,
                         );
-                        budget.record_tokens(&r.content_id, token_count);
+                        entry.budget.record_tokens(&r.content_id, token_count);
                     }
-                    let budget_status = budget.budget_status();
-                    drop(budget);
+                    let budget_status = entry.budget.budget_status();
 
                     // Survey-triggered prefetch: pre-warm parent sections of claim hits
                     let claim_section_ids: Vec<String> = results
@@ -1296,9 +1302,9 @@ impl IrisServer {
                         .filter_map(|r| parent_section_id(&r.content_id).map(String::from))
                         .collect::<std::collections::HashSet<_>>()
                         .into_iter()
-                        .filter(|sid| !session.is_delivered(&ContentId(sid.clone())))
+                        .filter(|sid| !entry.session.is_delivered(&ContentId(sid.clone())))
                         .collect();
-                    drop(session);
+                    drop(reg);
 
                     if !claim_section_ids.is_empty() {
                         let mut prefetch = self.prefetch.lock().await;
@@ -1405,11 +1411,13 @@ impl IrisServer {
                     let content_id = ContentId(params.section_id.clone());
 
                     // Check deduplication against session shadow
-                    let session = self.session.lock().await;
-                    let already_delivered = session.is_delivered(&content_id);
-                    let has_changed = session.has_changed(&content_id, &current_hash);
-                    let is_re_request = session.is_re_request(&content_id, &current_hash);
-                    drop(session);
+                    let mut reg = self.registry.lock().await;
+                    let entry = reg
+                        .get_session_mut(&self.active_session_id)
+                        .expect("active session exists");
+                    let already_delivered = entry.session.is_delivered(&content_id);
+                    let has_changed = entry.session.has_changed(&content_id, &current_hash);
+                    let is_re_request = entry.session.is_re_request(&content_id, &current_hash);
 
                     // Case 2: Already delivered and unchanged — skip re-delivery
                     if already_delivered && !has_changed {
@@ -1421,13 +1429,11 @@ impl IrisServer {
                         // If agent re-requests content it should still have,
                         // treat as a fault-based eviction signal.
                         if is_re_request {
-                            let mut budget = self.budget.lock().await;
-                            budget.force_evict(&params.section_id);
+                            entry.budget.force_evict(&params.section_id);
                         }
 
-                        let budget = self.budget.lock().await;
-                        let budget_status = budget.budget_status();
-                        drop(budget);
+                        let budget_status = entry.budget.budget_status();
+                        drop(reg);
 
                         let skip = AlreadyDeliveredResponse {
                             section_id: params.section_id.clone(),
@@ -1439,6 +1445,7 @@ impl IrisServer {
                     }
 
                     // Case 1: New content (or changed) — deliver full text
+                    drop(reg);
                     let budget_status = self
                         .record_section_delivery(&params.section_id, &detail.text, current_hash)
                         .await;
@@ -1500,24 +1507,25 @@ impl IrisServer {
                     );
 
                     // Record each claim delivery in session and budget
-                    let mut session = self.session.lock().await;
-                    let mut budget = self.budget.lock().await;
-                    let turn = session.current_turn() + 1;
+                    let mut reg = self.registry.lock().await;
+                    let entry = reg
+                        .get_session_mut(&self.active_session_id)
+                        .expect("active session exists");
+                    let turn = entry.session.current_turn() + 1;
                     for c in &claims {
                         let token_count = count_tokens(&c.text);
                         let hash = content_hash(&c.text);
-                        session.record_delivery(
+                        entry.session.record_delivery(
                             &ContentId(c.claim_id.clone()),
                             Resolution::Claim,
                             token_count,
                             turn,
                             hash,
                         );
-                        budget.record_tokens(&c.claim_id, token_count);
+                        entry.budget.record_tokens(&c.claim_id, token_count);
                     }
-                    let budget_status = budget.budget_status();
-                    drop(budget);
-                    drop(session);
+                    let budget_status = entry.budget.budget_status();
+                    drop(reg);
 
                     self.persist_session().await;
 
@@ -1580,24 +1588,25 @@ impl IrisServer {
                     );
 
                     // Record each related claim delivery in session and budget
-                    let mut session = self.session.lock().await;
-                    let mut budget = self.budget.lock().await;
-                    let turn = session.current_turn() + 1;
+                    let mut reg = self.registry.lock().await;
+                    let entry = reg
+                        .get_session_mut(&self.active_session_id)
+                        .expect("active session exists");
+                    let turn = entry.session.current_turn() + 1;
                     for r in &related {
                         let token_count = count_tokens(&r.text);
                         let hash = content_hash(&r.text);
-                        session.record_delivery(
+                        entry.session.record_delivery(
                             &ContentId(r.claim_id.clone()),
                             Resolution::Claim,
                             token_count,
                             turn,
                             hash,
                         );
-                        budget.record_tokens(&r.claim_id, token_count);
+                        entry.budget.record_tokens(&r.claim_id, token_count);
                     }
-                    let budget_status = budget.budget_status();
-                    drop(budget);
-                    drop(session);
+                    let budget_status = entry.budget.budget_status();
+                    drop(reg);
 
                     self.persist_session().await;
 
@@ -1641,22 +1650,23 @@ impl IrisServer {
             let mut evicted = Vec::new();
             let mut not_found = Vec::new();
 
-            let mut session = self.session.lock().await;
-            let mut budget = self.budget.lock().await;
+            let mut reg = self.registry.lock().await;
+            let entry = reg
+                .get_session_mut(&self.active_session_id)
+                .expect("active session exists");
 
             for id_str in &params.content_ids {
                 let content_id = ContentId(id_str.clone());
-                if session.remove_delivered(&content_id).is_some() {
-                    budget.force_evict(id_str);
+                if entry.session.remove_delivered(&content_id).is_some() {
+                    entry.budget.force_evict(id_str);
                     evicted.push(id_str.clone());
                 } else {
                     not_found.push(id_str.clone());
                 }
             }
 
-            let budget_status = budget.budget_status();
-            drop(budget);
-            drop(session);
+            let budget_status = entry.budget.budget_status();
+            drop(reg);
 
             self.persist_session().await;
 
@@ -1692,18 +1702,19 @@ impl IrisServer {
         async {
             debug!("iris_budget request");
 
-            let mut session = self.session.lock().await;
-            let budget = self.budget.lock().await;
+            let mut reg = self.registry.lock().await;
+            let entry = reg
+                .get_session_mut(&self.active_session_id)
+                .expect("active session exists");
             let prefetch = self.prefetch.lock().await;
 
-            let status = budget.budget_status();
-            let candidates = budget.eviction_candidates(&session, 5);
+            let status = entry.budget.budget_status();
+            let candidates = entry.budget.eviction_candidates(&entry.session, 5);
             let prefetch_metrics = prefetch.metrics();
-            let alerts = session.drain_alerts();
+            let alerts = entry.session.drain_alerts();
 
             drop(prefetch);
-            drop(budget);
-            drop(session);
+            drop(reg);
 
             let pressure_str = match status.pressure_level {
                 PressureLevel::Normal => "normal",
@@ -1744,17 +1755,18 @@ impl IrisServer {
                     {
                         let ids = choice.ids();
                         if !ids.is_empty() {
-                            let mut session = self.session.lock().await;
-                            let mut budget = self.budget.lock().await;
+                            let mut reg = self.registry.lock().await;
+                            let entry = reg
+                                .get_session_mut(&self.active_session_id)
+                                .expect("active session exists");
                             for id_str in &ids {
                                 let content_id = ContentId(id_str.clone());
-                                if session.remove_delivered(&content_id).is_some() {
-                                    budget.force_evict(id_str);
+                                if entry.session.remove_delivered(&content_id).is_some() {
+                                    entry.budget.force_evict(id_str);
                                     elicitation_evicted.push(id_str.clone());
                                 }
                             }
-                            drop(budget);
-                            drop(session);
+                            drop(reg);
                             self.persist_session().await;
                             debug!(
                                 evicted = ?elicitation_evicted,
@@ -1851,9 +1863,13 @@ impl IrisServer {
                 Ok(summaries) => {
                     debug!(summary_count = summaries.len(), "iris_compress success");
 
-                    let budget = self.budget.lock().await;
-                    let budget_status = budget.budget_status();
-                    drop(budget);
+                    let reg = self.registry.lock().await;
+                    let budget_status = reg
+                        .get_session(&self.active_session_id)
+                        .expect("active session exists")
+                        .budget
+                        .budget_status();
+                    drop(reg);
 
                     let response = self
                         .build_response(CompressResponse { summaries }, budget_status)
@@ -1909,9 +1925,13 @@ impl IrisServer {
                         total_sections, total_claims, "iris_toc success"
                     );
 
-                    let budget = self.budget.lock().await;
-                    let budget_status = budget.budget_status();
-                    drop(budget);
+                    let reg = self.registry.lock().await;
+                    let budget_status = reg
+                        .get_session(&self.active_session_id)
+                        .expect("active session exists")
+                        .budget
+                        .budget_status();
+                    drop(reg);
 
                     // Report ingestion status when corpus is empty to help
                     // diagnose "0 documents" scenarios.
@@ -2026,9 +2046,13 @@ impl IrisServer {
                         "iris_fetch success"
                     );
 
-                    let budget = self.budget.lock().await;
-                    let budget_status = budget.budget_status();
-                    drop(budget);
+                    let reg = self.registry.lock().await;
+                    let budget_status = reg
+                        .get_session(&self.active_session_id)
+                        .expect("active session exists")
+                        .budget
+                        .budget_status();
+                    drop(reg);
 
                     let response = self
                         .build_response(
@@ -2263,9 +2287,13 @@ impl IrisServer {
 
                     debug!(total, "iris_symbols success");
 
-                    let budget = self.budget.lock().await;
-                    let budget_status = budget.budget_status();
-                    drop(budget);
+                    let reg = self.registry.lock().await;
+                    let budget_status = reg
+                        .get_session(&self.active_session_id)
+                        .expect("active session exists")
+                        .budget
+                        .budget_status();
+                    drop(reg);
 
                     let response = self
                         .build_response(SymbolsResponse { symbols: summaries, total }, budget_status)
@@ -2306,10 +2334,13 @@ impl IrisServer {
             match self.service.get_symbol_definition(&params.symbol_id).await {
                 Ok(def) => {
                     let token_count = count_tokens(&def.source_context);
-                    let mut budget = self.budget.lock().await;
-                    budget.record_tokens(&params.symbol_id, token_count);
-                    let budget_status = budget.budget_status();
-                    drop(budget);
+                    let mut reg = self.registry.lock().await;
+                    let entry = reg
+                        .get_session_mut(&self.active_session_id)
+                        .expect("active session exists");
+                    entry.budget.record_tokens(&params.symbol_id, token_count);
+                    let budget_status = entry.budget.budget_status();
+                    drop(reg);
 
                     debug!(symbol_id = %params.symbol_id, token_count, "iris_definition success");
 
@@ -2361,9 +2392,13 @@ impl IrisServer {
                     let total = refs.len();
                     debug!(symbol_id = %params.symbol_id, total, "iris_references success");
 
-                    let budget = self.budget.lock().await;
-                    let budget_status = budget.budget_status();
-                    drop(budget);
+                    let reg = self.registry.lock().await;
+                    let budget_status = reg
+                        .get_session(&self.active_session_id)
+                        .expect("active session exists")
+                        .budget
+                        .budget_status();
+                    drop(reg);
 
                     let response = self
                         .build_response(
@@ -2443,9 +2478,13 @@ impl IrisServer {
 
                     debug!(total, "iris_bridge success");
 
-                    let budget = self.budget.lock().await;
-                    let budget_status = budget.budget_status();
-                    drop(budget);
+                    let reg = self.registry.lock().await;
+                    let budget_status = reg
+                        .get_session(&self.active_session_id)
+                        .expect("active session exists")
+                        .budget
+                        .budget_status();
+                    drop(reg);
 
                     let response = self
                         .build_response(BridgeResponse { links: summaries, total }, budget_status)
@@ -2479,18 +2518,20 @@ impl IrisServer {
         description = "Summarize sections read, budget state, and session activity"
     )]
     async fn session_summary(&self) -> Result<GetPromptResult, McpError> {
-        let session = self.session.lock().await;
-        let budget = self.budget.lock().await;
-        let status = budget.budget_status();
+        let reg = self.registry.lock().await;
+        let entry = reg
+            .get_session(&self.active_session_id)
+            .expect("active session exists");
+        let status = entry.budget.budget_status();
         let prefetch = self.prefetch.lock().await;
         let metrics = prefetch.metrics();
 
-        let delivered_count = session.delivered_count();
-        let total_tokens = session.total_delivered_tokens();
-        let trajectory_len = session.trajectory().len();
-        let stale_ids = session.stale_content_ids();
-        let has_alerts = session.has_pending_alerts();
-        let elapsed = session.elapsed();
+        let delivered_count = entry.session.delivered_count();
+        let total_tokens = entry.session.total_delivered_tokens();
+        let trajectory_len = entry.session.trajectory().len();
+        let stale_ids = entry.session.stale_content_ids();
+        let has_alerts = entry.session.has_pending_alerts();
+        let elapsed = entry.session.elapsed();
 
         let mut summary = format!(
             "## Session Summary\n\n\
@@ -2546,16 +2587,18 @@ impl IrisServer {
         description = "Recommend unread sections based on access patterns and prefetch"
     )]
     async fn what_next(&self) -> Result<GetPromptResult, McpError> {
-        let session = self.session.lock().await;
-        let budget = self.budget.lock().await;
+        let reg = self.registry.lock().await;
+        let entry = reg
+            .get_session(&self.active_session_id)
+            .expect("active session exists");
         let prefetch = self.prefetch.lock().await;
-        let status = budget.budget_status();
+        let status = entry.budget.budget_status();
 
         let mut recommendations = String::from("## What to Read Next\n\n");
 
         // 1. Pre-warmed sections not yet delivered
         let cache = prefetch.cache();
-        let delivered_ids = session.delivered_ids();
+        let delivered_ids = entry.session.delivered_ids();
         let prefetched: Vec<&str> = cache
             .keys()
             .filter(|key| !delivered_ids.contains(*key))
@@ -2698,16 +2741,13 @@ impl IrisServer {
     /// Create a new iris MCP server with custom budget configuration.
     #[must_use]
     pub fn with_budget_config(service: Arc<QueryService>, budget_config: BudgetConfig) -> Self {
-        let session = Session::new(
-            SessionId::from(uuid_v4()),
-            budget_config.max_context_tokens,
-            EvictionPolicy::Fifo,
-        );
-        let budget = BudgetTracker::new(budget_config, EvictionPolicy::Fifo);
+        let session_id = uuid_v4();
+        let mut registry = SessionRegistry::new(budget_config);
+        registry.create_session(&session_id, None, AccessMode::ReadWrite);
         Self {
             service,
-            session: Arc::new(Mutex::new(session)),
-            budget: Arc::new(Mutex::new(budget)),
+            registry: Arc::new(Mutex::new(registry)),
+            active_session_id: session_id,
             prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
             storage: None,
             analytics: None,
@@ -2739,30 +2779,32 @@ impl IrisServer {
         session_id: Option<String>,
     ) -> Self {
         let sid = session_id.unwrap_or_else(uuid_v4);
-        let session_id = SessionId::from(sid);
+        let session_id_obj = SessionId::from(sid.clone());
 
-        let session = match storage.load_session(&session_id).await {
+        let mut registry = SessionRegistry::new(budget_config.clone());
+
+        match storage.load_session(&session_id_obj).await {
             Ok(Some(restored)) => {
                 debug!(
-                    session_id = %session_id,
+                    session_id = %session_id_obj,
                     delivered_count = restored.delivered_count(),
                     "restored session from storage"
                 );
-                restored
+                // Create entry and replace its session with the restored one
+                let entry =
+                    registry.create_session(&sid, Some(budget_config), AccessMode::ReadWrite);
+                entry.session = restored;
             }
-            _ => Session::new(
-                session_id,
-                budget_config.max_context_tokens,
-                EvictionPolicy::Fifo,
-            ),
-        };
+            _ => {
+                registry.create_session(&sid, Some(budget_config), AccessMode::ReadWrite);
+            }
+        }
 
-        let budget = BudgetTracker::new(budget_config, EvictionPolicy::Fifo);
         let analytics = Arc::new(Analytics::new((*storage).clone()));
         Self {
             service,
-            session: Arc::new(Mutex::new(session)),
-            budget: Arc::new(Mutex::new(budget)),
+            registry: Arc::new(Mutex::new(registry)),
+            active_session_id: sid,
             prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
             storage: Some(storage),
             analytics: Some(analytics),
@@ -2836,10 +2878,16 @@ impl IrisServer {
         self
     }
 
-    /// Access the session `Arc` for external use (e.g. coherence task).
+    /// Access the session registry `Arc` for external use (e.g. coherence task).
     #[must_use]
-    pub fn session_arc(&self) -> Arc<Mutex<Session>> {
-        Arc::clone(&self.session)
+    pub fn registry_arc(&self) -> Arc<Mutex<SessionRegistry>> {
+        Arc::clone(&self.registry)
+    }
+
+    /// The active session ID for this MCP connection.
+    #[must_use]
+    pub fn active_session_id(&self) -> &str {
+        &self.active_session_id
     }
 
     /// Set the coherence notification receiver for resource subscription push.
@@ -2870,20 +2918,21 @@ impl IrisServer {
     ) -> BudgetStatus {
         let token_count = count_tokens(text);
         let content_id = ContentId(section_id.to_string());
-        let mut session = self.session.lock().await;
-        let mut budget = self.budget.lock().await;
-        let turn = session.current_turn() + 1;
-        session.record_delivery(
+        let mut reg = self.registry.lock().await;
+        let entry = reg
+            .get_session_mut(&self.active_session_id)
+            .expect("active session exists");
+        let turn = entry.session.current_turn() + 1;
+        entry.session.record_delivery(
             &content_id,
             Resolution::Section,
             token_count,
             turn,
             content_hash,
         );
-        budget.record_tokens(section_id, token_count);
-        let status = budget.budget_status();
-        drop(budget);
-        drop(session);
+        entry.budget.record_tokens(section_id, token_count);
+        let status = entry.budget.budget_status();
+        drop(reg);
         self.persist_session().await;
         status
     }
@@ -2898,17 +2947,19 @@ impl IrisServer {
         data: T,
         budget_status: BudgetStatus,
     ) -> ToolResponse<T> {
-        let mut session = self.session.lock().await;
-        let alerts = session.drain_alerts();
+        let mut reg = self.registry.lock().await;
+        let entry = reg
+            .get_session_mut(&self.active_session_id)
+            .expect("active session exists");
+        let alerts = entry.session.drain_alerts();
 
         // Compute eviction recommendations when under pressure
         let eviction_recommendations = if budget_status.pressure_level == PressureLevel::Normal {
             Vec::new()
         } else {
-            let budget = self.budget.lock().await;
-            budget.eviction_candidates(&session, 3)
+            entry.budget.eviction_candidates(&entry.session, 3)
         };
-        drop(session);
+        drop(reg);
 
         let progress = &self.ingestion_progress;
         let indexing = progress.is_running();
@@ -2995,9 +3046,13 @@ impl IrisServer {
                     "iris_clone success"
                 );
 
-                let budget = self.budget.lock().await;
-                let budget_status = budget.budget_status();
-                drop(budget);
+                let reg = self.registry.lock().await;
+                let budget_status = reg
+                    .get_session(&self.active_session_id)
+                    .expect("active session exists")
+                    .budget
+                    .budget_status();
+                drop(reg);
 
                 let response = self
                     .build_response(
@@ -3096,9 +3151,13 @@ impl IrisServer {
             "iris_refresh success"
         );
 
-        let budget = self.budget.lock().await;
-        let budget_status = budget.budget_status();
-        drop(budget);
+        let reg = self.registry.lock().await;
+        let budget_status = reg
+            .get_session(&self.active_session_id)
+            .expect("active session exists")
+            .budget
+            .budget_status();
+        drop(reg);
 
         let response = self
             .build_response(
@@ -3374,18 +3433,21 @@ impl IrisServer {
     /// Also flushes co-access patterns from the session trajectory.
     async fn persist_session(&self) {
         if let Some(ref storage) = self.storage {
-            let session = self.session.lock().await;
-            if let Err(e) = storage.save_session(&session).await {
+            let reg = self.registry.lock().await;
+            let Some(entry) = reg.get_session(&self.active_session_id) else {
+                return;
+            };
+            if let Err(e) = storage.save_session(&entry.session).await {
                 warn!(error = %e, "failed to persist session");
             }
             // Flush co-access patterns from trajectory
             if let Some(ref analytics) = self.analytics {
-                let trajectory = session.trajectory();
+                let trajectory = entry.session.trajectory();
                 let section_ids: Vec<SectionId> = trajectory
                     .iter()
                     .map(|cid| SectionId(cid.0.clone()))
                     .collect();
-                drop(session);
+                drop(reg);
                 if let Err(e) = analytics.record_co_accesses(&section_ids).await {
                     warn!(error = %e, "failed to record co-access patterns");
                 }
@@ -3503,8 +3565,10 @@ impl IrisServer {
     /// Build the `iris://status` resource content.
     async fn read_status_resource(&self) -> Result<ReadResourceResult, McpError> {
         let index = self.service.index();
-        let session = self.session.lock().await;
-        let budget = self.budget.lock().await;
+        let reg = self.registry.lock().await;
+        let entry = reg
+            .get_session(&self.active_session_id)
+            .expect("active session exists");
 
         let analytics_stats = if let Some(ref analytics) = self.analytics {
             analytics.corpus_stats().await.ok()
@@ -3518,10 +3582,14 @@ impl IrisServer {
                 "dimension": index.dimension(),
             },
             "session": {
-                "id": session.id.to_string(),
-                "delivered_count": session.delivered_count(),
+                "id": entry.session.id.to_string(),
+                "delivered_count": entry.session.delivered_count(),
+                "federation": {
+                    "total_sessions": reg.session_count(),
+                    "session_ids": reg.session_ids(),
+                },
             },
-            "budget": budget.budget_status(),
+            "budget": entry.budget.budget_status(),
         });
 
         if let Some(stats) = analytics_stats {

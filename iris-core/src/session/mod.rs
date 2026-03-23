@@ -17,6 +17,7 @@ pub mod compression;
 pub mod delta;
 pub mod eviction;
 pub mod prefetch;
+mod registry;
 mod types;
 mod window;
 
@@ -26,7 +27,8 @@ pub use eviction::{EvictionCandidate, EvictionRanker};
 pub use prefetch::{
     CacheEntry, PrefetchCache, PrefetchEngine, PrefetchMetrics, PrefetchStrategy, TopicTracker,
 };
+pub use registry::{SessionEntry, SessionRegistry};
 pub use types::{
-    CoherenceAlert, CompressionTier, DeliveredItem, EvictionPolicy, Session, SessionId,
+    AccessMode, CoherenceAlert, CompressionTier, DeliveredItem, EvictionPolicy, Session, SessionId,
 };
 pub use window::{WindowEstimator, WindowStatus};
