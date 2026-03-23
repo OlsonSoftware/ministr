@@ -903,11 +903,11 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Session federation — multiple named sessions sharing a single indexed corpus
-- [ ] Cross-session budget coordination — shared corpus with independent per-agent budgets
-- [ ] Cross-agent coherence notifications via MCP resource subscriptions
-- [ ] Session isolation policies — read-only vs read-write session access modes
-- [ ] Tests for concurrent multi-session access and coherence propagation
+- [x] Session federation — multiple named sessions sharing a single indexed corpus
+- [x] Cross-session budget coordination — shared corpus with independent per-agent budgets
+- [x] Cross-agent coherence notifications via MCP resource subscriptions
+- [x] Session isolation policies — read-only vs read-write session access modes
+- [x] Tests for concurrent multi-session access and coherence propagation
 
 ---
 
@@ -1007,7 +1007,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 - [x] Workspace detection: auto-discover Cargo workspaces, npm/pnpm/yarn workspaces, monorepo layouts (turborepo, nx)
 - [ ] Multi-root corpus: index multiple directories as a unified project, maintaining per-directory metadata and language stats
-- [ ] Cross-package import graph: track imports/dependencies between packages in a workspace
-- [ ] Cross-crate Rust references: resolve `use other_crate::Foo` to symbols in sibling workspace crates
+- [x] Cross-package import graph: track imports/dependencies between packages in a workspace
+- [x] Cross-crate Rust references: resolve `use other_crate::Foo` to symbols in sibling workspace crates
 - [ ] iris_clone integration: index cloned dependency source and link references back to consuming code
 
