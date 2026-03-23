@@ -15,6 +15,7 @@
 //! extraction using node kind heuristics common across grammars.
 
 pub(crate) mod ast_parser;
+pub mod bridge;
 mod complexity;
 pub mod generic_extractor;
 pub mod grammar;
