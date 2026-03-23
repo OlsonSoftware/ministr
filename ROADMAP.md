@@ -856,11 +856,11 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Declare elicitation capability in ServerCapabilities
-- [ ] Budget pressure elicitation — when pressure ≥ elevated, ask agent which sections to evict
-- [ ] Compression mode elicitation — confirm before expensive abstractive compression via sampling
-- [ ] Search disambiguation — elicit to refine ambiguous iris_survey queries with follow-up
-- [ ] Tests for elicitation request/response flow with mock client
+- [x] Declare elicitation capability in ServerCapabilities
+- [x] Budget pressure elicitation — when pressure ≥ elevated, ask agent which sections to evict
+- [x] Compression mode elicitation — confirm before expensive abstractive compression via sampling
+- [x] Search disambiguation — elicit to refine ambiguous iris_survey queries with follow-up
+- [x] Tests for elicitation request/response flow with mock client
 
 ---
 
@@ -872,11 +872,11 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Implement prompt capability and list_prompts/get_prompt handlers
-- [ ] "session-summary" prompt — summarize sections read, budget state, and session activity
-- [ ] "what-next" prompt — recommend unread sections based on access patterns and prefetch
-- [ ] "dependency-chain" prompt — trace claim relationships from a given concept
-- [ ] Completions support — tab-completion for section IDs, symbol IDs, and claim IDs
+- [x] Implement prompt capability and list_prompts/get_prompt handlers
+- [x] "session-summary" prompt — summarize sections read, budget state, and session activity
+- [x] "what-next" prompt — recommend unread sections based on access patterns and prefetch
+- [x] "dependency-chain" prompt — trace claim relationships from a given concept
+- [x] Completions support — tab-completion for section IDs, symbol IDs, and claim IDs
 
 ---
 

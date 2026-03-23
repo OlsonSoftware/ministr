@@ -17,25 +17,29 @@
 //! eviction feedback from the agent.
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
+use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData as McpError;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, CancelTaskParams, Content, CreateTaskResult,
+    CallToolRequestParams, CallToolResult, CancelTaskParams, CompleteRequestParams, CompleteResult,
+    CompletionInfo, Content, CreateTaskResult, GetPromptRequestParams, GetPromptResult,
     GetTaskInfoParams, GetTaskPayloadResult, GetTaskResult, GetTaskResultParams, Implementation,
-    ListResourceTemplatesResult, ListResourcesResult, ListTasksResult, NumberOrString,
-    PaginatedRequestParams, ProgressNotificationParam, RawResource, RawResourceTemplate,
-    ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
+    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListTasksResult,
+    NumberOrString, PaginatedRequestParams, ProgressNotificationParam, PromptMessage,
+    PromptMessageRole, RawResource, RawResourceTemplate, ReadResourceRequestParams,
+    ReadResourceResult, Reference, Resource, ResourceContents, ResourceTemplate,
     ResourceUpdatedNotificationParam, ServerCapabilities, ServerInfo, SubscribeRequestParams,
     UnsubscribeRequestParams,
 };
 use rmcp::schemars;
 use rmcp::service::{NotificationContext, Peer, RequestContext};
-use rmcp::{tool, tool_handler, tool_router};
+use rmcp::{prompt, prompt_handler, prompt_router, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -95,6 +99,8 @@ pub struct IrisServer {
     task_manager: Arc<McpTaskManager>,
     /// Macro-generated tool router for dispatching tool calls.
     tool_router: ToolRouter<Self>,
+    /// Macro-generated prompt router for dispatching prompt requests.
+    prompt_router: PromptRouter<Self>,
 }
 
 /// Tool response wrapper that includes budget status alongside the result data.
@@ -622,6 +628,7 @@ fn structured_result(value: &impl Serialize) -> Result<CallToolResult, McpError>
 }
 
 #[tool_handler]
+#[prompt_handler]
 impl ServerHandler for IrisServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
@@ -630,6 +637,8 @@ impl ServerHandler for IrisServer {
                 .enable_resources()
                 .enable_resources_subscribe()
                 .enable_tasks()
+                .enable_prompts()
+                .enable_completions()
                 .build(),
         )
         .with_server_info(
@@ -915,6 +924,39 @@ impl ServerHandler for IrisServer {
                 run_subscription_notifier(rx, peer_lock, subscriptions).await;
             });
         }
+    }
+
+    // ── Completions ──────────────────────────────────────────────────
+
+    async fn complete(
+        &self,
+        request: CompleteRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CompleteResult, McpError> {
+        let partial = &request.argument.value;
+        let values = match &request.r#ref {
+            Reference::Prompt(prompt_ref) => {
+                // For the dependency-chain prompt, complete the "concept" argument
+                // by fuzzy-matching section IDs.
+                if prompt_ref.name == "dependency-chain" && request.argument.name == "concept" {
+                    self.complete_section_ids(partial).await
+                } else {
+                    Vec::new()
+                }
+            }
+            Reference::Resource(resource_ref) => {
+                // Complete iris://corpus/{path} resource URIs.
+                if resource_ref.uri.starts_with("iris://corpus/") {
+                    self.complete_corpus_paths(partial).await
+                } else {
+                    Vec::new()
+                }
+            }
+        };
+
+        let info = CompletionInfo::with_all_values(values)
+            .map_err(|e| McpError::new(rmcp::model::ErrorCode::INTERNAL_ERROR, e, None))?;
+        Ok(CompleteResult::new(info))
     }
 }
 
@@ -2154,6 +2196,226 @@ impl IrisServer {
     }
 }
 
+// ── Prompt Router ────────────────────────────────────────────────────
+
+#[prompt_router]
+impl IrisServer {
+    /// Summarize the current session: sections read, budget state, and activity.
+    ///
+    /// Returns a structured overview of what has been delivered in this session,
+    /// the current budget utilization and pressure level, and any pending
+    /// coherence alerts or stale content.
+    #[prompt(
+        name = "session-summary",
+        description = "Summarize sections read, budget state, and session activity"
+    )]
+    async fn session_summary(&self) -> Result<GetPromptResult, McpError> {
+        let session = self.session.lock().await;
+        let budget = self.budget.lock().await;
+        let status = budget.budget_status();
+        let prefetch = self.prefetch.lock().await;
+        let metrics = prefetch.metrics();
+
+        let delivered_count = session.delivered_count();
+        let total_tokens = session.total_delivered_tokens();
+        let trajectory_len = session.trajectory().len();
+        let stale_ids = session.stale_content_ids();
+        let has_alerts = session.has_pending_alerts();
+        let elapsed = session.elapsed();
+
+        let mut summary = format!(
+            "## Session Summary\n\n\
+             **Delivered:** {delivered_count} sections ({total_tokens} tokens)\n\
+             **Trajectory:** {trajectory_len} access steps\n\
+             **Duration:** {elapsed:.0?}\n\n\
+             ### Budget\n\
+             - Utilization: {:.1}%\n\
+             - Pressure: {:?}\n\
+             - Remaining: {} tokens\n",
+            status.utilization * 100.0,
+            status.pressure_level,
+            status.tokens_remaining,
+        );
+
+        if !stale_ids.is_empty() {
+            let _ = write!(
+                summary,
+                "\n### Stale Content\n{} sections have changed on disk since delivery.\n",
+                stale_ids.len()
+            );
+        }
+
+        if has_alerts {
+            summary.push_str(
+                "\n### Coherence\nPending coherence alerts — \
+                             call `iris_budget` to review.\n",
+            );
+        }
+
+        let _ = write!(
+            summary,
+            "\n### Prefetch\n\
+             - Hit rate: {:.1}%\n\
+             - Cache entries: {}\n",
+            metrics.hit_rate() * 100.0,
+            prefetch.cache().len(),
+        );
+
+        Ok(GetPromptResult::new(vec![PromptMessage::new_text(
+            PromptMessageRole::User,
+            summary,
+        )])
+        .with_description("Session summary — sections read, budget state, and activity"))
+    }
+
+    /// Recommend unread sections based on access patterns and prefetch state.
+    ///
+    /// Looks at what the prefetch engine has pre-warmed, co-access patterns
+    /// from analytics, and budget headroom to suggest what to read next.
+    #[prompt(
+        name = "what-next",
+        description = "Recommend unread sections based on access patterns and prefetch"
+    )]
+    async fn what_next(&self) -> Result<GetPromptResult, McpError> {
+        let session = self.session.lock().await;
+        let budget = self.budget.lock().await;
+        let prefetch = self.prefetch.lock().await;
+        let status = budget.budget_status();
+
+        let mut recommendations = String::from("## What to Read Next\n\n");
+
+        // 1. Pre-warmed sections not yet delivered
+        let cache = prefetch.cache();
+        let delivered_ids = session.delivered_ids();
+        let prefetched: Vec<&str> = cache
+            .keys()
+            .filter(|key| !delivered_ids.contains(*key))
+            .take(10)
+            .collect();
+
+        if !prefetched.is_empty() {
+            recommendations.push_str("### Pre-warmed (ready for instant delivery)\n");
+            for id in &prefetched {
+                let _ = writeln!(recommendations, "- `{id}`");
+            }
+            recommendations.push('\n');
+        }
+
+        // 2. Budget headroom
+        let _ = write!(
+            recommendations,
+            "### Budget Headroom\n\
+             {remaining} tokens remaining ({util:.1}% used, pressure: {pressure:?})\n\n",
+            remaining = status.tokens_remaining,
+            util = status.utilization * 100.0,
+            pressure = status.pressure_level,
+        );
+
+        if matches!(status.pressure_level, PressureLevel::Critical) {
+            recommendations.push_str(
+                "**Warning:** Budget is critical. Consider evicting content \
+                 with `iris_evicted` or compressing with `iris_compress` before reading more.\n\n",
+            );
+        }
+
+        if prefetched.is_empty() {
+            recommendations.push_str(
+                "No pre-warmed sections available. Use `iris_survey` to search \
+                 for relevant content or `iris_toc` for a structural overview.\n",
+            );
+        }
+
+        Ok(GetPromptResult::new(vec![PromptMessage::new_text(
+            PromptMessageRole::User,
+            recommendations,
+        )])
+        .with_description("Recommendations for what to read next"))
+    }
+
+    /// Trace claim relationships from a given concept.
+    ///
+    /// Searches for claims matching the concept, then follows dependency
+    /// chains to show how claims relate to each other.
+    #[prompt(
+        name = "dependency-chain",
+        description = "Trace claim relationships from a given concept"
+    )]
+    async fn dependency_chain(
+        &self,
+        Parameters(params): Parameters<DependencyChainArgs>,
+    ) -> Result<GetPromptResult, McpError> {
+        let concept = &params.concept;
+
+        // Search for relevant sections to find claims.
+        let results = self.service.survey(concept, 5).await.map_err(|e| {
+            McpError::new(
+                rmcp::model::ErrorCode::INTERNAL_ERROR,
+                format!("survey failed: {e}"),
+                None,
+            )
+        })?;
+
+        if results.is_empty() {
+            return Ok(GetPromptResult::new(vec![PromptMessage::new_text(
+                PromptMessageRole::User,
+                format!("No content found matching concept: '{concept}'"),
+            )])
+            .with_description(format!("Dependency chain for '{concept}'")));
+        }
+
+        let mut output = format!("## Dependency Chain: {concept}\n\n");
+
+        // Extract claims from top results and follow relationships.
+        for result in results.iter().take(3) {
+            let claims = self
+                .service
+                .extract_claims(&result.content_id, Some(concept))
+                .await
+                .unwrap_or_default();
+
+            if claims.is_empty() {
+                continue;
+            }
+
+            let _ = writeln!(output, "### {}", result.content_id);
+
+            for claim in claims.iter().take(5) {
+                let _ = writeln!(output, "- **{}**: {}", claim.claim_id, claim.text);
+
+                // Follow relationships one level deep.
+                let relations = self
+                    .service
+                    .related_claims(&claim.claim_id, None)
+                    .await
+                    .unwrap_or_default();
+
+                for rel in relations.iter().take(3) {
+                    let _ = writeln!(
+                        output,
+                        "  - {} → `{}`: {}",
+                        rel.relation_type, rel.claim_id, rel.text,
+                    );
+                }
+            }
+            output.push('\n');
+        }
+
+        Ok(GetPromptResult::new(vec![PromptMessage::new_text(
+            PromptMessageRole::User,
+            output,
+        )])
+        .with_description(format!("Dependency chain for '{concept}'")))
+    }
+}
+
+/// Arguments for the `dependency-chain` prompt.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DependencyChainArgs {
+    /// The concept or topic to trace dependency chains for.
+    #[schemars(description = "The concept to trace claim dependency chains for")]
+    pub concept: String,
+}
+
 impl IrisServer {
     /// Create a new iris MCP server instance backed by the given query service.
     ///
@@ -2191,6 +2453,7 @@ impl IrisServer {
             subscriptions: Arc::new(Mutex::new(HashSet::new())),
             coherence_rx: Arc::new(Mutex::new(None)),
             tool_router: Self::tool_router(),
+            prompt_router: Self::prompt_router(),
         }
     }
 
@@ -2244,6 +2507,7 @@ impl IrisServer {
             subscriptions: Arc::new(Mutex::new(HashSet::new())),
             coherence_rx: Arc::new(Mutex::new(None)),
             tool_router: Self::tool_router(),
+            prompt_router: Self::prompt_router(),
         }
     }
 
@@ -2848,6 +3112,41 @@ impl IrisServer {
                 }
             }
         }
+    }
+
+    // ── Completion helpers ────────────────────────────────────────────
+
+    /// Complete section IDs by fuzzy-matching the partial value.
+    async fn complete_section_ids(&self, partial: &str) -> Vec<String> {
+        let storage = self.service.storage();
+        let documents = storage.list_documents().await.unwrap_or_default();
+        let lower = partial.to_lowercase();
+        let mut results = Vec::new();
+        for doc in &documents {
+            let sections = storage.list_sections(&doc.id).await.unwrap_or_default();
+            for section in sections {
+                if section.id.0.to_lowercase().contains(&lower) {
+                    results.push(section.id.0);
+                    if results.len() >= CompletionInfo::MAX_VALUES {
+                        return results;
+                    }
+                }
+            }
+        }
+        results
+    }
+
+    /// Complete corpus document paths for `iris://corpus/{path}` resources.
+    async fn complete_corpus_paths(&self, partial: &str) -> Vec<String> {
+        let storage = self.service.storage();
+        let documents = storage.list_documents().await.unwrap_or_default();
+        let lower = partial.to_lowercase();
+        documents
+            .into_iter()
+            .filter(|d| d.source_path.to_lowercase().contains(&lower))
+            .take(CompletionInfo::MAX_VALUES)
+            .map(|d| d.source_path)
+            .collect()
     }
 
     /// Build the `iris://status` resource content.
@@ -4904,6 +5203,149 @@ mod tests {
             clone_tool.task_support(),
             rmcp::model::TaskSupport::Optional,
             "iris_clone should support optional task mode"
+        );
+    }
+
+    // --- Prompts tests ---
+
+    #[test]
+    fn server_info_enables_prompts_capability() {
+        let server = setup_server_sync();
+        let info = server.get_info();
+        assert!(
+            info.capabilities.prompts.is_some(),
+            "prompts capability should be enabled"
+        );
+    }
+
+    #[test]
+    fn server_info_enables_completions_capability() {
+        let server = setup_server_sync();
+        let info = server.get_info();
+        assert!(
+            info.capabilities.completions.is_some(),
+            "completions capability should be enabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_prompts_returns_three_prompts() {
+        let (client, _server) = wrap_test_client(setup_server().await).await;
+        let result = client.peer().list_prompts(None).await.unwrap();
+        assert_eq!(result.prompts.len(), 3, "should have 3 prompts");
+        let names: Vec<&str> = result.prompts.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"session-summary"));
+        assert!(names.contains(&"what-next"));
+        assert!(names.contains(&"dependency-chain"));
+    }
+
+    #[tokio::test]
+    async fn get_prompt_session_summary_returns_messages() {
+        let (client, _server) = wrap_test_client(setup_server().await).await;
+        let result = client
+            .peer()
+            .get_prompt(GetPromptRequestParams::new("session-summary"))
+            .await
+            .unwrap();
+        assert!(
+            !result.messages.is_empty(),
+            "should return at least one message"
+        );
+        assert!(result.description.is_some(), "should have a description");
+    }
+
+    #[tokio::test]
+    async fn get_prompt_what_next_returns_messages() {
+        let (client, _server) = wrap_test_client(setup_server().await).await;
+        let result = client
+            .peer()
+            .get_prompt(GetPromptRequestParams::new("what-next"))
+            .await
+            .unwrap();
+        assert!(
+            !result.messages.is_empty(),
+            "should return at least one message"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_prompt_dependency_chain_returns_messages() {
+        let (client, _server) = wrap_test_client(setup_server().await).await;
+        let mut args = serde_json::Map::new();
+        args.insert("concept".into(), serde_json::json!("JWT"));
+        let result = client
+            .peer()
+            .get_prompt(GetPromptRequestParams::new("dependency-chain").with_arguments(args))
+            .await
+            .unwrap();
+        assert!(
+            !result.messages.is_empty(),
+            "should return at least one message"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_prompt_dependency_chain_no_results() {
+        let (client, _server) = wrap_test_client(setup_server().await).await;
+        let mut args = serde_json::Map::new();
+        args.insert("concept".into(), serde_json::json!("nonexistent-topic-xyz"));
+        let result = client
+            .peer()
+            .get_prompt(GetPromptRequestParams::new("dependency-chain").with_arguments(args))
+            .await
+            .unwrap();
+        assert!(!result.messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_prompt_unknown_name_returns_error() {
+        let (client, _server) = wrap_test_client(setup_server().await).await;
+        let result = client
+            .peer()
+            .get_prompt(GetPromptRequestParams::new("nonexistent"))
+            .await;
+        assert!(result.is_err(), "should error for unknown prompt");
+    }
+
+    // --- Completions tests ---
+
+    #[tokio::test]
+    async fn complete_section_ids_matches() {
+        let server = setup_server().await;
+        let results = server.complete_section_ids("auth").await;
+        assert!(
+            results.iter().any(|v| v.contains("auth")),
+            "should complete section IDs matching 'auth', got: {results:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_corpus_paths_matches() {
+        let server = setup_server().await;
+        let results = server.complete_corpus_paths("auth").await;
+        assert!(
+            results.iter().any(|v| v.contains("auth")),
+            "should complete corpus paths matching 'auth', got: {results:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_unknown_ref_returns_empty() {
+        let (client, _server) = wrap_test_client(setup_server().await).await;
+        let result = client
+            .peer()
+            .complete(CompleteRequestParams::new(
+                Reference::for_prompt("unknown"),
+                rmcp::model::ArgumentInfo {
+                    name: "arg".into(),
+                    value: "val".into(),
+                },
+            ))
+            .await
+            .unwrap();
+        assert!(
+            result.completion.values.is_empty(),
+            "should return empty for unknown prompt"
         );
     }
 }

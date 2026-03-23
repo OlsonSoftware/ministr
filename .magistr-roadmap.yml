@@ -948,20 +948,20 @@ phases:
 - id: V25
   name: MCP Prompts & Completions
   tagline: Predefined workflows and tab-completion for IDs
-  status: pending
+  status: done
   problem: Users must know iris tool APIs to get value; no guided workflows or autocompletion for content IDs
   solution: Expose MCP prompts for common workflows (session summary, next-read recommendations, dependency chains) and completions for section/symbol/claim IDs
   tasks:
   - text: Implement prompt capability and list_prompts/get_prompt handlers
-    checked: false
+    checked: true
   - text: '"session-summary" prompt — summarize sections read, budget state, and session activity'
-    checked: false
+    checked: true
   - text: '"what-next" prompt — recommend unread sections based on access patterns and prefetch'
-    checked: false
+    checked: true
   - text: '"dependency-chain" prompt — trace claim relationships from a given concept'
-    checked: false
+    checked: true
   - text: Completions support — tab-completion for section IDs, symbol IDs, and claim IDs
-    checked: false
+    checked: true
 - id: V26
   name: Extensions, Discovery & Auth
   tagline: Ecosystem integration and remote deployment readiness
