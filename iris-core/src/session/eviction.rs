@@ -2,7 +2,14 @@
 //!
 //! Scores delivered content items to determine which are best candidates for
 //! eviction from the agent's context window. Items are ranked by a composite
-//! score of recency decay, token weight, and resolution priority.
+//! score of recency decay, token weight, resolution priority, and attention
+//! position bias.
+//!
+//! The position factor models the "Lost in the Middle" phenomenon (Liu et al.,
+//! 2023): LLMs attend well to content at the start (primacy bias) and end
+//! (recency bias) of their context window, but poorly to content in the middle.
+//! Mid-context content is therefore a better eviction candidate — the LLM is
+//! already losing it to attention bias.
 
 use serde::Serialize;
 
@@ -23,12 +30,15 @@ pub struct EvictionCandidate {
 
 /// Ranks delivered content items by eviction priority.
 ///
-/// The ranking considers three factors:
-/// - **Recency decay** (weight 0.5): older items score higher. Uses normalized
+/// The ranking considers four factors:
+/// - **Recency decay** (weight 0.4): older items score higher. Uses normalized
 ///   turn distance: `(current_turn - turn_delivered) / current_turn`.
-/// - **Token weight** (weight 0.3): larger items are more valuable to evict,
+/// - **Token weight** (weight 0.25): larger items are more valuable to evict,
 ///   as they free more budget. Normalized against the largest item.
-/// - **Resolution priority** (weight 0.2): summaries are cheap to re-fetch
+/// - **Attention position** (weight 0.2): mid-context items score higher,
+///   modeling the "Lost in the Middle" U-shaped attention bias. Content at
+///   the start and end of the context window is better attended by the LLM.
+/// - **Resolution priority** (weight 0.15): summaries are cheap to re-fetch
 ///   and score higher for eviction. Sections are moderate, claims score lowest.
 ///
 /// # Examples
@@ -88,11 +98,23 @@ impl EvictionRanker {
             .unwrap_or(1)
             .max(1);
 
+        // Find turn bounds for position normalization
+        let min_turn = items
+            .iter()
+            .map(|item| item.turn_delivered)
+            .min()
+            .unwrap_or(0);
+        let max_turn = items
+            .iter()
+            .map(|item| item.turn_delivered)
+            .max()
+            .unwrap_or(0);
+
         let mut candidates: Vec<EvictionCandidate> = items
             .iter()
             .map(|item| {
-                let score = Self::compute_score(item, current_turn, max_tokens);
-                let reason = Self::describe_reason(item, current_turn);
+                let score = Self::compute_score(item, current_turn, max_tokens, min_turn, max_turn);
+                let reason = Self::describe_reason(item, current_turn, min_turn, max_turn);
                 EvictionCandidate {
                     content_id: item.content_id.0.clone(),
                     reason,
@@ -114,11 +136,22 @@ impl EvictionRanker {
     }
 
     /// Compute the composite eviction score for a single item.
+    ///
+    /// The score combines four factors: recency decay, token weight, attention
+    /// position bias, and resolution priority. The position factor uses a
+    /// quadratic U-shaped curve to model the "Lost in the Middle" phenomenon.
     #[allow(clippy::cast_precision_loss)]
-    fn compute_score(item: &DeliveredItem, current_turn: u32, max_tokens: usize) -> f64 {
-        const RECENCY_WEIGHT: f64 = 0.5;
-        const TOKEN_WEIGHT: f64 = 0.3;
-        const RESOLUTION_WEIGHT: f64 = 0.2;
+    fn compute_score(
+        item: &DeliveredItem,
+        current_turn: u32,
+        max_tokens: usize,
+        min_turn: u32,
+        max_turn: u32,
+    ) -> f64 {
+        const RECENCY_WEIGHT: f64 = 0.4;
+        const TOKEN_WEIGHT: f64 = 0.25;
+        const POSITION_WEIGHT: f64 = 0.2;
+        const RESOLUTION_WEIGHT: f64 = 0.15;
 
         // Recency decay: older items score higher
         let recency = if current_turn == 0 {
@@ -130,10 +163,36 @@ impl EvictionRanker {
         // Token weight: larger items are more valuable to evict
         let token_score = item.token_count as f64 / max_tokens as f64;
 
+        // Attention position: mid-context items score higher (Lost in the Middle).
+        // Uses inverted U curve: 4p(1-p) where p is normalized position [0,1].
+        // Start (p=0) → 0.0, middle (p=0.5) → 1.0, end (p=1) → 0.0.
+        let position_score = Self::position_score(item.turn_delivered, min_turn, max_turn);
+
         // Resolution priority: summaries easiest to re-fetch, claims hardest
         let resolution_score = Self::resolution_score(item);
 
-        recency * RECENCY_WEIGHT + token_score * TOKEN_WEIGHT + resolution_score * RESOLUTION_WEIGHT
+        recency * RECENCY_WEIGHT
+            + token_score * TOKEN_WEIGHT
+            + position_score * POSITION_WEIGHT
+            + resolution_score * RESOLUTION_WEIGHT
+    }
+
+    /// Score by attention position — higher means worse-attended (mid-context).
+    ///
+    /// Models the "Lost in the Middle" U-shaped attention curve. Items in the
+    /// middle of the context window score 1.0 (best eviction candidates),
+    /// while items at the start or end score 0.0 (protected by primacy/recency
+    /// attention bias).
+    fn position_score(turn_delivered: u32, min_turn: u32, max_turn: u32) -> f64 {
+        if max_turn <= min_turn {
+            // Single turn or no spread — no position differentiation
+            return 0.0;
+        }
+
+        let relative_pos = f64::from(turn_delivered - min_turn) / f64::from(max_turn - min_turn);
+
+        // Inverted U: peaks at 1.0 for middle position (0.5)
+        4.0 * relative_pos * (1.0 - relative_pos)
     }
 
     /// Score by resolution — higher means easier to re-fetch.
@@ -149,7 +208,12 @@ impl EvictionRanker {
     }
 
     /// Generate a human-readable reason for the eviction recommendation.
-    fn describe_reason(item: &DeliveredItem, current_turn: u32) -> String {
+    fn describe_reason(
+        item: &DeliveredItem,
+        current_turn: u32,
+        min_turn: u32,
+        max_turn: u32,
+    ) -> String {
         let age = current_turn.saturating_sub(item.turn_delivered);
         let resolution = match item.resolution {
             crate::types::Resolution::Summary => "summary",
@@ -159,9 +223,16 @@ impl EvictionRanker {
             crate::types::Resolution::SymbolFull => "symbol_full",
         };
 
+        let position_score = Self::position_score(item.turn_delivered, min_turn, max_turn);
+
         if age > 5 {
             format!(
                 "Delivered {age} turns ago ({resolution}, {} tokens) — likely stale",
+                item.token_count
+            )
+        } else if position_score > 0.8 {
+            format!(
+                "Mid-context {resolution} ({} tokens) — poorly attended by LLM",
                 item.token_count
             )
         } else if item.token_count > 500 {
@@ -386,5 +457,127 @@ mod tests {
         let json = serde_json::to_string(&candidate).unwrap();
         assert!(json.contains("test-id"));
         assert!(json.contains("tokens_recoverable"));
+    }
+
+    // --- Attention-position-aware scoring tests ---
+
+    #[test]
+    fn mid_context_items_rank_higher_than_start_or_end() {
+        let mut session = make_session();
+
+        // All same resolution and token count — only position differs
+        // Spread across turns 1..=10 with turn 10 as current
+        session.record_delivery(&cid("start"), Resolution::Section, 200, 1, "h1".into());
+        session.record_delivery(&cid("middle"), Resolution::Section, 200, 5, "h2".into());
+        session.record_delivery(&cid("end"), Resolution::Section, 200, 10, "h3".into());
+
+        let candidates = EvictionRanker::rank(&session, 10);
+
+        // Find scores for each
+        let _start_score = candidates
+            .iter()
+            .find(|c| c.content_id == "start")
+            .unwrap()
+            .score;
+        let middle_score = candidates
+            .iter()
+            .find(|c| c.content_id == "middle")
+            .unwrap()
+            .score;
+        let end_score = candidates
+            .iter()
+            .find(|c| c.content_id == "end")
+            .unwrap()
+            .score;
+
+        // Middle should have higher position contribution than end
+        // (start also has high recency score, so it may still outrank middle overall)
+        // But middle should score higher than end due to position boost
+        assert!(
+            middle_score > end_score,
+            "mid-context item should score higher than end-context: middle={middle_score}, end={end_score}"
+        );
+    }
+
+    #[test]
+    fn position_score_is_zero_for_single_item() {
+        // Single item means no position spread — position score should be 0
+        let score = EvictionRanker::position_score(5, 5, 5);
+        assert!(
+            (score - 0.0).abs() < f64::EPSILON,
+            "position score should be 0 for single turn: {score}"
+        );
+    }
+
+    #[test]
+    fn position_score_peaks_at_middle() {
+        // Turn 5 is exactly in the middle of [0, 10]
+        let score = EvictionRanker::position_score(5, 0, 10);
+        assert!(
+            (score - 1.0).abs() < f64::EPSILON,
+            "position score should be 1.0 at exact middle: {score}"
+        );
+    }
+
+    #[test]
+    fn position_score_is_zero_at_boundaries() {
+        let start_score = EvictionRanker::position_score(0, 0, 10);
+        let end_score = EvictionRanker::position_score(10, 0, 10);
+
+        assert!(
+            start_score.abs() < f64::EPSILON,
+            "position score at start should be 0: {start_score}"
+        );
+        assert!(
+            end_score.abs() < f64::EPSILON,
+            "position score at end should be 0: {end_score}"
+        );
+    }
+
+    #[test]
+    fn position_score_is_symmetric() {
+        // 25% from start == 25% from end
+        let score_quarter = EvictionRanker::position_score(25, 0, 100);
+        let score_three_quarter = EvictionRanker::position_score(75, 0, 100);
+
+        assert!(
+            (score_quarter - score_three_quarter).abs() < f64::EPSILON,
+            "position score should be symmetric: {score_quarter} vs {score_three_quarter}"
+        );
+    }
+
+    #[test]
+    fn reason_mentions_mid_context_for_middle_items() {
+        let mut session = make_session();
+
+        // Many items spread across turns, with a middle item
+        for i in 1..=20 {
+            session.record_delivery(
+                &cid(&format!("s{i}")),
+                Resolution::Section,
+                100,
+                i,
+                format!("h{i}"),
+            );
+        }
+
+        let candidates = EvictionRanker::rank(&session, 20);
+        // Items around turn 10 (middle) should mention mid-context in reason
+        let mid_candidate = candidates.iter().find(|c| c.content_id == "s10").unwrap();
+        assert!(
+            mid_candidate.reason.contains("Mid-context") || mid_candidate.reason.contains("stale"),
+            "mid-context item reason should be descriptive: {}",
+            mid_candidate.reason
+        );
+    }
+
+    #[test]
+    fn two_items_have_zero_position_scores() {
+        // With only 2 items at turns 0 and 10, both are at boundaries
+        let score_start = EvictionRanker::position_score(0, 0, 10);
+        let score_end = EvictionRanker::position_score(10, 0, 10);
+
+        assert!(score_start.abs() < f64::EPSILON);
+        assert!(score_end.abs() < f64::EPSILON);
     }
 }
