@@ -230,6 +230,10 @@ struct BudgetResponse {
     /// Pending coherence alerts (present when underlying content has changed).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     coherence_alerts: Vec<CoherenceAlert>,
+    /// Content IDs evicted via interactive elicitation (empty if elicitation
+    /// was unavailable, declined, or pressure was normal).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    elicitation_evicted: Vec<String>,
 }
 
 /// Parameters for the `iris_related` tool.
@@ -945,11 +949,85 @@ impl IrisServer {
                 session.delivered_ids()
             };
 
-            match self
+            // Run the survey; if results are ambiguous, try eliciting a refined query.
+            let survey_result = self
                 .service
                 .survey_excluding(&params.query, top_k, &exclude_ids)
-                .await
-            {
+                .await;
+
+            // Attempt disambiguation: if top score is low and scores are clustered,
+            // elicit a refined query from the agent and re-run the search.
+            let survey_result = match &survey_result {
+                Ok((results, _)) if results.len() >= 3 => {
+                    let top_score = results.first().map_or(0.0, |r| r.score);
+                    let fifth_score = results.get(4).map_or(0.0, |r| r.score);
+                    let spread = top_score - fifth_score;
+
+                    if top_score < 0.5 && spread < 0.1 {
+                        debug!(
+                            top_score,
+                            spread, "ambiguous survey results, attempting elicitation"
+                        );
+                        let peer_guard = self.peer.lock().await;
+                        if let Some(peer) = peer_guard.clone() {
+                            drop(peer_guard);
+                            let preview: String = results
+                                .iter()
+                                .take(5)
+                                .enumerate()
+                                .map(|(i, r)| {
+                                    format!(
+                                        "  {}. [score={:.2}] {}",
+                                        i + 1,
+                                        r.score,
+                                        r.text.chars().take(80).collect::<String>()
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let message = format!(
+                                "Your query '{}' returned ambiguous results \
+                                 (top score {top_score:.2}, spread {spread:.2}):\n\
+                                 {preview}\n\n\
+                                 Provide a more specific refined_query, or leave empty to \
+                                 keep these results.",
+                                params.query
+                            );
+                            if let Some(refinement) = crate::elicitation::try_elicit::<
+                                crate::elicitation::SearchRefinement,
+                            >(&peer, &message)
+                            .await
+                            {
+                                if refinement.refined_query.is_empty() {
+                                    survey_result
+                                } else {
+                                    debug!(
+                                        refined = %refinement.refined_query,
+                                        "re-running survey with refined query"
+                                    );
+                                    self.service
+                                        .survey_excluding(
+                                            &refinement.refined_query,
+                                            top_k,
+                                            &exclude_ids,
+                                        )
+                                        .await
+                                }
+                            } else {
+                                survey_result
+                            }
+                        } else {
+                            drop(peer_guard);
+                            survey_result
+                        }
+                    } else {
+                        survey_result
+                    }
+                }
+                _ => survey_result,
+            };
+
+            match survey_result {
                 Ok((results, deduplicated_count)) => {
                     debug!(
                         result_count = results.len(),
@@ -1406,6 +1484,54 @@ impl IrisServer {
                 "iris_budget complete"
             );
 
+            // When under pressure, try eliciting which sections to evict.
+            let mut elicitation_evicted = Vec::new();
+            if status.pressure_level != PressureLevel::Normal && !candidates.is_empty() {
+                let candidate_list: String = candidates
+                    .iter()
+                    .map(|c| format!("  - {} ({} tokens)", c.content_id, c.tokens_recoverable))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let message = format!(
+                    "Budget pressure is {pressure_str}. These sections are eviction candidates:\n\
+                     {candidate_list}\n\n\
+                     Which content_ids would you like to evict? \
+                     (provide comma-separated content_ids, or decline to skip)"
+                );
+
+                let peer_guard = self.peer.lock().await;
+                if let Some(peer) = peer_guard.clone() {
+                    drop(peer_guard);
+                    if let Some(choice) = crate::elicitation::try_elicit::<
+                        crate::elicitation::EvictionChoice,
+                    >(&peer, &message)
+                    .await
+                    {
+                        let ids = choice.ids();
+                        if !ids.is_empty() {
+                            let mut session = self.session.lock().await;
+                            let mut budget = self.budget.lock().await;
+                            for id_str in &ids {
+                                let content_id = ContentId(id_str.clone());
+                                if session.remove_delivered(&content_id).is_some() {
+                                    budget.force_evict(id_str);
+                                    elicitation_evicted.push(id_str.clone());
+                                }
+                            }
+                            drop(budget);
+                            drop(session);
+                            self.persist_session().await;
+                            debug!(
+                                evicted = ?elicitation_evicted,
+                                "evicted via budget elicitation"
+                            );
+                        }
+                    }
+                } else {
+                    drop(peer_guard);
+                }
+            }
+
             let response = BudgetResponse {
                 total_budget: status.tokens_used + status.tokens_remaining,
                 estimated_used: status.tokens_used,
@@ -1414,6 +1540,7 @@ impl IrisServer {
                 eviction_candidates: candidates,
                 prefetch_metrics,
                 coherence_alerts: alerts,
+                elicitation_evicted,
             };
             structured_result(&response)
         }
@@ -1441,16 +1568,43 @@ impl IrisServer {
         async {
             debug!(content_ids = ?params.content_ids, "iris_compress request");
 
-            // Try abstractive compression via MCP sampling if peer is available
+            // Determine compression mode: try eliciting preference, then fall back.
             let result = {
                 let peer_guard = self.peer.lock().await;
                 if let Some(peer) = peer_guard.clone() {
                     drop(peer_guard);
-                    let compressor = crate::sampling::SamplingCompressor::new(peer);
-                    debug!("attempting abstractive compression via MCP sampling");
-                    self.service
-                        .compress_content_abstractive(&params.content_ids, &compressor)
+
+                    // Elicit compression mode preference before spending sampling tokens.
+                    let use_abstractive = {
+                        let message = format!(
+                            "Compressing {} section(s). Abstractive compression (LLM-assisted) \
+                             achieves 90%+ reduction but uses sampling tokens. Extractive \
+                             (TF-IDF) achieves 60-80% reduction with no extra cost.\n\n\
+                             Set proceed=true and mode='abstractive' or 'extractive'.",
+                            params.content_ids.len()
+                        );
+                        match crate::elicitation::try_elicit::<
+                            crate::elicitation::CompressionConfirmation,
+                        >(&peer, &message)
                         .await
+                        {
+                            Some(conf) if conf.proceed && conf.mode == "abstractive" => true,
+                            Some(conf) if conf.proceed => false, // any other mode → extractive
+                            Some(_) => false,                    // proceed=false → extractive
+                            None => true, // no elicitation support → auto-detect (default: abstractive)
+                        }
+                    };
+
+                    if use_abstractive {
+                        let compressor = crate::sampling::SamplingCompressor::new(peer);
+                        debug!("attempting abstractive compression via MCP sampling");
+                        self.service
+                            .compress_content_abstractive(&params.content_ids, &compressor)
+                            .await
+                    } else {
+                        debug!("using extractive compression (agent preference)");
+                        self.service.compress_content(&params.content_ids).await
+                    }
                 } else {
                     drop(peer_guard);
                     debug!("no peer available, using extractive compression");
