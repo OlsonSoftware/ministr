@@ -3004,7 +3004,8 @@ fn build_test_symbols() -> Vec<SymbolRecord> {
             module_path: "config".into(),
             line_start: 10,
             line_end: 25,
-        },
+        cyclomatic_complexity: None,
+},
         SymbolRecord {
             id: SymbolId("sym-config::PrefetchConfig".into()),
             file_path: "src/config.rs".into(),
@@ -3016,7 +3017,8 @@ fn build_test_symbols() -> Vec<SymbolRecord> {
             module_path: "config".into(),
             line_start: 30,
             line_end: 45,
-        },
+        cyclomatic_complexity: None,
+},
         SymbolRecord {
             id: SymbolId("sym-service::QueryService".into()),
             file_path: "src/service.rs".into(),
@@ -3028,7 +3030,8 @@ fn build_test_symbols() -> Vec<SymbolRecord> {
             module_path: "service".into(),
             line_start: 50,
             line_end: 55,
-        },
+        cyclomatic_complexity: None,
+},
         SymbolRecord {
             id: SymbolId("sym-service::survey".into()),
             file_path: "src/service.rs".into(),
@@ -3040,7 +3043,8 @@ fn build_test_symbols() -> Vec<SymbolRecord> {
             module_path: "service".into(),
             line_start: 60,
             line_end: 80,
-        },
+        cyclomatic_complexity: None,
+},
         SymbolRecord {
             id: SymbolId("sym-storage::Storage".into()),
             file_path: "src/storage/traits.rs".into(),
@@ -3052,7 +3056,8 @@ fn build_test_symbols() -> Vec<SymbolRecord> {
             module_path: "storage".into(),
             line_start: 100,
             line_end: 200,
-        },
+        cyclomatic_complexity: None,
+},
     ]
 }
 

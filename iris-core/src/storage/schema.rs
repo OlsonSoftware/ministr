@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 7;
+pub const CURRENT_SCHEMA_VERSION: usize = 8;
 
 /// Returns the migration set for the content database.
 ///
@@ -175,6 +175,12 @@ fn migrations() -> Migrations<'static> {
 
             CREATE INDEX idx_symbol_refs_from ON symbol_refs(from_symbol_id);
             CREATE INDEX idx_symbol_refs_to ON symbol_refs(to_symbol_id);
+            ",
+        ),
+        // V8: Cyclomatic complexity metric for code symbols
+        M::up(
+            "
+            ALTER TABLE symbols ADD COLUMN cyclomatic_complexity INTEGER;
             ",
         ),
     ])

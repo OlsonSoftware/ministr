@@ -310,7 +310,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 7);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 8);
 }
 
 #[tokio::test]
@@ -1115,6 +1115,7 @@ fn sample_symbols() -> Vec<SymbolRecord> {
             module_path: "config".into(),
             line_start: 10,
             line_end: 25,
+            cyclomatic_complexity: None,
         },
         SymbolRecord {
             id: SymbolId("sym-config::PrefetchConfig".into()),
@@ -1127,6 +1128,7 @@ fn sample_symbols() -> Vec<SymbolRecord> {
             module_path: "config".into(),
             line_start: 30,
             line_end: 40,
+            cyclomatic_complexity: None,
         },
         SymbolRecord {
             id: SymbolId("sym-service::run".into()),
@@ -1139,6 +1141,7 @@ fn sample_symbols() -> Vec<SymbolRecord> {
             module_path: "service".into(),
             line_start: 5,
             line_end: 50,
+            cyclomatic_complexity: None,
         },
         SymbolRecord {
             id: SymbolId("sym-service::helper".into()),
@@ -1151,6 +1154,7 @@ fn sample_symbols() -> Vec<SymbolRecord> {
             module_path: "service".into(),
             line_start: 55,
             line_end: 60,
+            cyclomatic_complexity: None,
         },
         SymbolRecord {
             id: SymbolId("sym-storage::Storage".into()),
@@ -1163,6 +1167,7 @@ fn sample_symbols() -> Vec<SymbolRecord> {
             module_path: "storage::traits".into(),
             line_start: 1,
             line_end: 100,
+            cyclomatic_complexity: None,
         },
     ]
 }
@@ -1375,6 +1380,7 @@ async fn insert_symbols_upsert_on_conflict() {
         module_path: "foo".into(),
         line_start: 1,
         line_end: 5,
+        cyclomatic_complexity: None,
     };
     storage.insert_symbols(&[sym]).await.unwrap();
 
@@ -1390,6 +1396,7 @@ async fn insert_symbols_upsert_on_conflict() {
         module_path: "foo".into(),
         line_start: 1,
         line_end: 8,
+        cyclomatic_complexity: None,
     };
     storage.insert_symbols(&[updated]).await.unwrap();
 
@@ -1537,4 +1544,211 @@ async fn list_symbols_filter_by_file_path() {
         .unwrap();
     assert_eq!(results.len(), 2);
     assert!(results.iter().all(|s| s.file_path == "src/config.rs"));
+}
+
+// --- Transitive caller count tests ---
+
+#[tokio::test]
+async fn transitive_caller_counts_linear_chain() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Create a call chain: A → B → C
+    let symbols = vec![
+        SymbolRecord {
+            id: SymbolId("sym-a".into()),
+            file_path: "src/a.rs".into(),
+            name: "a".into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: "pub fn a()".into(),
+            doc_comment: None,
+            module_path: "a".into(),
+            line_start: 1,
+            line_end: 5,
+            cyclomatic_complexity: Some(1),
+        },
+        SymbolRecord {
+            id: SymbolId("sym-b".into()),
+            file_path: "src/b.rs".into(),
+            name: "b".into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: "pub fn b()".into(),
+            doc_comment: None,
+            module_path: "b".into(),
+            line_start: 1,
+            line_end: 5,
+            cyclomatic_complexity: Some(2),
+        },
+        SymbolRecord {
+            id: SymbolId("sym-c".into()),
+            file_path: "src/c.rs".into(),
+            name: "c".into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: "pub fn c()".into(),
+            doc_comment: None,
+            module_path: "c".into(),
+            line_start: 1,
+            line_end: 5,
+            cyclomatic_complexity: Some(3),
+        },
+    ];
+    storage.insert_symbols(&symbols).await.unwrap();
+
+    let refs = vec![
+        SymbolRefRecord {
+            from_symbol_id: SymbolId("sym-a".into()),
+            to_symbol_id: SymbolId("sym-b".into()),
+            ref_kind: RefKind::Calls,
+        },
+        SymbolRefRecord {
+            from_symbol_id: SymbolId("sym-b".into()),
+            to_symbol_id: SymbolId("sym-c".into()),
+            ref_kind: RefKind::Calls,
+        },
+    ];
+    storage.insert_symbol_refs(&refs).await.unwrap();
+
+    let counts = storage
+        .transitive_caller_counts(&[
+            SymbolId("sym-a".into()),
+            SymbolId("sym-b".into()),
+            SymbolId("sym-c".into()),
+        ])
+        .await
+        .unwrap();
+
+    // A has no callers
+    assert_eq!(counts.get(&SymbolId("sym-a".into())), None);
+    // B is called by A (1 caller)
+    assert_eq!(counts.get(&SymbolId("sym-b".into())), Some(&1));
+    // C is called by B, and transitively by A (2 callers)
+    assert_eq!(counts.get(&SymbolId("sym-c".into())), Some(&2));
+}
+
+#[tokio::test]
+async fn transitive_caller_counts_diamond() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Diamond: A → C, B → C, A → D → C
+    let symbols: Vec<SymbolRecord> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|name| SymbolRecord {
+            id: SymbolId(format!("sym-{name}")),
+            file_path: format!("src/{name}.rs"),
+            name: (*name).to_string(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: format!("pub fn {name}()"),
+            doc_comment: None,
+            module_path: (*name).to_string(),
+            line_start: 1,
+            line_end: 5,
+            cyclomatic_complexity: Some(1),
+        })
+        .collect();
+    storage.insert_symbols(&symbols).await.unwrap();
+
+    let refs = vec![
+        SymbolRefRecord {
+            from_symbol_id: SymbolId("sym-a".into()),
+            to_symbol_id: SymbolId("sym-c".into()),
+            ref_kind: RefKind::Calls,
+        },
+        SymbolRefRecord {
+            from_symbol_id: SymbolId("sym-b".into()),
+            to_symbol_id: SymbolId("sym-c".into()),
+            ref_kind: RefKind::Calls,
+        },
+        SymbolRefRecord {
+            from_symbol_id: SymbolId("sym-a".into()),
+            to_symbol_id: SymbolId("sym-d".into()),
+            ref_kind: RefKind::Calls,
+        },
+        SymbolRefRecord {
+            from_symbol_id: SymbolId("sym-d".into()),
+            to_symbol_id: SymbolId("sym-c".into()),
+            ref_kind: RefKind::Calls,
+        },
+    ];
+    storage.insert_symbol_refs(&refs).await.unwrap();
+
+    let counts = storage
+        .transitive_caller_counts(&[SymbolId("sym-c".into())])
+        .await
+        .unwrap();
+
+    // C is called by A (direct), B (direct), D (direct), and A transitively via D
+    // Unique transitive callers: A, B, D = 3
+    assert_eq!(counts.get(&SymbolId("sym-c".into())), Some(&3));
+}
+
+#[tokio::test]
+async fn cyclomatic_complexity_stored_and_retrieved() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    let symbols = vec![
+        SymbolRecord {
+            id: SymbolId("sym-fn-simple".into()),
+            file_path: "src/lib.rs".into(),
+            name: "simple".into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: "pub fn simple()".into(),
+            doc_comment: None,
+            module_path: String::new(),
+            line_start: 1,
+            line_end: 3,
+            cyclomatic_complexity: Some(1),
+        },
+        SymbolRecord {
+            id: SymbolId("sym-fn-complex".into()),
+            file_path: "src/lib.rs".into(),
+            name: "complex".into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: "pub fn complex()".into(),
+            doc_comment: None,
+            module_path: String::new(),
+            line_start: 5,
+            line_end: 30,
+            cyclomatic_complexity: Some(10),
+        },
+        SymbolRecord {
+            id: SymbolId("sym-struct-foo".into()),
+            file_path: "src/lib.rs".into(),
+            name: "Foo".into(),
+            kind: "struct".into(),
+            visibility: "pub".into(),
+            signature: "pub struct Foo".into(),
+            doc_comment: None,
+            module_path: String::new(),
+            line_start: 32,
+            line_end: 35,
+            cyclomatic_complexity: None,
+        },
+    ];
+    storage.insert_symbols(&symbols).await.unwrap();
+
+    let simple = storage
+        .get_symbol(&SymbolId("sym-fn-simple".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(simple.cyclomatic_complexity, Some(1));
+
+    let complex = storage
+        .get_symbol(&SymbolId("sym-fn-complex".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(complex.cyclomatic_complexity, Some(10));
+
+    let struc = storage
+        .get_symbol(&SymbolId("sym-struct-foo".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(struc.cyclomatic_complexity, None);
 }

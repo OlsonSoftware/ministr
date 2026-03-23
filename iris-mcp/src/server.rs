@@ -466,6 +466,12 @@ struct SymbolSummary {
     /// First line of doc comment, if present.
     #[serde(skip_serializing_if = "Option::is_none")]
     doc_preview: Option<String>,
+    /// Cyclomatic complexity (functions only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    complexity: Option<u32>,
+    /// Transitive caller count (impact analysis).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    caller_count: Option<u32>,
 }
 
 /// Response from the `iris_references` tool.
@@ -1492,18 +1498,32 @@ impl IrisServer {
             match self.service.search_symbols(&filter).await {
                 Ok(symbols) => {
                     let total = symbols.len();
+
+                    // Compute transitive caller counts for all result symbols
+                    let symbol_ids: Vec<_> = symbols.iter().map(|s| s.id.clone()).collect();
+                    let caller_counts = self
+                        .service
+                        .transitive_caller_counts(&symbol_ids)
+                        .await
+                        .unwrap_or_default();
+
                     let summaries: Vec<SymbolSummary> = symbols
                         .into_iter()
-                        .map(|s| SymbolSummary {
-                            id: s.id.0,
-                            name: s.name,
-                            kind: s.kind,
-                            file: s.file_path,
-                            line: s.line_start,
-                            signature: s.signature,
-                            doc_preview: s.doc_comment.map(|d| {
-                                d.lines().next().unwrap_or("").to_string()
-                            }),
+                        .map(|s| {
+                            let cc = caller_counts.get(&s.id).copied();
+                            SymbolSummary {
+                                id: s.id.0,
+                                name: s.name,
+                                kind: s.kind,
+                                file: s.file_path,
+                                line: s.line_start,
+                                signature: s.signature,
+                                doc_preview: s.doc_comment.map(|d| {
+                                    d.lines().next().unwrap_or("").to_string()
+                                }),
+                                complexity: s.cyclomatic_complexity,
+                                caller_count: cc,
+                            }
                         })
                         .collect();
 

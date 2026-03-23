@@ -766,7 +766,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Extract call graph via tree-sitter call_expression nodes, resolve callee against symbol table
 - [x] Extract type usage references from function parameter and return types in signatures
 - [ ] Multi-language ref extraction: Python imports, JS/TS imports/requires, Go imports
-- [ ] Add cyclomatic complexity metric and impact analysis (transitive caller count) to iris_symbols
+- [x] Add cyclomatic complexity metric and impact analysis (transitive caller count) to iris_symbols
 
 ---
 
