@@ -1146,20 +1146,20 @@ phases:
 - id: MC1
   name: Additive Multi-Corpus Management
   tagline: Clone repos that coexist instead of replacing each other
-  status: pending
+  status: in_progress
   problem: Cloning new repos evicts previous clone content (1,019→128 docs). Python/TypeScript clones report success but produce zero searchable content. Multi-repo workflows are broken.
   solution: Make roots additive with namespaced IDs (Repository pattern, SRP). Fix the ingestion pipeline so clone content persists in the vector index alongside existing roots. Show all roots with provenance in TOC.
   tasks:
   - text: Persist cloned/fetched roots in the roots registry alongside local corpus roots — each clone gets a named, tracked root entry
-    checked: false
+    checked: true
   - text: Namespace section and symbol IDs by root ID to prevent path collisions between repos with identical file paths
     checked: false
   - text: Make vector index and section registry append-only per root — adding a new root must never evict or replace existing roots' content
-    checked: false
+    checked: true
   - text: 'Diagnose and fix Python/TypeScript clone invisibility: clone reports "110 files indexed, 1925 sections" but zero searchable content — likely same root cause as corpus replacement'
-    checked: false
+    checked: true
   - text: Show cloned/fetched roots in iris_toc roots response with provenance metadata (repo URL, branch, clone timestamp, sparse paths)
-    checked: false
+    checked: true
   - text: 'Integration tests: clone 3+ repos sequentially, verify all remain searchable and root count grows monotonically'
     checked: false
 - id: CL1

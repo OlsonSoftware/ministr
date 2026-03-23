@@ -350,6 +350,12 @@ pub trait Storage: Send + Sync {
         &self,
     ) -> impl Future<Output = Result<Vec<DocumentRecord>, StorageError>> + Send;
 
+    /// List documents belonging to a specific corpus root.
+    fn list_documents_by_root(
+        &self,
+        root_id: &str,
+    ) -> impl Future<Output = Result<Vec<DocumentRecord>, StorageError>> + Send;
+
     /// Delete a document and all its sections/claims (cascading).
     fn delete_document(
         &self,

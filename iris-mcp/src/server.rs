@@ -3114,16 +3114,52 @@ impl IrisServer {
         };
         let clone_time_ms = elapsed_millis(clone_start);
 
-        // Phase 2: Ingest the cloned content with embeddings.
+        // Phase 1b: Register a corpus root for the clone.
+        let root_id = iris_core::ingestion::compute_root_id(&clone_result.clone_dir);
+        let clone_root = iris_core::types::CorpusRoot {
+            id: root_id.clone(),
+            path: clone_result.clone_dir.to_string_lossy().to_string(),
+            kind: iris_core::types::RootKind::Git,
+            display_name: Some(repo_display_name(&params.repo)),
+            file_count: 0,
+            language_stats: std::collections::HashMap::new(),
+            repo_url: Some(params.repo.clone()),
+            branch: clone_result.metadata.branch.clone(),
+            commit_sha: Some(clone_result.metadata.commit_sha.clone()),
+            clone_timestamp: Some(clone_result.metadata.clone_timestamp.clone()),
+            sparse_paths: clone_result.metadata.checked_out_paths.clone(),
+        };
+        if let Err(e) = storage.upsert_corpus_root(&clone_root).await {
+            warn!(error = %e, repo = %params.repo, "failed to register clone corpus root");
+        }
+
+        // Phase 2: Ingest the cloned content with embeddings (root-scoped).
         let ingest_start = std::time::Instant::now();
         let ingest_result = self
             .ingestion_pipeline
-            .ingest_directory_with_embeddings(&clone_result.clone_dir, storage, embedder, index)
+            .ingest_directory_with_embeddings_rooted(
+                &clone_result.clone_dir,
+                storage,
+                embedder,
+                index,
+                Some(&root_id),
+            )
             .await;
         let index_time_ms = elapsed_millis(ingest_start);
 
         match ingest_result {
             Ok(stats) => {
+                // Update the root's file count and language stats.
+                let lang_stats = compute_language_stats(&clone_result.files);
+                let updated_root = iris_core::types::CorpusRoot {
+                    file_count: stats.files_indexed,
+                    language_stats: lang_stats,
+                    ..clone_root
+                };
+                if let Err(e) = storage.upsert_corpus_root(&updated_root).await {
+                    warn!(error = %e, repo = %params.repo, "failed to update clone root stats");
+                }
+
                 // Record the clone in the git cache for staleness tracking.
                 let git_cache_record = iris_core::storage::GitCacheRecord {
                     repo_url: params.repo.clone(),
@@ -3823,6 +3859,47 @@ fn parse_resolution(s: &str) -> Resolution {
 /// Convert elapsed duration to milliseconds, saturating at `u64::MAX`.
 fn elapsed_millis(start: std::time::Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Extract a human-readable display name from a repository URL.
+///
+/// Strips the host prefix and `.git` suffix to produce e.g. `"owner/repo"`.
+fn repo_display_name(repo_url: &str) -> String {
+    let name = repo_url
+        .rsplit_once("://")
+        .map_or(repo_url, |(_, rest)| rest);
+    let name = name.strip_prefix("github.com/").unwrap_or(name);
+    let name = name.strip_prefix("gitlab.com/").unwrap_or(name);
+    name.strip_suffix(".git").unwrap_or(name).to_string()
+}
+
+/// Compute language statistics from a list of file paths.
+fn compute_language_stats(
+    files: &[std::path::PathBuf],
+) -> std::collections::HashMap<String, usize> {
+    let mut stats = std::collections::HashMap::new();
+    for file in files {
+        let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let lang = match ext {
+            "rs" => "rust",
+            "py" => "python",
+            "ts" | "tsx" => "typescript",
+            "js" | "jsx" => "javascript",
+            "go" => "go",
+            "rb" => "ruby",
+            "java" => "java",
+            "c" | "h" => "c",
+            "cpp" | "cxx" | "cc" | "hpp" => "cpp",
+            "toml" => "toml",
+            "yaml" | "yml" => "yaml",
+            "json" => "json",
+            "md" => "markdown",
+            other if !other.is_empty() => other,
+            _ => continue,
+        };
+        *stats.entry(lang.to_string()).or_insert(0) += 1;
+    }
+    stats
 }
 
 /// Generate a simple UUID v4-style session ID.

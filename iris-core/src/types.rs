@@ -634,6 +634,7 @@ impl fmt::Display for RootKind {
 ///
 /// Each root represents one source directory (or URL) in a multi-root corpus.
 /// Roots track per-directory file counts and language statistics.
+/// Git and web roots include provenance metadata for cache management.
 ///
 /// # Examples
 ///
@@ -648,6 +649,11 @@ impl fmt::Display for RootKind {
 ///     display_name: Some("src".into()),
 ///     file_count: 42,
 ///     language_stats: HashMap::from([("rust".into(), 30), ("toml".into(), 12)]),
+///     repo_url: None,
+///     branch: None,
+///     commit_sha: None,
+///     clone_timestamp: None,
+///     sparse_paths: Vec::new(),
 /// };
 /// assert_eq!(root.file_count, 42);
 /// assert_eq!(root.language_stats["rust"], 30);
@@ -666,6 +672,21 @@ pub struct CorpusRoot {
     pub file_count: usize,
     /// Language → file count mapping for this root.
     pub language_stats: std::collections::HashMap<String, usize>,
+    /// Remote repository URL (git roots only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
+    /// Branch that was cloned (git roots only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Commit SHA at clone time (git roots only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
+    /// Epoch-seconds timestamp of the clone (git roots only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clone_timestamp: Option<String>,
+    /// Paths used for sparse checkout (empty = full checkout).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sparse_paths: Vec<String>,
 }
 
 #[cfg(test)]
@@ -721,6 +742,11 @@ mod tests {
             display_name: Some("project".into()),
             file_count: 5,
             language_stats: std::collections::HashMap::from([("rust".into(), 5)]),
+            repo_url: None,
+            branch: None,
+            commit_sha: None,
+            clone_timestamp: None,
+            sparse_paths: Vec::new(),
         };
         assert_eq!(root.file_count, 5);
         assert_eq!(root.kind, RootKind::Local);
