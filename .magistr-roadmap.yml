@@ -1204,3 +1204,7 @@ phases:
     checked: true
   - text: 'Concurrent refresh pipeline: bounded-parallel staleness checks for git and web sources, git subprocess timeouts, tokio::join! for web+git overlap'
     checked: true
+  - text: 'Fix clone persistence: scope cleanup in ingest_paths_with_embeddings to local roots only, preventing cloned repo content from being deleted on restart'
+    checked: true
+  - text: 'Fix missing implements refs: second-pass reference resolution after ingestion loop resolves refs whose target symbols were indexed after the referencing file'
+    checked: true

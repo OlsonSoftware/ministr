@@ -28,7 +28,9 @@ use crate::storage::traits::{
     FileHashRecord, Storage, SymbolFilter, SymbolRecord, SymbolRefRecord,
 };
 use crate::token::count_tokens;
-use crate::types::{Claim, CorpusRoot, DocumentTree, RootKind, Section, SymbolId, VectorId};
+use crate::types::{
+    Claim, CorpusRoot, DocumentTree, RefKind, RootKind, Section, SymbolId, VectorId,
+};
 
 /// Result of ingesting a corpus directory.
 ///
@@ -319,7 +321,9 @@ impl IngestionPipeline {
                     debug!(path = %relative, "unchanged, skipping");
                     stats.files_skipped += 1;
                 }
-                Ok(FileResult::Indexed { sections, claims }) => {
+                Ok(FileResult::Indexed {
+                    sections, claims, ..
+                }) => {
                     debug!(path = %relative, sections, claims, "indexed");
                     stats.files_indexed += 1;
                     stats.total_sections += sections;
@@ -492,6 +496,7 @@ impl IngestionPipeline {
         Ok(FileResult::Indexed {
             sections: section_count,
             claims: claim_count,
+            pending_refs: Vec::new(),
         })
     }
 
@@ -701,7 +706,8 @@ impl IngestionPipeline {
 
         // For code files: extract symbols, store in SQLite, and embed into vector index
         if parser_kind == ParserKind::Code {
-            embed_code_symbols(source_path, content, storage, embedder, index, None).await?;
+            let _result =
+                embed_code_symbols(source_path, content, storage, embedder, index, None).await?;
         }
 
         // Detect and store claim relationships
@@ -868,6 +874,8 @@ impl IngestionPipeline {
             progress.start(files.len());
         }
 
+        let mut all_pending_refs = Vec::new();
+
         for file_path in &files {
             // Check cancellation at the top of each file iteration.
             if ct.is_some_and(CancellationToken::is_cancelled) {
@@ -910,11 +918,16 @@ impl IngestionPipeline {
                     debug!(path = %relative, "unchanged, skipping");
                     stats.files_skipped += 1;
                 }
-                Ok(FileResult::Indexed { sections, claims }) => {
+                Ok(FileResult::Indexed {
+                    sections,
+                    claims,
+                    pending_refs,
+                }) => {
                     debug!(path = %relative, sections, claims, "indexed with embeddings");
                     stats.files_indexed += 1;
                     stats.total_sections += sections;
                     stats.total_claims += claims;
+                    all_pending_refs.extend(pending_refs);
 
                     // Tag the document with its corpus root.
                     if let Some(rid) = root_id {
@@ -934,6 +947,10 @@ impl IngestionPipeline {
                 progress.increment_done();
             }
         }
+
+        // Second pass: resolve refs that failed because target symbols
+        // were indexed after the referencing file.
+        resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
 
         // Remove documents for files that no longer exist.
         // When a root_id is set, only clean up documents belonging to this root
@@ -1103,6 +1120,8 @@ impl IngestionPipeline {
             progress.start(files.len());
         }
 
+        let mut all_pending_refs = Vec::new();
+
         for file_path in &files {
             let relative = compute_relative_path(file_path, paths);
 
@@ -1133,11 +1152,16 @@ impl IngestionPipeline {
                     debug!(path = %relative, "unchanged, skipping");
                     stats.files_skipped += 1;
                 }
-                Ok(FileResult::Indexed { sections, claims }) => {
+                Ok(FileResult::Indexed {
+                    sections,
+                    claims,
+                    pending_refs,
+                }) => {
                     debug!(path = %relative, sections, claims, "indexed with embeddings");
                     stats.files_indexed += 1;
                     stats.total_sections += sections;
                     stats.total_claims += claims;
+                    all_pending_refs.extend(pending_refs);
 
                     // Tag document with its corpus root.
                     if let Some(root_id) = find_root_for_file(file_path, &roots) {
@@ -1158,29 +1182,36 @@ impl IngestionPipeline {
             }
         }
 
-        // Remove documents for files that no longer exist in any of the resolved paths
-        let existing_docs = storage
-            .list_documents()
-            .await
-            .map_err(IngestionError::from)?;
-        for doc in &existing_docs {
-            // Check if the source path still maps to an existing file
-            let still_exists = files.iter().any(|f| {
-                let rel = compute_relative_path(f, paths);
-                rel == doc.source_path
-            });
-            if !still_exists {
-                debug!(path = %doc.source_path, "file removed, deleting from index");
-                delete_document_vectors(&doc.id, storage, index).await?;
-                storage
-                    .delete_document(&doc.id)
-                    .await
-                    .map_err(IngestionError::from)?;
-                storage
-                    .delete_file_hash(&doc.source_path)
-                    .await
-                    .map_err(IngestionError::from)?;
-                stats.files_removed += 1;
+        // Second pass: resolve refs that failed because target symbols
+        // were indexed after the referencing file.
+        resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
+
+        // Remove documents for files that no longer exist, scoped to the
+        // local roots we just ingested.  Documents from other roots (git
+        // clones, web fetches) are untouched so they survive server restarts.
+        for (_root_path, rid) in &roots {
+            let root_docs = storage
+                .list_documents_by_root(rid)
+                .await
+                .map_err(IngestionError::from)?;
+            for doc in &root_docs {
+                let still_exists = files.iter().any(|f| {
+                    let rel = compute_relative_path(f, paths);
+                    rel == doc.source_path
+                });
+                if !still_exists {
+                    debug!(path = %doc.source_path, root = %rid, "file removed, deleting from index");
+                    delete_document_vectors(&doc.id, storage, index).await?;
+                    storage
+                        .delete_document(&doc.id)
+                        .await
+                        .map_err(IngestionError::from)?;
+                    storage
+                        .delete_file_hash(&doc.source_path)
+                        .await
+                        .map_err(IngestionError::from)?;
+                    stats.files_removed += 1;
+                }
             }
         }
 
@@ -1319,8 +1350,9 @@ impl IngestionPipeline {
         let parser_kind = self
             .parser_override
             .or_else(|| detect_parser_kind(Path::new(relative_path)));
+        let mut pending_refs = Vec::new();
         if parser_kind == Some(ParserKind::Code) {
-            embed_code_symbols(
+            let result = embed_code_symbols(
                 relative_path,
                 &content_str,
                 storage,
@@ -1329,6 +1361,7 @@ impl IngestionPipeline {
                 package_graph,
             )
             .await?;
+            pending_refs = result.pending_refs;
         }
 
         // Detect and store claim relationships
@@ -1361,6 +1394,7 @@ impl IngestionPipeline {
         Ok(FileResult::Indexed {
             sections: section_count,
             claims: claim_count,
+            pending_refs,
         })
     }
 
@@ -1491,15 +1525,15 @@ impl IngestionPipeline {
             )
             .await
             {
-                Ok(count) => {
-                    if count > 0 {
+                Ok(result) => {
+                    if result.inserted > 0 {
                         debug!(
                             path = %source_path,
-                            refs = count,
+                            refs = result.inserted,
                             "re-resolved dependency references"
                         );
                     }
-                    total_refs += count;
+                    total_refs += result.inserted;
                 }
                 Err(e) => {
                     warn!(path = %source_path, error = %e, "failed to re-resolve refs");
@@ -1669,6 +1703,13 @@ fn collect_all_claims(sections: &[Section]) -> Vec<Claim> {
 /// Symbol stubs embed `"signature\ndoc_comment"` for high-precision search.
 /// Symbol full embeds the complete symbol source for broader matching.
 #[allow(clippy::too_many_lines)]
+/// Result of code symbol embedding: unresolved cross-references
+/// for second-pass resolution.
+struct EmbedSymbolsResult {
+    pending_refs: Vec<PendingRef>,
+}
+
+#[allow(clippy::too_many_lines)]
 async fn embed_code_symbols<S, E, I>(
     relative_path: &str,
     content: &str,
@@ -1676,13 +1717,18 @@ async fn embed_code_symbols<S, E, I>(
     embedder: &E,
     index: &I,
     package_graph: Option<&PackageGraph>,
-) -> Result<usize, IngestionError>
+) -> Result<EmbedSymbolsResult, IngestionError>
 where
     S: Storage + ?Sized,
     E: Embedder + ?Sized,
     I: VectorIndex + ?Sized,
 {
     let source = content.as_bytes();
+    let empty_result = || {
+        Ok(EmbedSymbolsResult {
+            pending_refs: Vec::new(),
+        })
+    };
 
     // Detect language from file extension for multi-language symbol extraction.
     let registry = GrammarRegistry::global();
@@ -1698,18 +1744,18 @@ where
         let mut ast_parser = AstParser::new();
         match ast_parser.parse(source) {
             Ok(t) => t,
-            Err(_) => return Ok(0),
+            Err(_) => return empty_result(),
         }
     } else {
         let Some(ts_lang) = registry.language_for_extension(ext) else {
-            return Ok(0); // No grammar available for this extension
+            return empty_result(); // No grammar available for this extension
         };
         let Ok(mut ast_parser) = AstParser::with_language(ts_lang) else {
-            return Ok(0);
+            return empty_result();
         };
         match ast_parser.parse(source) {
             Ok(t) => t,
-            Err(_) => return Ok(0),
+            Err(_) => return empty_result(),
         }
     };
 
@@ -1724,7 +1770,7 @@ where
     };
 
     if symbols.is_empty() {
-        return Ok(0);
+        return empty_result();
     }
 
     // Delete old symbols for this file (re-index safety)
@@ -1790,7 +1836,7 @@ where
         .and_then(|e| e.to_str())
         .and_then(|ext| crate::code::GrammarRegistry::global().language_name_for_extension(ext))
         .unwrap_or("rust");
-    if let Err(e) = resolve_and_store_refs(
+    let pending_refs = match resolve_and_store_refs(
         &tree,
         source,
         relative_path,
@@ -1801,8 +1847,12 @@ where
     )
     .await
     {
-        warn!(path = %relative_path, error = %e, "failed to extract symbol refs");
-    }
+        Ok(result) => result.pending,
+        Err(e) => {
+            warn!(path = %relative_path, error = %e, "failed to extract symbol refs");
+            Vec::new()
+        }
+    };
 
     // Build embeddable texts for symbol-stub and symbol-full
     let mut ids: Vec<VectorId> = Vec::new();
@@ -1828,7 +1878,7 @@ where
     }
 
     if texts.is_empty() {
-        return Ok(0);
+        return empty_result();
     }
 
     // Batch embed
@@ -1847,13 +1897,38 @@ where
             })?;
     }
 
-    let count = ids.len();
     debug!(
-        symbols = count,
+        symbols = ids.len(),
         path = %relative_path,
         "embedded code symbols"
     );
-    Ok(count)
+    Ok(EmbedSymbolsResult { pending_refs })
+}
+
+/// A reference that could not be resolved during first-pass ingestion.
+///
+/// Stored so that a second pass can retry resolution once all symbols
+/// are in the database.
+#[derive(Debug, Clone)]
+struct PendingRef {
+    /// Symbol ID of the referencing side (the implementing type or importing module).
+    from_id: SymbolId,
+    /// Name of the target symbol that was not found.
+    target_name: String,
+    /// Kind of reference (Implements, Imports, Calls, Uses).
+    kind: RefKind,
+    /// File path of the source file (for diagnostics).
+    file_path: String,
+    /// Target crate hint for cross-crate disambiguation.
+    target_crate: Option<String>,
+}
+
+/// Result of first-pass reference resolution.
+struct ResolveResult {
+    /// Number of refs successfully resolved and stored.
+    inserted: usize,
+    /// Refs that could not be resolved (target symbol not yet indexed).
+    pending: Vec<PendingRef>,
 }
 
 /// Resolve raw cross-references against the stored symbol table and persist them.
@@ -1861,7 +1936,7 @@ where
 /// Extracts `use` imports and `impl Trait for Type` relationships from the AST,
 /// resolves target names against known symbols, and stores the resulting
 /// `SymbolRefRecord` values. Refs that can't be resolved (external crates,
-/// missing symbols) are silently skipped.
+/// missing symbols) are returned as [`PendingRef`] for second-pass resolution.
 ///
 /// When a [`PackageGraph`] is provided, cross-crate `use` imports are
 /// disambiguated by filtering symbol candidates to the target crate's
@@ -1875,10 +1950,13 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
     local_symbols: &[SymbolRecord],
     storage: &S,
     package_graph: Option<&PackageGraph>,
-) -> Result<usize, IngestionError> {
+) -> Result<ResolveResult, IngestionError> {
     let raw_refs = extract_refs(tree, source, language);
     if raw_refs.is_empty() {
-        return Ok(0);
+        return Ok(ResolveResult {
+            inserted: 0,
+            pending: Vec::new(),
+        });
     }
 
     // Build a set of local symbol IDs for fast existence checks.
@@ -1906,6 +1984,7 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
         .map(|s| s.id.clone());
 
     let mut resolved = Vec::new();
+    let mut pending = Vec::new();
 
     for raw in &raw_refs {
         // Determine the "from" symbol ID
@@ -1952,7 +2031,17 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
             .collect();
 
         let target = match primary.len() {
-            0 => continue, // No valid target found
+            0 => {
+                // Target not yet indexed — save for second-pass resolution.
+                pending.push(PendingRef {
+                    from_id,
+                    target_name: raw.target_name.clone(),
+                    kind: raw.kind,
+                    file_path: file_path.to_owned(),
+                    target_crate: raw.target_crate.clone(),
+                });
+                continue;
+            }
             1 => primary[0],
             _ => {
                 // Cross-crate disambiguation: if we know the target crate and have
@@ -2011,7 +2100,10 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
     }
 
     if resolved.is_empty() {
-        return Ok(0);
+        return Ok(ResolveResult {
+            inserted: 0,
+            pending,
+        });
     }
 
     // Insert refs one at a time, skipping any that violate FK constraints
@@ -2030,12 +2122,117 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
     if inserted > 0 {
         debug!(
             refs = inserted,
+            pending = pending.len(),
             path = %file_path,
             "resolved symbol cross-references"
         );
     }
 
-    Ok(inserted)
+    Ok(ResolveResult { inserted, pending })
+}
+
+/// Resolve pending cross-references that failed during first-pass ingestion.
+///
+/// After all files in a corpus have been indexed, this function retries
+/// resolution for refs whose target symbols were not yet in the database
+/// during the first pass (e.g., `impl Trait for Type` where the trait
+/// definition file sorts after the implementing file).
+async fn resolve_pending_refs<S: Storage + ?Sized>(
+    pending: &[PendingRef],
+    storage: &S,
+    package_graph: Option<&PackageGraph>,
+) -> usize {
+    if pending.is_empty() {
+        return 0;
+    }
+
+    let mut resolved = 0;
+
+    for pr in pending {
+        let target_filter = SymbolFilter {
+            name_exact: Some(pr.target_name.clone()),
+            ..SymbolFilter::default()
+        };
+
+        let Ok(matches) = storage.list_symbols(&target_filter).await else {
+            continue;
+        };
+
+        let primary: Vec<_> = matches
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.kind.as_str(),
+                    "struct" | "enum" | "trait" | "function" | "type" | "const" | "static" | "mod"
+                )
+            })
+            .collect();
+
+        let target = match primary.len() {
+            0 => continue,
+            1 => primary[0],
+            _ => {
+                let crate_filtered: Vec<_> =
+                    if let (Some(tc), Some(graph)) = (&pr.target_crate, package_graph) {
+                        if let Some(dir_prefix) = graph.dir_prefix_for_crate(tc) {
+                            primary
+                                .iter()
+                                .filter(|s| s.file_path.starts_with(dir_prefix))
+                                .copied()
+                                .collect()
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    };
+
+                if crate_filtered.len() == 1 {
+                    crate_filtered[0]
+                } else if !crate_filtered.is_empty() {
+                    crate_filtered
+                        .iter()
+                        .find(|s| s.file_path != pr.file_path)
+                        .copied()
+                        .unwrap_or(crate_filtered[0])
+                } else {
+                    primary
+                        .iter()
+                        .find(|s| s.file_path != pr.file_path)
+                        .copied()
+                        .unwrap_or(primary[0])
+                }
+            }
+        };
+
+        if pr.from_id == target.id {
+            continue;
+        }
+
+        let record = SymbolRefRecord {
+            from_symbol_id: pr.from_id.clone(),
+            to_symbol_id: target.id.clone(),
+            ref_kind: pr.kind,
+        };
+
+        if storage
+            .insert_symbol_refs(std::slice::from_ref(&record))
+            .await
+            .is_ok()
+        {
+            resolved += 1;
+        }
+    }
+
+    if resolved > 0 {
+        debug!(
+            refs = resolved,
+            total_pending = pending.len(),
+            "second-pass reference resolution"
+        );
+    }
+
+    resolved
 }
 
 /// Delete all vectors associated with a document from the index.
@@ -2148,7 +2345,12 @@ enum FileResult {
     /// File was unchanged and skipped.
     Skipped,
     /// File was indexed with the given counts.
-    Indexed { sections: usize, claims: usize },
+    Indexed {
+        sections: usize,
+        claims: usize,
+        /// Refs that could not be resolved in this pass (target not yet indexed).
+        pending_refs: Vec<PendingRef>,
+    },
 }
 
 /// Directories that are always skipped during file discovery, regardless of
@@ -4265,7 +4467,7 @@ pub fn compute_hash(content: &str) -> String {
         let tree = parser.parse(source, None).unwrap();
 
         let local_symbols = vec![mod_sym.clone(), struct_sym];
-        let inserted = resolve_and_store_refs(
+        let result = resolve_and_store_refs(
             &tree,
             source,
             "test.rs",
@@ -4277,7 +4479,7 @@ pub fn compute_hash(content: &str) -> String {
         .await
         .unwrap();
 
-        assert_eq!(inserted, 1, "should resolve one import ref");
+        assert_eq!(result.inserted, 1, "should resolve one import ref");
 
         // Verify the ref uses the mod symbol as the anchor
         let refs = storage.query_refs(&mod_sym.id, None).await.unwrap();
