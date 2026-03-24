@@ -241,6 +241,22 @@ pub struct SymbolRefRecord {
 }
 
 /// A stored bridge endpoint record.
+/// A reference that could not be resolved during ingestion, persisted for
+/// deferred resolution on subsequent warm restarts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingRefRecord {
+    /// Symbol ID of the referencing side.
+    pub from_symbol_id: String,
+    /// Name of the target symbol that was not found.
+    pub target_name: String,
+    /// Kind of reference (`implements`, `imports`, etc.).
+    pub kind: String,
+    /// Source file path.
+    pub file_path: String,
+    /// Optional target crate hint for cross-crate disambiguation.
+    pub target_crate: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BridgeEndpointRecord {
     /// Auto-generated row ID (set after insert).
@@ -652,6 +668,25 @@ pub trait Storage: Send + Sync {
     fn delete_bridge_data_for_file(
         &self,
         file_path: &str,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    // -- Pending refs (deferred resolution queue) --
+
+    /// Insert or replace pending refs that could not be resolved in the current pass.
+    fn upsert_pending_refs(
+        &self,
+        refs: &[PendingRefRecord],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Load all pending refs for deferred resolution.
+    fn list_pending_refs(
+        &self,
+    ) -> impl Future<Output = Result<Vec<PendingRefRecord>, StorageError>> + Send;
+
+    /// Delete pending refs that have been successfully resolved.
+    fn delete_pending_refs(
+        &self,
+        refs: &[PendingRefRecord],
     ) -> impl Future<Output = Result<(), StorageError>> + Send;
 
     // -- Corpus roots --

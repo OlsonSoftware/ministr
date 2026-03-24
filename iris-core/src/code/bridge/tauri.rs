@@ -261,8 +261,10 @@ fn try_extract_invoke_call(
     let function_node = node.child_by_field_name("function")?;
     let fn_text = node_text(&function_node, source);
 
-    // Match `invoke(...)` or `...invoke(...)`
-    if fn_text != "invoke" && !fn_text.ends_with(".invoke") {
+    // Match `invoke(...)`, `...invoke(...)`, `TAURI_INVOKE(...)`, etc.
+    // Case-insensitive to support tauri-specta and other generated wrappers.
+    let fn_lower = fn_text.to_ascii_lowercase();
+    if !fn_lower.contains("invoke") {
         return None;
     }
 
