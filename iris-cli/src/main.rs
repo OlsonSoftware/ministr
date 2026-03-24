@@ -199,7 +199,7 @@ async fn init_infrastructure(
 
     // Initialize embedder with content-addressable cache.
     let raw_embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
-        iris_core::embedding::FastEmbedder::new(&config.default_model, None)
+        iris_core::embedding::FastEmbedder::with_data_dir(&config.default_model, &config.data_dir)
             .into_diagnostic()
             .wrap_err("failed to initialize embedding model")?,
     );
