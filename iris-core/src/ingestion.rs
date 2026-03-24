@@ -2680,37 +2680,63 @@ const ALWAYS_IGNORE_DIRS: &[&str] = &[
     ".tox",
     ".mypy_cache",
     ".pytest_cache",
-    // Java / Gradle
+    ".ruff_cache",
+    // Java / Gradle / Maven
     ".gradle",
+    ".mvn",
+    // Go
+    ".go",
     // General build output
     "dist",
     "build",
     "out",
     // VCS
     ".git",
+    ".svn",
+    ".hg",
     // IDE / Editor
     ".idea",
     ".vs",
     ".vscode",
-    // Caches
+    ".zed",
+    // Caches and ML model artifacts
     ".cache",
+    ".fastembed_cache",
+    ".onnx_cache",
+    // iris own data
+    ".iris",
     // Vendor / deps
     "vendor",
+    // Coverage / profiling
+    "coverage",
+    ".nyc_output",
+    "htmlcov",
+    // Terraform / IaC
+    ".terraform",
 ];
 
 /// File patterns that are always skipped during file discovery.
 /// Minified bundles, source maps, and lockfiles add noise without value.
 const ALWAYS_IGNORE_PATTERNS: &[&str] = &[
+    // Minified bundles and source maps
     "*.min.js",
     "*.min.css",
     "*.map",
+    "*.chunk.js",
+    "*.bundle.js",
+    // Lock files
     "*.lock",
     "package-lock.json",
     "Cargo.lock",
     "yarn.lock",
     "pnpm-lock.yaml",
-    "*.chunk.js",
-    "*.bundle.js",
+    // ML model artifacts and tokenizer data
+    "tokenizer.json",
+    "*.onnx",
+    "*.bin",
+    "*.safetensors",
+    // Snapshots (test output noise, e.g. ruff has 2177 .snap files)
+    "*.snap",
 ];
 
 /// Discover all supported files in a directory recursively.
