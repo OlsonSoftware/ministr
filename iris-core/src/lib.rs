@@ -15,6 +15,7 @@ pub mod index;
 pub mod ingestion;
 pub mod llms_txt;
 pub mod parser;
+pub mod scaffold;
 pub mod search;
 pub mod service;
 pub mod session;

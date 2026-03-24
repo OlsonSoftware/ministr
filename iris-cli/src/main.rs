@@ -133,6 +133,9 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Scaffold agent config files on first run (idempotent — skips existing files).
+    iris_core::scaffold::scaffold_agent_config(&cwd);
+
     // Resolve corpus paths: .iris.toml > --corpus CLI > config.toml corpus_paths
     let corpus_paths: Vec<String> = if let Some((ref base_dir, ref cc)) = corpus_config {
         cc.resolve_local_paths(base_dir)
