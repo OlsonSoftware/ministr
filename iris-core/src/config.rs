@@ -305,6 +305,150 @@ fn default_data_dir() -> PathBuf {
         .join(".iris")
 }
 
+// ---------------------------------------------------------------------------
+// Per-repo `.iris.toml` configuration
+// ---------------------------------------------------------------------------
+
+/// Per-repo corpus configuration, loaded from `.iris.toml`.
+///
+/// Declares what to index from the repo: local paths, ignore patterns,
+/// external directories, and git repositories.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::config::RepoConfig;
+///
+/// let toml = r#"
+/// [corpus]
+/// paths = ["src", "docs"]
+/// ignore = ["*.test.ts"]
+///
+/// [[corpus.include]]
+/// path = "~/Code/shared-types/src"
+///
+/// [[corpus.git]]
+/// repo = "https://github.com/owner/repo.git"
+/// paths = ["src"]
+/// "#;
+///
+/// let config: RepoConfig = toml::from_str(toml).unwrap();
+/// assert_eq!(config.corpus.paths, vec!["src", "docs"]);
+/// assert_eq!(config.corpus.git.len(), 1);
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RepoConfig {
+    /// What to index.
+    pub corpus: CorpusSpec,
+}
+
+/// Specification of what to index from a repo.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CorpusSpec {
+    /// Paths relative to the repo root to index (defaults to `["."]`).
+    pub paths: Vec<String>,
+    /// Additional ignore patterns (on top of built-in always-ignore lists).
+    pub ignore: Vec<String>,
+    /// External local directories to include.
+    pub include: Vec<ExternalInclude>,
+    /// Git repositories to clone and index.
+    pub git: Vec<GitInclude>,
+}
+
+/// An external local directory to include in the corpus.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExternalInclude {
+    /// Absolute or `~`-relative path to the directory.
+    pub path: String,
+}
+
+/// A git repository to clone and index.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GitInclude {
+    /// Remote git repository URL (HTTPS or SSH).
+    pub repo: String,
+    /// Optional paths for sparse checkout.
+    pub paths: Option<Vec<String>>,
+    /// Optional branch (defaults to the repo's default branch).
+    pub branch: Option<String>,
+}
+
+/// The name of the per-repo config file.
+pub const CORPUS_CONFIG_FILENAME: &str = ".iris.toml";
+
+impl RepoConfig {
+    /// Discover `.iris.toml` by walking up from `start_dir`.
+    ///
+    /// Returns `Some((config_dir, config))` if found, `None` otherwise.
+    /// The `config_dir` is the directory containing `.iris.toml`, used
+    /// to resolve relative paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the file exists but cannot be parsed.
+    pub fn discover(start_dir: &Path) -> Result<Option<(PathBuf, Self)>, StorageError> {
+        let mut dir = start_dir.to_path_buf();
+        loop {
+            let config_path = dir.join(CORPUS_CONFIG_FILENAME);
+            if config_path.exists() {
+                let contents = std::fs::read_to_string(&config_path).map_err(StorageError::from)?;
+                let config: Self =
+                    toml::from_str(&contents).map_err(|e| StorageError::Serialization {
+                        reason: format!("failed to parse {}: {e}", config_path.display()),
+                    })?;
+                return Ok(Some((dir, config)));
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+        Ok(None)
+    }
+
+    /// Resolve all corpus paths from this config relative to `base_dir`.
+    ///
+    /// Returns a flat list of corpus path strings suitable for passing
+    /// to the ingestion pipeline. Local paths are resolved relative to
+    /// `base_dir`, `~` in external includes is expanded, and git repos
+    /// are returned as separate lists.
+    #[must_use]
+    pub fn resolve_local_paths(&self, base_dir: &Path) -> Vec<String> {
+        let mut paths = Vec::new();
+
+        // Repo-local paths (default to "." if empty)
+        let local_paths = if self.corpus.paths.is_empty() {
+            vec![".".to_string()]
+        } else {
+            self.corpus.paths.clone()
+        };
+
+        for p in &local_paths {
+            let resolved = base_dir.join(p);
+            paths.push(resolved.to_string_lossy().to_string());
+        }
+
+        // External includes (expand ~)
+        for inc in &self.corpus.include {
+            let expanded = expand_tilde(&inc.path);
+            paths.push(expanded);
+        }
+
+        paths
+    }
+}
+
+/// Expand `~` at the start of a path to the user's home directory.
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest).to_string_lossy().to_string();
+        }
+    }
+    path.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

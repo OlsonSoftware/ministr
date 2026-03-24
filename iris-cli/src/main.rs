@@ -118,12 +118,35 @@ async fn main() -> Result<()> {
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to load config from {}", config_path.display()))?;
 
-    // Merge CLI corpus paths with config corpus_paths (CLI takes precedence).
-    let corpus_paths: Vec<String> = if cli.corpus.is_empty() {
+    // Discover per-repo .iris.toml (walks up from CWD).
+    let cwd = std::env::current_dir()
+        .into_diagnostic()
+        .wrap_err("failed to get current directory")?;
+    let corpus_config = iris_core::config::RepoConfig::discover(&cwd)
+        .into_diagnostic()
+        .wrap_err("failed to read .iris.toml")?;
+
+    if let Some((ref config_dir, _)) = corpus_config {
+        tracing::info!(
+            config = %config_dir.join(iris_core::config::CORPUS_CONFIG_FILENAME).display(),
+            "loaded per-repo corpus config"
+        );
+    }
+
+    // Resolve corpus paths: .iris.toml > --corpus CLI > config.toml corpus_paths
+    let corpus_paths: Vec<String> = if let Some((ref base_dir, ref cc)) = corpus_config {
+        cc.resolve_local_paths(base_dir)
+    } else if cli.corpus.is_empty() {
         config.corpus_paths.clone()
     } else {
         cli.corpus.clone()
     };
+
+    // Collect git repos from .iris.toml for post-startup cloning.
+    let git_includes: Vec<iris_core::config::GitInclude> = corpus_config
+        .as_ref()
+        .map(|(_, cc)| cc.corpus.git.clone())
+        .unwrap_or_default();
 
     // Dispatch to the appropriate subcommand (default: serve over stdio).
     match cli.command.unwrap_or(Command::Serve {
@@ -140,7 +163,9 @@ async fn main() -> Result<()> {
             oauth,
             oauth_issuer,
         } => match transport {
-            Transport::Stdio => cmd_serve_stdio(&corpus_paths, &config_path, &config).await,
+            Transport::Stdio => {
+                cmd_serve_stdio(&corpus_paths, &git_includes, &config_path, &config).await
+            }
             Transport::Http => {
                 let oauth_config = if oauth {
                     Some(iris_mcp::auth::OAuthConfig {
@@ -152,6 +177,7 @@ async fn main() -> Result<()> {
                 };
                 cmd_serve_http(
                     &corpus_paths,
+                    &git_includes,
                     &config_path,
                     &config,
                     &host,
@@ -161,7 +187,7 @@ async fn main() -> Result<()> {
                 .await
             }
         },
-        Command::Index => cmd_index(&corpus_paths, &config_path, &config).await,
+        Command::Index => cmd_index(&corpus_paths, &git_includes, &config_path, &config).await,
     }
 }
 
@@ -335,13 +361,15 @@ async fn build_server(
 /// Spawn background corpus ingestion, returning when the MCP transport finishes.
 fn spawn_background_ingestion(
     corpus_paths: &[String],
+    git_includes: &[iris_core::config::GitInclude],
     ctx: &InfrastructureContext,
     ingestion_progress: &Arc<iris_core::ingestion::IngestionProgress>,
 ) {
-    if corpus_paths.is_empty() {
+    if corpus_paths.is_empty() && git_includes.is_empty() {
         return;
     }
     let bg_corpus_paths = corpus_paths.to_vec();
+    let bg_git_includes = git_includes.to_vec();
     let bg_corpus_dir = ctx.corpus_dir.clone();
     let bg_storage = Arc::clone(&ctx.storage);
     let bg_embedder = Arc::clone(&ctx.embedder);
@@ -351,6 +379,7 @@ fn spawn_background_ingestion(
     tokio::spawn(async move {
         match run_corpus_ingestion(
             &bg_corpus_paths,
+            &bg_git_includes,
             &bg_corpus_dir,
             &bg_storage,
             &*bg_embedder,
@@ -372,6 +401,7 @@ fn spawn_background_ingestion(
 /// `iris serve --transport stdio` — MCP server over stdin/stdout.
 async fn cmd_serve_stdio(
     corpus_paths: &[String],
+    git_includes: &[iris_core::config::GitInclude],
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
 ) -> Result<()> {
@@ -387,7 +417,7 @@ async fn cmd_serve_stdio(
         .wrap_err("failed to start MCP stdio transport")?;
 
     // Ingest in background AFTER the MCP server is running.
-    spawn_background_ingestion(corpus_paths, &ctx, &ingestion_progress);
+    spawn_background_ingestion(corpus_paths, git_includes, &ctx, &ingestion_progress);
 
     mcp_service
         .waiting()
@@ -402,6 +432,7 @@ async fn cmd_serve_stdio(
 /// `iris serve --transport http` — Streamable HTTP MCP server.
 async fn cmd_serve_http(
     corpus_paths: &[String],
+    git_includes: &[iris_core::config::GitInclude],
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
     host: &str,
@@ -446,7 +477,7 @@ async fn cmd_serve_http(
     tracing::info!(address = %bind_addr, "iris HTTP server listening");
 
     // Ingest in background AFTER the HTTP server is bound.
-    spawn_background_ingestion(corpus_paths, &ctx, &ingestion_progress);
+    spawn_background_ingestion(corpus_paths, git_includes, &ctx, &ingestion_progress);
 
     axum::serve(listener, app)
         .await
@@ -460,6 +491,7 @@ async fn cmd_serve_http(
 /// `iris index` — run ingestion synchronously and exit.
 async fn cmd_index(
     corpus_paths: &[String],
+    git_includes: &[iris_core::config::GitInclude],
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
 ) -> Result<()> {
@@ -469,7 +501,7 @@ async fn cmd_index(
         "iris starting (index mode)"
     );
 
-    if corpus_paths.is_empty() {
+    if corpus_paths.is_empty() && git_includes.is_empty() {
         tracing::warn!("no corpus paths specified, nothing to index");
         return Ok(());
     }
@@ -479,6 +511,7 @@ async fn cmd_index(
     let progress = Arc::new(iris_core::ingestion::IngestionProgress::new());
     run_corpus_ingestion(
         corpus_paths,
+        git_includes,
         &ctx.corpus_dir,
         &ctx.storage,
         &*ctx.embedder,
@@ -566,8 +599,10 @@ fn spawn_coherence(
 /// - Local paths are ingested via the standard file ingestion pipeline.
 /// - Web URLs are fetched and ingested via `WebFetcher`.
 /// - Git URLs are cloned and their content is ingested as local files.
+#[allow(clippy::too_many_arguments)]
 async fn run_corpus_ingestion(
     corpus_paths: &[String],
+    git_includes: &[iris_core::config::GitInclude],
     corpus_dir: &Path,
     storage: &iris_core::storage::SqliteStorage,
     embedder: &dyn iris_core::embedding::Embedder,
@@ -634,9 +669,12 @@ async fn run_corpus_ingestion(
         ingest_web_sources(&web_urls, corpus_dir, &pipeline, storage, embedder, index).await?;
     }
 
-    // Clone and ingest git repositories.
+    // Clone and ingest git repositories (from --corpus args and .iris.toml).
     if !git_urls.is_empty() {
         ingest_git_sources(&git_urls, &pipeline, storage, embedder, index).await;
+    }
+    if !git_includes.is_empty() {
+        ingest_git_includes(git_includes, &pipeline, storage, embedder, index).await;
     }
 
     index
@@ -800,6 +838,91 @@ async fn ingest_git_sources(
             }
             Err(e) => {
                 tracing::warn!(url = %url, error = %e, "git corpus clone failed");
+            }
+        }
+    }
+}
+
+/// Clone and ingest git repositories specified in `.iris.toml`.
+///
+/// Unlike [`ingest_git_sources`], this accepts [`GitInclude`] structs
+/// which support sparse checkout paths and branch selection.
+async fn ingest_git_includes(
+    includes: &[iris_core::config::GitInclude],
+    pipeline: &iris_core::ingestion::IngestionPipeline,
+    storage: &iris_core::storage::SqliteStorage,
+    embedder: &dyn iris_core::embedding::Embedder,
+    index: &dyn iris_core::index::VectorIndex,
+) {
+    let git_fetcher = iris_core::git::GitFetcher::with_defaults();
+
+    for inc in includes {
+        let paths_ref: Option<Vec<String>> = inc.paths.clone();
+        match git_fetcher
+            .clone(&inc.repo, paths_ref.as_deref(), inc.branch.as_deref(), None)
+            .await
+        {
+            Ok(clone_result) => {
+                let root_id = iris_core::ingestion::compute_root_id(&clone_result.clone_dir);
+                let clone_root = iris_core::types::CorpusRoot {
+                    id: root_id.clone(),
+                    path: clone_result.clone_dir.to_string_lossy().to_string(),
+                    kind: iris_core::types::RootKind::Git,
+                    display_name: Some(git_repo_display_name(&inc.repo)),
+                    file_count: 0,
+                    language_stats: std::collections::HashMap::new(),
+                    repo_url: Some(inc.repo.clone()),
+                    branch: clone_result.metadata.branch.clone(),
+                    commit_sha: Some(clone_result.metadata.commit_sha.clone()),
+                    clone_timestamp: Some(clone_result.metadata.clone_timestamp.clone()),
+                    sparse_paths: clone_result.metadata.checked_out_paths.clone(),
+                };
+                if let Err(e) = storage.upsert_corpus_root(&clone_root).await {
+                    tracing::warn!(repo = %inc.repo, error = %e, "failed to register clone root");
+                }
+
+                match pipeline
+                    .ingest_directory_with_embeddings_rooted(
+                        &clone_result.clone_dir,
+                        storage,
+                        embedder,
+                        index,
+                        Some(&root_id),
+                        None,
+                    )
+                    .await
+                {
+                    Ok(stats) => {
+                        let updated_root = iris_core::types::CorpusRoot {
+                            file_count: stats.files_indexed,
+                            ..clone_root
+                        };
+                        let _ = storage.upsert_corpus_root(&updated_root).await;
+
+                        let git_cache_record = iris_core::storage::GitCacheRecord {
+                            repo_url: inc.repo.clone(),
+                            branch: clone_result.metadata.branch.clone(),
+                            commit_sha: clone_result.metadata.commit_sha.clone(),
+                            clone_timestamp: clone_result.metadata.clone_timestamp.clone(),
+                            clone_dir: clone_result.clone_dir.to_string_lossy().to_string(),
+                            checked_out_paths: clone_result.metadata.checked_out_paths.clone(),
+                        };
+                        let _ = storage.upsert_git_cache(&git_cache_record).await;
+
+                        tracing::info!(
+                            repo = %inc.repo,
+                            files_indexed = stats.files_indexed,
+                            sections = stats.total_sections,
+                            "git include from .iris.toml ingested"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(repo = %inc.repo, error = %e, "git include ingestion failed");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(repo = %inc.repo, error = %e, "git include clone failed");
             }
         }
     }
