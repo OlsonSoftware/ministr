@@ -8,6 +8,9 @@
 //!
 //! When invoked without a subcommand (`iris --corpus ./docs`), defaults to `serve`.
 
+mod instance;
+mod proxy;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -361,6 +364,34 @@ async fn build_server(
     Ok((server, ctx, coherence_handle))
 }
 
+/// Spawn an HTTP listener for secondary iris instances to connect to.
+///
+/// Runs in a background task. When the primary's main MCP session ends,
+/// the tokio runtime drops this task and the listener closes.
+fn spawn_http_listener(server: iris_mcp::server::IrisServer, port: u16) {
+    use rmcp::transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    };
+
+    tokio::spawn(async move {
+        let server_factory = move || Ok(server.clone());
+        let session_manager = Arc::new(LocalSessionManager::default());
+        let http_service = StreamableHttpService::new(
+            server_factory,
+            session_manager,
+            StreamableHttpServerConfig::default(),
+        );
+        let app = axum::Router::new().nest_service("/mcp", http_service);
+
+        let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await else {
+            tracing::warn!(port, "failed to bind HTTP listener for secondaries");
+            return;
+        };
+        tracing::info!(port, "HTTP listener ready for secondary instances");
+        let _ = axum::serve(listener, app).await;
+    });
+}
+
 /// Spawn background corpus ingestion, returning when the MCP transport finishes.
 fn spawn_background_ingestion(
     corpus_paths: &[String],
@@ -402,34 +433,61 @@ fn spawn_background_ingestion(
 }
 
 /// `iris serve --transport stdio` — MCP server over stdin/stdout.
+///
+/// On first invocation for a corpus, acquires an exclusive lock and starts
+/// as the primary (stdio + HTTP listener for secondaries). On subsequent
+/// invocations, detects the primary and runs as a transparent proxy.
 async fn cmd_serve_stdio(
     corpus_paths: &[String],
     git_includes: &[iris_core::config::GitInclude],
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
 ) -> Result<()> {
-    let (server, ctx, _coherence_handle) = build_server(corpus_paths, config_path, config).await?;
-
-    let ingestion_progress = server.ingestion_progress_arc();
-
-    // Start MCP server FIRST so Claude Code doesn't time out.
-    let mcp_service = server
-        .serve(rmcp::transport::stdio())
-        .await
+    // Compute the corpus data dir early for lock detection.
+    let corpus_name = corpus_data_dir_name(corpus_paths);
+    let corpus_dir = config.data_dir.join("corpora").join(&corpus_name);
+    std::fs::create_dir_all(&corpus_dir)
         .into_diagnostic()
-        .wrap_err("failed to start MCP stdio transport")?;
+        .wrap_err("failed to create corpus directory")?;
 
-    // Ingest in background AFTER the MCP server is running.
-    spawn_background_ingestion(corpus_paths, git_includes, &ctx, &ingestion_progress);
+    let role = instance::acquire_role(&corpus_dir, corpus_paths)?;
 
-    mcp_service
-        .waiting()
-        .await
-        .into_diagnostic()
-        .wrap_err("MCP server exited with error")?;
+    match role {
+        instance::InstanceRole::Secondary { mcp_url } => {
+            tracing::info!(url = %mcp_url, "secondary instance — proxying to primary");
+            proxy::run_stdio_proxy(&mcp_url).await
+        }
+        instance::InstanceRole::Primary(lock) => {
+            let (server, ctx, _coherence_handle) =
+                build_server(corpus_paths, config_path, config).await?;
 
-    tracing::info!("iris shutting down");
-    Ok(())
+            let ingestion_progress = server.ingestion_progress_arc();
+
+            // Spawn HTTP listener for secondary instances.
+            spawn_http_listener(server.clone(), lock.http_port);
+
+            // Start stdio MCP server FIRST so Claude Code doesn't time out.
+            let mcp_service = server
+                .serve(rmcp::transport::stdio())
+                .await
+                .into_diagnostic()
+                .wrap_err("failed to start MCP stdio transport")?;
+
+            // Ingest in background AFTER the MCP server is running.
+            spawn_background_ingestion(corpus_paths, git_includes, &ctx, &ingestion_progress);
+
+            mcp_service
+                .waiting()
+                .await
+                .into_diagnostic()
+                .wrap_err("MCP server exited with error")?;
+
+            // lock dropped here → flock released, port file removed.
+            drop(lock);
+            tracing::info!("iris shutting down");
+            Ok(())
+        }
+    }
 }
 
 /// `iris serve --transport http` — Streamable HTTP MCP server.
