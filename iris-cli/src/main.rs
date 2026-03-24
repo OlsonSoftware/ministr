@@ -261,11 +261,18 @@ async fn init_infrastructure(
     }
 
     let index: Arc<dyn iris_core::index::VectorIndex> = if index_dir.exists() {
-        Arc::new(
-            iris_core::index::HnswIndex::load(&index_dir)
-                .into_diagnostic()
-                .wrap_err("failed to load vector index")?,
-        )
+        match iris_core::index::HnswIndex::load(&index_dir) {
+            Ok(loaded) => Arc::new(loaded),
+            Err(e) => {
+                tracing::warn!(error = %e, "corrupted vector index — discarding and rebuilding");
+                let _ = std::fs::remove_dir_all(&index_dir);
+                Arc::new(
+                    iris_core::index::HnswIndex::new(dim, 100_000)
+                        .into_diagnostic()
+                        .wrap_err("failed to create vector index after recovery")?,
+                )
+            }
+        }
     } else {
         Arc::new(
             iris_core::index::HnswIndex::new(dim, 100_000)
