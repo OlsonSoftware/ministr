@@ -501,6 +501,7 @@ impl IngestionPipeline {
             claims: claim_count,
             pending_refs: Vec::new(),
             bridge_endpoints: Vec::new(),
+            embedding_pairs: Vec::new(),
         })
     }
 
@@ -708,11 +709,12 @@ impl IngestionPipeline {
         // Embed all resolution levels
         embed_document(&doc, embedder, index)?;
 
-        // For code files: extract symbols, store in SQLite, and embed into vector index
+        // For code files: extract symbols, store in SQLite, and embed immediately.
         if parser_kind == ParserKind::Code {
-            let _result =
-                embed_code_symbols(source_path, content, storage, embedder, index, None, None)
-                    .await?;
+            let result = extract_code_symbols(source_path, content, storage, None, None).await?;
+            if !result.embedding_pairs.is_empty() {
+                batch_embed_and_insert(&result.embedding_pairs, embedder, index)?;
+            }
         }
 
         // Detect and store claim relationships
@@ -891,6 +893,7 @@ impl IngestionPipeline {
 
         let mut all_pending_refs = Vec::new();
         let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
+        let mut all_embedding_pairs: Vec<(VectorId, String)> = Vec::new();
 
         for file_path in &files {
             // Check cancellation at the top of each file iteration.
@@ -920,11 +923,10 @@ impl IngestionPipeline {
             };
 
             match self
-                .ingest_file_with_embeddings(
+                .parse_and_store_file(
                     file_path,
                     &relative,
                     storage,
-                    embedder,
                     index,
                     active_graph,
                     bridge_linker.as_ref(),
@@ -940,13 +942,15 @@ impl IngestionPipeline {
                     claims,
                     pending_refs,
                     bridge_endpoints,
+                    embedding_pairs,
                 }) => {
-                    debug!(path = %relative, sections, claims, "indexed with embeddings");
+                    debug!(path = %relative, sections, claims, "parsed and stored");
                     stats.files_indexed += 1;
                     stats.total_sections += sections;
                     stats.total_claims += claims;
                     all_pending_refs.extend(pending_refs);
                     all_bridge_endpoints.extend(bridge_endpoints);
+                    all_embedding_pairs.extend(embedding_pairs);
 
                     // Tag the document with its corpus root.
                     if let Some(rid) = root_id {
@@ -966,6 +970,9 @@ impl IngestionPipeline {
                 progress.increment_done();
             }
         }
+
+        // Batch embed all accumulated texts in one pass (GPU-bound).
+        stats.total_embeddings = batch_embed_and_insert(&all_embedding_pairs, embedder, index)?;
 
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
@@ -1166,6 +1173,7 @@ impl IngestionPipeline {
 
         let mut all_pending_refs = Vec::new();
         let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
+        let mut all_embedding_pairs: Vec<(VectorId, String)> = Vec::new();
 
         for file_path in &files {
             let relative = compute_relative_path(file_path, paths);
@@ -1183,11 +1191,10 @@ impl IngestionPipeline {
             }
 
             match self
-                .ingest_file_with_embeddings(
+                .parse_and_store_file(
                     file_path,
                     &relative,
                     storage,
-                    embedder,
                     index,
                     active_graph,
                     bridge_linker.as_ref(),
@@ -1203,13 +1210,15 @@ impl IngestionPipeline {
                     claims,
                     pending_refs,
                     bridge_endpoints,
+                    embedding_pairs,
                 }) => {
-                    debug!(path = %relative, sections, claims, "indexed with embeddings");
+                    debug!(path = %relative, sections, claims, "parsed and stored");
                     stats.files_indexed += 1;
                     stats.total_sections += sections;
                     stats.total_claims += claims;
                     all_pending_refs.extend(pending_refs);
                     all_bridge_endpoints.extend(bridge_endpoints);
+                    all_embedding_pairs.extend(embedding_pairs);
 
                     // Tag document with its corpus root.
                     if let Some(root_id) = find_root_for_file(file_path, &roots) {
@@ -1229,6 +1238,9 @@ impl IngestionPipeline {
                 progress.increment_done();
             }
         }
+
+        // Batch embed all accumulated texts in one pass (GPU-bound).
+        stats.total_embeddings = batch_embed_and_insert(&all_embedding_pairs, embedder, index)?;
 
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
@@ -1287,21 +1299,24 @@ impl IngestionPipeline {
     }
 
     /// Ingest a single file with multi-resolution embedding.
+    /// Parse, extract, and store a single file. Embedding is deferred — pairs
+    /// are returned in `FileResult::Indexed` for batch embedding after all files.
+    ///
+    /// The `index` parameter is used only for deleting stale vectors when
+    /// re-indexing a changed file. No new embeddings are created here.
     #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
-    #[instrument(skip(self, storage, embedder, index, package_graph, bridge_linker), fields(path = %relative_path))]
-    async fn ingest_file_with_embeddings<S, E, I>(
+    #[instrument(skip(self, storage, index, package_graph, bridge_linker), fields(path = %relative_path))]
+    async fn parse_and_store_file<S, I>(
         &self,
         file_path: &Path,
         relative_path: &str,
         storage: &S,
-        embedder: &E,
         index: &I,
         package_graph: Option<&PackageGraph>,
         bridge_linker: Option<&BridgeLinker>,
     ) -> Result<FileResult, IngestionError>
     where
         S: Storage + ?Sized,
-        E: Embedder + ?Sized,
         I: VectorIndex + ?Sized,
     {
         // Get file mtime for fast change detection
@@ -1397,28 +1412,28 @@ impl IngestionPipeline {
             .await
             .map_err(IngestionError::from)?;
 
-        // Embed all resolution levels
-        embed_document(&doc, embedder, index)?;
+        // Collect document embedding pairs (deferred for batch embedding).
+        let mut embedding_pairs: Vec<(VectorId, String)> = Vec::new();
+        collect_document_embeddings(&doc, &mut embedding_pairs);
 
-        // For code files: extract symbols, store in SQLite, and embed into vector index
+        // For code files: extract symbols, store in SQLite, collect symbol embedding pairs.
         let parser_kind = self
             .parser_override
             .or_else(|| detect_parser_kind(Path::new(relative_path)));
         let mut pending_refs = Vec::new();
         let mut bridge_endpoints = Vec::new();
         if parser_kind == Some(ParserKind::Code) {
-            let result = embed_code_symbols(
+            let result = extract_code_symbols(
                 relative_path,
                 &content_str,
                 storage,
-                embedder,
-                index,
                 package_graph,
                 bridge_linker,
             )
             .await?;
             pending_refs = result.pending_refs;
             bridge_endpoints = result.bridge_endpoints;
+            embedding_pairs.extend(result.embedding_pairs);
         }
 
         // Detect and store claim relationships
@@ -1453,6 +1468,7 @@ impl IngestionPipeline {
             claims: claim_count,
             pending_refs,
             bridge_endpoints,
+            embedding_pairs,
         })
     }
 
@@ -1661,6 +1677,62 @@ fn embed_document<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
     Ok(count)
 }
 
+/// Collect embeddable `(id, text)` pairs from a document tree without embedding.
+///
+/// Used by the batch embedding pipeline: pairs are accumulated across files
+/// and embedded in one large batch at the end of the ingestion loop.
+fn collect_document_embeddings(doc: &DocumentTree, pairs: &mut Vec<(VectorId, String)>) {
+    if let Some(ref summary) = doc.summary {
+        if !summary.trim().is_empty() {
+            pairs.push((VectorId::doc_summary(doc.id.as_ref()), summary.clone()));
+        }
+    }
+
+    let mut ids = Vec::new();
+    let mut texts = Vec::new();
+    collect_embeddable_items(&doc.sections, &mut ids, &mut texts);
+    pairs.extend(ids.into_iter().zip(texts));
+}
+
+/// Maximum texts per embedding inference call.
+const EMBED_BATCH_CHUNK: usize = 256;
+
+/// Embed and insert a batch of `(id, text)` pairs into the vector index.
+///
+/// Processes the batch in chunks of [`EMBED_BATCH_CHUNK`] to balance
+/// memory usage with ONNX inference efficiency.
+fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
+    pairs: &[(VectorId, String)],
+    embedder: &E,
+    index: &I,
+) -> Result<usize, IngestionError> {
+    if pairs.is_empty() {
+        return Ok(0);
+    }
+    let mut total = 0;
+
+    for chunk in pairs.chunks(EMBED_BATCH_CHUNK) {
+        let text_refs: Vec<&str> = chunk.iter().map(|(_, t)| t.as_str()).collect();
+        let vectors = embedder
+            .embed(&text_refs)
+            .map_err(|e| IngestionError::Embedding {
+                reason: e.to_string(),
+            })?;
+
+        for ((vid, _), vector) in chunk.iter().zip(vectors.iter()) {
+            index
+                .insert(vid.as_str(), vector)
+                .map_err(|e| IngestionError::Embedding {
+                    reason: format!("failed to insert vector {vid}: {e}"),
+                })?;
+        }
+        total += chunk.len();
+    }
+
+    info!(embeddings = total, "batch embedding complete");
+    Ok(total)
+}
+
 /// Embed a document tree into the sparse index using a SPLADE-style model.
 ///
 /// Mirrors [`embed_document`] but produces sparse vectors instead of dense.
@@ -1761,33 +1833,29 @@ fn collect_all_claims(sections: &[Section]) -> Vec<Claim> {
 /// Symbol stubs embed `"signature\ndoc_comment"` for high-precision search.
 /// Symbol full embeds the complete symbol source for broader matching.
 #[allow(clippy::too_many_lines)]
-/// Result of code symbol embedding: unresolved cross-references
-/// for second-pass resolution and bridge endpoints for post-loop linking.
-struct EmbedSymbolsResult {
+/// Result of code symbol extraction: unresolved cross-references,
+/// bridge endpoints, and deferred embedding pairs.
+struct CodeSymbolsResult {
     pending_refs: Vec<PendingRef>,
     bridge_endpoints: Vec<BridgeEndpoint>,
+    /// `(VectorId, text)` pairs for batch embedding after all files are parsed.
+    embedding_pairs: Vec<(VectorId, String)>,
 }
 
 #[allow(clippy::too_many_lines)]
-async fn embed_code_symbols<S, E, I>(
+async fn extract_code_symbols<S: Storage + ?Sized>(
     relative_path: &str,
     content: &str,
     storage: &S,
-    embedder: &E,
-    index: &I,
     package_graph: Option<&PackageGraph>,
     bridge_linker: Option<&BridgeLinker>,
-) -> Result<EmbedSymbolsResult, IngestionError>
-where
-    S: Storage + ?Sized,
-    E: Embedder + ?Sized,
-    I: VectorIndex + ?Sized,
-{
+) -> Result<CodeSymbolsResult, IngestionError> {
     let source = content.as_bytes();
     let empty_result = || {
-        Ok(EmbedSymbolsResult {
+        Ok(CodeSymbolsResult {
             pending_refs: Vec::new(),
             bridge_endpoints: Vec::new(),
+            embedding_pairs: Vec::new(),
         })
     };
 
@@ -1929,9 +1997,8 @@ where
         Vec::new()
     };
 
-    // Build embeddable texts for symbol-stub and symbol-full
-    let mut ids: Vec<VectorId> = Vec::new();
-    let mut texts: Vec<String> = Vec::new();
+    // Collect embeddable (id, text) pairs for deferred batch embedding.
+    let mut embedding_pairs: Vec<(VectorId, String)> = Vec::new();
 
     for (sym, record) in symbols.iter().zip(symbol_records.iter()) {
         // Symbol stub: signature + doc comment
@@ -1940,46 +2007,28 @@ where
             None => sym.signature.clone(),
         };
         if !stub_text.trim().is_empty() {
-            ids.push(VectorId::symbol_stub(record.id.as_ref()));
-            texts.push(stub_text);
+            embedding_pairs.push((VectorId::symbol_stub(record.id.as_ref()), stub_text));
         }
 
         // Symbol full: complete source code
         let full_text = &content[sym.byte_range.clone()];
         if !full_text.trim().is_empty() {
-            ids.push(VectorId::symbol_full(record.id.as_ref()));
-            texts.push(full_text.to_string());
+            embedding_pairs.push((
+                VectorId::symbol_full(record.id.as_ref()),
+                full_text.to_string(),
+            ));
         }
     }
 
-    if texts.is_empty() {
-        return empty_result();
-    }
-
-    // Batch embed
-    let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-    let vectors = embedder
-        .embed(&text_refs)
-        .map_err(|e| IngestionError::Embedding {
-            reason: e.to_string(),
-        })?;
-
-    for (vid, vector) in ids.iter().zip(vectors.iter()) {
-        index
-            .insert(vid.as_str(), vector)
-            .map_err(|e| IngestionError::Embedding {
-                reason: format!("failed to insert symbol vector {vid}: {e}"),
-            })?;
-    }
-
     debug!(
-        symbols = ids.len(),
+        symbols = embedding_pairs.len(),
         path = %relative_path,
-        "embedded code symbols"
+        "extracted code symbol embeddings"
     );
-    Ok(EmbedSymbolsResult {
+    Ok(CodeSymbolsResult {
         pending_refs,
         bridge_endpoints,
+        embedding_pairs,
     })
 }
 
@@ -2410,7 +2459,10 @@ async fn repair_missing_refs<S: Storage + ?Sized>(
         };
 
         // Check if this ref already exists
-        let Ok(existing_refs) = storage.query_refs(&from_sym.id, Some(RefKind::Implements)).await else {
+        let Ok(existing_refs) = storage
+            .query_refs(&from_sym.id, Some(RefKind::Implements))
+            .await
+        else {
             continue;
         };
         if existing_refs.iter().any(|r| r.to_symbol_id == to_sym.id) {
@@ -2433,7 +2485,10 @@ async fn repair_missing_refs<S: Storage + ?Sized>(
     }
 
     if repaired > 0 {
-        info!(refs = repaired, "repaired missing implements refs on warm restart");
+        info!(
+            refs = repaired,
+            "repaired missing implements refs on warm restart"
+        );
     }
 }
 
@@ -2456,10 +2511,7 @@ fn extract_type_from_impl_signature(sig: &str) -> Option<String> {
     let for_pos = sig.find(" for ")?;
     let type_part = &sig[for_pos + 5..];
     // Take first line, strip generics/where clauses
-    let type_name = type_part
-        .split(['<', '\n', '{'])
-        .next()?
-        .trim();
+    let type_name = type_part.split(['<', '\n', '{']).next()?.trim();
     if type_name.is_empty() {
         return None;
     }
@@ -2658,6 +2710,8 @@ enum FileResult {
         pending_refs: Vec<PendingRef>,
         /// Bridge endpoints extracted from this file.
         bridge_endpoints: Vec<BridgeEndpoint>,
+        /// `(VectorId, text)` pairs for deferred batch embedding.
+        embedding_pairs: Vec<(VectorId, String)>,
     },
 }
 
