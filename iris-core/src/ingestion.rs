@@ -27,8 +27,8 @@ use crate::parser::{
     DocumentParser, MarkdownParser, ParserKind, create_parser, detect_parser_kind,
 };
 use crate::storage::traits::{
-    BridgeEndpointRecord, BridgeLinkRecord, FileHashRecord, Storage, SymbolFilter, SymbolRecord,
-    SymbolRefRecord,
+    BridgeEndpointRecord, BridgeLinkRecord, FileHashRecord, PendingRefRecord, Storage,
+    SymbolFilter, SymbolRecord, SymbolRefRecord,
 };
 use crate::token::count_tokens;
 use crate::types::{
@@ -969,7 +969,9 @@ impl IngestionPipeline {
 
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
-        resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
+        let (_resolved, still_pending) =
+            resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
+        persist_pending_refs(&still_pending, storage).await;
 
         // Bridge linking: join accumulated endpoints into cross-language links.
         store_bridge_links(&all_bridge_endpoints, bridge_linker.as_ref(), storage).await;
@@ -1126,6 +1128,9 @@ impl IngestionPipeline {
                     progress.start(files.len());
                     progress.complete();
                 }
+                // Even on fast-skip, repair any missing refs from previous sessions.
+                repair_missing_refs(storage, None).await;
+
                 // Even on fast-skip, compute language stats from discovered files.
                 accumulate_language_stats(
                     &files,
@@ -1227,7 +1232,9 @@ impl IngestionPipeline {
 
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
-        resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
+        let (_resolved, still_pending) =
+            resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
+        persist_pending_refs(&still_pending, storage).await;
 
         // Bridge linking: join accumulated endpoints into cross-language links.
         store_bridge_links(&all_bridge_endpoints, bridge_linker.as_ref(), storage).await;
@@ -2208,16 +2215,20 @@ async fn resolve_and_store_refs<S: Storage + ?Sized>(
 /// resolution for refs whose target symbols were not yet in the database
 /// during the first pass (e.g., `impl Trait for Type` where the trait
 /// definition file sorts after the implementing file).
+///
+/// Returns `(resolved_count, still_unresolved)` so the caller can persist
+/// any remaining unresolved refs for future warm-restart resolution.
 async fn resolve_pending_refs<S: Storage + ?Sized>(
     pending: &[PendingRef],
     storage: &S,
     package_graph: Option<&PackageGraph>,
-) -> usize {
+) -> (usize, Vec<PendingRef>) {
     if pending.is_empty() {
-        return 0;
+        return (0, Vec::new());
     }
 
     let mut resolved = 0;
+    let mut still_unresolved = Vec::new();
 
     for pr in pending {
         let target_filter = SymbolFilter {
@@ -2240,7 +2251,10 @@ async fn resolve_pending_refs<S: Storage + ?Sized>(
             .collect();
 
         let target = match primary.len() {
-            0 => continue,
+            0 => {
+                still_unresolved.push(pr.clone());
+                continue;
+            }
             1 => primary[0],
             _ => {
                 let crate_filtered: Vec<_> =
@@ -2298,12 +2312,158 @@ async fn resolve_pending_refs<S: Storage + ?Sized>(
     if resolved > 0 {
         debug!(
             refs = resolved,
+            still_pending = still_unresolved.len(),
             total_pending = pending.len(),
             "second-pass reference resolution"
         );
     }
 
-    resolved
+    (resolved, still_unresolved)
+}
+
+/// Persist unresolved pending refs to `SQLite` for warm-restart resolution.
+async fn persist_pending_refs<S: Storage + ?Sized>(pending: &[PendingRef], storage: &S) {
+    if pending.is_empty() {
+        return;
+    }
+    let records: Vec<PendingRefRecord> = pending
+        .iter()
+        .map(|pr| PendingRefRecord {
+            from_symbol_id: pr.from_id.0.clone(),
+            target_name: pr.target_name.clone(),
+            kind: format!("{:?}", pr.kind),
+            file_path: pr.file_path.clone(),
+            target_crate: pr.target_crate.clone(),
+        })
+        .collect();
+    if let Err(e) = storage.upsert_pending_refs(&records).await {
+        warn!(error = %e, "failed to persist pending refs");
+    } else {
+        debug!(
+            count = records.len(),
+            "persisted pending refs for deferred resolution"
+        );
+    }
+}
+
+/// Load persisted pending refs from `SQLite` and attempt resolution.
+///
+/// Called on warm restart (mtime fast-skip) to resolve refs that were
+/// deferred from a previous session. Resolved refs are deleted from
+/// the `pending_refs` table.
+/// Scan for `impl` symbols missing `implements` refs and resolve them.
+///
+/// This is a lightweight repair pass that runs on warm restart (fast-skip).
+/// It queries all `impl` symbols whose signature contains ` for `, extracts
+/// the trait name, checks if an `implements` ref exists, and creates one if
+/// missing. No file re-parsing needed — works entirely from `SQLite`.
+async fn repair_missing_refs<S: Storage + ?Sized>(
+    storage: &S,
+    _package_graph: Option<&PackageGraph>,
+) {
+    // Find all impl symbols (their signatures look like "impl Trait for Type").
+    let impl_filter = SymbolFilter {
+        kind: Some("impl".to_string()),
+        ..SymbolFilter::default()
+    };
+    let Ok(impls) = storage.list_symbols(&impl_filter).await else {
+        return;
+    };
+
+    let mut repaired = 0;
+
+    for imp in &impls {
+        // Extract trait name from signature like "impl LanguageRefinement for GoRefinement"
+        let Some(trait_name) = extract_trait_from_impl_signature(&imp.signature) else {
+            continue;
+        };
+
+        // Extract the implementing type name (after "for")
+        let Some(type_name) = extract_type_from_impl_signature(&imp.signature) else {
+            continue;
+        };
+
+        // Find the "from" symbol (the implementing type in the same file)
+        let type_filter = SymbolFilter {
+            name_exact: Some(type_name.clone()),
+            file_path: Some(imp.file_path.clone()),
+            ..SymbolFilter::default()
+        };
+        let Ok(type_matches) = storage.list_symbols(&type_filter).await else {
+            continue;
+        };
+        let Some(from_sym) = type_matches.first() else {
+            continue;
+        };
+
+        // Find the target trait symbol
+        let trait_filter = SymbolFilter {
+            name_exact: Some(trait_name.clone()),
+            kind: Some("trait".to_string()),
+            ..SymbolFilter::default()
+        };
+        let Ok(trait_matches) = storage.list_symbols(&trait_filter).await else {
+            continue;
+        };
+        let Some(to_sym) = trait_matches.first() else {
+            continue;
+        };
+
+        // Check if this ref already exists
+        let Ok(existing_refs) = storage.query_refs(&from_sym.id, Some(RefKind::Implements)).await else {
+            continue;
+        };
+        if existing_refs.iter().any(|r| r.to_symbol_id == to_sym.id) {
+            continue; // Already resolved
+        }
+
+        // Create the missing ref
+        let record = SymbolRefRecord {
+            from_symbol_id: from_sym.id.clone(),
+            to_symbol_id: to_sym.id.clone(),
+            ref_kind: RefKind::Implements,
+        };
+        if storage
+            .insert_symbol_refs(std::slice::from_ref(&record))
+            .await
+            .is_ok()
+        {
+            repaired += 1;
+        }
+    }
+
+    if repaired > 0 {
+        info!(refs = repaired, "repaired missing implements refs on warm restart");
+    }
+}
+
+/// Extract the trait name from an impl signature like `"impl Trait for Type"`.
+fn extract_trait_from_impl_signature(sig: &str) -> Option<String> {
+    // Pattern: "impl TRAIT for TYPE" — trait is between "impl " and " for "
+    let after_impl = sig.strip_prefix("impl ")?;
+    let for_pos = after_impl.find(" for ")?;
+    let trait_part = &after_impl[..for_pos];
+    // Strip generic parameters and whitespace
+    let trait_name = trait_part.split('<').next()?.trim();
+    if trait_name.is_empty() {
+        return None;
+    }
+    Some(trait_name.to_string())
+}
+
+/// Extract the type name from an impl signature like `"impl Trait for Type"`.
+fn extract_type_from_impl_signature(sig: &str) -> Option<String> {
+    let for_pos = sig.find(" for ")?;
+    let type_part = &sig[for_pos + 5..];
+    // Take first line, strip generics/where clauses
+    let type_name = type_part
+        .split(['<', '\n', '{'])
+        .next()?
+        .trim();
+    if type_name.is_empty() {
+        return None;
+    }
+    Some(type_name.to_string())
 }
 
 /// Run the bridge linker on accumulated endpoints and store the results.

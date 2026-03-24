@@ -13,9 +13,9 @@ use tracing::instrument;
 use super::schema::{configure_connection, run_migrations};
 use super::traits::{
     BridgeEndpointRecord, BridgeLinkDetail, BridgeLinkRecord, ClaimRecord, CoAccessRecord,
-    CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord, RelatedClaimRecord,
-    SectionAccessStat, SectionRecord, Storage, SymbolFilter, SymbolRecord, SymbolRefRecord,
-    WebCacheRecord,
+    CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord, PendingRefRecord,
+    RelatedClaimRecord, SectionAccessStat, SectionRecord, Storage, SymbolFilter, SymbolRecord,
+    SymbolRefRecord, WebCacheRecord,
 };
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
@@ -1868,6 +1868,94 @@ impl Storage for SqliteStorage {
                 reason: e.to_string(),
             })?;
 
+            Ok(())
+        })
+        .await
+    }
+
+    // -- Pending refs (deferred resolution queue) --
+
+    async fn upsert_pending_refs(&self, refs: &[PendingRefRecord]) -> Result<(), StorageError> {
+        let refs = refs.to_vec();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "INSERT OR REPLACE INTO pending_refs
+                     (from_symbol_id, target_name, kind, file_path, target_crate)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            for r in &refs {
+                stmt.execute(rusqlite::params![
+                    r.from_symbol_id,
+                    r.target_name,
+                    r.kind,
+                    r.file_path,
+                    r.target_crate,
+                ])
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to upsert pending ref '{}': {e}", r.target_name),
+                })?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    async fn list_pending_refs(&self) -> Result<Vec<PendingRefRecord>, StorageError> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT from_symbol_id, target_name, kind, file_path, target_crate
+                     FROM pending_refs",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(PendingRefRecord {
+                        from_symbol_id: row.get(0)?,
+                        target_name: row.get(1)?,
+                        kind: row.get(2)?,
+                        file_path: row.get(3)?,
+                        target_crate: row.get(4)?,
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })
+        })
+        .await
+    }
+
+    async fn delete_pending_refs(&self, refs: &[PendingRefRecord]) -> Result<(), StorageError> {
+        let refs = refs.to_vec();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "DELETE FROM pending_refs
+                     WHERE from_symbol_id = ?1 AND target_name = ?2 AND kind = ?3",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            for r in &refs {
+                stmt.execute(rusqlite::params![r.from_symbol_id, r.target_name, r.kind])
+                    .map_err(|e| StorageError::Database {
+                        reason: format!("failed to delete pending ref '{}': {e}", r.target_name),
+                    })?;
+            }
             Ok(())
         })
         .await

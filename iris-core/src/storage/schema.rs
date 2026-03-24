@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 13;
+pub const CURRENT_SCHEMA_VERSION: usize = 14;
 
 /// Returns the migration set for the content database.
 ///
@@ -256,6 +256,19 @@ fn migrations() -> Migrations<'static> {
                 vector       BLOB NOT NULL,
                 created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 PRIMARY KEY (content_hash, model_name)
+            );
+            ",
+        ),
+        // V14: Deferred reference resolution queue — survives restarts
+        M::up(
+            "
+            CREATE TABLE pending_refs (
+                from_symbol_id TEXT NOT NULL,
+                target_name    TEXT NOT NULL,
+                kind           TEXT NOT NULL,
+                file_path      TEXT NOT NULL,
+                target_crate   TEXT,
+                PRIMARY KEY (from_symbol_id, target_name, kind)
             );
             ",
         ),

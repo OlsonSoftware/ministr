@@ -234,11 +234,12 @@ fn extract_python_imports(
     endpoints
 }
 
-/// Recursively walk looking for Python import statements.
+/// Recursively walk looking for Python import statements from internal `PyO3` modules.
 ///
-/// Captures `from module import name1, name2` patterns. All `from X import Y`
-/// statements are treated as potential `PyO3` imports — the linker will only
-/// create links when a matching Rust export exists.
+/// Captures `from _module import name1, name2` patterns where the module name
+/// starts with `_` (`PyO3` convention for native extension modules, e.g.
+/// `_pydantic_core`). Imports from external packages are skipped to avoid
+/// false positive bridge matches.
 fn walk_python_imports(
     cursor: &mut tree_sitter::TreeCursor<'_>,
     source: &[u8],
@@ -249,7 +250,11 @@ fn walk_python_imports(
         let node = cursor.node();
 
         if node.kind() == "import_from_statement" {
-            collect_python_import_names(&node, source, file_path, endpoints);
+            // Only create endpoints for imports from internal `PyO3` modules.
+            // Convention: native modules have a `_` prefix (e.g. `_pydantic_core`).
+            if is_internal_pyo3_import(&node, source) {
+                collect_python_import_names(&node, source, file_path, endpoints);
+            }
         }
 
         if cursor.goto_first_child() {
@@ -261,6 +266,25 @@ fn walk_python_imports(
             break;
         }
     }
+}
+
+/// Check if an `import_from_statement` imports from an internal `PyO3` module.
+///
+/// Returns `true` when the module name (the `from X` part) starts with `_`,
+/// which is the `PyO3` convention for native extension modules (e.g.
+/// `from _pydantic_core import SchemaValidator`). Also returns `true` for
+/// relative imports (`from . import X`) since those are project-internal.
+fn is_internal_pyo3_import(node: &tree_sitter::Node<'_>, source: &[u8]) -> bool {
+    // tree-sitter-python uses "module_name" field for the source module.
+    if let Some(module_node) = node.child_by_field_name("module_name") {
+        let module_text = node_text(&module_node, source);
+        // The final segment of a dotted path determines the native module.
+        // e.g. `from pydantic_core._pydantic_core import X` → `_pydantic_core`
+        let final_segment = module_text.rsplit('.').next().unwrap_or(&module_text);
+        return final_segment.starts_with('_');
+    }
+    // Relative imports without a module name (`from . import X`) are project-internal.
+    true
 }
 
 /// Collect imported names from a `from module import name1, name2` statement.
@@ -499,7 +523,7 @@ fn original_name() -> i32 {
     #[test]
     fn python_from_import() {
         let source = r"
-from mymodule import my_func, MyClass
+from _mymodule import my_func, MyClass
 ";
         let tree = parse_python(source);
         let extractor = PyO3Extractor;
@@ -520,8 +544,8 @@ from mymodule import my_func, MyClass
     #[test]
     fn python_from_import_multiple() {
         let source = r"
-from calculator import add, subtract, Calculator
-from utils import greet
+from _calculator import add, subtract, Calculator
+from _utils import greet
 ";
         let tree = parse_python(source);
         let extractor = PyO3Extractor;
@@ -559,7 +583,7 @@ fn greet(name: &str) -> String {
 }
 "#;
         let python_source = r#"
-from mymodule import greet
+from _mymodule import greet
 
 result = greet("World")
 "#;
