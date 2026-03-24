@@ -61,18 +61,31 @@ const PYTHON_MARKERS: &[(&str, &[BridgeKind])] = &[
 ];
 
 impl FrameworkDetector {
-    /// Detect bridge frameworks present at the given corpus root.
+    /// Detect bridge frameworks present at or above the given directory.
     ///
-    /// Scans manifest files and returns a sorted, deduplicated list of
-    /// detected [`BridgeKind`]s.
+    /// Walks up from `start_dir` checking each directory for manifest files
+    /// (`Cargo.toml`, `package.json`, `pyproject.toml`, `tauri.conf.json`).
+    /// Stops at a `.git` boundary or filesystem root. Returns a sorted,
+    /// deduplicated list of detected [`BridgeKind`]s.
     #[must_use]
-    pub fn detect(corpus_root: &Path) -> Vec<BridgeKind> {
+    pub fn detect(start_dir: &Path) -> Vec<BridgeKind> {
         let mut kinds = BTreeSet::new();
+        let mut dir = start_dir.to_path_buf();
 
-        Self::scan_cargo_toml(corpus_root, &mut kinds);
-        Self::scan_package_json(corpus_root, &mut kinds);
-        Self::scan_pyproject_toml(corpus_root, &mut kinds);
-        Self::scan_tauri_conf(corpus_root, &mut kinds);
+        loop {
+            Self::scan_cargo_toml(&dir, &mut kinds);
+            Self::scan_package_json(&dir, &mut kinds);
+            Self::scan_pyproject_toml(&dir, &mut kinds);
+            Self::scan_tauri_conf(&dir, &mut kinds);
+
+            // Stop at the iris project root or VCS boundary.
+            if dir.join(".iris.toml").exists() || dir.join(".git").exists() {
+                break;
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
 
         kinds.into_iter().collect()
     }
