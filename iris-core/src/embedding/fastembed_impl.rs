@@ -78,6 +78,17 @@ impl FastEmbedder {
             options = options.with_cache_dir(PathBuf::from(dir));
         }
 
+        // Use CoreML on macOS for GPU/Neural Engine acceleration.
+        #[cfg(target_os = "macos")]
+        {
+            let coreml = ort::ep::CoreML::default()
+                .with_subgraphs(true)
+                .with_compute_units(ort::ep::coreml::ComputeUnits::All)
+                .build();
+            options = options.with_execution_providers(vec![coreml]);
+            info!("CoreML execution provider enabled");
+        }
+
         let model = TextEmbedding::try_new(options).map_err(|e| IndexError::EmbeddingFailed {
             reason: format!("failed to initialize model '{model_name}': {e}"),
         })?;

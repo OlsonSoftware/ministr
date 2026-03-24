@@ -31,6 +31,7 @@ tiktoken-rs.workspace = true
 sha2.workspace = true
 quick-xml.workspace = true
 fastembed.workspace = true
+ort.workspace = true
 hnsw_rs.workspace = true
 notify.workspace = true
 tokio-util = "0.7"

@@ -54,6 +54,8 @@ tiktoken-rs = "0.6"
 
 # Embeddings
 fastembed = "5"
+# Must match fastembed's pinned ort version for CoreML support.
+ort = { version = "=2.0.0-rc.11", default-features = false, features = ["coreml"] }
 
 # Vector index
 hnsw_rs = "0.3"
