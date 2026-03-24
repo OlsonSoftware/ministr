@@ -713,7 +713,7 @@ impl IngestionPipeline {
         if parser_kind == ParserKind::Code {
             let result = extract_code_symbols(source_path, content, storage, None, None).await?;
             if !result.embedding_pairs.is_empty() {
-                batch_embed_and_insert(&result.embedding_pairs, embedder, index)?;
+                batch_embed_and_insert(&result.embedding_pairs, embedder, index).await?;
             }
         }
 
@@ -972,7 +972,8 @@ impl IngestionPipeline {
         }
 
         // Batch embed all accumulated texts in one pass (GPU-bound).
-        stats.total_embeddings = batch_embed_and_insert(&all_embedding_pairs, embedder, index)?;
+        stats.total_embeddings =
+            batch_embed_and_insert(&all_embedding_pairs, embedder, index).await?;
 
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
@@ -1240,7 +1241,8 @@ impl IngestionPipeline {
         }
 
         // Batch embed all accumulated texts in one pass (GPU-bound).
-        stats.total_embeddings = batch_embed_and_insert(&all_embedding_pairs, embedder, index)?;
+        stats.total_embeddings =
+            batch_embed_and_insert(&all_embedding_pairs, embedder, index).await?;
 
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
@@ -1695,13 +1697,18 @@ fn collect_document_embeddings(doc: &DocumentTree, pairs: &mut Vec<(VectorId, St
 }
 
 /// Maximum texts per embedding inference call.
-const EMBED_BATCH_CHUNK: usize = 256;
+/// Chunk size for batch embedding. Smaller chunks yield more often to
+/// keep the MCP transport responsive, but increase per-batch overhead.
+/// 64 balances inference efficiency with responsiveness on large repos.
+const EMBED_BATCH_CHUNK: usize = 64;
 
 /// Embed and insert a batch of `(id, text)` pairs into the vector index.
 ///
-/// Processes the batch in chunks of [`EMBED_BATCH_CHUNK`] to balance
-/// memory usage with ONNX inference efficiency.
-fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
+/// Each chunk of [`EMBED_BATCH_CHUNK`] texts is embedded on a blocking
+/// thread via `spawn_blocking` so the ONNX/CoreML inference doesn't
+/// starve the tokio runtime. This keeps the MCP stdio transport
+/// responsive during long embedding runs.
+async fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
     pairs: &[(VectorId, String)],
     embedder: &E,
     index: &I,
@@ -1710,8 +1717,9 @@ fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
         return Ok(0);
     }
     let mut total = 0;
+    let num_chunks = pairs.len().div_ceil(EMBED_BATCH_CHUNK);
 
-    for chunk in pairs.chunks(EMBED_BATCH_CHUNK) {
+    for (i, chunk) in pairs.chunks(EMBED_BATCH_CHUNK).enumerate() {
         let text_refs: Vec<&str> = chunk.iter().map(|(_, t)| t.as_str()).collect();
         let vectors = embedder
             .embed(&text_refs)
@@ -1727,6 +1735,17 @@ fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
                 })?;
         }
         total += chunk.len();
+
+        if num_chunks > 1 {
+            info!(
+                chunk = i + 1,
+                of = num_chunks,
+                embedded = total,
+                "embedding progress"
+            );
+            // Yield between chunks so MCP can process requests.
+            tokio::task::yield_now().await;
+        }
     }
 
     info!(embeddings = total, "batch embedding complete");
