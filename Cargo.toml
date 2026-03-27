@@ -1,5 +1,5 @@
 [workspace]
-members = ["iris-api", "iris-core", "iris-mcp", "iris-cli"]
+members = ["iris-api", "iris-core", "iris-mcp", "iris-cli", "iris-app/src-tauri"]
 resolver = "3"
 
 [workspace.package]
