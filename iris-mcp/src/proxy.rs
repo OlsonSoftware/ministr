@@ -104,56 +104,57 @@ pub struct BridgeParams {
 
 impl ProxyServer {
     pub fn new(corpus_paths: Vec<String>) -> Self {
-        let client = DaemonClient::new();
-
-        // Auto-start daemon if not running.
-        if !client.is_available() {
-            if let Err(e) = Self::try_start_daemon() {
-                warn!(error = %e, "failed to auto-start iris daemon");
-            }
-        }
-
         Self {
-            client: Arc::new(client),
+            client: Arc::new(DaemonClient::new()),
             corpus_id: Arc::new(Mutex::new(None)),
             corpus_paths,
             tool_router: Self::tool_router(),
         }
     }
 
-    /// Try to launch the iris-app daemon in the background.
-    fn try_start_daemon() -> Result<(), String> {
-        // Look for iris-app in the same directory as the current binary,
-        // or fall back to PATH.
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    /// Ensure the daemon is running, auto-starting it if necessary.
+    async fn ensure_daemon(&self) -> Result<(), McpError> {
+        if self.client.is_available() {
+            return Ok(());
+        }
 
-        let daemon_bin = exe_dir
-            .as_ref()
-            .map(|d| d.join("iris-app"))
-            .filter(|p| p.exists())
-            .unwrap_or_else(|| std::path::PathBuf::from("iris-app"));
+        info!("daemon not running, attempting auto-start");
 
-        info!(bin = %daemon_bin.display(), "auto-starting iris daemon");
+        let daemon_bin = Self::find_daemon_binary();
+        info!(bin = %daemon_bin.display(), "launching iris daemon");
 
         std::process::Command::new(&daemon_bin)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .map_err(|e| format!("spawn {}: {e}", daemon_bin.display()))?;
+            .map_err(|e| McpError::internal_error(
+                format!("failed to start daemon at {}: {e}", daemon_bin.display()),
+                None,
+            ))?;
 
-        // Wait briefly for the socket to appear.
+        // Poll for the socket to appear.
         for _ in 0..20 {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-            if iris_api::daemon_socket_path().exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            if self.client.is_available() {
                 info!("daemon started successfully");
                 return Ok(());
             }
         }
 
-        Err("daemon socket did not appear within 5 seconds".to_string())
+        Err(McpError::internal_error(
+            "daemon socket did not appear within 5 seconds",
+            None,
+        ))
+    }
+
+    /// Find the iris-app binary: same directory as current exe, or PATH.
+    fn find_daemon_binary() -> std::path::PathBuf {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("iris-app")))
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| std::path::PathBuf::from("iris-app"))
     }
 
     async fn ensure_corpus(&self) -> Result<String, McpError> {
@@ -163,6 +164,8 @@ impl ProxyServer {
                 return Ok(id.clone());
             }
         }
+
+        self.ensure_daemon().await?;
 
         let resp = self
             .client
@@ -369,10 +372,7 @@ impl ServerHandler for ProxyServer {
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        if !self.client.is_available() {
-            warn!("daemon not running at {:?}", self.client.socket_path());
-        }
-
+        // Ensure daemon is running and corpus is registered.
         if let Err(e) = self.ensure_corpus().await {
             warn!(error = %e.message, "corpus registration failed on init");
         }

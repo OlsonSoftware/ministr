@@ -8,7 +8,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod convert;
 mod daemon;
+mod indexer;
 mod registry;
 mod state;
 
