@@ -13,6 +13,7 @@ pub mod extraction;
 pub mod git;
 pub mod index;
 pub mod ingestion;
+pub mod mem_profile;
 pub mod llms_txt;
 pub mod parser;
 pub mod scaffold;

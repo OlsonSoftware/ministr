@@ -230,11 +230,13 @@ async fn init_infrastructure(
         .wrap_err("failed to open content database")?;
 
     // Initialize embedder with content-addressable cache.
+    iris_core::mem_profile::checkpoint("before embedding model init");
     let raw_embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
         iris_core::embedding::FastEmbedder::with_data_dir(&config.default_model, &config.data_dir)
             .into_diagnostic()
             .wrap_err("failed to initialize embedding model")?,
     );
+    iris_core::mem_profile::checkpoint("after embedding model init");
     let embedding_cache = iris_core::embedding::cache::EmbeddingCache::new(storage.conn());
     let embedder: Arc<dyn iris_core::embedding::Embedder> =
         Arc::new(iris_core::embedding::CachedEmbedder::new(
@@ -260,6 +262,7 @@ async fn init_infrastructure(
             .wrap_err("failed to remove stale vector index")?;
     }
 
+    iris_core::mem_profile::checkpoint("before vector index init");
     let index: Arc<dyn iris_core::index::VectorIndex> = if index_dir.exists() {
         match iris_core::index::HnswIndex::load(&index_dir) {
             Ok(loaded) => Arc::new(loaded),
@@ -280,6 +283,8 @@ async fn init_infrastructure(
                 .wrap_err("failed to create vector index")?,
         )
     };
+
+    iris_core::mem_profile::checkpoint("after vector index init");
 
     Ok(InfrastructureContext {
         corpus_dir,

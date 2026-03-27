@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 
+use crate::mem_profile;
+
 use crate::code::bridge::linker::{BridgeLinker, SourceFile as BridgeSourceFile};
 use crate::code::bridge::{BridgeEndpoint, BridgeKind, create_linker_for_kinds, detector};
 use crate::code::package_graph::PackageGraph;
@@ -895,6 +897,9 @@ impl IngestionPipeline {
         let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
         let mut all_embedding_pairs: Vec<(VectorId, String)> = Vec::new();
 
+        mem_profile::checkpoint("ingestion loop start (rooted)");
+        let mut file_counter = 0usize;
+
         for file_path in &files {
             // Check cancellation at the top of each file iteration.
             if ct.is_some_and(CancellationToken::is_cancelled) {
@@ -921,6 +926,9 @@ impl IngestionPipeline {
                 Some(rid) => namespace_path(rid, &raw_relative),
                 None => raw_relative,
             };
+
+            file_counter += 1;
+            mem_profile::checkpoint_every(50, file_counter, "before parse_and_store_file");
 
             match self
                 .parse_and_store_file(
@@ -952,6 +960,12 @@ impl IngestionPipeline {
                     all_bridge_endpoints.extend(bridge_endpoints);
                     all_embedding_pairs.extend(embedding_pairs);
 
+                    mem_profile::checkpoint_every(
+                        50,
+                        file_counter,
+                        "after parse_and_store (indexed)",
+                    );
+
                     // Tag the document with its corpus root.
                     if let Some(rid) = root_id {
                         let doc_id = crate::types::ContentId(relative.clone());
@@ -972,16 +986,20 @@ impl IngestionPipeline {
 
             // Flush embeddings incrementally to bound peak memory.
             if all_embedding_pairs.len() >= EMBED_FLUSH_THRESHOLD {
+                mem_profile::checkpoint("before embed flush (rooted)");
                 stats.total_embeddings +=
                     batch_embed_and_insert(&all_embedding_pairs, embedder, index).await?;
                 all_embedding_pairs.clear();
+                mem_profile::checkpoint("after embed flush (rooted)");
             }
         }
 
         // Flush any remaining embedding pairs.
+        mem_profile::checkpoint("before final embed flush (rooted)");
         stats.total_embeddings +=
             batch_embed_and_insert(&all_embedding_pairs, embedder, index).await?;
         drop(all_embedding_pairs);
+        mem_profile::checkpoint("after final embed flush (rooted)");
 
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
@@ -1184,7 +1202,13 @@ impl IngestionPipeline {
         let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
         let mut all_embedding_pairs: Vec<(VectorId, String)> = Vec::new();
 
+        mem_profile::checkpoint("ingestion loop start (paths)");
+        let mut file_counter = 0usize;
+
         for file_path in &files {
+            file_counter += 1;
+            mem_profile::checkpoint_every(50, file_counter, "per-file (paths)");
+
             let relative = compute_relative_path(file_path, paths);
 
             // Track language stats per root for this file.
@@ -1724,8 +1748,10 @@ fn collect_document_embeddings(doc: &DocumentTree, pairs: &mut Vec<(VectorId, St
 /// Maximum texts per embedding inference call.
 /// Chunk size for batch embedding. Smaller chunks yield more often to
 /// keep the MCP transport responsive, but increase per-batch overhead.
-/// 64 balances inference efficiency with responsiveness on large repos.
-const EMBED_BATCH_CHUNK: usize = 64;
+/// 32 balances inference efficiency with responsiveness and memory usage.
+/// Each chunk is passed to `embedder.embed()` in one ONNX Runtime call,
+/// and the runtime allocates intermediate tensors proportional to chunk size.
+const EMBED_BATCH_CHUNK: usize = 32;
 
 /// Number of accumulated embedding pairs that triggers an intermediate flush.
 ///
@@ -1754,11 +1780,13 @@ async fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
 
     for (i, chunk) in pairs.chunks(EMBED_BATCH_CHUNK).enumerate() {
         let text_refs: Vec<&str> = chunk.iter().map(|(_, t)| t.as_str()).collect();
+        mem_profile::checkpoint_every(5, i, "before embedder.embed()");
         let vectors = embedder
             .embed(&text_refs)
             .map_err(|e| IngestionError::Embedding {
                 reason: e.to_string(),
             })?;
+        mem_profile::checkpoint_every(5, i, "after embedder.embed()");
 
         for ((vid, _), vector) in chunk.iter().zip(vectors.iter()) {
             index
@@ -1768,6 +1796,7 @@ async fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
                 })?;
         }
         total += chunk.len();
+        mem_profile::checkpoint_every(5, i, "after index.insert() batch");
 
         if num_chunks > 1 {
             info!(
