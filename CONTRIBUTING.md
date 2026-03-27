@@ -1,0 +1,147 @@
+# Contributing to iris
+
+Thank you for your interest in contributing to iris! This guide covers everything you need to get started.
+
+## Development setup
+
+### Prerequisites
+
+- **Rust 1.85+** (edition 2024) — install via [rustup](https://rustup.rs)
+- **just** — task runner (`cargo install just` or `brew install just`)
+- **cargo-deny** — license and advisory checks (`cargo install cargo-deny`)
+
+### Clone and build
+
+```sh
+git clone https://github.com/alrik/iris-rs.git
+cd iris-rs
+cargo build --workspace
+```
+
+### Run tests
+
+```sh
+just test              # Run all tests
+just lint              # Run clippy with pedantic lints
+just fmt-check         # Check formatting
+just validate          # All three: fmt-check + lint + test
+```
+
+### Run iris locally
+
+Always use `--release` — debug mode is unusably slow due to ONNX runtime + macOS XProtect scanning:
+
+```sh
+cargo install --path iris-cli
+iris index             # Pre-warm the index
+iris serve             # Start MCP server (stdio)
+```
+
+## Architecture overview
+
+```
+iris-core/     — domain logic, no transport dependencies
+iris-mcp/      — MCP server adapter (rmcp)
+iris-cli/      — binary entry point
+```
+
+### Layered architecture
+
+Each crate follows **transport → service → storage** layering:
+
+- **Transport** (iris-mcp only): MCP tool handlers, JSON-RPC routing
+- **Service**: Business logic — session shadow, prefetch engine, budget manager
+- **Storage**: SQLite, HNSW index, file system access
+
+No layer may skip a level. Transport calls service; service calls storage.
+
+### Key subsystems
+
+| Subsystem | Location | Purpose |
+|-----------|----------|---------|
+| Session Shadow | `iris-core/src/session/` | Tracks delivered content, deduplicates, detects evictions |
+| Prefetch Engine | `iris-core/src/prefetch/` | Predicts next reads using sequential, structural, topical, and cross-session strategies |
+| Budget Manager | `iris-core/src/budget/` | Estimates token usage, recommends evictions |
+| Coherence | `iris-core/src/coherence/` | Watches filesystem, invalidates stale content |
+| Bridge Linker | `iris-core/src/bridge/` | Detects cross-language bindings (napi, pyo3, tauri, wasm-bindgen) |
+
+### Dependency rule
+
+```
+iris-cli  →  iris-mcp  →  iris-core
+                ↑              ↑
+            uses rmcp     NO transport deps
+            (MCP SDK)     (pure domain logic)
+```
+
+`iris-core` never imports MCP types.
+
+## Making changes
+
+### Workflow
+
+1. **Fork and branch** — create a feature branch from `main`
+2. **Write tests first** — we follow TDD (red-green-refactor)
+3. **Implement** — follow the conventions below
+4. **Validate** — run `just validate` (must pass)
+5. **Commit** — use [conventional commits](#commit-messages)
+6. **Open a PR** — target `main`, fill in the template
+
+### Coding conventions
+
+- **No `.unwrap()` or `.expect()`** in library code (tests are fine)
+- **`#![deny(unsafe_code)]`** in every crate
+- **`thiserror`** for error types in iris-core; **`miette`** for diagnostics in iris-cli/iris-mcp
+- **`tracing`** for all instrumentation (not `log`)
+- **Clippy pedantic** — `cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic`
+- **Edition 2024** — use modern Rust idioms
+
+### Commit messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+feat: add wasm-bindgen bridge detection
+fix: handle empty sections in budget estimation
+refactor: extract prefetch strategies into separate modules
+test: add integration tests for session persistence
+docs: update architecture diagram with bridge linker
+chore: bump fastembed to 5.1
+```
+
+### Testing
+
+- **Unit tests**: In-module `#[cfg(test)] mod tests` blocks
+- **Integration tests**: `tests/` directory with real SQLite + HNSW indexes
+- **No mocking storage** — integration tests use real databases
+- Use `tempfile::tempdir()` for test fixtures — never test against a live working directory
+
+### Quality gates
+
+All of these must pass before merge:
+
+```sh
+just validate          # fmt-check + lint + test
+just deny              # license and advisory checks
+just eval-gate         # retrieval quality regression gate
+```
+
+CI runs these automatically on every PR.
+
+## PR guidelines
+
+- **Keep PRs focused** — one logical change per PR
+- **Include tests** — every new feature or bugfix gets a test
+- **Update docs** if you change public API or behavior
+- **Link issues** — reference related issues in the PR description
+- **Be patient** — reviews may take a few days
+
+## Reporting issues
+
+- Use [GitHub Issues](https://github.com/alrik/iris-rs/issues)
+- Include: iris version, OS, Rust version, and steps to reproduce
+- For performance issues, include `RUST_LOG=debug` output
+
+## License
+
+By contributing, you agree that your contributions will be dual-licensed under MIT and Apache-2.0, as described in [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
