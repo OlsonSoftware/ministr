@@ -1210,3 +1210,100 @@ phases:
     checked: true
   - text: 'Wire bridge extraction pipeline into ingestion: framework detection, per-file endpoint extraction reusing tree-sitter ASTs, post-loop linking, SQLite storage — enables iris_bridge for PyO3, Tauri, NAPI, WasmBindgen, HttpRoute'
     checked: true
+- id: OSS1
+  name: Open Source Launch Prep
+  tagline: Ship it to the world
+  status: done
+  problem: iris is a private repo with no public presence — can't build community or adoption
+  solution: 'Clean up the repo for public consumption: README, LICENSE, CONTRIBUTING, CI, pre-built binaries'
+  tasks:
+  - text: Write a killer README.md — open with the squid2 bridge trace map demo, show cross-language linking, include .iris.toml setup, installation via homebrew + cargo
+    checked: true
+  - text: Add LICENSE files — dual MIT/Apache-2.0 (Rust ecosystem standard)
+    checked: true
+  - text: Add CONTRIBUTING.md with dev setup, architecture overview, and PR guidelines
+    checked: true
+  - text: 'Set up GitHub Actions CI: cargo check, test, clippy, fmt on PR + push to main'
+    checked: true
+  - text: 'Set up GitHub Actions release workflow: build binaries for macOS (arm64/x86), Linux (x86/arm64), Windows — publish as GitHub release assets'
+    checked: true
+  - text: Create homebrew tap (homebrew-iris) with formula pointing to GitHub release binaries
+    checked: true
+  - text: Publish to crates.io (iris-core, iris-mcp, iris-cli)
+    checked: true
+  - text: Clean up git history — squash/rebase any sensitive or messy commits, ensure no API keys or secrets in history
+    checked: true
+  - text: Set up GitHub Sponsors with tiers ($5/mo supporter, $25/mo backer, $100/mo sponsor)
+    checked: true
+- id: OSS2
+  name: Launch Content & Distribution
+  tagline: Get the word out
+  status: pending
+  problem: Nobody knows iris exists — need a compelling launch that reaches the right developers
+  solution: Create demo content, landing page, and post to developer communities
+  tasks:
+  - text: 'Record 60-second terminal demo: clone squid2, show iris_bridge finding 52 Tauri command links across Rust↔TypeScript (asciinema or screen recording)'
+    checked: false
+  - text: 'Record 2-minute deep dive demo: .iris.toml setup → indexing → survey → symbols → definition → references → bridge trace map'
+    checked: false
+  - text: Create landing page (simple — GitHub Pages or single-page site) with demo GIF, feature list, install command, .iris.toml example
+    checked: false
+  - text: 'Write HN Show post: "Show HN: iris — MCP server that traces code across language boundaries (Rust)"'
+    checked: false
+  - text: Post to r/rust, r/programming, r/LocalLLaMA, r/ClaudeAI
+    checked: false
+  - text: 'Tweet/X thread: the squid2 bridge trace map story — "I built an MCP server that automatically maps every Tauri command across Rust↔TypeScript"'
+    checked: false
+  - text: 'Submit to MCP registries: awesome-mcp-servers, MCP Market, Smithery'
+    checked: false
+- id: DX1
+  name: Developer Experience Polish
+  tagline: Two minutes to wow
+  status: in_progress
+  problem: First-time users need a frictionless experience — install, configure, see value in under 2 minutes
+  solution: 'Improve onboarding: iris init command, better error messages, progress reporting, example configs'
+  tasks:
+  - text: '`iris init` command — auto-detect project structure, generate .iris.toml with sensible defaults (detect Tauri/PyO3/NAPI from manifests)'
+    checked: false
+  - text: Better startup logging — show what .iris.toml was found, which paths are being indexed, bridge frameworks detected, progress bar for initial indexing
+    checked: false
+  - text: Friendly error messages when .iris.toml has invalid paths, missing dirs, or bad TOML syntax
+    checked: false
+  - text: '`iris status` command — show corpus stats, indexed files, bridge links found, data directory location, index freshness'
+    checked: false
+  - text: 'Ship example .iris.toml files for common project types: Tauri app, PyO3 project, plain Rust workspace, React+Node monorepo'
+    checked: false
+  - text: 'Fix memory leaks: cap WindowEstimator evicted list (Vec→counter), cap Session trajectory (Vec→VecDeque with 1000-entry sliding window), clean stale set on remove_delivered'
+    checked: true
+- id: PERF1
+  name: Indexing Performance
+  tagline: Index fast, start faster
+  status: pending
+  problem: Initial indexing is slow for large repos — 15-20s for 155 files, minutes for 1000+ file repos
+  solution: Concurrent file ingestion, incremental embedding, and smarter skip logic
+  tasks:
+  - text: Concurrent file ingestion — process files in parallel with semaphore-bounded tokio::spawn (same pattern as concurrent refresh), share embedder via Arc
+    checked: false
+  - text: Batch embedding — collect texts across multiple files, embed in larger batches to amortize ONNX overhead
+    checked: false
+  - text: Progressive availability — make already-indexed files queryable while remaining files are still being processed (currently blocks until complete)
+    checked: false
+  - text: Benchmark suite — measure indexing throughput (files/sec, sections/sec) on reference repos (iris-rs, pydantic-core, ruff) to track regressions
+    checked: false
+- id: CLOUD0
+  name: Cloud Index Protocol
+  tagline: Instant dependency context
+  status: pending
+  problem: Cloning + indexing dependencies is slow and wastes disk — every user re-indexes the same popular repos
+  solution: Define a wire protocol for streaming pre-computed index data (embeddings, sections, symbols) from a cloud service into local iris
+  tasks:
+  - text: Design index export format — serializable bundle of sections, symbols, claims, embeddings, bridge endpoints for a single corpus root
+    checked: false
+  - text: '`iris export` CLI command — dump a corpus root''s index to a portable bundle file (.iris-index)'
+    checked: false
+  - text: '`iris import` CLI command — load a .iris-index bundle into local storage + HNSW index without re-parsing or re-embedding'
+    checked: false
+  - text: Add `[[corpus.cloud]]` support to .iris.toml — fetch pre-built index from a URL instead of cloning + indexing
+    checked: false
+  - text: Versioned index bundles — include commit SHA so the client knows when to re-fetch a newer version
+    checked: false

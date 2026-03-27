@@ -789,7 +789,7 @@ impl Storage for SqliteStorage {
         let budget = session.agent_context_budget;
         let turn = session.current_turn();
         let items: Vec<DeliveredItem> = session.delivered_items().cloned().collect();
-        let trajectory: Vec<ContentId> = session.trajectory().to_vec();
+        let trajectory: Vec<ContentId> = session.trajectory().iter().cloned().collect();
 
         self.with_conn(move |conn| {
             conn.execute("SAVEPOINT save_session", [])

@@ -8,6 +8,12 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt;
 use std::time::Instant;
 
+/// Maximum number of trajectory entries to retain per session.
+///
+/// The trajectory is used by the prefetch engine for sequential access prediction.
+/// Only recent history matters for this, so we cap it to bound memory usage.
+const MAX_TRAJECTORY_LEN: usize = 1000;
+
 use serde::{Deserialize, Serialize};
 
 use crate::types::{ContentId, Resolution};
@@ -166,7 +172,8 @@ pub struct Session {
     /// Map of delivered content, keyed by `ContentId`.
     delivered: BTreeMap<String, DeliveredItem>,
     /// Ordered trajectory of content accesses (content IDs in access order).
-    trajectory: Vec<ContentId>,
+    /// Capped at [`MAX_TRAJECTORY_LEN`] to bound memory; oldest entries are dropped.
+    trajectory: VecDeque<ContentId>,
     /// Current interaction turn counter.
     current_turn: u32,
     /// Content IDs that have been marked stale due to underlying file changes.
@@ -188,7 +195,7 @@ impl Session {
             created_at: Instant::now(),
             agent_context_budget,
             delivered: BTreeMap::new(),
-            trajectory: Vec::new(),
+            trajectory: VecDeque::new(),
             current_turn: 0,
             stale: HashSet::new(),
             pending_alerts: VecDeque::new(),
@@ -208,6 +215,9 @@ impl Session {
         trajectory: Vec<ContentId>,
         current_turn: u32,
     ) -> Self {
+        // Convert to VecDeque, keeping only the most recent entries.
+        let skip = trajectory.len().saturating_sub(MAX_TRAJECTORY_LEN);
+        let trajectory: VecDeque<ContentId> = trajectory.into_iter().skip(skip).collect();
         Self {
             id,
             created_at: Instant::now(),
@@ -233,7 +243,10 @@ impl Session {
         content_hash: String,
     ) {
         self.current_turn = self.current_turn.max(turn);
-        self.trajectory.push(content_id.clone());
+        self.trajectory.push_back(content_id.clone());
+        if self.trajectory.len() > MAX_TRAJECTORY_LEN {
+            self.trajectory.pop_front();
+        }
 
         let item = DeliveredItem {
             content_id: content_id.clone(),
@@ -292,8 +305,10 @@ impl Session {
     }
 
     /// The ordered trajectory of content accesses (may contain duplicates).
+    ///
+    /// Capped at the most recent [`MAX_TRAJECTORY_LEN`] entries.
     #[must_use]
-    pub fn trajectory(&self) -> &[ContentId] {
+    pub fn trajectory(&self) -> &VecDeque<ContentId> {
         &self.trajectory
     }
 
@@ -320,6 +335,7 @@ impl Session {
     /// its context window (via `iris_evicted`). Returns the removed item
     /// if it existed.
     pub fn remove_delivered(&mut self, content_id: &ContentId) -> Option<DeliveredItem> {
+        self.stale.remove(&content_id.0);
         self.delivered.remove(&content_id.0)
     }
 
