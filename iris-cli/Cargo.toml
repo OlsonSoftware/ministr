@@ -18,6 +18,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+iris-api.workspace = true
 iris-core.workspace = true
 iris-mcp.workspace = true
 clap.workspace = true

@@ -182,6 +182,36 @@ impl DaemonClient {
             .await
     }
 
+    /// Get table of contents.
+    pub async fn toc(
+        &self,
+        corpus_id: &str,
+        req: &crate::query::TocRequest,
+    ) -> Result<crate::query::TocResponse, ClientError> {
+        self.post(&format!("/api/v1/corpora/{corpus_id}/toc"), req)
+            .await
+    }
+
+    /// Find related claims.
+    pub async fn related(
+        &self,
+        corpus_id: &str,
+        req: &crate::query::RelatedRequest,
+    ) -> Result<crate::query::RelatedResponse, ClientError> {
+        self.post(&format!("/api/v1/corpora/{corpus_id}/related"), req)
+            .await
+    }
+
+    /// Query cross-language bridge links.
+    pub async fn bridge(
+        &self,
+        corpus_id: &str,
+        req: &crate::query::BridgeRequest,
+    ) -> Result<crate::query::BridgeResponse, ClientError> {
+        self.post(&format!("/api/v1/corpora/{corpus_id}/bridge"), req)
+            .await
+    }
+
     // -- Admin --
 
     /// Get daemon status.
