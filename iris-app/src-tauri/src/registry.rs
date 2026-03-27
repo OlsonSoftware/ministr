@@ -12,27 +12,23 @@ use iris_api::corpus::{CorpusInfo, IndexingStatus};
 use iris_core::config::IrisConfig;
 use iris_core::embedding::Embedder;
 use iris_core::index::{HnswIndex, VectorIndex, VectorIndexLoad};
-use iris_core::ingestion::IngestionProgress;
+use iris_core::ingestion::{IngestionPipeline, IngestionProgress};
 use iris_core::service::QueryService;
 use iris_core::storage::SqliteStorage;
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Errors from corpus registry operations.
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
-    /// A storage operation failed.
     #[error("storage: {0}")]
     Storage(String),
-    /// An embedding model error.
     #[error("embedding: {0}")]
     Embedding(String),
-    /// An index error.
     #[error("index: {0}")]
     Index(String),
-    /// Corpus not found.
     #[error("corpus not found: {id}")]
     NotFound { id: String },
 }
@@ -42,31 +38,20 @@ pub enum RegistryError {
 /// The embedding model is loaded **once** and shared by all corpora,
 /// saving ~200 MB of memory per additional corpus.
 pub struct CorpusRegistry {
-    /// Shared embedding model.
     embedder: Arc<dyn Embedder>,
-    /// Active corpora, keyed by corpus ID.
     corpora: RwLock<HashMap<String, CorpusHandle>>,
-    /// Global configuration.
     config: IrisConfig,
 }
 
 /// A single managed corpus with its resources.
 pub struct CorpusHandle {
-    /// Corpus metadata.
-    pub info: CorpusInfo,
-    /// Persistent storage (SQLite).
+    pub info: RwLock<CorpusInfo>,
     pub storage: Arc<SqliteStorage>,
-    /// Dense vector index (HNSW).
     pub index: Arc<dyn VectorIndex>,
-    /// Query service facade.
     pub service: QueryService,
-    /// Indexing progress tracker.
     pub progress: Arc<IngestionProgress>,
-    /// Cancellation token for background indexing.
     pub cancel: CancellationToken,
-    /// Filesystem paths that make up this corpus.
     pub paths: Vec<PathBuf>,
-    /// Data directory for this corpus.
     pub data_dir: PathBuf,
 }
 
@@ -80,27 +65,22 @@ impl CorpusRegistry {
         }
     }
 
-    /// The shared embedding model.
     pub fn embedder(&self) -> &Arc<dyn Embedder> {
         &self.embedder
     }
 
-    /// The global configuration.
     pub fn config(&self) -> &IrisConfig {
         &self.config
     }
 
-    /// Register a corpus and prepare it for indexing.
-    ///
-    /// If the corpus is already registered (same ID), returns the existing
-    /// info without re-registering.
+    /// Register a corpus and spawn background indexing.
     pub async fn register(
-        &self,
+        self: &Arc<Self>,
         paths: &[String],
     ) -> Result<(String, bool), RegistryError> {
         let corpus_id = corpus_id_from_paths(paths);
 
-        // Check if already registered.
+        // Already registered?
         {
             let corpora = self.corpora.read().await;
             if corpora.contains_key(&corpus_id) {
@@ -108,25 +88,24 @@ impl CorpusRegistry {
             }
         }
 
-        // Initialize storage and index for this corpus.
         let corpus_dir = self.config.data_dir.join("corpora").join(&corpus_id);
         let db_path = corpus_dir.join("content.db");
         let index_dir = corpus_dir.join("index");
 
-        std::fs::create_dir_all(&corpus_dir).map_err(|e| {
-            RegistryError::Storage(format!("failed to create corpus dir: {e}"))
-        })?;
+        std::fs::create_dir_all(&corpus_dir)
+            .map_err(|e| RegistryError::Storage(format!("create dir: {e}")))?;
 
-        let storage = SqliteStorage::open(&db_path)
-            .map_err(|e| RegistryError::Storage(format!("failed to open database: {e}")))?;
-        let storage = Arc::new(storage);
+        let storage = Arc::new(
+            SqliteStorage::open(&db_path)
+                .map_err(|e| RegistryError::Storage(format!("open db: {e}")))?,
+        );
 
         let dim = self.embedder.dimension();
         let index: Arc<dyn VectorIndex> = if index_dir.exists() {
             match HnswIndex::load(&index_dir) {
                 Ok(loaded) => Arc::new(loaded),
                 Err(e) => {
-                    warn!(error = %e, "corrupted vector index — rebuilding");
+                    warn!(error = %e, "corrupted index — rebuilding");
                     let _ = std::fs::remove_dir_all(&index_dir);
                     Arc::new(
                         HnswIndex::new(dim, 100_000)
@@ -141,14 +120,10 @@ impl CorpusRegistry {
             )
         };
 
-        // Build query service.
         let query_storage = SqliteStorage::open(&db_path)
-            .map_err(|e| RegistryError::Storage(format!("failed to open query storage: {e}")))?;
-        let service = QueryService::new(
-            query_storage,
-            Arc::clone(&self.embedder),
-            Arc::clone(&index),
-        );
+            .map_err(|e| RegistryError::Storage(format!("open query db: {e}")))?;
+        let service =
+            QueryService::new(query_storage, Arc::clone(&self.embedder), Arc::clone(&index));
 
         let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
         let info = CorpusInfo {
@@ -157,11 +132,11 @@ impl CorpusRegistry {
             status: IndexingStatus::Idle,
             files_indexed: 0,
             sections_count: 0,
-            embeddings_count: 0,
+            embeddings_count: index.len(),
         };
 
         let handle = CorpusHandle {
-            info,
+            info: RwLock::new(info),
             storage,
             index,
             service,
@@ -171,11 +146,105 @@ impl CorpusRegistry {
             data_dir: corpus_dir,
         };
 
-        let mut corpora = self.corpora.write().await;
-        corpora.insert(corpus_id.clone(), handle);
+        {
+            let mut corpora = self.corpora.write().await;
+            corpora.insert(corpus_id.clone(), handle);
+        }
 
         info!(corpus_id = %corpus_id, paths = ?paths, "corpus registered");
+
+        // Spawn background indexing.
+        let registry = Arc::clone(self);
+        let cid = corpus_id.clone();
+        let owned_paths: Vec<String> = paths.to_vec();
+        tokio::spawn(async move {
+            registry.run_indexing(&cid, &owned_paths).await;
+        });
+
         Ok((corpus_id, true))
+    }
+
+    /// Run ingestion for a corpus. Updates status in the handle.
+    async fn run_indexing(&self, corpus_id: &str, paths: &[String]) {
+        let (storage, embedder, index, index_dir, progress, cancel) = {
+            let corpora = self.corpora.read().await;
+            let Some(handle) = corpora.get(corpus_id) else {
+                return;
+            };
+            (
+                Arc::clone(&handle.storage),
+                Arc::clone(&self.embedder),
+                Arc::clone(&handle.index),
+                handle.data_dir.join("index"),
+                Arc::clone(&handle.progress),
+                handle.cancel.clone(),
+            )
+        };
+
+        // Set status to indexing.
+        self.set_status(corpus_id, IndexingStatus::Indexing {
+            files_done: 0,
+            files_total: 0,
+        })
+        .await;
+
+        let local_paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        let pipeline = IngestionPipeline::new().with_progress(Arc::clone(&progress));
+
+        let result = pipeline
+            .ingest_paths_with_embeddings(&local_paths, &*storage, &*embedder, &*index)
+            .await;
+
+        match result {
+            Ok(stats) => {
+                info!(
+                    corpus_id,
+                    files_indexed = stats.files_indexed,
+                    files_skipped = stats.files_skipped,
+                    sections = stats.total_sections,
+                    embeddings = stats.total_embeddings,
+                    "indexing complete"
+                );
+
+                // Persist vector index to disk.
+                if let Err(e) = index.persist(&index_dir) {
+                    error!(corpus_id, error = %e, "failed to persist index");
+                }
+
+                // Update corpus info.
+                let corpora = self.corpora.read().await;
+                if let Some(handle) = corpora.get(corpus_id) {
+                    let mut info = handle.info.write().await;
+                    info.status = IndexingStatus::Idle;
+                    info.files_indexed = stats.files_indexed;
+                    info.sections_count = stats.total_sections;
+                    info.embeddings_count = index.len();
+                }
+            }
+            Err(e) => {
+                // Cancelled is not an error.
+                if matches!(e, iris_core::error::IngestionError::Cancelled) {
+                    info!(corpus_id, "indexing cancelled");
+                    self.set_status(corpus_id, IndexingStatus::Idle).await;
+                } else {
+                    error!(corpus_id, error = %e, "indexing failed");
+                    self.set_status(
+                        corpus_id,
+                        IndexingStatus::Error {
+                            message: e.to_string(),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    async fn set_status(&self, corpus_id: &str, status: IndexingStatus) {
+        let corpora = self.corpora.read().await;
+        if let Some(handle) = corpora.get(corpus_id) {
+            handle.info.write().await.status = status;
+        }
     }
 
     /// Unregister and remove a corpus.
@@ -183,7 +252,7 @@ impl CorpusRegistry {
         let mut corpora = self.corpora.write().await;
         if let Some(handle) = corpora.remove(corpus_id) {
             handle.cancel.cancel();
-            info!(corpus_id = %corpus_id, "corpus unregistered");
+            info!(corpus_id, "corpus unregistered");
             Ok(())
         } else {
             Err(RegistryError::NotFound {
@@ -195,13 +264,14 @@ impl CorpusRegistry {
     /// List all registered corpora.
     pub async fn list(&self) -> Vec<CorpusInfo> {
         let corpora = self.corpora.read().await;
-        corpora.values().map(|h| h.info.clone()).collect()
+        let mut result = Vec::with_capacity(corpora.len());
+        for handle in corpora.values() {
+            result.push(handle.info.read().await.clone());
+        }
+        result
     }
 
-    /// Get a read guard and look up a corpus by ID.
-    ///
-    /// Returns a reference to the `CorpusHandle` if found.
-    /// The caller must hold the returned guard for the duration of use.
+    /// Get a read guard to look up a corpus by ID.
     pub async fn get(
         &self,
         corpus_id: &str,
@@ -218,7 +288,6 @@ impl CorpusRegistry {
     }
 }
 
-/// Compute a deterministic corpus ID from a set of paths.
 fn corpus_id_from_paths(paths: &[String]) -> String {
     let mut sorted = paths.to_vec();
     sorted.sort();
@@ -227,7 +296,6 @@ fn corpus_id_from_paths(paths: &[String]) -> String {
     format!("multi-{}", &hex::encode(hash.as_slice())[..8])
 }
 
-/// Hex encoding without pulling in the `hex` crate.
 mod hex {
     pub fn encode(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()

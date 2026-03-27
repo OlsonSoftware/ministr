@@ -11,14 +11,11 @@ use crate::registry::CorpusRegistry;
 /// indexed corpora and the shared embedding model.
 #[derive(Clone)]
 pub struct AppState {
-    /// Central corpus registry — the heart of the daemon.
     pub registry: Arc<CorpusRegistry>,
-    /// Daemon start time for uptime reporting.
     pub started_at: std::time::Instant,
 }
 
 impl AppState {
-    /// Create a new `AppState` wrapping the given registry.
     #[must_use]
     pub fn new(registry: CorpusRegistry) -> Self {
         Self {
@@ -27,7 +24,6 @@ impl AppState {
         }
     }
 
-    /// Daemon uptime in seconds.
     #[must_use]
     pub fn uptime_secs(&self) -> u64 {
         self.started_at.elapsed().as_secs()
