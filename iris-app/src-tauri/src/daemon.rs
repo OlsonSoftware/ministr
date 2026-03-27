@@ -6,7 +6,7 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use tokio::net::UnixListener;
 use tracing::info;
@@ -37,6 +37,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/references/{sym}", get(references))
         .route("/api/v1/corpora/{id}/read/{section}", get(read_section))
         .route("/api/v1/corpora/{id}/extract", post(extract))
+        .route("/api/v1/corpora/{id}/toc", post(toc))
+        .route("/api/v1/corpora/{id}/related", post(related))
+        .route("/api/v1/corpora/{id}/bridge", post(bridge))
         // Admin
         .route("/api/v1/status", get(daemon_status))
         .with_state(state)
@@ -324,6 +327,140 @@ async fn extract(
                 })
                 .collect();
             Json(ExtractResponse { claims: api_claims }).into_response()
+        }
+        Err(e) => {
+            err_response(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response()
+        }
+    }
+}
+
+async fn toc(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<iris_api::query::TocRequest>,
+) -> impl IntoResponse {
+    let guard = match state.registry.get(&id).await {
+        Ok(g) => g,
+        Err(e) => return err_response(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+    };
+    let handle = &guard[&id];
+
+    match handle.service.toc(req.document_id.as_deref()).await {
+        Ok(entries) => {
+            let total = entries.len();
+            let offset = req.offset.unwrap_or(0);
+            let limit = req.limit.unwrap_or(100);
+            let api_entries: Vec<_> = entries
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(|e| iris_api::query::TocEntry {
+                    id: e.section_id.0,
+                    title: e.heading_path.last().cloned().unwrap_or_default(),
+                    kind: "section".to_string(),
+                    depth: e.depth as usize,
+                    children: 0,
+                    source_path: Some(e.document_id.0),
+                })
+                .collect();
+            Json(iris_api::query::TocResponse {
+                entries: api_entries,
+                total,
+            })
+            .into_response()
+        }
+        Err(e) => {
+            err_response(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response()
+        }
+    }
+}
+
+async fn related(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<iris_api::query::RelatedRequest>,
+) -> impl IntoResponse {
+    let guard = match state.registry.get(&id).await {
+        Ok(g) => g,
+        Err(e) => return err_response(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+    };
+    let handle = &guard[&id];
+
+    let relation_types: Option<Vec<iris_core::types::RelationType>> = if req.relation_types.is_empty()
+    {
+        None
+    } else {
+        Some(
+            req.relation_types
+                .iter()
+                .filter_map(|s| iris_core::types::RelationType::parse(s))
+                .collect(),
+        )
+    };
+
+    match handle
+        .service
+        .related_claims(&req.claim_id, relation_types.as_deref())
+        .await
+    {
+        Ok(claims) => {
+            let api_claims = claims
+                .into_iter()
+                .map(|c| iris_api::query::RelatedClaimResult {
+                    claim_id: c.claim_id,
+                    text: c.text,
+                    relation_type: c.relation_type,
+                    source_section: c.source_section,
+                    confidence: c.confidence,
+                })
+                .collect();
+            Json(iris_api::query::RelatedResponse {
+                claims: api_claims,
+            })
+            .into_response()
+        }
+        Err(e) => {
+            err_response(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response()
+        }
+    }
+}
+
+async fn bridge(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<iris_api::query::BridgeRequest>,
+) -> impl IntoResponse {
+    let guard = match state.registry.get(&id).await {
+        Ok(g) => g,
+        Err(e) => return err_response(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+    };
+    let handle = &guard[&id];
+
+    match handle
+        .service
+        .query_bridges(
+            req.query.as_deref(),
+            req.kind.as_deref(),
+            req.source_language.as_deref(),
+            None,
+        )
+        .await
+    {
+        Ok(links) => {
+            let limit = req.limit.unwrap_or(50);
+            let api_links: Vec<_> = links
+                .into_iter()
+                .take(limit)
+                .map(|l| iris_api::query::BridgeLink {
+                    kind: l.kind,
+                    source: l.export_binding_key,
+                    source_language: l.export_language,
+                    target: l.import_binding_key,
+                    target_language: l.import_language,
+                    confidence: l.confidence,
+                })
+                .collect();
+            Json(iris_api::query::BridgeResponse { links: api_links }).into_response()
         }
         Err(e) => {
             err_response(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response()

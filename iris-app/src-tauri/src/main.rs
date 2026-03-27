@@ -15,8 +15,7 @@ mod state;
 use std::sync::Arc;
 
 use iris_core::config::IrisConfig;
-use iris_core::embedding::{CachedEmbedder, FastEmbedder};
-use iris_core::embedding::cache::EmbeddingCache;
+use iris_core::embedding::FastEmbedder;
 use tauri::{
     Manager,
     menu::{MenuBuilder, MenuItemBuilder},

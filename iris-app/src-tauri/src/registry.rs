@@ -26,6 +26,7 @@ pub enum RegistryError {
     #[error("storage: {0}")]
     Storage(String),
     #[error("embedding: {0}")]
+    #[allow(dead_code)]
     Embedding(String),
     #[error("index: {0}")]
     Index(String),
@@ -51,6 +52,7 @@ pub struct CorpusHandle {
     pub service: QueryService,
     pub progress: Arc<IngestionProgress>,
     pub cancel: CancellationToken,
+    #[allow(dead_code)]
     pub paths: Vec<PathBuf>,
     pub data_dir: PathBuf,
 }
@@ -166,7 +168,7 @@ impl CorpusRegistry {
 
     /// Run ingestion for a corpus. Updates status in the handle.
     async fn run_indexing(&self, corpus_id: &str, paths: &[String]) {
-        let (storage, embedder, index, index_dir, progress, cancel) = {
+        let (storage, embedder, index, index_dir, progress, _cancel) = {
             let corpora = self.corpora.read().await;
             let Some(handle) = corpora.get(corpus_id) else {
                 return;

@@ -95,6 +95,18 @@ enum Command {
     /// Useful for pre-warming the index, debugging ingestion issues,
     /// or running in CI pipelines.
     Index,
+
+    /// Show daemon status (requires iris-app to be running).
+    Status,
+
+    /// Search the corpus via the daemon (requires iris-app to be running).
+    Search {
+        /// Search query.
+        query: String,
+        /// Maximum results.
+        #[arg(short = 'k', long, default_value_t = 10)]
+        top_k: usize,
+    },
 }
 
 /// MCP transport mode.
@@ -207,6 +219,8 @@ async fn main() -> Result<()> {
             }
         },
         Command::Index => cmd_index(&corpus_paths, &git_includes, &config_path, &config).await,
+        Command::Status => cmd_daemon_status().await,
+        Command::Search { query, top_k } => cmd_daemon_search(&corpus_paths, &query, top_k).await,
     }
 }
 
@@ -468,6 +482,79 @@ async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
         .await
         .into_diagnostic()
         .wrap_err("proxy MCP server failed")?;
+    Ok(())
+}
+
+/// `iris status` — show daemon status.
+async fn cmd_daemon_status() -> Result<()> {
+    let client = iris_api::client::DaemonClient::new();
+    if !client.is_available() {
+        miette::bail!("iris daemon is not running (no socket at {:?})", client.socket_path());
+    }
+
+    let status = client
+        .status()
+        .await
+        .into_diagnostic()
+        .wrap_err("failed to get daemon status")?;
+
+    eprintln!("iris daemon v{}", status.version);
+    eprintln!("  Uptime:    {}s", status.uptime_secs);
+    eprintln!("  Memory:    {:.0} MB", status.memory_mb);
+    eprintln!("  Model:     {} ({}d)", status.model, status.model_dimension);
+    eprintln!("  Corpora:   {}", status.corpora.len());
+    for c in &status.corpora {
+        eprintln!(
+            "    {} — {} files, {} sections, {} embeddings [{}]",
+            c.id,
+            c.files_indexed,
+            c.sections_count,
+            c.embeddings_count,
+            match &c.status {
+                iris_api::corpus::IndexingStatus::Idle => "idle".to_string(),
+                iris_api::corpus::IndexingStatus::Indexing { files_done, files_total } =>
+                    format!("indexing {files_done}/{files_total}"),
+                iris_api::corpus::IndexingStatus::Error { message } =>
+                    format!("error: {message}"),
+            }
+        );
+    }
+    Ok(())
+}
+
+/// `iris search` — search the corpus via the daemon.
+async fn cmd_daemon_search(corpus_paths: &[String], query: &str, top_k: usize) -> Result<()> {
+    let client = iris_api::client::DaemonClient::new();
+    if !client.is_available() {
+        miette::bail!("iris daemon is not running (no socket at {:?})", client.socket_path());
+    }
+
+    // Register corpus if needed.
+    let resp = client
+        .register_corpus(corpus_paths)
+        .await
+        .into_diagnostic()
+        .wrap_err("failed to register corpus")?;
+
+    let results = client
+        .survey(&resp.corpus_id, query, Some(top_k))
+        .await
+        .into_diagnostic()
+        .wrap_err("search failed")?;
+
+    for r in &results.results {
+        eprintln!(
+            "[{:8}] {:.3}  {}",
+            r.resolution, r.score, r.content_id
+        );
+        eprintln!("  {}", r.text.lines().next().unwrap_or(""));
+        eprintln!();
+    }
+
+    if results.results.is_empty() {
+        eprintln!("No results found.");
+    }
+
     Ok(())
 }
 

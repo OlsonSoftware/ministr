@@ -73,14 +73,87 @@ pub struct ReferencesParams {
     pub symbol_id: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TocParams {
+    #[serde(default)]
+    pub document_id: Option<String>,
+    #[serde(default)]
+    pub offset: Option<usize>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RelatedParams {
+    pub claim_id: String,
+    #[serde(default)]
+    pub relation_types: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct BridgeParams {
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub source_language: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 impl ProxyServer {
     pub fn new(corpus_paths: Vec<String>) -> Self {
+        let client = DaemonClient::new();
+
+        // Auto-start daemon if not running.
+        if !client.is_available() {
+            if let Err(e) = Self::try_start_daemon() {
+                warn!(error = %e, "failed to auto-start iris daemon");
+            }
+        }
+
         Self {
-            client: Arc::new(DaemonClient::new()),
+            client: Arc::new(client),
             corpus_id: Arc::new(Mutex::new(None)),
             corpus_paths,
             tool_router: Self::tool_router(),
         }
+    }
+
+    /// Try to launch the iris-app daemon in the background.
+    fn try_start_daemon() -> Result<(), String> {
+        // Look for iris-app in the same directory as the current binary,
+        // or fall back to PATH.
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+
+        let daemon_bin = exe_dir
+            .as_ref()
+            .map(|d| d.join("iris-app"))
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| std::path::PathBuf::from("iris-app"));
+
+        info!(bin = %daemon_bin.display(), "auto-starting iris daemon");
+
+        std::process::Command::new(&daemon_bin)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("spawn {}: {e}", daemon_bin.display()))?;
+
+        // Wait briefly for the socket to appear.
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if iris_api::daemon_socket_path().exists() {
+                info!("daemon started successfully");
+                return Ok(());
+            }
+        }
+
+        Err("daemon socket did not appear within 5 seconds".to_string())
     }
 
     async fn ensure_corpus(&self) -> Result<String, McpError> {
@@ -218,6 +291,60 @@ impl ProxyServer {
             .references(&cid, &params.symbol_id)
             .await
             .map_err(Self::err)?;
+        Self::json_result(&resp)
+    }
+
+    #[tool(
+        name = "iris_toc",
+        description = "Get a structural overview (table of contents) of the indexed corpus."
+    )]
+    async fn toc(
+        &self,
+        Parameters(params): Parameters<TocParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let cid = self.ensure_corpus().await?;
+        let req = iris_api::query::TocRequest {
+            document_id: params.document_id,
+            offset: params.offset,
+            limit: params.limit,
+        };
+        let resp = self.client.toc(&cid, &req).await.map_err(Self::err)?;
+        Self::json_result(&resp)
+    }
+
+    #[tool(
+        name = "iris_related",
+        description = "Find claims related to a given claim by relationship type (references, contradicts, depends_on, updates)."
+    )]
+    async fn related(
+        &self,
+        Parameters(params): Parameters<RelatedParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let cid = self.ensure_corpus().await?;
+        let req = iris_api::query::RelatedRequest {
+            claim_id: params.claim_id,
+            relation_types: params.relation_types.unwrap_or_default(),
+        };
+        let resp = self.client.related(&cid, &req).await.map_err(Self::err)?;
+        Self::json_result(&resp)
+    }
+
+    #[tool(
+        name = "iris_bridge",
+        description = "Query cross-language bridge links (FFI, NAPI, PyO3, etc.) between source and target languages."
+    )]
+    async fn bridge(
+        &self,
+        Parameters(params): Parameters<BridgeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let cid = self.ensure_corpus().await?;
+        let req = iris_api::query::BridgeRequest {
+            query: params.query,
+            kind: params.kind,
+            source_language: params.source_language,
+            limit: params.limit,
+        };
+        let resp = self.client.bridge(&cid, &req).await.map_err(Self::err)?;
         Self::json_result(&resp)
     }
 }
