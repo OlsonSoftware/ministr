@@ -66,6 +66,14 @@ enum Command {
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
 
+        /// Run as a thin proxy to the iris daemon instead of the monolithic server.
+        ///
+        /// When enabled, the MCP server connects to the iris daemon at
+        /// `~/.iris/irisd.sock` and delegates all indexing and querying.
+        /// Uses ~20 MB vs ~2 GB for the full server.
+        #[arg(long)]
+        proxy: bool,
+
         /// Enable OAuth 2.1 authentication for the HTTP transport.
         ///
         /// When enabled, the server exposes OAuth discovery endpoints and
@@ -159,6 +167,7 @@ async fn main() -> Result<()> {
         transport: Transport::Stdio,
         host: "127.0.0.1".to_string(),
         port: 8080,
+        proxy: false,
         oauth: false,
         oauth_issuer: None,
     }) {
@@ -166,9 +175,13 @@ async fn main() -> Result<()> {
             transport,
             host,
             port,
+            proxy,
             oauth,
             oauth_issuer,
         } => match transport {
+            Transport::Stdio if proxy => {
+                cmd_serve_proxy_stdio(&corpus_paths).await
+            }
             Transport::Stdio => {
                 cmd_serve_stdio(&corpus_paths, &git_includes, &config_path, &config).await
             }
@@ -442,6 +455,20 @@ fn spawn_background_ingestion(
             }
         }
     });
+}
+
+/// `iris serve --proxy` — thin MCP proxy over stdin/stdout.
+///
+/// Connects to the iris daemon at `~/.iris/irisd.sock` and proxies all
+/// tool calls. No ONNX model, no indexes, no SQLite — just HTTP over UDS.
+async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
+    let proxy = iris_mcp::proxy::ProxyServer::new(corpus_paths.to_vec());
+    proxy
+        .serve(rmcp::transport::stdio())
+        .await
+        .into_diagnostic()
+        .wrap_err("proxy MCP server failed")?;
+    Ok(())
 }
 
 /// `iris serve --transport stdio` — MCP server over stdin/stdout.

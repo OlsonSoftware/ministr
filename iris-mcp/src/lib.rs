@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod elicitation;
 pub mod error;
+pub mod proxy;
 pub mod sampling;
 pub mod server;
 pub mod task;
