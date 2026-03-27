@@ -13,8 +13,13 @@ use crate::error::IndexError;
 
 use super::Embedder;
 
-/// Default batch size for embedding inference.
-const DEFAULT_BATCH_SIZE: usize = 256;
+/// Batch size for embedding inference.
+///
+/// Controls the internal batch size passed to ONNX Runtime via fastembed.
+/// Smaller batches use less peak memory at a modest throughput cost.
+/// The ONNX runtime allocates intermediate tensors proportional to batch
+/// size, and these allocations are not always reclaimed promptly.
+const DEFAULT_BATCH_SIZE: usize = 16;
 
 /// Local embedding model powered by ONNX Runtime via the `fastembed` crate.
 ///
@@ -78,15 +83,49 @@ impl FastEmbedder {
             options = options.with_cache_dir(PathBuf::from(dir));
         }
 
-        // Use CoreML on macOS for GPU/Neural Engine acceleration.
+        // CoreML on macOS: enabled by default with CPUAndGPU compute units.
+        //
+        // The Neural Engine (ANE) path leaks ~12 GB per inference batch due to
+        // an Apple-side memory management bug in the CoreML/ANE bridge.
+        // See: https://github.com/microsoft/onnxruntime/issues/14455
+        //
+        // Override via IRIS_COMPUTE_UNITS: "cpu_and_gpu" (default), "cpu_only",
+        // "cpu_and_ane", or "all". Set IRIS_COREML=0 to disable CoreML entirely.
         #[cfg(target_os = "macos")]
         {
-            let coreml = ort::ep::CoreML::default()
-                .with_subgraphs(true)
-                .with_compute_units(ort::ep::coreml::ComputeUnits::All)
-                .build();
-            options = options.with_execution_providers(vec![coreml]);
-            info!("CoreML execution provider enabled");
+            let coreml_disabled =
+                std::env::var("IRIS_COREML").is_ok_and(|v| v == "0" || v == "false");
+
+            if !coreml_disabled {
+                let compute_units = match std::env::var("IRIS_COMPUTE_UNITS")
+                    .unwrap_or_default()
+                    .as_str()
+                {
+                    "cpu_only" => ort::ep::coreml::ComputeUnits::CPUOnly,
+                    "cpu_and_ane" => ort::ep::coreml::ComputeUnits::CPUAndNeuralEngine,
+                    "all" => ort::ep::coreml::ComputeUnits::All,
+                    // Default: CPU+GPU avoids the ANE memory leak while still
+                    // getting Metal GPU acceleration on Apple Silicon.
+                    _ => ort::ep::coreml::ComputeUnits::CPUAndGPU,
+                };
+
+                let mut coreml = ort::ep::CoreML::default()
+                    .with_compute_units(compute_units)
+                    .with_subgraphs(true)
+                    .with_static_input_shapes(true)
+                    .with_model_format(ort::ep::coreml::ModelFormat::MLProgram);
+
+                // Cache compiled CoreML models to avoid recompilation each session.
+                if let Some(dir) = cache_dir {
+                    let coreml_cache = PathBuf::from(dir).join("coreml_cache");
+                    coreml = coreml.with_model_cache_dir(coreml_cache.to_string_lossy());
+                }
+
+                options = options.with_execution_providers(vec![coreml.build()]);
+                info!(?compute_units, "CoreML execution provider enabled");
+            } else {
+                info!("CoreML disabled (IRIS_COREML=0), using CPU execution provider");
+            }
         }
 
         let model = TextEmbedding::try_new(options).map_err(|e| IndexError::EmbeddingFailed {
