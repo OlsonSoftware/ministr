@@ -55,8 +55,8 @@ pub struct WindowEstimator {
     current_tokens: usize,
     /// Monotonic sequence counter.
     next_sequence: u64,
-    /// Content IDs that have been evicted from the estimated window.
-    evicted: Vec<String>,
+    /// Number of content entries evicted from the estimated window.
+    evicted_count: usize,
 }
 
 /// Summary of the estimated window state.
@@ -84,7 +84,7 @@ impl WindowEstimator {
             entries: VecDeque::new(),
             current_tokens: 0,
             next_sequence: 0,
-            evicted: Vec::new(),
+            evicted_count: 0,
         }
     }
 
@@ -165,14 +165,14 @@ impl WindowEstimator {
             used: self.current_tokens,
             remaining: self.estimated_remaining(),
             entry_count: self.entries.len(),
-            evicted_count: self.evicted.len(),
+            evicted_count: self.evicted_count,
         }
     }
 
-    /// Content IDs that have been evicted from the estimated window.
+    /// Number of content entries evicted from the estimated window.
     #[must_use]
-    pub fn evicted_ids(&self) -> &[String] {
-        &self.evicted
+    pub fn evicted_count(&self) -> usize {
+        self.evicted_count
     }
 
     /// Check whether a content ID is currently in the estimated window.
@@ -190,7 +190,7 @@ impl WindowEstimator {
         if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id) {
             if let Some(entry) = self.entries.remove(pos) {
                 self.current_tokens = self.current_tokens.saturating_sub(entry.token_count);
-                self.evicted.push(entry.content_id);
+                self.evicted_count += 1;
                 return true;
             }
         }
@@ -202,7 +202,7 @@ impl WindowEstimator {
         while self.current_tokens > self.capacity {
             if let Some(evicted) = self.entries.pop_front() {
                 self.current_tokens = self.current_tokens.saturating_sub(evicted.token_count);
-                self.evicted.push(evicted.content_id);
+                self.evicted_count += 1;
             } else {
                 break;
             }
@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(est.estimated_remaining(), 1000);
         assert_eq!(est.capacity(), 1000);
         assert!(!est.is_full());
-        assert!(est.evicted_ids().is_empty());
+        assert_eq!(est.evicted_count(), 0);
     }
 
     #[test]
@@ -252,7 +252,7 @@ mod tests {
         assert!(est.is_in_window("s2"));
         assert!(est.is_in_window("s3"));
         assert_eq!(est.estimated_used(), 500);
-        assert_eq!(est.evicted_ids(), &["s1"]);
+        assert_eq!(est.evicted_count(), 1);
     }
 
     #[test]
@@ -272,7 +272,7 @@ mod tests {
         assert!(est.is_in_window("s3"));
         assert!(est.is_in_window("s4"));
         assert_eq!(est.estimated_used(), 500);
-        assert_eq!(est.evicted_ids(), &["s1", "s2"]);
+        assert_eq!(est.evicted_count(), 2);
     }
 
     #[test]
@@ -292,7 +292,7 @@ mod tests {
         assert!(est.is_in_window("s1"), "s1 was touched, should survive");
         assert!(!est.is_in_window("s2"), "s2 was LRU, should be evicted");
         assert!(est.is_in_window("s3"));
-        assert_eq!(est.evicted_ids(), &["s2"]);
+        assert_eq!(est.evicted_count(), 1);
     }
 
     #[test]
@@ -369,7 +369,7 @@ mod tests {
         assert!(!est.is_in_window("s2"));
         assert!(!est.is_in_window("big"));
         assert_eq!(est.estimated_used(), 0);
-        assert_eq!(est.evicted_ids(), &["s1", "s2", "big"]);
+        assert_eq!(est.evicted_count(), 3);
     }
 
     #[test]
@@ -456,7 +456,7 @@ mod tests {
         assert!(est.is_in_window("s2"));
         assert_eq!(est.estimated_used(), 500);
         assert!(est.is_full());
-        assert!(est.evicted_ids().is_empty());
+        assert_eq!(est.evicted_count(), 0);
     }
 
     #[test]
@@ -481,7 +481,7 @@ mod tests {
 
         assert!(!est.is_in_window("s1"));
         assert_eq!(est.estimated_used(), 0);
-        assert_eq!(est.evicted_ids(), &["s1"]);
+        assert_eq!(est.evicted_count(), 1);
     }
 
     #[test]
@@ -492,7 +492,7 @@ mod tests {
             est.record(&format!("s{i}"), 10);
         }
         assert_eq!(est.estimated_used(), 100);
-        assert!(est.evicted_ids().is_empty());
+        assert_eq!(est.evicted_count(), 0);
 
         // One large entry evicts many small ones
         est.record("big", 80);
@@ -500,11 +500,10 @@ mod tests {
 
         assert_eq!(est.estimated_used(), 100);
         // s0 through s7 evicted (8 * 10 = 80 tokens freed)
-        let evicted = est.evicted_ids();
         assert!(
-            evicted.len() >= 8,
+            est.evicted_count() >= 8,
             "should evict at least 8 entries: {}",
-            evicted.len()
+            est.evicted_count()
         );
     }
 
@@ -525,7 +524,7 @@ mod tests {
         assert_eq!(status.used + status.remaining, status.capacity);
         assert_eq!(status.used, est.estimated_used());
         assert_eq!(status.remaining, est.estimated_remaining());
-        assert_eq!(status.evicted_count, est.evicted_ids().len());
+        assert_eq!(status.evicted_count, est.evicted_count());
     }
 
     #[test]
@@ -581,7 +580,7 @@ mod tests {
         assert!(!est.is_in_window("s1"));
         assert!(est.is_in_window("s2"));
         assert_eq!(est.estimated_used(), 200);
-        assert!(est.evicted_ids().contains(&"s1".to_string()));
+        assert_eq!(est.evicted_count(), 1);
     }
 
     #[test]
