@@ -40,6 +40,11 @@ fn rss_bytes() -> Option<u64> {
     None
 }
 
+/// Get current RSS in megabytes. Returns `None` on unsupported platforms.
+pub fn rss_mb() -> Option<f64> {
+    rss_bytes().map(|b| b as f64 / 1_048_576.0)
+}
+
 /// Format bytes as a human-readable string.
 fn fmt_mb(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / 1_048_576.0)
