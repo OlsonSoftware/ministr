@@ -969,11 +969,19 @@ impl IngestionPipeline {
             if let Some(ref progress) = self.progress {
                 progress.increment_done();
             }
+
+            // Flush embeddings incrementally to bound peak memory.
+            if all_embedding_pairs.len() >= EMBED_FLUSH_THRESHOLD {
+                stats.total_embeddings +=
+                    batch_embed_and_insert(&all_embedding_pairs, embedder, index).await?;
+                all_embedding_pairs.clear();
+            }
         }
 
-        // Batch embed all accumulated texts in one pass (GPU-bound).
-        stats.total_embeddings =
+        // Flush any remaining embedding pairs.
+        stats.total_embeddings +=
             batch_embed_and_insert(&all_embedding_pairs, embedder, index).await?;
+        drop(all_embedding_pairs);
 
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
@@ -1238,11 +1246,19 @@ impl IngestionPipeline {
             if let Some(ref progress) = self.progress {
                 progress.increment_done();
             }
+
+            // Flush embeddings incrementally to bound peak memory.
+            if all_embedding_pairs.len() >= EMBED_FLUSH_THRESHOLD {
+                stats.total_embeddings +=
+                    batch_embed_and_insert(&all_embedding_pairs, embedder, index).await?;
+                all_embedding_pairs.clear();
+            }
         }
 
-        // Batch embed all accumulated texts in one pass (GPU-bound).
-        stats.total_embeddings =
+        // Flush any remaining embedding pairs.
+        stats.total_embeddings +=
             batch_embed_and_insert(&all_embedding_pairs, embedder, index).await?;
+        drop(all_embedding_pairs);
 
         // Second pass: resolve refs that failed because target symbols
         // were indexed after the referencing file.
@@ -1321,6 +1337,15 @@ impl IngestionPipeline {
         S: Storage + ?Sized,
         I: VectorIndex + ?Sized,
     {
+        // Hard guard: reject files inside always-ignored directories, regardless
+        // of how they were discovered. This is defense-in-depth — discover_files
+        // already filters via gitignore + ALWAYS_IGNORE_DIRS, but direct callers
+        // or edge cases (globs, symlinks) could bypass that filter.
+        if is_in_ignored_dir(file_path) {
+            debug!(path = %relative_path, "skipped: file is inside an always-ignored directory");
+            return Ok(FileResult::Skipped);
+        }
+
         // Get file mtime for fast change detection
         let file_mtime_ns = file_mtime_nanos(file_path).await;
 
@@ -1701,6 +1726,14 @@ fn collect_document_embeddings(doc: &DocumentTree, pairs: &mut Vec<(VectorId, St
 /// keep the MCP transport responsive, but increase per-batch overhead.
 /// 64 balances inference efficiency with responsiveness on large repos.
 const EMBED_BATCH_CHUNK: usize = 64;
+
+/// Number of accumulated embedding pairs that triggers an intermediate flush.
+///
+/// Instead of collecting all section texts in memory before embedding,
+/// we flush every `EMBED_FLUSH_THRESHOLD` pairs during the file loop.
+/// This bounds peak memory to roughly `threshold × avg_section_size` bytes
+/// rather than `total_sections × avg_section_size`.
+const EMBED_FLUSH_THRESHOLD: usize = 4096;
 
 /// Embed and insert a batch of `(id, text)` pairs into the vector index.
 ///
@@ -2812,6 +2845,24 @@ const ALWAYS_IGNORE_PATTERNS: &[&str] = &[
     "*.snap",
 ];
 
+/// Hard guard: check if a file path contains any always-ignored directory component.
+///
+/// This is defense-in-depth for [`parse_and_store_file`] — even if a file bypasses
+/// the `discover_files` walker (via direct path, glob, or symlink), it will be
+/// rejected here. Checks every path component against [`ALWAYS_IGNORE_DIRS`].
+fn is_in_ignored_dir(path: &Path) -> bool {
+    for component in path.components() {
+        if let std::path::Component::Normal(name) = component {
+            if let Some(name_str) = name.to_str() {
+                if ALWAYS_IGNORE_DIRS.contains(&name_str) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Discover all supported files in a directory recursively.
 ///
 /// Respects `.gitignore` rules and skips well-known junk directories
@@ -3479,6 +3530,39 @@ mod tests {
     use crate::storage::SqliteStorage;
     use crate::storage::traits::Storage;
     use crate::types::SectionId;
+
+    // --- Ignored directory guard ---
+
+    #[test]
+    fn is_in_ignored_dir_catches_target() {
+        assert!(is_in_ignored_dir(Path::new(
+            "/home/user/project/target/debug/foo.rs"
+        )));
+        assert!(is_in_ignored_dir(Path::new(
+            "target/release/build/crate/lib.rs"
+        )));
+    }
+
+    #[test]
+    fn is_in_ignored_dir_catches_node_modules() {
+        assert!(is_in_ignored_dir(Path::new(
+            "/app/node_modules/lodash/index.js"
+        )));
+    }
+
+    #[test]
+    fn is_in_ignored_dir_catches_git() {
+        assert!(is_in_ignored_dir(Path::new("/repo/.git/objects/pack/foo")));
+    }
+
+    #[test]
+    fn is_in_ignored_dir_allows_normal_paths() {
+        assert!(!is_in_ignored_dir(Path::new(
+            "/home/user/project/src/main.rs"
+        )));
+        assert!(!is_in_ignored_dir(Path::new("docs/README.md")));
+        assert!(!is_in_ignored_dir(Path::new("lib.rs")));
+    }
 
     // --- Hash computation ---
 

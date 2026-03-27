@@ -1275,6 +1275,8 @@ phases:
     checked: false
   - text: 'Fix memory leaks: cap WindowEstimator evicted list (Vec→counter), cap Session trajectory (Vec→VecDeque with 1000-entry sliding window), clean stale set on remove_delivered'
     checked: true
+  - text: 'Fix indexing memory blowup: stream embeddings incrementally (flush every 4096 pairs) instead of accumulating all section text in memory; add hard ALWAYS_IGNORE_DIRS guard in parse_and_store_file as defense-in-depth'
+    checked: true
 - id: PERF1
   name: Indexing Performance
   tagline: Index fast, start faster
