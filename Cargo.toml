@@ -1,5 +1,5 @@
 [workspace]
-members = ["iris-core", "iris-mcp", "iris-cli"]
+members = ["iris-api", "iris-core", "iris-mcp", "iris-cli"]
 resolver = "3"
 
 [workspace.package]
@@ -102,5 +102,6 @@ axum = "0.8"
 tempfile = "3"
 
 # iris workspace crates
+iris-api = { path = "iris-api" }
 iris-core = { path = "iris-core" }
 iris-mcp = { path = "iris-mcp" }
