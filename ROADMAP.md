@@ -1088,11 +1088,100 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Add tree-sitter-python, tree-sitter-typescript, tree-sitter-go as optional Cargo features with conditional compilation
-- [ ] Implement LanguageRefinement for Python: class, function, method, decorator, and import extraction via tree-sitter queries
-- [ ] Implement LanguageRefinement for TypeScript: class, interface, type alias, function, export, and import extraction via tree-sitter queries
-- [ ] Implement LanguageRefinement for Go: struct, interface, function, method (receiver), and import extraction via tree-sitter queries
-- [ ] Extract shared tree-sitter query patterns into a reusable query builder — common patterns like "find all imports" should be language-parameterized, not duplicated (DRY)
-- [ ] Add cross-file reference resolution for Python imports, TypeScript imports/exports, and Go imports — reuse the existing reference graph infrastructure
-- [ ] Integration tests: clone pydantic (Python), MCP TypeScript SDK, and bubbletea (Go) — verify iris_symbols, iris_definition, and iris_references return correct results for each language
+- [x] Add tree-sitter-python, tree-sitter-typescript, tree-sitter-go as optional Cargo features with conditional compilation
+- [x] Implement LanguageRefinement for Python: class, function, method, decorator, and import extraction via tree-sitter queries
+- [x] Implement LanguageRefinement for TypeScript: class, interface, type alias, function, export, and import extraction via tree-sitter queries
+- [x] Implement LanguageRefinement for Go: struct, interface, function, method (receiver), and import extraction via tree-sitter queries
+- [x] Extract shared tree-sitter query patterns into a reusable query builder — common patterns like "find all imports" should be language-parameterized, not duplicated (DRY)
+- [x] Add cross-file reference resolution for Python imports, TypeScript imports/exports, and Go imports — reuse the existing reference graph infrastructure
+- [x] Integration tests: clone pydantic (Python), MCP TypeScript SDK, and bubbletea (Go) — verify iris_symbols, iris_definition, and iris_references return correct results for each language
+- [x] Concurrent refresh pipeline: bounded-parallel staleness checks for git and web sources, git subprocess timeouts, tokio::join! for web+git overlap
+- [x] Fix clone persistence: scope cleanup in ingest_paths_with_embeddings to local roots only, preventing cloned repo content from being deleted on restart
+- [x] Fix missing implements refs: second-pass reference resolution after ingestion loop resolves refs whose target symbols were indexed after the referencing file
+- [x] Wire bridge extraction pipeline into ingestion: framework detection, per-file endpoint extraction reusing tree-sitter ASTs, post-loop linking, SQLite storage — enables iris_bridge for PyO3, Tauri, NAPI, WasmBindgen, HttpRoute
+
+---
+
+## Phase OSS1: Open Source Launch Prep ✦ "Ship it to the world"
+
+**Problem:** iris is a private repo with no public presence — can't build community or adoption
+
+**Solution:** Clean up the repo for public consumption: README, LICENSE, CONTRIBUTING, CI, pre-built binaries
+
+### Tasks
+
+- [x] Write a killer README.md — open with the squid2 bridge trace map demo, show cross-language linking, include .iris.toml setup, installation via homebrew + cargo
+- [x] Add LICENSE files — dual MIT/Apache-2.0 (Rust ecosystem standard)
+- [x] Add CONTRIBUTING.md with dev setup, architecture overview, and PR guidelines
+- [x] Set up GitHub Actions CI: cargo check, test, clippy, fmt on PR + push to main
+- [x] Set up GitHub Actions release workflow: build binaries for macOS (arm64/x86), Linux (x86/arm64), Windows — publish as GitHub release assets
+- [x] Create homebrew tap (homebrew-iris) with formula pointing to GitHub release binaries
+- [x] Publish to crates.io (iris-core, iris-mcp, iris-cli)
+- [x] Clean up git history — squash/rebase any sensitive or messy commits, ensure no API keys or secrets in history
+- [x] Set up GitHub Sponsors with tiers ($5/mo supporter, $25/mo backer, $100/mo sponsor)
+
+---
+
+## Phase OSS2: Launch Content & Distribution ✦ "Get the word out"
+
+**Problem:** Nobody knows iris exists — need a compelling launch that reaches the right developers
+
+**Solution:** Create demo content, landing page, and post to developer communities
+
+### Tasks
+
+- [ ] Record 60-second terminal demo: clone squid2, show iris_bridge finding 52 Tauri command links across Rust↔TypeScript (asciinema or screen recording)
+- [ ] Record 2-minute deep dive demo: .iris.toml setup → indexing → survey → symbols → definition → references → bridge trace map
+- [ ] Create landing page (simple — GitHub Pages or single-page site) with demo GIF, feature list, install command, .iris.toml example
+- [ ] Write HN Show post: "Show HN: iris — MCP server that traces code across language boundaries (Rust)"
+- [ ] Post to r/rust, r/programming, r/LocalLLaMA, r/ClaudeAI
+- [ ] Tweet/X thread: the squid2 bridge trace map story — "I built an MCP server that automatically maps every Tauri command across Rust↔TypeScript"
+- [ ] Submit to MCP registries: awesome-mcp-servers, MCP Market, Smithery
+
+---
+
+## Phase DX1: Developer Experience Polish ✦ "Two minutes to wow"
+
+**Problem:** First-time users need a frictionless experience — install, configure, see value in under 2 minutes
+
+**Solution:** Improve onboarding: iris init command, better error messages, progress reporting, example configs
+
+### Tasks
+
+- [ ] `iris init` command — auto-detect project structure, generate .iris.toml with sensible defaults (detect Tauri/PyO3/NAPI from manifests)
+- [ ] Better startup logging — show what .iris.toml was found, which paths are being indexed, bridge frameworks detected, progress bar for initial indexing
+- [ ] Friendly error messages when .iris.toml has invalid paths, missing dirs, or bad TOML syntax
+- [ ] `iris status` command — show corpus stats, indexed files, bridge links found, data directory location, index freshness
+- [ ] Ship example .iris.toml files for common project types: Tauri app, PyO3 project, plain Rust workspace, React+Node monorepo
+
+---
+
+## Phase PERF1: Indexing Performance ✦ "Index fast, start faster"
+
+**Problem:** Initial indexing is slow for large repos — 15-20s for 155 files, minutes for 1000+ file repos
+
+**Solution:** Concurrent file ingestion, incremental embedding, and smarter skip logic
+
+### Tasks
+
+- [ ] Concurrent file ingestion — process files in parallel with semaphore-bounded tokio::spawn (same pattern as concurrent refresh), share embedder via Arc
+- [ ] Batch embedding — collect texts across multiple files, embed in larger batches to amortize ONNX overhead
+- [ ] Progressive availability — make already-indexed files queryable while remaining files are still being processed (currently blocks until complete)
+- [ ] Benchmark suite — measure indexing throughput (files/sec, sections/sec) on reference repos (iris-rs, pydantic-core, ruff) to track regressions
+
+---
+
+## Phase CLOUD0: Cloud Index Protocol ✦ "Instant dependency context"
+
+**Problem:** Cloning + indexing dependencies is slow and wastes disk — every user re-indexes the same popular repos
+
+**Solution:** Define a wire protocol for streaming pre-computed index data (embeddings, sections, symbols) from a cloud service into local iris
+
+### Tasks
+
+- [ ] Design index export format — serializable bundle of sections, symbols, claims, embeddings, bridge endpoints for a single corpus root
+- [ ] `iris export` CLI command — dump a corpus root's index to a portable bundle file (.iris-index)
+- [ ] `iris import` CLI command — load a .iris-index bundle into local storage + HNSW index without re-parsing or re-embedding
+- [ ] Add `[[corpus.cloud]]` support to .iris.toml — fetch pre-built index from a URL instead of cloning + indexing
+- [ ] Versioned index bundles — include commit SHA so the client knows when to re-fetch a newer version
 
