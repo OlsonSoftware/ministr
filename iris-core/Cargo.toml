@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Core domain logic for iris — a context cache controller for LLM agents"
+readme = "../README.md"
+categories = ["development-tools", "text-processing"]
+keywords = ["mcp", "llm", "context", "embeddings", "rag"]
 
 [lints]
 workspace = true

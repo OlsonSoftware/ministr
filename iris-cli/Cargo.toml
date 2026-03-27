@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "A context cache controller for LLM agents — MCP server for intelligent document retrieval"
+readme = "../README.md"
 categories = ["command-line-utilities", "development-tools"]
 keywords = ["mcp", "llm", "context", "embeddings", "rag"]
 
