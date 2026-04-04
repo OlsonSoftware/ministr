@@ -643,7 +643,9 @@ async fn cmd_export(
     resolved_model: &str,
     output: Option<&Path>,
 ) -> Result<()> {
-    use iris_core::bundle::{self, BUNDLE_FORMAT_VERSION, BundleCorpusRoot, BundleManifest};
+    use iris_core::bundle::{
+        self, BUNDLE_FORMAT_VERSION, BundleCorpusRoot, BundleManifest, compute_bundle_version,
+    };
     use iris_core::storage::Storage as _;
 
     // Resolve the corpus data directory without loading the embedding model.
@@ -689,6 +691,31 @@ async fn cmd_export(
         (0, 0)
     };
 
+    let bundle_roots: Vec<BundleCorpusRoot> = roots
+        .iter()
+        .map(|r| BundleCorpusRoot {
+            id: r.id.clone(),
+            display_name: r.display_name.clone(),
+            kind: r.kind.as_str().to_string(),
+            commit_sha: r.commit_sha.clone(),
+            branch: r.branch.clone(),
+            repo_url: r.repo_url.clone(),
+        })
+        .collect();
+
+    // Capture the source commit SHA: prefer corpus root metadata, fall back
+    // to `git rev-parse HEAD` in the first corpus path.
+    let source_commit = bundle_roots
+        .iter()
+        .find_map(|r| r.commit_sha.clone())
+        .or_else(|| {
+            corpus_paths
+                .first()
+                .and_then(|p| iris_core::git::local_head_sha(std::path::Path::new(p)))
+        });
+
+    let bundle_version = Some(compute_bundle_version(&bundle_roots));
+
     let manifest = BundleManifest {
         format_version: BUNDLE_FORMAT_VERSION,
         model_name: resolved_model.to_string(),
@@ -696,21 +723,13 @@ async fn cmd_export(
         vector_count,
         document_count: doc_count,
         symbol_count: 0,
-        corpus_roots: roots
-            .iter()
-            .map(|r| BundleCorpusRoot {
-                id: r.id.clone(),
-                display_name: r.display_name.clone(),
-                kind: r.kind.as_str().to_string(),
-                commit_sha: r.commit_sha.clone(),
-                branch: r.branch.clone(),
-                repo_url: r.repo_url.clone(),
-            })
-            .collect(),
+        corpus_roots: bundle_roots,
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
+        bundle_version,
+        source_commit,
     };
 
     let output_path = output.map_or_else(
