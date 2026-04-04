@@ -110,6 +110,29 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
     Ok(())
 }
 
+/// Trigger a full re-index of a corpus.
+#[tauri::command]
+pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> Result<(), String> {
+    // Get the paths for this corpus, then re-register (which triggers re-indexing).
+    let paths = {
+        let guard = state.registry.corpora().read().await;
+        guard
+            .get(&corpus_id)
+            .map(|h| h.info.blocking_read().paths.clone())
+    };
+    let Some(paths) = paths else {
+        return Err(format!("corpus '{corpus_id}' not found"));
+    };
+
+    // Re-registering with the same paths triggers re-indexing.
+    state
+        .registry
+        .register(&paths)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Add a project from the tray menu (called from Rust, not from JS).
 pub async fn add_project_from_tray(handle: &AppHandle) {
     use tauri_plugin_dialog::DialogExt;
