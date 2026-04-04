@@ -75,6 +75,9 @@ pub enum EvictionPolicy {
     Fifo,
     /// Least recently used: content not re-accessed is evicted first.
     Lru,
+    /// FSRS-based: evict content with lowest predicted recall probability.
+    /// Requires retrievability scores passed to the window estimator.
+    Fsrs,
 }
 
 /// Compression tier for delivered content in the multi-tier eviction pipeline.

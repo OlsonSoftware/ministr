@@ -70,6 +70,15 @@ fn extract_text(content: &[Content]) -> &str {
         .as_str()
 }
 
+/// Extract the tool-specific `result` field from a `ToolResponse` JSON envelope.
+///
+/// Since CONTEXT1.0, tool responses have the shape:
+/// `{ "budget_status": {...}, "result": { tool-specific data } }`.
+/// This helper navigates to the `result` sub-object.
+fn tool_result(json: &serde_json::Value) -> &serde_json::Value {
+    &json["result"]
+}
+
 /// Build a multi-document corpus for realistic e2e testing.
 fn build_corpus() -> Vec<DocumentTree> {
     vec![
@@ -337,8 +346,9 @@ async fn full_flow_survey_read_extract_via_call_tool() {
 
     let survey_json: serde_json::Value =
         serde_json::from_str(extract_text(&survey_result.content)).unwrap();
+    let survey_data = tool_result(&survey_json);
 
-    let results = survey_json["results"].as_array().unwrap();
+    let results = survey_data["results"].as_array().unwrap();
     assert!(!results.is_empty(), "survey should return results");
 
     for r in results {
@@ -372,17 +382,18 @@ async fn full_flow_survey_read_extract_via_call_tool() {
 
     let read_json: serde_json::Value =
         serde_json::from_str(extract_text(&read_result.content)).unwrap();
+    let read_data = tool_result(&read_json);
 
     // Section may be already_delivered (if survey included it) or fresh
-    if read_json["status"].as_str() == Some("already_delivered") {
-        assert_eq!(read_json["section_id"], "docs/auth.md#tokens");
-        assert!(read_json["claims_available"].is_number());
+    if read_data["status"].as_str() == Some("already_delivered") {
+        assert_eq!(read_data["section_id"], "docs/auth.md#tokens");
+        assert!(read_data["claims_available"].is_number());
     } else {
-        assert_eq!(read_json["section_id"], "docs/auth.md#tokens");
-        assert!(read_json["text"].as_str().unwrap().contains("JWT tokens"));
-        assert_eq!(read_json["claims_available"], 2);
+        assert_eq!(read_data["section_id"], "docs/auth.md#tokens");
+        assert!(read_data["text"].as_str().unwrap().contains("JWT tokens"));
+        assert_eq!(read_data["claims_available"], 2);
 
-        let heading_path = read_json["heading_path"].as_array().unwrap();
+        let heading_path = read_data["heading_path"].as_array().unwrap();
         assert_eq!(heading_path[0], "Authentication");
         assert_eq!(heading_path[1], "Tokens");
     }
@@ -391,7 +402,7 @@ async fn full_flow_survey_read_extract_via_call_tool() {
     // If the section was already delivered by survey, the read returns
     // already_delivered and may trigger fault correction (budget decreases).
     // Otherwise budget accumulates as before.
-    if read_json["status"].as_str() != Some("already_delivered") {
+    if read_data["status"].as_str() != Some("already_delivered") {
         assert!(
             tokens_after_read >= tokens_after_survey,
             "budget should accumulate: {tokens_after_read} >= {tokens_after_survey}"
@@ -408,8 +419,9 @@ async fn full_flow_survey_read_extract_via_call_tool() {
 
     let extract_json: serde_json::Value =
         serde_json::from_str(extract_text(&extract_result.content)).unwrap();
+    let extract_data = tool_result(&extract_json);
 
-    let claims = extract_json["claims"].as_array().unwrap();
+    let claims = extract_data["claims"].as_array().unwrap();
     assert_eq!(claims.len(), 2);
 
     let claim_texts: Vec<&str> = claims.iter().map(|c| c["text"].as_str().unwrap()).collect();
@@ -441,7 +453,8 @@ async fn survey_deduplicates_already_delivered_content() {
     )
     .await;
     let j1: serde_json::Value = serde_json::from_str(extract_text(&r1.content)).unwrap();
-    let first_count = j1["results"].as_array().unwrap().len();
+    let d1 = tool_result(&j1);
+    let first_count = d1["results"].as_array().unwrap().len();
     assert!(first_count > 0);
 
     // Second survey with same query — delivered content filtered out
@@ -452,8 +465,9 @@ async fn survey_deduplicates_already_delivered_content() {
     )
     .await;
     let j2: serde_json::Value = serde_json::from_str(extract_text(&r2.content)).unwrap();
-    let second_count = j2["results"].as_array().unwrap().len();
-    let dedup_count = j2["deduplicated_count"].as_u64().unwrap();
+    let d2 = tool_result(&j2);
+    let second_count = d2["results"].as_array().unwrap().len();
+    let dedup_count = d2["deduplicated_count"].as_u64().unwrap();
 
     assert!(
         second_count < first_count,
@@ -474,7 +488,8 @@ async fn read_re_request_skips_unchanged_with_fault_correction() {
     )
     .await;
     let j1: serde_json::Value = serde_json::from_str(extract_text(&r1.content)).unwrap();
-    assert!(j1["text"].is_string(), "first read returns full text");
+    let d1 = tool_result(&j1);
+    assert!(d1["text"].is_string(), "first read returns full text");
 
     // Second read — already delivered and unchanged, skips re-delivery
     // to save context tokens. Fault correction evicts the budget entry.
@@ -485,16 +500,17 @@ async fn read_re_request_skips_unchanged_with_fault_correction() {
     )
     .await;
     let j2: serde_json::Value = serde_json::from_str(extract_text(&r2.content)).unwrap();
+    let d2 = tool_result(&j2);
     assert_eq!(
-        j2["status"], "already_delivered",
+        d2["status"], "already_delivered",
         "re-request should return already_delivered"
     );
     assert!(
-        j2["text"].is_null(),
+        d2["text"].is_null(),
         "should not include full text on re-request"
     );
     assert!(j2["budget_status"].is_object());
-    assert!(j2["claims_available"].is_number());
+    assert!(d2["claims_available"].is_number());
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +529,8 @@ async fn survey_finds_content_across_documents() {
     .await;
 
     let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
-    let results = json["results"].as_array().unwrap();
+    let data = tool_result(&json);
+    let results = data["results"].as_array().unwrap();
     assert!(!results.is_empty(), "should find rate limit content");
 
     let has_rate_limit = results.iter().any(|r| {
@@ -535,7 +552,8 @@ async fn read_sections_from_different_documents() {
     )
     .await;
     let auth_json: serde_json::Value = serde_json::from_str(extract_text(&auth.content)).unwrap();
-    assert!(auth_json["text"].as_str().unwrap().contains("OAuth"));
+    let auth_data = tool_result(&auth_json);
+    assert!(auth_data["text"].as_str().unwrap().contains("OAuth"));
 
     // Read from API doc
     let api = call_tool(
@@ -545,7 +563,8 @@ async fn read_sections_from_different_documents() {
     )
     .await;
     let api_json: serde_json::Value = serde_json::from_str(extract_text(&api.content)).unwrap();
-    assert!(api_json["text"].as_str().unwrap().contains("Rate limits"));
+    let api_data = tool_result(&api_json);
+    assert!(api_data["text"].as_str().unwrap().contains("Rate limits"));
 
     let total_used = api_json["budget_status"]["tokens_used"].as_u64().unwrap();
     assert!(total_used > 0, "budget should track multi-document reads");
@@ -567,7 +586,8 @@ async fn extract_with_query_scores_and_ranks_claims() {
     .await;
 
     let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
-    let claims = json["claims"].as_array().unwrap();
+    let data = tool_result(&json);
+    let claims = data["claims"].as_array().unwrap();
 
     assert_eq!(claims.len(), 2);
     for c in claims {
@@ -660,6 +680,8 @@ async fn budget_monotonically_increases_across_tool_types() {
     let j3: serde_json::Value = serde_json::from_str(extract_text(&r3.content)).unwrap();
     let t3 = j3["budget_status"]["tokens_used"].as_u64().unwrap();
 
+    // Note: budget_status is at the top level of ToolResponse, not under result.
+    // The token values t1, t2, t3 are already correctly extracted from budget_status.
     assert!(t1 > 0, "survey should use tokens");
     assert!(t2 > t1, "read adds tokens: {t2} > {t1}");
     assert!(t3 >= t2, "extract should not decrease tokens: {t3} >= {t2}");
@@ -708,13 +730,14 @@ async fn evicted_removes_content_from_session_and_budget() {
 
     let evict_json: serde_json::Value =
         serde_json::from_str(extract_text(&evict_result.content)).unwrap();
+    let evict_data = tool_result(&evict_json);
     assert_eq!(
-        evict_json["evicted"].as_array().unwrap().len(),
+        evict_data["evicted"].as_array().unwrap().len(),
         1,
         "should evict one item"
     );
     assert!(
-        evict_json["not_found"].as_array().unwrap().is_empty(),
+        evict_data["not_found"].as_array().unwrap().is_empty(),
         "should have no not_found items"
     );
 }
@@ -731,8 +754,9 @@ async fn evicted_reports_not_found_for_unknown_ids() {
     .await;
 
     let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
-    assert!(json["evicted"].as_array().unwrap().is_empty());
-    assert_eq!(json["not_found"].as_array().unwrap().len(), 1);
+    let data = tool_result(&json);
+    assert!(data["evicted"].as_array().unwrap().is_empty());
+    assert_eq!(data["not_found"].as_array().unwrap().len(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -784,7 +808,8 @@ async fn compress_returns_summaries_for_sections() {
     );
 
     let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
-    let summaries = json["summaries"].as_array().unwrap();
+    let data = tool_result(&json);
+    let summaries = data["summaries"].as_array().unwrap();
     assert_eq!(summaries.len(), 2, "should return two summaries");
 
     for s in summaries {
@@ -819,7 +844,8 @@ async fn related_returns_linked_claims() {
     );
 
     let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
-    let related = json["related"].as_array().unwrap();
+    let data = tool_result(&json);
+    let related = data["related"].as_array().unwrap();
     assert!(
         !related.is_empty(),
         "auth-c1 should have related claims via inserted relationships"
@@ -846,7 +872,8 @@ async fn related_with_type_filter() {
     .await;
 
     let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
-    let related = json["related"].as_array().unwrap();
+    let data = tool_result(&json);
+    let related = data["related"].as_array().unwrap();
 
     // All returned results should be of type "references"
     for r in related {
@@ -1302,7 +1329,8 @@ async fn e2e_survey_from_corpus_dir_returns_ranked_results() {
     );
 
     let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
-    let results = json["results"].as_array().unwrap();
+    let data = tool_result(&json);
+    let results = data["results"].as_array().unwrap();
     assert!(!results.is_empty(), "survey should return results");
 
     // Verify results are ranked by score (descending)
@@ -1348,24 +1376,25 @@ async fn e2e_read_returns_heading_paths_and_content_hash() {
     );
 
     let read_json: serde_json::Value = serde_json::from_str(extract_text(&read.content)).unwrap();
+    let read_data = tool_result(&read_json);
 
     // Verify section_id matches
-    assert_eq!(read_json["section_id"].as_str().unwrap(), section_id);
+    assert_eq!(read_data["section_id"].as_str().unwrap(), section_id);
 
     // Verify heading_path is present and non-empty
-    let heading_path = read_json["heading_path"].as_array().unwrap();
+    let heading_path = read_data["heading_path"].as_array().unwrap();
     assert!(
         !heading_path.is_empty(),
         "heading_path should be non-empty for a section"
     );
 
     // Verify full text content is returned
-    let text = read_json["text"].as_str().unwrap();
+    let text = read_data["text"].as_str().unwrap();
     assert!(!text.is_empty(), "text should be non-empty");
 
     // Verify claims_available is a number
     assert!(
-        read_json["claims_available"].is_number(),
+        read_data["claims_available"].is_number(),
         "should report claims_available"
     );
 
@@ -1400,7 +1429,8 @@ async fn e2e_extract_returns_claims_from_ingested_content() {
     .await;
     let survey_json: serde_json::Value =
         serde_json::from_str(extract_text(&survey.content)).unwrap();
-    let results = survey_json["results"].as_array().unwrap();
+    let survey_data = tool_result(&survey_json);
+    let results = survey_data["results"].as_array().unwrap();
 
     let section_result = results
         .iter()
@@ -1418,7 +1448,8 @@ async fn e2e_extract_returns_claims_from_ingested_content() {
 
     let extract_json: serde_json::Value =
         serde_json::from_str(extract_text(&extract.content)).unwrap();
-    let claims = extract_json["claims"].as_array().unwrap();
+    let extract_data = tool_result(&extract_json);
+    let claims = extract_data["claims"].as_array().unwrap();
 
     assert!(
         !claims.is_empty(),
@@ -1462,9 +1493,10 @@ async fn e2e_related_follows_claim_dependency_chains() {
     .await;
     let survey_json: serde_json::Value =
         serde_json::from_str(extract_text(&survey.content)).unwrap();
+    let survey_data = tool_result(&survey_json);
 
     // Find a claim-level result to trace
-    let claim_result = survey_json["results"]
+    let claim_result = survey_data["results"]
         .as_array()
         .unwrap()
         .iter()
@@ -1482,15 +1514,16 @@ async fn e2e_related_follows_claim_dependency_chains() {
 
         let related_json: serde_json::Value =
             serde_json::from_str(extract_text(&related.content)).unwrap();
+        let related_data = tool_result(&related_json);
 
         // The related array may be empty if no relationships were detected,
         // but the response structure should be valid.
         assert!(
-            related_json["related"].is_array(),
+            related_data["related"].is_array(),
             "should have a related array"
         );
 
-        for r in related_json["related"].as_array().unwrap() {
+        for r in related_data["related"].as_array().unwrap() {
             assert!(
                 r["claim_id"].is_string(),
                 "related claim should have claim_id"
@@ -1513,7 +1546,8 @@ async fn e2e_related_follows_claim_dependency_chains() {
     let (client2, _server2) = wrap_as_client(setup_server().await).await;
     let result = call_tool(&client2, "iris_related", json!({"claim_id": "auth-c1"})).await;
     let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
-    let related = json["related"].as_array().unwrap();
+    let data = tool_result(&json);
+    let related = data["related"].as_array().unwrap();
     assert!(
         !related.is_empty(),
         "auth-c1 should have related claims via dependency chain"
@@ -1540,11 +1574,12 @@ async fn e2e_read_session_dedup_on_second_request() {
     )
     .await;
     let j1: serde_json::Value = serde_json::from_str(extract_text(&r1.content)).unwrap();
+    let d1 = tool_result(&j1);
     assert!(
-        j1["text"].is_string(),
+        d1["text"].is_string(),
         "first read should deliver full text"
     );
-    let first_text = j1["text"].as_str().unwrap();
+    let first_text = d1["text"].as_str().unwrap();
     assert!(
         first_text.contains("JWT tokens"),
         "first read should contain section text"
@@ -1573,17 +1608,18 @@ async fn e2e_read_session_dedup_on_second_request() {
     )
     .await;
     let j2: serde_json::Value = serde_json::from_str(extract_text(&r2.content)).unwrap();
+    let d2 = tool_result(&j2);
 
     assert_eq!(
-        j2["status"], "already_delivered",
+        d2["status"], "already_delivered",
         "re-request should return already_delivered status"
     );
     assert!(
-        j2["text"].is_null(),
+        d2["text"].is_null(),
         "re-request should not include full text"
     );
     assert!(j2["budget_status"].is_object());
-    assert!(j2["claims_available"].is_number());
+    assert!(d2["claims_available"].is_number());
 
     // Verify survey deduplication works — same query returns fewer results
     let s1 = call_tool(
@@ -1593,7 +1629,8 @@ async fn e2e_read_session_dedup_on_second_request() {
     )
     .await;
     let sj1: serde_json::Value = serde_json::from_str(extract_text(&s1.content)).unwrap();
-    let first_count = sj1["results"].as_array().unwrap().len();
+    let sd1 = tool_result(&sj1);
+    let first_count = sd1["results"].as_array().unwrap().len();
 
     let s2 = call_tool(
         &client,
@@ -1602,8 +1639,9 @@ async fn e2e_read_session_dedup_on_second_request() {
     )
     .await;
     let sj2: serde_json::Value = serde_json::from_str(extract_text(&s2.content)).unwrap();
-    let second_count = sj2["results"].as_array().unwrap().len();
-    let dedup_count = sj2["deduplicated_count"].as_u64().unwrap();
+    let sd2 = tool_result(&sj2);
+    let second_count = sd2["results"].as_array().unwrap().len();
+    let dedup_count = sd2["deduplicated_count"].as_u64().unwrap();
 
     assert!(
         second_count < first_count || dedup_count > 0,
@@ -1654,7 +1692,8 @@ async fn e2e_compress_evict_cycle_updates_budget() {
     );
 
     let cj: serde_json::Value = serde_json::from_str(extract_text(&compress.content)).unwrap();
-    let summaries = cj["summaries"].as_array().unwrap();
+    let cd = tool_result(&cj);
+    let summaries = cd["summaries"].as_array().unwrap();
     assert_eq!(summaries.len(), 2, "should compress both sections");
 
     for s in summaries {
@@ -1677,13 +1716,14 @@ async fn e2e_compress_evict_cycle_updates_budget() {
     );
 
     let ej: serde_json::Value = serde_json::from_str(extract_text(&evict.content)).unwrap();
+    let ed = tool_result(&ej);
     assert_eq!(
-        ej["evicted"].as_array().unwrap().len(),
+        ed["evicted"].as_array().unwrap().len(),
         2,
         "should evict both items"
     );
     assert!(
-        ej["not_found"].as_array().unwrap().is_empty(),
+        ed["not_found"].as_array().unwrap().is_empty(),
         "should have no not_found"
     );
 
@@ -1787,7 +1827,8 @@ async fn e2e_coherence_detects_file_change_and_read_returns_updated() {
     )
     .await;
     let j1: serde_json::Value = serde_json::from_str(extract_text(&r1.content)).unwrap();
-    let original_text = j1["text"].as_str().unwrap();
+    let d1 = tool_result(&j1);
+    let original_text = d1["text"].as_str().unwrap();
     assert!(
         original_text.contains("24 hours"),
         "original text should contain '24 hours'"
@@ -1847,7 +1888,8 @@ JWT tokens use RS256 signing. Tokens now expire after 12 hours for improved secu
     );
 
     let j2: serde_json::Value = serde_json::from_str(extract_text(&r2.content)).unwrap();
-    let updated_text = j2["text"].as_str().unwrap();
+    let d2 = tool_result(&j2);
+    let updated_text = d2["text"].as_str().unwrap();
     assert!(
         updated_text.contains("12 hours"),
         "updated text should contain '12 hours', got: {updated_text}"
@@ -1884,9 +1926,10 @@ async fn iris_toc_returns_all_documents_and_sections() {
     );
 
     let body: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    let data = tool_result(&body);
 
     // Corpus stats header
-    let stats = &body["corpus_stats"];
+    let stats = &data["corpus_stats"];
     assert_eq!(
         stats["documents"].as_u64().unwrap(),
         2,
@@ -1903,7 +1946,7 @@ async fn iris_toc_returns_all_documents_and_sections() {
     );
 
     // Entries
-    let entries = body["entries"]
+    let entries = data["entries"]
         .as_array()
         .expect("entries should be an array");
     assert_eq!(entries.len(), 3, "should have 3 TOC entries");
@@ -1941,8 +1984,9 @@ async fn iris_toc_filters_by_document_id() {
     );
 
     let body: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    let data = tool_result(&body);
 
-    let entries = body["entries"]
+    let entries = data["entries"]
         .as_array()
         .expect("entries should be an array");
     assert_eq!(entries.len(), 1, "should have 1 section for docs/api.md");
@@ -1952,7 +1996,7 @@ async fn iris_toc_filters_by_document_id() {
         "docs/api.md#rate-limits"
     );
 
-    let stats = &body["corpus_stats"];
+    let stats = &data["corpus_stats"];
     assert_eq!(stats["documents"].as_u64().unwrap(), 1);
     assert_eq!(stats["sections"].as_u64().unwrap(), 1);
 }
@@ -2068,7 +2112,8 @@ async fn survey_prewarms_parent_sections_of_claim_hits() {
 
     let survey_body: serde_json::Value =
         serde_json::from_str(extract_text(&survey_result.content)).unwrap();
-    let results = survey_body["results"]
+    let survey_data = tool_result(&survey_body);
+    let results = survey_data["results"]
         .as_array()
         .expect("should have results");
 
@@ -2420,23 +2465,24 @@ async fn e2e_iris_fetch_then_survey_and_toc() {
 
     let fetch_json: serde_json::Value =
         serde_json::from_str(extract_text(&fetch_result.content)).unwrap();
+    let fetch_data = tool_result(&fetch_json);
 
     assert_eq!(
-        fetch_json["pages_fetched"].as_u64().unwrap(),
+        fetch_data["pages_fetched"].as_u64().unwrap(),
         1,
         "should fetch exactly 1 page"
     );
     assert!(
-        fetch_json["sections_indexed"].as_u64().unwrap() > 0,
+        fetch_data["sections_indexed"].as_u64().unwrap() > 0,
         "should index sections"
     );
     assert_eq!(
-        fetch_json["strategy_used"].as_str().unwrap(),
+        fetch_data["strategy_used"].as_str().unwrap(),
         "direct_fetch",
         "should use direct fetch strategy for plain URL"
     );
     assert!(
-        fetch_json["tokens_added"].as_u64().unwrap() > 0,
+        fetch_data["tokens_added"].as_u64().unwrap() > 0,
         "should report tokens added"
     );
     assert!(
@@ -2459,7 +2505,8 @@ async fn e2e_iris_fetch_then_survey_and_toc() {
 
     let survey_json: serde_json::Value =
         serde_json::from_str(extract_text(&survey_result.content)).unwrap();
-    let results = survey_json["results"].as_array().unwrap();
+    let survey_data = tool_result(&survey_json);
+    let results = survey_data["results"].as_array().unwrap();
     assert!(!results.is_empty(), "survey should find fetched content");
 
     // Verify at least one result references web content
@@ -2481,7 +2528,8 @@ async fn e2e_iris_fetch_then_survey_and_toc() {
 
     let toc_json: serde_json::Value =
         serde_json::from_str(extract_text(&toc_result.content)).unwrap();
-    let entries = toc_json["entries"].as_array().unwrap();
+    let toc_data = tool_result(&toc_json);
+    let entries = toc_data["entries"].as_array().unwrap();
     assert!(!entries.is_empty(), "toc should list fetched documents");
 
     // Verify the web-fetched document appears in the ToC
@@ -2671,12 +2719,13 @@ async fn e2e_iris_clone_then_survey_and_toc() {
     );
 
     let clone_json: serde_json::Value = serde_json::from_str(clone_text).unwrap();
+    let clone_data = tool_result(&clone_json);
     assert!(
-        clone_json["files_discovered"].as_u64().unwrap() > 0,
+        clone_data["files_discovered"].as_u64().unwrap() > 0,
         "should discover files in clone"
     );
     assert!(
-        clone_json["sections_extracted"].as_u64().unwrap() > 0,
+        clone_data["sections_extracted"].as_u64().unwrap() > 0,
         "should extract sections from cloned content"
     );
     assert!(clone_json["budget_status"].is_object());
@@ -2696,7 +2745,8 @@ async fn e2e_iris_clone_then_survey_and_toc() {
 
     let survey_json: serde_json::Value =
         serde_json::from_str(extract_text(&survey_result.content)).unwrap();
-    let results = survey_json["results"].as_array().unwrap();
+    let survey_data = tool_result(&survey_json);
+    let results = survey_data["results"].as_array().unwrap();
     assert!(!results.is_empty(), "survey should find cloned content");
 
     // Step 3: Verify iris_toc lists the cloned documents
@@ -2709,7 +2759,8 @@ async fn e2e_iris_clone_then_survey_and_toc() {
 
     let toc_json: serde_json::Value =
         serde_json::from_str(extract_text(&toc_result.content)).unwrap();
-    let entries = toc_json["entries"].as_array().unwrap();
+    let toc_data = tool_result(&toc_json);
+    let entries = toc_data["entries"].as_array().unwrap();
     assert!(!entries.is_empty(), "toc should list cloned documents");
     assert!(
         entries.len() >= 2,
@@ -2815,12 +2866,13 @@ async fn e2e_clone_and_fetch_unified_survey_results() {
     );
 
     let fetch_json: serde_json::Value = serde_json::from_str(fetch_text).unwrap();
+    let fetch_data = tool_result(&fetch_json);
     assert!(
-        fetch_json["pages_fetched"].as_u64().unwrap() > 0,
+        fetch_data["pages_fetched"].as_u64().unwrap() > 0,
         "should fetch at least 1 page, got: {fetch_json}"
     );
     assert!(
-        fetch_json["sections_indexed"].as_u64().unwrap() > 0,
+        fetch_data["sections_indexed"].as_u64().unwrap() > 0,
         "should index sections from fetched page, got: {fetch_json}"
     );
 
@@ -2848,7 +2900,8 @@ async fn e2e_clone_and_fetch_unified_survey_results() {
 
     let survey_json: serde_json::Value =
         serde_json::from_str(extract_text(&survey_result.content)).unwrap();
-    let results = survey_json["results"].as_array().unwrap();
+    let survey_data = tool_result(&survey_json);
+    let results = survey_data["results"].as_array().unwrap();
     assert!(
         !results.is_empty(),
         "survey should return results from indexed sources"
@@ -2874,7 +2927,8 @@ async fn e2e_clone_and_fetch_unified_survey_results() {
     let toc_result = call_tool(&client, "iris_toc", json!({})).await;
     let toc_json: serde_json::Value =
         serde_json::from_str(extract_text(&toc_result.content)).unwrap();
-    let entries = toc_json["entries"].as_array().unwrap();
+    let toc_data = tool_result(&toc_json);
+    let entries = toc_data["entries"].as_array().unwrap();
 
     // Both iris_fetch and iris_clone succeeded above, so the corpus has
     // content from both sources. The ToC must include at least the cloned docs.
@@ -3130,8 +3184,9 @@ async fn iris_symbols_finds_struct_by_name() {
     assert!(result.is_error.is_none() || result.is_error == Some(false));
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
+    let data = tool_result(&response);
 
-    let symbols = response["symbols"].as_array().unwrap();
+    let symbols = data["symbols"].as_array().unwrap();
     assert!(!symbols.is_empty(), "should find IrisConfig by name search");
     assert!(symbols.iter().any(|s| s["name"] == "IrisConfig"));
 }
@@ -3143,8 +3198,9 @@ async fn iris_symbols_filters_by_kind() {
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
+    let data = tool_result(&response);
 
-    let symbols = response["symbols"].as_array().unwrap();
+    let symbols = data["symbols"].as_array().unwrap();
     assert_eq!(symbols.len(), 1, "should find exactly one function");
     assert_eq!(symbols[0]["name"], "survey");
     assert_eq!(symbols[0]["kind"], "function");
@@ -3157,8 +3213,9 @@ async fn iris_symbols_filters_by_module() {
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
+    let data = tool_result(&response);
 
-    let symbols = response["symbols"].as_array().unwrap();
+    let symbols = data["symbols"].as_array().unwrap();
     assert_eq!(symbols.len(), 2, "should find two symbols in config module");
     assert!(symbols.iter().all(|s| s["file"] == "src/config.rs"));
 }
@@ -3170,8 +3227,9 @@ async fn iris_symbols_returns_all_when_no_filter() {
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
+    let data = tool_result(&response);
 
-    let total = response["total"].as_u64().unwrap();
+    let total = data["total"].as_u64().unwrap();
     assert_eq!(total, 5, "should return all 5 symbols when unfiltered");
 }
 
@@ -3182,8 +3240,9 @@ async fn iris_symbols_includes_doc_preview() {
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
+    let data = tool_result(&response);
 
-    let symbols = response["symbols"].as_array().unwrap();
+    let symbols = data["symbols"].as_array().unwrap();
     let storage_sym = symbols
         .iter()
         .find(|s| s["name"] == "Storage")
@@ -3207,16 +3266,17 @@ async fn iris_definition_returns_symbol_metadata() {
     assert!(result.is_error.is_none() || result.is_error == Some(false));
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
+    let data = tool_result(&response);
 
-    assert_eq!(response["name"], "IrisConfig");
-    assert_eq!(response["kind"], "struct");
-    assert_eq!(response["visibility"], "pub");
-    assert_eq!(response["file_path"], "src/config.rs");
-    assert_eq!(response["line_start"], 10);
-    assert_eq!(response["line_end"], 25);
+    assert_eq!(data["name"], "IrisConfig");
+    assert_eq!(data["kind"], "struct");
+    assert_eq!(data["visibility"], "pub");
+    assert_eq!(data["file_path"], "src/config.rs");
+    assert_eq!(data["line_start"], 10);
+    assert_eq!(data["line_end"], 25);
 
     // Heading path should include module + name
-    let heading = response["heading_path"].as_array().unwrap();
+    let heading = data["heading_path"].as_array().unwrap();
     assert!(heading.iter().any(|h| h == "config"));
     assert!(heading.iter().any(|h| h == "IrisConfig"));
 }
@@ -3271,8 +3331,9 @@ async fn iris_references_finds_callers() {
     assert!(result.is_error.is_none() || result.is_error == Some(false));
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
+    let data = tool_result(&response);
 
-    let refs = response["references"].as_array().unwrap();
+    let refs = data["references"].as_array().unwrap();
     assert!(!refs.is_empty(), "Storage should have references");
     // survey calls Storage
     assert!(
@@ -3294,8 +3355,9 @@ async fn iris_references_filters_by_ref_kind() {
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
+    let data = tool_result(&response);
 
-    let refs = response["references"].as_array().unwrap();
+    let refs = data["references"].as_array().unwrap();
     assert!(
         refs.is_empty(),
         "IrisConfig should have no 'calls' references, only 'uses'"
@@ -3311,8 +3373,9 @@ async fn iris_references_filters_by_ref_kind() {
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
+    let data2 = tool_result(&response);
 
-    let refs = response["references"].as_array().unwrap();
+    let refs = data2["references"].as_array().unwrap();
     assert_eq!(refs.len(), 1, "IrisConfig should have one 'uses' reference");
     assert_eq!(refs[0]["from_name"], "survey");
 }

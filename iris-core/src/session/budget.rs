@@ -126,6 +126,28 @@ impl BudgetTracker {
         self.window.record(content_id, token_count)
     }
 
+    /// Record a token delivery with FSRS-aware eviction.
+    ///
+    /// Under the [`EvictionPolicy::Fsrs`] policy, the memory tracker's
+    /// retrievability scores determine which content is evicted first
+    /// (lowest predicted recall probability).
+    #[allow(clippy::cast_precision_loss)]
+    pub fn record_tokens_with_memory(
+        &mut self,
+        content_id: &str,
+        token_count: usize,
+        memory: &super::memory::MemoryTracker,
+        current_turn: u32,
+    ) -> Vec<String> {
+        let scores: std::collections::HashMap<String, f64> = memory
+            .states()
+            .keys()
+            .map(|k| (k.clone(), memory.retrievability(k, current_turn)))
+            .collect();
+        self.window
+            .record_with_scores(content_id, token_count, Some(&scores))
+    }
+
     /// Mark content as recently accessed (LRU policy only).
     pub fn touch(&mut self, content_id: &str) {
         self.window.touch(content_id);
@@ -206,11 +228,12 @@ impl BudgetTracker {
         &self,
         session: &Session,
         max_candidates: usize,
+        memory: Option<&super::memory::MemoryTracker>,
     ) -> Vec<EvictionCandidate> {
         if self.pressure_level() == PressureLevel::Normal {
             return Vec::new();
         }
-        EvictionRanker::rank(session, max_candidates)
+        EvictionRanker::rank(session, max_candidates, memory)
     }
 
     /// Recommend automatic tier promotions based on current pressure.
@@ -578,7 +601,7 @@ mod tests {
 
         // 300/1000 = 0.3 -> Normal pressure
         assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
-        let candidates = tracker.eviction_candidates(&session, 5);
+        let candidates = tracker.eviction_candidates(&session, 5, None);
         assert!(
             candidates.is_empty(),
             "no eviction candidates under normal pressure"
@@ -614,7 +637,7 @@ mod tests {
 
         // 900/1000 = 0.9 -> Elevated
         assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
-        let candidates = tracker.eviction_candidates(&session, 5);
+        let candidates = tracker.eviction_candidates(&session, 5, None);
         assert!(
             !candidates.is_empty(),
             "should return candidates under elevated pressure"
@@ -641,7 +664,7 @@ mod tests {
 
         // 960/1000 = 0.96 -> Critical
         assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
-        let candidates = tracker.eviction_candidates(&session, 5);
+        let candidates = tracker.eviction_candidates(&session, 5, None);
         assert!(
             !candidates.is_empty(),
             "should return candidates under critical pressure"

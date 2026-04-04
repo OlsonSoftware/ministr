@@ -1825,7 +1825,10 @@ impl IrisServer {
             let prefetch = self.prefetch.lock().await;
 
             let status = entry.budget.budget_status();
-            let candidates = entry.budget.eviction_candidates(&entry.session, 5);
+            let candidates =
+                entry
+                    .budget
+                    .eviction_candidates(&entry.session, 5, Some(&entry.memory));
             let prefetch_metrics = prefetch.metrics();
             let alerts = entry.session.drain_alerts();
 
@@ -3155,7 +3158,9 @@ impl IrisServer {
         let eviction_recommendations = if budget_status.pressure_level == PressureLevel::Normal {
             Vec::new()
         } else {
-            entry.budget.eviction_candidates(&entry.session, 3)
+            entry
+                .budget
+                .eviction_candidates(&entry.session, 3, Some(&entry.memory))
         };
         drop(reg);
 
@@ -4637,7 +4642,7 @@ mod tests {
             .unwrap();
         let text1 = extract_text(&result1.content);
         let parsed1: serde_json::Value = serde_json::from_str(text1).unwrap();
-        let first_count = parsed1["results"].as_array().unwrap().len();
+        let first_count = parsed1["result"]["results"].as_array().unwrap().len();
         assert!(first_count > 0, "first survey should return results");
 
         // Second survey with same query — should filter out delivered content
@@ -4650,8 +4655,8 @@ mod tests {
             .unwrap();
         let text2 = extract_text(&result2.content);
         let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
-        let second_count = parsed2["results"].as_array().unwrap().len();
-        let dedup_count = parsed2["deduplicated_count"].as_u64().unwrap();
+        let second_count = parsed2["result"]["results"].as_array().unwrap().len();
+        let dedup_count = parsed2["result"]["deduplicated_count"].as_u64().unwrap();
 
         assert!(
             second_count < first_count,
@@ -4677,7 +4682,7 @@ mod tests {
         let text1 = extract_text(&result1.content);
         let parsed1: serde_json::Value = serde_json::from_str(text1).unwrap();
         assert!(
-            parsed1["text"].is_string(),
+            parsed1["result"]["text"].is_string(),
             "first read should return full text"
         );
 
@@ -4691,11 +4696,11 @@ mod tests {
         let text2 = extract_text(&result2.content);
         let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
         assert_eq!(
-            parsed2["status"], "already_delivered",
+            parsed2["result"]["status"], "already_delivered",
             "re-request should return already_delivered status"
         );
         assert!(
-            parsed2["text"].is_null(),
+            parsed2["result"]["text"].is_null(),
             "re-request should not include full text"
         );
         assert!(
@@ -4703,7 +4708,7 @@ mod tests {
             "response should include budget_status"
         );
         assert!(
-            parsed2["claims_available"].is_number(),
+            parsed2["result"]["claims_available"].is_number(),
             "response should include claims_available"
         );
     }
@@ -4721,9 +4726,12 @@ mod tests {
 
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert!(parsed["results"].is_array(), "should have results array");
         assert!(
-            parsed["deduplicated_count"].is_number(),
+            parsed["result"]["results"].is_array(),
+            "should have results array"
+        );
+        assert!(
+            parsed["result"]["deduplicated_count"].is_number(),
             "should have deduplicated_count"
         );
     }
@@ -4742,9 +4750,14 @@ mod tests {
 
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert_eq!(parsed["section_id"], "docs/auth.md#tokens");
-        assert_eq!(parsed["claims_available"], 2);
-        assert!(parsed["text"].as_str().unwrap().contains("JWT tokens"));
+        assert_eq!(parsed["result"]["section_id"], "docs/auth.md#tokens");
+        assert_eq!(parsed["result"]["claims_available"], 2);
+        assert!(
+            parsed["result"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("JWT tokens")
+        );
         assert!(parsed["budget_status"].is_object());
     }
 
@@ -4900,8 +4913,8 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(parsed["evicted"].as_array().unwrap().len(), 1);
-        assert_eq!(parsed["not_found"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["result"]["evicted"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["result"]["not_found"].as_array().unwrap().len(), 0);
         assert!(parsed["budget_status"].is_object());
         assert_eq!(
             parsed["budget_status"]["tokens_used"].as_u64().unwrap(),
@@ -4924,8 +4937,8 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(parsed["evicted"].as_array().unwrap().len(), 0);
-        assert_eq!(parsed["not_found"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["result"]["evicted"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["result"]["not_found"].as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -4951,8 +4964,8 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(parsed["evicted"].as_array().unwrap().len(), 1);
-        assert_eq!(parsed["not_found"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["result"]["evicted"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["result"]["not_found"].as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -4969,8 +4982,8 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(parsed["evicted"].as_array().unwrap().len(), 0);
-        assert_eq!(parsed["not_found"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["result"]["evicted"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["result"]["not_found"].as_array().unwrap().len(), 0);
     }
 
     // --- Fault-based correction tests ---
@@ -5002,7 +5015,7 @@ mod tests {
         let text2 = extract_text(&result2.content);
         let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
         assert_eq!(
-            parsed2["status"], "already_delivered",
+            parsed2["result"]["status"], "already_delivered",
             "re-request should skip re-delivery"
         );
 
@@ -5152,7 +5165,7 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        let summaries = parsed["summaries"].as_array().unwrap();
+        let summaries = parsed["result"]["summaries"].as_array().unwrap();
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0]["original_id"], "docs/auth.md#tokens");
         assert!(summaries[0]["summary"].is_string());
@@ -5171,7 +5184,7 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        let summaries = parsed["summaries"].as_array().unwrap();
+        let summaries = parsed["result"]["summaries"].as_array().unwrap();
         assert!(
             summaries.is_empty(),
             "unknown content IDs should be silently skipped"
@@ -5206,7 +5219,7 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        let summaries = parsed["summaries"].as_array().unwrap();
+        let summaries = parsed["result"]["summaries"].as_array().unwrap();
         if !summaries.is_empty() {
             let original = summaries[0]["original_tokens"].as_u64().unwrap();
             let compressed = summaries[0]["compressed_tokens"].as_u64().unwrap();
@@ -5233,7 +5246,7 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        let summaries = parsed["summaries"].as_array().unwrap();
+        let summaries = parsed["result"]["summaries"].as_array().unwrap();
         assert_eq!(
             summaries.len(),
             1,
@@ -6463,10 +6476,10 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
         // Our test corpus has 1 section — verify pagination metadata
-        assert_eq!(parsed["corpus_stats"]["sections"], 1);
-        assert_eq!(parsed["corpus_stats"]["offset"], 0);
-        assert_eq!(parsed["corpus_stats"]["returned"], 1);
-        assert_eq!(parsed["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["result"]["corpus_stats"]["sections"], 1);
+        assert_eq!(parsed["result"]["corpus_stats"]["offset"], 0);
+        assert_eq!(parsed["result"]["corpus_stats"]["returned"], 1);
+        assert_eq!(parsed["result"]["entries"].as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -6485,10 +6498,10 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(parsed["corpus_stats"]["sections"], 1);
-        assert_eq!(parsed["corpus_stats"]["offset"], 100);
-        assert_eq!(parsed["corpus_stats"]["returned"], 0);
-        assert!(parsed["entries"].as_array().unwrap().is_empty());
+        assert_eq!(parsed["result"]["corpus_stats"]["sections"], 1);
+        assert_eq!(parsed["result"]["corpus_stats"]["offset"], 100);
+        assert_eq!(parsed["result"]["corpus_stats"]["returned"], 0);
+        assert!(parsed["result"]["entries"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -6509,9 +6522,9 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
         // Test corpus has no symbols — verify pagination metadata defaults
-        assert_eq!(parsed["total"], 0);
-        assert_eq!(parsed["offset"], 0);
-        assert!(parsed["symbols"].as_array().unwrap().is_empty());
+        assert_eq!(parsed["result"]["total"], 0);
+        assert_eq!(parsed["result"]["offset"], 0);
+        assert!(parsed["result"]["symbols"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -6531,9 +6544,9 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(parsed["total"], 0);
-        assert_eq!(parsed["offset"], 50);
-        assert!(parsed["symbols"].as_array().unwrap().is_empty());
+        assert_eq!(parsed["result"]["total"], 0);
+        assert_eq!(parsed["result"]["offset"], 50);
+        assert!(parsed["result"]["symbols"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

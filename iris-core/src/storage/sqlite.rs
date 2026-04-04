@@ -2145,3 +2145,104 @@ impl<T> OptionalExt<T> for Result<T, rusqlite::Error> {
         }
     }
 }
+
+// --- FSRS memory state persistence ---
+
+impl SqliteStorage {
+    /// Save FSRS memory states to the database (upsert).
+    ///
+    /// Used at session end to persist learned section importance across sessions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the database transaction fails.
+    pub async fn save_memory_states(
+        &self,
+        states: &[(String, crate::session::memory::MemoryState)],
+    ) -> Result<(), StorageError> {
+        let states = states.to_vec();
+        self.with_conn(move |conn| {
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            for (section_id, state) in &states {
+                tx.execute(
+                    "INSERT INTO section_memory_states
+                       (section_id, stability, difficulty, last_access_turn, access_count, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                     ON CONFLICT(section_id) DO UPDATE SET
+                       stability = ?2,
+                       difficulty = ?3,
+                       last_access_turn = ?4,
+                       access_count = ?5,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+                    rusqlite::params![
+                        section_id,
+                        state.stability,
+                        state.difficulty,
+                        state.last_access_turn,
+                        state.access_count,
+                    ],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            }
+            tx.commit().map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Load FSRS memory states from the database, ordered by access count descending.
+    ///
+    /// Used at session start to restore learned importance from previous sessions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the database query fails.
+    pub async fn load_memory_states(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(String, crate::session::memory::MemoryState)>, StorageError> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT section_id, stability, difficulty, last_access_turn, access_count
+                     FROM section_memory_states
+                     ORDER BY access_count DESC
+                     LIMIT ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            let rows = stmt
+                .query_map(rusqlite::params![limit], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        crate::session::memory::MemoryState {
+                            stability: row.get(1)?,
+                            difficulty: row.get(2)?,
+                            last_access_turn: row.get(3)?,
+                            access_count: row.get(4)?,
+                        },
+                    ))
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row.map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?);
+            }
+            Ok(result)
+        })
+        .await
+    }
+}
