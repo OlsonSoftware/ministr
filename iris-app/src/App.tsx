@@ -203,6 +203,7 @@ export function App() {
               status={status}
               theme={theme}
               onThemeChange={setTheme}
+              onShowOnboarding={() => setShowOnboarding(true)}
             />
           )}
         </main>

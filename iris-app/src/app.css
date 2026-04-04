@@ -1,6 +1,24 @@
 @import "tailwindcss";
 
-@theme {
+/* Light theme (default) */
+:root {
+  --color-surface: #fafafa;
+  --color-surface-raised: #ffffff;
+  --color-surface-overlay: #f0f0f0;
+  --color-border: #e0e0e0;
+  --color-border-hover: #bbb;
+  --color-text: #1a1a1a;
+  --color-text-muted: #666;
+  --color-text-dim: #999;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #2563eb;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+}
+
+/* Dark theme */
+.dark {
   --color-surface: #0f0f0f;
   --color-surface-raised: #1a1a1a;
   --color-surface-overlay: #242424;
@@ -14,6 +32,22 @@
   --color-success: #22c55e;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
+}
+
+@theme {
+  --color-surface: var(--color-surface);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-overlay: var(--color-surface-overlay);
+  --color-border: var(--color-border);
+  --color-border-hover: var(--color-border-hover);
+  --color-text: var(--color-text);
+  --color-text-muted: var(--color-text-muted);
+  --color-text-dim: var(--color-text-dim);
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-danger: var(--color-danger);
 }
 
 body {
@@ -32,9 +66,9 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #444;
+  background: var(--color-border);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: var(--color-border-hover);
 }

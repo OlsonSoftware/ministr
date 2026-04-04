@@ -9,9 +9,10 @@ interface SettingsProps {
   status: DaemonStatus;
   theme: string;
   onThemeChange: (theme: "dark" | "light" | "system") => void;
+  onShowOnboarding: () => void;
 }
 
-export function Settings({ status, theme, onThemeChange }: SettingsProps) {
+export function Settings({ status, theme, onThemeChange, onShowOnboarding }: SettingsProps) {
   const [autostart, setAutostart] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -116,6 +117,25 @@ export function Settings({ status, theme, onThemeChange }: SettingsProps) {
           </div>
         </Card>
       )}
+
+      <Card>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-medium text-sm">Onboarding</h3>
+            <p className="text-xs text-text-dim mt-0.5">Show the setup wizard again</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              await invoke("reset_onboarding");
+              onShowOnboarding();
+            }}
+          >
+            Show Setup
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 }
