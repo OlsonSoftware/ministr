@@ -1,0 +1,117 @@
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Users, Gauge, Zap } from "lucide-react";
+import { Card } from "./ui/card";
+import type { SessionDetail, DaemonStatus } from "../lib/types";
+
+interface Props {
+  status: DaemonStatus;
+}
+
+export function SessionDashboard({ status }: Props) {
+  const [sessions, setSessions] = useState<SessionDetail[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const all: SessionDetail[] = [];
+        for (const c of status.corpora) {
+          const s = await invoke<SessionDetail[]>("list_sessions", {
+            corpusId: c.id,
+          });
+          all.push(...s);
+        }
+        if (!cancelled) setSessions(all);
+      } catch {
+        /* ignore */
+      }
+    }
+    load();
+    const interval = setInterval(load, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [status.corpora]);
+
+  return (
+    <div className="space-y-3">
+      <h2 className="text-sm font-medium text-text-muted uppercase tracking-wider flex items-center gap-2">
+        <Users className="h-4 w-4" /> Active Sessions
+      </h2>
+
+      {sessions.length === 0 ? (
+        <p className="text-sm text-text-dim">No active sessions.</p>
+      ) : (
+        <div className="grid gap-3">
+          {sessions.map((s) => (
+            <Card key={s.session_id}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono text-text-dim truncate max-w-[200px]">
+                  {s.session_id}
+                </span>
+                <PressureBadge level={s.pressure_level} />
+              </div>
+
+              <div className="flex items-center gap-4 text-xs text-text-dim mb-2">
+                <span>Corpus: {s.corpus_id}</span>
+                <span>Turn {s.current_turn}</span>
+                <span>{s.delivered_count} delivered</span>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span>Token budget</span>
+                  <span>
+                    {formatTokens(s.tokens_used)} / {formatTokens(s.tokens_used + s.tokens_remaining)}
+                  </span>
+                </div>
+                <BudgetBar utilization={s.utilization} pressure={s.pressure_level} />
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BudgetBar({ utilization, pressure }: { utilization: number; pressure: string }) {
+  const pct = Math.min(utilization * 100, 100);
+  const color =
+    pressure === "critical"
+      ? "bg-danger"
+      : pressure === "high"
+        ? "bg-warning"
+        : pressure === "medium"
+          ? "bg-accent"
+          : "bg-green-500";
+
+  return (
+    <div className="h-2 rounded-full bg-surface-overlay overflow-hidden">
+      <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function PressureBadge({ level }: { level: string }) {
+  const colors: Record<string, string> = {
+    none: "bg-green-500/10 text-green-500",
+    low: "bg-green-500/10 text-green-500",
+    medium: "bg-accent/10 text-accent",
+    high: "bg-warning/10 text-warning",
+    critical: "bg-danger/10 text-danger",
+  };
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full ${colors[level] ?? colors.low}`}>
+      {level}
+    </span>
+  );
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toString();
+}

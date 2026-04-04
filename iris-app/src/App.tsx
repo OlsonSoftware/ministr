@@ -7,6 +7,12 @@ import {
   Settings as SettingsIcon,
   ScrollText,
   Zap,
+  Users,
+  Timer,
+  Search,
+  TreePine,
+  GitBranch,
+  Cpu,
 } from "lucide-react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useTheme } from "./hooks/useTheme";
@@ -15,9 +21,15 @@ import { ProjectDetail } from "./components/ProjectDetail";
 import { Settings } from "./components/Settings";
 import { LogViewer } from "./components/LogViewer";
 import { Onboarding } from "./components/Onboarding";
+import { SessionDashboard } from "./components/SessionDashboard";
+import { IngestionTimeline } from "./components/IngestionTimeline";
+import { QueryPlayground } from "./components/QueryPlayground";
+import { CorpusTreemap } from "./components/CorpusTreemap";
+import { SymbolGraph } from "./components/SymbolGraph";
+import { ContextSimulator } from "./components/ContextSimulator";
 import { cn } from "./lib/utils";
 
-type Tab = "projects" | "health" | "logs" | "settings";
+type Tab = "projects" | "health" | "sessions" | "ingestion" | "search" | "treemap" | "symbols" | "simulator" | "logs" | "settings";
 
 export function App() {
   const { status, error, refresh } = useDaemonStatus();
@@ -35,7 +47,8 @@ export function App() {
   useEffect(() => {
     const unlisten = listen<string>("navigate", (event) => {
       const target = event.payload as Tab;
-      if (["projects", "health", "logs", "settings"].includes(target)) {
+      const validTabs: Tab[] = ["projects", "health", "sessions", "ingestion", "search", "treemap", "symbols", "simulator", "logs", "settings"];
+      if (validTabs.includes(target)) {
         setTab(target);
       }
     });
@@ -97,6 +110,42 @@ export function App() {
             label="Health"
           />
           <NavButton
+            icon={Users}
+            active={tab === "sessions"}
+            onClick={() => setTab("sessions")}
+            label="Sessions"
+          />
+          <NavButton
+            icon={Timer}
+            active={tab === "ingestion"}
+            onClick={() => setTab("ingestion")}
+            label="Ingestion"
+          />
+          <NavButton
+            icon={Search}
+            active={tab === "search"}
+            onClick={() => setTab("search")}
+            label="Search"
+          />
+          <NavButton
+            icon={TreePine}
+            active={tab === "treemap"}
+            onClick={() => setTab("treemap")}
+            label="Treemap"
+          />
+          <NavButton
+            icon={GitBranch}
+            active={tab === "symbols"}
+            onClick={() => setTab("symbols")}
+            label="Symbols"
+          />
+          <NavButton
+            icon={Cpu}
+            active={tab === "simulator"}
+            onClick={() => setTab("simulator")}
+            label="Simulator"
+          />
+          <NavButton
             icon={ScrollText}
             active={tab === "logs"}
             onClick={() => setTab("logs")}
@@ -135,6 +184,18 @@ export function App() {
             </div>
           ) : tab === "health" ? (
             <HealthView status={status} />
+          ) : tab === "sessions" ? (
+            <SessionDashboard status={status} />
+          ) : tab === "ingestion" ? (
+            <IngestionTimeline status={status} />
+          ) : tab === "search" ? (
+            <QueryPlayground status={status} />
+          ) : tab === "treemap" ? (
+            <CorpusTreemap status={status} />
+          ) : tab === "symbols" ? (
+            <SymbolGraph status={status} />
+          ) : tab === "simulator" ? (
+            <ContextSimulator />
           ) : tab === "logs" ? (
             <LogViewer />
           ) : (
@@ -147,13 +208,19 @@ export function App() {
         </main>
       </div>
 
-      {/* Bottom tabs (narrow screens) */}
+      {/* Bottom tabs (narrow screens) — show key tabs only */}
       <nav className="flex sm:hidden border-t border-border shrink-0">
         <TabButton
           icon={FolderKanban}
           label="Projects"
           active={tab === "projects"}
           onClick={() => setTab("projects")}
+        />
+        <TabButton
+          icon={Search}
+          label="Search"
+          active={tab === "search"}
+          onClick={() => setTab("search")}
         />
         <TabButton
           icon={Activity}
