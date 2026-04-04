@@ -893,12 +893,16 @@ async fn evict_content(
 // ---------------------------------------------------------------------------
 
 async fn daemon_status(State(state): State<AppState>) -> impl IntoResponse {
+    let corpora = state.registry.list().await;
+    let total_sessions: usize = corpora.iter().map(|c| c.active_sessions).sum();
     Json(DaemonStatus {
         version: env!("CARGO_PKG_VERSION").to_string(),
         uptime_secs: state.uptime_secs(),
         memory_mb: iris_core::mem_profile::rss_mb().unwrap_or(0.0),
         model: state.registry.config().default_model.clone(),
         model_dimension: state.registry.embedder().dimension(),
-        corpora: state.registry.list().await,
+        corpora,
+        log_path: None,
+        total_sessions,
     })
 }

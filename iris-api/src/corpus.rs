@@ -53,6 +53,9 @@ pub struct CorpusInfo {
     pub sections_count: usize,
     /// Number of embeddings in the vector index.
     pub embeddings_count: usize,
+    /// Number of active MCP sessions using this corpus.
+    #[serde(default)]
+    pub active_sessions: usize,
 }
 
 /// Current indexing status of a corpus.

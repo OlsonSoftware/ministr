@@ -237,6 +237,7 @@ fn build_corpus_handle(
             files_indexed: 2,
             sections_count: 3,
             embeddings_count: index.len(),
+            active_sessions: 0,
         }),
         storage,
         index,

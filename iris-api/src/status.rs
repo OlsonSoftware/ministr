@@ -19,4 +19,10 @@ pub struct DaemonStatus {
     pub model_dimension: usize,
     /// All registered corpora with their status.
     pub corpora: Vec<CorpusInfo>,
+    /// Path to the daemon log file (if file logging is active).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_path: Option<String>,
+    /// Total active sessions across all corpora.
+    #[serde(default)]
+    pub total_sessions: usize,
 }
