@@ -1441,11 +1441,11 @@ phases:
   - text: 'Add prefetch metrics endpoint: GET /sessions/:id/prefetch — hit/miss rates per strategy'
     checked: true
   - text: 'Ingestion progress streaming: GET /corpora/:id/progress returns SSE stream with file count, section count, phase'
-    checked: false
+    checked: true
   - text: 'Coherence notification forwarding: proxy subscribes to daemon SSE channel, forwards stale section IDs to MCP client via notifications/resources/updated'
     checked: false
   - text: 'Session persistence: save/restore session state (delivered items, trajectory, budget) across daemon restarts via SQLite'
-    checked: false
+    checked: true
   - text: 'Bundle export/import endpoints on daemon API: POST /corpora/:id/export, POST /corpora/import'
     checked: false
   - text: 'Cloud bundle fetch integration: daemon downloads [[corpus.cloud]] bundles, checks staleness via bundle_version, caches manifests'
@@ -1453,7 +1453,7 @@ phases:
   - text: Update iris-mcp ProxyServer to delegate all new endpoints (compress, budget, evict, prefetch metrics) to daemon
     checked: true
   - text: Rate limiting / request queuing for expensive operations (survey embedding, re-index) to prevent daemon overload
-    checked: false
+    checked: true
 - id: TRAY1
   name: Tray App Foundation
   tagline: System tray GUI that keeps the daemon alive and shows project status

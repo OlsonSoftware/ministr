@@ -135,19 +135,52 @@ async fn populate_storage(
 
     // Index all content at multiple resolutions.
     let texts_and_ids = [
-        ("doc-summary::docs/auth.md", "Complete authentication reference."),
-        ("doc-summary::docs/api.md", "Full API reference documentation."),
-        ("sec-summary::docs/auth.md#tokens", "Token authentication details."),
-        ("sec-summary::docs/auth.md#oauth", "OAuth 2.0 integration details."),
-        ("sec-summary::docs/api.md#rate-limits", "Rate limiting policy."),
-        ("section::docs/auth.md#tokens", "JWT tokens use RS256 signing. Tokens expire after 24 hours."),
-        ("section::docs/auth.md#oauth", "OAuth 2.0 authorization code flow with PKCE is required for public clients."),
-        ("section::docs/api.md#rate-limits", "Rate limits are 100 requests per minute per API key. Exceeding the limit returns HTTP 429."),
+        (
+            "doc-summary::docs/auth.md",
+            "Complete authentication reference.",
+        ),
+        (
+            "doc-summary::docs/api.md",
+            "Full API reference documentation.",
+        ),
+        (
+            "sec-summary::docs/auth.md#tokens",
+            "Token authentication details.",
+        ),
+        (
+            "sec-summary::docs/auth.md#oauth",
+            "OAuth 2.0 integration details.",
+        ),
+        (
+            "sec-summary::docs/api.md#rate-limits",
+            "Rate limiting policy.",
+        ),
+        (
+            "section::docs/auth.md#tokens",
+            "JWT tokens use RS256 signing. Tokens expire after 24 hours.",
+        ),
+        (
+            "section::docs/auth.md#oauth",
+            "OAuth 2.0 authorization code flow with PKCE is required for public clients.",
+        ),
+        (
+            "section::docs/api.md#rate-limits",
+            "Rate limits are 100 requests per minute per API key. Exceeding the limit returns HTTP 429.",
+        ),
         ("claim::auth-c1", "JWT tokens use RS256 signing algorithm."),
         ("claim::auth-c2", "Tokens expire after 24 hours by default."),
-        ("claim::auth-c3", "OAuth 2.0 authorization code flow is supported."),
-        ("claim::api-c1", "Rate limit is 100 requests per minute per API key."),
-        ("claim::api-c2", "Exceeding the rate limit returns HTTP 429."),
+        (
+            "claim::auth-c3",
+            "OAuth 2.0 authorization code flow is supported.",
+        ),
+        (
+            "claim::api-c1",
+            "Rate limit is 100 requests per minute per API key.",
+        ),
+        (
+            "claim::api-c2",
+            "Exceeding the rate limit returns HTTP 429.",
+        ),
     ];
 
     for (id, text) in &texts_and_ids {

@@ -3,13 +3,16 @@
 //! Exposes the iris daemon API via axum at `~/.iris/irisd.sock`.
 //! All handlers delegate to [`QueryService`] via the [`CorpusRegistry`].
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_core::Stream;
 use tokio::net::UnixListener;
 use tracing::info;
 
@@ -44,6 +47,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/related", post(related))
         .route("/api/v1/corpora/{id}/bridge", post(bridge))
         .route("/api/v1/corpora/{id}/compress", post(compress_content))
+        .route("/api/v1/corpora/{id}/progress", get(ingestion_progress))
         .route("/api/v1/corpora/{id}/prefetch", get(prefetch_metrics))
         .route("/api/v1/corpora/{id}/sessions", post(create_session))
         .route(
@@ -234,6 +238,7 @@ async fn survey(
     Path(id): Path<String>,
     Json(req): Json<query::SurveyRequest>,
 ) -> impl IntoResponse {
+    let _permit = state.query_semaphore.acquire().await;
     let guard = get_corpus!(&state, &id);
     let top_k = req.top_k.unwrap_or(10);
     match guard[&id].service.survey(&req.query, top_k).await {
@@ -252,6 +257,7 @@ async fn symbols(
     Path(id): Path<String>,
     Json(req): Json<query::SymbolsRequest>,
 ) -> impl IntoResponse {
+    let _permit = state.query_semaphore.acquire().await;
     let guard = get_corpus!(&state, &id);
     let limit = req.limit.unwrap_or(20);
     let filter = SymbolFilter {
@@ -458,6 +464,7 @@ async fn compress_content(
     Path(id): Path<String>,
     Json(req): Json<iris_api::session::CompressRequest>,
 ) -> impl IntoResponse {
+    let _permit = state.query_semaphore.acquire().await;
     let guard = get_corpus!(&state, &id);
     match guard[&id].service.compress_content(&req.content_ids).await {
         Ok(items) => Json(iris_api::session::CompressResponse {
@@ -465,6 +472,62 @@ async fn compress_content(
         })
         .into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "compress_failed", e).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ingestion progress SSE
+// ---------------------------------------------------------------------------
+
+async fn ingestion_progress(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let progress = {
+        let corpora = state.registry.corpora().read().await;
+        match corpora.get(&id) {
+            Some(handle) => Arc::clone(&handle.progress),
+            None => {
+                return err(StatusCode::NOT_FOUND, "not_found", format!("corpus '{id}'"))
+                    .into_response();
+            }
+        }
+    };
+
+    let stream = progress_stream(progress);
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+fn progress_stream(
+    progress: Arc<iris_core::ingestion::IngestionProgress>,
+) -> impl Stream<Item = Result<Event, Infallible>> {
+    async_stream::stream! {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        loop {
+            interval.tick().await;
+            let status_code = progress.status();
+            let status = match status_code {
+                0 => "pending",
+                1 => "running",
+                _ => "complete",
+            };
+            let event = iris_api::corpus::IngestionProgressEvent {
+                status: status.to_string(),
+                files_total: progress.files_total(),
+                files_done: progress.files_done(),
+                embeddings_total: progress.embeddings_total(),
+                embeddings_done: progress.embeddings_done(),
+            };
+            if let Ok(json) = serde_json::to_string(&event) {
+                yield Ok(Event::default().data(json));
+            }
+            // Stop streaming once ingestion is complete.
+            if status_code >= 2 {
+                break;
+            }
+        }
     }
 }
 
@@ -574,6 +637,7 @@ async fn create_session(
 
     let session_id = generate_session_id();
     let budget_tokens = req.budget_tokens.unwrap_or(100_000);
+    let data_dir = handle.data_dir.clone();
 
     let mut sessions = handle.sessions.lock().await;
     let budget_config = iris_core::session::BudgetConfig {
@@ -581,6 +645,21 @@ async fn create_session(
         ..iris_core::session::BudgetConfig::default()
     };
     sessions.get_or_create(&session_id, Some(budget_config), AccessMode::ReadWrite);
+    drop(sessions);
+
+    // Persist the new session.
+    let db_path = data_dir.join("sessions.db");
+    if let Err(e) = crate::persistence::save_session(
+        &db_path,
+        &id,
+        &session_id,
+        budget_tokens,
+        0,
+        &std::collections::BTreeMap::new(),
+        &[],
+    ) {
+        tracing::warn!(error = %e, "failed to persist session");
+    }
 
     (
         StatusCode::CREATED,
@@ -617,9 +696,16 @@ async fn destroy_session(
 ) -> impl IntoResponse {
     let guard = get_corpus!(&state, &id);
     let handle = &guard[&id];
+    let data_dir = handle.data_dir.clone();
 
     let mut sessions = handle.sessions.lock().await;
     if sessions.remove_session(&sid).is_some() {
+        drop(sessions);
+        // Remove persisted session.
+        let db_path = data_dir.join("sessions.db");
+        if let Err(e) = crate::persistence::delete_session(&db_path, &id, &sid) {
+            tracing::warn!(error = %e, "failed to delete persisted session");
+        }
         StatusCode::NO_CONTENT.into_response()
     } else {
         err(

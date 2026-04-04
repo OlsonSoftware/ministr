@@ -4,6 +4,9 @@ use std::sync::Arc;
 
 use crate::registry::CorpusRegistry;
 
+/// Default maximum concurrent expensive queries (survey, symbols, compress).
+const DEFAULT_QUERY_CONCURRENCY: usize = 4;
+
 /// Application-wide shared state.
 ///
 /// Passed to both Tauri commands (GUI) and axum handlers (daemon API)
@@ -13,6 +16,8 @@ use crate::registry::CorpusRegistry;
 pub struct AppState {
     pub registry: Arc<CorpusRegistry>,
     pub started_at: std::time::Instant,
+    /// Semaphore limiting concurrent expensive operations (survey, symbols, compress).
+    pub query_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -21,6 +26,7 @@ impl AppState {
         Self {
             registry: Arc::new(registry),
             started_at: std::time::Instant::now(),
+            query_semaphore: Arc::new(tokio::sync::Semaphore::new(DEFAULT_QUERY_CONCURRENCY)),
         }
     }
 
@@ -30,6 +36,7 @@ impl AppState {
         Self {
             registry,
             started_at: std::time::Instant::now(),
+            query_semaphore: Arc::new(tokio::sync::Semaphore::new(DEFAULT_QUERY_CONCURRENCY)),
         }
     }
 

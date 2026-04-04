@@ -81,3 +81,18 @@ pub struct ListCorporaResponse {
     /// All registered corpora.
     pub corpora: Vec<CorpusInfo>,
 }
+
+/// A single SSE event for ingestion progress.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct IngestionProgressEvent {
+    /// Phase: `"pending"`, `"running"`, or `"complete"`.
+    pub status: String,
+    /// Total files discovered for ingestion.
+    pub files_total: usize,
+    /// Files processed so far.
+    pub files_done: usize,
+    /// Total embeddings to generate.
+    pub embeddings_total: usize,
+    /// Embeddings generated so far.
+    pub embeddings_done: usize,
+}

@@ -7,5 +7,6 @@
 pub mod convert;
 pub mod daemon;
 pub mod indexer;
+pub mod persistence;
 pub mod registry;
 pub mod state;
