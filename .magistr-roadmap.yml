@@ -1295,7 +1295,7 @@ phases:
 - id: EMBED1
   name: Code-Specialized Embeddings
   tagline: Upgrade from general-purpose to code-optimized embedding models
-  status: in_progress
+  status: done
   problem: iris uses a general-purpose embedding model; code-specialized models like Nomic Embed Code dramatically outperform on code retrieval benchmarks
   solution: Abstract embedding backend, add Nomic Embed Code via ONNX, make model configurable in .iris.toml, benchmark quality improvements
   depends_on:
@@ -1308,7 +1308,7 @@ phases:
   - text: Configurable embedding model in .iris.toml (corpus.model field) with resolve_model_name() priority chain + model mismatch detection on index load
     checked: true
   - text: 'Benchmark retrieval quality: current model vs Nomic Embed Code vs Jina Code v2 using iris''s evaluation suite (S3 phase infrastructure)'
-    checked: false
+    checked: true
   - text: TruncatingEmbedder for Matryoshka dimension reduction — truncate + L2-normalize for nomic-embed-text-v1.5 (768→256/128)
     checked: true
 - id: TRANSPORT1

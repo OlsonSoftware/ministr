@@ -56,6 +56,14 @@ bench-eval:
 eval-gate:
     cargo test --test eval_retrieval eval_retrieval_regression_gate -p iris-core -- --nocapture
 
+# Compare embedding model retrieval quality (requires ~1GB model downloads)
+bench-models:
+    cargo test --test eval_model_comparison -p iris-core --release -- --nocapture --ignored
+
+# Compare a single model (pass model name, use @dim suffix for Matryoshka)
+bench-model model:
+    IRIS_EVAL_MODELS="{{model}}" cargo test --test eval_model_comparison -p iris-core --release -- --nocapture --ignored
+
 # Run all benchmarks
 bench-all:
     cargo bench -p iris-core

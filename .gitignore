@@ -19,3 +19,4 @@ docs/book/
 Cargo.lock
 .mcp.json
 .fastembed_cache
+eval/model-comparison.json
