@@ -41,12 +41,12 @@ pub fn scaffold_agent_config(project_root: &Path) -> usize {
     // VS Code Copilot reads .claude/settings.json by default (Feb 2026+).
     created += write_claude_hooks(project_root);
 
-    // ── VS Code Copilot: .github/hooks/ (native hook format) ────────────
-    // VS Code also reads .github/hooks/*.json natively. We generate the
-    // same hooks in this format for explicit coverage.
+    // ── Copilot CLI / cloud agent: .github/hooks/ (native hook format) ──
+    // Copilot CLI reads .github/hooks/*.json with version:1 format.
+    // VS Code Copilot also reads these + .claude/settings.json.
     let hooks_dir = project_root.join(".github").join("hooks");
     let hooks_files: &[(&str, &str)] =
-        &[("iris-enforce.json", VSCODE_HOOKS)];
+        &[("iris-enforce.json", COPILOT_HOOKS)];
     created += write_files(&hooks_dir, hooks_files);
 
     // ── Cursor: .cursor/rules/ ──────────────────────────────────────────
@@ -269,68 +269,23 @@ fn playbook_for_project(root: &Path) -> &'static str {
 // Embedded templates
 // ---------------------------------------------------------------------------
 
-/// VS Code Copilot native hooks (`.github/hooks/iris-enforce.json`).
+/// Copilot CLI / cloud agent hooks (`.github/hooks/iris-enforce.json`).
 ///
-/// VS Code reads `.github/hooks/*.json` natively (Preview, Feb 2026+).
-/// This provides the same enforcement as `.claude/settings.json` hooks
-/// in VS Code's own format.
-const VSCODE_HOOKS: &str = r#"{
+/// Copilot CLI reads `.github/hooks/*.json` with `"version": 1` format.
+/// VS Code Copilot also reads these files (and `.claude/settings.json`).
+/// Uses camelCase event names and bash/powershell keys per GitHub docs.
+///
+/// The preToolUse hook inspects toolName and toolArgs to block search/exploration
+/// tools and redirect to iris MCP tools.
+const COPILOT_HOOKS: &str = r#"{
+  "version": 1,
   "hooks": {
-    "PreToolUse": [
+    "preToolUse": [
       {
         "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead of built-in search. iris provides semantic code search. See .claude/rules/iris-scope.md.\"}}'",
-        "if": "Grep"
-      },
-      {
-        "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc or iris_survey instead of built-in file listing. See .claude/rules/iris-scope.md.\"}}'",
-        "if": "Glob"
-      },
-      {
-        "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of shell search tools. Do not shell out for code search.\"}}'",
-        "if": "Bash(grep *)"
-      },
-      {
-        "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of shell search tools.\"}}'",
-        "if": "Bash(rg *)"
-      },
-      {
-        "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of shell file-finding tools.\"}}'",
-        "if": "Bash(find *)"
-      },
-      {
-        "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of shell file-finding tools.\"}}'",
-        "if": "Bash(fd *)"
-      },
-      {
-        "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search/filter tools. Use iris_survey for search, iris_toc for structure.\"}}'",
-        "if": "Bash(*|*grep*)"
-      },
-      {
-        "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search/filter tools. Use iris_survey for search, iris_toc for structure.\"}}'",
-        "if": "Bash(*|*rg*)"
-      },
-      {
-        "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to head/tail/wc. Use iris tools for exploration.\"}}'",
-        "if": "Bash(*|*head*)"
-      },
-      {
-        "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to head/tail/wc. Use iris tools for exploration.\"}}'",
-        "if": "Bash(*|*tail*)"
-      },
-      {
-        "type": "command",
-        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to head/tail/wc. Use iris tools for exploration.\"}}'",
-        "if": "Bash(*|*wc*)"
+        "bash": "INPUT=$(cat); TN=$(echo \"$INPUT\" | jq -r '.toolName'); TA=$(echo \"$INPUT\" | jq -r '.toolArgs // \"\"'); case \"$TN\" in grep|Grep) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of grep. iris provides semantic code search.\"}'; exit 0;; glob|Glob) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of glob. iris provides structural overview.\"}'; exit 0;; bash|Bash|shell) CMD=$(echo \"$TA\" | jq -r '.command // \"\"'); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of shell search commands.\"}'; exit 0;; find\\ *|fd\\ *) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of shell file-finding commands.\"}'; exit 0;; esac; if echo \"$CMD\" | grep -qE '\\|\\s*(grep|rg|ag|ack|head|tail|wc)'; then echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search/filter tools. Use iris_survey, iris_toc, or iris_read.\"}'; exit 0; fi;; esac",
+        "powershell": "$input = [Console]::In.ReadToEnd() | ConvertFrom-Json; $tn = $input.toolName; $ta = if ($input.toolArgs) { $input.toolArgs } else { '' }; $blocked = @('grep','Grep','glob','Glob'); if ($blocked -contains $tn) { @{permissionDecision='deny'; permissionDecisionReason='Use iris MCP tools instead of built-in search.'} | ConvertTo-Json -Compress; exit 0 }; if ($tn -in @('bash','Bash','shell')) { $cmd = ($ta | ConvertFrom-Json).command; if ($cmd -match '^(grep|egrep|fgrep|rg|ag|ack|find|fd)\\s') { @{permissionDecision='deny'; permissionDecisionReason='Use iris MCP tools instead of shell search.'} | ConvertTo-Json -Compress; exit 0 }; if ($cmd -match '\\|\\s*(grep|rg|ag|ack|head|tail|wc)') { @{permissionDecision='deny'; permissionDecisionReason='Do not pipe to search/filter tools. Use iris tools.'} | ConvertTo-Json -Compress; exit 0 } }",
+        "timeoutSec": 5
       }
     ]
   }
@@ -758,10 +713,11 @@ mod tests {
         }).unwrap();
         assert!(bash_matcher["hooks"].as_array().unwrap().len() >= 6);
 
-        // Verify VS Code hooks contain PreToolUse
-        let vscode = std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap();
-        let vval: serde_json::Value = serde_json::from_str(&vscode).unwrap();
-        assert!(vval["hooks"]["PreToolUse"].is_array());
+        // Verify Copilot CLI hooks contain preToolUse (camelCase) and version
+        let copilot = std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap();
+        let cval: serde_json::Value = serde_json::from_str(&copilot).unwrap();
+        assert_eq!(cval["version"], 1);
+        assert!(cval["hooks"]["preToolUse"].is_array());
     }
 
     #[test]
