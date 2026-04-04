@@ -1455,8 +1455,30 @@ impl Storage for SqliteStorage {
                 sql.push_str(" AND name = ?");
                 params.push(Box::new(exact.clone()));
             } else if let Some(ref name) = filter.name {
-                sql.push_str(" AND name LIKE ?");
-                params.push(Box::new(format!("%{name}%")));
+                // Split multi-word queries into tokens and AND them together,
+                // matching each against name, doc_comment, or signature.
+                let tokens: Vec<&str> = name.split_whitespace().collect();
+                if tokens.len() <= 1 {
+                    // Single word: fast substring match on name only (original behavior).
+                    sql.push_str(" AND name LIKE ?");
+                    params.push(Box::new(format!("%{name}%")));
+                } else {
+                    // Multi-word: each token must appear in name OR doc_comment OR signature.
+                    sql.push_str(" AND (");
+                    for (i, token) in tokens.iter().enumerate() {
+                        if i > 0 {
+                            sql.push_str(" AND ");
+                        }
+                        sql.push_str(
+                            "(name LIKE ? OR COALESCE(doc_comment, '') LIKE ? OR signature LIKE ?)",
+                        );
+                        let pattern = format!("%{token}%");
+                        params.push(Box::new(pattern.clone()));
+                        params.push(Box::new(pattern.clone()));
+                        params.push(Box::new(pattern));
+                    }
+                    sql.push(')');
+                }
             }
             if let Some(ref kind) = filter.kind {
                 sql.push_str(" AND kind = ?");
@@ -1467,10 +1489,14 @@ impl Storage for SqliteStorage {
                 params.push(Box::new(visibility.clone()));
             }
             if let Some(ref module) = filter.module {
-                // Prefix match: "config" matches "config" and "config::sub"
-                sql.push_str(" AND (module_path = ? OR module_path LIKE ?)");
+                // Prefix match on module_path, or substring match on file_path
+                // so "mcp" matches files under iris-mcp/ even if module_path is "server".
+                sql.push_str(
+                    " AND (module_path = ? OR module_path LIKE ? OR file_path LIKE ?)",
+                );
                 params.push(Box::new(module.clone()));
                 params.push(Box::new(format!("{module}::%")));
+                params.push(Box::new(format!("%{module}%")));
             }
             if let Some(ref file_path) = filter.file_path {
                 sql.push_str(" AND file_path = ?");
