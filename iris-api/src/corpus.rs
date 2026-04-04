@@ -96,3 +96,48 @@ pub struct IngestionProgressEvent {
     /// Embeddings generated so far.
     pub embeddings_done: usize,
 }
+
+/// Compact bundle manifest for API responses.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BundleManifestApi {
+    /// Bundle format version.
+    pub format_version: u32,
+    /// Embedding model name.
+    pub model_name: String,
+    /// Embedding vector dimension.
+    pub dimension: usize,
+    /// Number of vectors in the index.
+    pub vector_count: usize,
+    /// Number of documents.
+    pub document_count: usize,
+    /// Number of code symbols.
+    pub symbol_count: usize,
+    /// Content-addressable version hash for staleness checking.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_version: Option<String>,
+}
+
+/// Response after exporting a corpus to a bundle.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ExportBundleResponse {
+    /// Filesystem path to the generated bundle file.
+    pub bundle_path: String,
+    /// Bundle manifest metadata.
+    pub manifest: BundleManifestApi,
+}
+
+/// Request to import a bundle into the daemon.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ImportBundleRequest {
+    /// Filesystem path to the `.iris-index` bundle file.
+    pub bundle_path: String,
+}
+
+/// Response after importing a bundle.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ImportBundleResponse {
+    /// Corpus ID assigned to the imported bundle.
+    pub corpus_id: String,
+    /// Bundle manifest metadata.
+    pub manifest: BundleManifestApi,
+}

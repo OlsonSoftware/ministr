@@ -47,8 +47,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/related", post(related))
         .route("/api/v1/corpora/{id}/bridge", post(bridge))
         .route("/api/v1/corpora/{id}/compress", post(compress_content))
+        .route("/api/v1/corpora/{id}/export", post(export_bundle))
         .route("/api/v1/corpora/{id}/progress", get(ingestion_progress))
+        .route("/api/v1/corpora/{id}/coherence", get(coherence_stream))
         .route("/api/v1/corpora/{id}/prefetch", get(prefetch_metrics))
+        .route("/api/v1/corpora/import", post(import_bundle))
         .route("/api/v1/corpora/{id}/sessions", post(create_session))
         .route(
             "/api/v1/corpora/{id}/sessions/{sid}/budget",
@@ -528,6 +531,139 @@ fn progress_stream(
                 break;
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Coherence SSE
+// ---------------------------------------------------------------------------
+
+async fn coherence_stream(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let coherence_tx = {
+        let corpora = state.registry.corpora().read().await;
+        match corpora.get(&id) {
+            Some(handle) => handle.coherence_tx.clone(),
+            None => {
+                return err(StatusCode::NOT_FOUND, "not_found", format!("corpus '{id}'"))
+                    .into_response();
+            }
+        }
+    };
+
+    let mut rx = coherence_tx.subscribe();
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(section_ids) => {
+                    if let Ok(json) = serde_json::to_string(&section_ids) {
+                        yield Ok::<_, Infallible>(Event::default().event("coherence").data(json));
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+            }
+        }
+    };
+
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Bundle export/import
+// ---------------------------------------------------------------------------
+
+async fn export_bundle(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let (data_dir, model_name, dimension) = {
+        let corpora = state.registry.corpora().read().await;
+        match corpora.get(&id) {
+            Some(handle) => (
+                handle.data_dir.clone(),
+                state.registry.config().default_model.clone(),
+                state.registry.embedder().dimension(),
+            ),
+            None => {
+                return err(StatusCode::NOT_FOUND, "not_found", format!("corpus '{id}'"))
+                    .into_response();
+            }
+        }
+    };
+
+    let output_path = data_dir.join(format!("{id}.iris-index"));
+    let manifest = iris_core::bundle::BundleManifest {
+        format_version: 1,
+        model_name,
+        dimension,
+        vector_count: 0,
+        document_count: 0,
+        symbol_count: 0,
+        corpus_roots: vec![],
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        bundle_version: None,
+        source_commit: None,
+    };
+
+    match iris_core::bundle::export_bundle(&data_dir, &output_path, &manifest) {
+        Ok(path) => {
+            // Re-read manifest from the exported bundle for accurate counts.
+            let final_manifest = iris_core::bundle::read_manifest(&path).unwrap_or(manifest);
+            Json(iris_api::corpus::ExportBundleResponse {
+                bundle_path: path.display().to_string(),
+                manifest: convert::bundle_manifest(&final_manifest),
+            })
+            .into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "export_failed", e).into_response(),
+    }
+}
+
+async fn import_bundle(
+    State(state): State<AppState>,
+    Json(req): Json<iris_api::corpus::ImportBundleRequest>,
+) -> impl IntoResponse {
+    let bundle_path = std::path::PathBuf::from(&req.bundle_path);
+    if !bundle_path.exists() {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "file_not_found",
+            format!("bundle not found: {}", req.bundle_path),
+        )
+        .into_response();
+    }
+
+    // Read manifest to determine corpus ID.
+    let manifest = match iris_core::bundle::read_manifest(&bundle_path) {
+        Ok(m) => m,
+        Err(e) => {
+            return err(StatusCode::BAD_REQUEST, "invalid_bundle", e).into_response();
+        }
+    };
+
+    let corpus_id = format!(
+        "import-{}",
+        &iris_core::bundle::compute_bundle_version(&manifest.corpus_roots)[..8]
+    );
+    let corpus_dir = state
+        .registry
+        .config()
+        .data_dir
+        .join("corpora")
+        .join(&corpus_id);
+
+    match iris_core::bundle::import_bundle(&bundle_path, &corpus_dir) {
+        Ok(imported_manifest) => Json(iris_api::corpus::ImportBundleResponse {
+            corpus_id,
+            manifest: convert::bundle_manifest(&imported_manifest),
+        })
+        .into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "import_failed", e).into_response(),
     }
 }
 

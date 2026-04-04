@@ -248,6 +248,7 @@ fn build_corpus_handle(
         progress: Arc::new(IngestionProgress::new()),
         cancel: CancellationToken::new(),
         data_dir,
+        coherence_tx: tokio::sync::broadcast::channel(16).0,
     }
 }
 

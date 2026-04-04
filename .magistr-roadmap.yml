@@ -1428,7 +1428,7 @@ phases:
 - id: DAEMON2
   name: Daemon API Completeness
   tagline: Full query, session, and streaming API on the daemon
-  status: in_progress
+  status: done
   problem: Daemon API covers basic queries but lacks compression, budget, eviction, prefetch metrics, ingestion progress streaming, and coherence notification forwarding
   solution: Extend daemon HTTP API to cover every MCP tool operation, add SSE streaming for progress/coherence, and persist session state across daemon restarts
   depends_on:
@@ -1443,13 +1443,13 @@ phases:
   - text: 'Ingestion progress streaming: GET /corpora/:id/progress returns SSE stream with file count, section count, phase'
     checked: true
   - text: 'Coherence notification forwarding: proxy subscribes to daemon SSE channel, forwards stale section IDs to MCP client via notifications/resources/updated'
-    checked: false
+    checked: true
   - text: 'Session persistence: save/restore session state (delivered items, trajectory, budget) across daemon restarts via SQLite'
     checked: true
   - text: 'Bundle export/import endpoints on daemon API: POST /corpora/:id/export, POST /corpora/import'
-    checked: false
+    checked: true
   - text: 'Cloud bundle fetch integration: daemon downloads [[corpus.cloud]] bundles, checks staleness via bundle_version, caches manifests'
-    checked: false
+    checked: true
   - text: Update iris-mcp ProxyServer to delegate all new endpoints (compress, budget, evict, prefetch metrics) to daemon
     checked: true
   - text: Rate limiting / request queuing for expensive operations (survey embedding, re-index) to prevent daemon overload

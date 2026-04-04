@@ -396,3 +396,46 @@ async fn test_rate_limiting_concurrent_surveys() {
         assert!(resp.results.len() <= 3);
     }
 }
+
+#[tokio::test]
+async fn test_coherence_sse_endpoint() {
+    let daemon = TestDaemon::start().await;
+
+    let mut stream = tokio::net::UnixStream::connect(&daemon.socket_path)
+        .await
+        .unwrap();
+
+    let request = format!(
+        "GET /api/v1/corpora/{}/coherence HTTP/1.1\r\n\
+         Host: localhost\r\n\
+         Accept: text/event-stream\r\n\
+         Connection: close\r\n\
+         \r\n",
+        daemon.corpus_id
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+
+    let mut buf = vec![0u8; 4096];
+    let n = tokio::time::timeout(std::time::Duration::from_secs(2), stream.read(&mut buf))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let response = String::from_utf8_lossy(&buf[..n]);
+    assert!(
+        response.contains("text/event-stream"),
+        "should return SSE content type, got: {response}"
+    );
+}
+
+#[tokio::test]
+async fn test_bundle_import_nonexistent() {
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let req = iris_api::corpus::ImportBundleRequest {
+        bundle_path: "/nonexistent/bundle.iris-index".into(),
+    };
+    let result = client.import_bundle(&req).await;
+    assert!(result.is_err(), "import of nonexistent bundle should fail");
+}
