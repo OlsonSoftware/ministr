@@ -1,8 +1,15 @@
 //! First-run scaffolding for agent configuration files.
 //!
-//! When iris starts in a repo for the first time, it generates `.claude/rules/`
-//! files that teach AI agents how to use iris effectively. Files are never
-//! overwritten — only missing files are created (idempotent).
+//! When iris starts in a repo for the first time, it generates configuration
+//! files that teach AI agents how to use iris effectively:
+//!
+//! - `.claude/rules/` — Claude Code tool rules, scope, and playbook
+//! - `.claude/settings.json` — PreToolUse hooks that redirect Grep/Glob to iris
+//! - `.cursor/rules/iris.mdc` — Cursor IDE rules
+//! - `.github/copilot-instructions.md` — GitHub Copilot instructions
+//! - `AGENTS.md` — Universal agent instructions
+//!
+//! Files are never overwritten — only missing files are created (idempotent).
 
 use std::path::Path;
 
@@ -17,51 +24,146 @@ use crate::code::bridge::detector::FrameworkDetector;
 ///
 /// Returns the number of files created (0 if everything was already in place).
 pub fn scaffold_agent_config(project_root: &Path) -> usize {
-    let rules_dir = project_root.join(".claude").join("rules");
-
     let playbook = playbook_for_project(project_root);
 
-    let files: &[(&str, &str)] = &[
+    let mut created = 0;
+
+    // ── Claude Code: .claude/rules/ ─────────────────────────────────────
+    let claude_rules_dir = project_root.join(".claude").join("rules");
+    let claude_rules: &[(&str, &str)] = &[
         ("iris-scope.md", IRIS_SCOPE),
         ("tools.md", TOOLS),
         ("iris-playbook.md", playbook),
     ];
+    created += write_files(&claude_rules_dir, claude_rules);
 
+    // ── Claude Code: .claude/settings.json (PreToolUse hooks) ───────────
+    created += write_claude_hooks(project_root);
+
+    // ── Cursor: .cursor/rules/ ──────────────────────────────────────────
+    let cursor_rules_dir = project_root.join(".cursor").join("rules");
+    let cursor_rules: &[(&str, &str)] = &[("iris.mdc", CURSOR_RULES)];
+    created += write_files(&cursor_rules_dir, cursor_rules);
+
+    // ── GitHub Copilot: .github/copilot-instructions.md ─────────────────
+    let github_dir = project_root.join(".github");
+    let copilot_files: &[(&str, &str)] =
+        &[("copilot-instructions.md", COPILOT_INSTRUCTIONS)];
+    created += write_files(&github_dir, copilot_files);
+
+    // ── Universal: AGENTS.md ────────────────────────────────────────────
+    let agents_files: &[(&str, &str)] = &[("AGENTS.md", AGENTS_MD)];
+    created += write_files(project_root, agents_files);
+
+    if created > 0 {
+        info!(
+            files = created,
+            root = %project_root.display(),
+            "scaffolded iris agent config"
+        );
+    }
+
+    created
+}
+
+/// Write a set of files into a directory. Creates the directory if needed.
+/// Skips files that already exist. Returns the number of files created.
+fn write_files(dir: &Path, files: &[(&str, &str)]) -> usize {
     let mut created = 0;
-
     for &(filename, content) in files {
-        let path = rules_dir.join(filename);
+        let path = dir.join(filename);
         if path.exists() {
             debug!(file = %path.display(), "already exists, skipping");
             continue;
         }
-
-        // Create directory structure if needed.
-        if let Err(e) = std::fs::create_dir_all(&rules_dir) {
-            debug!(error = %e, "failed to create .claude/rules/");
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            debug!(error = %e, dir = %dir.display(), "failed to create directory");
             return created;
         }
-
         match std::fs::write(&path, content) {
             Ok(()) => {
                 created += 1;
-                debug!(file = %path.display(), "scaffolded agent config");
+                debug!(file = %path.display(), "scaffolded");
             }
             Err(e) => {
                 debug!(file = %path.display(), error = %e, "failed to write");
             }
         }
     }
+    created
+}
 
-    if created > 0 {
-        info!(
-            files = created,
-            dir = %rules_dir.display(),
-            "scaffolded iris agent config"
-        );
+/// Write `.claude/settings.json` with `PreToolUse` hooks that redirect
+/// Grep/Glob usage to iris. Merges non-destructively — only adds the
+/// hooks key if not already present.
+fn write_claude_hooks(project_root: &Path) -> usize {
+    let settings_path = project_root.join(".claude").join("settings.json");
+
+    // Don't overwrite if the file already has hooks configured.
+    if settings_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&settings_path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                if val.get("hooks").is_some() {
+                    debug!(
+                        file = %settings_path.display(),
+                        "hooks already configured, skipping"
+                    );
+                    return 0;
+                }
+            }
+        }
     }
 
-    created
+    let settings = serde_json::json!({
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Grep|Glob",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead. iris provides semantic code search with better results. See .claude/rules/iris-scope.md for the full tool guide.\"}}'"
+                        }
+                    ]
+                }
+            ]
+        }
+    });
+
+    // Merge with existing settings if the file exists.
+    let merged = if settings_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&settings_path) {
+            if let Ok(mut existing) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(obj) = existing.as_object_mut() {
+                    obj.insert("hooks".to_string(), settings["hooks"].clone());
+                }
+                existing
+            } else {
+                settings
+            }
+        } else {
+            settings
+        }
+    } else {
+        settings
+    };
+
+    if let Err(e) = std::fs::create_dir_all(settings_path.parent().unwrap_or(project_root)) {
+        debug!(error = %e, "failed to create .claude/");
+        return 0;
+    }
+
+    let json_str = serde_json::to_string_pretty(&merged).unwrap_or_default();
+    match std::fs::write(&settings_path, format!("{json_str}\n")) {
+        Ok(()) => {
+            debug!(file = %settings_path.display(), "wrote Claude Code hooks");
+            1
+        }
+        Err(e) => {
+            debug!(file = %settings_path.display(), error = %e, "failed to write");
+            0
+        }
+    }
 }
 
 /// Choose the right playbook based on detected bridge frameworks.
@@ -283,3 +385,240 @@ Decision guide for using iris tools effectively in this project.
 - **Don't `Read` to explore.** Use `iris_read` or `iris_definition`.
 - **Don't skip `iris_references` before modifying shared code.**
 "#;
+
+// ---------------------------------------------------------------------------
+// Cursor rules
+// ---------------------------------------------------------------------------
+
+/// Cursor IDE rules file (`.cursor/rules/iris.mdc`).
+///
+/// Cursor uses MDC (Markdown Configuration) format — standard markdown with
+/// optional YAML frontmatter. The `description` and `globs` fields control
+/// when the rules are shown to the agent.
+const CURSOR_RULES: &str = r#"---
+description: iris MCP codebase navigation tools — use instead of built-in search
+globs:
+  - "**/*"
+---
+
+# iris MCP — Codebase Navigation
+
+iris is an MCP server providing semantic code search. **Always prefer iris tools over built-in search.**
+
+## Available Tools
+
+| Tool | Purpose |
+|------|---------|
+| `iris_survey` | Semantic search across docs and code. **Start here.** |
+| `iris_symbols` | Find structs, functions, traits, enums by name/kind/module. |
+| `iris_definition` | Get full source of a symbol by ID. |
+| `iris_references` | Find callers, implementors, importers of a symbol. |
+| `iris_read` | Read a section by ID (with deduplication and delta delivery). |
+| `iris_extract` | Get atomic claims from a section, optionally filtered by query. |
+| `iris_toc` | Structural overview of the indexed corpus. |
+| `iris_bridge` | Cross-language bridge links (Tauri, PyO3, NAPI, etc.). |
+
+## Rules
+
+1. **Use `iris_survey` instead of file search or grep** for discovering code and documentation.
+2. **Use `iris_symbols` instead of grep** for finding functions, structs, traits, or enums.
+3. **Use `iris_definition` instead of reading whole files** to get a symbol's source.
+4. **Use `iris_references` before modifying any shared symbol** to find all callers.
+5. **Use `iris_bridge` before modifying any cross-language boundary** (Tauri commands, FFI, etc.).
+
+## Workflow
+
+`iris_survey` → `iris_symbols` → `iris_definition` / `iris_read` → `iris_references` / `iris_bridge`
+"#;
+
+// ---------------------------------------------------------------------------
+// GitHub Copilot instructions
+// ---------------------------------------------------------------------------
+
+/// GitHub Copilot custom instructions (`.github/copilot-instructions.md`).
+///
+/// Used by Copilot CLI, Copilot Chat in VS Code, and Copilot cloud agent.
+const COPILOT_INSTRUCTIONS: &str = r#"# iris MCP — Codebase Navigation
+
+This project uses [iris](https://github.com/iris-rs/iris) as an MCP server for semantic code search.
+
+## Tool Preferences
+
+**Always prefer iris MCP tools over built-in search tools** (grep, glob, file reading for exploration):
+
+| Instead of… | Use… |
+|-------------|------|
+| `grep` / text search | `iris_survey(query: "...")` — semantic search across docs and code |
+| File listing / glob | `iris_toc` — structural overview of the indexed corpus |
+| Reading a file to find symbols | `iris_symbols(query: "name")` — find by name/kind/module |
+| Reading a file for a specific function | `iris_definition(symbol_id: "...")` — get full source |
+
+## Workflow
+
+1. **Start with `iris_survey`** for any question about the codebase
+2. **Use `iris_symbols`** to find specific code symbols
+3. **Use `iris_definition` or `iris_read`** to get full source
+4. **Use `iris_references`** before modifying shared code (find all callers)
+5. **Use `iris_bridge`** before modifying cross-language boundaries (Tauri, FFI, etc.)
+
+## Key Rules
+
+- Only use file `Read` immediately before `Edit` — for everything else, use iris tools
+- Always check `iris_references` before modifying or deleting shared code
+- If the project has cross-language bindings, check `iris_bridge` before changing IPC/FFI boundaries
+"#;
+
+// ---------------------------------------------------------------------------
+// AGENTS.md (universal)
+// ---------------------------------------------------------------------------
+
+/// Universal agent instructions (`AGENTS.md`).
+///
+/// Supported by GitHub Copilot CLI (via `AGENTS.md` at project root) and
+/// other agents that follow the agents.md convention.
+const AGENTS_MD: &str = r#"# Agent Instructions
+
+This project uses **iris** as an MCP server for semantic code search and navigation.
+All AI agents working on this codebase should prefer iris tools over built-in alternatives.
+
+## MCP Server: iris
+
+iris is automatically configured via `.mcp.json` (Claude Code), `.vscode/mcp.json` (VS Code / Copilot), and `.cursor/mcp.json` (Cursor).
+
+### Tool Reference
+
+| Tool | Purpose |
+|------|---------|
+| `iris_survey(query)` | Semantic search across docs and code. **Start here.** |
+| `iris_symbols(query)` | Find structs, functions, traits, enums by name/kind/module. |
+| `iris_definition(symbol_id)` | Get full source of a symbol by ID. |
+| `iris_references(symbol_id)` | Find callers, implementors, importers of a symbol. |
+| `iris_read(section_id)` | Read a section by ID. |
+| `iris_extract(section_id)` | Get atomic claims from a section. |
+| `iris_toc` | Structural overview of the indexed corpus. |
+| `iris_bridge(query)` | Cross-language bridge links (Tauri, PyO3, NAPI, etc.). |
+
+### Preferred Over Built-in Tools
+
+| Instead of… | Use… |
+|-------------|------|
+| Grep / text search | `iris_survey` |
+| Glob / file listing | `iris_toc` |
+| Reading files for exploration | `iris_symbols` → `iris_definition` |
+| Finding references manually | `iris_references` |
+
+### Workflow
+
+1. `iris_survey` → understand concepts, find relevant code
+2. `iris_symbols` → locate specific symbols
+3. `iris_definition` / `iris_read` → get full source
+4. `iris_references` → check impact before modifying
+5. `iris_bridge` → check cross-language boundaries
+6. Only then: `Read` → `Edit`
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn scaffold_creates_all_files() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let created = scaffold_agent_config(root);
+
+        // Should create: 3 claude rules + 1 settings.json + 1 cursor rule
+        //   + 1 copilot instructions + 1 AGENTS.md = 7
+        assert_eq!(created, 7);
+
+        // Claude Code files
+        assert!(root.join(".claude/rules/iris-scope.md").exists());
+        assert!(root.join(".claude/rules/tools.md").exists());
+        assert!(root.join(".claude/rules/iris-playbook.md").exists());
+        assert!(root.join(".claude/settings.json").exists());
+
+        // Cursor files
+        assert!(root.join(".cursor/rules/iris.mdc").exists());
+
+        // Copilot files
+        assert!(root.join(".github/copilot-instructions.md").exists());
+
+        // Universal
+        assert!(root.join("AGENTS.md").exists());
+
+        // Verify Claude hooks contain PreToolUse
+        let settings = std::fs::read_to_string(root.join(".claude/settings.json")).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&settings).unwrap();
+        assert!(val["hooks"]["PreToolUse"].is_array());
+    }
+
+    #[test]
+    fn scaffold_is_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let first = scaffold_agent_config(root);
+        assert_eq!(first, 7);
+
+        let second = scaffold_agent_config(root);
+        assert_eq!(second, 0);
+    }
+
+    #[test]
+    fn scaffold_does_not_overwrite_existing() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Pre-create a file with custom content.
+        std::fs::create_dir_all(root.join(".claude/rules")).unwrap();
+        std::fs::write(root.join(".claude/rules/tools.md"), "custom content").unwrap();
+
+        scaffold_agent_config(root);
+
+        // Should not overwrite.
+        let content = std::fs::read_to_string(root.join(".claude/rules/tools.md")).unwrap();
+        assert_eq!(content, "custom content");
+    }
+
+    #[test]
+    fn claude_hooks_merge_with_existing_settings() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Pre-create settings with existing content.
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        std::fs::write(
+            root.join(".claude/settings.json"),
+            r#"{"permissions": {"allow": ["Bash(cargo test)"]}}"#,
+        )
+        .unwrap();
+
+        write_claude_hooks(root);
+
+        let settings = std::fs::read_to_string(root.join(".claude/settings.json")).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&settings).unwrap();
+
+        // Should have both hooks and permissions.
+        assert!(val["hooks"]["PreToolUse"].is_array());
+        assert!(val["permissions"]["allow"].is_array());
+    }
+
+    #[test]
+    fn claude_hooks_skip_when_hooks_exist() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Pre-create settings with existing hooks.
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        std::fs::write(
+            root.join(".claude/settings.json"),
+            r#"{"hooks": {"PostToolUse": []}}"#,
+        )
+        .unwrap();
+
+        let created = write_claude_hooks(root);
+        assert_eq!(created, 0); // Should skip — hooks already present.
+    }
+}

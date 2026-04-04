@@ -246,6 +246,13 @@ pub fn write_mcp_configs(root: &Path) -> Result<(), InitError> {
     }
     write_mcp_json(root, ".vscode/mcp.json")?;
 
+    // Cursor: .cursor/mcp.json
+    let cursor_dir = root.join(".cursor");
+    if !cursor_dir.exists() {
+        std::fs::create_dir_all(&cursor_dir)?;
+    }
+    write_mcp_json(root, ".cursor/mcp.json")?;
+
     Ok(())
 }
 
@@ -627,18 +634,23 @@ version = "0.1.0"
     }
 
     #[test]
-    fn test_refuses_overwrite() {
+    fn test_skips_overwrite_but_writes_mcp() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
         fs::write(root.join(CORPUS_CONFIG_FILENAME), "existing").unwrap();
 
+        // Should succeed (writes MCP configs) but not overwrite .iris.toml.
         let result = write_config(root, false);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            InitError::AlreadyExists { .. }
-        ));
+        assert!(result.is_ok());
+        assert_eq!(
+            fs::read_to_string(root.join(CORPUS_CONFIG_FILENAME)).unwrap(),
+            "existing"
+        );
+        // MCP configs should exist.
+        assert!(root.join(".mcp.json").exists());
+        assert!(root.join(".vscode/mcp.json").exists());
+        assert!(root.join(".cursor/mcp.json").exists());
     }
 
     #[test]

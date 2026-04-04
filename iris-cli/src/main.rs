@@ -614,6 +614,9 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
         .into_diagnostic()
         .wrap_err("failed to generate .iris.toml")?;
 
+    // Scaffold agent config files (Claude Code hooks, Cursor rules, etc.).
+    let scaffolded = iris_core::scaffold::scaffold_agent_config(root);
+
     eprintln!("Detected project: {}", detection.project_name);
     for ws in &detection.workspaces {
         eprintln!("  {} workspace ({} members)", ws.kind, ws.members.len());
@@ -630,12 +633,24 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
     } else {
         eprintln!("Generated .iris.toml with {total_paths} paths");
     }
-    eprintln!("Updated .mcp.json (Claude Code)");
-    eprintln!("Updated .vscode/mcp.json (GitHub Copilot)");
+
+    eprintln!();
+    eprintln!("MCP server configs:");
+    eprintln!("  ✓ .mcp.json (Claude Code)");
+    eprintln!("  ✓ .vscode/mcp.json (VS Code / GitHub Copilot)");
+    eprintln!("  ✓ .cursor/mcp.json (Cursor)");
+    eprintln!();
+    eprintln!("Agent instructions ({scaffolded} new files):");
+    eprintln!("  ✓ .claude/rules/          (tool scope, playbook)");
+    eprintln!("  ✓ .claude/settings.json   (PreToolUse hooks — Grep/Glob → iris)");
+    eprintln!("  ✓ .cursor/rules/iris.mdc  (Cursor rules)");
+    eprintln!("  ✓ .github/copilot-instructions.md");
+    eprintln!("  ✓ AGENTS.md               (universal)");
     eprintln!();
     eprintln!("Next steps:");
-    eprintln!("  1. Start a new Claude Code session in this directory");
-    eprintln!("  2. iris will auto-index and tools will be available");
+    eprintln!("  1. Start a new session in your preferred agent (Claude Code, Cursor, Copilot)");
+    eprintln!("  2. iris will auto-index and semantic search tools become available");
+    eprintln!("  3. The agent will prefer iris tools over built-in grep/glob/file search");
     Ok(())
 }
 
