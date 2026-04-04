@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nickelpack/nk/main/schemas/tauri/2.0/config.schema.json",
   "productName": "iris",
   "version": "0.1.0",
-  "identifier": "com.iris.app",
+  "identifier": "com.iris.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -19,12 +19,7 @@
         "resizable": true,
         "visible": false
       }
-    ],
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true,
-      "tooltip": "iris — index daemon"
-    }
+    ]
   },
   "bundle": {
     "active": true,

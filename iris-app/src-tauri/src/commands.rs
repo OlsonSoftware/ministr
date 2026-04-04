@@ -215,6 +215,7 @@ pub async fn dismiss_onboarding() -> Result<(), String> {
 }
 
 /// Remove a project by ID (called from tray menu).
+#[allow(dead_code)]
 pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result<(), String> {
     let state = handle.state::<AppState>();
 
