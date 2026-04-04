@@ -107,6 +107,17 @@ enum Command {
         #[arg(short = 'k', long, default_value_t = 10)]
         top_k: usize,
     },
+
+    /// Generate .iris.toml with auto-detected project settings.
+    ///
+    /// Scans the current directory for project manifests (Cargo.toml,
+    /// package.json, pyproject.toml), detects workspace layouts and
+    /// bridge frameworks, and writes a sensible default config.
+    Init {
+        /// Overwrite existing .iris.toml if present.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// MCP transport mode.
@@ -149,11 +160,26 @@ async fn main() -> Result<()> {
         .into_diagnostic()
         .wrap_err("failed to read .iris.toml")?;
 
-    if let Some((ref config_dir, _)) = corpus_config {
-        tracing::info!(
-            config = %config_dir.join(iris_core::config::CORPUS_CONFIG_FILENAME).display(),
-            "loaded per-repo corpus config"
-        );
+    match &corpus_config {
+        Some((config_dir, cc)) => {
+            let config_file = config_dir.join(iris_core::config::CORPUS_CONFIG_FILENAME);
+            tracing::info!(
+                config = %config_file.display(),
+                paths = cc.corpus.paths.len(),
+                git_repos = cc.corpus.git.len(),
+                ignore_patterns = cc.corpus.ignore.len(),
+                "loaded .iris.toml"
+            );
+
+            // Validate config and emit user-friendly warnings.
+            let warnings = cc.validate(config_dir);
+            for w in &warnings {
+                tracing::warn!("{w}");
+            }
+        }
+        None => {
+            tracing::info!("no .iris.toml found — using CLI args or config.toml defaults");
+        }
     }
 
     // Scaffold agent config files on first run (idempotent — skips existing files).
@@ -221,6 +247,7 @@ async fn main() -> Result<()> {
         Command::Index => cmd_index(&corpus_paths, &git_includes, &config_path, &config).await,
         Command::Status => cmd_daemon_status().await,
         Command::Search { query, top_k } => cmd_daemon_search(&corpus_paths, &query, top_k).await,
+        Command::Init { force } => cmd_init(&cwd, force),
     }
 }
 
@@ -345,10 +372,14 @@ async fn build_server(
     Option<tokio::task::JoinHandle<()>>,
 )> {
     tracing::info!(
-        corpus = ?corpus_paths,
+        corpus_count = corpus_paths.len(),
         config = %config_path.display(),
-        "iris starting"
+        "iris starting — {} corpus path(s)",
+        corpus_paths.len()
     );
+    for path in corpus_paths {
+        tracing::info!(path = %path, "  corpus root");
+    }
 
     let ctx = init_infrastructure(corpus_paths, config).await?;
 
@@ -473,8 +504,31 @@ fn spawn_background_ingestion(
 
 /// `iris serve --proxy` — thin MCP proxy over stdin/stdout.
 ///
+/// `iris init` — detect project structure and generate `.iris.toml`.
+fn cmd_init(root: &Path, force: bool) -> Result<()> {
+    let detection = iris_core::init::write_config(root, force)
+        .into_diagnostic()
+        .wrap_err("failed to generate .iris.toml")?;
+
+    eprintln!("Detected project: {}", detection.project_name);
+    for ws in &detection.workspaces {
+        eprintln!("  {} workspace ({} members)", ws.kind, ws.members.len());
+    }
+    if !detection.bridges.is_empty() {
+        let names: Vec<_> = detection.bridges.iter().map(|b| format!("{b:?}")).collect();
+        eprintln!("  Bridges: {}", names.join(", "));
+    }
+    eprintln!();
+    let total_paths = detection.source_paths.len() + detection.doc_paths.len();
+    eprintln!("Generated .iris.toml with {total_paths} paths");
+    eprintln!();
+    eprintln!("Next steps:");
+    eprintln!("  iris serve    # start the MCP server (indexes on startup)");
+    Ok(())
+}
+
 /// Connects to the iris daemon at `~/.iris/irisd.sock` and proxies all
-/// tool calls. No ONNX model, no indexes, no SQLite — just HTTP over UDS.
+/// tool calls. No ONNX model, no indexes, no `SQLite` — just HTTP over UDS.
 async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
     let proxy = iris_mcp::proxy::ProxyServer::new(corpus_paths.to_vec());
     proxy
@@ -485,40 +539,115 @@ async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `iris status` — show daemon status.
+/// `iris status` — show corpus stats from local storage.
+///
+/// Opens the `SQLite` database directly (no embedding model needed) and
+/// displays document counts, corpus roots, data directory, and index info.
+/// Falls back to the daemon API if available for richer live status.
 async fn cmd_daemon_status() -> Result<()> {
+    use iris_core::storage::Storage as _;
+
+    // Try daemon first for live status.
     let client = iris_api::client::DaemonClient::new();
-    if !client.is_available() {
-        miette::bail!("iris daemon is not running (no socket at {:?})", client.socket_path());
+    if client.is_available() {
+        if let Ok(status) = client.status().await {
+            eprintln!("iris daemon v{}", status.version);
+            eprintln!("  Uptime:    {}s", status.uptime_secs);
+            eprintln!("  Memory:    {:.0} MB", status.memory_mb);
+            eprintln!("  Model:     {} ({}d)", status.model, status.model_dimension);
+            eprintln!("  Corpora:   {}", status.corpora.len());
+            for c in &status.corpora {
+                eprintln!(
+                    "    {} — {} files, {} sections, {} embeddings [{}]",
+                    c.id,
+                    c.files_indexed,
+                    c.sections_count,
+                    c.embeddings_count,
+                    match &c.status {
+                        iris_api::corpus::IndexingStatus::Idle => "idle".to_string(),
+                        iris_api::corpus::IndexingStatus::Indexing { files_done, files_total } =>
+                            format!("indexing {files_done}/{files_total}"),
+                        iris_api::corpus::IndexingStatus::Error { message } =>
+                            format!("error: {message}"),
+                    }
+                );
+            }
+            return Ok(());
+        }
     }
 
-    let status = client
-        .status()
-        .await
+    // Daemon not available — show local storage stats.
+    let config_path = iris_core::config::IrisConfig::default_path();
+    let config = iris_core::config::IrisConfig::load(&config_path)
         .into_diagnostic()
-        .wrap_err("failed to get daemon status")?;
+        .wrap_err("failed to load config")?;
 
-    eprintln!("iris daemon v{}", status.version);
-    eprintln!("  Uptime:    {}s", status.uptime_secs);
-    eprintln!("  Memory:    {:.0} MB", status.memory_mb);
-    eprintln!("  Model:     {} ({}d)", status.model, status.model_dimension);
-    eprintln!("  Corpora:   {}", status.corpora.len());
-    for c in &status.corpora {
+    let cwd = std::env::current_dir()
+        .into_diagnostic()
+        .wrap_err("failed to get current directory")?;
+    let corpus_config = iris_core::config::RepoConfig::discover(&cwd)
+        .into_diagnostic()
+        .wrap_err("failed to read .iris.toml")?;
+
+    let corpus_paths: Vec<String> = if let Some((ref base_dir, ref cc)) = corpus_config {
+        cc.resolve_local_paths(base_dir)
+    } else {
+        config.corpus_paths.clone()
+    };
+
+    let corpus_name = if corpus_paths.is_empty() {
+        "default".to_owned()
+    } else {
+        corpus_data_dir_name(&corpus_paths)
+    };
+
+    let corpus_dir = config.data_dir.join("corpora").join(&corpus_name);
+    let db_path = corpus_dir.join("content.db");
+    let index_dir = corpus_dir.join("index");
+
+    eprintln!("iris status (local)");
+    eprintln!();
+    eprintln!("  Data dir:  {}", corpus_dir.display());
+    eprintln!("  Database:  {}", if db_path.exists() { "exists" } else { "not found" });
+    eprintln!("  Index dir: {}", if index_dir.exists() { "exists" } else { "not found" });
+
+    if !db_path.exists() {
+        eprintln!();
+        eprintln!("  No index found. Run `iris serve` or `iris index` to build one.");
+        return Ok(());
+    }
+
+    let storage = iris_core::storage::SqliteStorage::open(&db_path)
+        .into_diagnostic()
+        .wrap_err("failed to open content database")?;
+
+    let doc_count = storage.document_count().await.unwrap_or(0);
+    let roots = storage.list_corpus_roots().await.unwrap_or_default();
+
+    eprintln!("  Documents: {doc_count}");
+    eprintln!("  Roots:     {}", roots.len());
+    for r in &roots {
+        let name = r.display_name.as_deref().unwrap_or(&r.path);
         eprintln!(
-            "    {} — {} files, {} sections, {} embeddings [{}]",
-            c.id,
-            c.files_indexed,
-            c.sections_count,
-            c.embeddings_count,
-            match &c.status {
-                iris_api::corpus::IndexingStatus::Idle => "idle".to_string(),
-                iris_api::corpus::IndexingStatus::Indexing { files_done, files_total } =>
-                    format!("indexing {files_done}/{files_total}"),
-                iris_api::corpus::IndexingStatus::Error { message } =>
-                    format!("error: {message}"),
-            }
+            "    {name} ({} — {} files)",
+            r.kind.as_str(),
+            r.file_count
         );
     }
+
+    // Show index file sizes.
+    if index_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&index_dir) {
+            let total_bytes: u64 = entries
+                .filter_map(Result::ok)
+                .filter_map(|e| e.metadata().ok().map(|m| m.len()))
+                .sum();
+            #[allow(clippy::cast_precision_loss)]
+            let mb = total_bytes as f64 / 1_048_576.0;
+            eprintln!("  Index size: {mb:.1} MB");
+        }
+    }
+
     Ok(())
 }
 
@@ -683,10 +812,14 @@ async fn cmd_index(
     config: &iris_core::config::IrisConfig,
 ) -> Result<()> {
     tracing::info!(
-        corpus = ?corpus_paths,
+        corpus_count = corpus_paths.len(),
         config = %config_path.display(),
-        "iris starting (index mode)"
+        "iris index — {} corpus path(s)",
+        corpus_paths.len()
     );
+    for path in corpus_paths {
+        tracing::info!(path = %path, "  corpus root");
+    }
 
     if corpus_paths.is_empty() && git_includes.is_empty() {
         tracing::warn!("no corpus paths specified, nothing to index");

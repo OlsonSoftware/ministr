@@ -103,6 +103,7 @@ pub struct BridgeParams {
 }
 
 impl ProxyServer {
+    #[must_use]
     pub fn new(corpus_paths: Vec<String>) -> Self {
         Self {
             client: Arc::new(DaemonClient::new()),
@@ -185,7 +186,7 @@ impl ProxyServer {
         Ok(CallToolResult::structured(v))
     }
 
-    fn err(e: iris_api::client::ClientError) -> McpError {
+    fn err(e: &iris_api::client::ClientError) -> McpError {
         McpError::internal_error(e.to_string(), None)
     }
 }
@@ -205,7 +206,7 @@ impl ProxyServer {
             .client
             .survey(&cid, &params.query, params.top_k)
             .await
-            .map_err(Self::err)?;
+            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -222,7 +223,7 @@ impl ProxyServer {
             .client
             .read_section(&cid, &params.section_id)
             .await
-            .map_err(Self::err)?;
+            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -239,7 +240,7 @@ impl ProxyServer {
             section_id: params.section_id,
             query: params.query,
         };
-        let resp = self.client.extract(&cid, &req).await.map_err(Self::err)?;
+        let resp = self.client.extract(&cid, &req).await.map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -259,7 +260,7 @@ impl ProxyServer {
             visibility: params.visibility,
             limit: params.limit,
         };
-        let resp = self.client.symbols(&cid, &req).await.map_err(Self::err)?;
+        let resp = self.client.symbols(&cid, &req).await.map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -276,7 +277,7 @@ impl ProxyServer {
             .client
             .definition(&cid, &params.symbol_id)
             .await
-            .map_err(Self::err)?;
+            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -293,7 +294,7 @@ impl ProxyServer {
             .client
             .references(&cid, &params.symbol_id)
             .await
-            .map_err(Self::err)?;
+            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -311,7 +312,7 @@ impl ProxyServer {
             offset: params.offset,
             limit: params.limit,
         };
-        let resp = self.client.toc(&cid, &req).await.map_err(Self::err)?;
+        let resp = self.client.toc(&cid, &req).await.map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -328,7 +329,7 @@ impl ProxyServer {
             claim_id: params.claim_id,
             relation_types: params.relation_types.unwrap_or_default(),
         };
-        let resp = self.client.related(&cid, &req).await.map_err(Self::err)?;
+        let resp = self.client.related(&cid, &req).await.map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -347,7 +348,7 @@ impl ProxyServer {
             source_language: params.source_language,
             limit: params.limit,
         };
-        let resp = self.client.bridge(&cid, &req).await.map_err(Self::err)?;
+        let resp = self.client.bridge(&cid, &req).await.map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 }

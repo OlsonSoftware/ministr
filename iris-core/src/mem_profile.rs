@@ -41,11 +41,14 @@ fn rss_bytes() -> Option<u64> {
 }
 
 /// Get current RSS in megabytes. Returns `None` on unsupported platforms.
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
 pub fn rss_mb() -> Option<f64> {
     rss_bytes().map(|b| b as f64 / 1_048_576.0)
 }
 
 /// Format bytes as a human-readable string.
+#[allow(clippy::cast_precision_loss)]
 fn fmt_mb(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / 1_048_576.0)
 }
@@ -56,6 +59,7 @@ pub fn checkpoint(label: &str) {
     let Some(rss) = rss_bytes() else { return };
 
     let prev = LAST_CHECKPOINT_BYTES.swap(rss, Ordering::Relaxed);
+    #[allow(clippy::cast_possible_wrap)]
     let delta = rss as i64 - prev as i64;
     HIGH_WATER_BYTES.fetch_max(rss, Ordering::Relaxed);
     let hwm = HIGH_WATER_BYTES.load(Ordering::Relaxed);
@@ -77,6 +81,7 @@ pub fn checkpoint_every(n: usize, counter: usize, label: &str) -> Option<u64> {
     }
     let rss = rss_bytes()?;
     let prev = LAST_CHECKPOINT_BYTES.swap(rss, Ordering::Relaxed);
+    #[allow(clippy::cast_possible_wrap)]
     let delta = rss as i64 - prev as i64;
     HIGH_WATER_BYTES.fetch_max(rss, Ordering::Relaxed);
     let hwm = HIGH_WATER_BYTES.load(Ordering::Relaxed);

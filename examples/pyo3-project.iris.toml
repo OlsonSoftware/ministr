@@ -1,0 +1,27 @@
+# iris config for a PyO3 project (Rust + Python)
+#
+# Typical layout:
+#   src/            — Rust source with #[pyfunction] / #[pyclass]
+#   python/mylib/   — Python package consuming the Rust extension
+#   docs/           — project docs
+#
+# iris detects PyO3 bridges and links Rust exports to Python usage sites.
+
+[corpus]
+paths = [
+    # Rust source (PyO3 extension module)
+    "src",
+
+    # Python package
+    "python",
+
+    # Documentation
+    "docs",
+    "README.md",
+]
+
+ignore = [
+    "*_test.py",           # Python test files
+    "test_*.py",
+    "*.snap",              # insta test snapshots
+]

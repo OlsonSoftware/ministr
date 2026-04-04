@@ -1259,20 +1259,20 @@ phases:
 - id: DX1
   name: Developer Experience Polish
   tagline: Two minutes to wow
-  status: in_progress
+  status: done
   problem: First-time users need a frictionless experience — install, configure, see value in under 2 minutes
   solution: 'Improve onboarding: iris init command, better error messages, progress reporting, example configs'
   tasks:
   - text: '`iris init` command — auto-detect project structure, generate .iris.toml with sensible defaults (detect Tauri/PyO3/NAPI from manifests)'
-    checked: false
+    checked: true
   - text: Better startup logging — show what .iris.toml was found, which paths are being indexed, bridge frameworks detected, progress bar for initial indexing
-    checked: false
+    checked: true
   - text: Friendly error messages when .iris.toml has invalid paths, missing dirs, or bad TOML syntax
-    checked: false
+    checked: true
   - text: '`iris status` command — show corpus stats, indexed files, bridge links found, data directory location, index freshness'
-    checked: false
+    checked: true
   - text: 'Ship example .iris.toml files for common project types: Tauri app, PyO3 project, plain Rust workspace, React+Node monorepo'
-    checked: false
+    checked: true
   - text: 'Fix memory leaks: cap WindowEstimator evicted list (Vec→counter), cap Session trajectory (Vec→VecDeque with 1000-entry sliding window), clean stale set on remove_delivered'
     checked: true
   - text: 'Fix indexing memory blowup: stream embeddings incrementally (flush every 4096 pairs) instead of accumulating all section text in memory; add hard ALWAYS_IGNORE_DIRS guard in parse_and_store_file as defense-in-depth'
@@ -1292,6 +1292,83 @@ phases:
     checked: false
   - text: Benchmark suite — measure indexing throughput (files/sec, sections/sec) on reference repos (iris-rs, pydantic-core, ruff) to track regressions
     checked: false
+- id: EMBED1
+  name: Code-Specialized Embeddings
+  tagline: Upgrade from general-purpose to code-optimized embedding models
+  status: pending
+  problem: iris uses a general-purpose embedding model; code-specialized models like Nomic Embed Code dramatically outperform on code retrieval benchmarks
+  solution: Abstract embedding backend, add Nomic Embed Code via ONNX, make model configurable in .iris.toml, benchmark quality improvements
+  depends_on:
+  - PERF1
+  tasks:
+  - text: Abstract embedding backend behind a swappable trait to support multiple model backends
+    checked: false
+  - text: Add Nomic Embed Code support via ONNX — SOTA code-specific embedding model, outperforms Voyage Code 3 and OpenAI Embed 3 Large on CodeSearchNet
+    checked: false
+  - text: Configurable embedding model in .iris.toml — model name, local path, or auto-download URL
+    checked: false
+  - text: 'Benchmark retrieval quality: current model vs Nomic Embed Code vs Jina Code v2 using iris''s evaluation suite (S3 phase infrastructure)'
+    checked: false
+  - text: Matryoshka dimension reduction — store lower-dim vectors for HNSW search, full-dim for reranking (Nomic supports this natively)
+    checked: false
+- id: TRANSPORT1
+  name: Streamable HTTP & Remote Mode
+  tagline: Deploy iris as a remote MCP server with production-grade transport
+  status: pending
+  problem: iris only supports stdio transport, limiting it to local use; the MCP ecosystem is converging on Streamable HTTP for remote/enterprise deployment
+  solution: Add Streamable HTTP transport, stateless request mode, OAuth 2.1 auth, Docker deployment recipe
+  depends_on:
+  - CLOUD0
+  tasks:
+  - text: Add Streamable HTTP transport to iris-mcp alongside existing stdio transport (MCP 2025-11-25 spec)
+    checked: false
+  - text: Stateless request mode — each HTTP request processed independently, no session affinity required (SEP-1442 pattern)
+    checked: false
+  - text: OAuth 2.1 with PKCE for authenticated remote access to iris server
+    checked: false
+  - text: Docker image and fly.io/Railway deploy recipe for running iris as a remote MCP server
+    checked: false
+  - text: Connection pooling and concurrent request handling behind reverse proxy (nginx/Caddy config examples)
+    checked: false
+- id: CONTEXT1
+  name: Context Engineering Optimizations
+  tagline: Maximize KV-cache hit rates and smarter eviction for agent workflows
+  status: pending
+  problem: Agent context windows are expensive; iris can optimize how it arranges and manages context to reduce LLM costs and improve cache utilization
+  solution: Prompt-cache-aware response ordering, compressed summary cache lines, speculative prefetch from agent plan/task lists
+  tasks:
+  - text: Prompt-cache-aware response ordering — arrange MCP tool responses with stable prefix and varying suffix to maximize KV-cache hit rate
+    checked: false
+  - text: Compressed summaries as cache lines — wire iris_compress into automatic eviction so evicted sections leave behind expandable summaries
+    checked: false
+  - text: Speculative prefetch from agent plan — use MCP prompts/task lists to prefetch sections before they're explicitly requested
+    checked: false
+- id: MEMORY1
+  name: Spaced Repetition Context Management
+  tagline: FSRS-based importance scoring for smarter budget management
+  status: pending
+  problem: Current eviction is access-recency-based; spaced repetition can predict which sections will be needed again, reducing unnecessary re-fetches
+  solution: FSRS-based importance scoring, decay-aware eviction, cross-session memory persistence for per-user access patterns
+  tasks:
+  - text: FSRS-based importance scoring — sections accessed frequently get higher retention priority in the budget manager
+    checked: false
+  - text: Decay-aware eviction — replace LRU with FSRS-predicted future access probability for eviction decisions
+    checked: false
+  - text: Cross-session memory — persist section access patterns across sessions so iris learns which codebase areas matter most per user
+    checked: false
+- id: A2A1
+  name: Agent-to-Agent Protocol Support
+  tagline: Expose iris as an A2A-discoverable code intelligence agent
+  status: pending
+  problem: Multi-agent workflows are emerging (Google A2A protocol); agents need to discover and delegate code intelligence tasks to specialized services like iris
+  solution: Implement A2A Agent Card, task endpoints for code intelligence queries, multi-agent session sharing
+  tasks:
+  - text: Implement A2A Agent Card — advertise iris's code intelligence capabilities (survey, symbols, references, bridge) to other agents
+    checked: false
+  - text: A2A task endpoints — agents can submit code intelligence tasks ("find references to X", "understand module Y") via A2A protocol
+    checked: false
+  - text: Multi-agent session sharing — when multiple agents work the same repo, share session shadow to prevent duplicated context fetches
+    checked: false
 - id: CLOUD0
   name: Cloud Index Protocol
   tagline: Instant dependency context
@@ -1308,4 +1385,8 @@ phases:
   - text: Add `[[corpus.cloud]]` support to .iris.toml — fetch pre-built index from a URL instead of cloning + indexing
     checked: false
   - text: Versioned index bundles — include commit SHA so the client knows when to re-fetch a newer version
+    checked: false
+  - text: Streamable HTTP transport awareness — ensure exported index bundles work seamlessly with remote iris servers over Streamable HTTP
+    checked: false
+  - text: OAuth 2.1 scoped tokens for cloud index access — read-only tokens for consumers, write tokens for publishers
     checked: false

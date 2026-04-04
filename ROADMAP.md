@@ -1148,11 +1148,13 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] `iris init` command — auto-detect project structure, generate .iris.toml with sensible defaults (detect Tauri/PyO3/NAPI from manifests)
-- [ ] Better startup logging — show what .iris.toml was found, which paths are being indexed, bridge frameworks detected, progress bar for initial indexing
-- [ ] Friendly error messages when .iris.toml has invalid paths, missing dirs, or bad TOML syntax
-- [ ] `iris status` command — show corpus stats, indexed files, bridge links found, data directory location, index freshness
-- [ ] Ship example .iris.toml files for common project types: Tauri app, PyO3 project, plain Rust workspace, React+Node monorepo
+- [x] `iris init` command — auto-detect project structure, generate .iris.toml with sensible defaults (detect Tauri/PyO3/NAPI from manifests)
+- [x] Better startup logging — show what .iris.toml was found, which paths are being indexed, bridge frameworks detected, progress bar for initial indexing
+- [x] Friendly error messages when .iris.toml has invalid paths, missing dirs, or bad TOML syntax
+- [x] `iris status` command — show corpus stats, indexed files, bridge links found, data directory location, index freshness
+- [x] Ship example .iris.toml files for common project types: Tauri app, PyO3 project, plain Rust workspace, React+Node monorepo
+- [x] Fix memory leaks: cap WindowEstimator evicted list (Vec→counter), cap Session trajectory (Vec→VecDeque with 1000-entry sliding window), clean stale set on remove_delivered
+- [x] Fix indexing memory blowup: stream embeddings incrementally (flush every 4096 pairs) instead of accumulating all section text in memory; add hard ALWAYS_IGNORE_DIRS guard in parse_and_store_file as defense-in-depth
 
 ---
 
@@ -1171,6 +1173,80 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ---
 
+## Phase EMBED1: Code-Specialized Embeddings ✦ "Upgrade from general-purpose to code-optimized embedding models"
+
+**Problem:** iris uses a general-purpose embedding model; code-specialized models like Nomic Embed Code dramatically outperform on code retrieval benchmarks
+
+**Solution:** Abstract embedding backend, add Nomic Embed Code via ONNX, make model configurable in .iris.toml, benchmark quality improvements
+
+### Tasks
+
+- [ ] Abstract embedding backend behind a swappable trait to support multiple model backends
+- [ ] Add Nomic Embed Code support via ONNX — SOTA code-specific embedding model, outperforms Voyage Code 3 and OpenAI Embed 3 Large on CodeSearchNet
+- [ ] Configurable embedding model in .iris.toml — model name, local path, or auto-download URL
+- [ ] Benchmark retrieval quality: current model vs Nomic Embed Code vs Jina Code v2 using iris's evaluation suite (S3 phase infrastructure)
+- [ ] Matryoshka dimension reduction — store lower-dim vectors for HNSW search, full-dim for reranking (Nomic supports this natively)
+
+---
+
+## Phase TRANSPORT1: Streamable HTTP & Remote Mode ✦ "Deploy iris as a remote MCP server with production-grade transport"
+
+**Problem:** iris only supports stdio transport, limiting it to local use; the MCP ecosystem is converging on Streamable HTTP for remote/enterprise deployment
+
+**Solution:** Add Streamable HTTP transport, stateless request mode, OAuth 2.1 auth, Docker deployment recipe
+
+### Tasks
+
+- [ ] Add Streamable HTTP transport to iris-mcp alongside existing stdio transport (MCP 2025-11-25 spec)
+- [ ] Stateless request mode — each HTTP request processed independently, no session affinity required (SEP-1442 pattern)
+- [ ] OAuth 2.1 with PKCE for authenticated remote access to iris server
+- [ ] Docker image and fly.io/Railway deploy recipe for running iris as a remote MCP server
+- [ ] Connection pooling and concurrent request handling behind reverse proxy (nginx/Caddy config examples)
+
+---
+
+## Phase CONTEXT1: Context Engineering Optimizations ✦ "Maximize KV-cache hit rates and smarter eviction for agent workflows"
+
+**Problem:** Agent context windows are expensive; iris can optimize how it arranges and manages context to reduce LLM costs and improve cache utilization
+
+**Solution:** Prompt-cache-aware response ordering, compressed summary cache lines, speculative prefetch from agent plan/task lists
+
+### Tasks
+
+- [ ] Prompt-cache-aware response ordering — arrange MCP tool responses with stable prefix and varying suffix to maximize KV-cache hit rate
+- [ ] Compressed summaries as cache lines — wire iris_compress into automatic eviction so evicted sections leave behind expandable summaries
+- [ ] Speculative prefetch from agent plan — use MCP prompts/task lists to prefetch sections before they're explicitly requested
+
+---
+
+## Phase MEMORY1: Spaced Repetition Context Management ✦ "FSRS-based importance scoring for smarter budget management"
+
+**Problem:** Current eviction is access-recency-based; spaced repetition can predict which sections will be needed again, reducing unnecessary re-fetches
+
+**Solution:** FSRS-based importance scoring, decay-aware eviction, cross-session memory persistence for per-user access patterns
+
+### Tasks
+
+- [ ] FSRS-based importance scoring — sections accessed frequently get higher retention priority in the budget manager
+- [ ] Decay-aware eviction — replace LRU with FSRS-predicted future access probability for eviction decisions
+- [ ] Cross-session memory — persist section access patterns across sessions so iris learns which codebase areas matter most per user
+
+---
+
+## Phase A2A1: Agent-to-Agent Protocol Support ✦ "Expose iris as an A2A-discoverable code intelligence agent"
+
+**Problem:** Multi-agent workflows are emerging (Google A2A protocol); agents need to discover and delegate code intelligence tasks to specialized services like iris
+
+**Solution:** Implement A2A Agent Card, task endpoints for code intelligence queries, multi-agent session sharing
+
+### Tasks
+
+- [ ] Implement A2A Agent Card — advertise iris's code intelligence capabilities (survey, symbols, references, bridge) to other agents
+- [ ] A2A task endpoints — agents can submit code intelligence tasks ("find references to X", "understand module Y") via A2A protocol
+- [ ] Multi-agent session sharing — when multiple agents work the same repo, share session shadow to prevent duplicated context fetches
+
+---
+
 ## Phase CLOUD0: Cloud Index Protocol ✦ "Instant dependency context"
 
 **Problem:** Cloning + indexing dependencies is slow and wastes disk — every user re-indexes the same popular repos
@@ -1184,4 +1260,6 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [ ] `iris import` CLI command — load a .iris-index bundle into local storage + HNSW index without re-parsing or re-embedding
 - [ ] Add `[[corpus.cloud]]` support to .iris.toml — fetch pre-built index from a URL instead of cloning + indexing
 - [ ] Versioned index bundles — include commit SHA so the client knows when to re-fetch a newer version
+- [ ] Streamable HTTP transport awareness — ensure exported index bundles work seamlessly with remote iris servers over Streamable HTTP
+- [ ] OAuth 2.1 scoped tokens for cloud index access — read-only tokens for consumers, write tokens for publishers
 

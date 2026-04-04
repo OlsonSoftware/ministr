@@ -396,7 +396,12 @@ impl RepoConfig {
                 let contents = std::fs::read_to_string(&config_path).map_err(StorageError::from)?;
                 let config: Self =
                     toml::from_str(&contents).map_err(|e| StorageError::Serialization {
-                        reason: format!("failed to parse {}: {e}", config_path.display()),
+                        reason: format!(
+                            "invalid TOML in {path}: {e}\n\n  \
+                             hint: check for missing quotes, mismatched brackets, \
+                             or invalid field names",
+                            path = config_path.display()
+                        ),
                     })?;
                 return Ok(Some((dir, config)));
             }
@@ -436,6 +441,83 @@ impl RepoConfig {
         }
 
         paths
+    }
+}
+
+/// A warning about a potential issue in a `.iris.toml` config file.
+///
+/// Validation produces warnings rather than hard errors because some
+/// issues (like not-yet-created directories) may be intentional.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigWarning {
+    /// A path listed in `[corpus] paths` does not exist on disk.
+    MissingPath {
+        /// The path that could not be found.
+        path: String,
+        /// The absolute resolved path that was checked.
+        resolved: PathBuf,
+    },
+    /// The config has no paths and no git repos — nothing to index.
+    EmptyCorpus,
+}
+
+impl std::fmt::Display for ConfigWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingPath { path, resolved } => {
+                write!(
+                    f,
+                    "corpus path \"{path}\" does not exist (resolved to {})",
+                    resolved.display()
+                )
+            }
+            Self::EmptyCorpus => write!(f, ".iris.toml has no paths and no git repos — nothing to index"),
+        }
+    }
+}
+
+impl RepoConfig {
+    /// Validate the config against the filesystem and return any warnings.
+    ///
+    /// Checks that corpus paths exist, that at least one source is
+    /// configured, and that external includes resolve to valid directories.
+    #[must_use]
+    pub fn validate(&self, base_dir: &Path) -> Vec<ConfigWarning> {
+        let mut warnings = Vec::new();
+
+        // Check if completely empty
+        if self.corpus.paths.is_empty()
+            && self.corpus.git.is_empty()
+            && self.corpus.include.is_empty()
+        {
+            warnings.push(ConfigWarning::EmptyCorpus);
+            return warnings;
+        }
+
+        // Check local paths exist
+        for p in &self.corpus.paths {
+            let resolved = base_dir.join(p);
+            if !resolved.exists() {
+                warnings.push(ConfigWarning::MissingPath {
+                    path: p.clone(),
+                    resolved,
+                });
+            }
+        }
+
+        // Check external includes exist
+        for inc in &self.corpus.include {
+            let expanded = expand_tilde(&inc.path);
+            let resolved = PathBuf::from(&expanded);
+            if !resolved.exists() {
+                warnings.push(ConfigWarning::MissingPath {
+                    path: inc.path.clone(),
+                    resolved,
+                });
+            }
+        }
+
+        warnings
     }
 }
 
@@ -662,5 +744,65 @@ mod tests {
         assert!(matches!(classified[1], CorpusSource::Web(_)));
         assert!(matches!(classified[2], CorpusSource::Git(_)));
         assert!(matches!(classified[3], CorpusSource::Git(_)));
+    }
+
+    #[test]
+    fn validate_missing_path_warns() {
+        let config = RepoConfig {
+            corpus: CorpusSpec {
+                paths: vec!["src".to_string(), "nonexistent-dir".to_string()],
+                ..Default::default()
+            },
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+
+        let warnings = config.validate(root);
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(&warnings[0], ConfigWarning::MissingPath { path, .. } if path == "nonexistent-dir"));
+    }
+
+    #[test]
+    fn validate_empty_corpus_warns() {
+        let config = RepoConfig::default();
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        let warnings = config.validate(tmp.path());
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(&warnings[0], ConfigWarning::EmptyCorpus));
+    }
+
+    #[test]
+    fn validate_valid_config_no_warnings() {
+        let config = RepoConfig {
+            corpus: CorpusSpec {
+                paths: vec!["src".to_string()],
+                ..Default::default()
+            },
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+
+        let warnings = config.validate(tmp.path());
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_git_only_no_warning() {
+        let config = RepoConfig {
+            corpus: CorpusSpec {
+                git: vec![GitInclude {
+                    repo: "https://github.com/example/repo.git".to_string(),
+                    paths: None,
+                    branch: None,
+                }],
+                ..Default::default()
+            },
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        let warnings = config.validate(tmp.path());
+        assert!(warnings.is_empty());
     }
 }

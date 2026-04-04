@@ -1,0 +1,27 @@
+# iris config for a Rust workspace
+#
+# Typical layout:
+#   crate-a/src/  — library crate
+#   crate-b/src/  — another library crate
+#   cli/src/      — binary crate
+#   docs/         — project docs
+#
+# iris indexes all workspace members and builds symbol references
+# across crate boundaries.
+
+[corpus]
+paths = [
+    # Workspace members
+    "crate-a/src",
+    "crate-b/src",
+    "cli/src",
+
+    # Documentation
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+]
+
+ignore = [
+    "*.snap",              # insta test snapshots
+]

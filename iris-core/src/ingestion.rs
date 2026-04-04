@@ -165,6 +165,47 @@ impl Default for IngestionProgress {
     }
 }
 
+/// Emits periodic progress logs during ingestion.
+///
+/// Logs on two triggers: every `interval` seconds, or whenever the
+/// completion percentage crosses a 10% boundary — whichever comes first.
+struct ProgressLogger {
+    last_log: std::time::Instant,
+    interval: std::time::Duration,
+    last_pct_bucket: usize,
+}
+
+impl ProgressLogger {
+    fn new() -> Self {
+        Self {
+            last_log: std::time::Instant::now(),
+            interval: std::time::Duration::from_secs(5),
+            last_pct_bucket: 0,
+        }
+    }
+
+    fn maybe_log(&mut self, done: usize, total: usize) {
+        if total == 0 {
+            return;
+        }
+        let pct = (done * 100) / total;
+        let pct_bucket = pct / 10 * 10;
+        let elapsed = self.last_log.elapsed() >= self.interval;
+        let pct_jump = pct_bucket > self.last_pct_bucket;
+
+        if elapsed || pct_jump {
+            info!(
+                files_done = done,
+                files_total = total,
+                pct = pct,
+                "indexing progress — {done}/{total} files ({pct}%)"
+            );
+            self.last_log = std::time::Instant::now();
+            self.last_pct_bucket = pct_bucket;
+        }
+    }
+}
+
 /// Maximum number of sentences in a section-level summary.
 const SUMMARY_MAX_SENTENCES: usize = 3;
 
@@ -896,6 +937,7 @@ impl IngestionPipeline {
         let mut all_pending_refs = Vec::new();
         let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
         let mut all_embedding_pairs: Vec<(VectorId, String)> = Vec::new();
+        let mut progress_logger = ProgressLogger::new();
 
         mem_profile::checkpoint("ingestion loop start (rooted)");
         let mut file_counter = 0usize;
@@ -982,6 +1024,7 @@ impl IngestionPipeline {
 
             if let Some(ref progress) = self.progress {
                 progress.increment_done();
+                progress_logger.maybe_log(progress.files_done(), progress.files_total());
             }
 
             // Flush embeddings incrementally to bound peak memory.
@@ -1201,6 +1244,7 @@ impl IngestionPipeline {
         let mut all_pending_refs = Vec::new();
         let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
         let mut all_embedding_pairs: Vec<(VectorId, String)> = Vec::new();
+        let mut progress_logger = ProgressLogger::new();
 
         mem_profile::checkpoint("ingestion loop start (paths)");
         let mut file_counter = 0usize;
@@ -1269,6 +1313,7 @@ impl IngestionPipeline {
 
             if let Some(ref progress) = self.progress {
                 progress.increment_done();
+                progress_logger.maybe_log(progress.files_done(), progress.files_total());
             }
 
             // Flush embeddings incrementally to bound peak memory.
@@ -1746,12 +1791,9 @@ fn collect_document_embeddings(doc: &DocumentTree, pairs: &mut Vec<(VectorId, St
 }
 
 /// Maximum texts per embedding inference call.
-/// Chunk size for batch embedding. Smaller chunks yield more often to
-/// keep the MCP transport responsive, but increase per-batch overhead.
-/// 32 balances inference efficiency with responsiveness and memory usage.
-/// Each chunk is passed to `embedder.embed()` in one ONNX Runtime call,
-/// and the runtime allocates intermediate tensors proportional to chunk size.
-const EMBED_BATCH_CHUNK: usize = 32;
+/// 128 maximizes GPU throughput while keeping the MCP transport responsive.
+/// With the `CoreML` ANE leak fixed (default `CPUAndGPU`), larger chunks are safe.
+const EMBED_BATCH_CHUNK: usize = 128;
 
 /// Number of accumulated embedding pairs that triggers an intermediate flush.
 ///
