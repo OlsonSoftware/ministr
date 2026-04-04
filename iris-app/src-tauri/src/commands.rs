@@ -1,7 +1,11 @@
-//! Tauri IPC commands — bridge between the Svelte frontend and Rust backend.
+//! Tauri IPC commands — bridge between the React frontend and Rust backend.
+
+use serde::Serialize;
 
 use iris_api::corpus::{CorpusInfo, RegisterCorpusResponse};
 use iris_api::status::DaemonStatus;
+use iris_core::session::PressureLevel;
+use iris_core::storage::traits::Storage;
 use tauri::{AppHandle, Manager, State};
 
 use iris_daemon::state::AppState;
@@ -248,4 +252,259 @@ pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result
     }
 
     Ok(())
+}
+
+// ── New GUI feature commands ─────────────────────────────────────────────────
+
+/// Session info returned to the frontend.
+#[derive(Serialize)]
+pub struct SessionDetail {
+    pub session_id: String,
+    pub corpus_id: String,
+    pub pressure_level: String,
+    pub tokens_used: usize,
+    pub tokens_remaining: usize,
+    pub utilization: f64,
+    pub delivered_count: usize,
+    pub current_turn: u32,
+}
+
+/// List all active sessions across all corpora.
+#[tauri::command]
+pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDetail>, String> {
+    let guard = state.registry.corpora().read().await;
+    let mut sessions = Vec::new();
+
+    for (corpus_id, handle) in guard.iter() {
+        let reg = handle.sessions.lock().await;
+        for sid in reg.session_ids() {
+            if let Some(entry) = reg.get_session(&sid) {
+                let status = entry.budget.budget_status();
+                sessions.push(SessionDetail {
+                    session_id: sid.clone(),
+                    corpus_id: corpus_id.clone(),
+                    pressure_level: match entry.budget.pressure_level() {
+                        PressureLevel::Normal => "normal",
+                        PressureLevel::Elevated => "elevated",
+                        PressureLevel::Critical => "critical",
+                    }
+                    .to_string(),
+                    tokens_used: status.tokens_used,
+                    tokens_remaining: status.tokens_remaining,
+                    utilization: status.utilization,
+                    delivered_count: entry.session.delivered_ids().len(),
+                    current_turn: entry.session.current_turn(),
+                });
+            }
+        }
+    }
+
+    Ok(sessions)
+}
+
+/// File info for the corpus treemap.
+#[derive(Serialize)]
+pub struct FileInfo {
+    pub path: String,
+    pub content_hash: String,
+    pub mtime_ns: Option<i64>,
+    pub section_count: usize,
+}
+
+/// List all indexed files for a corpus with section counts.
+#[tauri::command]
+pub async fn list_corpus_files(
+    state: State<'_, AppState>,
+    corpus_id: String,
+) -> Result<Vec<FileInfo>, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+    let storage = &handle.storage;
+
+    let hashes = storage
+        .list_file_hashes()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Count sections per source_path by querying documents then sections.
+    let docs = storage
+        .list_documents()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut section_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for doc in &docs {
+        let sections = storage.list_sections(&doc.id).await.unwrap_or_default();
+        *section_counts.entry(doc.source_path.clone()).or_default() += sections.len();
+    }
+
+    Ok(hashes
+        .into_iter()
+        .map(|h| FileInfo {
+            section_count: section_counts.get(&h.path).copied().unwrap_or(0),
+            path: h.path,
+            content_hash: h.content_hash,
+            mtime_ns: h.mtime_ns,
+        })
+        .collect())
+}
+
+/// Search result returned to the frontend.
+#[derive(Serialize)]
+pub struct SearchResult {
+    pub content_id: String,
+    pub resolution: String,
+    pub score: f32,
+    pub text: String,
+    pub heading_path: Vec<String>,
+}
+
+/// Search a corpus by query (wraps QueryService::survey).
+#[tauri::command]
+pub async fn search_corpus(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    query: String,
+    top_k: Option<usize>,
+) -> Result<Vec<SearchResult>, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let results = handle
+        .service
+        .survey(&query, top_k.unwrap_or(10))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(results
+        .into_iter()
+        .map(|r| SearchResult {
+            content_id: r.content_id,
+            resolution: r.resolution,
+            score: r.score,
+            text: r.text,
+            heading_path: r.heading_path.unwrap_or_default(),
+        })
+        .collect())
+}
+
+/// Symbol info returned to the frontend.
+#[derive(Serialize)]
+pub struct SymbolInfo {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub file_path: String,
+    pub visibility: String,
+    pub signature: String,
+    pub doc_comment: Option<String>,
+    pub module_path: String,
+}
+
+/// Search symbols in a corpus.
+#[tauri::command]
+pub async fn search_symbols(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    query: String,
+    kind: Option<String>,
+) -> Result<Vec<SymbolInfo>, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let filter = iris_core::storage::traits::SymbolFilter {
+        name: Some(query),
+        name_exact: None,
+        kind,
+        visibility: None,
+        module: None,
+        file_path: None,
+    };
+
+    let records = handle
+        .storage
+        .list_symbols(&filter)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(records
+        .into_iter()
+        .map(|r| SymbolInfo {
+            id: r.id.0,
+            name: r.name,
+            kind: r.kind,
+            file_path: r.file_path,
+            visibility: r.visibility,
+            signature: r.signature,
+            doc_comment: r.doc_comment,
+            module_path: r.module_path,
+        })
+        .collect())
+}
+
+/// Reference link for the symbol graph.
+#[derive(Serialize)]
+pub struct SymbolRef {
+    pub from_name: String,
+    pub from_file: String,
+    pub to_name: String,
+    pub to_file: String,
+    pub ref_kind: String,
+}
+
+/// Get references (callers, importers, implementors) for a symbol.
+#[tauri::command]
+pub async fn symbol_references(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    symbol_id: String,
+) -> Result<Vec<SymbolRef>, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let refs = handle
+        .service
+        .get_symbol_references(&symbol_id, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(refs
+        .into_iter()
+        .map(|r| SymbolRef {
+            from_name: r.from_name,
+            from_file: r.from_file,
+            to_name: r.to_name,
+            to_file: r.to_file,
+            ref_kind: r.ref_kind,
+        })
+        .collect())
+}
+
+/// Ingestion progress snapshot for a corpus.
+#[derive(Serialize)]
+pub struct IngestionProgressInfo {
+    pub corpus_id: String,
+    pub status: u8,
+    pub files_total: usize,
+    pub files_done: usize,
+    pub embeddings_done: usize,
+}
+
+/// Get ingestion progress for all corpora.
+#[tauri::command]
+pub async fn ingestion_progress(
+    state: State<'_, AppState>,
+) -> Result<Vec<IngestionProgressInfo>, String> {
+    let guard = state.registry.corpora().read().await;
+    Ok(guard
+        .iter()
+        .map(|(corpus_id, handle)| IngestionProgressInfo {
+            corpus_id: corpus_id.clone(),
+            status: handle.progress.status(),
+            files_total: handle.progress.files_total(),
+            files_done: handle.progress.files_done(),
+            embeddings_done: handle.progress.embeddings_done(),
+        })
+        .collect())
 }

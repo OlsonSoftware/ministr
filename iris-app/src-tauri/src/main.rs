@@ -133,6 +133,12 @@ fn main() {
             commands::read_logs,
             commands::should_show_onboarding,
             commands::dismiss_onboarding,
+            commands::list_sessions,
+            commands::list_corpus_files,
+            commands::search_corpus,
+            commands::search_symbols,
+            commands::symbol_references,
+            commands::ingestion_progress,
         ])
         .run(tauri::generate_context!())
         .expect("error while running iris app");
