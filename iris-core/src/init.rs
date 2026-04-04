@@ -209,12 +209,14 @@ pub fn render_toml(detection: &ProjectDetection) -> String {
 /// Returns [`InitError::Io`] on filesystem errors.
 pub fn write_config(root: &Path, force: bool) -> Result<ProjectDetection, InitError> {
     let config_path = root.join(CORPUS_CONFIG_FILENAME);
+    let detection = detect_project(root);
 
     if config_path.exists() && !force {
-        return Err(InitError::AlreadyExists { path: config_path });
+        // .iris.toml already exists — skip it, but still write MCP configs.
+        write_mcp_configs(root)?;
+        return Ok(detection);
     }
 
-    let detection = detect_project(root);
     let toml_str = render_toml(&detection);
     std::fs::write(&config_path, toml_str)?;
 
@@ -263,7 +265,7 @@ fn write_mcp_json(root: &Path, relative_path: &str) -> Result<(), InitError> {
         serde_json::json!({})
     };
 
-    // Only add if iris isn't already configured.
+    // Always update the iris entry to ensure correct args.
     let servers = config.as_object_mut().and_then(|o| {
         o.entry("mcpServers")
             .or_insert_with(|| serde_json::json!({}))
@@ -271,11 +273,9 @@ fn write_mcp_json(root: &Path, relative_path: &str) -> Result<(), InitError> {
     });
 
     if let Some(servers) = servers {
-        if !servers.contains_key("iris") {
-            servers.insert("iris".to_string(), iris_entry);
-            let json_str = serde_json::to_string_pretty(&config).unwrap_or_default();
-            std::fs::write(&path, format!("{json_str}\n"))?;
-        }
+        servers.insert("iris".to_string(), iris_entry);
+        let json_str = serde_json::to_string_pretty(&config).unwrap_or_default();
+        std::fs::write(&path, format!("{json_str}\n"))?;
     }
 
     Ok(())
