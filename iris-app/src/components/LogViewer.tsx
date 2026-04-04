@@ -17,21 +17,27 @@ export function LogViewer() {
   const [filter, setFilter] = useState("");
   const [level, setLevel] = useState<LogLevel>("all");
   const [autoScroll, setAutoScroll] = useState(true);
+  const autoScrollRef = useRef(true);
+  const prevLogLen = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  async function refresh() {
-    const lines = await invoke<string[]>("read_logs", { lines: 500 });
-    setLogs(lines);
-    if (autoScroll) {
-      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
-    }
-  }
-
   useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 3000);
-    return () => clearInterval(id);
+    let cancelled = false;
+    async function poll() {
+      const lines = await invoke<string[]>("read_logs", { lines: 500 });
+      if (cancelled) return;
+      const changed = lines.length !== prevLogLen.current;
+      prevLogLen.current = lines.length;
+      setLogs(lines);
+      // Only scroll when new content arrived AND auto-scroll is on.
+      if (changed && autoScrollRef.current) {
+        setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      }
+    }
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   const filtered = logs.filter((line) => {
@@ -94,15 +100,24 @@ export function LogViewer() {
               className="h-7 pl-7 pr-2 text-xs rounded-md border border-border bg-surface-raised text-text placeholder:text-text-dim focus:outline-none focus:border-accent"
             />
           </div>
-          <Button variant="ghost" size="sm" onClick={refresh} title="Refresh">
+          <Button variant="ghost" size="sm" onClick={async () => {
+            const lines = await invoke<string[]>("read_logs", { lines: 500 });
+            prevLogLen.current = lines.length;
+            setLogs(lines);
+            if (autoScrollRef.current) {
+              setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+            }
+          }} title="Refresh">
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant={autoScroll ? "default" : "ghost"}
             size="sm"
             onClick={() => {
-              setAutoScroll(!autoScroll);
-              if (!autoScroll) {
+              const next = !autoScroll;
+              autoScrollRef.current = next;
+              setAutoScroll(next);
+              if (next) {
                 bottomRef.current?.scrollIntoView({ behavior: "smooth" });
               }
             }}
