@@ -254,6 +254,37 @@ pub enum GitError {
     Timeout { timeout_secs: u64 },
 }
 
+/// Errors from index bundle export/import operations.
+#[derive(Debug, thiserror::Error)]
+pub enum BundleError {
+    /// A required file is missing from the corpus directory.
+    #[error("missing file {path}: {reason}")]
+    MissingFile { path: PathBuf, reason: String },
+
+    /// File I/O failed during export or import.
+    #[error("I/O error for {path}: {reason}")]
+    Io { path: PathBuf, reason: String },
+
+    /// Serialization or deserialization failed.
+    #[error("serialization error: {reason}")]
+    SerializationFailed { reason: String },
+
+    /// The bundle's database operations failed.
+    #[error("database error: {reason}")]
+    DatabaseError { reason: String },
+
+    /// The bundle file is malformed or missing required entries.
+    #[error("invalid bundle: {reason}")]
+    InvalidBundle { reason: String },
+
+    /// The bundle was created with a newer format version than we support.
+    #[error("incompatible bundle version {bundle_version} (max supported: {max_supported})")]
+    IncompatibleVersion {
+        bundle_version: u32,
+        max_supported: u32,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
