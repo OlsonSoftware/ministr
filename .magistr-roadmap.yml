@@ -1385,7 +1385,7 @@ phases:
   - text: Add `[[corpus.cloud]]` support to .iris.toml — fetch pre-built index from a URL instead of cloning + indexing
     checked: true
   - text: Versioned index bundles — include commit SHA so the client knows when to re-fetch a newer version
-    checked: false
+    checked: true
   - text: Streamable HTTP transport awareness — ensure exported index bundles work seamlessly with remote iris servers over Streamable HTTP
     checked: false
   - text: OAuth 2.1 scoped tokens for cloud index access — read-only tokens for consumers, write tokens for publishers

@@ -401,6 +401,7 @@ pub struct GitInclude {
 /// [[corpus.cloud]]
 /// url = "https://releases.example.com/my-project.iris-index"
 /// name = "my-project"
+/// pin_version = "abc123def456"
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CloudInclude {
@@ -408,6 +409,12 @@ pub struct CloudInclude {
     pub url: String,
     /// Optional name for the imported corpus (defaults to URL filename stem).
     pub name: Option<String>,
+    /// Pin to a specific bundle version hash.
+    ///
+    /// When set, the client skips staleness checks and only re-fetches if the
+    /// local cached version differs from this value.
+    #[serde(default)]
+    pub pin_version: Option<String>,
 }
 
 /// Resolve the effective embedding model name.
@@ -1012,6 +1019,24 @@ mod tests {
             "https://cdn.example.com/shared-types.iris-index"
         );
         assert!(config.corpus.cloud[1].name.is_none());
+        // pin_version defaults to None when omitted
+        assert!(config.corpus.cloud[0].pin_version.is_none());
+        assert!(config.corpus.cloud[1].pin_version.is_none());
+    }
+
+    #[test]
+    fn corpus_spec_cloud_pin_version() {
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+
+            [[corpus.cloud]]
+            url = "https://example.com/pinned.iris-index"
+            pin_version = "abc123"
+        "#;
+        let config: RepoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.corpus.cloud.len(), 1);
+        assert_eq!(config.corpus.cloud[0].pin_version, Some("abc123".into()));
     }
 
     #[test]

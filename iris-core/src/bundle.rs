@@ -15,6 +15,7 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::{info, instrument};
 
 use crate::error::BundleError;
@@ -44,6 +45,19 @@ pub struct BundleManifest {
     pub corpus_roots: Vec<BundleCorpusRoot>,
     /// Unix timestamp (seconds) when the bundle was created.
     pub created_at: u64,
+    /// Deterministic content hash of corpus root versions.
+    ///
+    /// SHA-256 of sorted `"{root_id}:{commit_sha}"` pairs. Two bundles with
+    /// the same `bundle_version` contain identical content. Clients compare
+    /// this field to decide whether a cached bundle is still current.
+    #[serde(default)]
+    pub bundle_version: Option<String>,
+    /// Git HEAD SHA of the primary source repository at export time.
+    ///
+    /// For single-root bundles this is the root's commit SHA; for multi-root
+    /// bundles it is the first git root's SHA (if any).
+    #[serde(default)]
+    pub source_commit: Option<String>,
 }
 
 /// Corpus root metadata embedded in the bundle manifest.
@@ -374,14 +388,205 @@ fn append_bytes<W: Write>(
         })
 }
 
+/// Compute a deterministic bundle version string from corpus root metadata.
+///
+/// Collects `"{id}:{commit_sha}"` for each root (using `"none"` when a root
+/// has no commit SHA), sorts lexicographically, then returns the hex-encoded
+/// SHA-256 of the concatenation. The same set of roots always produces the
+/// same version regardless of insertion order.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::bundle::{BundleCorpusRoot, compute_bundle_version};
+///
+/// let roots = vec![BundleCorpusRoot {
+///     id: "root-a".into(),
+///     display_name: None,
+///     kind: "git".into(),
+///     commit_sha: Some("abc123".into()),
+///     branch: None,
+///     repo_url: None,
+/// }];
+/// let v = compute_bundle_version(&roots);
+/// assert_eq!(v.len(), 64); // hex SHA-256
+/// ```
+pub fn compute_bundle_version(roots: &[BundleCorpusRoot]) -> String {
+    let mut parts: Vec<String> = roots
+        .iter()
+        .map(|r| {
+            let sha = r.commit_sha.as_deref().unwrap_or("none");
+            format!("{}:{sha}", r.id)
+        })
+        .collect();
+    parts.sort();
+
+    let mut hasher = Sha256::new();
+    for part in &parts {
+        hasher.update(part.as_bytes());
+        hasher.update(b"\n");
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+/// Read only the manifest from a `.iris-index` bundle without extracting files.
+///
+/// Opens the zstd-compressed tar, scans entries until `manifest.json` is found,
+/// deserializes it, and returns. The rest of the archive is not read.
+///
+/// # Errors
+///
+/// Returns [`BundleError`] if the bundle cannot be opened, decompressed, or
+/// does not contain a valid `manifest.json`.
+#[instrument(skip_all, fields(bundle = %bundle_path.as_ref().display()))]
+pub fn read_manifest(bundle_path: impl AsRef<Path>) -> Result<BundleManifest, BundleError> {
+    let bundle_path = bundle_path.as_ref();
+
+    let file = File::open(bundle_path).map_err(|e| BundleError::Io {
+        path: bundle_path.to_path_buf(),
+        reason: format!("failed to open bundle: {e}"),
+    })?;
+    let reader = BufReader::new(file);
+    let zstd_reader = zstd::Decoder::new(reader).map_err(|e| BundleError::Io {
+        path: bundle_path.to_path_buf(),
+        reason: format!("failed to create zstd decoder: {e}"),
+    })?;
+    let mut archive = tar::Archive::new(zstd_reader);
+
+    for entry_result in archive.entries().map_err(|e| BundleError::Io {
+        path: bundle_path.to_path_buf(),
+        reason: format!("failed to read archive entries: {e}"),
+    })? {
+        let mut entry = entry_result.map_err(|e| BundleError::Io {
+            path: bundle_path.to_path_buf(),
+            reason: format!("failed to read archive entry: {e}"),
+        })?;
+
+        let entry_path = entry
+            .path()
+            .map_err(|e| BundleError::Io {
+                path: bundle_path.to_path_buf(),
+                reason: format!("invalid entry path: {e}"),
+            })?
+            .into_owned();
+
+        if entry_path.to_string_lossy() == "manifest.json" {
+            let mut content = Vec::new();
+            entry
+                .read_to_end(&mut content)
+                .map_err(|e| BundleError::Io {
+                    path: bundle_path.to_path_buf(),
+                    reason: format!("failed to read manifest: {e}"),
+                })?;
+            let manifest: BundleManifest =
+                serde_json::from_slice(&content).map_err(|e| BundleError::InvalidBundle {
+                    reason: format!("failed to parse manifest: {e}"),
+                })?;
+            return Ok(manifest);
+        }
+    }
+
+    Err(BundleError::InvalidBundle {
+        reason: "bundle does not contain manifest.json".into(),
+    })
+}
+
+/// On-disk metadata for a cached cloud bundle.
+///
+/// Written to `<data_dir>/cloud_cache/<url-hash>/cache.json` after a
+/// successful cloud bundle fetch+import, enabling staleness checks on
+/// subsequent runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundleCacheEntry {
+    /// The URL this bundle was fetched from.
+    pub url: String,
+    /// The manifest of the last-fetched bundle.
+    pub manifest: BundleManifest,
+    /// Unix epoch seconds when the bundle was fetched.
+    pub fetched_at: u64,
+}
+
+/// Load a cached bundle manifest for the given URL, if one exists.
+///
+/// Looks for `<data_dir>/cloud_cache/<sha256(url)>/cache.json`.
+///
+/// # Errors
+///
+/// Returns [`BundleError`] on I/O or deserialization failures. Returns
+/// `Ok(None)` if no cache entry exists.
+pub fn load_cache_entry(
+    data_dir: &Path,
+    url: &str,
+) -> Result<Option<BundleCacheEntry>, BundleError> {
+    let cache_path = cloud_cache_path(data_dir, url);
+    if !cache_path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&cache_path).map_err(|e| BundleError::Io {
+        path: cache_path.clone(),
+        reason: format!("failed to read cache entry: {e}"),
+    })?;
+    let entry: BundleCacheEntry =
+        serde_json::from_str(&content).map_err(|e| BundleError::SerializationFailed {
+            reason: format!("failed to parse cache entry: {e}"),
+        })?;
+    Ok(Some(entry))
+}
+
+/// Save a bundle cache entry after a successful fetch+import.
+///
+/// Writes to `<data_dir>/cloud_cache/<sha256(url)>/cache.json`.
+///
+/// # Errors
+///
+/// Returns [`BundleError`] if the cache directory cannot be created or the
+/// file cannot be written.
+pub fn save_cache_entry(data_dir: &Path, entry: &BundleCacheEntry) -> Result<(), BundleError> {
+    let cache_path = cloud_cache_path(data_dir, &entry.url);
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| BundleError::Io {
+            path: parent.to_path_buf(),
+            reason: format!("failed to create cache dir: {e}"),
+        })?;
+    }
+    let json =
+        serde_json::to_string_pretty(entry).map_err(|e| BundleError::SerializationFailed {
+            reason: format!("failed to serialize cache entry: {e}"),
+        })?;
+    fs::write(&cache_path, json).map_err(|e| BundleError::Io {
+        path: cache_path,
+        reason: format!("failed to write cache entry: {e}"),
+    })?;
+    Ok(())
+}
+
+/// Check whether a cached bundle is still current by comparing bundle versions.
+///
+/// Returns `true` only when both manifests carry a `bundle_version` and the
+/// values match. Missing versions on either side are treated as stale.
+#[must_use]
+pub fn is_cache_current(cached: &BundleManifest, remote: &BundleManifest) -> bool {
+    match (&cached.bundle_version, &remote.bundle_version) {
+        (Some(c), Some(r)) => c == r,
+        _ => false,
+    }
+}
+
+/// Derive the on-disk cache path for a cloud bundle URL.
+fn cloud_cache_path(data_dir: &Path, url: &str) -> PathBuf {
+    let mut hasher = Sha256::new();
+    hasher.update(url.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+    data_dir.join("cloud_cache").join(&hash).join("cache.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn manifest_roundtrip() {
-        let manifest = BundleManifest {
+    fn test_manifest(version: Option<String>, commit: Option<String>) -> BundleManifest {
+        BundleManifest {
             format_version: BUNDLE_FORMAT_VERSION,
             model_name: "all-MiniLM-L6-v2".into(),
             dimension: 384,
@@ -397,7 +602,14 @@ mod tests {
                 repo_url: None,
             }],
             created_at: 1_700_000_000,
-        };
+            bundle_version: version,
+            source_commit: commit,
+        }
+    }
+
+    #[test]
+    fn manifest_roundtrip() {
+        let manifest = test_manifest(None, None);
 
         let json = serde_json::to_string_pretty(&manifest).unwrap();
         let parsed: BundleManifest = serde_json::from_str(&json).unwrap();
@@ -406,6 +618,37 @@ mod tests {
         assert_eq!(parsed.dimension, 384);
         assert_eq!(parsed.vector_count, 1000);
         assert_eq!(parsed.corpus_roots.len(), 1);
+        assert!(parsed.bundle_version.is_none());
+        assert!(parsed.source_commit.is_none());
+    }
+
+    #[test]
+    fn manifest_roundtrip_with_version() {
+        let manifest = test_manifest(Some("abc123def456".into()), Some("deadbeef".into()));
+
+        let json = serde_json::to_string_pretty(&manifest).unwrap();
+        let parsed: BundleManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.bundle_version.as_deref(), Some("abc123def456"));
+        assert_eq!(parsed.source_commit.as_deref(), Some("deadbeef"));
+    }
+
+    #[test]
+    fn manifest_backward_compat_missing_version_fields() {
+        // Simulate a v1 manifest that lacks the new fields.
+        let json = r#"{
+            "format_version": 1,
+            "model_name": "test",
+            "dimension": 384,
+            "vector_count": 0,
+            "document_count": 0,
+            "symbol_count": 0,
+            "corpus_roots": [],
+            "created_at": 0
+        }"#;
+        let parsed: BundleManifest = serde_json::from_str(json).unwrap();
+        assert!(parsed.bundle_version.is_none());
+        assert!(parsed.source_commit.is_none());
+        assert_eq!(parsed.format_version, 1);
     }
 
     #[test]
@@ -428,6 +671,8 @@ mod tests {
             symbol_count: 0,
             corpus_roots: vec![],
             created_at: 0,
+            bundle_version: None,
+            source_commit: None,
         };
         let output = tmp.path().join("test.iris-index");
         let result = export_bundle(&corpus, &output, &manifest);
@@ -470,6 +715,8 @@ mod tests {
             symbol_count: 0,
             corpus_roots: vec![],
             created_at: 1_700_000_000,
+            bundle_version: Some("test-version-hash".into()),
+            source_commit: Some("abc123".into()),
         };
         let bundle_path = tmp.path().join("test.iris-index");
         export_bundle(&corpus_dir, &bundle_path, &manifest).unwrap();
@@ -570,6 +817,8 @@ mod tests {
             symbol_count: 0,
             corpus_roots: vec![],
             created_at: 0,
+            bundle_version: None,
+            source_commit: None,
         };
         let json = serde_json::to_vec_pretty(&manifest).unwrap();
         append_bytes(&mut archive, "manifest.json", &json).unwrap();
@@ -584,5 +833,186 @@ mod tests {
             BundleError::IncompatibleVersion { .. } => {}
             other => panic!("expected IncompatibleVersion, got: {other}"),
         }
+    }
+
+    // --- compute_bundle_version tests ---
+
+    #[test]
+    fn bundle_version_is_deterministic() {
+        let roots = vec![
+            BundleCorpusRoot {
+                id: "root-b".into(),
+                display_name: None,
+                kind: "git".into(),
+                commit_sha: Some("sha-b".into()),
+                branch: None,
+                repo_url: None,
+            },
+            BundleCorpusRoot {
+                id: "root-a".into(),
+                display_name: None,
+                kind: "git".into(),
+                commit_sha: Some("sha-a".into()),
+                branch: None,
+                repo_url: None,
+            },
+        ];
+        let v1 = compute_bundle_version(&roots);
+
+        // Reversed order should produce the same version (sorted internally).
+        let reversed: Vec<_> = roots.into_iter().rev().collect();
+        let v2 = compute_bundle_version(&reversed);
+
+        assert_eq!(v1, v2);
+        assert_eq!(v1.len(), 64, "should be hex SHA-256");
+    }
+
+    #[test]
+    fn bundle_version_differs_for_different_shas() {
+        let roots_a = vec![BundleCorpusRoot {
+            id: "root".into(),
+            display_name: None,
+            kind: "git".into(),
+            commit_sha: Some("sha-1".into()),
+            branch: None,
+            repo_url: None,
+        }];
+        let roots_b = vec![BundleCorpusRoot {
+            id: "root".into(),
+            display_name: None,
+            kind: "git".into(),
+            commit_sha: Some("sha-2".into()),
+            branch: None,
+            repo_url: None,
+        }];
+        assert_ne!(
+            compute_bundle_version(&roots_a),
+            compute_bundle_version(&roots_b)
+        );
+    }
+
+    #[test]
+    fn bundle_version_stable_for_no_shas() {
+        let roots = vec![BundleCorpusRoot {
+            id: "local-root".into(),
+            display_name: None,
+            kind: "local".into(),
+            commit_sha: None,
+            branch: None,
+            repo_url: None,
+        }];
+        let v1 = compute_bundle_version(&roots);
+        let v2 = compute_bundle_version(&roots);
+        assert_eq!(v1, v2);
+        assert_eq!(v1.len(), 64);
+    }
+
+    // --- read_manifest tests ---
+
+    #[test]
+    fn read_manifest_from_bundle() {
+        let tmp = TempDir::new().unwrap();
+        let corpus_dir = tmp.path().join("corpus");
+        let index_dir = corpus_dir.join("index");
+        fs::create_dir_all(&index_dir).unwrap();
+
+        let db_path = corpus_dir.join("content.db");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE documents (id TEXT PRIMARY KEY);")
+            .unwrap();
+        drop(conn);
+
+        fs::write(index_dir.join("id_map.json"), b"{}").unwrap();
+        fs::write(index_dir.join("iris_hnsw.hnsw.dat"), b"dat").unwrap();
+        fs::write(index_dir.join("iris_hnsw.hnsw.graph"), b"graph").unwrap();
+
+        let manifest = BundleManifest {
+            format_version: BUNDLE_FORMAT_VERSION,
+            model_name: "test".into(),
+            dimension: 384,
+            vector_count: 10,
+            document_count: 5,
+            symbol_count: 0,
+            corpus_roots: vec![],
+            created_at: 1_700_000_000,
+            bundle_version: Some("ver-hash".into()),
+            source_commit: Some("deadbeef".into()),
+        };
+        let bundle_path = tmp.path().join("test.iris-index");
+        export_bundle(&corpus_dir, &bundle_path, &manifest).unwrap();
+
+        let read_back = read_manifest(&bundle_path).unwrap();
+        assert_eq!(read_back.model_name, "test");
+        assert_eq!(read_back.vector_count, 10);
+        assert_eq!(read_back.bundle_version.as_deref(), Some("ver-hash"));
+        assert_eq!(read_back.source_commit.as_deref(), Some("deadbeef"));
+    }
+
+    #[test]
+    fn read_manifest_missing_returns_error() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create a bundle with no manifest.json
+        let bundle_path = tmp.path().join("no-manifest.iris-index");
+        let file = File::create(&bundle_path).unwrap();
+        let writer = BufWriter::new(file);
+        let zstd_writer = zstd::Encoder::new(writer, 1).unwrap();
+        let mut archive = tar::Builder::new(zstd_writer);
+        append_bytes(&mut archive, "other.txt", b"hello").unwrap();
+        let zstd_writer = archive.into_inner().unwrap();
+        zstd_writer.finish().unwrap();
+
+        let result = read_manifest(&bundle_path);
+        assert!(result.is_err());
+    }
+
+    // --- cache entry tests ---
+
+    #[test]
+    fn cache_entry_roundtrip() {
+        let tmp = TempDir::new().unwrap();
+        let entry = BundleCacheEntry {
+            url: "https://example.com/test.iris-index".into(),
+            manifest: test_manifest(Some("v1".into()), Some("abc".into())),
+            fetched_at: 1_700_000_000,
+        };
+
+        save_cache_entry(tmp.path(), &entry).unwrap();
+        let loaded = load_cache_entry(tmp.path(), &entry.url).unwrap();
+        assert!(loaded.is_some());
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.url, entry.url);
+        assert_eq!(loaded.manifest.bundle_version.as_deref(), Some("v1"));
+        assert_eq!(loaded.fetched_at, 1_700_000_000);
+    }
+
+    #[test]
+    fn load_cache_entry_missing_returns_none() {
+        let tmp = TempDir::new().unwrap();
+        let result = load_cache_entry(tmp.path(), "https://example.com/missing").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn is_cache_current_matching_versions() {
+        let a = test_manifest(Some("same".into()), None);
+        let b = test_manifest(Some("same".into()), None);
+        assert!(is_cache_current(&a, &b));
+    }
+
+    #[test]
+    fn is_cache_current_different_versions() {
+        let a = test_manifest(Some("v1".into()), None);
+        let b = test_manifest(Some("v2".into()), None);
+        assert!(!is_cache_current(&a, &b));
+    }
+
+    #[test]
+    fn is_cache_current_none_treated_as_stale() {
+        let with = test_manifest(Some("v1".into()), None);
+        let without = test_manifest(None, None);
+        assert!(!is_cache_current(&with, &without));
+        assert!(!is_cache_current(&without, &with));
+        assert!(!is_cache_current(&without, &without));
     }
 }
