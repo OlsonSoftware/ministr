@@ -642,12 +642,35 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
 /// Connects to the iris daemon at `~/.iris/irisd.sock` and proxies all
 /// tool calls. No ONNX model, no indexes, no `SQLite` — just HTTP over UDS.
 async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
+    eprintln!(
+        "iris: proxy starting with {} corpus paths",
+        corpus_paths.len()
+    );
+
+    // Pre-register corpus with daemon before starting MCP handshake.
+    let client = iris_api::client::DaemonClient::new();
+    match client.register_corpus(corpus_paths).await {
+        Ok(resp) => {
+            eprintln!(
+                "iris: corpus {} registered (indexing_started={})",
+                resp.corpus_id, resp.indexing_started
+            );
+        }
+        Err(e) => {
+            eprintln!("iris: warning — corpus registration failed: {e}");
+        }
+    }
+
+    eprintln!("iris: starting MCP proxy on stdio");
     let proxy = iris_mcp::proxy::ProxyServer::new(corpus_paths.to_vec());
-    proxy
+    let service = proxy
         .serve(rmcp::transport::stdio())
         .await
         .into_diagnostic()
         .wrap_err("proxy MCP server failed")?;
+
+    // Keep the service alive until the client disconnects.
+    service.waiting().await;
     Ok(())
 }
 

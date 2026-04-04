@@ -541,10 +541,7 @@ impl ServerHandler for ProxyServer {
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        // Ensure daemon is running and corpus is registered.
-        if let Err(e) = self.ensure_corpus().await {
-            warn!(error = %e.message, "corpus registration failed on init");
-        }
+        info!("proxy: initialize called — corpus registration deferred to first tool call");
 
         if context.peer.peer_info().is_none() {
             context.peer.set_peer_info(request);
