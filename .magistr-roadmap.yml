@@ -1410,7 +1410,7 @@ phases:
   - text: 'Session-aware query endpoints: all queries scoped to a session for dedup, delta delivery, and budget tracking'
     checked: true
   - text: Prefetch engine runs daemon-side, shared across MCP sessions on the same corpus
-    checked: false
+    checked: true
   - text: 'Daemon auto-launch from proxy: search PATH, sibling directory, ~/.iris/bin for iris-app binary'
     checked: false
   - text: 'PID file + health check: /api/v1/status returns uptime, corpus count, memory usage, version'

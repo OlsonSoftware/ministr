@@ -128,3 +128,22 @@ pub fn budget_status(
         utilization: b.utilization,
     }
 }
+
+pub fn prefetch_metrics(
+    m: &iris_core::session::prefetch::PrefetchMetrics,
+    cache_size: usize,
+    cache_capacity: usize,
+) -> iris_api::session::PrefetchMetricsResponse {
+    iris_api::session::PrefetchMetricsResponse {
+        hits: m.hits,
+        misses: m.misses,
+        sequential_hits: m.sequential_hits,
+        topical_hits: m.topical_hits,
+        structural_hits: m.structural_hits,
+        cross_session_hits: m.cross_session_hits,
+        survey_expand_hits: m.survey_expand_hits,
+        agent_plan_hits: m.agent_plan_hits,
+        cache_size,
+        cache_capacity,
+    }
+}
