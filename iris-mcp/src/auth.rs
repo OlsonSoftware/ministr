@@ -54,7 +54,12 @@ impl Default for OAuthConfig {
     fn default() -> Self {
         Self {
             issuer: "http://localhost:8080".into(),
-            scopes_supported: vec!["iris:read".into(), "iris:write".into()],
+            scopes_supported: vec![
+                "iris:read".into(),
+                "iris:write".into(),
+                "iris:bundle:read".into(),
+                "iris:bundle:write".into(),
+            ],
             token_ttl: Duration::from_secs(3600),
             code_ttl: Duration::from_secs(600),
         }
@@ -130,6 +135,29 @@ impl OAuthStore {
         }
         Some(access.client_id.clone())
     }
+
+    /// Validate an access token and check that it includes the required scope.
+    ///
+    /// Returns the client ID if the token is valid and its `scope` field
+    /// contains `required_scope` as a space-separated entry. Returns `None`
+    /// if the token is missing, expired, or lacks the scope.
+    pub async fn validate_token_with_scope(
+        &self,
+        token: &str,
+        required_scope: &str,
+    ) -> Option<String> {
+        let tokens = self.tokens.read().await;
+        let access = tokens.get(token)?;
+        let now = epoch_now();
+        if now > access.expires_at {
+            return None;
+        }
+        if access.scope.split_whitespace().any(|s| s == required_scope) {
+            Some(access.client_id.clone())
+        } else {
+            None
+        }
+    }
 }
 
 // ── Middleware ──────────────────────────────────────────────────────────────
@@ -162,6 +190,76 @@ pub async fn validate_token_middleware(
         debug!("invalid or expired token");
         unauthorized_response(&store.config)
     }
+}
+
+/// State for scope-checking middleware: the OAuth store plus the required scope.
+#[derive(Clone)]
+pub struct ScopedState {
+    /// The OAuth store for token validation.
+    pub store: OAuthStore,
+    /// The scope required to access the protected routes.
+    pub required_scope: String,
+}
+
+/// Axum middleware that validates Bearer tokens **and** checks for a specific scope.
+///
+/// Returns 401 if the token is missing, expired, or lacks the required scope.
+/// Returns 403 if the token is valid but the scope is insufficient.
+pub async fn validate_scope_middleware(
+    State(state): State<ScopedState>,
+    headers: HeaderMap,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let auth_header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    let token = match auth_header {
+        Some(h) if h.starts_with("Bearer ") => &h[7..],
+        _ => {
+            debug!("missing or malformed Authorization header");
+            return unauthorized_response(&state.store.config);
+        }
+    };
+
+    // First check: valid token?
+    if state.store.validate_token(token).await.is_none() {
+        debug!("invalid or expired token");
+        return unauthorized_response(&state.store.config);
+    }
+
+    // Second check: has required scope?
+    if let Some(client_id) = state
+        .store
+        .validate_token_with_scope(token, &state.required_scope)
+        .await
+    {
+        debug!(client_id = %client_id, scope = %state.required_scope, "scoped token validated");
+        next.run(request).await
+    } else {
+        debug!(scope = %state.required_scope, "token lacks required scope");
+        (
+            StatusCode::FORBIDDEN,
+            format!("insufficient scope: requires {}", state.required_scope),
+        )
+            .into_response()
+    }
+}
+
+/// Wrap a router with scope-checking middleware.
+///
+/// Requests must carry a valid Bearer token that includes `required_scope`
+/// in its space-separated scope list.
+pub fn scope_protected_router(router: Router, store: OAuthStore, required_scope: &str) -> Router {
+    let scoped = ScopedState {
+        store,
+        required_scope: required_scope.to_owned(),
+    };
+    router.layer(middleware::from_fn_with_state(
+        scoped,
+        validate_scope_middleware,
+    ))
 }
 
 fn unauthorized_response(config: &OAuthConfig) -> Response {
@@ -586,6 +684,16 @@ mod tests {
         let config = OAuthConfig::default();
         assert!(config.scopes_supported.contains(&"iris:read".to_string()));
         assert!(config.scopes_supported.contains(&"iris:write".to_string()));
+        assert!(
+            config
+                .scopes_supported
+                .contains(&"iris:bundle:read".to_string())
+        );
+        assert!(
+            config
+                .scopes_supported
+                .contains(&"iris:bundle:write".to_string())
+        );
         assert_eq!(config.token_ttl, Duration::from_secs(3600));
     }
 
@@ -646,6 +754,75 @@ mod tests {
         let verify = base64_url_encode(&hasher2.finalize());
 
         assert_eq!(challenge, verify);
+    }
+
+    #[tokio::test]
+    async fn validate_token_with_scope_matching() {
+        let store = OAuthStore::new(OAuthConfig::default());
+        let token_val = "scoped-token";
+        store.tokens.write().await.insert(
+            token_val.to_string(),
+            AccessToken {
+                token: token_val.to_string(),
+                client_id: "client-1".into(),
+                scope: "iris:read iris:bundle:read".into(),
+                expires_at: epoch_now() + 3600,
+            },
+        );
+
+        // Has the scope — should succeed.
+        let result = store
+            .validate_token_with_scope(token_val, "iris:bundle:read")
+            .await;
+        assert_eq!(result, Some("client-1".to_string()));
+
+        // Also has iris:read.
+        let result = store
+            .validate_token_with_scope(token_val, "iris:read")
+            .await;
+        assert_eq!(result, Some("client-1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn validate_token_with_scope_missing() {
+        let store = OAuthStore::new(OAuthConfig::default());
+        let token_val = "limited-token";
+        store.tokens.write().await.insert(
+            token_val.to_string(),
+            AccessToken {
+                token: token_val.to_string(),
+                client_id: "client-1".into(),
+                scope: "iris:read".into(),
+                expires_at: epoch_now() + 3600,
+            },
+        );
+
+        // Does NOT have iris:bundle:read — should fail.
+        let result = store
+            .validate_token_with_scope(token_val, "iris:bundle:read")
+            .await;
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn validate_token_with_scope_expired() {
+        let store = OAuthStore::new(OAuthConfig::default());
+        let token_val = "expired-scoped";
+        store.tokens.write().await.insert(
+            token_val.to_string(),
+            AccessToken {
+                token: token_val.to_string(),
+                client_id: "client-1".into(),
+                scope: "iris:bundle:read".into(),
+                expires_at: epoch_now().saturating_sub(100),
+            },
+        );
+
+        // Token expired — should fail even though scope matches.
+        let result = store
+            .validate_token_with_scope(token_val, "iris:bundle:read")
+            .await;
+        assert_eq!(result, None);
     }
 
     #[test]
