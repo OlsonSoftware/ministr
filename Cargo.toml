@@ -91,6 +91,10 @@ tree-sitter-c-sharp = "0.23"
 tree-sitter-swift = "0.7"
 tree-sitter-kotlin-ng = "1"
 
+# Archive / compression
+tar = "0.4"
+zstd = "0.13"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 

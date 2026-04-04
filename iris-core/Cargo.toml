@@ -55,6 +55,9 @@ tree-sitter-ruby = { workspace = true, optional = true }
 tree-sitter-c-sharp = { workspace = true, optional = true }
 tree-sitter-swift = { workspace = true, optional = true }
 tree-sitter-kotlin-ng = { workspace = true, optional = true }
+tar.workspace = true
+zstd.workspace = true
+tempfile.workspace = true
 
 [features]
 default = ["lang-all"]
@@ -85,7 +88,6 @@ lang-kotlin = ["dep:tree-sitter-kotlin-ng"]
 
 [dev-dependencies]
 serde_json.workspace = true
-tempfile.workspace = true
 criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
 

@@ -4,6 +4,7 @@
 //! for iris. It has no transport dependencies and no knowledge of MCP.
 
 pub mod analytics;
+pub mod bundle;
 pub mod code;
 pub mod coherence;
 pub mod config;
@@ -12,10 +13,10 @@ pub mod error;
 pub mod extraction;
 pub mod git;
 pub mod index;
-pub mod init;
 pub mod ingestion;
-pub mod mem_profile;
+pub mod init;
 pub mod llms_txt;
+pub mod mem_profile;
 pub mod parser;
 pub mod scaffold;
 pub mod search;

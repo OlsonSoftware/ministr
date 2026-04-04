@@ -1372,12 +1372,12 @@ phases:
 - id: CLOUD0
   name: Cloud Index Protocol
   tagline: Instant dependency context
-  status: pending
+  status: in_progress
   problem: Cloning + indexing dependencies is slow and wastes disk — every user re-indexes the same popular repos
   solution: Define a wire protocol for streaming pre-computed index data (embeddings, sections, symbols) from a cloud service into local iris
   tasks:
   - text: Design index export format — serializable bundle of sections, symbols, claims, embeddings, bridge endpoints for a single corpus root
-    checked: false
+    checked: true
   - text: '`iris export` CLI command — dump a corpus root''s index to a portable bundle file (.iris-index)'
     checked: false
   - text: '`iris import` CLI command — load a .iris-index bundle into local storage + HNSW index without re-parsing or re-embedding'
