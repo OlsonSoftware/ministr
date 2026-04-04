@@ -196,6 +196,18 @@ impl Storage for SqliteStorage {
                 })?;
 
             let result = (|| {
+                // Remove any stale document with the same source_path to avoid
+                // UNIQUE constraint violations (can happen if a prior run was
+                // interrupted after inserting the doc but before writing the
+                // file hash record).
+                conn.execute(
+                    "DELETE FROM documents WHERE source_path = ?1",
+                    rusqlite::params![doc.source_path],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to clean stale document {}: {e}", doc.source_path),
+                })?;
+
                 conn.execute(
                     "INSERT INTO documents (id, title, source_path, summary) VALUES (?1, ?2, ?3, ?4)",
                     rusqlite::params![doc.id.as_ref(), doc.title, doc.source_path, doc.summary,],
