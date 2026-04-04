@@ -1280,18 +1280,18 @@ phases:
 - id: PERF1
   name: Indexing Performance
   tagline: Index fast, start faster
-  status: pending
+  status: done
   problem: Initial indexing is slow for large repos — 15-20s for 155 files, minutes for 1000+ file repos
   solution: Concurrent file ingestion, incremental embedding, and smarter skip logic
   tasks:
   - text: Concurrent file ingestion — process files in parallel with semaphore-bounded tokio::spawn (same pattern as concurrent refresh), share embedder via Arc
-    checked: false
+    checked: true
   - text: Batch embedding — collect texts across multiple files, embed in larger batches to amortize ONNX overhead
-    checked: false
+    checked: true
   - text: Progressive availability — make already-indexed files queryable while remaining files are still being processed (currently blocks until complete)
-    checked: false
+    checked: true
   - text: Benchmark suite — measure indexing throughput (files/sec, sections/sec) on reference repos (iris-rs, pydantic-core, ruff) to track regressions
-    checked: false
+    checked: true
 - id: EMBED1
   name: Code-Specialized Embeddings
   tagline: Upgrade from general-purpose to code-optimized embedding models

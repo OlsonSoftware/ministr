@@ -217,9 +217,7 @@ async fn main() -> Result<()> {
             oauth,
             oauth_issuer,
         } => match transport {
-            Transport::Stdio if proxy => {
-                cmd_serve_proxy_stdio(&corpus_paths).await
-            }
+            Transport::Stdio if proxy => cmd_serve_proxy_stdio(&corpus_paths).await,
             Transport::Stdio => {
                 cmd_serve_stdio(&corpus_paths, &git_includes, &config_path, &config).await
             }
@@ -544,6 +542,7 @@ async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
 /// Opens the `SQLite` database directly (no embedding model needed) and
 /// displays document counts, corpus roots, data directory, and index info.
 /// Falls back to the daemon API if available for richer live status.
+#[allow(clippy::too_many_lines)]
 async fn cmd_daemon_status() -> Result<()> {
     use iris_core::storage::Storage as _;
 
@@ -554,7 +553,10 @@ async fn cmd_daemon_status() -> Result<()> {
             eprintln!("iris daemon v{}", status.version);
             eprintln!("  Uptime:    {}s", status.uptime_secs);
             eprintln!("  Memory:    {:.0} MB", status.memory_mb);
-            eprintln!("  Model:     {} ({}d)", status.model, status.model_dimension);
+            eprintln!(
+                "  Model:     {} ({}d)",
+                status.model, status.model_dimension
+            );
             eprintln!("  Corpora:   {}", status.corpora.len());
             for c in &status.corpora {
                 eprintln!(
@@ -565,8 +567,10 @@ async fn cmd_daemon_status() -> Result<()> {
                     c.embeddings_count,
                     match &c.status {
                         iris_api::corpus::IndexingStatus::Idle => "idle".to_string(),
-                        iris_api::corpus::IndexingStatus::Indexing { files_done, files_total } =>
-                            format!("indexing {files_done}/{files_total}"),
+                        iris_api::corpus::IndexingStatus::Indexing {
+                            files_done,
+                            files_total,
+                        } => format!("indexing {files_done}/{files_total}"),
                         iris_api::corpus::IndexingStatus::Error { message } =>
                             format!("error: {message}"),
                     }
@@ -608,8 +612,22 @@ async fn cmd_daemon_status() -> Result<()> {
     eprintln!("iris status (local)");
     eprintln!();
     eprintln!("  Data dir:  {}", corpus_dir.display());
-    eprintln!("  Database:  {}", if db_path.exists() { "exists" } else { "not found" });
-    eprintln!("  Index dir: {}", if index_dir.exists() { "exists" } else { "not found" });
+    eprintln!(
+        "  Database:  {}",
+        if db_path.exists() {
+            "exists"
+        } else {
+            "not found"
+        }
+    );
+    eprintln!(
+        "  Index dir: {}",
+        if index_dir.exists() {
+            "exists"
+        } else {
+            "not found"
+        }
+    );
 
     if !db_path.exists() {
         eprintln!();
@@ -628,11 +646,7 @@ async fn cmd_daemon_status() -> Result<()> {
     eprintln!("  Roots:     {}", roots.len());
     for r in &roots {
         let name = r.display_name.as_deref().unwrap_or(&r.path);
-        eprintln!(
-            "    {name} ({} — {} files)",
-            r.kind.as_str(),
-            r.file_count
-        );
+        eprintln!("    {name} ({} — {} files)", r.kind.as_str(), r.file_count);
     }
 
     // Show index file sizes.
@@ -655,7 +669,10 @@ async fn cmd_daemon_status() -> Result<()> {
 async fn cmd_daemon_search(corpus_paths: &[String], query: &str, top_k: usize) -> Result<()> {
     let client = iris_api::client::DaemonClient::new();
     if !client.is_available() {
-        miette::bail!("iris daemon is not running (no socket at {:?})", client.socket_path());
+        miette::bail!(
+            "iris daemon is not running (no socket at {:?})",
+            client.socket_path()
+        );
     }
 
     // Register corpus if needed.
@@ -672,10 +689,7 @@ async fn cmd_daemon_search(corpus_paths: &[String], query: &str, top_k: usize) -
         .wrap_err("search failed")?;
 
     for r in &results.results {
-        eprintln!(
-            "[{:8}] {:.3}  {}",
-            r.resolution, r.score, r.content_id
-        );
+        eprintln!("[{:8}] {:.3}  {}", r.resolution, r.score, r.content_id);
         eprintln!("  {}", r.text.lines().next().unwrap_or(""));
         eprintln!();
     }
