@@ -15,14 +15,8 @@ export function IngestionTimeline({ status }: Props) {
     let cancelled = false;
     async function poll() {
       try {
-        const all: IngestionProgressInfo[] = [];
-        for (const c of status.corpora) {
-          const p = await invoke<IngestionProgressInfo>("ingestion_progress", {
-            corpusId: c.id,
-          });
-          all.push(p);
-        }
-        if (!cancelled) setProgress(all);
+        const result = await invoke<IngestionProgressInfo[]>("ingestion_progress");
+        if (!cancelled) setProgress(result);
       } catch {
         /* ignore */
       }
