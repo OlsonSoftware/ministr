@@ -309,10 +309,7 @@ async fn init_infrastructure(
         .wrap_err("failed to open content database")?;
 
     // Use resolved model name or fall back to global default.
-    let model_name = resolved_model.map_or_else(
-        || config.default_model.clone(),
-        String::from,
-    );
+    let model_name = resolved_model.map_or_else(|| config.default_model.clone(), String::from);
     tracing::info!(model = %model_name, "resolved embedding model");
 
     // Initialize embedder with content-addressable cache.
@@ -857,6 +854,10 @@ async fn cmd_serve_http(
 
     let ingestion_progress = server.ingestion_progress_arc();
 
+    // Extract Arcs before moving server into the factory closure.
+    let a2a_service = server.service_arc();
+    let a2a_registry = server.registry_arc();
+
     // Each HTTP session gets its own IrisServer clone.
     // All clones share the same Arc'd infrastructure.
     let server_factory = move || Ok(server.clone());
@@ -870,12 +871,22 @@ async fn cmd_serve_http(
 
     let mcp_router = axum::Router::new().nest_service("/mcp", http_service);
 
+    // A2A protocol endpoints (agent card + task submission)
+    let a2a_state = iris_mcp::a2a::A2aState {
+        service: a2a_service,
+        registry: a2a_registry,
+        tasks: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+    };
+    let a2a_router = iris_mcp::a2a::a2a_routes(a2a_state);
+
     let app = if let Some(oauth_cfg) = oauth_config {
         tracing::info!("OAuth 2.1 authentication enabled");
         let store = iris_mcp::auth::OAuthStore::new(oauth_cfg);
-        iris_mcp::auth::protected_router(mcp_router, store)
+        let protected = iris_mcp::auth::protected_router(mcp_router, store);
+        // A2A agent card is public; task endpoints merged with protected routes
+        a2a_router.merge(protected)
     } else {
-        mcp_router
+        a2a_router.merge(mcp_router)
     };
 
     let bind_addr = format!("{host}:{port}");
