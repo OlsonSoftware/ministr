@@ -41,8 +41,8 @@ export function IngestionTimeline({ status }: Props) {
         <div className="grid gap-3">
           {progress.map((p) => {
             const corpusInfo = status.corpora.find((c) => c.id === p.corpus_id);
-            const pct = p.files_total > 0 ? (p.files_done / p.files_total) * 100 : 100;
-            const isActive = p.files_total > 0 && p.files_done < p.files_total;
+            const isActive = p.status === 1; // 0=pending, 1=running, 2=complete
+            const pct = p.files_total > 0 ? (p.files_done / p.files_total) * 100 : (isActive ? 0 : 100);
 
             return (
               <Card key={p.corpus_id}>
@@ -54,9 +54,13 @@ export function IngestionTimeline({ status }: Props) {
                     <span className="text-xs px-2 py-0.5 rounded-full bg-warning/10 text-warning animate-pulse">
                       indexing
                     </span>
-                  ) : (
+                  ) : p.status === 2 ? (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-500">
-                      idle
+                      complete
+                    </span>
+                  ) : (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-surface-overlay text-text-dim">
+                      pending
                     </span>
                   )}
                 </div>
