@@ -1241,9 +1241,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Implement A2A Agent Card — advertise iris's code intelligence capabilities (survey, symbols, references, bridge) to other agents
-- [ ] A2A task endpoints — agents can submit code intelligence tasks ("find references to X", "understand module Y") via A2A protocol
-- [ ] Multi-agent session sharing — when multiple agents work the same repo, share session shadow to prevent duplicated context fetches
+- [x] Implement A2A Agent Card — advertise iris's code intelligence capabilities (survey, symbols, references, bridge) to other agents
+- [x] A2A task endpoints — agents can submit code intelligence tasks ("find references to X", "understand module Y") via A2A protocol
+- [x] Multi-agent session sharing — when multiple agents work the same repo, share session shadow to prevent duplicated context fetches
 
 ---
 

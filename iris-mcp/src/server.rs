@@ -3032,6 +3032,12 @@ impl IrisServer {
         self
     }
 
+    /// Access the query service `Arc` for external use (e.g. A2A task handlers).
+    #[must_use]
+    pub fn service_arc(&self) -> Arc<QueryService> {
+        Arc::clone(&self.service)
+    }
+
     /// Access the session registry `Arc` for external use (e.g. coherence task).
     #[must_use]
     pub fn registry_arc(&self) -> Arc<Mutex<SessionRegistry>> {
