@@ -32,6 +32,24 @@
     }
   }
 
+  async function addProject() {
+    try {
+      await invoke("add_project_dialog");
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function removeProject(corpusId: string) {
+    try {
+      await invoke("remove_project", { corpusId });
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   onMount(() => {
     refresh();
     const interval = setInterval(refresh, 2000);
@@ -73,9 +91,12 @@
 
   {#if status}
     <section class="corpora">
-      <h2>Corpora ({status.corpora.length})</h2>
+      <div class="section-header">
+        <h2>Corpora ({status.corpora.length})</h2>
+        <button class="btn-add" onclick={addProject}>+ Add Project</button>
+      </div>
       {#if status.corpora.length === 0}
-        <p class="empty">No corpora registered. The MCP server will register corpora automatically.</p>
+        <p class="empty">No corpora registered. Click "Add Project" or use the tray menu.</p>
       {:else}
         <div class="corpus-list">
           {#each status.corpora as corpus}
@@ -83,6 +104,7 @@
               <div class="corpus-header">
                 <span class="status-dot" style="background: {statusColor(corpus.status.state)}"></span>
                 <code class="corpus-id">{corpus.id}</code>
+                <button class="btn-remove" onclick={() => removeProject(corpus.id)}>Remove</button>
               </div>
               <div class="corpus-paths">
                 {#each corpus.paths as path}
@@ -225,5 +247,46 @@
     margin-top: 8px;
     font-size: 0.8rem;
     color: #f59e0b;
+  }
+
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .section-header h2 {
+    margin: 0;
+  }
+
+  .btn-add {
+    background: #1e3a5f;
+    border: 1px solid #2563eb;
+    color: #93c5fd;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .btn-add:hover {
+    background: #1e40af;
+  }
+
+  .btn-remove {
+    background: transparent;
+    border: 1px solid #555;
+    color: #888;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    margin-left: auto;
+  }
+
+  .btn-remove:hover {
+    border-color: #ef4444;
+    color: #ef4444;
   }
 </style>

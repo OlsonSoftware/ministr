@@ -1457,28 +1457,28 @@ phases:
 - id: TRAY1
   name: Tray App Foundation
   tagline: System tray GUI that keeps the daemon alive and shows project status
-  status: pending
+  status: done
   problem: No visual interface to manage indexed projects — users rely on CLI commands and have no visibility into daemon health or indexing progress
   solution: 'Tauri v2 system tray app: dynamic project list menu, add/remove projects via file picker, status indicators, prevent_exit to keep daemon running in background'
   depends_on:
   - DAEMON1
   tasks:
   - text: 'Tauri v2 project setup: system tray icon, basic right-click menu, prevent_exit to keep daemon alive when windows close'
-    checked: false
+    checked: true
   - text: 'Daemon startup: spawn UDS listener on app launch, shared AppState with CorpusRegistry + embedded QueryService'
-    checked: false
+    checked: true
   - text: 'Dynamic tray menu: list registered projects with status icons (indexing/ready/error), refresh on registry changes'
-    checked: false
+    checked: true
   - text: 'Add Project flow: tray menu item opens file picker, registers corpus with daemon, triggers background indexing'
-    checked: false
+    checked: true
   - text: 'Remove Project: unregister corpus, optionally delete index data from ~/.iris/corpora/'
-    checked: false
+    checked: true
   - text: 'Frontend scaffold: minimal HTML/CSS/JS (or Svelte) for the project management window, Tauri command bridge'
-    checked: false
+    checked: true
   - text: 'Tray tooltip: "iris — N projects indexed, M active sessions"'
-    checked: false
+    checked: true
   - text: 'Auto-detect .iris.toml: scan common project directories on first launch, suggest projects to register'
-    checked: false
+    checked: true
 - id: TRAY2
   name: Project Management GUI
   tagline: Full project dashboard with index health, sessions, and settings
