@@ -355,6 +355,17 @@ pub struct CorpusSpec {
     pub include: Vec<ExternalInclude>,
     /// Git repositories to clone and index.
     pub git: Vec<GitInclude>,
+    /// Embedding model override for this repo.
+    ///
+    /// When set, overrides the global `default_model`. Use
+    /// [`supported_models()`](crate::embedding::supported_models) for valid names.
+    pub model: Option<String>,
+    /// Target embedding dimension for Matryoshka truncation.
+    ///
+    /// When set, embeddings are truncated to this dimensionality and
+    /// re-normalized. Only useful with Matryoshka-capable models
+    /// (e.g. `nomic-embed-text-v1.5`).
+    pub dimension: Option<usize>,
 }
 
 /// An external local directory to include in the corpus.
@@ -373,6 +384,53 @@ pub struct GitInclude {
     pub paths: Option<Vec<String>>,
     /// Optional branch (defaults to the repo's default branch).
     pub branch: Option<String>,
+}
+
+/// Resolve the effective embedding model name.
+///
+/// Priority (highest to lowest):
+/// 1. Per-repo `.iris.toml` `corpus.model`
+/// 2. Per-corpus `meta.toml` `model`
+/// 3. Global `~/.iris/config.toml` `default_model`
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::config::{resolve_model_name, IrisConfig, RepoConfig, CorpusConfig, CorpusSpec};
+///
+/// let global = IrisConfig::default();
+///
+/// // No overrides — uses global default
+/// assert_eq!(resolve_model_name(None, None, &global), "all-MiniLM-L6-v2");
+///
+/// // Repo config overrides global
+/// let mut repo = RepoConfig::default();
+/// repo.corpus.model = Some("jina-embeddings-v2-base-code".into());
+/// assert_eq!(
+///     resolve_model_name(Some(&repo), None, &global),
+///     "jina-embeddings-v2-base-code"
+/// );
+/// ```
+#[must_use]
+pub fn resolve_model_name(
+    repo_config: Option<&RepoConfig>,
+    corpus_config: Option<&CorpusConfig>,
+    global_config: &IrisConfig,
+) -> String {
+    // 1. Per-repo .iris.toml model
+    if let Some(repo) = repo_config {
+        if let Some(ref model) = repo.corpus.model {
+            return model.clone();
+        }
+    }
+    // 2. Per-corpus meta.toml model
+    if let Some(corpus) = corpus_config {
+        if let Some(ref model) = corpus.model {
+            return model.clone();
+        }
+    }
+    // 3. Global default
+    global_config.default_model.clone()
 }
 
 /// The name of the per-repo config file.
@@ -471,7 +529,10 @@ impl std::fmt::Display for ConfigWarning {
                     resolved.display()
                 )
             }
-            Self::EmptyCorpus => write!(f, ".iris.toml has no paths and no git repos — nothing to index"),
+            Self::EmptyCorpus => write!(
+                f,
+                ".iris.toml has no paths and no git repos — nothing to index"
+            ),
         }
     }
 }
@@ -760,7 +821,9 @@ mod tests {
 
         let warnings = config.validate(root);
         assert_eq!(warnings.len(), 1);
-        assert!(matches!(&warnings[0], ConfigWarning::MissingPath { path, .. } if path == "nonexistent-dir"));
+        assert!(
+            matches!(&warnings[0], ConfigWarning::MissingPath { path, .. } if path == "nonexistent-dir")
+        );
     }
 
     #[test]
@@ -804,5 +867,99 @@ mod tests {
 
         let warnings = config.validate(tmp.path());
         assert!(warnings.is_empty());
+    }
+
+    // -- resolve_model_name tests --
+
+    #[test]
+    fn resolve_model_falls_back_to_global() {
+        let global = IrisConfig::default();
+        assert_eq!(resolve_model_name(None, None, &global), "all-MiniLM-L6-v2");
+    }
+
+    #[test]
+    fn resolve_model_corpus_overrides_global() {
+        let global = IrisConfig::default();
+        let corpus = CorpusConfig {
+            model: Some("bge-base-en-v1.5".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_model_name(None, Some(&corpus), &global),
+            "bge-base-en-v1.5"
+        );
+    }
+
+    #[test]
+    fn resolve_model_repo_overrides_all() {
+        let global = IrisConfig::default();
+        let corpus = CorpusConfig {
+            model: Some("bge-base-en-v1.5".into()),
+            ..Default::default()
+        };
+        let repo = RepoConfig {
+            corpus: CorpusSpec {
+                model: Some("jina-embeddings-v2-base-code".into()),
+                ..Default::default()
+            },
+        };
+        assert_eq!(
+            resolve_model_name(Some(&repo), Some(&corpus), &global),
+            "jina-embeddings-v2-base-code"
+        );
+    }
+
+    #[test]
+    fn resolve_model_repo_none_falls_through() {
+        let global = IrisConfig::default();
+        let corpus = CorpusConfig {
+            model: Some("bge-base-en-v1.5".into()),
+            ..Default::default()
+        };
+        let repo = RepoConfig {
+            corpus: CorpusSpec {
+                model: None,
+                ..Default::default()
+            },
+        };
+        assert_eq!(
+            resolve_model_name(Some(&repo), Some(&corpus), &global),
+            "bge-base-en-v1.5"
+        );
+    }
+
+    // -- CorpusSpec model field --
+
+    #[test]
+    fn corpus_spec_model_from_toml() {
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+            model = "jina-embeddings-v2-base-code"
+        "#;
+        let config: RepoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.corpus.model.as_deref(),
+            Some("jina-embeddings-v2-base-code")
+        );
+    }
+
+    #[test]
+    fn corpus_spec_model_default_none() {
+        let config = CorpusSpec::default();
+        assert!(config.model.is_none());
+        assert!(config.dimension.is_none());
+    }
+
+    #[test]
+    fn corpus_spec_dimension_from_toml() {
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+            model = "nomic-embed-text-v1.5"
+            dimension = 256
+        "#;
+        let config: RepoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.corpus.dimension, Some(256));
     }
 }

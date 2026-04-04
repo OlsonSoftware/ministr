@@ -11,7 +11,7 @@ mod rerank;
 mod sparse;
 
 pub use cache::CachedEmbedder;
-pub use fastembed_impl::FastEmbedder;
+pub use fastembed_impl::{FastEmbedder, ModelInfo, TruncatingEmbedder, supported_models};
 pub use rerank::FastReranker;
 pub use sparse::FastSparseEmbedder;
 
