@@ -22,6 +22,8 @@ pub fn section_detail(d: iris_core::service::SectionDetail) -> query::SectionDet
         text: d.text,
         summary: d.summary,
         claims_available: d.claims_available,
+        status: None,
+        budget_status: None,
     }
 }
 
@@ -113,5 +115,16 @@ pub fn bridge_link(l: iris_core::storage::BridgeLinkDetail) -> query::BridgeLink
         target: l.import_binding_key,
         target_language: l.import_language,
         confidence: l.confidence,
+    }
+}
+
+pub fn budget_status(
+    b: &iris_core::session::BudgetStatus,
+) -> iris_api::session::SessionBudgetResponse {
+    iris_api::session::SessionBudgetResponse {
+        pressure_level: format!("{:?}", b.pressure_level).to_lowercase(),
+        tokens_used: b.tokens_used,
+        tokens_remaining: b.tokens_remaining,
+        utilization: b.utilization,
     }
 }

@@ -9,12 +9,12 @@ use std::sync::Arc;
 use iris_api::client::DaemonClient;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{
-    CallToolResult, Implementation, InitializeRequestParams, InitializeResult,
-    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
-    ServerCapabilities, ServerInfo,
-};
 use rmcp::model::ErrorData as McpError;
+use rmcp::model::{
+    CallToolResult, Implementation, InitializeRequestParams, InitializeResult, ListPromptsResult,
+    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams, ServerCapabilities,
+    ServerInfo,
+};
 use rmcp::schemars;
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -27,6 +27,7 @@ use tracing::{info, warn};
 pub struct ProxyServer {
     client: Arc<DaemonClient>,
     corpus_id: Arc<Mutex<Option<String>>>,
+    session_id: Arc<Mutex<Option<String>>>,
     corpus_paths: Vec<String>,
     tool_router: ToolRouter<Self>,
 }
@@ -108,6 +109,7 @@ impl ProxyServer {
         Self {
             client: Arc::new(DaemonClient::new()),
             corpus_id: Arc::new(Mutex::new(None)),
+            session_id: Arc::new(Mutex::new(None)),
             corpus_paths,
             tool_router: Self::tool_router(),
         }
@@ -129,10 +131,12 @@ impl ProxyServer {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .map_err(|e| McpError::internal_error(
-                format!("failed to start daemon at {}: {e}", daemon_bin.display()),
-                None,
-            ))?;
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("failed to start daemon at {}: {e}", daemon_bin.display()),
+                    None,
+                )
+            })?;
 
         // Poll for the socket to appear.
         for _ in 0..20 {
@@ -178,6 +182,28 @@ impl ProxyServer {
         *guard = Some(resp.corpus_id.clone());
         info!(corpus_id = %resp.corpus_id, "registered corpus with daemon");
         Ok(resp.corpus_id)
+    }
+
+    /// Ensure a daemon session exists for this proxy, creating one lazily.
+    async fn ensure_session(&self) -> Result<String, McpError> {
+        {
+            let guard = self.session_id.lock().await;
+            if let Some(ref id) = *guard {
+                return Ok(id.clone());
+            }
+        }
+
+        let corpus_id = self.ensure_corpus().await?;
+        let resp = self
+            .client
+            .create_session(&corpus_id, None)
+            .await
+            .map_err(|e| McpError::internal_error(format!("daemon session: {e}"), None))?;
+
+        let mut guard = self.session_id.lock().await;
+        *guard = Some(resp.session_id.clone());
+        info!(session_id = %resp.session_id, "created daemon session");
+        Ok(resp.session_id)
     }
 
     fn json_result<T: Serialize>(data: &T) -> Result<CallToolResult, McpError> {
@@ -239,8 +265,13 @@ impl ProxyServer {
         let req = iris_api::query::ExtractRequest {
             section_id: params.section_id,
             query: params.query,
+            session_id: None,
         };
-        let resp = self.client.extract(&cid, &req).await.map_err(|e| Self::err(&e))?;
+        let resp = self
+            .client
+            .extract(&cid, &req)
+            .await
+            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -260,7 +291,11 @@ impl ProxyServer {
             visibility: params.visibility,
             limit: params.limit,
         };
-        let resp = self.client.symbols(&cid, &req).await.map_err(|e| Self::err(&e))?;
+        let resp = self
+            .client
+            .symbols(&cid, &req)
+            .await
+            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -311,8 +346,13 @@ impl ProxyServer {
             document_id: params.document_id,
             offset: params.offset,
             limit: params.limit,
+            session_id: None,
         };
-        let resp = self.client.toc(&cid, &req).await.map_err(|e| Self::err(&e))?;
+        let resp = self
+            .client
+            .toc(&cid, &req)
+            .await
+            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -328,8 +368,13 @@ impl ProxyServer {
         let req = iris_api::query::RelatedRequest {
             claim_id: params.claim_id,
             relation_types: params.relation_types.unwrap_or_default(),
+            session_id: None,
         };
-        let resp = self.client.related(&cid, &req).await.map_err(|e| Self::err(&e))?;
+        let resp = self
+            .client
+            .related(&cid, &req)
+            .await
+            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 
@@ -347,8 +392,28 @@ impl ProxyServer {
             kind: params.kind,
             source_language: params.source_language,
             limit: params.limit,
+            session_id: None,
         };
-        let resp = self.client.bridge(&cid, &req).await.map_err(|e| Self::err(&e))?;
+        let resp = self
+            .client
+            .bridge(&cid, &req)
+            .await
+            .map_err(|e| Self::err(&e))?;
+        Self::json_result(&resp)
+    }
+
+    #[tool(
+        name = "iris_budget",
+        description = "Get the current context budget status: total budget, estimated usage, pressure level."
+    )]
+    async fn budget(&self) -> Result<CallToolResult, McpError> {
+        let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
+        let resp = self
+            .client
+            .session_budget(&cid, &sid)
+            .await
+            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 }

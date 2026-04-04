@@ -1916,12 +1916,11 @@ impl IrisServer {
 
     /// Generate compressed summaries for content the agent wants to evict.
     ///
-    /// When MCP sampling is available, uses LLM-assisted abstractive
-    /// compression for 90%+ token reduction. Falls back to extractive
-    /// TF-IDF summarization (60–80% reduction) when sampling is unavailable.
+    /// Uses extractive TF-IDF summarization for 60–80% token reduction
+    /// with no extra cost.
     #[tool(
         name = "iris_compress",
-        description = "Generate compressed summaries for sections the agent wants to evict from context. Uses LLM-assisted abstractive compression (90%+ reduction) when sampling is available, falling back to extractive (60-80%). Returns summaries with original/compressed token counts and compression method.",
+        description = "Generate compressed summaries for sections the agent wants to evict from context. Uses extractive TF-IDF compression (60-80% reduction). Returns summaries with original/compressed token counts.",
         output_schema = tool_output_schema::<ToolResponse<CompressResponse>>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]
@@ -1934,49 +1933,9 @@ impl IrisServer {
         async {
             debug!(content_ids = ?params.content_ids, "iris_compress request");
 
-            // Determine compression mode: try eliciting preference, then fall back.
-            let result = {
-                let peer_guard = self.peer.lock().await;
-                if let Some(peer) = peer_guard.clone() {
-                    drop(peer_guard);
-
-                    // Elicit compression mode preference before spending sampling tokens.
-                    let use_abstractive = {
-                        let message = format!(
-                            "Compressing {} section(s). Abstractive compression (LLM-assisted) \
-                             achieves 90%+ reduction but uses sampling tokens. Extractive \
-                             (TF-IDF) achieves 60-80% reduction with no extra cost.\n\n\
-                             Set proceed=true and mode='abstractive' or 'extractive'.",
-                            params.content_ids.len()
-                        );
-                        match crate::elicitation::try_elicit::<
-                            crate::elicitation::CompressionConfirmation,
-                        >(&peer, &message)
-                        .await
-                        {
-                            Some(conf) if conf.proceed && conf.mode == "abstractive" => true,
-                            Some(conf) if conf.proceed => false, // any other mode → extractive
-                            Some(_) => false,                    // proceed=false → extractive
-                            None => true, // no elicitation support → auto-detect (default: abstractive)
-                        }
-                    };
-
-                    if use_abstractive {
-                        let compressor = crate::sampling::SamplingCompressor::new(peer);
-                        debug!("attempting abstractive compression via MCP sampling");
-                        self.service
-                            .compress_content_abstractive(&params.content_ids, &compressor)
-                            .await
-                    } else {
-                        debug!("using extractive compression (agent preference)");
-                        self.service.compress_content(&params.content_ids).await
-                    }
-                } else {
-                    drop(peer_guard);
-                    debug!("no peer available, using extractive compression");
-                    self.service.compress_content(&params.content_ids).await
-                }
-            };
+            // Always use extractive (TF-IDF) compression — fast, no extra cost,
+            // and doesn't require MCP sampling support from the client.
+            let result = self.service.compress_content(&params.content_ids).await;
 
             match result {
                 Ok(summaries) => {

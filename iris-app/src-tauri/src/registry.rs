@@ -15,6 +15,7 @@ use iris_core::embedding::Embedder;
 use iris_core::index::{HnswIndex, VectorIndex, VectorIndexLoad};
 use iris_core::ingestion::IngestionProgress;
 use iris_core::service::QueryService;
+use iris_core::session::{BudgetConfig, SessionRegistry};
 use iris_core::storage::SqliteStorage;
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
@@ -47,6 +48,7 @@ pub struct CorpusHandle {
     pub storage: Arc<SqliteStorage>,
     pub index: Arc<dyn VectorIndex>,
     pub service: QueryService,
+    pub sessions: tokio::sync::Mutex<SessionRegistry>,
     pub progress: Arc<IngestionProgress>,
     pub cancel: CancellationToken,
     pub data_dir: PathBuf,
@@ -209,12 +211,12 @@ impl CorpusRegistry {
             storage,
             index,
             service,
+            sessions: tokio::sync::Mutex::new(SessionRegistry::new(BudgetConfig::default())),
             progress: Arc::new(IngestionProgress::new()),
             cancel: CancellationToken::new(),
             data_dir: corpus_dir,
         })
     }
-
 }
 
 fn load_or_create_index(

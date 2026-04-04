@@ -1390,3 +1390,147 @@ phases:
     checked: true
   - text: OAuth 2.1 scoped tokens for cloud index access — read-only tokens for consumers, write tokens for publishers
     checked: true
+- id: DAEMON1
+  name: Daemon Foundation
+  tagline: Centralized indexing/inference daemon that all MCP clients share
+  status: in_progress
+  problem: Each MCP session loads its own 2GB embedding model, HNSW index, and file watcher — wasteful, slow to start, and no shared state across IDE windows
+  solution: 'Complete the iris-app daemon (UDS HTTP API) as the single owner of all heavy state: embedding model, indexes, sessions, coherence. MCP proxy auto-launches and delegates.'
+  tasks:
+  - text: 'Complete CorpusRegistry: register, get, list, unregister with Arc<RwLock> concurrency and per-corpus QueryService lifecycle'
+    checked: true
+  - text: Move embedding model loading into daemon startup — single shared fastembed instance across all corpora
+    checked: true
+  - text: 'Integrate ingestion pipeline into daemon: index corpus on register, run async with progress handle'
+    checked: true
+  - text: Wire coherence engine (file watcher) into daemon — per-corpus file watching with stale section tracking
+    checked: true
+  - text: 'Session management API: create session, track deliveries, budget status — daemon owns session state'
+    checked: true
+  - text: 'Session-aware query endpoints: all queries scoped to a session for dedup, delta delivery, and budget tracking'
+    checked: true
+  - text: Prefetch engine runs daemon-side, shared across MCP sessions on the same corpus
+    checked: false
+  - text: 'Daemon auto-launch from proxy: search PATH, sibling directory, ~/.iris/bin for iris-app binary'
+    checked: false
+  - text: 'PID file + health check: /api/v1/status returns uptime, corpus count, memory usage, version'
+    checked: false
+  - text: 'Graceful shutdown: drain active sessions, flush SQLite WAL, remove socket file'
+    checked: false
+  - text: 'Cross-platform IPC: named pipes on Windows (\\.\pipe\iris) alongside UDS on Unix — abstract in iris-api'
+    checked: false
+  - text: 'Daemon startup resilience: stale socket cleanup, lock file guard, concurrent launch protection'
+    checked: false
+  - text: 'Stress test: multiple MCP proxies connecting simultaneously to the same daemon, concurrent queries on shared corpus'
+    checked: false
+  - text: 'Integration test: proxy ↔ daemon roundtrip for all query types (survey, read, symbols, definition, references, toc, extract, related, bridge)'
+    checked: false
+- id: DAEMON2
+  name: Daemon API Completeness
+  tagline: Full query, session, and streaming API on the daemon
+  status: pending
+  problem: Daemon API covers basic queries but lacks compression, budget, eviction, prefetch metrics, ingestion progress streaming, and coherence notification forwarding
+  solution: Extend daemon HTTP API to cover every MCP tool operation, add SSE streaming for progress/coherence, and persist session state across daemon restarts
+  depends_on:
+  - DAEMON1
+  tasks:
+  - text: Add compress endpoint to daemon API — extractive TF-IDF compression via /api/v1/corpora/:id/compress
+    checked: false
+  - text: 'Add budget and eviction endpoints: GET /sessions/:id/budget, POST /sessions/:id/evicted'
+    checked: false
+  - text: 'Add prefetch metrics endpoint: GET /sessions/:id/prefetch — hit/miss rates per strategy'
+    checked: false
+  - text: 'Ingestion progress streaming: GET /corpora/:id/progress returns SSE stream with file count, section count, phase'
+    checked: false
+  - text: 'Coherence notification forwarding: proxy subscribes to daemon SSE channel, forwards stale section IDs to MCP client via notifications/resources/updated'
+    checked: false
+  - text: 'Session persistence: save/restore session state (delivered items, trajectory, budget) across daemon restarts via SQLite'
+    checked: false
+  - text: 'Bundle export/import endpoints on daemon API: POST /corpora/:id/export, POST /corpora/import'
+    checked: false
+  - text: 'Cloud bundle fetch integration: daemon downloads [[corpus.cloud]] bundles, checks staleness via bundle_version, caches manifests'
+    checked: false
+  - text: Update iris-mcp ProxyServer to delegate all new endpoints (compress, budget, evict, prefetch metrics) to daemon
+    checked: false
+  - text: Rate limiting / request queuing for expensive operations (survey embedding, re-index) to prevent daemon overload
+    checked: false
+- id: TRAY1
+  name: Tray App Foundation
+  tagline: System tray GUI that keeps the daemon alive and shows project status
+  status: pending
+  problem: No visual interface to manage indexed projects — users rely on CLI commands and have no visibility into daemon health or indexing progress
+  solution: 'Tauri v2 system tray app: dynamic project list menu, add/remove projects via file picker, status indicators, prevent_exit to keep daemon running in background'
+  depends_on:
+  - DAEMON1
+  tasks:
+  - text: 'Tauri v2 project setup: system tray icon, basic right-click menu, prevent_exit to keep daemon alive when windows close'
+    checked: false
+  - text: 'Daemon startup: spawn UDS listener on app launch, shared AppState with CorpusRegistry + embedded QueryService'
+    checked: false
+  - text: 'Dynamic tray menu: list registered projects with status icons (indexing/ready/error), refresh on registry changes'
+    checked: false
+  - text: 'Add Project flow: tray menu item opens file picker, registers corpus with daemon, triggers background indexing'
+    checked: false
+  - text: 'Remove Project: unregister corpus, optionally delete index data from ~/.iris/corpora/'
+    checked: false
+  - text: 'Frontend scaffold: minimal HTML/CSS/JS (or Svelte) for the project management window, Tauri command bridge'
+    checked: false
+  - text: 'Tray tooltip: "iris — N projects indexed, M active sessions"'
+    checked: false
+  - text: 'Auto-detect .iris.toml: scan common project directories on first launch, suggest projects to register'
+    checked: false
+- id: TRAY2
+  name: Project Management GUI
+  tagline: Full project dashboard with index health, sessions, and settings
+  status: pending
+  problem: Users can't see index health, active MCP sessions, disk usage, or configure iris without editing TOML files
+  solution: Project detail views with stats, re-index actions, active session panel, settings page for model/auto-start/ignores, dark/light theme
+  depends_on:
+  - TRAY1
+  - DAEMON2
+  tasks:
+  - text: 'Project list component: name, path, status badge, file/section/symbol counts, last indexed timestamp'
+    checked: false
+  - text: 'Project detail view: sections, symbols, documents, vectors, disk usage, embedding model, index staleness'
+    checked: false
+  - text: 'Re-index action: button triggers re-ingestion with live progress bar from SSE stream'
+    checked: false
+  - text: 'Project list component: name, path, status badge, file/section/symbol counts, last indexed timestamp'
+    checked: false
+  - text: 'Project detail view: expandable card with sections, symbols, documents, disk usage, embedding model, vector dimension'
+    checked: false
+  - text: 'Re-index action: button triggers full re-ingestion from GUI with live progress bar'
+    checked: false
+  - text: 'Active sessions panel: show connected MCP clients per corpus with session ID, turn count, budget utilization'
+    checked: false
+  - text: 'Settings page: default embedding model, global ignore patterns, data directory location'
+    checked: false
+  - text: 'Index health dashboard: vector count, staleness indicator, corpus root provenance (local/git/web/cloud)'
+    checked: false
+  - text: 'Responsive layout: works as compact popover from tray click and as resizable standalone window'
+    checked: false
+  - text: Dark/light theme following system preference, with manual override in settings
+    checked: false
+- id: TRAY3
+  name: Platform Polish & Distribution
+  tagline: Auto-start, notifications, installers, and cross-platform CI
+  status: pending
+  problem: No auto-start on login, no desktop notifications, no packaged installers, no cross-platform CI
+  solution: Launchd/systemd/startup auto-start, native notifications, DMG/MSI/AppImage packaging, GitHub Actions CI for macOS/Windows/Linux
+  depends_on:
+  - TRAY2
+  tasks:
+  - text: 'Auto-start on login: launchd plist (macOS), startup registry entry (Windows), systemd user unit (Linux)'
+    checked: false
+  - text: 'Desktop notifications: "indexing complete" with section/symbol counts, "index error" with actionable message'
+    checked: false
+  - text: 'Log viewer: searchable, filterable daemon log tail in the GUI window'
+    checked: false
+  - text: 'First-run onboarding: welcome screen, detect .iris.toml in home/projects, guided "add your first project" flow'
+    checked: false
+  - text: 'Installer packaging: DMG with drag-to-Applications (macOS), MSI/NSIS (Windows), AppImage + .deb (Linux)'
+    checked: false
+  - text: 'Cross-platform CI: GitHub Actions matrix build + test on macOS, Windows, Ubuntu — produce release artifacts'
+    checked: false
+  - text: 'Architecture docs + installation guide: diagram of daemon/proxy/tray topology, platform-specific install instructions'
+    checked: false

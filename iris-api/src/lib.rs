@@ -10,6 +10,7 @@
 pub mod client;
 pub mod corpus;
 pub mod query;
+pub mod session;
 pub mod status;
 
 /// Well-known Unix domain socket path for the iris daemon.
