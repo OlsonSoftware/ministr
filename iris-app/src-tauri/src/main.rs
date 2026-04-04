@@ -133,6 +133,7 @@ fn main() {
             commands::read_logs,
             commands::should_show_onboarding,
             commands::dismiss_onboarding,
+            commands::reset_onboarding,
             commands::list_sessions,
             commands::list_corpus_files,
             commands::search_corpus,

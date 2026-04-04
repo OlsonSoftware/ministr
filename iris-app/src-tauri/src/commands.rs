@@ -227,6 +227,19 @@ pub async fn dismiss_onboarding() -> Result<(), String> {
     std::fs::write(&sentinel, "").map_err(|e| e.to_string())
 }
 
+/// Reset onboarding so it shows again on next visit.
+#[tauri::command]
+pub async fn reset_onboarding() -> Result<(), String> {
+    let sentinel = iris_api::daemon_socket_path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("/tmp"))
+        .join("onboarding_done");
+    if sentinel.exists() {
+        std::fs::remove_file(&sentinel).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Remove a project by ID (called from tray menu).
 #[allow(dead_code)]
 pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result<(), String> {
