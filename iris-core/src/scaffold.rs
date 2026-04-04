@@ -37,8 +37,17 @@ pub fn scaffold_agent_config(project_root: &Path) -> usize {
     ];
     created += write_files(&claude_rules_dir, claude_rules);
 
-    // ── Claude Code: .claude/settings.json (PreToolUse hooks) ───────────
+    // ── Claude Code + VS Code Copilot: .claude/settings.json (PreToolUse hooks)
+    // VS Code Copilot reads .claude/settings.json by default (Feb 2026+).
     created += write_claude_hooks(project_root);
+
+    // ── VS Code Copilot: .github/hooks/ (native hook format) ────────────
+    // VS Code also reads .github/hooks/*.json natively. We generate the
+    // same hooks in this format for explicit coverage.
+    let hooks_dir = project_root.join(".github").join("hooks");
+    let hooks_files: &[(&str, &str)] =
+        &[("iris-enforce.json", VSCODE_HOOKS)];
+    created += write_files(&hooks_dir, hooks_files);
 
     // ── Cursor: .cursor/rules/ ──────────────────────────────────────────
     let cursor_rules_dir = project_root.join(".cursor").join("rules");
@@ -94,8 +103,8 @@ fn write_files(dir: &Path, files: &[(&str, &str)]) -> usize {
 }
 
 /// Write `.claude/settings.json` with `PreToolUse` hooks that redirect
-/// Grep/Glob usage to iris. Merges non-destructively — only adds the
-/// hooks key if not already present.
+/// Grep/Glob/Bash-search usage to iris. Merges non-destructively — only
+/// adds the hooks key if not already present.
 fn write_claude_hooks(project_root: &Path) -> usize {
     let settings_path = project_root.join(".claude").join("settings.json");
 
@@ -114,17 +123,51 @@ fn write_claude_hooks(project_root: &Path) -> usize {
         }
     }
 
+    // Deny messages per category.
+    let deny_search = "Use iris_survey or iris_symbols instead of shell search tools. \
+        iris provides semantic code search with better results. \
+        See .claude/rules/iris-scope.md for the full tool guide.";
+    let deny_files = "Use iris_toc or iris_survey instead of shell file-finding tools.";
+    let deny_pipe = "Don't pipe to search/filter tools for code exploration. \
+        Use iris_survey for search, iris_toc for structure, iris_read for content.";
+
+    let mut bash_hooks: Vec<serde_json::Value> = Vec::new();
+
+    // Direct search commands.
+    for cmd in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
+        bash_hooks.push(deny_hook(&format!("Bash({cmd} *)"), deny_search));
+    }
+
+    // Direct file-finding commands.
+    for cmd in &["find", "fd"] {
+        bash_hooks.push(deny_hook(&format!("Bash({cmd} *)"), deny_files));
+    }
+
+    // Piped search/exploration patterns (covers `cmd | grep` and `cmd|grep`).
+    for cmd in &["grep", "rg", "ag", "ack"] {
+        bash_hooks.push(deny_hook(&format!("Bash(*|*{cmd} *)"), deny_pipe));
+    }
+
+    // Piped reading/counting — agents chain these for file exploration.
+    for cmd in &["wc", "head", "tail"] {
+        bash_hooks.push(deny_hook(&format!("Bash(*|*{cmd}*)"), deny_pipe));
+    }
+
     let settings = serde_json::json!({
         "hooks": {
             "PreToolUse": [
                 {
                     "matcher": "Grep|Glob",
                     "hooks": [
-                        {
-                            "type": "command",
-                            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead. iris provides semantic code search with better results. See .claude/rules/iris-scope.md for the full tool guide.\"}}'"
-                        }
+                        deny_hook(
+                            "",
+                            deny_search,
+                        )
                     ]
+                },
+                {
+                    "matcher": "Bash",
+                    "hooks": bash_hooks
                 }
             ]
         }
@@ -166,6 +209,34 @@ fn write_claude_hooks(project_root: &Path) -> usize {
     }
 }
 
+/// Build a single PreToolUse deny hook entry.
+///
+/// When the `if_pattern` matches a tool invocation, the hook returns a JSON
+/// deny decision with the given `reason`. If `if_pattern` is empty, the hook
+/// fires for all invocations matching the parent matcher.
+fn deny_hook(if_pattern: &str, reason: &str) -> serde_json::Value {
+    // Escape quotes in the reason for the printf JSON string.
+    let escaped = reason.replace('"', r#"\""#);
+    let printf_json = format!(
+        "printf '{{\"hookSpecificOutput\":{{\"hookEventName\":\"PreToolUse\",\
+         \"permissionDecision\":\"deny\",\
+         \"permissionDecisionReason\":\"{escaped}\"}}}}'",
+    );
+
+    let mut hook = serde_json::json!({
+        "type": "command",
+        "command": printf_json
+    });
+
+    if !if_pattern.is_empty() {
+        hook.as_object_mut()
+            .unwrap()
+            .insert("if".to_string(), serde_json::Value::String(if_pattern.to_string()));
+    }
+
+    hook
+}
+
 /// Choose the right playbook based on detected bridge frameworks.
 fn playbook_for_project(root: &Path) -> &'static str {
     let kinds = FrameworkDetector::detect(root);
@@ -198,10 +269,78 @@ fn playbook_for_project(root: &Path) -> &'static str {
 // Embedded templates
 // ---------------------------------------------------------------------------
 
+/// VS Code Copilot native hooks (`.github/hooks/iris-enforce.json`).
+///
+/// VS Code reads `.github/hooks/*.json` natively (Preview, Feb 2026+).
+/// This provides the same enforcement as `.claude/settings.json` hooks
+/// in VS Code's own format.
+const VSCODE_HOOKS: &str = r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead of built-in search. iris provides semantic code search. See .claude/rules/iris-scope.md.\"}}'",
+        "if": "Grep"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc or iris_survey instead of built-in file listing. See .claude/rules/iris-scope.md.\"}}'",
+        "if": "Glob"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of shell search tools. Do not shell out for code search.\"}}'",
+        "if": "Bash(grep *)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of shell search tools.\"}}'",
+        "if": "Bash(rg *)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of shell file-finding tools.\"}}'",
+        "if": "Bash(find *)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of shell file-finding tools.\"}}'",
+        "if": "Bash(fd *)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search/filter tools. Use iris_survey for search, iris_toc for structure.\"}}'",
+        "if": "Bash(*|*grep*)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search/filter tools. Use iris_survey for search, iris_toc for structure.\"}}'",
+        "if": "Bash(*|*rg*)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to head/tail/wc. Use iris tools for exploration.\"}}'",
+        "if": "Bash(*|*head*)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to head/tail/wc. Use iris tools for exploration.\"}}'",
+        "if": "Bash(*|*tail*)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to head/tail/wc. Use iris tools for exploration.\"}}'",
+        "if": "Bash(*|*wc*)"
+      }
+    ]
+  }
+}
+"#;
+
 /// Mandatory tool scope rules — always the same regardless of project type.
 const IRIS_SCOPE: &str = r#"# iris MCP — Codebase Navigation
 
-iris is the **recommended** tool for all codebase exploration.
+iris is the **required** tool for all codebase exploration. Do NOT use built-in search tools.
 
 ## Tool Rules
 
@@ -215,7 +354,19 @@ iris is the **recommended** tool for all codebase exploration.
 | `iris_extract(id: "...")`         | **PRIMARY**    | Get atomic claims from a section, optionally filtered by query.               |
 | `iris_toc`                        | **PRIMARY**    | Structural overview of the indexed corpus.                                    |
 | `iris_bridge(query/kind/...)`     | **PRIMARY**    | Cross-language bridge links (Tauri, PyO3, NAPI, etc.).                        |
-| `Read(file)`                      | **RESTRICTED** | Prefer iris tools for exploration. Use `Read` only immediately before `Edit`. |
+| `Grep` / `Glob`                   | **BLOCKED**    | Denied by PreToolUse hook. Use iris_survey or iris_symbols instead.           |
+| `Bash(grep/rg/find/...)`          | **BLOCKED**    | Denied by PreToolUse hook. Do NOT shell out for search or file discovery.     |
+| `Bash(... \| grep/head/tail/wc)`  | **BLOCKED**    | Denied by PreToolUse hook. Do NOT pipe to search/filter tools.               |
+| `Read(file)`                      | **RESTRICTED** | Use `Read` only immediately before `Edit`. Never for exploration.             |
+
+## Prohibited Patterns
+
+These are **hard-blocked** by PreToolUse hooks and will be denied:
+
+- `grep`, `rg`, `ag`, `ack`, `egrep`, `fgrep` — use `iris_survey` instead
+- `find`, `fd` — use `iris_toc` or `iris_survey` instead
+- `cat file | grep`, `cmd | head`, `cmd | tail`, `cmd | wc` — use iris tools instead
+- `Grep(pattern)`, `Glob(pattern)` — use `iris_survey` or `iris_symbols` instead
 
 ## Workflow
 
@@ -396,14 +547,14 @@ Decision guide for using iris tools effectively in this project.
 /// optional YAML frontmatter. The `description` and `globs` fields control
 /// when the rules are shown to the agent.
 const CURSOR_RULES: &str = r#"---
-description: iris MCP codebase navigation tools — use instead of built-in search
+description: iris MCP codebase navigation — REQUIRED for all code search and exploration
 globs:
   - "**/*"
 ---
 
-# iris MCP — Codebase Navigation
+# iris MCP — Codebase Navigation (MANDATORY)
 
-iris is an MCP server providing semantic code search. **Always prefer iris tools over built-in search.**
+iris is an MCP server providing semantic code search. **You MUST use iris tools for ALL codebase exploration.**
 
 ## Available Tools
 
@@ -418,13 +569,29 @@ iris is an MCP server providing semantic code search. **Always prefer iris tools
 | `iris_toc` | Structural overview of the indexed corpus. |
 | `iris_bridge` | Cross-language bridge links (Tauri, PyO3, NAPI, etc.). |
 
+## PROHIBITED — Do NOT Use These for Exploration
+
+**NEVER use these tools for code discovery, search, or exploration:**
+
+- ❌ `grep`, `rg`, `ripgrep`, `ag`, `ack` — use `iris_survey` instead
+- ❌ `find`, `fd`, `ls -R`, directory traversal — use `iris_toc` instead
+- ❌ `cat file | grep`, `cmd | head`, `cmd | tail`, `cmd | wc` — use iris tools
+- ❌ Built-in file search / text search / Grep tool — use `iris_survey`
+- ❌ Built-in Glob / file listing — use `iris_toc`
+- ❌ Reading files to discover structure — use `iris_toc` or `iris_symbols`
+- ❌ Shell/Bash/Terminal for ANY search, file discovery, or piped exploration
+
+The ONLY acceptable use of file Read is immediately before Edit.
+The ONLY acceptable use of Shell/Bash is for building, testing, and running commands (not exploration).
+
 ## Rules
 
-1. **Use `iris_survey` instead of file search or grep** for discovering code and documentation.
+1. **Use `iris_survey` instead of ANY search** for discovering code and documentation.
 2. **Use `iris_symbols` instead of grep** for finding functions, structs, traits, or enums.
 3. **Use `iris_definition` instead of reading whole files** to get a symbol's source.
 4. **Use `iris_references` before modifying any shared symbol** to find all callers.
 5. **Use `iris_bridge` before modifying any cross-language boundary** (Tauri commands, FFI, etc.).
+6. **NEVER use Bash/Shell for code search, file discovery, or piped exploration.**
 
 ## Workflow
 
@@ -438,20 +605,41 @@ iris is an MCP server providing semantic code search. **Always prefer iris tools
 /// GitHub Copilot custom instructions (`.github/copilot-instructions.md`).
 ///
 /// Used by Copilot CLI, Copilot Chat in VS Code, and Copilot cloud agent.
-const COPILOT_INSTRUCTIONS: &str = r#"# iris MCP — Codebase Navigation
+const COPILOT_INSTRUCTIONS: &str = r#"# iris MCP — Codebase Navigation (MANDATORY)
 
 This project uses [iris](https://github.com/iris-rs/iris) as an MCP server for semantic code search.
 
-## Tool Preferences
+## CRITICAL: Tool Restrictions
 
-**Always prefer iris MCP tools over built-in search tools** (grep, glob, file reading for exploration):
+**You MUST use iris MCP tools for ALL codebase exploration.** The following are PROHIBITED:
+
+### Prohibited Tools and Patterns
+
+- ❌ **Grep tool** — use `iris_survey(query: "...")` instead
+- ❌ **Glob tool** — use `iris_toc` instead
+- ❌ **`grep`**, **`rg`**, **`ag`**, **`ack`** in Bash/Shell — use `iris_survey` instead
+- ❌ **`find`**, **`fd`**, **`ls -R`** in Bash/Shell — use `iris_toc` instead
+- ❌ **`cat | grep`**, **`cmd | head`**, **`cmd | tail`**, **`cmd | wc`** — use iris tools
+- ❌ **ANY piped shell command** for code exploration — use iris tools
+- ❌ **Reading files** for exploration — use `iris_symbols` → `iris_definition`
+
+### Allowed Uses of Shell/Bash
+
+Shell is ONLY acceptable for: building code, running tests, installing dependencies, git operations, and running the project. NEVER for searching, file discovery, or piped exploration.
+
+### Allowed Uses of file Read
+
+File Read is ONLY acceptable immediately before Edit — never for exploration or discovery.
+
+## Required Tool Mapping
 
 | Instead of… | Use… |
 |-------------|------|
-| `grep` / text search | `iris_survey(query: "...")` — semantic search across docs and code |
-| File listing / glob | `iris_toc` — structural overview of the indexed corpus |
+| `grep` / `Grep` / text search | `iris_survey(query: "...")` — semantic search across docs and code |
+| `find` / `Glob` / file listing | `iris_toc` — structural overview of the indexed corpus |
 | Reading a file to find symbols | `iris_symbols(query: "name")` — find by name/kind/module |
 | Reading a file for a specific function | `iris_definition(symbol_id: "...")` — get full source |
+| Checking who calls a function | `iris_references(symbol_id: "...")` — find all callers |
 
 ## Workflow
 
@@ -460,12 +648,6 @@ This project uses [iris](https://github.com/iris-rs/iris) as an MCP server for s
 3. **Use `iris_definition` or `iris_read`** to get full source
 4. **Use `iris_references`** before modifying shared code (find all callers)
 5. **Use `iris_bridge`** before modifying cross-language boundaries (Tauri, FFI, etc.)
-
-## Key Rules
-
-- Only use file `Read` immediately before `Edit` — for everything else, use iris tools
-- Always check `iris_references` before modifying or deleting shared code
-- If the project has cross-language bindings, check `iris_bridge` before changing IPC/FFI boundaries
 "#;
 
 // ---------------------------------------------------------------------------
@@ -479,7 +661,7 @@ This project uses [iris](https://github.com/iris-rs/iris) as an MCP server for s
 const AGENTS_MD: &str = r#"# Agent Instructions
 
 This project uses **iris** as an MCP server for semantic code search and navigation.
-All AI agents working on this codebase should prefer iris tools over built-in alternatives.
+All AI agents working on this codebase **MUST** use iris tools instead of built-in alternatives.
 
 ## MCP Server: iris
 
@@ -498,7 +680,21 @@ iris is automatically configured via `.mcp.json` (Claude Code), `.vscode/mcp.jso
 | `iris_toc` | Structural overview of the indexed corpus. |
 | `iris_bridge(query)` | Cross-language bridge links (Tauri, PyO3, NAPI, etc.). |
 
-### Preferred Over Built-in Tools
+### PROHIBITED — Do NOT Use for Exploration
+
+**These are BLOCKED and must NEVER be used for code discovery or search:**
+
+- ❌ `grep`, `rg`, `ripgrep`, `ag`, `ack`, `egrep`, `fgrep` → use `iris_survey`
+- ❌ `find`, `fd`, `ls -R`, `tree`, directory listing → use `iris_toc`
+- ❌ `cat file | grep`, `cmd | head`, `cmd | tail`, `cmd | wc` → use iris tools
+- ❌ Built-in Grep/Glob tools → use `iris_survey` / `iris_toc`
+- ❌ Reading files for exploration → use `iris_symbols` → `iris_definition`
+- ❌ Any Shell/Bash/Terminal command for search or file discovery
+
+**Allowed uses of Shell/Bash:** building, testing, git, installing dependencies, running the project.
+**Allowed uses of file Read:** only immediately before Edit — never for exploration.
+
+### Required Tool Mapping
 
 | Instead of… | Use… |
 |-------------|------|
@@ -529,15 +725,18 @@ mod tests {
 
         let created = scaffold_agent_config(root);
 
-        // Should create: 3 claude rules + 1 settings.json + 1 cursor rule
-        //   + 1 copilot instructions + 1 AGENTS.md = 7
-        assert_eq!(created, 7);
+        // Should create: 3 claude rules + 1 settings.json + 1 vscode hooks
+        //   + 1 cursor rule + 1 copilot instructions + 1 AGENTS.md = 8
+        assert_eq!(created, 8);
 
         // Claude Code files
         assert!(root.join(".claude/rules/iris-scope.md").exists());
         assert!(root.join(".claude/rules/tools.md").exists());
         assert!(root.join(".claude/rules/iris-playbook.md").exists());
         assert!(root.join(".claude/settings.json").exists());
+
+        // VS Code hooks
+        assert!(root.join(".github/hooks/iris-enforce.json").exists());
 
         // Cursor files
         assert!(root.join(".cursor/rules/iris.mdc").exists());
@@ -548,10 +747,21 @@ mod tests {
         // Universal
         assert!(root.join("AGENTS.md").exists());
 
-        // Verify Claude hooks contain PreToolUse
+        // Verify Claude hooks contain PreToolUse with Bash matchers
         let settings = std::fs::read_to_string(root.join(".claude/settings.json")).unwrap();
         let val: serde_json::Value = serde_json::from_str(&settings).unwrap();
-        assert!(val["hooks"]["PreToolUse"].is_array());
+        let hooks = val["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(hooks.len() >= 2); // Grep|Glob + Bash matchers
+        // Verify the Bash matcher has hooks with "if" patterns
+        let bash_matcher = hooks.iter().find(|h| {
+            h["matcher"].as_str() == Some("Bash")
+        }).unwrap();
+        assert!(bash_matcher["hooks"].as_array().unwrap().len() >= 6);
+
+        // Verify VS Code hooks contain PreToolUse
+        let vscode = std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap();
+        let vval: serde_json::Value = serde_json::from_str(&vscode).unwrap();
+        assert!(vval["hooks"]["PreToolUse"].is_array());
     }
 
     #[test]
@@ -560,7 +770,7 @@ mod tests {
         let root = tmp.path();
 
         let first = scaffold_agent_config(root);
-        assert_eq!(first, 7);
+        assert_eq!(first, 8);
 
         let second = scaffold_agent_config(root);
         assert_eq!(second, 0);

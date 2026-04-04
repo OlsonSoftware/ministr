@@ -642,15 +642,16 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
     eprintln!();
     eprintln!("Agent instructions ({scaffolded} new files):");
     eprintln!("  ✓ .claude/rules/          (tool scope, playbook)");
-    eprintln!("  ✓ .claude/settings.json   (PreToolUse hooks — Grep/Glob → iris)");
-    eprintln!("  ✓ .cursor/rules/iris.mdc  (Cursor rules)");
+    eprintln!("  ✓ .claude/settings.json   (PreToolUse hooks — blocks Grep/Glob/Bash search)");
+    eprintln!("  ✓ .github/hooks/          (VS Code Copilot hooks — same enforcement)");
+    eprintln!("  ✓ .cursor/rules/iris.mdc  (Cursor rules — aggressive advisory)");
     eprintln!("  ✓ .github/copilot-instructions.md");
     eprintln!("  ✓ AGENTS.md               (universal)");
     eprintln!();
     eprintln!("Next steps:");
     eprintln!("  1. Start a new session in your preferred agent (Claude Code, Cursor, Copilot)");
     eprintln!("  2. iris will auto-index and semantic search tools become available");
-    eprintln!("  3. The agent will prefer iris tools over built-in grep/glob/file search");
+    eprintln!("  3. Grep/Glob/Bash search are blocked — agents must use iris tools");
     Ok(())
 }
 
