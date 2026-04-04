@@ -450,6 +450,48 @@ pub struct DocumentTree {
     pub summary: Option<String>,
 }
 
+impl DocumentTree {
+    /// Ensure every section and claim ID in the tree is unique.
+    ///
+    /// Duplicate section IDs arise when a source file contains multiple
+    /// symbols with the same fully-qualified name (e.g. `fn rss_bytes()`
+    /// under different `#[cfg]` blocks). This renames collisions by
+    /// appending `-2`, `-3`, etc., and updates child claim IDs to match.
+    ///
+    /// Call this after parsing and enrichment, before storage, embedding,
+    /// or relationship detection — so every downstream consumer sees
+    /// consistent, unique IDs.
+    pub fn deduplicate_ids(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        dedup_section_ids_recursive(&mut self.sections, &mut seen);
+    }
+}
+
+fn dedup_section_ids_recursive(
+    sections: &mut [Section],
+    seen: &mut std::collections::HashSet<String>,
+) {
+    for section in sections.iter_mut() {
+        let original = section.id.as_ref().to_string();
+        if seen.contains(&original) {
+            let deduped = (2u64..)
+                .map(|n| format!("{original}-{n}"))
+                .find(|candidate| !seen.contains(candidate))
+                .expect("infinite iterator always finds a candidate");
+
+            section.id = SectionId(deduped.clone());
+            for (i, claim) in section.claims.iter_mut().enumerate() {
+                claim.id = ClaimId(format!("{deduped}:c{i}"));
+                claim.section_id = section.id.clone();
+            }
+            seen.insert(deduped);
+        } else {
+            seen.insert(original);
+        }
+        dedup_section_ids_recursive(&mut section.children, seen);
+    }
+}
+
 /// A structural section within a document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Section {
@@ -946,5 +988,81 @@ mod tests {
     fn parent_section_id_rejects_non_numeric_suffix() {
         assert_eq!(parent_section_id("section:cabc"), None);
         assert_eq!(parent_section_id("section:c"), None);
+    }
+
+    fn make_section(id: &str, claims: &[&str]) -> Section {
+        Section {
+            id: SectionId(id.into()),
+            heading_path: vec![],
+            depth: 1,
+            text: String::new(),
+            structural_nodes: vec![],
+            children: vec![],
+            claims: claims
+                .iter()
+                .enumerate()
+                .map(|(i, text)| Claim {
+                    id: ClaimId(format!("{id}:c{i}")),
+                    text: (*text).into(),
+                    section_id: SectionId(id.into()),
+                })
+                .collect(),
+            summary: None,
+        }
+    }
+
+    #[test]
+    fn deduplicate_ids_renames_collisions() {
+        let mut doc = DocumentTree {
+            id: ContentId("doc".into()),
+            title: "test".into(),
+            source_path: "test.rs".into(),
+            sections: vec![
+                make_section("test.rs#mod::foo", &["claim A"]),
+                make_section("test.rs#mod::foo", &["claim B"]),
+                make_section("test.rs#mod::foo", &["claim C"]),
+            ],
+            summary: None,
+        };
+
+        doc.deduplicate_ids();
+
+        // First keeps original, second and third get suffixed.
+        assert_eq!(doc.sections[0].id.as_ref(), "test.rs#mod::foo");
+        assert_eq!(doc.sections[1].id.as_ref(), "test.rs#mod::foo-2");
+        assert_eq!(doc.sections[2].id.as_ref(), "test.rs#mod::foo-3");
+
+        // Claims updated to match their parent section.
+        assert_eq!(
+            doc.sections[1].claims[0].id.as_ref(),
+            "test.rs#mod::foo-2:c0"
+        );
+        assert_eq!(
+            doc.sections[1].claims[0].section_id.as_ref(),
+            "test.rs#mod::foo-2"
+        );
+        assert_eq!(
+            doc.sections[2].claims[0].id.as_ref(),
+            "test.rs#mod::foo-3:c0"
+        );
+    }
+
+    #[test]
+    fn deduplicate_ids_no_op_when_unique() {
+        let mut doc = DocumentTree {
+            id: ContentId("doc".into()),
+            title: "test".into(),
+            source_path: "test.rs".into(),
+            sections: vec![
+                make_section("test.rs#a", &["x"]),
+                make_section("test.rs#b", &["y"]),
+            ],
+            summary: None,
+        };
+
+        doc.deduplicate_ids();
+
+        assert_eq!(doc.sections[0].id.as_ref(), "test.rs#a");
+        assert_eq!(doc.sections[1].id.as_ref(), "test.rs#b");
     }
 }
