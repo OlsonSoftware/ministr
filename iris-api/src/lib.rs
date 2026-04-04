@@ -26,6 +26,38 @@ pub fn daemon_socket_path() -> std::path::PathBuf {
     }
 }
 
+/// Resolve the daemon PID file path (`~/.iris/irisd.pid`).
+#[must_use]
+pub fn daemon_pid_path() -> std::path::PathBuf {
+    if let Some(home) = home_dir() {
+        home.join(".iris").join("irisd.pid")
+    } else {
+        std::path::PathBuf::from("/tmp/irisd.pid")
+    }
+}
+
+/// IPC address for the daemon — Unix domain socket or Windows named pipe.
+#[derive(Debug, Clone)]
+pub enum IpcAddr {
+    /// Unix domain socket path (macOS, Linux).
+    Unix(std::path::PathBuf),
+    /// Windows named pipe name (e.g. `\\.\pipe\iris`).
+    NamedPipe(String),
+}
+
+/// Get the platform-appropriate IPC address for the daemon.
+#[must_use]
+pub fn daemon_ipc_addr() -> IpcAddr {
+    #[cfg(unix)]
+    {
+        IpcAddr::Unix(daemon_socket_path())
+    }
+    #[cfg(windows)]
+    {
+        IpcAddr::NamedPipe(r"\\.\pipe\iris".to_string())
+    }
+}
+
 /// Platform-independent home directory lookup.
 fn home_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME")

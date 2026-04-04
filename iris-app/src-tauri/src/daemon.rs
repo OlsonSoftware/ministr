@@ -58,21 +58,80 @@ pub fn router(state: AppState) -> Router {
 }
 
 /// Start the daemon listener on the Unix domain socket.
+///
+/// Writes a PID file for process liveness detection and removes stale
+/// sockets from crashed predecessors. On graceful shutdown, cleans up
+/// both the socket and PID file.
 pub async fn start(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
     let socket_path = iris_api::daemon_socket_path();
+    let pid_path = iris_api::daemon_pid_path();
+
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+
+    // Startup resilience: detect stale socket from a crashed predecessor.
     if socket_path.exists() {
-        std::fs::remove_file(&socket_path)?;
+        if is_daemon_process_alive(&pid_path) {
+            return Err("another iris daemon is already running".into());
+        }
+        tracing::warn!("removing stale socket from crashed daemon");
+        let _ = std::fs::remove_file(&socket_path);
+        let _ = std::fs::remove_file(&pid_path);
     }
 
     let listener = UnixListener::bind(&socket_path)?;
-    info!(path = %socket_path.display(), "daemon listening on UDS");
 
-    axum::serve(listener, router(state)).await?;
+    // Write PID file for liveness detection by proxies and future launches.
+    let pid = std::process::id();
+    std::fs::write(&pid_path, pid.to_string())?;
+    info!(path = %socket_path.display(), pid, "daemon listening on UDS");
+
+    // Graceful shutdown on ctrl-c or SIGTERM.
+    let shutdown = shutdown_signal();
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(shutdown)
+        .await?;
+
+    info!("daemon shutting down gracefully");
     let _ = std::fs::remove_file(&socket_path);
+    let _ = std::fs::remove_file(&pid_path);
     Ok(())
+}
+
+/// Check if a daemon is actually listening on the socket.
+///
+/// Attempts a TCP-level connect to the UDS. If it succeeds, a live daemon
+/// owns the socket. This avoids `unsafe` process checks via `kill(pid, 0)`.
+fn is_daemon_process_alive(pid_path: &std::path::Path) -> bool {
+    // If no PID file exists, the socket is certainly stale.
+    if !pid_path.exists() {
+        return false;
+    }
+    // Try connecting to the socket — if it succeeds, a daemon is alive.
+    let socket_path = iris_api::daemon_socket_path();
+    std::os::unix::net::UnixStream::connect(socket_path).is_ok()
+}
+
+/// Wait for ctrl-c or SIGTERM (Unix) to initiate graceful shutdown.
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => info!("received ctrl-c, shutting down"),
+            _ = sigterm.recv() => info!("received SIGTERM, shutting down"),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.ok();
+        info!("received ctrl-c, shutting down");
+    }
 }
 
 // ---------------------------------------------------------------------------

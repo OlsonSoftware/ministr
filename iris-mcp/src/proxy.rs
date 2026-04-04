@@ -116,13 +116,27 @@ impl ProxyServer {
     }
 
     /// Ensure the daemon is running, auto-starting it if necessary.
+    ///
+    /// If a stale socket is detected (file exists but daemon unresponsive),
+    /// cleans up and retries the launch once.
     async fn ensure_daemon(&self) -> Result<(), McpError> {
-        if self.client.is_available() {
+        // Fast path: socket exists and daemon responds.
+        if self.client.is_healthy().await {
             return Ok(());
         }
 
-        info!("daemon not running, attempting auto-start");
+        // Stale socket recovery: if file exists but daemon is dead, clean up.
+        if self.client.is_socket_present() {
+            warn!("daemon socket exists but is unresponsive — cleaning stale files");
+            let _ = std::fs::remove_file(iris_api::daemon_socket_path());
+            let _ = std::fs::remove_file(iris_api::daemon_pid_path());
+        }
 
+        self.launch_daemon().await
+    }
+
+    /// Spawn the daemon binary and wait for it to become responsive.
+    async fn launch_daemon(&self) -> Result<(), McpError> {
         let daemon_bin = Self::find_daemon_binary();
         info!(bin = %daemon_bin.display(), "launching iris daemon");
 
@@ -138,28 +152,66 @@ impl ProxyServer {
                 )
             })?;
 
-        // Poll for the socket to appear.
+        // Poll for the socket to appear (fast stat check).
         for _ in 0..20 {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            if self.client.is_available() {
-                info!("daemon started successfully");
-                return Ok(());
+            if self.client.is_socket_present() {
+                break;
             }
         }
 
+        // Confirm the daemon is actually responding.
+        if self.client.is_healthy().await {
+            info!("daemon started successfully");
+            return Ok(());
+        }
+
         Err(McpError::internal_error(
-            "daemon socket did not appear within 5 seconds",
+            "daemon did not become responsive within 5 seconds",
             None,
         ))
     }
 
-    /// Find the iris-app binary: same directory as current exe, or PATH.
+    /// Find the iris-app binary by searching multiple well-known locations.
+    ///
+    /// Search order:
+    /// 1. Same directory as the current executable (development / co-installed)
+    /// 2. `~/.iris/bin/iris-app` (user install)
+    /// 3. macOS app bundle: `/Applications/iris.app/Contents/MacOS/iris-app`
+    /// 4. `PATH` fallback
     fn find_daemon_binary() -> std::path::PathBuf {
-        std::env::current_exe()
+        // 1. Sibling of current executable.
+        if let Some(sibling) = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("iris-app")))
             .filter(|p| p.exists())
-            .unwrap_or_else(|| std::path::PathBuf::from("iris-app"))
+        {
+            return sibling;
+        }
+
+        // 2. ~/.iris/bin/iris-app
+        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+            let user_bin = std::path::PathBuf::from(home)
+                .join(".iris")
+                .join("bin")
+                .join("iris-app");
+            if user_bin.exists() {
+                return user_bin;
+            }
+        }
+
+        // 3. macOS app bundle.
+        #[cfg(target_os = "macos")]
+        {
+            let app_bundle =
+                std::path::PathBuf::from("/Applications/iris.app/Contents/MacOS/iris-app");
+            if app_bundle.exists() {
+                return app_bundle;
+            }
+        }
+
+        // 4. Fall back to PATH.
+        std::path::PathBuf::from("iris-app")
     }
 
     async fn ensure_corpus(&self) -> Result<String, McpError> {

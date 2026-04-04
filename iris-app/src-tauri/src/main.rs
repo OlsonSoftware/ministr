@@ -89,9 +89,9 @@ fn main() {
                         }
                     }
                     "quit" => {
-                        // Clean up the UDS socket before quitting.
-                        let socket = iris_api::daemon_socket_path();
-                        let _ = std::fs::remove_file(socket);
+                        // Clean up daemon files before quitting.
+                        let _ = std::fs::remove_file(iris_api::daemon_socket_path());
+                        let _ = std::fs::remove_file(iris_api::daemon_pid_path());
                         app.exit(0);
                     }
                     _ => {}

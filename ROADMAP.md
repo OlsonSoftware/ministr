@@ -1184,7 +1184,7 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Swappable embedding trait + ModelInfo registry with 44 models from fastembed v5 (SUPPORTED_MODELS table, supported_models() API)
 - [x] Add jina-embeddings-v2-base-code (768d, code-specialized) + nomic-embed-text-v1.5 (Matryoshka) + 30 more models via fastembed-rs ONNX
 - [x] Configurable embedding model in .iris.toml (corpus.model field) with resolve_model_name() priority chain + model mismatch detection on index load
-- [ ] Benchmark retrieval quality: current model vs Nomic Embed Code vs Jina Code v2 using iris's evaluation suite (S3 phase infrastructure)
+- [x] Benchmark retrieval quality: current model vs Nomic Embed Code vs Jina Code v2 using iris's evaluation suite (S3 phase infrastructure)
 - [x] TruncatingEmbedder for Matryoshka dimension reduction — truncate + L2-normalize for nomic-embed-text-v1.5 (768→256/128)
 
 ---
@@ -1255,11 +1255,116 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Design index export format — serializable bundle of sections, symbols, claims, embeddings, bridge endpoints for a single corpus root
-- [ ] `iris export` CLI command — dump a corpus root's index to a portable bundle file (.iris-index)
-- [ ] `iris import` CLI command — load a .iris-index bundle into local storage + HNSW index without re-parsing or re-embedding
-- [ ] Add `[[corpus.cloud]]` support to .iris.toml — fetch pre-built index from a URL instead of cloning + indexing
-- [ ] Versioned index bundles — include commit SHA so the client knows when to re-fetch a newer version
-- [ ] Streamable HTTP transport awareness — ensure exported index bundles work seamlessly with remote iris servers over Streamable HTTP
-- [ ] OAuth 2.1 scoped tokens for cloud index access — read-only tokens for consumers, write tokens for publishers
+- [x] Design index export format — serializable bundle of sections, symbols, claims, embeddings, bridge endpoints for a single corpus root
+- [x] `iris export` CLI command — dump a corpus root's index to a portable bundle file (.iris-index)
+- [x] `iris import` CLI command — load a .iris-index bundle into local storage + HNSW index without re-parsing or re-embedding
+- [x] Add `[[corpus.cloud]]` support to .iris.toml — fetch pre-built index from a URL instead of cloning + indexing
+- [x] Versioned index bundles — include commit SHA so the client knows when to re-fetch a newer version
+- [x] Streamable HTTP transport awareness — ensure exported index bundles work seamlessly with remote iris servers over Streamable HTTP
+- [x] OAuth 2.1 scoped tokens for cloud index access — read-only tokens for consumers, write tokens for publishers
+
+---
+
+## Phase DAEMON1: Daemon Foundation ✦ "Centralized indexing/inference daemon that all MCP clients share"
+
+**Problem:** Each MCP session loads its own 2GB embedding model, HNSW index, and file watcher — wasteful, slow to start, and no shared state across IDE windows
+
+**Solution:** Complete the iris-app daemon (UDS HTTP API) as the single owner of all heavy state: embedding model, indexes, sessions, coherence. MCP proxy auto-launches and delegates.
+
+### Tasks
+
+- [x] Complete CorpusRegistry: register, get, list, unregister with Arc<RwLock> concurrency and per-corpus QueryService lifecycle
+- [x] Move embedding model loading into daemon startup — single shared fastembed instance across all corpora
+- [x] Integrate ingestion pipeline into daemon: index corpus on register, run async with progress handle
+- [x] Wire coherence engine (file watcher) into daemon — per-corpus file watching with stale section tracking
+- [x] Session management API: create session, track deliveries, budget status — daemon owns session state
+- [x] Session-aware query endpoints: all queries scoped to a session for dedup, delta delivery, and budget tracking
+- [x] Prefetch engine runs daemon-side, shared across MCP sessions on the same corpus
+- [x] Daemon auto-launch from proxy: search PATH, sibling directory, ~/.iris/bin for iris-app binary
+- [x] PID file + health check: /api/v1/status returns uptime, corpus count, memory usage, version
+- [x] Graceful shutdown: drain active sessions, flush SQLite WAL, remove socket file
+- [x] Cross-platform IPC: named pipes on Windows (\\.\pipe\iris) alongside UDS on Unix — abstract in iris-api
+- [x] Daemon startup resilience: stale socket cleanup, lock file guard, concurrent launch protection
+- [ ] Stress test: multiple MCP proxies connecting simultaneously to the same daemon, concurrent queries on shared corpus
+- [ ] Integration test: proxy ↔ daemon roundtrip for all query types (survey, read, symbols, definition, references, toc, extract, related, bridge)
+
+---
+
+## Phase DAEMON2: Daemon API Completeness ✦ "Full query, session, and streaming API on the daemon"
+
+**Problem:** Daemon API covers basic queries but lacks compression, budget, eviction, prefetch metrics, ingestion progress streaming, and coherence notification forwarding
+
+**Solution:** Extend daemon HTTP API to cover every MCP tool operation, add SSE streaming for progress/coherence, and persist session state across daemon restarts
+
+### Tasks
+
+- [ ] Add compress endpoint to daemon API — extractive TF-IDF compression via /api/v1/corpora/:id/compress
+- [ ] Add budget and eviction endpoints: GET /sessions/:id/budget, POST /sessions/:id/evicted
+- [ ] Add prefetch metrics endpoint: GET /sessions/:id/prefetch — hit/miss rates per strategy
+- [ ] Ingestion progress streaming: GET /corpora/:id/progress returns SSE stream with file count, section count, phase
+- [ ] Coherence notification forwarding: proxy subscribes to daemon SSE channel, forwards stale section IDs to MCP client via notifications/resources/updated
+- [ ] Session persistence: save/restore session state (delivered items, trajectory, budget) across daemon restarts via SQLite
+- [ ] Bundle export/import endpoints on daemon API: POST /corpora/:id/export, POST /corpora/import
+- [ ] Cloud bundle fetch integration: daemon downloads [[corpus.cloud]] bundles, checks staleness via bundle_version, caches manifests
+- [ ] Update iris-mcp ProxyServer to delegate all new endpoints (compress, budget, evict, prefetch metrics) to daemon
+- [ ] Rate limiting / request queuing for expensive operations (survey embedding, re-index) to prevent daemon overload
+
+---
+
+## Phase TRAY1: Tray App Foundation ✦ "System tray GUI that keeps the daemon alive and shows project status"
+
+**Problem:** No visual interface to manage indexed projects — users rely on CLI commands and have no visibility into daemon health or indexing progress
+
+**Solution:** Tauri v2 system tray app: dynamic project list menu, add/remove projects via file picker, status indicators, prevent_exit to keep daemon running in background
+
+### Tasks
+
+- [ ] Tauri v2 project setup: system tray icon, basic right-click menu, prevent_exit to keep daemon alive when windows close
+- [ ] Daemon startup: spawn UDS listener on app launch, shared AppState with CorpusRegistry + embedded QueryService
+- [ ] Dynamic tray menu: list registered projects with status icons (indexing/ready/error), refresh on registry changes
+- [ ] Add Project flow: tray menu item opens file picker, registers corpus with daemon, triggers background indexing
+- [ ] Remove Project: unregister corpus, optionally delete index data from ~/.iris/corpora/
+- [ ] Frontend scaffold: minimal HTML/CSS/JS (or Svelte) for the project management window, Tauri command bridge
+- [ ] Tray tooltip: "iris — N projects indexed, M active sessions"
+- [ ] Auto-detect .iris.toml: scan common project directories on first launch, suggest projects to register
+
+---
+
+## Phase TRAY2: Project Management GUI ✦ "Full project dashboard with index health, sessions, and settings"
+
+**Problem:** Users can't see index health, active MCP sessions, disk usage, or configure iris without editing TOML files
+
+**Solution:** Project detail views with stats, re-index actions, active session panel, settings page for model/auto-start/ignores, dark/light theme
+
+### Tasks
+
+- [ ] Project list component: name, path, status badge, file/section/symbol counts, last indexed timestamp
+- [ ] Project detail view: sections, symbols, documents, vectors, disk usage, embedding model, index staleness
+- [ ] Re-index action: button triggers re-ingestion with live progress bar from SSE stream
+- [ ] Project list component: name, path, status badge, file/section/symbol counts, last indexed timestamp
+- [ ] Project detail view: expandable card with sections, symbols, documents, disk usage, embedding model, vector dimension
+- [ ] Re-index action: button triggers full re-ingestion from GUI with live progress bar
+- [ ] Active sessions panel: show connected MCP clients per corpus with session ID, turn count, budget utilization
+- [ ] Settings page: default embedding model, global ignore patterns, data directory location
+- [ ] Index health dashboard: vector count, staleness indicator, corpus root provenance (local/git/web/cloud)
+- [ ] Responsive layout: works as compact popover from tray click and as resizable standalone window
+- [ ] Dark/light theme following system preference, with manual override in settings
+
+---
+
+## Phase TRAY3: Platform Polish & Distribution ✦ "Auto-start, notifications, installers, and cross-platform CI"
+
+**Problem:** No auto-start on login, no desktop notifications, no packaged installers, no cross-platform CI
+
+**Solution:** Launchd/systemd/startup auto-start, native notifications, DMG/MSI/AppImage packaging, GitHub Actions CI for macOS/Windows/Linux
+
+### Tasks
+
+- [ ] Auto-start on login: launchd plist (macOS), startup registry entry (Windows), systemd user unit (Linux)
+- [ ] Desktop notifications: "indexing complete" with section/symbol counts, "index error" with actionable message
+- [ ] Log viewer: searchable, filterable daemon log tail in the GUI window
+- [ ] First-run onboarding: welcome screen, detect .iris.toml in home/projects, guided "add your first project" flow
+- [ ] Installer packaging: DMG with drag-to-Applications (macOS), MSI/NSIS (Windows), AppImage + .deb (Linux)
+- [ ] Cross-platform CI: GitHub Actions matrix build + test on macOS, Windows, Ubuntu — produce release artifacts
+- [ ] Architecture docs + installation guide: diagram of daemon/proxy/tray topology, platform-specific install instructions
 

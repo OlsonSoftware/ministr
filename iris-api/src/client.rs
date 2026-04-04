@@ -66,10 +66,34 @@ impl DaemonClient {
         Self { socket_path: path }
     }
 
-    /// Check if the daemon socket exists (daemon may be running).
+    /// Check if the daemon socket file exists (fast, no I/O beyond stat).
+    ///
+    /// Use this for polling during startup. For a definitive health check,
+    /// call [`is_healthy`](Self::is_healthy) instead.
+    #[must_use]
+    pub fn is_socket_present(&self) -> bool {
+        self.socket_path.exists()
+    }
+
+    /// Check if the daemon is actually running and responding.
+    ///
+    /// Attempts a real HTTP request to `/api/v1/status`. Returns `true`
+    /// only if the daemon responds successfully within 2 seconds.
+    pub async fn is_healthy(&self) -> bool {
+        if !self.socket_path.exists() {
+            return false;
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(2), self.status())
+            .await
+            .is_ok_and(|r| r.is_ok())
+    }
+
+    /// Alias for [`is_socket_present`] — quick file-existence check.
+    ///
+    /// Prefer [`is_healthy`] when you need to confirm the daemon is responsive.
     #[must_use]
     pub fn is_available(&self) -> bool {
-        self.socket_path.exists()
+        self.is_socket_present()
     }
 
     /// The socket path this client connects to.
@@ -360,10 +384,10 @@ impl DaemonClient {
         self.raw_request("DELETE", path, None).await
     }
 
-    /// Send a raw HTTP request over the Unix domain socket.
+    /// Send a raw HTTP request over the platform IPC channel.
     ///
-    /// This uses a simple HTTP/1.1 implementation over `tokio::net::UnixStream`
-    /// to avoid pulling in a full HTTP client with UDS support.
+    /// Uses Unix domain sockets on macOS/Linux and named pipes on Windows.
+    /// Implements a minimal HTTP/1.1 client to avoid heavy dependencies.
     async fn raw_request(
         &self,
         method: &str,
@@ -371,11 +395,8 @@ impl DaemonClient {
         body: Option<Vec<u8>>,
     ) -> Result<Vec<u8>, ClientError> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::UnixStream;
 
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| ClientError::Connect(format!("{}: {e}", self.socket_path.display())))?;
+        let mut stream = self.connect().await?;
 
         // Build HTTP/1.1 request.
         let content_length = body.as_ref().map_or(0, Vec::len);
@@ -413,6 +434,14 @@ impl DaemonClient {
             .ok_or_else(|| ClientError::Request("malformed HTTP response".to_string()))?;
 
         Ok(response[header_end + 4..].to_vec())
+    }
+
+    /// Connect to the daemon's IPC channel (UDS on Unix, named pipe on Windows).
+    #[cfg(unix)]
+    async fn connect(&self) -> Result<tokio::net::UnixStream, ClientError> {
+        tokio::net::UnixStream::connect(&self.socket_path)
+            .await
+            .map_err(|e| ClientError::Connect(format!("{}: {e}", self.socket_path.display())))
     }
 
     fn parse_response<T: DeserializeOwned>(body: &[u8]) -> Result<T, ClientError> {
