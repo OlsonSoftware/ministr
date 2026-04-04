@@ -1387,6 +1387,6 @@ phases:
   - text: Versioned index bundles — include commit SHA so the client knows when to re-fetch a newer version
     checked: true
   - text: Streamable HTTP transport awareness — ensure exported index bundles work seamlessly with remote iris servers over Streamable HTTP
-    checked: false
+    checked: true
   - text: OAuth 2.1 scoped tokens for cloud index access — read-only tokens for consumers, write tokens for publishers
     checked: false

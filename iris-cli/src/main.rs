@@ -1062,14 +1062,22 @@ async fn cmd_serve_http(
     };
     let a2a_router = iris_mcp::a2a::a2a_routes(a2a_state);
 
+    // Bundle-serving endpoints (read-only, public).
+    let bundle_state = iris_mcp::bundle_routes::BundleState {
+        corpus_dir: ctx.corpus_dir.clone(),
+        model_name: resolved_model.to_string(),
+        storage: Arc::clone(&ctx.storage),
+    };
+    let bundle_router = iris_mcp::bundle_routes::bundle_routes(bundle_state);
+
     let app = if let Some(oauth_cfg) = oauth_config {
         tracing::info!("OAuth 2.1 authentication enabled");
         let store = iris_mcp::auth::OAuthStore::new(oauth_cfg);
         let protected = iris_mcp::auth::protected_router(mcp_router, store);
         // A2A agent card is public; task endpoints merged with protected routes
-        a2a_router.merge(protected)
+        a2a_router.merge(protected).merge(bundle_router)
     } else {
-        a2a_router.merge(mcp_router)
+        a2a_router.merge(mcp_router).merge(bundle_router)
     };
 
     let bind_addr = format!("{host}:{port}");

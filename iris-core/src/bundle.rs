@@ -411,6 +411,7 @@ fn append_bytes<W: Write>(
 /// let v = compute_bundle_version(&roots);
 /// assert_eq!(v.len(), 64); // hex SHA-256
 /// ```
+#[must_use]
 pub fn compute_bundle_version(roots: &[BundleCorpusRoot]) -> String {
     let mut parts: Vec<String> = roots
         .iter()
