@@ -491,6 +491,20 @@ impl QueryService {
         })
     }
 
+    /// Look up the heading path for a section, returning an empty vec if not found.
+    ///
+    /// Used by the eviction cascade to generate meaningful bookmark text
+    /// without loading the full section content.
+    pub async fn section_heading_path(&self, section_id: &str) -> Vec<String> {
+        let sid = SectionId(section_id.to_string());
+        self.storage
+            .get_section(&sid)
+            .await
+            .ok()
+            .flatten()
+            .map_or_else(Vec::new, |s| s.heading_path)
+    }
+
     /// Extract atomic claims from a section, optionally filtered by query relevance.
     ///
     /// When a query is provided, claims are scored by cosine similarity to the

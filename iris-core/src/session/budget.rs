@@ -118,8 +118,12 @@ impl BudgetTracker {
     }
 
     /// Record a token delivery against the budget.
-    pub fn record_tokens(&mut self, content_id: &str, token_count: usize) {
-        self.window.record(content_id, token_count);
+    ///
+    /// Returns the content IDs of any entries evicted from the window model
+    /// to make room for this delivery. Callers should apply bookmark
+    /// compression to evicted IDs so the agent retains structural awareness.
+    pub fn record_tokens(&mut self, content_id: &str, token_count: usize) -> Vec<String> {
+        self.window.record(content_id, token_count)
     }
 
     /// Mark content as recently accessed (LRU policy only).

@@ -93,7 +93,9 @@ impl WindowEstimator {
     /// If the new delivery would push total tokens over capacity, existing
     /// entries are evicted according to the eviction policy until there is
     /// room or the queue is empty.
-    pub fn record(&mut self, content_id: &str, token_count: usize) {
+    ///
+    /// Returns the content IDs of any entries evicted to make room.
+    pub fn record(&mut self, content_id: &str, token_count: usize) -> Vec<String> {
         // If this content was already delivered, remove the old entry first
         if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id) {
             if let Some(old) = self.entries.remove(pos) {
@@ -112,7 +114,7 @@ impl WindowEstimator {
         self.entries.push_back(entry);
 
         // Evict until we're within capacity
-        self.evict_to_capacity();
+        self.evict_to_capacity()
     }
 
     /// Mark a content ID as recently accessed (LRU only).
@@ -198,15 +200,21 @@ impl WindowEstimator {
     }
 
     /// Evict entries from the front of the queue until we're within capacity.
-    fn evict_to_capacity(&mut self) {
+    ///
+    /// Returns the content IDs of evicted entries so callers can apply
+    /// compression (e.g. bookmarks) instead of losing the content entirely.
+    fn evict_to_capacity(&mut self) -> Vec<String> {
+        let mut evicted_ids = Vec::new();
         while self.current_tokens > self.capacity {
             if let Some(evicted) = self.entries.pop_front() {
                 self.current_tokens = self.current_tokens.saturating_sub(evicted.token_count);
                 self.evicted_count += 1;
+                evicted_ids.push(evicted.content_id);
             } else {
                 break;
             }
         }
+        evicted_ids
     }
 }
 
@@ -632,5 +640,44 @@ mod tests {
         assert_eq!(status.remaining, 300);
         assert_eq!(status.entry_count, 1);
         assert_eq!(status.evicted_count, 1);
+    }
+
+    #[test]
+    fn record_returns_evicted_ids() {
+        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+
+        // Fill to capacity — no eviction yet
+        let evicted = est.record("s1", 60);
+        assert!(evicted.is_empty());
+        let evicted = est.record("s2", 30);
+        assert!(evicted.is_empty());
+
+        // This pushes over capacity, evicting s1
+        let evicted = est.record("s3", 50);
+        assert_eq!(evicted, vec!["s1"]);
+        assert_eq!(est.estimated_used(), 80); // s2(30) + s3(50)
+    }
+
+    #[test]
+    fn record_returns_multiple_evicted_ids() {
+        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+
+        est.record("s1", 30);
+        est.record("s2", 30);
+        est.record("s3", 30);
+
+        // Insert a large item that evicts both s1 and s2
+        let evicted = est.record("big", 80);
+        assert_eq!(evicted, vec!["s1", "s2", "s3"]);
+        assert_eq!(est.estimated_used(), 80);
+    }
+
+    #[test]
+    fn evict_to_capacity_returns_empty_when_under_capacity() {
+        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        est.record("s1", 100);
+        // Under capacity — no eviction
+        let evicted = est.record("s2", 100);
+        assert!(evicted.is_empty());
     }
 }

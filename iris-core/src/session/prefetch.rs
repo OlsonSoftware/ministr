@@ -61,6 +61,8 @@ pub enum PrefetchStrategy {
     CrossSession,
     /// Survey expansion: parent sections of claim-level survey hits.
     SurveyExpand,
+    /// Agent intent prediction: sections predicted from tool call patterns.
+    AgentPlan,
 }
 
 /// A pre-computed cache entry ready for immediate delivery.
@@ -101,6 +103,8 @@ pub struct PrefetchMetrics {
     pub cross_session_hits: u64,
     /// Hits from survey-expand prefetch entries.
     pub survey_expand_hits: u64,
+    /// Hits from agent-plan intent prediction entries.
+    pub agent_plan_hits: u64,
 }
 
 impl PrefetchMetrics {
@@ -145,6 +149,7 @@ impl PrefetchMetrics {
             PrefetchStrategy::Structural => self.structural_hits,
             PrefetchStrategy::CrossSession => self.cross_session_hits,
             PrefetchStrategy::SurveyExpand => self.survey_expand_hits,
+            PrefetchStrategy::AgentPlan => self.agent_plan_hits,
         };
         strategy_hits as f64 / total as f64
     }
@@ -221,6 +226,7 @@ impl PrefetchCache {
                     PrefetchStrategy::Structural => self.metrics.structural_hits += 1,
                     PrefetchStrategy::CrossSession => self.metrics.cross_session_hits += 1,
                     PrefetchStrategy::SurveyExpand => self.metrics.survey_expand_hits += 1,
+                    PrefetchStrategy::AgentPlan => self.metrics.agent_plan_hits += 1,
                 }
             }
             self.touch(key);
@@ -450,6 +456,8 @@ pub struct PrefetchEngine {
     cache: PrefetchCache,
     /// Running topic vector tracker for topical prefetch.
     topic_tracker: TopicTracker,
+    /// Agent intent tracker for tool-call-pattern-based prediction.
+    intent_tracker: IntentTracker,
 }
 
 impl PrefetchEngine {
@@ -459,6 +467,7 @@ impl PrefetchEngine {
         Self {
             cache: PrefetchCache::new(cache_capacity),
             topic_tracker: TopicTracker::with_defaults(),
+            intent_tracker: IntentTracker::default(),
         }
     }
 
@@ -468,6 +477,7 @@ impl PrefetchEngine {
         Self {
             cache: PrefetchCache::with_default_capacity(),
             topic_tracker: TopicTracker::with_defaults(),
+            intent_tracker: IntentTracker::default(),
         }
     }
 
@@ -701,6 +711,97 @@ impl PrefetchEngine {
     #[must_use]
     pub fn metrics(&self) -> PrefetchMetrics {
         self.cache.metrics()
+    }
+
+    /// Record a tool call for intent prediction.
+    pub fn record_tool_call(&mut self, tool_name: &str, key_arg: &str) {
+        self.intent_tracker.record_call(tool_name, key_arg);
+    }
+
+    /// Record survey results as predicted next reads.
+    ///
+    /// Clears previous survey predictions and stores the new section IDs.
+    /// These become `AgentPlan` prefetch candidates on the next prefetch cycle.
+    pub fn record_survey_results(&mut self, section_ids: Vec<String>) {
+        self.intent_tracker.pending_survey_ids = section_ids;
+    }
+
+    /// Prefetch sections predicted by agent intent analysis.
+    ///
+    /// Inserts predicted section records into the cache with `AgentPlan` strategy.
+    /// Respects a cap of `MAX_INTENT_PREFETCH` entries to avoid cache thrashing.
+    pub fn prefetch_from_intent(&mut self, sections: Vec<crate::storage::SectionRecord>) {
+        let mut inserted = 0;
+        for section in sections {
+            if inserted >= MAX_INTENT_PREFETCH {
+                break;
+            }
+            if self.cache.peek(&section.id.0).is_some() {
+                continue;
+            }
+            let token_count = crate::token::count_tokens(&section.text);
+            let key = section.id.0.clone();
+            self.cache.insert(
+                key,
+                CacheEntry {
+                    content_id: section.id.0,
+                    text: section.text,
+                    token_count,
+                    heading_path: Some(section.heading_path),
+                    summary: section.summary,
+                    resolution: Resolution::Section,
+                    claims_available: 0,
+                    strategy: PrefetchStrategy::AgentPlan,
+                },
+            );
+            inserted += 1;
+        }
+    }
+
+    /// Get predicted section IDs from the intent tracker.
+    ///
+    /// Returns the pending survey result IDs that haven't been prefetched yet.
+    #[must_use]
+    pub fn predicted_section_ids(&self) -> &[String] {
+        &self.intent_tracker.pending_survey_ids
+    }
+}
+
+/// Maximum number of entries prefetched per agent-intent trigger.
+const MAX_INTENT_PREFETCH: usize = 5;
+
+/// Tracks agent tool call patterns to predict future reads.
+///
+/// Observes the sequence of tool calls (name + key argument) and maintains
+/// a list of predicted section IDs from the most recent survey results.
+#[derive(Debug, Default)]
+struct IntentTracker {
+    /// Recent tool calls for pattern matching.
+    recent_calls: VecDeque<ToolCallSignal>,
+    /// Section IDs from the most recent `iris_survey` — likely next reads.
+    pending_survey_ids: Vec<String>,
+}
+
+/// A recorded tool call for intent analysis.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct ToolCallSignal {
+    tool_name: String,
+    key_arg: String,
+}
+
+/// Maximum number of recent tool calls to track.
+const MAX_INTENT_HISTORY: usize = 20;
+
+impl IntentTracker {
+    fn record_call(&mut self, tool_name: &str, key_arg: &str) {
+        self.recent_calls.push_back(ToolCallSignal {
+            tool_name: tool_name.to_string(),
+            key_arg: key_arg.to_string(),
+        });
+        if self.recent_calls.len() > MAX_INTENT_HISTORY {
+            self.recent_calls.pop_front();
+        }
     }
 }
 
@@ -1135,6 +1236,7 @@ mod tests {
             structural_hits: 1,
             cross_session_hits: 0,
             survey_expand_hits: 0,
+            agent_plan_hits: 0,
         };
 
         assert!((metrics.strategy_hit_rate(PrefetchStrategy::Sequential) - 0.2).abs() < 1e-5);
@@ -1942,5 +2044,109 @@ mod tests {
         assert_eq!(m.hits, 1);
         assert_eq!(m.survey_expand_hits, 1);
         assert_eq!(m.structural_hits, 0);
+    }
+
+    // --- IntentTracker tests ---
+
+    #[test]
+    fn intent_tracker_records_calls() {
+        let mut engine = PrefetchEngine::with_default_capacity();
+        engine.record_tool_call("iris_survey", "auth middleware");
+        engine.record_tool_call("iris_read", "section-123");
+        assert_eq!(engine.intent_tracker.recent_calls.len(), 2);
+    }
+
+    #[test]
+    fn intent_tracker_caps_history() {
+        let mut engine = PrefetchEngine::with_default_capacity();
+        for i in 0..30 {
+            engine.record_tool_call("iris_survey", &format!("query-{i}"));
+        }
+        assert_eq!(engine.intent_tracker.recent_calls.len(), MAX_INTENT_HISTORY);
+    }
+
+    #[test]
+    fn record_survey_results_replaces_previous() {
+        let mut engine = PrefetchEngine::with_default_capacity();
+        engine.record_survey_results(vec!["s1".into(), "s2".into()]);
+        assert_eq!(engine.predicted_section_ids(), &["s1", "s2"]);
+
+        engine.record_survey_results(vec!["s3".into()]);
+        assert_eq!(engine.predicted_section_ids(), &["s3"]);
+    }
+
+    #[test]
+    fn prefetch_from_intent_inserts_and_caps() {
+        use crate::storage::SectionRecord;
+        use crate::types::{ContentId, SectionId};
+
+        let mut engine = PrefetchEngine::with_default_capacity();
+
+        let sections: Vec<SectionRecord> = (0..10)
+            .map(|i| SectionRecord {
+                id: SectionId(format!("s{i}")),
+                document_id: ContentId("doc".into()),
+                heading_path: vec![format!("Section {i}")],
+                depth: 1,
+                text: format!("Content of section {i}"),
+                summary: None,
+                position: i,
+            })
+            .collect();
+
+        engine.prefetch_from_intent(sections);
+
+        // Should cap at MAX_INTENT_PREFETCH (5)
+        let mut hits = 0;
+        for i in 0..10 {
+            if engine.try_serve(&format!("s{i}")).is_some() {
+                hits += 1;
+            }
+        }
+        assert_eq!(hits, 5, "should prefetch at most 5 sections");
+
+        // Verify AgentPlan strategy recorded on hits
+        let m = engine.metrics();
+        assert_eq!(m.agent_plan_hits, 5);
+    }
+
+    #[test]
+    fn prefetch_from_intent_skips_cached() {
+        use crate::storage::SectionRecord;
+        use crate::types::{ContentId, SectionId};
+
+        let mut engine = PrefetchEngine::with_default_capacity();
+
+        // Pre-warm s0
+        engine.cache.insert(
+            "s0".into(),
+            CacheEntry {
+                content_id: "s0".into(),
+                text: "existing".into(),
+                token_count: 10,
+                heading_path: None,
+                summary: None,
+                resolution: Resolution::Section,
+                claims_available: 0,
+                strategy: PrefetchStrategy::Sequential,
+            },
+        );
+
+        let sections = vec![SectionRecord {
+            id: SectionId("s0".into()),
+            document_id: ContentId("doc".into()),
+            heading_path: vec!["S0".into()],
+            depth: 1,
+            text: "new content".into(),
+            summary: None,
+            position: 0,
+        }];
+
+        engine.prefetch_from_intent(sections);
+
+        // Should not overwrite existing entry
+        let entry = engine.try_serve("s0").unwrap();
+        assert_eq!(entry.text, "existing");
+        assert_eq!(entry.strategy, PrefetchStrategy::Sequential);
     }
 }

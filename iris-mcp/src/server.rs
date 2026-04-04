@@ -193,12 +193,14 @@ pub struct IrisServer {
 /// Every tool response is serialized as a JSON object with a `data` field
 /// containing the tool-specific result and a `budget_status` field with
 /// the current token budget snapshot.
+///
+/// Fields are ordered for KV-cache prefix stability: stable metadata first,
+/// varying tool-specific payload last. LLM providers cache KV tensors for
+/// matching prompt prefixes, so consecutive tool calls with the same budget
+/// status share a prefix up to the `result` field.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ToolResponse<T: Serialize + schemars::JsonSchema> {
-    /// The tool-specific result data.
-    #[serde(flatten)]
-    data: T,
-    /// Current budget status snapshot.
+    /// Current budget status snapshot (stable across consecutive calls).
     budget_status: BudgetStatus,
     /// Pending coherence alerts (present when underlying content has changed).
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -212,6 +214,8 @@ struct ToolResponse<T: Serialize + schemars::JsonSchema> {
     /// Proactive eviction recommendations when budget pressure is elevated or critical.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     eviction_recommendations: Vec<EvictionCandidate>,
+    /// The tool-specific result data (varying — placed last for prefix stability).
+    result: T,
 }
 
 /// Wrapper for survey responses that includes both results and dedup metadata.
@@ -806,6 +810,9 @@ fn tool_output_schema<T: schemars::JsonSchema + 'static>() -> std::sync::Arc<rmc
 /// Maximum serialized response size in bytes before the guard injects a warning.
 const MAX_RESPONSE_BYTES: usize = 100_000;
 
+/// Maximum number of survey results to prefetch via agent intent prediction.
+const MAX_INTENT_PREFETCH_SURVEY: usize = 5;
+
 /// Serialize a value into a `CallToolResult` with structured content.
 ///
 /// Sets both `structured_content` (JSON object) and `content` (text fallback)
@@ -1367,7 +1374,7 @@ impl IrisServer {
                             turn,
                             hash,
                         );
-                        entry.budget.record_tokens(&r.content_id, token_count);
+                        let _ = entry.budget.record_tokens(&r.content_id, token_count);
                     }
                     let budget_status = entry.budget.budget_status();
 
@@ -1407,6 +1414,39 @@ impl IrisServer {
                                 }
                             }
                             prefetch.prefetch_survey_expand(sections, &claims_counts);
+                        }
+                    }
+
+                    // Agent intent: record survey result section IDs as predicted next reads.
+                    // Top results are likely to be read next by the agent.
+                    {
+                        let survey_section_ids: Vec<String> = results
+                            .iter()
+                            .filter(|r| r.resolution == "section")
+                            .take(MAX_INTENT_PREFETCH_SURVEY)
+                            .map(|r| r.content_id.clone())
+                            .collect();
+                        if !survey_section_ids.is_empty() {
+                            let mut prefetch = self.prefetch.lock().await;
+                            prefetch.record_tool_call("iris_survey", &params.query);
+                            prefetch.record_survey_results(survey_section_ids.clone());
+
+                            // Fetch and pre-warm the predicted sections
+                            let mut sections = Vec::new();
+                            for sid in &survey_section_ids {
+                                if prefetch.cache().peek(sid).is_some() {
+                                    continue;
+                                }
+                                let section_id = SectionId(sid.clone());
+                                if let Ok(Some(record)) =
+                                    self.service.storage().get_section(&section_id).await
+                                {
+                                    sections.push(record);
+                                }
+                            }
+                            if !sections.is_empty() {
+                                prefetch.prefetch_from_intent(sections);
+                            }
                         }
                     }
 
@@ -1598,7 +1638,7 @@ impl IrisServer {
                             turn,
                             hash,
                         );
-                        entry.budget.record_tokens(&c.claim_id, token_count);
+                        let _ = entry.budget.record_tokens(&c.claim_id, token_count);
                     }
                     let budget_status = entry.budget.budget_status();
                     drop(reg);
@@ -1679,7 +1719,7 @@ impl IrisServer {
                             turn,
                             hash,
                         );
-                        entry.budget.record_tokens(&r.claim_id, token_count);
+                        let _ = entry.budget.record_tokens(&r.claim_id, token_count);
                     }
                     let budget_status = entry.budget.budget_status();
                     drop(reg);
@@ -2441,7 +2481,7 @@ impl IrisServer {
                     let entry = reg
                         .get_session_mut(&self.active_session_id)
                         .expect("active session exists");
-                    entry.budget.record_tokens(&params.symbol_id, token_count);
+                    let _ = entry.budget.record_tokens(&params.symbol_id, token_count);
                     let budget_status = entry.budget.budget_status();
                     drop(reg);
 
@@ -3020,6 +3060,10 @@ impl IrisServer {
 
     /// Record a section delivery in the session shadow and budget tracker.
     ///
+    /// When the delivery causes window eviction, applies bookmark compression
+    /// to evicted entries synchronously and spawns background extractive
+    /// compression to upgrade bookmarks into summaries.
+    ///
     /// Returns the budget status snapshot after recording.
     async fn record_section_delivery(
         &self,
@@ -3041,10 +3085,53 @@ impl IrisServer {
             turn,
             content_hash,
         );
-        entry.budget.record_tokens(section_id, token_count);
+        let evicted_ids = entry.budget.record_tokens(section_id, token_count);
+
         let status = entry.budget.budget_status();
         drop(reg);
+
+        // Phase 1: bookmark compression for evicted entries.
+        // Look up heading paths, then re-acquire lock to apply bookmarks.
+        if !evicted_ids.is_empty() {
+            let mut heading_paths = Vec::with_capacity(evicted_ids.len());
+            for evicted_id in &evicted_ids {
+                heading_paths.push(self.service.section_heading_path(evicted_id).await);
+            }
+            let mut reg = self.registry.lock().await;
+            if let Some(entry) = reg.get_session_mut(&self.active_session_id) {
+                for (evicted_id, heading_path) in evicted_ids.iter().zip(&heading_paths) {
+                    let evicted_cid = ContentId(evicted_id.clone());
+                    entry.session.mask_to_bookmark(&evicted_cid, heading_path);
+                }
+            }
+            drop(reg);
+        }
+
         self.persist_session().await;
+
+        // Phase 2: background extractive compression to upgrade bookmarks.
+        if !evicted_ids.is_empty() {
+            let service = self.service.clone();
+            let registry = self.registry.clone();
+            let session_id = self.active_session_id.clone();
+            tokio::spawn(async move {
+                if let Ok(compressed) = service.compress_content(&evicted_ids).await {
+                    let mut reg = registry.lock().await;
+                    if let Some(entry) = reg.get_session_mut(&session_id) {
+                        for item in compressed {
+                            let cid = ContentId(item.original_id.clone());
+                            entry.session.set_compressed_summary(
+                                &cid,
+                                item.summary,
+                                iris_core::session::CompressionTier::Extractive,
+                                item.compressed_tokens,
+                            );
+                        }
+                    }
+                }
+            });
+        }
+
         status
     }
 
@@ -3083,12 +3170,12 @@ impl IrisServer {
         };
 
         ToolResponse {
-            data,
             budget_status,
             coherence_alerts: alerts,
             indexing_in_progress: indexing,
             indexing_message,
             eviction_recommendations,
+            result: data,
         }
     }
 
@@ -6519,5 +6606,123 @@ mod tests {
             result.get("_truncation_warning").is_none(),
             "should not inject warning for small payload"
         );
+    }
+
+    #[test]
+    fn tool_response_prefix_stability() {
+        use iris_core::session::{BudgetStatus, PressureLevel};
+
+        // Two different tool result types with identical budget status
+        let budget = BudgetStatus {
+            tokens_used: 5000,
+            tokens_remaining: 95_000,
+            pressure_level: PressureLevel::Normal,
+            utilization: 0.05,
+        };
+
+        let resp_a = ToolResponse {
+            budget_status: budget.clone(),
+            coherence_alerts: Vec::new(),
+            indexing_in_progress: false,
+            indexing_message: None,
+            eviction_recommendations: Vec::new(),
+            result: serde_json::json!({"results": [1, 2, 3]}),
+        };
+        let resp_b = ToolResponse {
+            budget_status: budget,
+            coherence_alerts: Vec::new(),
+            indexing_in_progress: false,
+            indexing_message: None,
+            eviction_recommendations: Vec::new(),
+            result: serde_json::json!({"symbols": ["foo", "bar"]}),
+        };
+
+        let json_a = serde_json::to_string(&resp_a).unwrap();
+        let json_b = serde_json::to_string(&resp_b).unwrap();
+
+        // Both should start with identical budget_status prefix
+        let prefix_a = &json_a[..json_a.find("\"result\"").unwrap()];
+        let prefix_b = &json_b[..json_b.find("\"result\"").unwrap()];
+        assert_eq!(
+            prefix_a, prefix_b,
+            "stable prefix should be byte-identical across different tool responses"
+        );
+    }
+
+    #[test]
+    fn tool_response_result_not_flattened() {
+        use iris_core::session::{BudgetStatus, PressureLevel};
+
+        let resp = ToolResponse {
+            budget_status: BudgetStatus {
+                tokens_used: 0,
+                tokens_remaining: 100_000,
+                pressure_level: PressureLevel::Normal,
+                utilization: 0.0,
+            },
+            coherence_alerts: Vec::new(),
+            indexing_in_progress: false,
+            indexing_message: None,
+            eviction_recommendations: Vec::new(),
+            result: serde_json::json!({"items": [1]}),
+        };
+
+        let v = serde_json::to_value(&resp).unwrap();
+        let obj = v.as_object().unwrap();
+
+        // `result` should be a nested object, not flattened
+        assert!(obj.contains_key("result"), "should have 'result' key");
+        assert!(
+            obj.contains_key("budget_status"),
+            "should have 'budget_status' key"
+        );
+        // Flattened fields should NOT appear at top level
+        assert!(
+            !obj.contains_key("items"),
+            "'items' should be inside 'result', not flattened"
+        );
+    }
+
+    #[test]
+    fn tool_response_skips_empty_optional_fields() {
+        use iris_core::session::{BudgetStatus, PressureLevel};
+
+        let resp = ToolResponse {
+            budget_status: BudgetStatus {
+                tokens_used: 0,
+                tokens_remaining: 100_000,
+                pressure_level: PressureLevel::Normal,
+                utilization: 0.0,
+            },
+            coherence_alerts: Vec::new(),
+            indexing_in_progress: false,
+            indexing_message: None,
+            eviction_recommendations: Vec::new(),
+            result: serde_json::json!({}),
+        };
+
+        let v = serde_json::to_value(&resp).unwrap();
+        let obj = v.as_object().unwrap();
+
+        // skip_serializing_if should suppress empty/false fields
+        assert!(
+            !obj.contains_key("coherence_alerts"),
+            "empty alerts should be skipped"
+        );
+        assert!(
+            !obj.contains_key("indexing_in_progress"),
+            "false indexing should be skipped"
+        );
+        assert!(
+            !obj.contains_key("indexing_message"),
+            "None message should be skipped"
+        );
+        assert!(
+            !obj.contains_key("eviction_recommendations"),
+            "empty recs should be skipped"
+        );
+
+        // Only budget_status and result should remain
+        assert_eq!(obj.len(), 2, "should only have budget_status and result");
     }
 }
