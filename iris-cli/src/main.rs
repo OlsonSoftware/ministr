@@ -249,6 +249,13 @@ async fn main() -> Result<()> {
             oauth_issuer,
         } => match transport {
             Transport::Stdio if proxy => cmd_serve_proxy_stdio(&corpus_paths).await,
+            Transport::Stdio
+                if !proxy && iris_api::client::DaemonClient::new().is_healthy().await =>
+            {
+                // Daemon is running (tray app) — auto-switch to lightweight proxy.
+                eprintln!("iris: daemon detected at ~/.iris/irisd.sock — running as proxy");
+                cmd_serve_proxy_stdio(&corpus_paths).await
+            }
             Transport::Stdio => {
                 cmd_serve_stdio(
                     &corpus_paths,
@@ -616,10 +623,15 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
         eprintln!("  Bridges: {}", names.join(", "));
     }
     eprintln!();
+    let config_path = root.join(".iris.toml");
     let total_paths = detection.source_paths.len() + detection.doc_paths.len();
-    eprintln!("Generated .iris.toml with {total_paths} paths");
-    eprintln!("Generated .mcp.json (Claude Code)");
-    eprintln!("Generated .vscode/mcp.json (GitHub Copilot)");
+    if config_path.exists() && !force {
+        eprintln!(".iris.toml already exists (use --force to overwrite)");
+    } else {
+        eprintln!("Generated .iris.toml with {total_paths} paths");
+    }
+    eprintln!("Updated .mcp.json (Claude Code)");
+    eprintln!("Updated .vscode/mcp.json (GitHub Copilot)");
     eprintln!();
     eprintln!("Next steps:");
     eprintln!("  1. Start a new Claude Code session in this directory");
