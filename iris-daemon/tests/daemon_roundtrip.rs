@@ -3,6 +3,7 @@
 mod common;
 
 use iris_api::query::{BridgeRequest, ExtractRequest, RelatedRequest, SymbolsRequest, TocRequest};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use common::TestDaemon;
 
@@ -292,4 +293,106 @@ async fn test_evict_nonexistent_session() {
         .evict_content(&daemon.corpus_id, "sess-nonexistent", &req)
         .await;
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_ingestion_progress_sse() {
+    let daemon = TestDaemon::start().await;
+
+    // Connect raw HTTP to the SSE endpoint and read the first event.
+    let mut stream = tokio::net::UnixStream::connect(&daemon.socket_path)
+        .await
+        .unwrap();
+
+    let request = format!(
+        "GET /api/v1/corpora/{}/progress HTTP/1.1\r\n\
+         Host: localhost\r\n\
+         Accept: text/event-stream\r\n\
+         Connection: close\r\n\
+         \r\n",
+        daemon.corpus_id
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+
+    // Read response — may need multiple reads to get headers + first event.
+    let mut response = String::new();
+    let mut buf = vec![0u8; 4096];
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_secs(2), stream.read(&mut buf)).await {
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => {
+                response.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if response.contains("data:") {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    assert!(
+        response.contains("text/event-stream"),
+        "should return SSE content type, got: {response}"
+    );
+    assert!(
+        response.contains("data:"),
+        "should contain SSE data event, got: {response}"
+    );
+}
+
+#[tokio::test]
+async fn test_session_persistence() {
+    use iris_daemon::persistence;
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("sessions.db");
+
+    // Save a session.
+    persistence::save_session(
+        &db_path,
+        "corpus-1",
+        "sess-abc",
+        50_000,
+        3,
+        &std::collections::BTreeMap::new(),
+        &[],
+    )
+    .unwrap();
+
+    // Load it back.
+    let sessions = persistence::load_sessions(&db_path, "corpus-1").unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].session_id, "sess-abc");
+    assert_eq!(sessions[0].budget_tokens, 50_000);
+    assert_eq!(sessions[0].current_turn, 3);
+
+    // Delete it.
+    persistence::delete_session(&db_path, "corpus-1", "sess-abc").unwrap();
+    let sessions = persistence::load_sessions(&db_path, "corpus-1").unwrap();
+    assert!(sessions.is_empty());
+}
+
+#[tokio::test]
+async fn test_rate_limiting_concurrent_surveys() {
+    // Verify that concurrent surveys beyond the semaphore limit are queued (not rejected).
+    let daemon = TestDaemon::start().await;
+    let num_concurrent = 8; // More than the default concurrency limit of 4.
+
+    let mut handles = Vec::new();
+    for i in 0..num_concurrent {
+        let client = daemon.client();
+        let corpus_id = daemon.corpus_id.clone();
+        handles.push(tokio::spawn(async move {
+            client
+                .survey(&corpus_id, &format!("rate limit test {i}"), Some(3))
+                .await
+                .unwrap()
+        }));
+    }
+
+    // All should succeed (queued, not rejected).
+    for handle in handles {
+        let resp = handle.await.unwrap();
+        assert!(resp.results.len() <= 3);
+    }
 }
