@@ -35,9 +35,22 @@ function statusBadge(status: IndexingStatus) {
 
 function projectName(paths: string[]): string {
   if (paths.length === 0) return "Unknown";
-  const first = paths[0];
-  const parts = first.split("/");
-  return parts[parts.length - 1] || first;
+  if (paths.length === 1) {
+    const parts = paths[0].split("/");
+    return parts[parts.length - 1] || paths[0];
+  }
+  // Find common ancestor directory across all paths.
+  const segments = paths.map((p) => p.split("/"));
+  let common = 0;
+  outer: for (let i = 0; i < segments[0].length; i++) {
+    for (let j = 1; j < segments.length; j++) {
+      if (i >= segments[j].length || segments[j][i] !== segments[0][i]) break outer;
+    }
+    common = i + 1;
+  }
+  const ancestor = segments[0].slice(0, common).join("/");
+  const parts = ancestor.split("/");
+  return parts[parts.length - 1] || paths[0];
 }
 
 export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: ProjectListProps) {
