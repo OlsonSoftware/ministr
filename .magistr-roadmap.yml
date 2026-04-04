@@ -1412,15 +1412,15 @@ phases:
   - text: Prefetch engine runs daemon-side, shared across MCP sessions on the same corpus
     checked: true
   - text: 'Daemon auto-launch from proxy: search PATH, sibling directory, ~/.iris/bin for iris-app binary'
-    checked: false
+    checked: true
   - text: 'PID file + health check: /api/v1/status returns uptime, corpus count, memory usage, version'
-    checked: false
+    checked: true
   - text: 'Graceful shutdown: drain active sessions, flush SQLite WAL, remove socket file'
-    checked: false
+    checked: true
   - text: 'Cross-platform IPC: named pipes on Windows (\\.\pipe\iris) alongside UDS on Unix — abstract in iris-api'
-    checked: false
+    checked: true
   - text: 'Daemon startup resilience: stale socket cleanup, lock file guard, concurrent launch protection'
-    checked: false
+    checked: true
   - text: 'Stress test: multiple MCP proxies connecting simultaneously to the same daemon, concurrent queries on shared corpus'
     checked: false
   - text: 'Integration test: proxy ↔ daemon roundtrip for all query types (survey, read, symbols, definition, references, toc, extract, related, bridge)'
