@@ -43,11 +43,16 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/toc", post(toc))
         .route("/api/v1/corpora/{id}/related", post(related))
         .route("/api/v1/corpora/{id}/bridge", post(bridge))
+        .route("/api/v1/corpora/{id}/compress", post(compress_content))
         .route("/api/v1/corpora/{id}/prefetch", get(prefetch_metrics))
         .route("/api/v1/corpora/{id}/sessions", post(create_session))
         .route(
             "/api/v1/corpora/{id}/sessions/{sid}/budget",
             get(session_budget),
+        )
+        .route(
+            "/api/v1/corpora/{id}/sessions/{sid}/evicted",
+            post(evict_content),
         )
         .route(
             "/api/v1/corpora/{id}/sessions/{sid}",
@@ -445,6 +450,25 @@ async fn bridge(
 }
 
 // ---------------------------------------------------------------------------
+// Compress
+// ---------------------------------------------------------------------------
+
+async fn compress_content(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<iris_api::session::CompressRequest>,
+) -> impl IntoResponse {
+    let guard = get_corpus!(&state, &id);
+    match guard[&id].service.compress_content(&req.content_ids).await {
+        Ok(items) => Json(iris_api::session::CompressResponse {
+            summaries: items.into_iter().map(convert::compressed_item).collect(),
+        })
+        .into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "compress_failed", e).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Prefetch
 // ---------------------------------------------------------------------------
 
@@ -604,6 +628,41 @@ async fn destroy_session(
             format!("session {sid} not found"),
         )
         .into_response()
+    }
+}
+
+async fn evict_content(
+    State(state): State<AppState>,
+    Path((id, sid)): Path<(String, String)>,
+    Json(req): Json<iris_api::session::EvictRequest>,
+) -> impl IntoResponse {
+    let guard = get_corpus!(&state, &id);
+    let handle = &guard[&id];
+
+    let mut sessions = handle.sessions.lock().await;
+    match sessions.get_session_mut(&sid) {
+        Some(entry) => {
+            let mut evicted = Vec::new();
+            let mut not_found = Vec::new();
+
+            for id_str in &req.content_ids {
+                let content_id = iris_core::types::ContentId(id_str.clone());
+                if entry.session.remove_delivered(&content_id).is_some() {
+                    entry.budget.force_evict(id_str);
+                    evicted.push(id_str.clone());
+                } else {
+                    not_found.push(id_str.clone());
+                }
+            }
+
+            Json(iris_api::session::EvictResponse { evicted, not_found }).into_response()
+        }
+        None => err(
+            StatusCode::NOT_FOUND,
+            "session_not_found",
+            format!("session {sid} not found"),
+        )
+        .into_response(),
     }
 }
 

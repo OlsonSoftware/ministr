@@ -103,6 +103,16 @@ pub struct BridgeParams {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CompressParams {
+    pub content_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct EvictedParams {
+    pub content_ids: Vec<String>,
+}
+
 impl ProxyServer {
     #[must_use]
     pub fn new(corpus_paths: Vec<String>) -> Self {
@@ -464,6 +474,47 @@ impl ProxyServer {
         let resp = self
             .client
             .session_budget(&cid, &sid)
+            .await
+            .map_err(|e| Self::err(&e))?;
+        Self::json_result(&resp)
+    }
+
+    #[tool(
+        name = "iris_compress",
+        description = "Generate compressed summaries for sections the agent wants to evict from context. Uses extractive TF-IDF compression (60-80% reduction)."
+    )]
+    async fn compress(
+        &self,
+        Parameters(params): Parameters<CompressParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let cid = self.ensure_corpus().await?;
+        let req = iris_api::session::CompressRequest {
+            content_ids: params.content_ids,
+        };
+        let resp = self
+            .client
+            .compress(&cid, &req)
+            .await
+            .map_err(|e| Self::err(&e))?;
+        Self::json_result(&resp)
+    }
+
+    #[tool(
+        name = "iris_evicted",
+        description = "Signal that content IDs have been evicted from the agent's context window. Updates session tracking for accurate budget and deduplication."
+    )]
+    async fn evicted(
+        &self,
+        Parameters(params): Parameters<EvictedParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
+        let req = iris_api::session::EvictRequest {
+            content_ids: params.content_ids,
+        };
+        let resp = self
+            .client
+            .evict_content(&cid, &sid, &req)
             .await
             .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
