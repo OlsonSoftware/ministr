@@ -141,6 +141,21 @@ pub fn compressed_item(
 }
 
 #[must_use]
+pub fn bundle_manifest(
+    m: &iris_core::bundle::BundleManifest,
+) -> iris_api::corpus::BundleManifestApi {
+    iris_api::corpus::BundleManifestApi {
+        format_version: m.format_version,
+        model_name: m.model_name.clone(),
+        dimension: m.dimension,
+        vector_count: m.vector_count,
+        document_count: m.document_count,
+        symbol_count: m.symbol_count,
+        bundle_version: m.bundle_version.clone(),
+    }
+}
+
+#[must_use]
 pub fn budget_status(
     b: &iris_core::session::BudgetStatus,
 ) -> iris_api::session::SessionBudgetResponse {

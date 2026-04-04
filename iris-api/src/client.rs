@@ -301,6 +301,37 @@ impl DaemonClient {
             .await
     }
 
+    // -- Bundles --
+
+    /// Export a corpus to a portable `.iris-index` bundle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn export_bundle(
+        &self,
+        corpus_id: &str,
+    ) -> Result<crate::corpus::ExportBundleResponse, ClientError> {
+        // POST with empty body to trigger export.
+        self.post(
+            &format!("/api/v1/corpora/{corpus_id}/export"),
+            &serde_json::Value::Null,
+        )
+        .await
+    }
+
+    /// Import an `.iris-index` bundle into the daemon.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn import_bundle(
+        &self,
+        req: &crate::corpus::ImportBundleRequest,
+    ) -> Result<crate::corpus::ImportBundleResponse, ClientError> {
+        self.post("/api/v1/corpora/import", req).await
+    }
+
     // -- Compress --
 
     /// Compress content items for budget-efficient eviction.

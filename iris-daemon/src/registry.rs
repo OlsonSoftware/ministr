@@ -54,6 +54,8 @@ pub struct CorpusHandle {
     pub progress: Arc<IngestionProgress>,
     pub cancel: CancellationToken,
     pub data_dir: PathBuf,
+    /// Broadcast channel for coherence notifications (stale section IDs).
+    pub coherence_tx: tokio::sync::broadcast::Sender<Vec<String>>,
 }
 
 impl CorpusRegistry {
@@ -232,6 +234,7 @@ impl CorpusRegistry {
             progress: Arc::new(IngestionProgress::new()),
             cancel: CancellationToken::new(),
             data_dir: corpus_dir,
+            coherence_tx: tokio::sync::broadcast::channel(16).0,
         })
     }
 }
