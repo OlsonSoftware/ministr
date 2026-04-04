@@ -16,6 +16,7 @@ mod budget;
 pub mod compression;
 pub mod delta;
 pub mod eviction;
+pub mod memory;
 pub mod prefetch;
 mod registry;
 mod types;
@@ -24,6 +25,7 @@ mod window;
 pub use budget::{BudgetConfig, BudgetStatus, BudgetTracker, PressureLevel};
 pub use compression::{CompressionPipeline, TierPromotion};
 pub use eviction::{EvictionCandidate, EvictionRanker};
+pub use memory::{AccessRating, MemoryState, MemoryTracker};
 pub use prefetch::{
     CacheEntry, PrefetchCache, PrefetchEngine, PrefetchMetrics, PrefetchStrategy, TopicTracker,
 };

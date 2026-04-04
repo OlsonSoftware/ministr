@@ -1227,9 +1227,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] FSRS-based importance scoring — sections accessed frequently get higher retention priority in the budget manager
-- [ ] Decay-aware eviction — replace LRU with FSRS-predicted future access probability for eviction decisions
-- [ ] Cross-session memory — persist section access patterns across sessions so iris learns which codebase areas matter most per user
+- [x] FSRS-based importance scoring — sections accessed frequently get higher retention priority in the budget manager
+- [x] Decay-aware eviction — replace LRU with FSRS-predicted future access probability for eviction decisions
+- [x] Cross-session memory — persist section access patterns across sessions so iris learns which codebase areas matter most per user
 
 ---
 

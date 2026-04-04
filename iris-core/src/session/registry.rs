@@ -44,6 +44,8 @@ pub struct SessionEntry {
     pub budget: BudgetTracker,
     /// Access mode controlling what operations this session can perform.
     pub access_mode: AccessMode,
+    /// FSRS-based memory tracker for importance-aware eviction.
+    pub memory: super::memory::MemoryTracker,
 }
 
 /// Registry managing multiple named sessions that share a single corpus.
@@ -95,6 +97,7 @@ impl SessionRegistry {
                 session,
                 budget,
                 access_mode,
+                memory: super::memory::MemoryTracker::new(),
             },
         );
         self.sessions.get_mut(id).expect("just inserted")

@@ -1346,16 +1346,16 @@ phases:
 - id: MEMORY1
   name: Spaced Repetition Context Management
   tagline: FSRS-based importance scoring for smarter budget management
-  status: pending
+  status: done
   problem: Current eviction is access-recency-based; spaced repetition can predict which sections will be needed again, reducing unnecessary re-fetches
   solution: FSRS-based importance scoring, decay-aware eviction, cross-session memory persistence for per-user access patterns
   tasks:
   - text: FSRS-based importance scoring — sections accessed frequently get higher retention priority in the budget manager
-    checked: false
+    checked: true
   - text: Decay-aware eviction — replace LRU with FSRS-predicted future access probability for eviction decisions
-    checked: false
+    checked: true
   - text: Cross-session memory — persist section access patterns across sessions so iris learns which codebase areas matter most per user
-    checked: false
+    checked: true
 - id: A2A1
   name: Agent-to-Agent Protocol Support
   tagline: Expose iris as an A2A-discoverable code intelligence agent

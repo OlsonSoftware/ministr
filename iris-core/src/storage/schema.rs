@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 14;
+pub const CURRENT_SCHEMA_VERSION: usize = 15;
 
 /// Returns the migration set for the content database.
 ///
@@ -269,6 +269,19 @@ fn migrations() -> Migrations<'static> {
                 file_path      TEXT NOT NULL,
                 target_crate   TEXT,
                 PRIMARY KEY (from_symbol_id, target_name, kind)
+            );
+            ",
+        ),
+        // V15: FSRS memory states — cross-session section importance learning
+        M::up(
+            "
+            CREATE TABLE section_memory_states (
+                section_id    TEXT PRIMARY KEY NOT NULL,
+                stability     REAL NOT NULL DEFAULT 1.0,
+                difficulty    REAL NOT NULL DEFAULT 0.3,
+                last_access_turn INTEGER NOT NULL DEFAULT 0,
+                access_count  INTEGER NOT NULL DEFAULT 0,
+                updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
             ",
         ),

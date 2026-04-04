@@ -96,6 +96,20 @@ impl WindowEstimator {
     ///
     /// Returns the content IDs of any entries evicted to make room.
     pub fn record(&mut self, content_id: &str, token_count: usize) -> Vec<String> {
+        self.record_with_scores(content_id, token_count, None)
+    }
+
+    /// Record a delivery with optional FSRS retrievability scores.
+    ///
+    /// Under [`EvictionPolicy::Fsrs`], eviction selects the entry with the
+    /// lowest retrievability score instead of the oldest entry.
+    /// FIFO and LRU policies ignore the scores.
+    pub fn record_with_scores(
+        &mut self,
+        content_id: &str,
+        token_count: usize,
+        scores: Option<&std::collections::HashMap<String, f64>>,
+    ) -> Vec<String> {
         // If this content was already delivered, remove the old entry first
         if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id) {
             if let Some(old) = self.entries.remove(pos) {
@@ -114,7 +128,7 @@ impl WindowEstimator {
         self.entries.push_back(entry);
 
         // Evict until we're within capacity
-        self.evict_to_capacity()
+        self.evict_to_capacity(scores)
     }
 
     /// Mark a content ID as recently accessed (LRU only).
@@ -199,14 +213,37 @@ impl WindowEstimator {
         false
     }
 
-    /// Evict entries from the front of the queue until we're within capacity.
+    /// Evict entries until we're within capacity.
+    ///
+    /// Under FIFO/LRU, evicts from the front of the queue.
+    /// Under FSRS, evicts the entry with the lowest retrievability score.
     ///
     /// Returns the content IDs of evicted entries so callers can apply
     /// compression (e.g. bookmarks) instead of losing the content entirely.
-    fn evict_to_capacity(&mut self) -> Vec<String> {
+    fn evict_to_capacity(
+        &mut self,
+        scores: Option<&std::collections::HashMap<String, f64>>,
+    ) -> Vec<String> {
         let mut evicted_ids = Vec::new();
         while self.current_tokens > self.capacity {
-            if let Some(evicted) = self.entries.pop_front() {
+            let victim = match (&self.policy, scores) {
+                (EvictionPolicy::Fsrs, Some(s)) if !self.entries.is_empty() => {
+                    // Find the entry with the lowest retrievability
+                    let min_idx = self
+                        .entries
+                        .iter()
+                        .enumerate()
+                        .min_by(|(_, a), (_, b)| {
+                            let ra = s.get(&a.content_id).copied().unwrap_or(0.0);
+                            let rb = s.get(&b.content_id).copied().unwrap_or(0.0);
+                            ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .map(|(i, _)| i);
+                    min_idx.and_then(|i| self.entries.remove(i))
+                }
+                _ => self.entries.pop_front(),
+            };
+            if let Some(evicted) = victim {
                 self.current_tokens = self.current_tokens.saturating_sub(evicted.token_count);
                 self.evicted_count += 1;
                 evicted_ids.push(evicted.content_id);
@@ -679,5 +716,70 @@ mod tests {
         // Under capacity — no eviction
         let evicted = est.record("s2", 100);
         assert!(evicted.is_empty());
+    }
+
+    // --- FSRS eviction policy tests ---
+
+    #[test]
+    fn fsrs_evicts_lowest_retrievability_first() {
+        let mut est = WindowEstimator::new(100, EvictionPolicy::Fsrs);
+        est.record("a", 40);
+        est.record("b", 40);
+
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("a".to_string(), 0.9); // high R — should survive
+        scores.insert("b".to_string(), 0.1); // low R — should be evicted
+        scores.insert("c".to_string(), 1.0); // just accessed — highest R
+
+        // Insert c (40 tokens) → pushes over capacity (120 > 100), evicts b
+        let evicted = est.record_with_scores("c", 40, Some(&scores));
+        assert_eq!(evicted, vec!["b"], "should evict entry with lowest R");
+    }
+
+    #[test]
+    fn fsrs_without_scores_falls_back_to_fifo() {
+        let mut est = WindowEstimator::new(100, EvictionPolicy::Fsrs);
+        est.record("a", 40);
+        est.record("b", 40);
+
+        // No scores → falls back to pop_front (FIFO)
+        let evicted = est.record_with_scores("c", 40, None);
+        assert_eq!(evicted, vec!["a"], "without scores, should evict oldest");
+    }
+
+    #[test]
+    fn fifo_ignores_scores() {
+        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+        est.record("a", 40);
+        est.record("b", 40);
+
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("a".to_string(), 0.9); // high R — FIFO should still evict first
+        scores.insert("b".to_string(), 0.1);
+
+        let evicted = est.record_with_scores("c", 40, Some(&scores));
+        assert_eq!(
+            evicted,
+            vec!["a"],
+            "FIFO should evict oldest regardless of scores"
+        );
+    }
+
+    #[test]
+    fn fsrs_unknown_content_gets_zero_retrievability() {
+        let mut est = WindowEstimator::new(100, EvictionPolicy::Fsrs);
+        est.record("known", 40);
+        est.record("unknown", 40);
+
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("known".to_string(), 0.5); // R=0.5
+        // "unknown" not in scores → defaults to 0.0 → evicted first
+
+        let evicted = est.record_with_scores("c", 40, Some(&scores));
+        assert_eq!(
+            evicted,
+            vec!["unknown"],
+            "unscored content should be evicted first"
+        );
     }
 }

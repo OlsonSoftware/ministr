@@ -73,7 +73,7 @@ pub struct EvictionCandidate {
 ///     "hash2".to_string(),
 /// );
 ///
-/// let candidates = EvictionRanker::rank(&session, 5);
+/// let candidates = EvictionRanker::rank(&session, 5, None);
 /// assert!(!candidates.is_empty());
 /// // Old section should rank higher (better eviction candidate)
 /// assert_eq!(candidates[0].content_id, "old-section");
@@ -83,10 +83,18 @@ pub struct EvictionRanker;
 impl EvictionRanker {
     /// Rank delivered items by eviction priority.
     ///
+    /// When a [`MemoryTracker`] is provided, the recency factor uses FSRS
+    /// retrievability (sections with low predicted recall are better eviction
+    /// candidates). Without a tracker, falls back to simple turn-based decay.
+    ///
     /// Returns up to `max_candidates` items sorted by descending eviction
     /// score (best candidates first).
     #[must_use]
-    pub fn rank(session: &Session, max_candidates: usize) -> Vec<EvictionCandidate> {
+    pub fn rank(
+        session: &Session,
+        max_candidates: usize,
+        memory: Option<&super::memory::MemoryTracker>,
+    ) -> Vec<EvictionCandidate> {
         let current_turn = session.current_turn();
         let items: Vec<&DeliveredItem> = session.delivered_items().collect();
 
@@ -122,7 +130,7 @@ impl EvictionRanker {
         let base_scores: Vec<f64> = sorted_items
             .iter()
             .map(|item| {
-                Self::compute_base_score(item, current_turn, max_tokens, min_turn, max_turn)
+                Self::compute_base_score(item, current_turn, max_tokens, min_turn, max_turn, memory)
             })
             .collect();
 
@@ -168,17 +176,24 @@ impl EvictionRanker {
         max_tokens: usize,
         min_turn: u32,
         max_turn: u32,
+        memory: Option<&super::memory::MemoryTracker>,
     ) -> f64 {
         const RECENCY_WEIGHT: f64 = 0.35;
         const TOKEN_WEIGHT: f64 = 0.2;
         const POSITION_WEIGHT: f64 = 0.2;
         const RESOLUTION_WEIGHT: f64 = 0.15;
 
-        // Recency decay: older items score higher
-        let recency = if current_turn == 0 {
-            0.0
-        } else {
-            f64::from(current_turn - item.turn_delivered) / f64::from(current_turn)
+        // Recency/retrievability: use FSRS when available, else simple decay.
+        // Low retrievability → high eviction score (likely forgotten).
+        let recency = match memory {
+            Some(mem) => 1.0 - mem.retrievability(&item.content_id.0, current_turn),
+            None => {
+                if current_turn == 0 {
+                    0.0
+                } else {
+                    f64::from(current_turn - item.turn_delivered) / f64::from(current_turn)
+                }
+            }
         };
 
         // Token weight: larger items are more valuable to evict
@@ -337,7 +352,7 @@ mod tests {
     #[test]
     fn empty_session_returns_no_candidates() {
         let session = make_session();
-        let candidates = EvictionRanker::rank(&session, 5);
+        let candidates = EvictionRanker::rank(&session, 5, None);
         assert!(candidates.is_empty());
     }
 
@@ -345,7 +360,7 @@ mod tests {
     fn zero_max_candidates_returns_empty() {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
-        let candidates = EvictionRanker::rank(&session, 0);
+        let candidates = EvictionRanker::rank(&session, 0, None);
         assert!(candidates.is_empty());
     }
 
@@ -356,7 +371,7 @@ mod tests {
         session.record_delivery(&cid("old"), Resolution::Section, 200, 1, "h1".into());
         session.record_delivery(&cid("recent"), Resolution::Section, 200, 10, "h2".into());
 
-        let candidates = EvictionRanker::rank(&session, 10);
+        let candidates = EvictionRanker::rank(&session, 10, None);
         assert_eq!(candidates.len(), 2);
         assert_eq!(
             candidates[0].content_id, "old",
@@ -372,7 +387,7 @@ mod tests {
         session.record_delivery(&cid("small"), Resolution::Section, 50, 5, "h1".into());
         session.record_delivery(&cid("large"), Resolution::Section, 2000, 5, "h2".into());
 
-        let candidates = EvictionRanker::rank(&session, 10);
+        let candidates = EvictionRanker::rank(&session, 10, None);
         assert_eq!(candidates.len(), 2);
         assert_eq!(
             candidates[0].content_id, "large",
@@ -388,7 +403,7 @@ mod tests {
         session.record_delivery(&cid("claim"), Resolution::Claim, 100, 5, "h1".into());
         session.record_delivery(&cid("summary"), Resolution::Summary, 100, 5, "h2".into());
 
-        let candidates = EvictionRanker::rank(&session, 10);
+        let candidates = EvictionRanker::rank(&session, 10, None);
         assert_eq!(candidates.len(), 2);
         assert_eq!(
             candidates[0].content_id, "summary",
@@ -410,7 +425,7 @@ mod tests {
             );
         }
 
-        let candidates = EvictionRanker::rank(&session, 3);
+        let candidates = EvictionRanker::rank(&session, 3, None);
         assert_eq!(candidates.len(), 3);
     }
 
@@ -419,7 +434,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 350, 1, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 5);
+        let candidates = EvictionRanker::rank(&session, 5, None);
         assert_eq!(candidates[0].tokens_recoverable, 350);
     }
 
@@ -430,7 +445,7 @@ mod tests {
         // Advance turn significantly
         session.record_delivery(&cid("new"), Resolution::Claim, 10, 10, "h2".into());
 
-        let candidates = EvictionRanker::rank(&session, 10);
+        let candidates = EvictionRanker::rank(&session, 10, None);
         let old_candidate = candidates.iter().find(|c| c.content_id == "old").unwrap();
         assert!(
             old_candidate.reason.contains("stale"),
@@ -444,7 +459,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("big"), Resolution::Section, 1000, 1, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 5);
+        let candidates = EvictionRanker::rank(&session, 5, None);
         assert!(
             candidates[0].reason.contains("Large")
                 || candidates[0].reason.contains("stale")
@@ -459,7 +474,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("only"), Resolution::Section, 300, 1, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 5);
+        let candidates = EvictionRanker::rank(&session, 5, None);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].content_id, "only");
     }
@@ -495,7 +510,7 @@ mod tests {
         // Advance turn
         session.record_delivery(&cid("current"), Resolution::Claim, 10, 10, "h4".into());
 
-        let candidates = EvictionRanker::rank(&session, 10);
+        let candidates = EvictionRanker::rank(&session, 10, None);
         assert_eq!(
             candidates[0].content_id, "old-big-summary",
             "old + large + summary should be the top eviction candidate"
@@ -507,7 +522,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 100, 0, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 5);
+        let candidates = EvictionRanker::rank(&session, 5, None);
         for c in &candidates {
             assert!(c.score >= 0.0, "score should be non-negative: {}", c.score);
         }
@@ -538,7 +553,7 @@ mod tests {
         session.record_delivery(&cid("middle"), Resolution::Section, 200, 5, "h2".into());
         session.record_delivery(&cid("end"), Resolution::Section, 200, 10, "h3".into());
 
-        let candidates = EvictionRanker::rank(&session, 10);
+        let candidates = EvictionRanker::rank(&session, 10, None);
 
         // Find scores for each
         let _start_score = candidates
@@ -628,7 +643,7 @@ mod tests {
             );
         }
 
-        let candidates = EvictionRanker::rank(&session, 20);
+        let candidates = EvictionRanker::rank(&session, 20, None);
         // Items around turn 10 (middle) should mention mid-context in reason
         let mid_candidate = candidates.iter().find(|c| c.content_id == "s10").unwrap();
         assert!(
@@ -662,7 +677,7 @@ mod tests {
         // One isolated item far away
         session.record_delivery(&cid("lone"), Resolution::Section, 200, 20, "h4".into());
 
-        let candidates = EvictionRanker::rank(&session, 10);
+        let candidates = EvictionRanker::rank(&session, 10, None);
 
         // Find scores for adjacent group vs isolated item
         let a_score = candidates
@@ -696,7 +711,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("only"), Resolution::Section, 200, 1, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 5);
+        let candidates = EvictionRanker::rank(&session, 5, None);
         assert_eq!(candidates.len(), 1);
         // Single item has no neighbors, so contiguity bonus should be 0
         // Score should equal the base score only
@@ -713,7 +728,7 @@ mod tests {
         // Recent, small, claim — poor eviction candidate
         session.record_delivery(&cid("new"), Resolution::Claim, 20, 20, "h3".into());
 
-        let candidates = EvictionRanker::rank(&session, 10);
+        let candidates = EvictionRanker::rank(&session, 10, None);
 
         // Old summaries should still rank above the new claim even with contiguity
         let new_score = candidates
