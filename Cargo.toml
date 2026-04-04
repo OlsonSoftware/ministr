@@ -1,5 +1,5 @@
 [workspace]
-members = ["iris-api", "iris-core", "iris-mcp", "iris-cli", "iris-app/src-tauri"]
+members = ["iris-api", "iris-core", "iris-daemon", "iris-mcp", "iris-cli", "iris-app/src-tauri"]
 resolver = "3"
 
 [workspace.package]
@@ -108,4 +108,5 @@ tempfile = "3"
 # iris workspace crates
 iris-api = { path = "iris-api" }
 iris-core = { path = "iris-core" }
+iris-daemon = { path = "iris-daemon" }
 iris-mcp = { path = "iris-mcp" }

@@ -195,10 +195,9 @@ impl DaemonClient {
         corpus_id: &str,
         symbol_id: &str,
     ) -> Result<SymbolDefinition, ClientError> {
-        self.get(&format!(
-            "/api/v1/corpora/{corpus_id}/definition/{symbol_id}"
-        ))
-        .await
+        let encoded = encode_path_component(symbol_id);
+        self.get(&format!("/api/v1/corpora/{corpus_id}/definition/{encoded}"))
+            .await
     }
 
     /// Get references to a symbol.
@@ -211,10 +210,9 @@ impl DaemonClient {
         corpus_id: &str,
         symbol_id: &str,
     ) -> Result<ReferencesResponse, ClientError> {
-        self.get(&format!(
-            "/api/v1/corpora/{corpus_id}/references/{symbol_id}"
-        ))
-        .await
+        let encoded = encode_path_component(symbol_id);
+        self.get(&format!("/api/v1/corpora/{corpus_id}/references/{encoded}"))
+            .await
     }
 
     /// Read a section by ID.
@@ -227,7 +225,8 @@ impl DaemonClient {
         corpus_id: &str,
         section_id: &str,
     ) -> Result<SectionDetail, ClientError> {
-        self.get(&format!("/api/v1/corpora/{corpus_id}/read/{section_id}"))
+        let encoded = encode_path_component(section_id);
+        self.get(&format!("/api/v1/corpora/{corpus_id}/read/{encoded}"))
             .await
     }
 
@@ -464,4 +463,32 @@ impl Default for DaemonClient {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Percent-encode a path component for use in HTTP URLs.
+///
+/// Encodes characters that are not unreserved in RFC 3986 (e.g. `/`, `#`, `?`, `%`).
+fn encode_path_component(s: &str) -> String {
+    use std::fmt::Write;
+    let mut encoded = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            // Unreserved characters (RFC 3986 section 2.3) plus `:` and `@`.
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'~'
+            | b':'
+            | b'@' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                let _ = write!(encoded, "%{byte:02X}");
+            }
+        }
+    }
+    encoded
 }

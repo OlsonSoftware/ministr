@@ -24,6 +24,15 @@ impl AppState {
         }
     }
 
+    /// Create state from an already-shared registry.
+    #[must_use]
+    pub fn from_arc(registry: Arc<CorpusRegistry>) -> Self {
+        Self {
+            registry,
+            started_at: std::time::Instant::now(),
+        }
+    }
+
     #[must_use]
     pub fn uptime_secs(&self) -> u64 {
         self.started_at.elapsed().as_secs()

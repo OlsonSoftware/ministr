@@ -79,6 +79,10 @@ impl CorpusRegistry {
     }
 
     /// Register a corpus, initialize its resources, and spawn background indexing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] if storage or index initialization fails.
     pub async fn register(
         self: &Arc<Self>,
         paths: &[String],
@@ -108,6 +112,10 @@ impl CorpusRegistry {
     }
 
     /// Unregister a corpus, cancelling any background work.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::NotFound`] if the corpus does not exist.
     pub async fn unregister(&self, corpus_id: &str) -> Result<(), RegistryError> {
         match self.corpora.write().await.remove(corpus_id) {
             Some(handle) => {
@@ -132,6 +140,10 @@ impl CorpusRegistry {
     }
 
     /// Get a read guard to access a corpus by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::NotFound`] if the corpus does not exist.
     pub async fn get(
         &self,
         corpus_id: &str,
@@ -242,7 +254,9 @@ fn load_or_create_index(
     ))
 }
 
-fn corpus_id_from_paths(paths: &[String]) -> String {
+/// Derive a deterministic corpus ID from sorted paths.
+#[must_use]
+pub fn corpus_id_from_paths(paths: &[String]) -> String {
     use std::fmt::Write;
     let mut sorted = paths.to_vec();
     sorted.sort();

@@ -62,6 +62,10 @@ pub fn router(state: AppState) -> Router {
 /// Writes a PID file for process liveness detection and removes stale
 /// sockets from crashed predecessors. On graceful shutdown, cleans up
 /// both the socket and PID file.
+///
+/// # Errors
+///
+/// Returns an error if the socket cannot be bound or another daemon is running.
 pub async fn start(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
     let socket_path = iris_api::daemon_socket_path();
     let pid_path = iris_api::daemon_pid_path();
@@ -96,6 +100,22 @@ pub async fn start(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
     info!("daemon shutting down gracefully");
     let _ = std::fs::remove_file(&socket_path);
     let _ = std::fs::remove_file(&pid_path);
+    Ok(())
+}
+
+/// Start the daemon on a caller-provided listener (for testing).
+///
+/// Does not write PID files or handle signals — the caller manages
+/// the listener lifecycle.
+///
+/// # Errors
+///
+/// Returns an error if the axum server fails.
+pub async fn serve(
+    state: AppState,
+    listener: UnixListener,
+) -> Result<(), Box<dyn std::error::Error>> {
+    axum::serve(listener, router(state)).await?;
     Ok(())
 }
 

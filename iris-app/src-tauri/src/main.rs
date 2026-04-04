@@ -8,25 +8,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
-mod convert;
-mod daemon;
-mod indexer;
-mod registry;
-mod state;
 
 use std::sync::Arc;
 
 use iris_core::config::IrisConfig;
 use iris_core::embedding::FastEmbedder;
+use iris_daemon::daemon;
+use iris_daemon::registry::CorpusRegistry;
+use iris_daemon::state::AppState;
 use tauri::{
     Manager,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
 };
 use tracing::info;
-
-use registry::CorpusRegistry;
-use state::AppState;
 
 fn main() {
     // Initialize tracing to stderr (stdout is reserved for Tauri IPC).
