@@ -1,4 +1,6 @@
-import { Palette, HardDrive, Cpu } from "lucide-react";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Palette, HardDrive, Cpu, Power } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import type { DaemonStatus } from "../lib/types";
@@ -10,11 +12,45 @@ interface SettingsProps {
 }
 
 export function Settings({ status, theme, onThemeChange }: SettingsProps) {
+  const [autostart, setAutostart] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    invoke<boolean>("is_autostart_enabled").then(setAutostart).catch(() => {});
+  }, []);
+
+  async function toggleAutostart() {
+    const newValue = !autostart;
+    await invoke("set_autostart", { enabled: newValue });
+    setAutostart(newValue);
+  }
+
   return (
     <div className="space-y-3">
       <h2 className="text-sm font-medium text-text-muted uppercase tracking-wider">
         Settings
       </h2>
+
+      <Card>
+        <div className="flex items-center gap-2 mb-3">
+          <Power className="h-4 w-4 text-text-muted" />
+          <h3 className="font-medium text-sm">Startup</h3>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-text-muted">Start at login</span>
+          <button
+            onClick={toggleAutostart}
+            className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${
+              autostart ? "bg-accent" : "bg-surface-overlay"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                autostart ? "translate-x-4" : ""
+              }`}
+            />
+          </button>
+        </div>
+      </Card>
 
       <Card>
         <div className="flex items-center gap-2 mb-3">

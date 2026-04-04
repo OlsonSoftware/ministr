@@ -1,0 +1,75 @@
+name: App Release
+
+on:
+  push:
+    tags:
+      - "v*-app"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-aarch64
+            os: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-x86_64
+            os: macos-latest
+            args: "--target x86_64-apple-darwin"
+          - platform: windows
+            os: windows-latest
+            args: ""
+          - platform: linux
+            os: ubuntu-22.04
+            args: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-aarch64' && 'aarch64-apple-darwin' || matrix.platform == 'macos-x86_64' && 'x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: iris-app/pnpm-lock.yaml
+
+      - name: Install frontend deps
+        working-directory: iris-app
+        run: pnpm install
+
+      - name: Install Linux deps
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "iris app ${{ github.ref_name }}"
+          releaseBody: "Cross-platform iris desktop app release."
+          releaseDraft: true
+          prerelease: false
+          projectPath: iris-app
+          tauriScript: pnpm tauri
+          args: ${{ matrix.args }}

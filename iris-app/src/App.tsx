@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   FolderKanban,
   Activity,
   Settings as SettingsIcon,
+  ScrollText,
   Zap,
 } from "lucide-react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
@@ -10,17 +12,30 @@ import { useTheme } from "./hooks/useTheme";
 import { ProjectList } from "./components/ProjectList";
 import { ProjectDetail } from "./components/ProjectDetail";
 import { Settings } from "./components/Settings";
+import { LogViewer } from "./components/LogViewer";
+import { Onboarding } from "./components/Onboarding";
 import { cn } from "./lib/utils";
 
-type Tab = "projects" | "health" | "settings";
+type Tab = "projects" | "health" | "logs" | "settings";
 
 export function App() {
   const { status, error, refresh } = useDaemonStatus();
   const { theme, setTheme } = useTheme();
   const [tab, setTab] = useState<Tab>("projects");
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  useEffect(() => {
+    invoke<boolean>("should_show_onboarding").then((should) => {
+      setShowOnboarding(should);
+    });
+  }, []);
   const [selectedCorpusId, setSelectedCorpusId] = useState<string | null>(null);
 
   const selectedCorpus = status?.corpora.find((c) => c.id === selectedCorpusId);
+
+  if (showOnboarding) {
+    return <Onboarding onDismiss={() => setShowOnboarding(false)} />;
+  }
 
   return (
     <div className="flex h-screen flex-col">
@@ -66,6 +81,12 @@ export function App() {
             onClick={() => setTab("health")}
             label="Health"
           />
+          <NavButton
+            icon={ScrollText}
+            active={tab === "logs"}
+            onClick={() => setTab("logs")}
+            label="Logs"
+          />
           <div className="flex-1" />
           <NavButton
             icon={SettingsIcon}
@@ -99,6 +120,8 @@ export function App() {
             </div>
           ) : tab === "health" ? (
             <HealthView status={status} />
+          ) : tab === "logs" ? (
+            <LogViewer />
           ) : (
             <Settings
               status={status}
@@ -122,6 +145,12 @@ export function App() {
           label="Health"
           active={tab === "health"}
           onClick={() => setTab("health")}
+        />
+        <TabButton
+          icon={ScrollText}
+          label="Logs"
+          active={tab === "logs"}
+          onClick={() => setTab("logs")}
         />
         <TabButton
           icon={SettingsIcon}

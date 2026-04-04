@@ -155,6 +155,65 @@ pub async fn add_project_from_tray(handle: &AppHandle) {
     }
 }
 
+/// Check if auto-start at login is enabled.
+#[tauri::command]
+pub async fn is_autostart_enabled(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// Enable or disable auto-start at login.
+#[tauri::command]
+pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|e| e.to_string())
+    } else {
+        manager.disable().map_err(|e| e.to_string())
+    }
+}
+
+/// Read the last N lines from the daemon log file.
+#[tauri::command]
+pub async fn read_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
+    let max_lines = lines.unwrap_or(200);
+    let log_dir = iris_api::daemon_socket_path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("/tmp"))
+        .to_path_buf();
+    let log_path = log_dir.join("iris.log");
+
+    if !log_path.exists() {
+        return Ok(vec!["No log file found.".to_string()]);
+    }
+
+    let content = std::fs::read_to_string(&log_path).map_err(|e| e.to_string())?;
+    let all_lines: Vec<String> = content.lines().map(String::from).collect();
+    let start = all_lines.len().saturating_sub(max_lines);
+    Ok(all_lines[start..].to_vec())
+}
+
+/// Check if first-run onboarding should be shown.
+#[tauri::command]
+pub async fn should_show_onboarding() -> Result<bool, String> {
+    let sentinel = iris_api::daemon_socket_path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("/tmp"))
+        .join("onboarding_done");
+    Ok(!sentinel.exists())
+}
+
+/// Dismiss the onboarding screen.
+#[tauri::command]
+pub async fn dismiss_onboarding() -> Result<(), String> {
+    let sentinel = iris_api::daemon_socket_path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("/tmp"))
+        .join("onboarding_done");
+    std::fs::write(&sentinel, "").map_err(|e| e.to_string())
+}
+
 /// Remove a project by ID (called from tray menu).
 pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result<(), String> {
     let state = handle.state::<AppState>();
