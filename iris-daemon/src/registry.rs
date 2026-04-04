@@ -3,6 +3,9 @@
 //! Owns the shared embedding model (loaded once) and a map of
 //! [`CorpusHandle`] instances. Thread-safe via interior `RwLock`.
 //!
+//! Registered corpora are persisted to a JSON manifest at
+//! `{data_dir}/corpora.json` so that they survive daemon restarts.
+//!
 //! Ingestion is delegated to the [`indexer`](crate::indexer) module (SRP).
 
 use std::collections::HashMap;
@@ -18,12 +21,22 @@ use iris_core::service::QueryService;
 use iris_core::session::prefetch::PrefetchEngine;
 use iris_core::session::{BudgetConfig, SessionRegistry};
 use iris_core::storage::SqliteStorage;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::indexer;
+
+// -- Manifest persistence --
+
+/// A single entry in the on-disk corpus manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManifestEntry {
+    id: String,
+    paths: Vec<String>,
+}
 
 /// Errors from corpus registry operations.
 #[derive(Debug, thiserror::Error)]
@@ -80,6 +93,36 @@ impl CorpusRegistry {
         &self.corpora
     }
 
+    /// Restore previously registered corpora from the on-disk manifest.
+    ///
+    /// Reads `{data_dir}/corpora.json` and re-registers each entry.
+    /// Skips entries whose source paths no longer exist on disk.
+    /// Safe to call on an empty registry — idempotent with `register`.
+    pub async fn restore(self: &Arc<Self>) {
+        let manifest_path = self.manifest_path();
+        let entries = match std::fs::read_to_string(&manifest_path) {
+            Ok(json) => match serde_json::from_str::<Vec<ManifestEntry>>(&json) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    warn!(error = %e, "corrupt corpus manifest — starting fresh");
+                    return;
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(e) => {
+                warn!(error = %e, "failed to read corpus manifest");
+                return;
+            }
+        };
+
+        info!(count = entries.len(), "restoring corpora from manifest");
+        for entry in &entries {
+            if let Err(e) = self.register(&entry.paths).await {
+                warn!(corpus_id = %entry.id, error = %e, "failed to restore corpus");
+            }
+        }
+    }
+
     /// Register a corpus, initialize its resources, and spawn background indexing.
     ///
     /// # Errors
@@ -99,6 +142,8 @@ impl CorpusRegistry {
 
         self.corpora.write().await.insert(corpus_id.clone(), handle);
         info!(corpus_id = %corpus_id, "corpus registered");
+
+        self.save_manifest().await;
 
         // Spawn background indexing (delegated to indexer module).
         let registry = Arc::clone(self);
@@ -123,6 +168,7 @@ impl CorpusRegistry {
             Some(handle) => {
                 handle.cancel.cancel();
                 info!(corpus_id, "corpus unregistered");
+                self.save_manifest().await;
                 Ok(())
             }
             None => Err(RegistryError::NotFound {
@@ -186,6 +232,36 @@ impl CorpusRegistry {
     }
 
     // -- Private --
+
+    fn manifest_path(&self) -> PathBuf {
+        self.config.data_dir.join("corpora.json")
+    }
+
+    /// Persist the current corpus registrations to disk.
+    async fn save_manifest(&self) {
+        let entries: Vec<ManifestEntry> = {
+            let corpora = self.corpora.read().await;
+            let mut entries = Vec::with_capacity(corpora.len());
+            for (id, handle) in corpora.iter() {
+                let info = handle.info.read().await;
+                entries.push(ManifestEntry {
+                    id: id.clone(),
+                    paths: info.paths.clone(),
+                });
+            }
+            entries
+        };
+
+        let path = self.manifest_path();
+        match serde_json::to_string_pretty(&entries) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    warn!(error = %e, "failed to write corpus manifest");
+                }
+            }
+            Err(e) => warn!(error = %e, "failed to serialize corpus manifest"),
+        }
+    }
 
     fn create_handle(
         &self,

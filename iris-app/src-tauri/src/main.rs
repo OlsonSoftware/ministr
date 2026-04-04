@@ -68,6 +68,12 @@ fn main() {
             // Share state with Tauri commands.
             app.manage(state.clone());
 
+            // --- Restore previously registered corpora ---
+            let restore_state = state.clone();
+            tauri::async_runtime::spawn(async move {
+                restore_state.registry.restore().await;
+            });
+
             // --- Start the UDS daemon in the background ---
             let daemon_state = state.clone();
             tauri::async_runtime::spawn(async move {
