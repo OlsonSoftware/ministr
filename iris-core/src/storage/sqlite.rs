@@ -264,6 +264,18 @@ impl Storage for SqliteStorage {
         .await
     }
 
+    async fn section_count(&self) -> Result<usize, StorageError> {
+        self.with_conn(|conn| {
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM sections", [], |row| row.get(0))
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            Ok(usize::try_from(count).unwrap_or(0))
+        })
+        .await
+    }
+
     async fn list_documents(&self) -> Result<Vec<DocumentRecord>, StorageError> {
         self.with_conn(|conn| {
             let mut stmt = conn
