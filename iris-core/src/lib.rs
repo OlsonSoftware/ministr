@@ -12,6 +12,7 @@ pub mod error;
 pub mod extraction;
 pub mod git;
 pub mod index;
+pub mod init;
 pub mod ingestion;
 pub mod mem_profile;
 pub mod llms_txt;

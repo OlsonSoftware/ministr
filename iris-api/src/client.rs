@@ -81,6 +81,10 @@ impl DaemonClient {
     // -- Corpus management --
 
     /// Register a corpus with the daemon.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn register_corpus(
         &self,
         paths: &[String],
@@ -93,17 +97,29 @@ impl DaemonClient {
     }
 
     /// List all registered corpora.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn list_corpora(&self) -> Result<Vec<CorpusInfo>, ClientError> {
         let resp: ListCorporaResponse = self.get("/api/v1/corpora").await?;
         Ok(resp.corpora)
     }
 
     /// Get status of a specific corpus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn corpus_status(&self, corpus_id: &str) -> Result<CorpusInfo, ClientError> {
         self.get(&format!("/api/v1/corpora/{corpus_id}")).await
     }
 
     /// Unregister a corpus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection or request failure.
     pub async fn unregister_corpus(&self, corpus_id: &str) -> Result<(), ClientError> {
         self.delete(&format!("/api/v1/corpora/{corpus_id}")).await?;
         Ok(())
@@ -112,6 +128,10 @@ impl DaemonClient {
     // -- Query endpoints --
 
     /// Semantic search across the corpus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn survey(
         &self,
         corpus_id: &str,
@@ -127,6 +147,10 @@ impl DaemonClient {
     }
 
     /// Search for code symbols.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn symbols(
         &self,
         corpus_id: &str,
@@ -137,6 +161,10 @@ impl DaemonClient {
     }
 
     /// Get a symbol definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn definition(
         &self,
         corpus_id: &str,
@@ -149,6 +177,10 @@ impl DaemonClient {
     }
 
     /// Get references to a symbol.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn references(
         &self,
         corpus_id: &str,
@@ -161,6 +193,10 @@ impl DaemonClient {
     }
 
     /// Read a section by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn read_section(
         &self,
         corpus_id: &str,
@@ -173,6 +209,10 @@ impl DaemonClient {
     }
 
     /// Extract claims from a section.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn extract(
         &self,
         corpus_id: &str,
@@ -183,6 +223,10 @@ impl DaemonClient {
     }
 
     /// Get table of contents.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn toc(
         &self,
         corpus_id: &str,
@@ -193,6 +237,10 @@ impl DaemonClient {
     }
 
     /// Find related claims.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn related(
         &self,
         corpus_id: &str,
@@ -203,6 +251,10 @@ impl DaemonClient {
     }
 
     /// Query cross-language bridge links.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn bridge(
         &self,
         corpus_id: &str,
@@ -215,6 +267,10 @@ impl DaemonClient {
     // -- Admin --
 
     /// Get daemon status.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
     pub async fn status(&self) -> Result<DaemonStatus, ClientError> {
         self.get("/api/v1/status").await
     }
@@ -223,7 +279,7 @@ impl DaemonClient {
 
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
         let resp = self.raw_request("GET", path, None).await?;
-        self.parse_response(resp).await
+        Self::parse_response(&resp)
     }
 
     async fn post<T: DeserializeOwned>(
@@ -233,7 +289,7 @@ impl DaemonClient {
     ) -> Result<T, ClientError> {
         let json = serde_json::to_vec(body).map_err(|e| ClientError::Request(e.to_string()))?;
         let resp = self.raw_request("POST", path, Some(json)).await?;
-        self.parse_response(resp).await
+        Self::parse_response(&resp)
     }
 
     async fn delete(&self, path: &str) -> Result<Vec<u8>, ClientError> {
@@ -295,21 +351,18 @@ impl DaemonClient {
         Ok(response[header_end + 4..].to_vec())
     }
 
-    async fn parse_response<T: DeserializeOwned>(
-        &self,
-        body: Vec<u8>,
-    ) -> Result<T, ClientError> {
+    fn parse_response<T: DeserializeOwned>(body: &[u8]) -> Result<T, ClientError> {
         // Try to parse as the expected type first.
-        if let Ok(value) = serde_json::from_slice::<T>(&body) {
+        if let Ok(value) = serde_json::from_slice::<T>(body) {
             return Ok(value);
         }
         // If that fails, try to parse as an API error.
-        if let Ok(err) = serde_json::from_slice::<ApiError>(&body) {
+        if let Ok(err) = serde_json::from_slice::<ApiError>(body) {
             return Err(ClientError::Api(err));
         }
         // Last resort: raw deserialization error.
         Err(ClientError::Deserialize(
-            String::from_utf8_lossy(&body).into_owned(),
+            String::from_utf8_lossy(body).into_owned(),
         ))
     }
 }

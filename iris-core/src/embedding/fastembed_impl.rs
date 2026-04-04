@@ -16,10 +16,9 @@ use super::Embedder;
 /// Batch size for embedding inference.
 ///
 /// Controls the internal batch size passed to ONNX Runtime via fastembed.
-/// Smaller batches use less peak memory at a modest throughput cost.
-/// The ONNX runtime allocates intermediate tensors proportional to batch
-/// size, and these allocations are not always reclaimed promptly.
-const DEFAULT_BATCH_SIZE: usize = 16;
+/// With the `CoreML` ANE leak fixed (default `CPUAndGPU`), larger batches
+/// are safe and significantly improve throughput.
+const DEFAULT_BATCH_SIZE: usize = 128;
 
 /// Local embedding model powered by ONNX Runtime via the `fastembed` crate.
 ///
@@ -96,7 +95,9 @@ impl FastEmbedder {
             let coreml_disabled =
                 std::env::var("IRIS_COREML").is_ok_and(|v| v == "0" || v == "false");
 
-            if !coreml_disabled {
+            if coreml_disabled {
+                info!("CoreML disabled (IRIS_COREML=0), using CPU execution provider");
+            } else {
                 let compute_units = match std::env::var("IRIS_COMPUTE_UNITS")
                     .unwrap_or_default()
                     .as_str()
@@ -123,8 +124,6 @@ impl FastEmbedder {
 
                 options = options.with_execution_providers(vec![coreml.build()]);
                 info!(?compute_units, "CoreML execution provider enabled");
-            } else {
-                info!("CoreML disabled (IRIS_COREML=0), using CPU execution provider");
             }
         }
 
