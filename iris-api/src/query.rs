@@ -17,6 +17,9 @@ pub struct SurveyRequest {
     /// Maximum number of results to return (default: 10).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<usize>,
+    /// Session ID for dedup and budget tracking (omit for stateless queries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// A single survey search result.
@@ -40,6 +43,12 @@ pub struct SurveyResult {
 pub struct SurveyResponse {
     /// Ranked search results.
     pub results: Vec<SurveyResult>,
+    /// Number of results deduplicated (already delivered in this session).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deduplicated_count: Option<usize>,
+    /// Budget status snapshot (present when `session_id` was provided).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_status: Option<crate::session::SessionBudgetResponse>,
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +161,12 @@ pub struct SectionDetail {
     pub summary: Option<String>,
     /// Number of claims available for extraction.
     pub claims_available: usize,
+    /// Delivery status: `"already_delivered"` when session dedup detects a re-read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Budget status snapshot (present when `session_id` was provided).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_status: Option<crate::session::SessionBudgetResponse>,
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +181,9 @@ pub struct ExtractRequest {
     /// Optional query to filter claims by relevance.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
+    /// Session ID for delivery tracking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// A single extracted claim.
@@ -203,6 +221,9 @@ pub struct TocRequest {
     /// Maximum entries to return.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    /// Session ID for delivery tracking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// A table-of-contents entry.
@@ -244,6 +265,9 @@ pub struct RelatedRequest {
     /// Filter by relationship types.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relation_types: Vec<String>,
+    /// Session ID for delivery tracking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// A related claim result.
@@ -287,6 +311,9 @@ pub struct BridgeRequest {
     /// Maximum results.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    /// Session ID for delivery tracking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// A cross-language bridge link.

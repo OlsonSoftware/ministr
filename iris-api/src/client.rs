@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
 
+use crate::ApiError;
 use crate::corpus::{
     CorpusInfo, ListCorporaResponse, RegisterCorpusRequest, RegisterCorpusResponse,
 };
@@ -15,7 +16,6 @@ use crate::query::{
     SurveyResponse, SymbolDefinition, SymbolsRequest, SymbolsResponse,
 };
 use crate::status::DaemonStatus;
-use crate::ApiError;
 
 /// Errors from daemon client operations.
 #[derive(Debug)]
@@ -141,6 +141,7 @@ impl DaemonClient {
         let req = SurveyRequest {
             query: query.to_string(),
             top_k,
+            session_id: None,
         };
         self.post(&format!("/api/v1/corpora/{corpus_id}/survey"), &req)
             .await
@@ -202,10 +203,8 @@ impl DaemonClient {
         corpus_id: &str,
         section_id: &str,
     ) -> Result<SectionDetail, ClientError> {
-        self.get(&format!(
-            "/api/v1/corpora/{corpus_id}/read/{section_id}"
-        ))
-        .await
+        self.get(&format!("/api/v1/corpora/{corpus_id}/read/{section_id}"))
+            .await
     }
 
     /// Extract claims from a section.
@@ -262,6 +261,56 @@ impl DaemonClient {
     ) -> Result<crate::query::BridgeResponse, ClientError> {
         self.post(&format!("/api/v1/corpora/{corpus_id}/bridge"), req)
             .await
+    }
+
+    // -- Sessions --
+
+    /// Create a new session for a corpus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn create_session(
+        &self,
+        corpus_id: &str,
+        budget_tokens: Option<usize>,
+    ) -> Result<crate::session::CreateSessionResponse, ClientError> {
+        let req = crate::session::CreateSessionRequest { budget_tokens };
+        self.post(&format!("/api/v1/corpora/{corpus_id}/sessions"), &req)
+            .await
+    }
+
+    /// Get the budget status for a session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn session_budget(
+        &self,
+        corpus_id: &str,
+        session_id: &str,
+    ) -> Result<crate::session::SessionBudgetResponse, ClientError> {
+        self.get(&format!(
+            "/api/v1/corpora/{corpus_id}/sessions/{session_id}/budget"
+        ))
+        .await
+    }
+
+    /// Destroy a session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection failure.
+    pub async fn destroy_session(
+        &self,
+        corpus_id: &str,
+        session_id: &str,
+    ) -> Result<(), ClientError> {
+        self.delete(&format!(
+            "/api/v1/corpora/{corpus_id}/sessions/{session_id}"
+        ))
+        .await?;
+        Ok(())
     }
 
     // -- Admin --
