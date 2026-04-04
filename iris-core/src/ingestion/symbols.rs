@@ -35,9 +35,9 @@ pub(super) struct PendingRef {
     pub target_crate: Option<String>,
 }
 
-struct ResolveResult {
-    inserted: usize,
-    pending: Vec<PendingRef>,
+pub(super) struct ResolveResult {
+    pub(super) inserted: usize,
+    pub(super) pending: Vec<PendingRef>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -283,7 +283,7 @@ fn filter_primary(matches: &[SymbolRecord]) -> Vec<&SymbolRecord> {
 }
 
 #[allow(clippy::too_many_lines)]
-async fn resolve_and_store_refs<S: Storage + ?Sized>(
+pub(super) async fn resolve_and_store_refs<S: Storage + ?Sized>(
     tree: &tree_sitter::Tree,
     source: &[u8],
     file_path: &str,
