@@ -1,0 +1,14 @@
+target/
+.git/
+docs/book/
+.fastembed_cache/
+.DS_Store
+*.md
+!deploy/README.md
+.claude/
+.magistr/
+.magistr-roadmap.yml
+.mcp.json
+# iris-app requires Tauri system deps, but its Cargo.toml must be present
+# for workspace resolution. Only exclude its heavy build artifacts.
+iris-app/src-tauri/target/

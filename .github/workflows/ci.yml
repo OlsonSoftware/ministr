@@ -84,3 +84,12 @@ jobs:
             echo "✓ found tool: $tool"
           done
           echo "✓ MCP smoke test passed"
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t iris .

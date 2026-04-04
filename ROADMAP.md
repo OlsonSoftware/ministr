@@ -1166,10 +1166,10 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Concurrent file ingestion — process files in parallel with semaphore-bounded tokio::spawn (same pattern as concurrent refresh), share embedder via Arc
-- [ ] Batch embedding — collect texts across multiple files, embed in larger batches to amortize ONNX overhead
-- [ ] Progressive availability — make already-indexed files queryable while remaining files are still being processed (currently blocks until complete)
-- [ ] Benchmark suite — measure indexing throughput (files/sec, sections/sec) on reference repos (iris-rs, pydantic-core, ruff) to track regressions
+- [x] Concurrent file ingestion — process files in parallel with semaphore-bounded tokio::spawn (same pattern as concurrent refresh), share embedder via Arc
+- [x] Batch embedding — collect texts across multiple files, embed in larger batches to amortize ONNX overhead
+- [x] Progressive availability — make already-indexed files queryable while remaining files are still being processed (currently blocks until complete)
+- [x] Benchmark suite — measure indexing throughput (files/sec, sections/sec) on reference repos (iris-rs, pydantic-core, ruff) to track regressions
 
 ---
 
@@ -1181,11 +1181,11 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Abstract embedding backend behind a swappable trait to support multiple model backends
-- [ ] Add Nomic Embed Code support via ONNX — SOTA code-specific embedding model, outperforms Voyage Code 3 and OpenAI Embed 3 Large on CodeSearchNet
-- [ ] Configurable embedding model in .iris.toml — model name, local path, or auto-download URL
+- [x] Swappable embedding trait + ModelInfo registry with 44 models from fastembed v5 (SUPPORTED_MODELS table, supported_models() API)
+- [x] Add jina-embeddings-v2-base-code (768d, code-specialized) + nomic-embed-text-v1.5 (Matryoshka) + 30 more models via fastembed-rs ONNX
+- [x] Configurable embedding model in .iris.toml (corpus.model field) with resolve_model_name() priority chain + model mismatch detection on index load
 - [ ] Benchmark retrieval quality: current model vs Nomic Embed Code vs Jina Code v2 using iris's evaluation suite (S3 phase infrastructure)
-- [ ] Matryoshka dimension reduction — store lower-dim vectors for HNSW search, full-dim for reranking (Nomic supports this natively)
+- [x] TruncatingEmbedder for Matryoshka dimension reduction — truncate + L2-normalize for nomic-embed-text-v1.5 (768→256/128)
 
 ---
 
@@ -1197,11 +1197,11 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Add Streamable HTTP transport to iris-mcp alongside existing stdio transport (MCP 2025-11-25 spec)
-- [ ] Stateless request mode — each HTTP request processed independently, no session affinity required (SEP-1442 pattern)
-- [ ] OAuth 2.1 with PKCE for authenticated remote access to iris server
-- [ ] Docker image and fly.io/Railway deploy recipe for running iris as a remote MCP server
-- [ ] Connection pooling and concurrent request handling behind reverse proxy (nginx/Caddy config examples)
+- [x] Add Streamable HTTP transport to iris-mcp alongside existing stdio transport (MCP 2025-11-25 spec)
+- [x] Stateless request mode — each HTTP request processed independently, no session affinity required (SEP-1442 pattern)
+- [x] OAuth 2.1 with PKCE for authenticated remote access to iris server
+- [x] Docker image and fly.io/Railway deploy recipe for running iris as a remote MCP server
+- [x] Connection pooling and concurrent request handling behind reverse proxy (nginx/Caddy config examples)
 
 ---
 

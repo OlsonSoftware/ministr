@@ -18,14 +18,12 @@ use crate::registry::CorpusRegistry;
 ///
 /// Updates the corpus status through `Idle → Indexing → Idle/Error`,
 /// then persists the vector index to disk.
-pub async fn run(
-    registry: &CorpusRegistry,
-    corpus_id: &str,
-    paths: &[String],
-) {
+pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
     let (storage, embedder, index, index_dir, progress) = {
         let corpora = registry.corpora().read().await;
-        let Some(handle) = corpora.get(corpus_id) else { return };
+        let Some(handle) = corpora.get(corpus_id) else {
+            return;
+        };
         (
             Arc::clone(&handle.storage),
             Arc::clone(registry.embedder()),
@@ -36,7 +34,13 @@ pub async fn run(
     };
 
     registry
-        .set_status(corpus_id, IndexingStatus::Indexing { files_done: 0, files_total: 0 })
+        .set_status(
+            corpus_id,
+            IndexingStatus::Indexing {
+                files_done: 0,
+                files_total: 0,
+            },
+        )
         .await;
 
     let local_paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
@@ -60,21 +64,28 @@ pub async fn run(
                 error!(corpus_id, error = %e, "failed to persist vector index");
             }
 
-            registry.update_stats(
-                corpus_id,
-                stats.files_indexed,
-                stats.total_sections,
-                index.len(),
-            ).await;
+            registry
+                .update_stats(
+                    corpus_id,
+                    stats.files_indexed,
+                    stats.total_sections,
+                    index.len(),
+                )
+                .await;
         }
-        Err(e) if matches!(e, iris_core::error::IngestionError::Cancelled) => {
+        Err(iris_core::error::IngestionError::Cancelled) => {
             info!(corpus_id, "indexing cancelled");
             registry.set_status(corpus_id, IndexingStatus::Idle).await;
         }
         Err(e) => {
             error!(corpus_id, error = %e, "indexing failed");
             registry
-                .set_status(corpus_id, IndexingStatus::Error { message: e.to_string() })
+                .set_status(
+                    corpus_id,
+                    IndexingStatus::Error {
+                        message: e.to_string(),
+                    },
+                )
                 .await;
         }
     }
@@ -84,11 +95,7 @@ pub async fn run(
 ///
 /// Debounces events with a 2-second cooldown to avoid re-indexing
 /// on every keystroke during active editing.
-pub fn spawn_watcher(
-    registry: Arc<CorpusRegistry>,
-    corpus_id: String,
-    paths: Vec<String>,
-) {
+pub fn spawn_watcher(registry: Arc<CorpusRegistry>, corpus_id: String, paths: Vec<String>) {
     tokio::spawn(async move {
         let watch_paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
@@ -110,16 +117,10 @@ pub fn spawn_watcher(
             };
 
             // Debounce: drain any queued events and wait 2 seconds for quiet.
-            loop {
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(2),
-                    watcher.recv(),
-                )
-                .await
-                {
-                    Ok(Some(_)) => continue, // more events, keep draining
-                    _ => break,              // timeout or closed — proceed
-                }
+            while let Ok(Some(_)) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), watcher.recv()).await
+            {
+                // more events, keep draining
             }
 
             info!(corpus_id, "file changes detected, re-indexing");

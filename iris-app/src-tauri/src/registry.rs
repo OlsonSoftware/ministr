@@ -111,7 +111,9 @@ impl CorpusRegistry {
                 info!(corpus_id, "corpus unregistered");
                 Ok(())
             }
-            None => Err(RegistryError::NotFound { id: corpus_id.to_string() }),
+            None => Err(RegistryError::NotFound {
+                id: corpus_id.to_string(),
+            }),
         }
     }
 
@@ -129,12 +131,15 @@ impl CorpusRegistry {
     pub async fn get(
         &self,
         corpus_id: &str,
-    ) -> Result<tokio::sync::RwLockReadGuard<'_, HashMap<String, CorpusHandle>>, RegistryError> {
+    ) -> Result<tokio::sync::RwLockReadGuard<'_, HashMap<String, CorpusHandle>>, RegistryError>
+    {
         let corpora = self.corpora.read().await;
         if corpora.contains_key(corpus_id) {
             Ok(corpora)
         } else {
-            Err(RegistryError::NotFound { id: corpus_id.to_string() })
+            Err(RegistryError::NotFound {
+                id: corpus_id.to_string(),
+            })
         }
     }
 
@@ -182,7 +187,7 @@ impl CorpusRegistry {
         );
 
         let dim = self.embedder.dimension();
-        let index = self.load_or_create_index(&index_dir, dim)?;
+        let index = load_or_create_index(&index_dir, dim)?;
 
         let query_storage = SqliteStorage::open(&db_path)
             .map_err(|e| RegistryError::Storage(format!("open query db: {e}")))?;
@@ -210,31 +215,34 @@ impl CorpusRegistry {
         })
     }
 
-    fn load_or_create_index(
-        &self,
-        index_dir: &std::path::Path,
-        dim: usize,
-    ) -> Result<Arc<dyn VectorIndex>, RegistryError> {
-        if index_dir.exists() {
-            match HnswIndex::load(index_dir) {
-                Ok(loaded) => return Ok(Arc::new(loaded)),
-                Err(e) => {
-                    warn!(error = %e, "corrupted index — rebuilding");
-                    let _ = std::fs::remove_dir_all(index_dir);
-                }
+}
+
+fn load_or_create_index(
+    index_dir: &std::path::Path,
+    dim: usize,
+) -> Result<Arc<dyn VectorIndex>, RegistryError> {
+    if index_dir.exists() {
+        match HnswIndex::load(index_dir) {
+            Ok(loaded) => return Ok(Arc::new(loaded)),
+            Err(e) => {
+                warn!(error = %e, "corrupted index — rebuilding");
+                let _ = std::fs::remove_dir_all(index_dir);
             }
         }
-        Ok(Arc::new(
-            HnswIndex::new(dim, 100_000)
-                .map_err(|e| RegistryError::Index(e.to_string()))?,
-        ))
     }
+    Ok(Arc::new(
+        HnswIndex::new(dim, 100_000).map_err(|e| RegistryError::Index(e.to_string()))?,
+    ))
 }
 
 fn corpus_id_from_paths(paths: &[String]) -> String {
+    use std::fmt::Write;
     let mut sorted = paths.to_vec();
     sorted.sort();
     let hash = Sha256::digest(sorted.join("\n").as_bytes());
-    let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+    let hex = hash.iter().fold(String::new(), |mut acc, b| {
+        let _ = write!(acc, "{b:02x}");
+        acc
+    });
     format!("multi-{}", &hex[..8])
 }
