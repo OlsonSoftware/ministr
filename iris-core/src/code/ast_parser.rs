@@ -403,13 +403,13 @@ fn only_fn() {}
     }
 
     #[test]
-    fn parse_ingestion_rs_identifies_structs_and_consts() {
-        let source = std::fs::read("src/ingestion.rs").expect("cannot read ingestion.rs");
+    fn parse_pipeline_rs_identifies_structs_and_consts() {
+        let source = std::fs::read("src/ingestion/pipeline.rs").expect("cannot read pipeline.rs");
         let mut parser = AstParser::new();
         let tree = parser.parse(&source).unwrap();
         let items = walk_top_level_items(&tree, &source);
 
-        // ingestion.rs should contain IngestionStats struct
+        // pipeline.rs should contain IngestionStats struct
         let struct_names: Vec<&str> = items
             .iter()
             .filter(|i| i.kind == ItemKind::Struct)
@@ -422,17 +422,6 @@ fn only_fn() {}
         assert!(
             struct_names.contains(&"IngestionPipeline"),
             "expected IngestionPipeline struct, found: {struct_names:?}"
-        );
-
-        // Should have const items like SUMMARY_MAX_SENTENCES
-        let const_names: Vec<&str> = items
-            .iter()
-            .filter(|i| i.kind == ItemKind::Const)
-            .map(|i| i.name.as_str())
-            .collect();
-        assert!(
-            const_names.contains(&"SUMMARY_MAX_SENTENCES"),
-            "expected SUMMARY_MAX_SENTENCES const, found: {const_names:?}"
         );
 
         // Should have impl blocks

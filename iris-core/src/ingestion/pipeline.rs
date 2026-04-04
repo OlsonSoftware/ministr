@@ -21,7 +21,7 @@ use crate::error::IngestionError;
 use crate::extraction::claims::HeuristicClaimExtractor;
 use crate::extraction::relationships::HeuristicRelationshipDetector;
 use crate::extraction::summary::ExtractiveSummaryGenerator;
-use crate::index::VectorIndex;
+use crate::index::{NullVectorIndex, VectorIndex};
 use crate::mem_profile;
 use crate::parser::{
     DocumentParser, MarkdownParser, ParserKind, create_parser, detect_parser_kind,
@@ -474,8 +474,8 @@ impl IngestionPipeline {
             &self.relationship_detector,
             self.min_section_tokens,
             existing_hash.is_some(),
-            ProcessOptions::<crate::index::NullVectorIndex> {
-                index: None,
+            None::<&NullVectorIndex>,
+            ProcessOptions {
                 hash_path: Some(relative_path),
                 content_hash: Some(hash),
                 mtime_ns: file_mtime_ns,
@@ -531,8 +531,8 @@ impl IngestionPipeline {
             &self.relationship_detector,
             self.min_section_tokens,
             existing_hash.is_some(),
-            ProcessOptions::<crate::index::NullVectorIndex> {
-                index: None,
+            None::<&NullVectorIndex>,
+            ProcessOptions {
                 hash_path: Some(source_path),
                 content_hash: Some(hash),
                 mtime_ns: None,
@@ -595,8 +595,8 @@ impl IngestionPipeline {
             &self.relationship_detector,
             self.min_section_tokens,
             existing_hash.is_some(),
+            Some(index),
             ProcessOptions {
-                index: Some(index),
                 hash_path: Some(source_path),
                 content_hash: Some(hash),
                 mtime_ns: None,
@@ -1280,8 +1280,8 @@ impl IngestionPipeline {
             &self.relationship_detector,
             self.min_section_tokens,
             existing_hash.is_some(),
+            Some(index),
             ProcessOptions {
-                index: Some(index),
                 hash_path: Some(relative_path),
                 content_hash: Some(hash),
                 mtime_ns: file_mtime_ns,

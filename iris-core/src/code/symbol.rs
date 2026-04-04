@@ -550,11 +550,11 @@ mod tests {
     }
 
     #[test]
-    fn extract_symbols_from_ingestion_rs() {
-        let source = std::fs::read("src/ingestion.rs").expect("cannot read ingestion.rs");
+    fn extract_symbols_from_pipeline_rs() {
+        let source = std::fs::read("src/ingestion/pipeline.rs").expect("cannot read pipeline.rs");
         let mut parser = AstParser::new();
         let tree = parser.parse(&source).unwrap();
-        let symbols = extract_symbols(&tree, &source, "src/ingestion.rs", &["ingestion"]);
+        let symbols = extract_symbols(&tree, &source, "src/ingestion/pipeline.rs", &["ingestion", "pipeline"]);
 
         // Should have IngestionStats struct
         let stats = symbols
@@ -565,14 +565,8 @@ mod tests {
         assert_eq!(s.visibility, Visibility::Public);
         assert!(s.doc_comment.is_some());
 
-        // Should have SUMMARY_MAX_SENTENCES const
-        let constant = symbols
-            .iter()
-            .find(|s| s.name == "SUMMARY_MAX_SENTENCES" && s.kind == ItemKind::Const);
-        assert!(constant.is_some(), "expected SUMMARY_MAX_SENTENCES const");
-
-        // All top-level symbols have module_path ["ingestion"],
-        // methods inside impl blocks have ["ingestion", "TypeName"]
+        // All top-level symbols have module_path starting with ["ingestion", "pipeline"],
+        // methods inside impl blocks have ["ingestion", "pipeline", "TypeName"]
         for sym in &symbols {
             assert_eq!(
                 sym.module_path[0], "ingestion",

@@ -7,8 +7,6 @@
 //! entry point is a thin wrapper that handles I/O differences (file vs content,
 //! immediate vs deferred embedding) and delegates the core work here.
 
-use std::path::Path;
-
 use tracing::debug;
 
 use crate::error::IngestionError;
@@ -35,9 +33,7 @@ pub(super) struct ProcessedDocument {
 }
 
 /// Options controlling what the shared pipeline does beyond the core sequence.
-pub(super) struct ProcessOptions<'a, I: VectorIndex + ?Sized> {
-    /// If set, delete old vectors before re-inserting the document.
-    pub index: Option<&'a I>,
+pub(super) struct ProcessOptions<'a> {
     /// Path key for the file hash record. `None` skips hash storage.
     pub hash_path: Option<&'a str>,
     /// Content hash to store. Required if `hash_path` is set.
@@ -67,7 +63,8 @@ pub(super) async fn store_enriched_document<S, I>(
     relationship_detector: &dyn RelationshipDetector,
     min_section_tokens: usize,
     existing_hash: bool,
-    opts: ProcessOptions<'_, I>,
+    delete_vectors_index: Option<&I>,
+    opts: ProcessOptions<'_>,
 ) -> Result<ProcessedDocument, IngestionError>
 where
     S: Storage + ?Sized,
@@ -101,7 +98,7 @@ where
 
     // 6. Delete old document (+ vectors if re-indexing)
     if existing_hash {
-        if let Some(index) = opts.index {
+        if let Some(index) = delete_vectors_index {
             delete_document_vectors(&doc.id, storage, index).await?;
         }
         storage

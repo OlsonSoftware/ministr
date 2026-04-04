@@ -96,6 +96,32 @@ pub trait VectorIndex: Send + Sync {
     fn dimension(&self) -> usize;
 }
 
+/// A no-op vector index used when embedding is not needed.
+///
+/// All operations succeed immediately without storing anything.
+pub struct NullVectorIndex;
+
+impl VectorIndex for NullVectorIndex {
+    fn insert(&self, _id: &str, _vector: &[f32]) -> Result<(), IndexError> {
+        Ok(())
+    }
+    fn search_knn(&self, _query: &[f32], _k: usize) -> Result<Vec<SearchResult>, IndexError> {
+        Ok(Vec::new())
+    }
+    fn delete(&self, _id: &str) -> Result<bool, IndexError> {
+        Ok(false)
+    }
+    fn persist(&self, _dir: &Path) -> Result<(), IndexError> {
+        Ok(())
+    }
+    fn len(&self) -> usize {
+        0
+    }
+    fn dimension(&self) -> usize {
+        0
+    }
+}
+
 /// Load a vector index from a persisted directory.
 ///
 /// This is separate from the trait because `load` requires `Self: Sized`
