@@ -618,9 +618,12 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
     eprintln!();
     let total_paths = detection.source_paths.len() + detection.doc_paths.len();
     eprintln!("Generated .iris.toml with {total_paths} paths");
+    eprintln!("Generated .mcp.json (Claude Code)");
+    eprintln!("Generated .vscode/mcp.json (GitHub Copilot)");
     eprintln!();
     eprintln!("Next steps:");
-    eprintln!("  iris serve    # start the MCP server (indexes on startup)");
+    eprintln!("  1. Start a new Claude Code session in this directory");
+    eprintln!("  2. iris will auto-index and tools will be available");
     Ok(())
 }
 
