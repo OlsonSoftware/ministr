@@ -133,6 +133,71 @@ async fn delete_nonexistent_document_returns_false() {
     assert!(!deleted);
 }
 
+/// Regression test: documents with duplicate section IDs (e.g. three
+/// `fn rss_bytes()` under different `#[cfg]` blocks) must not fail
+/// with a UNIQUE constraint violation on claims.
+#[tokio::test]
+async fn duplicate_section_ids_deduplicate_claims() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Two sections with the same ID, each carrying a claim.
+    let doc = DocumentTree {
+        id: ContentId("doc-dup".into()),
+        title: "Dup Test".into(),
+        source_path: "src/dup.rs".into(),
+        sections: vec![
+            Section {
+                id: SectionId("src/dup.rs#mod::foo".into()),
+                heading_path: vec!["mod".into(), "foo".into()],
+                depth: 1,
+                text: "First foo impl.".into(),
+                structural_nodes: vec![],
+                children: vec![],
+                claims: vec![Claim {
+                    id: ClaimId("src/dup.rs#mod::foo:c0".into()),
+                    text: "Foo does X.".into(),
+                    section_id: SectionId("src/dup.rs#mod::foo".into()),
+                }],
+                summary: None,
+            },
+            Section {
+                id: SectionId("src/dup.rs#mod::foo".into()),
+                heading_path: vec!["mod".into(), "foo".into()],
+                depth: 1,
+                text: "Second foo impl.".into(),
+                structural_nodes: vec![],
+                children: vec![],
+                claims: vec![Claim {
+                    id: ClaimId("src/dup.rs#mod::foo:c0".into()),
+                    text: "Foo does Y.".into(),
+                    section_id: SectionId("src/dup.rs#mod::foo".into()),
+                }],
+                summary: None,
+            },
+        ],
+        summary: None,
+    };
+
+    // Must succeed — previously failed with UNIQUE constraint on claims.id
+    storage.insert_document(&doc).await.unwrap();
+
+    let sections = storage.list_sections(&doc.id).await.unwrap();
+    assert_eq!(sections.len(), 2, "both sections stored (one deduped)");
+
+    // The deduped section should have a modified ID; its claim should too.
+    let deduped = sections
+        .iter()
+        .find(|s| s.id.as_ref() != "src/dup.rs#mod::foo")
+        .expect("should have a deduped section");
+    let claims = storage.list_claims(&deduped.id).await.unwrap();
+    assert_eq!(claims.len(), 1, "deduped section should have its claim");
+    assert!(
+        claims[0].id.as_ref().starts_with(deduped.id.as_ref()),
+        "claim ID should be based on the deduped section ID, got: {}",
+        claims[0].id.as_ref()
+    );
+}
+
 #[tokio::test]
 async fn get_and_list_sections() {
     let storage = SqliteStorage::open_in_memory().unwrap();

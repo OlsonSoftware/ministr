@@ -150,19 +150,27 @@ fn insert_sections_recursive(
 
         *position_offset += 1;
 
-        // Insert claims for this section
+        // Insert claims for this section.
+        // When the section ID was deduplicated, regenerate claim IDs to match
+        // (pre-generated claim IDs use the original section ID and would collide).
+        let section_was_deduped = section_id != section.id.as_ref();
         for (claim_pos, claim) in section.claims.iter().enumerate() {
+            let claim_id = if section_was_deduped {
+                format!("{section_id}:c{claim_pos}")
+            } else {
+                claim.id.as_ref().to_string()
+            };
             conn.execute(
                 "INSERT INTO claims (id, section_id, text, position) VALUES (?1, ?2, ?3, ?4)",
                 rusqlite::params![
-                    claim.id.as_ref(),
+                    claim_id,
                     section_id,
                     claim.text,
                     i64::try_from(claim_pos).unwrap_or(i64::MAX),
                 ],
             )
             .map_err(|e| StorageError::Database {
-                reason: format!("failed to insert claim {}: {e}", claim.id),
+                reason: format!("failed to insert claim {claim_id}: {e}"),
             })?;
         }
 
