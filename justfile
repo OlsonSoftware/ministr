@@ -68,6 +68,14 @@ docs:
 docs-serve:
     mdbook serve docs --open
 
+# Build Docker image
+docker-build:
+    docker build -t iris .
+
+# Run iris in Docker with HTTP transport
+docker-run *args:
+    docker run -p 8080:8080 -v iris_data:/data iris {{args}}
+
 # Run all quality gates: format check + build + test + lint
 validate: fmt-check lint test
 
