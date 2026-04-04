@@ -4,7 +4,7 @@ use iris_api::corpus::{CorpusInfo, RegisterCorpusResponse};
 use iris_api::status::DaemonStatus;
 use tauri::State;
 
-use crate::state::AppState;
+use iris_daemon::state::AppState;
 
 /// List all registered corpora.
 #[tauri::command]

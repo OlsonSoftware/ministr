@@ -16,7 +16,7 @@ use crate::registry::CorpusRegistry;
 
 /// Run the full ingestion pipeline for a corpus.
 ///
-/// Updates the corpus status through `Idle → Indexing → Idle/Error`,
+/// Updates the corpus status through `Idle -> Indexing -> Idle/Error`,
 /// then persists the vector index to disk.
 pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
     let (storage, embedder, index, index_dir, progress) = {

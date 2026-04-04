@@ -1393,7 +1393,7 @@ phases:
 - id: DAEMON1
   name: Daemon Foundation
   tagline: Centralized indexing/inference daemon that all MCP clients share
-  status: in_progress
+  status: done
   problem: Each MCP session loads its own 2GB embedding model, HNSW index, and file watcher — wasteful, slow to start, and no shared state across IDE windows
   solution: 'Complete the iris-app daemon (UDS HTTP API) as the single owner of all heavy state: embedding model, indexes, sessions, coherence. MCP proxy auto-launches and delegates.'
   tasks:
@@ -1422,9 +1422,9 @@ phases:
   - text: 'Daemon startup resilience: stale socket cleanup, lock file guard, concurrent launch protection'
     checked: true
   - text: 'Stress test: multiple MCP proxies connecting simultaneously to the same daemon, concurrent queries on shared corpus'
-    checked: false
+    checked: true
   - text: 'Integration test: proxy ↔ daemon roundtrip for all query types (survey, read, symbols, definition, references, toc, extract, related, bridge)'
-    checked: false
+    checked: true
 - id: DAEMON2
   name: Daemon API Completeness
   tagline: Full query, session, and streaming API on the daemon

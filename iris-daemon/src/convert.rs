@@ -1,10 +1,11 @@
 //! Type conversions from iris-core domain types to iris-api wire types.
 //!
 //! Free functions instead of From impls to avoid orphan rule violations
-//! (both types are from external crates relative to iris-app).
+//! (both types are from external crates relative to iris-daemon).
 
 use iris_api::query;
 
+#[must_use]
 pub fn survey_result(r: iris_core::service::SurveyResult) -> query::SurveyResult {
     query::SurveyResult {
         content_id: r.content_id,
@@ -15,6 +16,7 @@ pub fn survey_result(r: iris_core::service::SurveyResult) -> query::SurveyResult
     }
 }
 
+#[must_use]
 pub fn section_detail(d: iris_core::service::SectionDetail) -> query::SectionDetail {
     query::SectionDetail {
         section_id: d.section_id,
@@ -27,6 +29,7 @@ pub fn section_detail(d: iris_core::service::SectionDetail) -> query::SectionDet
     }
 }
 
+#[must_use]
 pub fn claim_result(c: iris_core::service::ClaimResult) -> query::ClaimResult {
     query::ClaimResult {
         claim_id: c.claim_id,
@@ -35,6 +38,7 @@ pub fn claim_result(c: iris_core::service::ClaimResult) -> query::ClaimResult {
     }
 }
 
+#[must_use]
 pub fn symbol_definition(s: iris_core::service::SymbolDefinition) -> query::SymbolDefinition {
     query::SymbolDefinition {
         id: s.id,
@@ -51,6 +55,7 @@ pub fn symbol_definition(s: iris_core::service::SymbolDefinition) -> query::Symb
     }
 }
 
+#[must_use]
 pub fn symbol_from_record(s: iris_core::storage::SymbolRecord) -> query::SymbolDefinition {
     query::SymbolDefinition {
         id: s.id.0,
@@ -72,6 +77,7 @@ pub fn symbol_from_record(s: iris_core::storage::SymbolRecord) -> query::SymbolD
     }
 }
 
+#[must_use]
 pub fn symbol_reference(r: iris_core::service::SymbolRefResult) -> query::SymbolReference {
     query::SymbolReference {
         from_symbol_id: r.from_symbol_id,
@@ -86,6 +92,7 @@ pub fn symbol_reference(r: iris_core::service::SymbolRefResult) -> query::Symbol
     }
 }
 
+#[must_use]
 pub fn related_claim(c: iris_core::service::RelatedClaimResult) -> query::RelatedClaimResult {
     query::RelatedClaimResult {
         claim_id: c.claim_id,
@@ -96,6 +103,7 @@ pub fn related_claim(c: iris_core::service::RelatedClaimResult) -> query::Relate
     }
 }
 
+#[must_use]
 pub fn toc_entry(e: iris_core::types::TocEntry) -> query::TocEntry {
     query::TocEntry {
         id: e.section_id.0,
@@ -107,6 +115,7 @@ pub fn toc_entry(e: iris_core::types::TocEntry) -> query::TocEntry {
     }
 }
 
+#[must_use]
 pub fn bridge_link(l: iris_core::storage::BridgeLinkDetail) -> query::BridgeLink {
     query::BridgeLink {
         kind: l.kind,
@@ -118,6 +127,7 @@ pub fn bridge_link(l: iris_core::storage::BridgeLinkDetail) -> query::BridgeLink
     }
 }
 
+#[must_use]
 pub fn budget_status(
     b: &iris_core::session::BudgetStatus,
 ) -> iris_api::session::SessionBudgetResponse {
@@ -129,6 +139,7 @@ pub fn budget_status(
     }
 }
 
+#[must_use]
 pub fn prefetch_metrics(
     m: &iris_core::session::prefetch::PrefetchMetrics,
     cache_size: usize,
