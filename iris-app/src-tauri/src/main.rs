@@ -98,6 +98,7 @@ fn main() {
             commands::daemon_status,
             commands::add_project_dialog,
             commands::remove_project,
+            commands::trigger_reindex,
         ])
         .run(tauri::generate_context!())
         .expect("error while running iris app");
