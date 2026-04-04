@@ -994,6 +994,10 @@ impl IngestionPipeline {
                 stats.files_skipped = files.len();
                 if let Some(ref progress) = self.progress {
                     progress.start(files.len());
+                    // All files skipped (unchanged) — mark them all done.
+                    for _ in 0..files.len() {
+                        progress.increment_done();
+                    }
                     progress.complete();
                 }
                 repair_missing_refs(storage, None).await;
