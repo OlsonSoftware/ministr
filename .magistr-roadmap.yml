@@ -1514,23 +1514,23 @@ phases:
 - id: TRAY3
   name: Platform Polish & Distribution
   tagline: Auto-start, notifications, installers, and cross-platform CI
-  status: pending
+  status: done
   problem: No auto-start on login, no desktop notifications, no packaged installers, no cross-platform CI
   solution: Launchd/systemd/startup auto-start, native notifications, DMG/MSI/AppImage packaging, GitHub Actions CI for macOS/Windows/Linux
   depends_on:
   - TRAY2
   tasks:
   - text: 'Auto-start on login: launchd plist (macOS), startup registry entry (Windows), systemd user unit (Linux)'
-    checked: false
+    checked: true
   - text: 'Desktop notifications: "indexing complete" with section/symbol counts, "index error" with actionable message'
-    checked: false
+    checked: true
   - text: 'Log viewer: searchable, filterable daemon log tail in the GUI window'
-    checked: false
+    checked: true
   - text: 'First-run onboarding: welcome screen, detect .iris.toml in home/projects, guided "add your first project" flow'
-    checked: false
+    checked: true
   - text: 'Installer packaging: DMG with drag-to-Applications (macOS), MSI/NSIS (Windows), AppImage + .deb (Linux)'
-    checked: false
+    checked: true
   - text: 'Cross-platform CI: GitHub Actions matrix build + test on macOS, Windows, Ubuntu — produce release artifacts'
-    checked: false
+    checked: true
   - text: 'Architecture docs + installation guide: diagram of daemon/proxy/tray topology, platform-specific install instructions'
-    checked: false
+    checked: true

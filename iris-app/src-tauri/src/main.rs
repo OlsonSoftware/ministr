@@ -40,6 +40,11 @@ fn main() {
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // --- Initialize the iris daemon ---
             let config = IrisConfig::load(&IrisConfig::default_path())
@@ -99,6 +104,11 @@ fn main() {
             commands::add_project_dialog,
             commands::remove_project,
             commands::trigger_reindex,
+            commands::is_autostart_enabled,
+            commands::set_autostart,
+            commands::read_logs,
+            commands::should_show_onboarding,
+            commands::dismiss_onboarding,
         ])
         .run(tauri::generate_context!())
         .expect("error while running iris app");
