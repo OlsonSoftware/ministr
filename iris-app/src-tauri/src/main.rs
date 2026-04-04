@@ -19,7 +19,7 @@ use iris_daemon::state::AppState;
 use tauri::{
     AppHandle, Manager,
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::{TrayIcon, TrayIconBuilder},
+    tray::TrayIconBuilder,
 };
 use tracing::info;
 
@@ -86,12 +86,9 @@ fn main() {
                 auto_detect_projects(&detect_state, &detect_handle).await;
             });
 
-            // --- Dynamic tray menu refresh ---
-            let refresh_state = state.clone();
-            let refresh_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                tray_refresh_loop(&refresh_state, &refresh_handle).await;
-            });
+            // Note: dynamic tray menu rebuild removed — caused panics on macOS
+            // because tray event handlers must be registered on the main thread.
+            // The GUI dashboard handles project management instead.
 
             info!("iris app started");
             Ok(())
@@ -152,91 +149,8 @@ fn handle_menu_event(app: &AppHandle, event_id: &str) {
             let _ = std::fs::remove_file(iris_api::daemon_pid_path());
             app.exit(0);
         }
-        id if id.starts_with("remove:") => {
-            let corpus_id = id.strip_prefix("remove:").unwrap_or("").to_string();
-            let handle = app.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = commands::remove_project_by_id(&handle, &corpus_id).await {
-                    tracing::warn!(error = %e, corpus_id, "failed to remove project");
-                }
-            });
-        }
         _ => {}
     }
-}
-
-/// Refresh the tray menu and tooltip every 5 seconds with current corpus list.
-async fn tray_refresh_loop(state: &AppState, handle: &AppHandle) {
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-        let corpora = state.registry.list().await;
-        let count = corpora.len();
-
-        // Update tooltip.
-        if let Some(tray) = handle.tray_by_id(TRAY_ID) {
-            let tooltip = if count == 0 {
-                "iris — no projects".to_string()
-            } else {
-                format!(
-                    "iris — {count} project{}",
-                    if count == 1 { "" } else { "s" }
-                )
-            };
-            let _: Result<(), _> = tray.set_tooltip(Some(&tooltip));
-
-            // Rebuild menu with corpus entries.
-            if let Err(e) = rebuild_tray_menu(handle, &tray, &corpora) {
-                tracing::debug!(error = %e, "failed to rebuild tray menu");
-            }
-        }
-    }
-}
-
-/// Rebuild the tray menu with current corpus list.
-fn rebuild_tray_menu(
-    handle: &AppHandle,
-    tray: &TrayIcon,
-    corpora: &[iris_api::corpus::CorpusInfo],
-) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItemBuilder::with_id("show", "Show Dashboard").build(handle)?;
-    let add = MenuItemBuilder::with_id("add_project", "Add Project...").build(handle)?;
-
-    let mut builder = MenuBuilder::new(handle);
-    builder = builder.items(&[&show, &add]);
-
-    // Add separator and corpus entries if any.
-    if !corpora.is_empty() {
-        builder = builder.separator();
-        for corpus in corpora {
-            let status_icon = match corpus.status {
-                iris_api::corpus::IndexingStatus::Idle => "●",
-                iris_api::corpus::IndexingStatus::Indexing { .. } => "◌",
-                iris_api::corpus::IndexingStatus::Error { .. } => "✕",
-            };
-            // Use last path component as display name.
-            let display_name = corpus
-                .paths
-                .first()
-                .and_then(|p| std::path::Path::new(p).file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or(&corpus.id);
-            let label = format!("{status_icon} {display_name}");
-            let remove_id = format!("remove:{}", corpus.id);
-            let item = MenuItemBuilder::with_id(&remove_id, &label).build(handle)?;
-            builder = builder.item(&item);
-        }
-    }
-
-    builder = builder.separator();
-    let quit = MenuItemBuilder::with_id("quit", "Quit iris").build(handle)?;
-    builder = builder.item(&quit);
-
-    let menu = builder.build()?;
-    tray.set_menu(Some(menu))?;
-    tray.on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()));
-
-    Ok(())
 }
 
 /// Scan common project directories for `.iris.toml` files on first launch.
