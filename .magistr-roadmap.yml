@@ -1383,7 +1383,7 @@ phases:
   - text: '`iris import` CLI command — load a .iris-index bundle into local storage + HNSW index without re-parsing or re-embedding'
     checked: true
   - text: Add `[[corpus.cloud]]` support to .iris.toml — fetch pre-built index from a URL instead of cloning + indexing
-    checked: false
+    checked: true
   - text: Versioned index bundles — include commit SHA so the client knows when to re-fetch a newer version
     checked: false
   - text: Streamable HTTP transport awareness — ensure exported index bundles work seamlessly with remote iris servers over Streamable HTTP
