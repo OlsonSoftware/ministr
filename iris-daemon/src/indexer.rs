@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use iris_api::corpus::IndexingStatus;
 use iris_core::ingestion::IngestionPipeline;
-use tracing::{error, info};
+use iris_core::storage::Storage;
+use tracing::{error, info, warn};
 
 use crate::registry::CorpusRegistry;
 
@@ -64,11 +65,28 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
                 error!(corpus_id, error = %e, "failed to persist vector index");
             }
 
+            // Query storage for total counts (not just incremental stats)
+            // so the UI shows correct numbers even when files were skipped.
+            let total_files = match storage.document_count().await {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!(corpus_id, error = %e, "failed to count documents, using incremental stats");
+                    stats.files_indexed
+                }
+            };
+            let total_sections = match storage.section_count().await {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!(corpus_id, error = %e, "failed to count sections, using incremental stats");
+                    stats.total_sections
+                }
+            };
+
             registry
                 .update_stats(
                     corpus_id,
-                    stats.files_indexed,
-                    stats.total_sections,
+                    total_files,
+                    total_sections,
                     index.len(),
                 )
                 .await;

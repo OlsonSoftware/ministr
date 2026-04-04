@@ -361,6 +361,9 @@ pub trait Storage: Send + Sync {
     /// Count documents in the corpus (lighter than listing all).
     fn document_count(&self) -> impl Future<Output = Result<usize, StorageError>> + Send;
 
+    /// Count sections in the corpus (lighter than listing all).
+    fn section_count(&self) -> impl Future<Output = Result<usize, StorageError>> + Send;
+
     /// List all documents in the corpus.
     fn list_documents(
         &self,
