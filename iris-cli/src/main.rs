@@ -14,6 +14,8 @@ mod proxy;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use iris_core::index::VectorIndex as _;
+
 use clap::{Parser, Subcommand};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use rmcp::ServiceExt;
@@ -200,6 +202,13 @@ async fn main() -> Result<()> {
         .map(|(_, cc)| cc.corpus.git.clone())
         .unwrap_or_default();
 
+    // Resolve embedding model name: .iris.toml > config.toml default_model
+    let resolved_model = iris_core::config::resolve_model_name(
+        corpus_config.as_ref().map(|(_, cc)| cc),
+        None,
+        &config,
+    );
+
     // Dispatch to the appropriate subcommand (default: serve over stdio).
     match cli.command.unwrap_or(Command::Serve {
         transport: Transport::Stdio,
@@ -219,7 +228,14 @@ async fn main() -> Result<()> {
         } => match transport {
             Transport::Stdio if proxy => cmd_serve_proxy_stdio(&corpus_paths).await,
             Transport::Stdio => {
-                cmd_serve_stdio(&corpus_paths, &git_includes, &config_path, &config).await
+                cmd_serve_stdio(
+                    &corpus_paths,
+                    &git_includes,
+                    &config_path,
+                    &config,
+                    &resolved_model,
+                )
+                .await
             }
             Transport::Http => {
                 let oauth_config = if oauth {
@@ -238,11 +254,21 @@ async fn main() -> Result<()> {
                     &host,
                     port,
                     oauth_config,
+                    &resolved_model,
                 )
                 .await
             }
         },
-        Command::Index => cmd_index(&corpus_paths, &git_includes, &config_path, &config).await,
+        Command::Index => {
+            cmd_index(
+                &corpus_paths,
+                &git_includes,
+                &config_path,
+                &config,
+                &resolved_model,
+            )
+            .await
+        }
         Command::Status => cmd_daemon_status().await,
         Command::Search { query, top_k } => cmd_daemon_search(&corpus_paths, &query, top_k).await,
         Command::Init { force } => cmd_init(&cwd, force),
@@ -255,6 +281,7 @@ async fn main() -> Result<()> {
 async fn init_infrastructure(
     corpus_paths: &[String],
     config: &iris_core::config::IrisConfig,
+    resolved_model: Option<&str>,
 ) -> Result<InfrastructureContext> {
     // Determine corpus data directory from a hash of all paths.
     let corpus_name = if corpus_paths.is_empty() {
@@ -281,21 +308,25 @@ async fn init_infrastructure(
         .into_diagnostic()
         .wrap_err("failed to open content database")?;
 
+    // Use resolved model name or fall back to global default.
+    let model_name = resolved_model.map_or_else(
+        || config.default_model.clone(),
+        String::from,
+    );
+    tracing::info!(model = %model_name, "resolved embedding model");
+
     // Initialize embedder with content-addressable cache.
     iris_core::mem_profile::checkpoint("before embedding model init");
     let raw_embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
-        iris_core::embedding::FastEmbedder::with_data_dir(&config.default_model, &config.data_dir)
+        iris_core::embedding::FastEmbedder::with_data_dir(&model_name, &config.data_dir)
             .into_diagnostic()
             .wrap_err("failed to initialize embedding model")?,
     );
     iris_core::mem_profile::checkpoint("after embedding model init");
     let embedding_cache = iris_core::embedding::cache::EmbeddingCache::new(storage.conn());
-    let embedder: Arc<dyn iris_core::embedding::Embedder> =
-        Arc::new(iris_core::embedding::CachedEmbedder::new(
-            raw_embedder,
-            embedding_cache,
-            &config.default_model,
-        ));
+    let embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
+        iris_core::embedding::CachedEmbedder::new(raw_embedder, embedding_cache, &model_name),
+    );
 
     // Initialize vector index.
     // If the SQLite DB is empty (fresh migration) but a stale vector index
@@ -315,26 +346,8 @@ async fn init_infrastructure(
     }
 
     iris_core::mem_profile::checkpoint("before vector index init");
-    let index: Arc<dyn iris_core::index::VectorIndex> = if index_dir.exists() {
-        match iris_core::index::HnswIndex::load(&index_dir) {
-            Ok(loaded) => Arc::new(loaded),
-            Err(e) => {
-                tracing::warn!(error = %e, "corrupted vector index — discarding and rebuilding");
-                let _ = std::fs::remove_dir_all(&index_dir);
-                Arc::new(
-                    iris_core::index::HnswIndex::new(dim, 100_000)
-                        .into_diagnostic()
-                        .wrap_err("failed to create vector index after recovery")?,
-                )
-            }
-        }
-    } else {
-        Arc::new(
-            iris_core::index::HnswIndex::new(dim, 100_000)
-                .into_diagnostic()
-                .wrap_err("failed to create vector index")?,
-        )
-    };
+    let index: Arc<dyn iris_core::index::VectorIndex> =
+        load_or_create_index(&index_dir, dim, &model_name)?;
 
     iris_core::mem_profile::checkpoint("after vector index init");
 
@@ -345,6 +358,68 @@ async fn init_infrastructure(
         embedder,
         index,
     })
+}
+
+/// Load an existing HNSW index or create a fresh one.
+///
+/// Detects embedding model changes (dimension or model name mismatch) and
+/// discards the old index when the model has changed, forcing a re-index.
+fn load_or_create_index(
+    index_dir: &Path,
+    dim: usize,
+    model_name: &str,
+) -> Result<Arc<dyn iris_core::index::VectorIndex>> {
+    if index_dir.exists() {
+        match iris_core::index::HnswIndex::load(index_dir) {
+            Ok(loaded) => {
+                let dim_mismatch = loaded.dimension() != dim;
+                let model_mismatch = loaded
+                    .model_name()
+                    .as_ref()
+                    .is_some_and(|old| old != model_name);
+
+                if dim_mismatch || model_mismatch {
+                    let old_model = loaded.model_name().unwrap_or_else(|| "unknown".to_owned());
+                    tracing::warn!(
+                        old_model = %old_model,
+                        new_model = %model_name,
+                        old_dim = loaded.dimension(),
+                        new_dim = dim,
+                        "embedding model changed — discarding old index for re-indexing"
+                    );
+                    drop(loaded);
+                    let _ = std::fs::remove_dir_all(index_dir);
+                    return create_fresh_index(dim, model_name);
+                }
+                // Legacy index without model name — adopt current model
+                if loaded.model_name().is_none() {
+                    tracing::info!(
+                        model = %model_name,
+                        "upgrading legacy index with model name tracking"
+                    );
+                    loaded.set_model_name(model_name);
+                }
+                return Ok(Arc::new(loaded));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "corrupted vector index — discarding and rebuilding");
+                let _ = std::fs::remove_dir_all(index_dir);
+            }
+        }
+    }
+    create_fresh_index(dim, model_name)
+}
+
+/// Create a fresh HNSW index with the given dimension and model name.
+fn create_fresh_index(
+    dim: usize,
+    model_name: &str,
+) -> Result<Arc<dyn iris_core::index::VectorIndex>> {
+    let fresh = iris_core::index::HnswIndex::new(dim, 100_000)
+        .into_diagnostic()
+        .wrap_err("failed to create vector index")?;
+    fresh.set_model_name(model_name);
+    Ok(Arc::new(fresh))
 }
 
 /// Shared infrastructure components initialized at startup.
@@ -364,6 +439,7 @@ async fn build_server(
     corpus_paths: &[String],
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
+    resolved_model: Option<&str>,
 ) -> Result<(
     iris_mcp::server::IrisServer,
     InfrastructureContext,
@@ -379,7 +455,7 @@ async fn build_server(
         tracing::info!(path = %path, "  corpus root");
     }
 
-    let ctx = init_infrastructure(corpus_paths, config).await?;
+    let ctx = init_infrastructure(corpus_paths, config, resolved_model).await?;
 
     let service = Arc::new(iris_core::service::QueryService::new(
         (*ctx.storage).clone(),
@@ -711,6 +787,7 @@ async fn cmd_serve_stdio(
     git_includes: &[iris_core::config::GitInclude],
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
+    resolved_model: &str,
 ) -> Result<()> {
     // Compute the corpus data dir early for lock detection.
     let corpus_name = corpus_data_dir_name(corpus_paths);
@@ -728,7 +805,7 @@ async fn cmd_serve_stdio(
         }
         instance::InstanceRole::Primary(lock) => {
             let (server, ctx, _coherence_handle) =
-                build_server(corpus_paths, config_path, config).await?;
+                build_server(corpus_paths, config_path, config, Some(resolved_model)).await?;
 
             let ingestion_progress = server.ingestion_progress_arc();
 
@@ -760,6 +837,7 @@ async fn cmd_serve_stdio(
 }
 
 /// `iris serve --transport http` — Streamable HTTP MCP server.
+#[allow(clippy::too_many_arguments)]
 async fn cmd_serve_http(
     corpus_paths: &[String],
     git_includes: &[iris_core::config::GitInclude],
@@ -768,12 +846,14 @@ async fn cmd_serve_http(
     host: &str,
     port: u16,
     oauth_config: Option<iris_mcp::auth::OAuthConfig>,
+    resolved_model: &str,
 ) -> Result<()> {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
 
-    let (server, ctx, _coherence_handle) = build_server(corpus_paths, config_path, config).await?;
+    let (server, ctx, _coherence_handle) =
+        build_server(corpus_paths, config_path, config, Some(resolved_model)).await?;
 
     let ingestion_progress = server.ingestion_progress_arc();
 
@@ -824,6 +904,7 @@ async fn cmd_index(
     git_includes: &[iris_core::config::GitInclude],
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
+    resolved_model: &str,
 ) -> Result<()> {
     tracing::info!(
         corpus_count = corpus_paths.len(),
@@ -840,7 +921,7 @@ async fn cmd_index(
         return Ok(());
     }
 
-    let ctx = init_infrastructure(corpus_paths, config).await?;
+    let ctx = init_infrastructure(corpus_paths, config, Some(resolved_model)).await?;
 
     let progress = Arc::new(iris_core::ingestion::IngestionProgress::new());
     run_corpus_ingestion(

@@ -91,6 +91,8 @@ struct HnswInner {
     dim: usize,
     /// Search width parameter for queries.
     ef_search: usize,
+    /// Name of the embedding model that produced these vectors.
+    model_name: Option<String>,
 }
 
 /// Configuration for building an [`HnswIndex`].
@@ -155,6 +157,10 @@ struct IdMapData {
     id_to_int: HashMap<String, usize>,
     deleted: Vec<usize>,
     next_id: usize,
+    /// Name of the embedding model that produced these vectors.
+    /// `None` for indexes created before model tracking was added.
+    #[serde(default)]
+    model_name: Option<String>,
 }
 
 impl HnswIndex {
@@ -167,6 +173,27 @@ impl HnswIndex {
     /// Returns [`IndexError::EmbeddingFailed`] if the dimension is zero.
     pub fn new(dimension: usize, max_elements: usize) -> Result<Self, IndexError> {
         Self::with_config(HnswIndexConfig::new(dimension, max_elements))
+    }
+
+    /// Set the embedding model name for this index.
+    ///
+    /// Persisted alongside the index data so that model changes can be
+    /// detected on reload, preventing silent vector space mismatches.
+    pub fn set_model_name(&self, name: &str) {
+        if let Ok(mut inner) = self.inner.write() {
+            inner.model_name = Some(name.to_owned());
+        }
+    }
+
+    /// Return the embedding model name, if one has been set.
+    ///
+    /// Returns `None` for legacy indexes created before model tracking.
+    #[must_use]
+    pub fn model_name(&self) -> Option<String> {
+        self.inner
+            .read()
+            .ok()
+            .and_then(|inner| inner.model_name.clone())
     }
 
     /// Create a new HNSW index with custom configuration.
@@ -205,6 +232,7 @@ impl HnswIndex {
                 next_id: 0,
                 dim: config.dimension,
                 ef_search: config.ef_search,
+                model_name: None,
             }),
         })
     }
@@ -353,6 +381,7 @@ impl VectorIndex for HnswIndex {
             id_to_int: inner.id_to_int.clone(),
             deleted: inner.deleted.iter().copied().collect(),
             next_id: inner.next_id,
+            model_name: inner.model_name.clone(),
         };
 
         let map_path = dir.join(ID_MAP_FILE);
@@ -436,6 +465,7 @@ impl VectorIndexLoad for HnswIndex {
                 next_id: id_map.next_id,
                 dim: id_map.dim,
                 ef_search: id_map.ef_search,
+                model_name: id_map.model_name,
             }),
         })
     }
@@ -697,6 +727,67 @@ mod tests {
     fn load_nonexistent_fails() {
         let err = HnswIndex::load(Path::new("/nonexistent/path")).unwrap_err();
         assert!(matches!(err, IndexError::LoadFailed { .. }));
+    }
+
+    // --- Model name tracking ---
+
+    #[test]
+    fn model_name_default_none() {
+        let index = HnswIndex::new(4, 100).unwrap();
+        assert!(index.model_name().is_none());
+    }
+
+    #[test]
+    fn set_and_get_model_name() {
+        let index = HnswIndex::new(4, 100).unwrap();
+        index.set_model_name("jina-embeddings-v2-base-code");
+        assert_eq!(
+            index.model_name().as_deref(),
+            Some("jina-embeddings-v2-base-code")
+        );
+    }
+
+    #[test]
+    fn model_name_persists_roundtrip() {
+        let dim = 4;
+        let index = HnswIndex::new(dim, 100).unwrap();
+        index.insert("v1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+        index.set_model_name("nomic-embed-text-v1.5");
+
+        let tmp = tempfile::tempdir().unwrap();
+        let index_dir = tmp.path().join("model_name_test");
+        index.persist(&index_dir).unwrap();
+
+        let loaded = HnswIndex::load(&index_dir).unwrap();
+        assert_eq!(
+            loaded.model_name().as_deref(),
+            Some("nomic-embed-text-v1.5")
+        );
+    }
+
+    #[test]
+    fn legacy_index_loads_without_model_name() {
+        // Simulate a legacy id_map.json without the model_name field
+        let tmp = tempfile::tempdir().unwrap();
+        let index_dir = tmp.path().join("legacy_test");
+        fs::create_dir_all(&index_dir).unwrap();
+
+        // Create an index, persist it, then strip model_name from the JSON
+        let index = HnswIndex::new(4, 100).unwrap();
+        index.insert("v1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+        index.persist(&index_dir).unwrap();
+
+        // Read and re-write id_map.json without model_name
+        let map_path = index_dir.join(ID_MAP_FILE);
+        let content = fs::read_to_string(&map_path).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        value.as_object_mut().unwrap().remove("model_name");
+        fs::write(&map_path, serde_json::to_string(&value).unwrap()).unwrap();
+
+        // Load should succeed with model_name = None
+        let loaded = HnswIndex::load(&index_dir).unwrap();
+        assert!(loaded.model_name().is_none());
+        assert_eq!(loaded.len(), 1);
     }
 
     // --- Trait object usage ---

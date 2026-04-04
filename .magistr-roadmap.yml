@@ -1295,22 +1295,22 @@ phases:
 - id: EMBED1
   name: Code-Specialized Embeddings
   tagline: Upgrade from general-purpose to code-optimized embedding models
-  status: pending
+  status: in_progress
   problem: iris uses a general-purpose embedding model; code-specialized models like Nomic Embed Code dramatically outperform on code retrieval benchmarks
   solution: Abstract embedding backend, add Nomic Embed Code via ONNX, make model configurable in .iris.toml, benchmark quality improvements
   depends_on:
   - PERF1
   tasks:
-  - text: Abstract embedding backend behind a swappable trait to support multiple model backends
-    checked: false
-  - text: Add Nomic Embed Code support via ONNX — SOTA code-specific embedding model, outperforms Voyage Code 3 and OpenAI Embed 3 Large on CodeSearchNet
-    checked: false
-  - text: Configurable embedding model in .iris.toml — model name, local path, or auto-download URL
-    checked: false
+  - text: Swappable embedding trait + ModelInfo registry with 44 models from fastembed v5 (SUPPORTED_MODELS table, supported_models() API)
+    checked: true
+  - text: Add jina-embeddings-v2-base-code (768d, code-specialized) + nomic-embed-text-v1.5 (Matryoshka) + 30 more models via fastembed-rs ONNX
+    checked: true
+  - text: Configurable embedding model in .iris.toml (corpus.model field) with resolve_model_name() priority chain + model mismatch detection on index load
+    checked: true
   - text: 'Benchmark retrieval quality: current model vs Nomic Embed Code vs Jina Code v2 using iris''s evaluation suite (S3 phase infrastructure)'
     checked: false
-  - text: Matryoshka dimension reduction — store lower-dim vectors for HNSW search, full-dim for reranking (Nomic supports this natively)
-    checked: false
+  - text: TruncatingEmbedder for Matryoshka dimension reduction — truncate + L2-normalize for nomic-embed-text-v1.5 (768→256/128)
+    checked: true
 - id: TRANSPORT1
   name: Streamable HTTP & Remote Mode
   tagline: Deploy iris as a remote MCP server with production-grade transport
