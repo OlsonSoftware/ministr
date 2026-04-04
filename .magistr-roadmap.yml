@@ -1379,9 +1379,9 @@ phases:
   - text: Design index export format — serializable bundle of sections, symbols, claims, embeddings, bridge endpoints for a single corpus root
     checked: true
   - text: '`iris export` CLI command — dump a corpus root''s index to a portable bundle file (.iris-index)'
-    checked: false
+    checked: true
   - text: '`iris import` CLI command — load a .iris-index bundle into local storage + HNSW index without re-parsing or re-embedding'
-    checked: false
+    checked: true
   - text: Add `[[corpus.cloud]]` support to .iris.toml — fetch pre-built index from a URL instead of cloning + indexing
     checked: false
   - text: Versioned index bundles — include commit SHA so the client knows when to re-fetch a newer version

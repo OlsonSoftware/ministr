@@ -120,6 +120,28 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+
+    /// Export the corpus index to a portable `.iris-index` bundle.
+    ///
+    /// Creates a zstd-compressed archive containing the content database
+    /// (with session-local data stripped), HNSW vector index, and metadata
+    /// manifest. The bundle can be imported on another machine without
+    /// re-parsing or re-embedding.
+    Export {
+        /// Output file path (default: `<corpus-name>.iris-index` in current dir).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Import a `.iris-index` bundle into the local corpus store.
+    ///
+    /// Decompresses the bundle and loads the content database and HNSW
+    /// index into the corpus data directory, ready for querying without
+    /// re-indexing.
+    Import {
+        /// Path to the `.iris-index` bundle file.
+        bundle: PathBuf,
+    },
 }
 
 /// MCP transport mode.
@@ -272,6 +294,10 @@ async fn main() -> Result<()> {
         Command::Status => cmd_daemon_status().await,
         Command::Search { query, top_k } => cmd_daemon_search(&corpus_paths, &query, top_k).await,
         Command::Init { force } => cmd_init(&cwd, force),
+        Command::Export { output } => {
+            cmd_export(&corpus_paths, &config, &resolved_model, output.as_deref()).await
+        }
+        Command::Import { bundle } => cmd_import(&corpus_paths, &config, &bundle),
     }
 }
 
@@ -607,6 +633,144 @@ async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
         .await
         .into_diagnostic()
         .wrap_err("proxy MCP server failed")?;
+    Ok(())
+}
+
+/// `iris export` — export the corpus index to a portable bundle.
+async fn cmd_export(
+    corpus_paths: &[String],
+    config: &iris_core::config::IrisConfig,
+    resolved_model: &str,
+    output: Option<&Path>,
+) -> Result<()> {
+    use iris_core::bundle::{self, BUNDLE_FORMAT_VERSION, BundleCorpusRoot, BundleManifest};
+    use iris_core::storage::Storage as _;
+
+    // Resolve the corpus data directory without loading the embedding model.
+    let corpus_name = if corpus_paths.is_empty() {
+        "default".to_owned()
+    } else {
+        corpus_data_dir_name(corpus_paths)
+    };
+    let corpus_dir = config.data_dir.join("corpora").join(&corpus_name);
+    let db_path = corpus_dir.join("content.db");
+
+    if !db_path.exists() {
+        miette::bail!(
+            "no indexed corpus found at {}. Run `iris index` first.",
+            corpus_dir.display()
+        );
+    }
+
+    // Open storage (no embedder needed for export).
+    let storage = iris_core::storage::SqliteStorage::open(&db_path)
+        .into_diagnostic()
+        .wrap_err("failed to open content database")?;
+
+    let doc_count = storage
+        .document_count()
+        .await
+        .into_diagnostic()
+        .wrap_err("failed to count documents")?;
+    let roots = storage
+        .list_corpus_roots()
+        .await
+        .into_diagnostic()
+        .wrap_err("failed to list corpus roots")?;
+
+    // Get vector count and dimension from the HNSW index.
+    let index_dir = corpus_dir.join("index");
+    let (vector_count, dimension) = if index_dir.exists() {
+        match iris_core::index::HnswIndex::load(&index_dir) {
+            Ok(loaded) => (loaded.len(), loaded.dimension()),
+            Err(_) => (0, 0),
+        }
+    } else {
+        (0, 0)
+    };
+
+    let manifest = BundleManifest {
+        format_version: BUNDLE_FORMAT_VERSION,
+        model_name: resolved_model.to_string(),
+        dimension,
+        vector_count,
+        document_count: doc_count,
+        symbol_count: 0,
+        corpus_roots: roots
+            .iter()
+            .map(|r| BundleCorpusRoot {
+                id: r.id.clone(),
+                display_name: r.display_name.clone(),
+                kind: r.kind.as_str().to_string(),
+                commit_sha: r.commit_sha.clone(),
+                branch: r.branch.clone(),
+                repo_url: r.repo_url.clone(),
+            })
+            .collect(),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let output_path = output.map_or_else(
+        || {
+            let filename = format!("{corpus_name}.iris-index");
+            PathBuf::from(filename)
+        },
+        Path::to_path_buf,
+    );
+
+    bundle::export_bundle(&corpus_dir, &output_path, &manifest)
+        .into_diagnostic()
+        .wrap_err("failed to export bundle")?;
+
+    eprintln!("Exported {doc_count} documents, {vector_count} vectors ({dimension}d)");
+    eprintln!("Bundle: {}", output_path.display());
+    Ok(())
+}
+
+/// `iris import` — import a `.iris-index` bundle into local storage.
+fn cmd_import(
+    corpus_paths: &[String],
+    config: &iris_core::config::IrisConfig,
+    bundle_path: &Path,
+) -> Result<()> {
+    use iris_core::bundle;
+
+    if !bundle_path.exists() {
+        miette::bail!("bundle not found: {}", bundle_path.display());
+    }
+
+    // Determine corpus directory name from the bundle filename or corpus paths.
+    let corpus_name = if corpus_paths.is_empty() {
+        bundle_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("imported")
+            .to_owned()
+    } else {
+        corpus_data_dir_name(corpus_paths)
+    };
+    let corpus_dir = config.data_dir.join("corpora").join(&corpus_name);
+
+    if corpus_dir.join("content.db").exists() {
+        miette::bail!(
+            "corpus '{}' already exists at {}. Remove it first or use a different name.",
+            corpus_name,
+            corpus_dir.display()
+        );
+    }
+
+    let manifest = bundle::import_bundle(bundle_path, &corpus_dir)
+        .into_diagnostic()
+        .wrap_err("failed to import bundle")?;
+
+    eprintln!(
+        "Imported: {} documents, {} vectors ({}d, model: {})",
+        manifest.document_count, manifest.vector_count, manifest.dimension, manifest.model_name
+    );
+    eprintln!("Corpus: {}", corpus_dir.display());
     Ok(())
 }
 
