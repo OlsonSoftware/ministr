@@ -128,6 +128,19 @@ pub fn bridge_link(l: iris_core::storage::BridgeLinkDetail) -> query::BridgeLink
 }
 
 #[must_use]
+pub fn compressed_item(
+    c: iris_core::service::CompressedItem,
+) -> iris_api::session::CompressedItemApi {
+    iris_api::session::CompressedItemApi {
+        original_id: c.original_id,
+        summary: c.summary,
+        original_tokens: c.original_tokens,
+        compressed_tokens: c.compressed_tokens,
+        method: c.method,
+    }
+}
+
+#[must_use]
 pub fn budget_status(
     b: &iris_core::session::BudgetStatus,
 ) -> iris_api::session::SessionBudgetResponse {

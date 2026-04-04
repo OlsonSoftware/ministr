@@ -224,3 +224,72 @@ async fn test_session_lifecycle() {
         .await;
     assert!(err.is_err(), "destroyed session should return error");
 }
+
+#[tokio::test]
+async fn test_compress() {
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let req = iris_api::session::CompressRequest {
+        content_ids: vec!["docs/auth.md#tokens".into()],
+    };
+    let resp = client.compress(&daemon.corpus_id, &req).await.unwrap();
+    // Extractive compression may skip very short sections, so allow 0 or 1.
+    assert!(resp.summaries.len() <= 1);
+    if let Some(item) = resp.summaries.first() {
+        assert_eq!(item.original_id, "docs/auth.md#tokens");
+        assert!(!item.summary.is_empty());
+        assert_eq!(item.method, "extractive");
+    }
+}
+
+#[tokio::test]
+async fn test_compress_unknown_ids() {
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let req = iris_api::session::CompressRequest {
+        content_ids: vec!["nonexistent#section".into()],
+    };
+    let resp = client.compress(&daemon.corpus_id, &req).await.unwrap();
+    assert!(resp.summaries.is_empty());
+}
+
+#[tokio::test]
+async fn test_evict_content() {
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    // Create a session first.
+    let session = client
+        .create_session(&daemon.corpus_id, Some(50_000))
+        .await
+        .unwrap();
+
+    // Evict content IDs (not previously delivered — should be not_found).
+    let req = iris_api::session::EvictRequest {
+        content_ids: vec!["docs/auth.md#tokens".into(), "nonexistent".into()],
+    };
+    let resp = client
+        .evict_content(&daemon.corpus_id, &session.session_id, &req)
+        .await
+        .unwrap();
+
+    // Neither was delivered, so both should be not_found.
+    assert!(resp.evicted.is_empty());
+    assert_eq!(resp.not_found.len(), 2);
+}
+
+#[tokio::test]
+async fn test_evict_nonexistent_session() {
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let req = iris_api::session::EvictRequest {
+        content_ids: vec!["docs/auth.md#tokens".into()],
+    };
+    let result = client
+        .evict_content(&daemon.corpus_id, "sess-nonexistent", &req)
+        .await;
+    assert!(result.is_err());
+}

@@ -58,3 +58,48 @@ pub struct PrefetchMetricsResponse {
     /// Maximum cache capacity.
     pub cache_capacity: usize,
 }
+
+/// Request to compress content items for budget-efficient eviction.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CompressRequest {
+    /// Content IDs (section or symbol) to generate compressed summaries for.
+    pub content_ids: Vec<String>,
+}
+
+/// A single compressed content item.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CompressedItemApi {
+    /// The original content ID that was compressed.
+    pub original_id: String,
+    /// The compressed summary text.
+    pub summary: String,
+    /// Token count of the original content.
+    pub original_tokens: usize,
+    /// Token count of the compressed summary.
+    pub compressed_tokens: usize,
+    /// Compression method used (e.g. `"extractive"`, `"symbol_stub"`).
+    pub method: String,
+}
+
+/// Response from the compress endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CompressResponse {
+    /// Compressed summaries (one per successfully compressed content ID).
+    pub summaries: Vec<CompressedItemApi>,
+}
+
+/// Request to signal content evicted from the agent's context window.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EvictRequest {
+    /// Content IDs that have been dropped from the agent's context.
+    pub content_ids: Vec<String>,
+}
+
+/// Response from the eviction endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EvictResponse {
+    /// Content IDs that were successfully removed from session tracking.
+    pub evicted: Vec<String>,
+    /// Content IDs that were not found in the session.
+    pub not_found: Vec<String>,
+}

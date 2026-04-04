@@ -301,6 +301,22 @@ impl DaemonClient {
             .await
     }
 
+    // -- Compress --
+
+    /// Compress content items for budget-efficient eviction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn compress(
+        &self,
+        corpus_id: &str,
+        req: &crate::session::CompressRequest,
+    ) -> Result<crate::session::CompressResponse, ClientError> {
+        self.post(&format!("/api/v1/corpora/{corpus_id}/compress"), req)
+            .await
+    }
+
     // -- Sessions --
 
     /// Create a new session for a corpus.
@@ -349,6 +365,24 @@ impl DaemonClient {
         ))
         .await?;
         Ok(())
+    }
+
+    /// Signal that content has been evicted from the agent's context window.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn evict_content(
+        &self,
+        corpus_id: &str,
+        session_id: &str,
+        req: &crate::session::EvictRequest,
+    ) -> Result<crate::session::EvictResponse, ClientError> {
+        self.post(
+            &format!("/api/v1/corpora/{corpus_id}/sessions/{session_id}/evicted"),
+            req,
+        )
+        .await
     }
 
     // -- Admin --
@@ -474,15 +508,7 @@ fn encode_path_component(s: &str) -> String {
     for byte in s.bytes() {
         match byte {
             // Unreserved characters (RFC 3986 section 2.3) plus `:` and `@`.
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'-'
-            | b'_'
-            | b'.'
-            | b'~'
-            | b':'
-            | b'@' => {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b':' | b'@' => {
                 encoded.push(byte as char);
             }
             _ => {
