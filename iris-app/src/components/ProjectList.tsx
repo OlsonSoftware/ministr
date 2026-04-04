@@ -7,6 +7,7 @@ import {
   Layers,
   Box,
   Plus,
+  Users,
 } from "lucide-react";
 import type { CorpusInfo, IndexingStatus } from "../lib/types";
 import { Badge } from "./ui/badge";
@@ -149,6 +150,11 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
               <span className="flex items-center gap-1">
                 <Box className="h-3 w-3" /> {corpus.embeddings_count} vectors
               </span>
+              {corpus.active_sessions > 0 && (
+                <span className="flex items-center gap-1 text-accent">
+                  <Users className="h-3 w-3" /> {corpus.active_sessions} {corpus.active_sessions === 1 ? "session" : "sessions"}
+                </span>
+              )}
             </div>
 
             {corpus.status.state === "indexing" && (

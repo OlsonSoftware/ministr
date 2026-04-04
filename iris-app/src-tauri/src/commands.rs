@@ -47,6 +47,13 @@ pub async fn unregister_corpus(
 pub async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonStatus, String> {
     let corpora = state.registry.list().await;
     let rss = iris_core::mem_profile::rss_mb().unwrap_or(0.0);
+    let total_sessions: usize = corpora.iter().map(|c| c.active_sessions).sum();
+
+    let log_path = iris_api::daemon_socket_path()
+        .parent()
+        .map(|p| p.join("iris.log"))
+        .filter(|p| p.exists())
+        .map(|p| p.display().to_string());
 
     Ok(DaemonStatus {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -55,6 +62,8 @@ pub async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonStatus, S
         model: state.registry.config().default_model.clone(),
         model_dimension: state.registry.embedder().dimension(),
         corpora,
+        log_path,
+        total_sessions,
     })
 }
 

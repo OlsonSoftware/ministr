@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Palette, HardDrive, Cpu, Power } from "lucide-react";
+import { Palette, HardDrive, Cpu, Power, ScrollText } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import type { DaemonStatus } from "../lib/types";
@@ -104,6 +104,18 @@ export function Settings({ status, theme, onThemeChange }: SettingsProps) {
           </div>
         </div>
       </Card>
+
+      {status.log_path && (
+        <Card>
+          <div className="flex items-center gap-2 mb-3">
+            <ScrollText className="h-4 w-4 text-text-muted" />
+            <h3 className="font-medium text-sm">Log File</h3>
+          </div>
+          <div className="font-mono text-xs text-text-dim bg-surface-overlay rounded px-2 py-1.5 break-all select-all">
+            {status.log_path}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

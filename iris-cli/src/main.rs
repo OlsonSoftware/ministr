@@ -670,7 +670,7 @@ async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
         .wrap_err("proxy MCP server failed")?;
 
     // Keep the service alive until the client disconnects.
-    service.waiting().await;
+    let _ = service.waiting().await;
     Ok(())
 }
 

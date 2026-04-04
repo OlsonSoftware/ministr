@@ -182,7 +182,9 @@ impl CorpusRegistry {
         let corpora = self.corpora.read().await;
         let mut result = Vec::with_capacity(corpora.len());
         for handle in corpora.values() {
-            result.push(handle.info.read().await.clone());
+            let mut info = handle.info.read().await.clone();
+            info.active_sessions = handle.sessions.lock().await.session_count();
+            result.push(info);
         }
         result
     }
@@ -299,6 +301,7 @@ impl CorpusRegistry {
                 files_indexed: 0,
                 sections_count: 0,
                 embeddings_count: index.len(),
+                active_sessions: 0,
             }),
             storage,
             index,

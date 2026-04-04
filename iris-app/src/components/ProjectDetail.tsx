@@ -2,10 +2,11 @@ import {
   Database,
   Cpu,
   HardDrive,
-  GitBranch,
   Code2,
   FileText,
   Layers,
+  Users,
+  Clock,
 } from "lucide-react";
 import type { CorpusInfo, DaemonStatus } from "../lib/types";
 import { Card } from "./ui/card";
@@ -34,6 +35,34 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
       </Card>
 
       <Card>
+        <h3 className="font-medium text-sm mb-3">Sessions</h3>
+        {corpus.active_sessions > 0 ? (
+          <div className="flex items-center gap-2">
+            <div className="rounded-md bg-accent/10 p-1.5">
+              <Users className="h-3.5 w-3.5 text-accent" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-accent">
+                {corpus.active_sessions} active
+              </p>
+              <p className="text-xs text-text-dim">MCP agent connections</p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-text-dim">
+            No active sessions — connect an MCP client to start querying
+          </p>
+        )}
+      </Card>
+
+      <Card>
+        <h3 className="font-medium text-sm mb-3">Corpus ID</h3>
+        <div className="font-mono text-xs text-text-dim bg-surface-overlay rounded px-2 py-1.5 break-all select-all">
+          {corpus.id}
+        </div>
+      </Card>
+
+      <Card>
         <h3 className="font-medium text-sm mb-3">Embedding Model</h3>
         <div className="space-y-2 text-xs">
           <div className="flex justify-between">
@@ -43,10 +72,6 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
           <div className="flex justify-between">
             <span className="text-text-muted">Dimension</span>
             <Badge variant="muted">{status.model_dimension}d</Badge>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Memory</span>
-            <span>{status.memory_mb.toFixed(0)} MB</span>
           </div>
         </div>
       </Card>
@@ -75,7 +100,14 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
           </div>
           <div className="flex justify-between">
             <span className="text-text-muted">Uptime</span>
-            <span>{formatUptime(status.uptime_secs)}</span>
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {formatUptime(status.uptime_secs)}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Memory</span>
+            <span>{status.memory_mb.toFixed(0)} MB RSS</span>
           </div>
           <div className="flex justify-between">
             <span className="text-text-muted">Corpora</span>

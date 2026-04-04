@@ -5,6 +5,7 @@ export interface CorpusInfo {
   files_indexed: number;
   sections_count: number;
   embeddings_count: number;
+  active_sessions: number;
 }
 
 export type IndexingStatus =
@@ -19,6 +20,8 @@ export interface DaemonStatus {
   model: string;
   model_dimension: number;
   corpora: CorpusInfo[];
+  log_path?: string;
+  total_sessions: number;
 }
 
 export interface SessionInfo {

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   FolderKanban,
   Activity,
@@ -29,6 +30,20 @@ export function App() {
       setShowOnboarding(should);
     });
   }, []);
+
+  // Listen for navigation events from tray menu (e.g. "View Logs").
+  useEffect(() => {
+    const unlisten = listen<string>("navigate", (event) => {
+      const target = event.payload as Tab;
+      if (["projects", "health", "logs", "settings"].includes(target)) {
+        setTab(target);
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   const [selectedCorpusId, setSelectedCorpusId] = useState<string | null>(null);
 
   const selectedCorpus = status?.corpora.find((c) => c.id === selectedCorpusId);
@@ -235,9 +250,15 @@ function HealthView({ status }: { status: import("./lib/types").DaemonStatus }) 
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MetricCard label="Corpora" value={status.corpora.length.toString()} />
+        <MetricCard label="Sessions" value={status.total_sessions.toString()} highlight={status.total_sessions > 0 ? "active" : undefined} />
         <MetricCard label="Indexing" value={indexing.toString()} highlight={indexing > 0 ? "warning" : undefined} />
         <MetricCard label="Errors" value={errors.toString()} highlight={errors > 0 ? "danger" : undefined} />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <MetricCard label="Model" value={status.model.replace("all-MiniLM-", "MiniLM-")} />
+        <MetricCard label="Dimension" value={`${status.model_dimension}d`} />
         <MetricCard label="Uptime" value={formatUptime(status.uptime_secs)} />
+        <MetricCard label="Version" value={`v${status.version}`} />
       </div>
     </div>
   );
@@ -250,7 +271,7 @@ function MetricCard({
 }: {
   label: string;
   value: string;
-  highlight?: "warning" | "danger";
+  highlight?: "warning" | "danger" | "active";
 }) {
   return (
     <div className="rounded-lg border border-border bg-surface-raised p-3">
@@ -260,6 +281,7 @@ function MetricCard({
           "text-lg font-semibold mt-0.5",
           highlight === "warning" && "text-warning",
           highlight === "danger" && "text-danger",
+          highlight === "active" && "text-accent",
         )}
       >
         {value}

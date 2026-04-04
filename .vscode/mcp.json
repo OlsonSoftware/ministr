@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "iris": {
+      "args": [
+        "serve",
+        "--transport",
+        "stdio"
+      ],
+      "command": "iris"
+    }
+  }
+}
