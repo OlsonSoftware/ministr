@@ -33,3 +33,28 @@ pub struct SessionBudgetResponse {
     /// Utilization ratio (0.0–1.0).
     pub utilization: f64,
 }
+
+/// Prefetch cache metrics for a corpus.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PrefetchMetricsResponse {
+    /// Total cache hits.
+    pub hits: u64,
+    /// Total cache misses.
+    pub misses: u64,
+    /// Hits from sequential locality strategy.
+    pub sequential_hits: u64,
+    /// Hits from topical similarity strategy.
+    pub topical_hits: u64,
+    /// Hits from structural proximity strategy.
+    pub structural_hits: u64,
+    /// Hits from cross-session analytics strategy.
+    pub cross_session_hits: u64,
+    /// Hits from survey expansion strategy.
+    pub survey_expand_hits: u64,
+    /// Hits from agent intent prediction strategy.
+    pub agent_plan_hits: u64,
+    /// Current number of entries in the prefetch cache.
+    pub cache_size: usize,
+    /// Maximum cache capacity.
+    pub cache_capacity: usize,
+}

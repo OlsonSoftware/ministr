@@ -263,6 +263,21 @@ impl DaemonClient {
             .await
     }
 
+    // -- Prefetch --
+
+    /// Get prefetch cache metrics for a corpus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn prefetch_metrics(
+        &self,
+        corpus_id: &str,
+    ) -> Result<crate::session::PrefetchMetricsResponse, ClientError> {
+        self.get(&format!("/api/v1/corpora/{corpus_id}/prefetch"))
+            .await
+    }
+
     // -- Sessions --
 
     /// Create a new session for a corpus.

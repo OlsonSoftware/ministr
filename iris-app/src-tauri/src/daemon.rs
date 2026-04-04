@@ -3,6 +3,8 @@
 //! Exposes the iris daemon API via axum at `~/.iris/irisd.sock`.
 //! All handlers delegate to [`QueryService`] via the [`CorpusRegistry`].
 
+use std::sync::Arc;
+
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -41,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/toc", post(toc))
         .route("/api/v1/corpora/{id}/related", post(related))
         .route("/api/v1/corpora/{id}/bridge", post(bridge))
+        .route("/api/v1/corpora/{id}/prefetch", get(prefetch_metrics))
         .route("/api/v1/corpora/{id}/sessions", post(create_session))
         .route(
             "/api/v1/corpora/{id}/sessions/{sid}/budget",
@@ -218,8 +221,43 @@ async fn read_section(
     Path((id, section)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let guard = get_corpus!(&state, &id);
-    match guard[&id].service.read_section(&section).await {
-        Ok(detail) => Json(convert::section_detail(detail)).into_response(),
+    let handle = &guard[&id];
+
+    // Check prefetch cache for a warm hit.
+    let warm_detail = {
+        let mut prefetch = handle.prefetch.lock().await;
+        prefetch
+            .try_serve(&section)
+            .map(|entry| iris_core::service::SectionDetail {
+                section_id: entry.content_id.clone(),
+                heading_path: entry.heading_path.clone().unwrap_or_default(),
+                text: entry.text.clone(),
+                summary: entry.summary.clone(),
+                claims_available: entry.claims_available,
+            })
+    };
+
+    let read_result = if let Some(detail) = warm_detail {
+        tracing::debug!(section_id = %section, "daemon read: warm cache hit");
+        Ok(detail)
+    } else {
+        handle.service.read_section(&section).await
+    };
+
+    match read_result {
+        Ok(detail) => {
+            // Clone Arcs before dropping the registry guard.
+            let storage = Arc::clone(&handle.storage);
+            let prefetch = Arc::clone(&handle.prefetch);
+            let section_clone = section.clone();
+            drop(guard);
+
+            // Spawn background prefetch (don't block the response).
+            tokio::spawn(async move {
+                trigger_prefetch(&section_clone, &storage, &prefetch).await;
+            });
+            Json(convert::section_detail(detail)).into_response()
+        }
         Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
     }
 }
@@ -325,6 +363,78 @@ async fn bridge(
         .into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Prefetch
+// ---------------------------------------------------------------------------
+
+/// Run sequential + structural prefetch strategies after a read operation.
+///
+/// Runs in a spawned task so the read response isn't delayed.
+async fn trigger_prefetch(
+    section_id: &str,
+    storage: &iris_core::storage::SqliteStorage,
+    prefetch: &tokio::sync::Mutex<iris_core::session::prefetch::PrefetchEngine>,
+) {
+    use iris_core::storage::Storage;
+    use iris_core::types::SectionId;
+
+    let sid = SectionId(section_id.to_string());
+
+    // Sequential: next section + parent document summary.
+    let next_section = storage.get_next_section(&sid).await.unwrap_or(None);
+    let claims_count = if let Some(ref next) = next_section {
+        storage.list_claims(&next.id).await.map(|c| c.len()).ok()
+    } else {
+        None
+    };
+    let doc_record = storage.get_document_for_section(&sid).await.ok().flatten();
+    let doc_summary = doc_record
+        .as_ref()
+        .and_then(|doc| doc.summary.as_ref().map(|s| (doc.id.0.clone(), s.clone())));
+
+    {
+        let mut pf = prefetch.lock().await;
+        pf.prefetch_sequential(next_section, doc_summary, claims_count);
+    }
+
+    // Structural: sibling sections from the same document.
+    if let Some(ref doc) = doc_record {
+        if let Ok(all_sections) = storage.list_sections(&doc.id).await {
+            let current_pos = all_sections.iter().position(|s| s.id.0 == section_id);
+            if let Some(pos) = current_pos {
+                let start = pos.saturating_sub(2);
+                let end = (pos + 3).min(all_sections.len());
+                let siblings: Vec<_> = all_sections[start..end]
+                    .iter()
+                    .filter(|s| s.id.0 != section_id)
+                    .cloned()
+                    .collect();
+                let mut claims_counts = std::collections::HashMap::new();
+                for s in &siblings {
+                    if let Ok(claims) = storage.list_claims(&s.id).await {
+                        claims_counts.insert(s.id.0.clone(), claims.len());
+                    }
+                }
+                let mut pf = prefetch.lock().await;
+                pf.prefetch_structural(siblings, &claims_counts);
+            }
+        }
+    }
+}
+
+async fn prefetch_metrics(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let guard = get_corpus!(&state, &id);
+    let handle = &guard[&id];
+    let pf = handle.prefetch.lock().await;
+    let metrics = pf.metrics();
+    let size = pf.cache().len();
+    let capacity = pf.cache().capacity();
+    Json(convert::prefetch_metrics(&metrics, size, capacity)).into_response()
 }
 
 // ---------------------------------------------------------------------------

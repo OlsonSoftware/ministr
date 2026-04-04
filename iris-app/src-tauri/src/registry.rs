@@ -15,6 +15,7 @@ use iris_core::embedding::Embedder;
 use iris_core::index::{HnswIndex, VectorIndex, VectorIndexLoad};
 use iris_core::ingestion::IngestionProgress;
 use iris_core::service::QueryService;
+use iris_core::session::prefetch::PrefetchEngine;
 use iris_core::session::{BudgetConfig, SessionRegistry};
 use iris_core::storage::SqliteStorage;
 use sha2::{Digest, Sha256};
@@ -49,6 +50,7 @@ pub struct CorpusHandle {
     pub index: Arc<dyn VectorIndex>,
     pub service: QueryService,
     pub sessions: tokio::sync::Mutex<SessionRegistry>,
+    pub prefetch: Arc<tokio::sync::Mutex<PrefetchEngine>>,
     pub progress: Arc<IngestionProgress>,
     pub cancel: CancellationToken,
     pub data_dir: PathBuf,
@@ -212,6 +214,9 @@ impl CorpusRegistry {
             index,
             service,
             sessions: tokio::sync::Mutex::new(SessionRegistry::new(BudgetConfig::default())),
+            prefetch: Arc::new(tokio::sync::Mutex::new(
+                PrefetchEngine::with_default_capacity(),
+            )),
             progress: Arc::new(IngestionProgress::new()),
             cancel: CancellationToken::new(),
             data_dir: corpus_dir,
