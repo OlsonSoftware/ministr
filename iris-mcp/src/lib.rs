@@ -6,6 +6,7 @@
 
 pub mod a2a;
 pub mod auth;
+pub mod bundle_routes;
 pub mod elicitation;
 pub mod error;
 pub mod proxy;
