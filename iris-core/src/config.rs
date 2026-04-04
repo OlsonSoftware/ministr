@@ -355,6 +355,8 @@ pub struct CorpusSpec {
     pub include: Vec<ExternalInclude>,
     /// Git repositories to clone and index.
     pub git: Vec<GitInclude>,
+    /// Pre-built cloud index bundles to fetch instead of re-indexing.
+    pub cloud: Vec<CloudInclude>,
     /// Embedding model override for this repo.
     ///
     /// When set, overrides the global `default_model`. Use
@@ -384,6 +386,28 @@ pub struct GitInclude {
     pub paths: Option<Vec<String>>,
     /// Optional branch (defaults to the repo's default branch).
     pub branch: Option<String>,
+}
+
+/// A pre-built index bundle to fetch from a remote URL.
+///
+/// When specified, iris downloads the `.iris-index` bundle and imports it
+/// instead of cloning and re-indexing locally. This is useful for large
+/// codebases where indexing is expensive but a maintainer publishes
+/// pre-built bundles.
+///
+/// # Example
+///
+/// ```toml
+/// [[corpus.cloud]]
+/// url = "https://releases.example.com/my-project.iris-index"
+/// name = "my-project"
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CloudInclude {
+    /// URL to the `.iris-index` bundle file.
+    pub url: String,
+    /// Optional name for the imported corpus (defaults to URL filename stem).
+    pub name: Option<String>,
 }
 
 /// Resolve the effective embedding model name.
@@ -961,5 +985,42 @@ mod tests {
         "#;
         let config: RepoConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.corpus.dimension, Some(256));
+    }
+
+    #[test]
+    fn corpus_spec_cloud_includes_from_toml() {
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+
+            [[corpus.cloud]]
+            url = "https://releases.example.com/my-project.iris-index"
+            name = "my-project"
+
+            [[corpus.cloud]]
+            url = "https://cdn.example.com/shared-types.iris-index"
+        "#;
+        let config: RepoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.corpus.cloud.len(), 2);
+        assert_eq!(
+            config.corpus.cloud[0].url,
+            "https://releases.example.com/my-project.iris-index"
+        );
+        assert_eq!(config.corpus.cloud[0].name, Some("my-project".into()));
+        assert_eq!(
+            config.corpus.cloud[1].url,
+            "https://cdn.example.com/shared-types.iris-index"
+        );
+        assert!(config.corpus.cloud[1].name.is_none());
+    }
+
+    #[test]
+    fn corpus_spec_cloud_defaults_to_empty() {
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+        "#;
+        let config: RepoConfig = toml::from_str(toml).unwrap();
+        assert!(config.corpus.cloud.is_empty());
     }
 }
