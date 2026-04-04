@@ -1333,16 +1333,16 @@ phases:
 - id: CONTEXT1
   name: Context Engineering Optimizations
   tagline: Maximize KV-cache hit rates and smarter eviction for agent workflows
-  status: pending
+  status: done
   problem: Agent context windows are expensive; iris can optimize how it arranges and manages context to reduce LLM costs and improve cache utilization
   solution: Prompt-cache-aware response ordering, compressed summary cache lines, speculative prefetch from agent plan/task lists
   tasks:
   - text: Prompt-cache-aware response ordering — arrange MCP tool responses with stable prefix and varying suffix to maximize KV-cache hit rate
-    checked: false
+    checked: true
   - text: Compressed summaries as cache lines — wire iris_compress into automatic eviction so evicted sections leave behind expandable summaries
-    checked: false
+    checked: true
   - text: Speculative prefetch from agent plan — use MCP prompts/task lists to prefetch sections before they're explicitly requested
-    checked: false
+    checked: true
 - id: MEMORY1
   name: Spaced Repetition Context Management
   tagline: FSRS-based importance scoring for smarter budget management

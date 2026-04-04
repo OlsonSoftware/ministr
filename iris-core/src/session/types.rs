@@ -132,6 +132,10 @@ pub struct DeliveredItem {
     pub content_hash: String,
     /// Current compression tier in the multi-tier eviction pipeline.
     pub compression_tier: CompressionTier,
+    /// Compressed summary text, populated by automatic eviction compression.
+    /// Present when tier is Extractive or Abstractive after background compression.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub compressed_summary: Option<String>,
 }
 
 /// An agent interaction session tracking delivered content and access patterns.
@@ -255,6 +259,7 @@ impl Session {
             turn_delivered: turn,
             content_hash,
             compression_tier: CompressionTier::Full,
+            compressed_summary: None,
         };
 
         self.delivered.insert(content_id.0.clone(), item);
@@ -383,6 +388,28 @@ impl Session {
         let original_tokens = item.token_count;
         item.compression_tier = tier;
         item.token_count = new_token_count;
+        Some(original_tokens.saturating_sub(new_token_count))
+    }
+
+    /// Update a delivered item with a compressed summary and new tier.
+    ///
+    /// Used by automatic eviction compression: after an entry is bookmarked,
+    /// background compression produces a summary that upgrades the tier from
+    /// `Bookmark` to `Extractive` or `Abstractive`.
+    ///
+    /// Returns `Some(tokens_freed)` if the item exists, `None` otherwise.
+    pub fn set_compressed_summary(
+        &mut self,
+        content_id: &ContentId,
+        summary: String,
+        tier: CompressionTier,
+        new_token_count: usize,
+    ) -> Option<usize> {
+        let item = self.delivered.get_mut(&content_id.0)?;
+        let original_tokens = item.token_count;
+        item.compression_tier = tier;
+        item.token_count = new_token_count;
+        item.compressed_summary = Some(summary);
         Some(original_tokens.saturating_sub(new_token_count))
     }
 
@@ -787,6 +814,7 @@ mod tests {
             turn_delivered: 3,
             content_hash: "abc123".into(),
             compression_tier: CompressionTier::Full,
+            compressed_summary: None,
         };
         let json = serde_json::to_string(&item).unwrap();
         let back: DeliveredItem = serde_json::from_str(&json).unwrap();
@@ -1141,6 +1169,39 @@ mod tests {
     fn set_compression_tier_nonexistent_returns_none() {
         let mut session = make_session();
         let result = session.set_compression_tier(&cid("nope"), CompressionTier::Bookmark, 5);
+        assert!(result.is_none());
+    }
+
+    // --- set_compressed_summary tests ---
+
+    #[test]
+    fn set_compressed_summary_stores_and_updates_tier() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 1000, 1, "h1".into());
+
+        let freed = session.set_compressed_summary(
+            &cid("s1"),
+            "A summary of s1.".into(),
+            CompressionTier::Extractive,
+            300,
+        );
+        assert_eq!(freed, Some(700));
+
+        let item = session.get_delivered(&cid("s1")).unwrap();
+        assert_eq!(item.compression_tier, CompressionTier::Extractive);
+        assert_eq!(item.token_count, 300);
+        assert_eq!(item.compressed_summary.as_deref(), Some("A summary of s1."));
+    }
+
+    #[test]
+    fn set_compressed_summary_nonexistent_returns_none() {
+        let mut session = make_session();
+        let result = session.set_compressed_summary(
+            &cid("nope"),
+            "summary".into(),
+            CompressionTier::Extractive,
+            100,
+        );
         assert!(result.is_none());
     }
 

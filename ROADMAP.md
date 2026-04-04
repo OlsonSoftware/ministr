@@ -1213,9 +1213,9 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Prompt-cache-aware response ordering — arrange MCP tool responses with stable prefix and varying suffix to maximize KV-cache hit rate
-- [ ] Compressed summaries as cache lines — wire iris_compress into automatic eviction so evicted sections leave behind expandable summaries
-- [ ] Speculative prefetch from agent plan — use MCP prompts/task lists to prefetch sections before they're explicitly requested
+- [x] Prompt-cache-aware response ordering — arrange MCP tool responses with stable prefix and varying suffix to maximize KV-cache hit rate
+- [x] Compressed summaries as cache lines — wire iris_compress into automatic eviction so evicted sections leave behind expandable summaries
+- [x] Speculative prefetch from agent plan — use MCP prompts/task lists to prefetch sections before they're explicitly requested
 
 ---
 

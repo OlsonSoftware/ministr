@@ -349,6 +349,7 @@ mod tests {
             turn_delivered: 1,
             content_hash: "h".into(),
             compression_tier: CompressionTier::Full,
+            compressed_summary: None,
         };
 
         let freed = CompressionPipeline::estimate_tokens_freed(&item, CompressionTier::Bookmark);
@@ -364,6 +365,7 @@ mod tests {
             turn_delivered: 1,
             content_hash: "h".into(),
             compression_tier: CompressionTier::Bookmark,
+            compressed_summary: None,
         };
 
         let freed = CompressionPipeline::estimate_tokens_freed(&item, CompressionTier::Evicted);
