@@ -1372,7 +1372,7 @@ phases:
 - id: CLOUD0
   name: Cloud Index Protocol
   tagline: Instant dependency context
-  status: in_progress
+  status: done
   problem: Cloning + indexing dependencies is slow and wastes disk — every user re-indexes the same popular repos
   solution: Define a wire protocol for streaming pre-computed index data (embeddings, sections, symbols) from a cloud service into local iris
   tasks:
@@ -1389,4 +1389,4 @@ phases:
   - text: Streamable HTTP transport awareness — ensure exported index bundles work seamlessly with remote iris servers over Streamable HTTP
     checked: true
   - text: OAuth 2.1 scoped tokens for cloud index access — read-only tokens for consumers, write tokens for publishers
-    checked: false
+    checked: true

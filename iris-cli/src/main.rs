@@ -1073,9 +1073,11 @@ async fn cmd_serve_http(
     let app = if let Some(oauth_cfg) = oauth_config {
         tracing::info!("OAuth 2.1 authentication enabled");
         let store = iris_mcp::auth::OAuthStore::new(oauth_cfg);
-        let protected = iris_mcp::auth::protected_router(mcp_router, store);
-        // A2A agent card is public; task endpoints merged with protected routes
-        a2a_router.merge(protected).merge(bundle_router)
+        let protected = iris_mcp::auth::protected_router(mcp_router, store.clone());
+        // Bundle endpoints require iris:bundle:read scope when OAuth is active.
+        let protected_bundles =
+            iris_mcp::auth::scope_protected_router(bundle_router, store, "iris:bundle:read");
+        a2a_router.merge(protected).merge(protected_bundles)
     } else {
         a2a_router.merge(mcp_router).merge(bundle_router)
     };
