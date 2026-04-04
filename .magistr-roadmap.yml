@@ -1238,24 +1238,24 @@ phases:
 - id: OSS2
   name: Launch Content & Distribution
   tagline: Get the word out
-  status: pending
+  status: done
   problem: Nobody knows iris exists — need a compelling launch that reaches the right developers
   solution: Create demo content, landing page, and post to developer communities
   tasks:
   - text: 'Record 60-second terminal demo: clone squid2, show iris_bridge finding 52 Tauri command links across Rust↔TypeScript (asciinema or screen recording)'
-    checked: false
+    checked: true
   - text: 'Record 2-minute deep dive demo: .iris.toml setup → indexing → survey → symbols → definition → references → bridge trace map'
-    checked: false
+    checked: true
   - text: Create landing page (simple — GitHub Pages or single-page site) with demo GIF, feature list, install command, .iris.toml example
-    checked: false
+    checked: true
   - text: 'Write HN Show post: "Show HN: iris — MCP server that traces code across language boundaries (Rust)"'
-    checked: false
+    checked: true
   - text: Post to r/rust, r/programming, r/LocalLLaMA, r/ClaudeAI
-    checked: false
+    checked: true
   - text: 'Tweet/X thread: the squid2 bridge trace map story — "I built an MCP server that automatically maps every Tauri command across Rust↔TypeScript"'
-    checked: false
+    checked: true
   - text: 'Submit to MCP registries: awesome-mcp-servers, MCP Market, Smithery'
-    checked: false
+    checked: true
 - id: DX1
   name: Developer Experience Polish
   tagline: Two minutes to wow
