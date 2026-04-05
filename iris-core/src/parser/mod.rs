@@ -8,6 +8,7 @@
 //! Use [`detect_parser_kind`] to auto-detect the parser from a file extension,
 //! or [`create_parser`] to instantiate the appropriate parser for a [`ParserKind`].
 
+mod assembly;
 mod code;
 mod common;
 mod html;
