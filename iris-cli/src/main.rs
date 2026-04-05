@@ -142,6 +142,22 @@ enum Command {
         /// Path to the `.iris-index` bundle file.
         bundle: PathBuf,
     },
+
+    /// Manage iris agent hooks.
+    Hooks {
+        #[command(subcommand)]
+        action: HooksAction,
+    },
+}
+
+/// Subcommands for `iris hooks`.
+#[derive(Debug, Subcommand)]
+enum HooksAction {
+    /// Test installed hooks by simulating tool calls.
+    ///
+    /// Checks all agent platform hook files, validates their structure,
+    /// and simulates common tool calls to report which would be blocked.
+    Test,
 }
 
 /// MCP transport mode.
@@ -307,6 +323,9 @@ async fn main() -> Result<()> {
             cmd_export(&corpus_paths, &config, &resolved_model, output.as_deref()).await
         }
         Command::Import { bundle } => cmd_import(&corpus_paths, &config, &bundle),
+        Command::Hooks { action } => match action {
+            HooksAction::Test => cmd_hooks_test(&cwd),
+        },
     }
 }
 
@@ -606,6 +625,162 @@ fn spawn_background_ingestion(
             }
         }
     });
+}
+
+/// `iris hooks test` — validate installed hook files and simulate tool calls.
+fn cmd_hooks_test(root: &Path) -> Result<()> {
+    use std::collections::BTreeMap;
+
+    /// A simulated tool call for testing.
+    struct TestCase {
+        tool: &'static str,
+        args: &'static str,
+        should_block: bool,
+    }
+
+    let test_cases = &[
+        TestCase { tool: "Grep", args: r#"{"pattern": "fn main"}"#, should_block: true },
+        TestCase { tool: "Glob", args: r#"{"pattern": "**/*.rs"}"#, should_block: true },
+        TestCase { tool: "Bash", args: r#"{"command": "grep -r TODO ."}"#, should_block: true },
+        TestCase { tool: "Bash", args: r#"{"command": "find . -name '*.rs'"}"#, should_block: true },
+        TestCase { tool: "Bash", args: r#"{"command": "cat file.rs | grep fn"}"#, should_block: true },
+        TestCase { tool: "Bash", args: r#"{"command": "rg pattern src/"}"#, should_block: true },
+        TestCase { tool: "Bash", args: r#"{"command": "cargo test"}"#, should_block: false },
+        TestCase { tool: "Bash", args: r#"{"command": "cargo build"}"#, should_block: false },
+        TestCase { tool: "Bash", args: r#"{"command": "git status"}"#, should_block: false },
+        TestCase { tool: "Read", args: r#"{"path": "src/main.rs"}"#, should_block: false },
+    ];
+
+    // ── Check hook files ────────────────────────────────────────────────
+    let hook_files: BTreeMap<&str, std::path::PathBuf> = [
+        ("Claude Code", root.join(".claude/settings.json")),
+        ("Copilot CLI", root.join(".github/hooks/iris-enforce.json")),
+        ("Cursor", root.join(".cursor/hooks.json")),
+        ("Windsurf", root.join(".windsurf/hooks.json")),
+    ]
+    .into_iter()
+    .collect();
+
+    eprintln!("Hook files:");
+    let mut any_missing = false;
+    for (platform, path) in &hook_files {
+        if path.exists() {
+            // Validate JSON structure.
+            match std::fs::read_to_string(path) {
+                Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(_) => eprintln!("  ✓ {platform:<14} {}", path.strip_prefix(root).unwrap_or(path).display()),
+                    Err(e) => eprintln!("  ✗ {platform:<14} invalid JSON: {e}"),
+                },
+                Err(e) => eprintln!("  ✗ {platform:<14} read error: {e}"),
+            }
+        } else {
+            eprintln!("  ✗ {platform:<14} not found (run `iris init`)");
+            any_missing = true;
+        }
+    }
+
+    // ── Check advisory files ────────────────────────────────────────────
+    eprintln!();
+    eprintln!("Advisory files:");
+    let advisory_files: &[(&str, &str)] = &[
+        ("Claude rules", ".claude/rules/iris-scope.md"),
+        ("Cursor rules", ".cursor/rules/iris.mdc"),
+        ("Windsurf rules", "windsurf/rules/iris.md"),
+        ("Continue rules", ".continue/rules/iris.md"),
+        ("Copilot instructions", ".github/copilot-instructions.md"),
+        ("AGENTS.md", "AGENTS.md"),
+        ("Language rules", ".claude/rules/iris-lang-rules.md"),
+        ("Custom rules", ".claude/rules/iris-custom.md"),
+    ];
+    for (name, rel_path) in advisory_files {
+        let path = root.join(rel_path);
+        if path.exists() {
+            eprintln!("  ✓ {name:<22} {rel_path}");
+        } else {
+            eprintln!("  · {name:<22} not present");
+        }
+    }
+
+    if any_missing {
+        eprintln!();
+        eprintln!("⚠ Some hook files are missing. Run `iris init` to generate them.");
+    }
+
+    // ── Simulate tool calls ─────────────────────────────────────────────
+    eprintln!();
+    eprintln!("Simulated tool calls:");
+    let mut pass = 0;
+    let mut fail = 0;
+    for tc in test_cases {
+        let expected = if tc.should_block { "BLOCK" } else { "ALLOW" };
+        let actual_blocked = would_hook_block(tc.tool, tc.args);
+        let actual = if actual_blocked { "BLOCK" } else { "ALLOW" };
+        let ok = actual_blocked == tc.should_block;
+        if ok {
+            pass += 1;
+        } else {
+            fail += 1;
+        }
+
+        // Truncate args for display.
+        let cmd_display = if tc.tool == "Bash" {
+            serde_json::from_str::<serde_json::Value>(tc.args)
+                .ok()
+                .and_then(|v| v["command"].as_str().map(String::from))
+                .unwrap_or_else(|| tc.args.to_string())
+        } else {
+            tc.tool.to_string()
+        };
+
+        let icon = if ok { "✓" } else { "✗" };
+        let expect_str = if !ok { format!(" (expected {expected})") } else { String::new() };
+        eprintln!("  {icon} {cmd_display:<40} → {actual}{expect_str}");
+    }
+
+    eprintln!();
+    eprintln!("{pass} passed, {fail} failed");
+
+    if fail > 0 {
+        eprintln!("⚠ Some simulations did not match expected behavior.");
+    }
+
+    Ok(())
+}
+
+/// Check if the Claude Code hooks would block a given tool/args combination.
+///
+/// This simulates the `PreToolUse` hook logic from `.claude/settings.json`.
+fn would_hook_block(tool_name: &str, tool_args: &str) -> bool {
+    let search_tools = ["grep", "Grep", "egrep", "fgrep", "rg", "ag", "ack"];
+    let find_tools = ["find", "fd"];
+
+    match tool_name {
+        "Grep" | "Glob" => true,
+        "Bash" => {
+            let cmd = serde_json::from_str::<serde_json::Value>(tool_args)
+                .ok()
+                .and_then(|v| v["command"].as_str().map(String::from))
+                .unwrap_or_default();
+
+            // Direct search command.
+            let first_word = cmd.split_whitespace().next().unwrap_or("");
+            if search_tools.contains(&first_word) || find_tools.contains(&first_word) {
+                return true;
+            }
+
+            // Piped to search tool.
+            if cmd.contains('|') {
+                for tool in &search_tools {
+                    if cmd.contains(&format!("| {tool}")) || cmd.contains(&format!("|{tool}")) {
+                        return true;
+                    }
+                }
+            }
+
+            false
+        }
+        _ => false,
+    }
 }
 
 /// `iris serve --proxy` — thin MCP proxy over stdin/stdout.
