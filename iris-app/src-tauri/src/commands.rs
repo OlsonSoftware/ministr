@@ -100,6 +100,8 @@ pub async fn add_project_dialog(
 /// Remove a project and clean up its index data.
 #[tauri::command]
 pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Result<(), String> {
+    tracing::info!(corpus_id = %corpus_id, "remove_project called from frontend");
+
     // Get data_dir before unregistering.
     let data_dir = {
         let guard = state.registry.corpora().read().await;
@@ -110,7 +112,10 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
         .registry
         .unregister(&corpus_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            tracing::error!(corpus_id = %corpus_id, error = %e, "unregister failed");
+            e.to_string()
+        })?;
 
     // Clean up index data.
     if let Some(dir) = data_dir {
@@ -126,15 +131,21 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
 /// Trigger a full re-index of a corpus.
 #[tauri::command]
 pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> Result<(), String> {
+    tracing::info!(corpus_id = %corpus_id, "trigger_reindex called from frontend");
+
     // Get the paths for this corpus.
     let paths = {
         let guard = state.registry.corpora().read().await;
         match guard.get(&corpus_id) {
             Some(h) => h.info.read().await.paths.clone(),
-            None => return Err(format!("corpus '{corpus_id}' not found")),
+            None => {
+                tracing::warn!(corpus_id = %corpus_id, "trigger_reindex: corpus not found");
+                return Err(format!("corpus '{corpus_id}' not found"));
+            }
         }
     };
 
+    tracing::info!(corpus_id = %corpus_id, paths = ?paths, "trigger_reindex: unregister + re-register");
     // Unregister first, then re-register to force a fresh indexing run.
     let _ = state.registry.unregister(&corpus_id).await;
     state
