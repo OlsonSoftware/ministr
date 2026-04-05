@@ -16,5 +16,6 @@ pub use claims::{ClaimExtractor, HeuristicClaimExtractor};
 pub use relationships::{HeuristicRelationshipDetector, RelationshipDetector};
 pub use strategy::{
     AutoCompressor, CompressStrategy, ContentType, ExtractiveStrategy, SalienceWeightedStrategy,
+    StructuredClaimStrategy,
 };
 pub use summary::{ExtractiveSummaryGenerator, SummaryGenerator};
