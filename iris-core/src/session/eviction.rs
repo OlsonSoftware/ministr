@@ -215,8 +215,17 @@ impl EvictionRanker {
 
         // Recency/retrievability: use FSRS when available, else simple decay.
         // Low retrievability → high eviction score (likely forgotten).
+        // When FSRS is available, salience boosts effective stability so
+        // task-relevant items forget slower (EVICT2.1).
+        let salience = salience_for_item(&item.content_id.0, task_keywords);
         let recency = match memory {
-            Some(mem) => 1.0 - mem.retrievability(&item.content_id.0, current_turn),
+            Some(mem) => {
+                1.0 - mem.salience_adjusted_retrievability(
+                    &item.content_id.0,
+                    current_turn,
+                    salience,
+                )
+            }
             None => {
                 if current_turn == 0 {
                     0.0
@@ -239,7 +248,7 @@ impl EvictionRanker {
 
         // Task salience: invert so high-salience items score LOW (protected).
         // 1.0 = no salience (evict-friendly), 0.0 = highly salient (keep).
-        let salience_score = 1.0 - salience_for_item(&item.content_id.0, task_keywords);
+        let salience_score = 1.0 - salience;
 
         recency * RECENCY_WEIGHT
             + token_score * TOKEN_WEIGHT

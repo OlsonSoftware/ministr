@@ -1615,16 +1615,16 @@ phases:
 - id: EVICT2
   name: Salience-Aware Eviction
   tagline: Evict what matters least, not just what's oldest
-  status: pending
+  status: in_progress
   problem: Current eviction uses FSRS + recency — Zhang (AAAI 2026) shows salience-aware retention under fixed budgets outperforms simple LRU/LFU
   solution: Implement salience scoring from Zhang's algorithms, integrate with existing FSRS, A/B test via eval suite
   tasks:
   - text: 'Implement salience scoring: combine recency, frequency, semantic relevance to current task, and dependency graph position (Zhang AAAI 2026)'
-    checked: false
+    checked: true
   - text: 'Integrate salience with FSRS: salience score modulates FSRS difficulty parameter — high-salience items decay slower'
     checked: false
   - text: 'Task-aware eviction: use recent iris_survey queries and tool call patterns to infer current task context, boost related sections'
-    checked: false
+    checked: true
   - text: 'Eval suite comparison: benchmark salience-aware vs current FSRS-only eviction on context retention quality using eval harness'
     checked: false
   - text: 'Eviction explainability: iris_budget reports why each section was recommended for eviction (staleness, low salience, redundancy)'
