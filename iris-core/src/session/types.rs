@@ -18,6 +18,48 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{ContentId, Resolution};
 
+/// Cumulative session metrics for token economics tracking.
+///
+/// Tracks running totals of deliveries, evictions, compressions, and delta
+/// updates across the session lifetime. These counters increase monotonically
+/// and are never reset — they represent the full history of the session.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionMetrics {
+    /// Total number of content deliveries (including re-deliveries).
+    pub total_deliveries: u64,
+    /// Cumulative tokens delivered to the agent across all deliveries.
+    pub cumulative_tokens_delivered: u64,
+    /// Total number of explicit evictions (via `iris_evicted`).
+    pub total_evictions: u64,
+    /// Cumulative tokens freed by explicit evictions.
+    pub cumulative_tokens_evicted: u64,
+    /// Total number of compression tier transitions.
+    pub total_compressions: u64,
+    /// Cumulative tokens freed by compression operations.
+    pub cumulative_tokens_compressed: u64,
+    /// Number of delta updates (content changed since last delivery).
+    pub delta_updates: u64,
+    /// Number of deduplicated requests (content already delivered, same hash).
+    pub dedup_hits: u64,
+}
+
+impl SessionMetrics {
+    /// Net token savings: evicted + compressed.
+    #[must_use]
+    pub fn total_tokens_saved(&self) -> u64 {
+        self.cumulative_tokens_evicted + self.cumulative_tokens_compressed
+    }
+
+    /// Compression ratio: saved / delivered. Returns 0.0 if nothing delivered.
+    #[must_use]
+    pub fn compression_ratio(&self) -> f64 {
+        if self.cumulative_tokens_delivered == 0 {
+            return 0.0;
+        }
+        self.total_tokens_saved() as f64 / self.cumulative_tokens_delivered as f64
+    }
+}
+
 /// A coherence alert generated when underlying content changes.
 ///
 /// Contains lists of changed sections and stale content IDs that the agent
@@ -187,6 +229,8 @@ pub struct Session {
     stale: HashSet<String>,
     /// Pending coherence alerts waiting to be delivered to the agent.
     pending_alerts: VecDeque<CoherenceAlert>,
+    /// Cumulative token economics metrics.
+    metrics: SessionMetrics,
 }
 
 impl Session {
@@ -206,6 +250,7 @@ impl Session {
             current_turn: 0,
             stale: HashSet::new(),
             pending_alerts: VecDeque::new(),
+            metrics: SessionMetrics::default(),
         }
     }
 
@@ -234,6 +279,7 @@ impl Session {
             current_turn,
             stale: HashSet::new(),
             pending_alerts: VecDeque::new(),
+            metrics: SessionMetrics::default(),
         }
     }
 
@@ -254,6 +300,9 @@ impl Session {
         if self.trajectory.len() > MAX_TRAJECTORY_LEN {
             self.trajectory.pop_front();
         }
+
+        self.metrics.total_deliveries += 1;
+        self.metrics.cumulative_tokens_delivered += token_count as u64;
 
         let item = DeliveredItem {
             content_id: content_id.clone(),
@@ -344,7 +393,10 @@ impl Session {
     /// if it existed.
     pub fn remove_delivered(&mut self, content_id: &ContentId) -> Option<DeliveredItem> {
         self.stale.remove(&content_id.0);
-        self.delivered.remove(&content_id.0)
+        let item = self.delivered.remove(&content_id.0)?;
+        self.metrics.total_evictions += 1;
+        self.metrics.cumulative_tokens_evicted += item.token_count as u64;
+        Some(item)
     }
 
     /// Mask a delivered item to bookmark tier.
@@ -374,7 +426,12 @@ impl Session {
         item.compression_tier = CompressionTier::Bookmark;
         item.token_count = bookmark_tokens;
 
-        Some(original_tokens.saturating_sub(bookmark_tokens))
+        let freed = original_tokens.saturating_sub(bookmark_tokens);
+        if freed > 0 {
+            self.metrics.total_compressions += 1;
+            self.metrics.cumulative_tokens_compressed += freed as u64;
+        }
+        Some(freed)
     }
 
     /// Set the compression tier and token count for a delivered item.
@@ -391,7 +448,12 @@ impl Session {
         let original_tokens = item.token_count;
         item.compression_tier = tier;
         item.token_count = new_token_count;
-        Some(original_tokens.saturating_sub(new_token_count))
+        let freed = original_tokens.saturating_sub(new_token_count);
+        if freed > 0 {
+            self.metrics.total_compressions += 1;
+            self.metrics.cumulative_tokens_compressed += freed as u64;
+        }
+        Some(freed)
     }
 
     /// Update a delivered item with a compressed summary and new tier.
@@ -413,7 +475,12 @@ impl Session {
         item.compression_tier = tier;
         item.token_count = new_token_count;
         item.compressed_summary = Some(summary);
-        Some(original_tokens.saturating_sub(new_token_count))
+        let freed = original_tokens.saturating_sub(new_token_count);
+        if freed > 0 {
+            self.metrics.total_compressions += 1;
+            self.metrics.cumulative_tokens_compressed += freed as u64;
+        }
+        Some(freed)
     }
 
     /// Generate bookmark text from a heading path.
@@ -513,6 +580,24 @@ impl Session {
     #[must_use]
     pub fn has_pending_alerts(&self) -> bool {
         !self.pending_alerts.is_empty()
+    }
+
+    // --- Metrics ---
+
+    /// Cumulative token economics metrics for this session.
+    #[must_use]
+    pub fn metrics(&self) -> &SessionMetrics {
+        &self.metrics
+    }
+
+    /// Record a dedup hit (agent requested content already delivered, same hash).
+    pub fn record_dedup_hit(&mut self) {
+        self.metrics.dedup_hits += 1;
+    }
+
+    /// Record a delta update (content changed since last delivery).
+    pub fn record_delta_update(&mut self) {
+        self.metrics.delta_updates += 1;
     }
 }
 
@@ -1240,5 +1325,151 @@ mod tests {
         let item = session.get_delivered(&cid("doc")).unwrap();
         assert_eq!(item.compression_tier, CompressionTier::Evicted);
         assert_eq!(item.token_count, 0);
+    }
+
+    // --- SessionMetrics tests ---
+
+    #[test]
+    fn metrics_initial_state_is_zero() {
+        let session = make_session();
+        let m = session.metrics();
+        assert_eq!(m.total_deliveries, 0);
+        assert_eq!(m.cumulative_tokens_delivered, 0);
+        assert_eq!(m.total_evictions, 0);
+        assert_eq!(m.cumulative_tokens_evicted, 0);
+        assert_eq!(m.total_compressions, 0);
+        assert_eq!(m.cumulative_tokens_compressed, 0);
+        assert_eq!(m.delta_updates, 0);
+        assert_eq!(m.dedup_hits, 0);
+        assert_eq!(m.total_tokens_saved(), 0);
+        assert!((m.compression_ratio() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn metrics_track_deliveries() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 100, 1, "h1".into());
+        session.record_delivery(&cid("s2"), Resolution::Section, 200, 2, "h2".into());
+
+        let m = session.metrics();
+        assert_eq!(m.total_deliveries, 2);
+        assert_eq!(m.cumulative_tokens_delivered, 300);
+    }
+
+    #[test]
+    fn metrics_track_evictions() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 100, 1, "h1".into());
+        session.record_delivery(&cid("s2"), Resolution::Section, 200, 2, "h2".into());
+
+        session.remove_delivered(&cid("s1"));
+
+        let m = session.metrics();
+        assert_eq!(m.total_evictions, 1);
+        assert_eq!(m.cumulative_tokens_evicted, 100);
+        assert_eq!(m.total_tokens_saved(), 100);
+    }
+
+    #[test]
+    fn metrics_track_compression() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 500, 1, "h1".into());
+
+        let freed = session.set_compression_tier(&cid("s1"), CompressionTier::Extractive, 150);
+        assert_eq!(freed, Some(350));
+
+        let m = session.metrics();
+        assert_eq!(m.total_compressions, 1);
+        assert_eq!(m.cumulative_tokens_compressed, 350);
+        assert_eq!(m.total_tokens_saved(), 350);
+    }
+
+    #[test]
+    fn metrics_track_bookmark_compression() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 500, 1, "h1".into());
+
+        let freed = session.mask_to_bookmark(&cid("s1"), &["Chapter".into(), "Auth".into()]);
+        assert!(freed.is_some());
+        let freed = freed.unwrap();
+        assert!(freed > 490); // bookmark is tiny
+
+        let m = session.metrics();
+        assert_eq!(m.total_compressions, 1);
+        assert_eq!(m.cumulative_tokens_compressed, freed as u64);
+    }
+
+    #[test]
+    fn metrics_track_compressed_summary() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 800, 1, "h1".into());
+
+        let freed = session.set_compressed_summary(
+            &cid("s1"),
+            "Summary text".into(),
+            CompressionTier::Abstractive,
+            80,
+        );
+        assert_eq!(freed, Some(720));
+
+        let m = session.metrics();
+        assert_eq!(m.total_compressions, 1);
+        assert_eq!(m.cumulative_tokens_compressed, 720);
+    }
+
+    #[test]
+    fn metrics_compression_ratio() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 1000, 1, "h1".into());
+        session.remove_delivered(&cid("s1"));
+
+        let m = session.metrics();
+        // delivered=1000, evicted=1000, ratio=1.0
+        assert!((m.compression_ratio() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn metrics_dedup_and_delta() {
+        let mut session = make_session();
+        session.record_dedup_hit();
+        session.record_dedup_hit();
+        session.record_delta_update();
+
+        let m = session.metrics();
+        assert_eq!(m.dedup_hits, 2);
+        assert_eq!(m.delta_updates, 1);
+    }
+
+    #[test]
+    fn metrics_cumulative_across_operations() {
+        let mut session = make_session();
+
+        // Deliver 3 items
+        session.record_delivery(&cid("s1"), Resolution::Section, 100, 1, "h1".into());
+        session.record_delivery(&cid("s2"), Resolution::Section, 200, 1, "h2".into());
+        session.record_delivery(&cid("s3"), Resolution::Section, 300, 2, "h3".into());
+
+        // Compress one
+        session.set_compression_tier(&cid("s2"), CompressionTier::Extractive, 60);
+
+        // Evict one
+        session.remove_delivered(&cid("s1"));
+
+        // Record misc
+        session.record_dedup_hit();
+        session.record_delta_update();
+
+        let m = session.metrics();
+        assert_eq!(m.total_deliveries, 3);
+        assert_eq!(m.cumulative_tokens_delivered, 600);
+        assert_eq!(m.total_evictions, 1);
+        assert_eq!(m.cumulative_tokens_evicted, 100);
+        assert_eq!(m.total_compressions, 1);
+        assert_eq!(m.cumulative_tokens_compressed, 140);
+        assert_eq!(m.total_tokens_saved(), 240);
+        assert_eq!(m.dedup_hits, 1);
+        assert_eq!(m.delta_updates, 1);
+        // compression_ratio = 240/600 = 0.4
+        assert!((m.compression_ratio() - 0.4).abs() < 0.001);
     }
 }

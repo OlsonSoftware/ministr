@@ -326,6 +326,8 @@ struct BudgetResponse {
     eviction_candidates: Vec<EvictionCandidate>,
     /// Prefetch cache hit/miss metrics by strategy.
     prefetch_metrics: iris_core::session::PrefetchMetrics,
+    /// Cumulative session token economics.
+    session_metrics: SessionMetricsResponse,
     /// Pending coherence alerts (present when underlying content has changed).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     #[schemars(default)]
@@ -335,6 +337,31 @@ struct BudgetResponse {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     #[schemars(default)]
     elicitation_evicted: Vec<String>,
+}
+
+/// Cumulative token economics for a session.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct SessionMetricsResponse {
+    /// Total content deliveries (including re-deliveries).
+    total_deliveries: u64,
+    /// Cumulative tokens delivered across all deliveries.
+    cumulative_tokens_delivered: u64,
+    /// Total explicit evictions.
+    total_evictions: u64,
+    /// Cumulative tokens freed by evictions.
+    cumulative_tokens_evicted: u64,
+    /// Total compression tier transitions.
+    total_compressions: u64,
+    /// Cumulative tokens freed by compressions.
+    cumulative_tokens_compressed: u64,
+    /// Net token savings (evicted + compressed).
+    total_tokens_saved: u64,
+    /// Savings ratio (saved / delivered). 0.0 if nothing delivered.
+    compression_ratio: f64,
+    /// Delta updates (content changed since last delivery).
+    delta_updates: u64,
+    /// Dedup hits (agent re-requested already-delivered content).
+    dedup_hits: u64,
 }
 
 /// Parameters for the `iris_related` tool.
@@ -363,6 +390,12 @@ struct RelatedResponse {
 struct CompressResponse {
     /// Compressed summaries for the requested content.
     summaries: Vec<CompressedItem>,
+    /// Total original tokens across all compressed items.
+    total_original_tokens: usize,
+    /// Total compressed tokens across all compressed items.
+    total_compressed_tokens: usize,
+    /// Aggregate compression ratio (compressed / original). Lower is better.
+    compression_ratio: f64,
 }
 
 /// Parameters for the `iris_toc` tool.
@@ -1548,6 +1581,8 @@ impl IrisServer {
                             "iris_read: already delivered, skipping re-delivery"
                         );
 
+                        entry.session.record_dedup_hit();
+
                         // If agent re-requests content it should still have,
                         // treat as a fault-based eviction signal.
                         if is_re_request {
@@ -1564,6 +1599,11 @@ impl IrisServer {
                         };
                         let response = self.build_response(skip, budget_status).await;
                         return structured_result(&response);
+                    }
+
+                    // Track delta updates when content has changed since last delivery.
+                    if already_delivered && has_changed {
+                        entry.session.record_delta_update();
                     }
 
                     // Case 1: New content (or changed) — deliver full text
@@ -1837,6 +1877,7 @@ impl IrisServer {
                     .eviction_candidates(&entry.session, 5, Some(&entry.memory));
             let prefetch_metrics = prefetch.metrics();
             let alerts = entry.session.drain_alerts();
+            let metrics = entry.session.metrics().clone();
 
             drop(prefetch);
             drop(reg);
@@ -1911,6 +1952,18 @@ impl IrisServer {
                 pressure_level: pressure_str.to_string(),
                 eviction_candidates: candidates,
                 prefetch_metrics,
+                session_metrics: SessionMetricsResponse {
+                    total_deliveries: metrics.total_deliveries,
+                    cumulative_tokens_delivered: metrics.cumulative_tokens_delivered,
+                    total_evictions: metrics.total_evictions,
+                    cumulative_tokens_evicted: metrics.cumulative_tokens_evicted,
+                    total_compressions: metrics.total_compressions,
+                    cumulative_tokens_compressed: metrics.cumulative_tokens_compressed,
+                    total_tokens_saved: metrics.total_tokens_saved(),
+                    compression_ratio: metrics.compression_ratio(),
+                    delta_updates: metrics.delta_updates,
+                    dedup_hits: metrics.dedup_hits,
+                },
                 coherence_alerts: alerts,
                 elicitation_evicted,
             };
@@ -1947,6 +2000,16 @@ impl IrisServer {
                 Ok(summaries) => {
                     debug!(summary_count = summaries.len(), "iris_compress success");
 
+                    let total_original: usize =
+                        summaries.iter().map(|s| s.original_tokens).sum();
+                    let total_compressed: usize =
+                        summaries.iter().map(|s| s.compressed_tokens).sum();
+                    let ratio = if total_original > 0 {
+                        total_compressed as f64 / total_original as f64
+                    } else {
+                        0.0
+                    };
+
                     let reg = self.registry.lock().await;
                     let budget_status = reg
                         .get_session(&self.active_session_id)
@@ -1955,9 +2018,13 @@ impl IrisServer {
                         .budget_status();
                     drop(reg);
 
-                    let response = self
-                        .build_response(CompressResponse { summaries }, budget_status)
-                        .await;
+                    let compress_resp = CompressResponse {
+                        summaries,
+                        total_original_tokens: total_original,
+                        total_compressed_tokens: total_compressed,
+                        compression_ratio: ratio,
+                    };
+                    let response = self.build_response(compress_resp, budget_status).await;
                     structured_result(&response)
                 }
                 Err(e) => {
