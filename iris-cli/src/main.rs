@@ -648,6 +648,9 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
     eprintln!("  ✓ .github/hooks/          (Copilot CLI + cloud agent hooks — same enforcement)");
     eprintln!("  ✓ .cursor/rules/iris.mdc  (Cursor rules — aggressive advisory)");
     eprintln!("  ✓ .cursor/hooks.json      (Cursor hooks — blocks shell search/find/pipes)");
+    eprintln!("  ✓ .windsurf/hooks.json    (Windsurf hooks — blocks shell search/find/pipes)");
+    eprintln!("  ✓ windsurf/rules/iris.md  (Windsurf rules)");
+    eprintln!("  ✓ .continue/rules/iris.md (Continue.dev rules)");
     eprintln!("  ✓ .github/copilot-instructions.md");
     eprintln!("  ✓ AGENTS.md               (universal)");
     eprintln!();
