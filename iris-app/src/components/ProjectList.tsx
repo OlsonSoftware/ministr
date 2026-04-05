@@ -79,10 +79,11 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
     try {
       console.log("[iris] remove_project", corpusId);
       await invoke("remove_project", { corpusId });
-      console.log("[iris] remove_project OK");
-      onRefresh();
+      console.log("[iris] remove_project OK, refreshing...");
+      await onRefresh();
+      console.log("[iris] refresh after remove OK");
     } catch (err) {
-      console.error("[iris] remove_project failed:", err);
+      console.error("[iris] remove_project error:", err);
     }
   }
 
@@ -91,10 +92,11 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
     try {
       console.log("[iris] trigger_reindex", corpusId);
       await invoke("trigger_reindex", { corpusId });
-      console.log("[iris] trigger_reindex OK");
-      onRefresh();
+      console.log("[iris] trigger_reindex OK, refreshing...");
+      await onRefresh();
+      console.log("[iris] refresh after reindex OK");
     } catch (err) {
-      console.error("[iris] trigger_reindex failed:", err);
+      console.error("[iris] trigger_reindex error:", err);
     }
   }
 
