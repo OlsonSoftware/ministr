@@ -242,7 +242,16 @@ async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
 
     for path in &found_paths {
         info!(path, "auto-detected project with .iris.toml");
-        if let Err(e) = state.registry.register(std::slice::from_ref(path)).await {
+        // Read .iris.toml and resolve paths so the corpus uses the configured
+        // paths (e.g. ["src", "docs"]) rather than the bare project directory.
+        let project_dir = std::path::Path::new(path);
+        let resolved = iris_core::config::RepoConfig::discover(project_dir)
+            .ok()
+            .flatten()
+            .map(|(base, rc)| rc.resolve_local_paths(&base))
+            .unwrap_or_else(|| vec![path.clone()]);
+
+        if let Err(e) = state.registry.register(&resolved).await {
             tracing::warn!(error = %e, path, "failed to auto-register project");
         }
     }
