@@ -189,7 +189,10 @@ impl CorpusRegistry {
     ///
     /// Returns [`RegistryError::NotFound`] if the corpus does not exist.
     pub async fn unregister(&self, corpus_id: &str) -> Result<(), RegistryError> {
-        match self.corpora.write().await.remove(corpus_id) {
+        // Extract from the map first, releasing the write lock before
+        // save_manifest (which needs a read lock — same RwLock, not reentrant).
+        let removed = self.corpora.write().await.remove(corpus_id);
+        match removed {
             Some(handle) => {
                 handle.cancel.cancel();
                 info!(corpus_id, "corpus unregistered");
