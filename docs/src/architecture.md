@@ -2,19 +2,28 @@
 
 ## Workspace Structure
 
-iris is organized as a Cargo workspace with three crates:
+iris is organized as a Cargo workspace with six crates:
 
 ```
-iris-core/     — domain logic, no transport dependencies
-iris-mcp/      — MCP server, depends on iris-core + rmcp
-iris-cli/      — binary entry point, depends on iris-mcp
+iris-core/          — domain logic, no transport dependencies
+iris-api/           — shared request/response types for daemon ↔ MCP/CLI communication
+iris-daemon/        — HTTP API over Unix domain socket, depends on iris-core + iris-api
+iris-mcp/           — MCP server adapter, depends on iris-core + iris-api + rmcp
+iris-cli/           — binary entry point, depends on iris-mcp
+iris-app/src-tauri/ — Tauri v2 desktop app, depends on iris-core + iris-api + iris-daemon
 ```
 
 **iris-core** contains all business logic: parsing, indexing, embedding, search, session management, prefetching, and budget tracking. It has no knowledge of MCP or any transport protocol.
 
-**iris-mcp** adapts iris-core's service layer to the MCP protocol using the `rmcp` crate. It implements tool handlers, request routing, and response formatting.
+**iris-api** defines the shared request/response types and the `DaemonClient` for communicating with the iris daemon over a Unix domain socket (`~/.iris/irisd.sock`). It has no dependency on iris-core — it is pure types.
+
+**iris-daemon** is the long-running background service that owns the heavy resources (ONNX model, HNSW indexes, SQLite). It exposes an HTTP API over UDS for corpus management and querying.
+
+**iris-mcp** adapts iris-core's service layer to the MCP protocol using the `rmcp` crate. It implements tool handlers, request routing, and response formatting. Transitioning to a thin proxy that delegates storage/embedding/indexing to the daemon.
 
 **iris-cli** is the binary entry point. It parses CLI arguments, loads configuration, and starts the MCP server over stdio transport.
+
+**iris-app** is the Tauri v2 desktop application that wraps the daemon with a GUI dashboard and system tray icon.
 
 ## Layered Architecture
 
@@ -24,6 +33,9 @@ Each crate follows strict transport → service → storage layering:
 ┌─────────────────────────────────────────────┐
 │  Transport (iris-mcp)                       │
 │  MCP tool handlers, JSON-RPC, req/res map   │
+├─────────────────────────────────────────────┤
+│  Daemon API (iris-daemon)                   │
+│  HTTP over UDS, corpus routes, SSE streams  │
 ├─────────────────────────────────────────────┤
 │  Service (iris-core)                        │
 │  Session shadow, prefetch, budget, query    │
@@ -37,17 +49,21 @@ No layer may skip a level. Transport calls service; service calls storage. Stora
 
 ## Deployment Model
 
-iris runs as a standalone sidecar process. Any MCP-compatible agent connects to it over stdio (or optionally HTTP):
+iris uses a daemon + proxy architecture. The daemon (iris-app or iris-daemon) owns heavy resources and persists across sessions. MCP-compatible agents connect to a thin MCP proxy (iris-cli) over stdio, which delegates to the daemon via UDS:
 
 ```
 ┌──────────────────┐     MCP (JSON-RPC)     ┌──────────────────┐
-│   Any LLM Agent  │ ◄───────────────────► │      iris        │
-│                  │   tool calls/responses  │                  │
-│  Claude Code     │                         │  Rust binary     │
-│  Cursor          │                         │  ~30MB           │
-│  Custom agent    │                         │  Single process  │
-└──────────────────┘                         └────────┬─────────┘
-                                                      │
+│   Any LLM Agent  │ ◄───────────────────► │  iris-cli (MCP)  │
+│                  │   tool calls/responses  │  thin proxy      │
+│  Claude Code     │                         └────────┬─────────┘
+│  Cursor          │                                  │ UDS
+│  Custom agent    │                         ┌────────▼─────────┐
+└──────────────────┘                         │  iris-daemon     │
+                                             │  ONNX, HNSW,    │
+┌──────────────────┐                         │  SQLite, sessions│
+│  iris-app (GUI)  │─── embeds daemon ──────►│  ~/.iris/irisd   │
+│  system tray     │                         └────────┬─────────┘
+└──────────────────┘                                  │
                                              ┌────────▼─────────┐
                                              │  Document corpus │
                                              │  (local files)   │
