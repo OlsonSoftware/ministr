@@ -2,14 +2,21 @@
 //!
 //! Scores delivered content items to determine which are best candidates for
 //! eviction from the agent's context window. Items are ranked by a composite
-//! score of recency decay, token weight, resolution priority, and attention
-//! position bias.
+//! score of recency decay, token weight, resolution priority, attention
+//! position bias, contiguity bonus, and **task salience**.
+//!
+//! Task salience (EVICT2.0) uses the agent's recent search queries to infer
+//! the current task. Sections whose content IDs (typically file paths or
+//! heading paths) share keywords with recent queries get a salience boost,
+//! making them less likely to be evicted.
 //!
 //! The position factor models the "Lost in the Middle" phenomenon (Liu et al.,
 //! 2023): LLMs attend well to content at the start (primacy bias) and end
 //! (recency bias) of their context window, but poorly to content in the middle.
 //! Mid-context content is therefore a better eviction candidate — the LLM is
 //! already losing it to attention bias.
+
+use std::collections::VecDeque;
 
 use serde::Serialize;
 
@@ -30,17 +37,20 @@ pub struct EvictionCandidate {
 
 /// Ranks delivered content items by eviction priority.
 ///
-/// The ranking considers five factors:
-/// - **Recency decay** (weight 0.35): older items score higher. Uses normalized
+/// The ranking considers six factors:
+/// - **Recency decay** (weight 0.30): older items score higher. Uses normalized
 ///   turn distance: `(current_turn - turn_delivered) / current_turn`.
-/// - **Token weight** (weight 0.2): larger items are more valuable to evict,
+/// - **Token weight** (weight 0.15): larger items are more valuable to evict,
 ///   as they free more budget. Normalized against the largest item.
-/// - **Attention position** (weight 0.2): mid-context items score higher,
+/// - **Attention position** (weight 0.15): mid-context items score higher,
 ///   modeling the "Lost in the Middle" U-shaped attention bias. Content at
 ///   the start and end of the context window is better attended by the LLM.
-/// - **Resolution priority** (weight 0.15): summaries are cheap to re-fetch
+/// - **Resolution priority** (weight 0.10): summaries are cheap to re-fetch
 ///   and score higher for eviction. Sections are moderate, claims score lowest.
-/// - **Contiguity bonus** (weight 0.1): items adjacent to other high-scoring
+/// - **Task salience** (weight 0.20): items related to the agent's current
+///   task (inferred from recent queries) score *lower* — they should be kept.
+///   Unrelated items score higher for eviction (Zhang AAAI 2026 inspired).
+/// - **Contiguity bonus** (weight 0.10): items adjacent to other high-scoring
 ///   candidates get a bonus, encouraging eviction of contiguous blocks.
 ///   This preserves positional coherence in the remaining context, avoiding
 ///   the degradation caused by non-contiguous eviction (arxiv 2511.04686).
@@ -87,6 +97,10 @@ impl EvictionRanker {
     /// retrievability (sections with low predicted recall are better eviction
     /// candidates). Without a tracker, falls back to simple turn-based decay.
     ///
+    /// Task salience is automatically computed from the session's recent
+    /// queries. Items related to the current task score lower (protected
+    /// from eviction).
+    ///
     /// Returns up to `max_candidates` items sorted by descending eviction
     /// score (best candidates first).
     #[must_use]
@@ -122,6 +136,9 @@ impl EvictionRanker {
             .max()
             .unwrap_or(0);
 
+        // Extract task keywords from recent queries for salience scoring
+        let task_keywords = extract_task_keywords(session.recent_queries());
+
         // Sort items by turn_delivered for contiguity analysis
         let mut sorted_items: Vec<&DeliveredItem> = items.clone();
         sorted_items.sort_by_key(|item| item.turn_delivered);
@@ -130,7 +147,15 @@ impl EvictionRanker {
         let base_scores: Vec<f64> = sorted_items
             .iter()
             .map(|item| {
-                Self::compute_base_score(item, current_turn, max_tokens, min_turn, max_turn, memory)
+                Self::compute_base_score(
+                    item,
+                    current_turn,
+                    max_tokens,
+                    min_turn,
+                    max_turn,
+                    memory,
+                    &task_keywords,
+                )
             })
             .collect();
 
@@ -138,7 +163,8 @@ impl EvictionRanker {
             .iter()
             .zip(&base_scores)
             .map(|(item, &score)| {
-                let reason = Self::describe_reason(item, current_turn, min_turn, max_turn);
+                let reason =
+                    Self::describe_reason(item, current_turn, min_turn, max_turn, &task_keywords);
                 EvictionCandidate {
                     content_id: item.content_id.0.clone(),
                     reason,
@@ -164,9 +190,11 @@ impl EvictionRanker {
 
     /// Compute the composite eviction score for a single item.
     ///
-    /// The score combines four factors: recency decay, token weight, attention
-    /// position bias, and resolution priority. The position factor uses a
-    /// quadratic U-shaped curve to model the "Lost in the Middle" phenomenon.
+    /// The score combines five factors: recency decay, token weight, attention
+    /// position bias, resolution priority, and task salience. The position
+    /// factor uses a quadratic U-shaped curve to model the "Lost in the Middle"
+    /// phenomenon. Salience is inverted — high salience means *lower* eviction
+    /// score (protected).
     ///
     /// This returns the **base** score before contiguity bonuses are applied.
     #[allow(clippy::cast_precision_loss)]
@@ -177,11 +205,13 @@ impl EvictionRanker {
         min_turn: u32,
         max_turn: u32,
         memory: Option<&super::memory::MemoryTracker>,
+        task_keywords: &[String],
     ) -> f64 {
-        const RECENCY_WEIGHT: f64 = 0.35;
-        const TOKEN_WEIGHT: f64 = 0.2;
-        const POSITION_WEIGHT: f64 = 0.2;
-        const RESOLUTION_WEIGHT: f64 = 0.15;
+        const RECENCY_WEIGHT: f64 = 0.30;
+        const TOKEN_WEIGHT: f64 = 0.15;
+        const POSITION_WEIGHT: f64 = 0.15;
+        const RESOLUTION_WEIGHT: f64 = 0.10;
+        const SALIENCE_WEIGHT: f64 = 0.20;
 
         // Recency/retrievability: use FSRS when available, else simple decay.
         // Low retrievability → high eviction score (likely forgotten).
@@ -207,10 +237,15 @@ impl EvictionRanker {
         // Resolution priority: summaries easiest to re-fetch, claims hardest
         let resolution_score = Self::resolution_score(item);
 
+        // Task salience: invert so high-salience items score LOW (protected).
+        // 1.0 = no salience (evict-friendly), 0.0 = highly salient (keep).
+        let salience_score = 1.0 - salience_for_item(&item.content_id.0, task_keywords);
+
         recency * RECENCY_WEIGHT
             + token_score * TOKEN_WEIGHT
             + position_score * POSITION_WEIGHT
             + resolution_score * RESOLUTION_WEIGHT
+            + salience_score * SALIENCE_WEIGHT
     }
 
     /// Apply contiguity bonuses to base scores.
@@ -295,6 +330,7 @@ impl EvictionRanker {
         current_turn: u32,
         min_turn: u32,
         max_turn: u32,
+        task_keywords: &[String],
     ) -> String {
         let age = current_turn.saturating_sub(item.turn_delivered);
         let resolution = match item.resolution {
@@ -305,9 +341,15 @@ impl EvictionRanker {
             crate::types::Resolution::SymbolFull => "symbol_full",
         };
 
+        let salience = salience_for_item(&item.content_id.0, task_keywords);
         let position_score = Self::position_score(item.turn_delivered, min_turn, max_turn);
 
-        if age > 5 {
+        if salience > 0.5 {
+            format!(
+                "Task-relevant {resolution} ({} tokens) — protected by salience",
+                item.token_count
+            )
+        } else if age > 5 {
             format!(
                 "Delivered {age} turns ago ({resolution}, {} tokens) — likely stale",
                 item.token_count
@@ -329,6 +371,59 @@ impl EvictionRanker {
             )
         }
     }
+}
+
+/// Extract lowercase keywords from recent queries.
+///
+/// Splits each query into words, lowercases them, removes common stop words
+/// and short tokens, and deduplicates. This gives a cheap approximation of
+/// "what the agent is currently working on" without embedding computation.
+fn extract_task_keywords(queries: &VecDeque<String>) -> Vec<String> {
+    const STOP_WORDS: &[&str] = &[
+        "the", "a", "an", "in", "of", "to", "for", "and", "or", "is", "it", "by", "on", "at",
+        "how", "what", "where", "when", "why", "this", "that", "with", "from", "are", "was",
+        "be", "has", "had", "do", "does", "did", "not", "but", "if", "can", "all", "each",
+        "which", "their", "will", "would", "should", "could", "about", "into", "than",
+    ];
+
+    let mut seen = std::collections::HashSet::new();
+    let mut keywords = Vec::new();
+
+    for query in queries {
+        for word in query.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            let lower = word.to_lowercase();
+            if lower.len() >= 3
+                && !STOP_WORDS.contains(&lower.as_str())
+                && seen.insert(lower.clone())
+            {
+                keywords.push(lower);
+            }
+        }
+    }
+
+    keywords
+}
+
+/// Compute salience score for a content ID against task keywords.
+///
+/// Returns 0.0 (no salience) to 1.0 (highly salient). Uses keyword overlap
+/// between the content ID (typically a file path or heading path) and the
+/// extracted task keywords. This is a cheap heuristic — content IDs in iris
+/// encode semantic meaning (e.g., "session/eviction.rs#EvictionRanker").
+fn salience_for_item(content_id: &str, task_keywords: &[String]) -> f64 {
+    if task_keywords.is_empty() {
+        return 0.0;
+    }
+
+    let id_lower = content_id.to_lowercase();
+    let matching = task_keywords
+        .iter()
+        .filter(|kw| id_lower.contains(kw.as_str()))
+        .count();
+
+    // Normalize: cap at 3 matches for full salience
+    let raw = matching as f64 / 3.0_f64.min(task_keywords.len() as f64);
+    raw.min(1.0)
 }
 
 #[cfg(test)]
@@ -754,5 +849,134 @@ mod tests {
         let base_scores: Vec<f64> = Vec::new();
         EvictionRanker::apply_contiguity_bonus(&mut candidates, &base_scores);
         assert!(candidates.is_empty());
+    }
+
+    // --- Task salience tests ---
+
+    #[test]
+    fn extract_task_keywords_filters_stop_words_and_short() {
+        let queries = VecDeque::from(["find the eviction ranker in session".to_string()]);
+        let kw = extract_task_keywords(&queries);
+        assert!(kw.contains(&"eviction".to_string()));
+        assert!(kw.contains(&"ranker".to_string()));
+        assert!(kw.contains(&"session".to_string()));
+        assert!(kw.contains(&"find".to_string()));
+        assert!(!kw.contains(&"the".to_string()), "stop word should be filtered");
+        assert!(!kw.contains(&"in".to_string()), "short stop word should be filtered");
+    }
+
+    #[test]
+    fn extract_task_keywords_deduplicates() {
+        let queries = VecDeque::from([
+            "eviction ranker".to_string(),
+            "eviction scoring".to_string(),
+        ]);
+        let kw = extract_task_keywords(&queries);
+        let eviction_count = kw.iter().filter(|w| *w == "eviction").count();
+        assert_eq!(eviction_count, 1, "duplicates should be removed");
+    }
+
+    #[test]
+    fn salience_for_item_returns_zero_with_no_keywords() {
+        let score = salience_for_item("session/eviction.rs#EvictionRanker", &[]);
+        assert!((score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn salience_for_item_matches_path_segments() {
+        let kw = vec!["eviction".into(), "ranker".into(), "session".into()];
+        let score = salience_for_item("session/eviction.rs#EvictionRanker", &kw);
+        assert!(
+            score > 0.9,
+            "3+ keyword matches should yield near-1.0 salience: {score}"
+        );
+    }
+
+    #[test]
+    fn salience_for_item_partial_match() {
+        let kw = vec!["scaffold".into(), "hooks".into(), "cursor".into()];
+        let score = salience_for_item("session/eviction.rs#EvictionRanker", &kw);
+        assert!(
+            score < 0.1,
+            "no keyword overlap should yield near-0 salience: {score}"
+        );
+    }
+
+    #[test]
+    fn salience_protects_task_relevant_items_from_eviction() {
+        let mut session = make_session();
+
+        // Two items: same age, size, resolution — only path differs
+        session.record_delivery(
+            &cid("session/eviction.rs#EvictionRanker"),
+            Resolution::Section,
+            200,
+            5,
+            "h1".into(),
+        );
+        session.record_delivery(
+            &cid("readme.md#introduction"),
+            Resolution::Section,
+            200,
+            5,
+            "h2".into(),
+        );
+
+        // Record queries about eviction
+        session.record_query("eviction ranker session");
+
+        let candidates = EvictionRanker::rank(&session, 10, None);
+        let eviction_score = candidates
+            .iter()
+            .find(|c| c.content_id == "session/eviction.rs#EvictionRanker")
+            .unwrap()
+            .score;
+        let readme_score = candidates
+            .iter()
+            .find(|c| c.content_id == "readme.md#introduction")
+            .unwrap()
+            .score;
+
+        assert!(
+            readme_score > eviction_score,
+            "non-salient item should have higher eviction score: readme={readme_score}, eviction={eviction_score}"
+        );
+    }
+
+    #[test]
+    fn salience_reason_mentions_task_relevant() {
+        let mut session = make_session();
+        session.record_delivery(
+            &cid("session/eviction.rs#EvictionRanker"),
+            Resolution::Section,
+            200,
+            1,
+            "h1".into(),
+        );
+        session.record_query("eviction ranker session scoring");
+
+        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidate = &candidates[0];
+        assert!(
+            candidate.reason.contains("Task-relevant") || candidate.reason.contains("protected"),
+            "reason should mention salience protection: {}",
+            candidate.reason
+        );
+    }
+
+    #[test]
+    fn salience_with_empty_queries_behaves_like_no_salience() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+        session.record_delivery(&cid("s2"), Resolution::Section, 200, 5, "h2".into());
+
+        // No queries recorded — salience should not affect ordering
+        let candidates = EvictionRanker::rank(&session, 10, None);
+        assert_eq!(candidates.len(), 2);
+        // Older item still ranks higher
+        assert_eq!(
+            candidates[0].content_id, "s1",
+            "without queries, recency should still dominate"
+        );
     }
 }

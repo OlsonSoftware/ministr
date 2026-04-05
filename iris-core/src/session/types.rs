@@ -14,6 +14,12 @@ use std::time::Instant;
 /// Only recent history matters for this, so we cap it to bound memory usage.
 const MAX_TRAJECTORY_LEN: usize = 1000;
 
+/// Maximum number of recent queries to retain for task-awareness.
+///
+/// Used by the salience scorer to infer current task context.
+/// Kept small since only the most recent queries reflect the agent's focus.
+const MAX_RECENT_QUERIES: usize = 10;
+
 use serde::{Deserialize, Serialize};
 
 use crate::types::{ContentId, Resolution};
@@ -229,6 +235,9 @@ pub struct Session {
     stale: HashSet<String>,
     /// Pending coherence alerts waiting to be delivered to the agent.
     pending_alerts: VecDeque<CoherenceAlert>,
+    /// Recent search queries issued by the agent (sliding window).
+    /// Used for task-awareness in salience-based eviction scoring.
+    recent_queries: VecDeque<String>,
     /// Cumulative token economics metrics.
     metrics: SessionMetrics,
 }
@@ -250,6 +259,7 @@ impl Session {
             current_turn: 0,
             stale: HashSet::new(),
             pending_alerts: VecDeque::new(),
+            recent_queries: VecDeque::new(),
             metrics: SessionMetrics::default(),
         }
     }
@@ -279,6 +289,7 @@ impl Session {
             current_turn,
             stale: HashSet::new(),
             pending_alerts: VecDeque::new(),
+            recent_queries: VecDeque::new(),
             metrics: SessionMetrics::default(),
         }
     }
@@ -598,6 +609,26 @@ impl Session {
     /// Record a delta update (content changed since last delivery).
     pub fn record_delta_update(&mut self) {
         self.metrics.delta_updates += 1;
+    }
+
+    /// Record a search query issued by the agent for task-awareness.
+    ///
+    /// Maintains a sliding window of recent queries (capped at
+    /// [`MAX_RECENT_QUERIES`]) used by the salience scorer to infer
+    /// what the agent is currently working on.
+    pub fn record_query(&mut self, query: &str) {
+        if self.recent_queries.len() >= MAX_RECENT_QUERIES {
+            self.recent_queries.pop_front();
+        }
+        self.recent_queries.push_back(query.to_string());
+    }
+
+    /// Recent search queries (most recent last).
+    ///
+    /// Used by [`EvictionRanker`] for task-aware salience scoring.
+    #[must_use]
+    pub fn recent_queries(&self) -> &VecDeque<String> {
+        &self.recent_queries
     }
 }
 

@@ -1537,7 +1537,7 @@ phases:
 - id: STABLE1
   name: Stabilization & Battle-Testing
   tagline: Prove it works under real load before shipping
-  status: pending
+  status: in_progress
   problem: Code is feature-complete but many paths are untested under real multi-agent, multi-corpus conditions
   solution: Integration tests, stress tests, end-to-end daemon roundtrips, false-positive hook auditing
   tasks:
@@ -1546,30 +1546,30 @@ phases:
   - text: 'Integration test: proxy ↔ daemon roundtrip for all 15 MCP tool operations (survey, read, symbols, definition, references, toc, extract, related, bridge, compress, budget, evicted, fetch, clone, subscribe)'
     checked: false
   - text: 'Hook enforcement test suite: verify all 4 platforms (Claude Code, Copilot CLI, Cursor, VS Code) block grep/glob/find and pass legitimate commands'
-    checked: false
+    checked: true
   - text: 'Autoheal regression tests: corrupt each generated hook file, run iris init, verify heal restores correct content without touching advisory files'
-    checked: false
+    checked: true
   - text: 'Large codebase soak test: index a 100K+ file monorepo (e.g., chromium subset), measure memory, query latency, and crash resilience'
     checked: false
   - text: 'Session lifecycle test: create/use/evict/destroy sessions across daemon restarts, verify state persistence and recovery'
-    checked: false
+    checked: true
 - id: MEASURE1
   name: Token Economics & Measurement
   tagline: Measure and prove context window savings
-  status: pending
+  status: in_progress
   problem: SDL-MCP claims 70% token savings but iris has no measurement framework — can't compete on claims without data
   solution: Token counting instrumentation, before/after comparisons, benchmark suite, savings dashboard in tray app
   tasks:
   - text: 'Token counting middleware: instrument all MCP tool responses with input/output token estimates (tiktoken-rs or character-based approximation)'
-    checked: false
+    checked: true
   - text: 'Baseline comparison: measure tokens consumed by equivalent grep/glob/cat workflows vs iris_survey/iris_definition for same queries'
     checked: false
   - text: 'Session token budget dashboard: track cumulative tokens delivered, evicted, compressed per session — expose via iris_budget tool'
-    checked: false
+    checked: true
   - text: 'Compression ratio tracking: measure tokens before/after iris_compress, report ratio and estimated savings in tool response'
-    checked: false
+    checked: true
   - text: 'Prefetch hit rate metrics: track how often prefetched content is actually used in subsequent tool calls — validate predictive strategies'
-    checked: false
+    checked: true
   - text: 'Benchmark suite: automated comparison against raw grep/cat, SDL-MCP, and context7 on standardized codebases (SWE-bench repos)'
     checked: false
   - text: 'Tray app stats: show per-project token savings, session count, and compression ratios in the GUI dashboard'
@@ -1577,29 +1577,29 @@ phases:
 - id: SCHEMA1
   name: Tool Schema Optimization
   tagline: Minimize the hidden token tax from tool definitions
-  status: pending
+  status: in_progress
   problem: Hasan et al. (2026) showed MCP tool descriptions are bloated — iris has 15 tools whose schemas consume context tokens on every turn
   solution: Audit tool schemas for redundancy, compress descriptions, merge related tools, measure schema token footprint
   tasks:
   - text: 'Audit all 15 tool schemas: count tokens per tool description, identify redundant parameters, overlapping functionality'
-    checked: false
+    checked: true
   - text: 'Compress tool descriptions: rewrite for minimum tokens while preserving agent comprehension — test with Claude, GPT, Gemini'
-    checked: false
+    checked: true
   - text: 'Tool consolidation analysis: identify tools that could merge (e.g., iris_read + iris_extract, iris_symbols + iris_definition) without UX loss'
-    checked: false
+    checked: true
   - text: 'Lazy tool registration: only expose tools relevant to corpus type (skip bridge tools if no cross-language code, skip web tools if local-only)'
     checked: false
   - text: 'Schema token budget metric: report total schema overhead in iris_budget response so agents and users can see the cost'
-    checked: false
+    checked: true
 - id: SCAFFOLD2
   name: Universal Agent Onboarding
   tagline: One command to rule all agents
-  status: pending
+  status: in_progress
   problem: iris init works for this repo but needs to become the killer onboarding for any project — first-class feature, not internal tooling
   solution: Project type detection, template library, interactive wizard, hook testing CLI, docs site section
   tasks:
   - text: 'Project type detection: auto-detect monorepo, library, web-app, CLI, API from Cargo.toml/package.json/pyproject.toml — tailor generated rules'
-    checked: false
+    checked: true
   - text: 'Template library: pre-built rule sets for Rust, TypeScript, Python, Go, Java — language-specific playbooks with best practices'
     checked: false
   - text: 'Interactive wizard: iris init --interactive prompts for project type, agent platforms, hook strictness level (strict/moderate/advisory)'
@@ -1609,7 +1609,7 @@ phases:
   - text: 'Custom rule injection: support user-defined rules in .iris.toml [agent.rules] that get merged into generated config files'
     checked: false
   - text: 'Windsurf / Aider / Continue.dev support: extend scaffold to generate configs for emerging agent platforms'
-    checked: false
+    checked: true
   - text: 'Documentation: dedicated docs page for iris init — platform matrix, hook formats, customization guide, troubleshooting'
     checked: false
 - id: EVICT2
