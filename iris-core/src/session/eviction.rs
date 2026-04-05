@@ -431,9 +431,9 @@ impl EvictionRanker {
 fn extract_task_keywords(queries: &VecDeque<String>) -> Vec<String> {
     const STOP_WORDS: &[&str] = &[
         "the", "a", "an", "in", "of", "to", "for", "and", "or", "is", "it", "by", "on", "at",
-        "how", "what", "where", "when", "why", "this", "that", "with", "from", "are", "was",
-        "be", "has", "had", "do", "does", "did", "not", "but", "if", "can", "all", "each",
-        "which", "their", "will", "would", "should", "could", "about", "into", "than",
+        "how", "what", "where", "when", "why", "this", "that", "with", "from", "are", "was", "be",
+        "has", "had", "do", "does", "did", "not", "but", "if", "can", "all", "each", "which",
+        "their", "will", "would", "should", "could", "about", "into", "than",
     ];
 
     let mut seen = std::collections::HashSet::new();
@@ -935,8 +935,14 @@ mod tests {
         assert!(kw.contains(&"ranker".to_string()));
         assert!(kw.contains(&"session".to_string()));
         assert!(kw.contains(&"find".to_string()));
-        assert!(!kw.contains(&"the".to_string()), "stop word should be filtered");
-        assert!(!kw.contains(&"in".to_string()), "short stop word should be filtered");
+        assert!(
+            !kw.contains(&"the".to_string()),
+            "stop word should be filtered"
+        );
+        assert!(
+            !kw.contains(&"in".to_string()),
+            "short stop word should be filtered"
+        );
     }
 
     #[test]
@@ -1064,7 +1070,10 @@ mod tests {
 
         let candidates = EvictionRanker::rank(&session, 10, None);
         for c in &candidates {
-            let factors = c.factors.as_ref().expect("factors should always be present");
+            let factors = c
+                .factors
+                .as_ref()
+                .expect("factors should always be present");
             assert!(factors.recency >= 0.0 && factors.recency <= 1.0);
             assert!(factors.token_weight >= 0.0 && factors.token_weight <= 1.0);
             assert!(factors.position >= 0.0 && factors.position <= 1.0);
@@ -1092,7 +1101,8 @@ mod tests {
             + factors.contiguity;
         assert!(
             (weighted - c.score).abs() < 0.01,
-            "weighted factor sum {weighted} should approximate score {}", c.score
+            "weighted factor sum {weighted} should approximate score {}",
+            c.score
         );
     }
 }

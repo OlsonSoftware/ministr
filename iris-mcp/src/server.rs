@@ -902,8 +902,7 @@ fn apply_response_size_guard(mut v: serde_json::Value) -> serde_json::Value {
 #[prompt_handler]
 impl ServerHandler for IrisServer {
     fn get_info(&self) -> ServerInfo {
-        let default_instructions =
-            "iris is a context cache controller for LLM agents. Use iris_toc to get \
+        let default_instructions = "iris is a context cache controller for LLM agents. Use iris_toc to get \
              a structural overview of the indexed corpus, iris_survey to search for \
              relevant content, iris_read to retrieve full section text, iris_extract \
              to get atomic claims from a section, iris_related to follow dependency \
@@ -2021,8 +2020,7 @@ impl IrisServer {
                 Ok(summaries) => {
                     debug!(summary_count = summaries.len(), "iris_compress success");
 
-                    let total_original: usize =
-                        summaries.iter().map(|s| s.original_tokens).sum();
+                    let total_original: usize = summaries.iter().map(|s| s.original_tokens).sum();
                     let total_compressed: usize =
                         summaries.iter().map(|s| s.compressed_tokens).sum();
                     let ratio = if total_original > 0 {
@@ -4309,17 +4307,16 @@ fn has_code_files_in_dir(root: &std::path::Path) -> bool {
     let mut checked = 0u32;
 
     while let Some((dir, depth)) = queue.pop_front() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name();
             let name_str = name.to_str().unwrap_or("");
 
             if path.is_dir() {
-                if depth < 6
-                    && !name_str.starts_with('.')
-                    && !SKIP_DIRS.contains(&name_str)
-                {
+                if depth < 6 && !name_str.starts_with('.') && !SKIP_DIRS.contains(&name_str) {
                     queue.push_back((path, depth + 1));
                 }
             } else if path.is_file() {
@@ -4342,22 +4339,64 @@ fn has_code_files_in_dir(root: &std::path::Path) -> bool {
 fn build_instructions(router: &ToolRouter<IrisServer>) -> String {
     // Map of tool name → description fragment for the instructions string
     let tool_descriptions: &[(&str, &str)] = &[
-        ("iris_toc", "iris_toc to get a structural overview of the indexed corpus"),
+        (
+            "iris_toc",
+            "iris_toc to get a structural overview of the indexed corpus",
+        ),
         ("iris_survey", "iris_survey to search for relevant content"),
         ("iris_read", "iris_read to retrieve full section text"),
-        ("iris_extract", "iris_extract to get atomic claims from a section"),
-        ("iris_related", "iris_related to follow dependency chains between claims"),
-        ("iris_budget", "iris_budget to check context budget status and get eviction recommendations"),
-        ("iris_compress", "iris_compress to generate compressed summaries of content you want to evict"),
-        ("iris_evicted", "iris_evicted to signal when content has been dropped from your context window"),
-        ("iris_fetch", "iris_fetch to fetch web content by URL and add it to the corpus"),
-        ("iris_refresh", "iris_refresh to check cached web sources for staleness and re-fetch changed content"),
-        ("iris_clone", "iris_clone to clone a git repository and index its content"),
-        ("iris_task", "iris_task to poll background fetch/clone tasks (deprecated — prefer MCP tasks/get)"),
-        ("iris_symbols", "iris_symbols to search the code symbol index"),
-        ("iris_definition", "iris_definition to get the full source definition of a symbol"),
-        ("iris_references", "iris_references to find all references to a symbol"),
-        ("iris_bridge", "iris_bridge to query cross-language bridge links"),
+        (
+            "iris_extract",
+            "iris_extract to get atomic claims from a section",
+        ),
+        (
+            "iris_related",
+            "iris_related to follow dependency chains between claims",
+        ),
+        (
+            "iris_budget",
+            "iris_budget to check context budget status and get eviction recommendations",
+        ),
+        (
+            "iris_compress",
+            "iris_compress to generate compressed summaries of content you want to evict",
+        ),
+        (
+            "iris_evicted",
+            "iris_evicted to signal when content has been dropped from your context window",
+        ),
+        (
+            "iris_fetch",
+            "iris_fetch to fetch web content by URL and add it to the corpus",
+        ),
+        (
+            "iris_refresh",
+            "iris_refresh to check cached web sources for staleness and re-fetch changed content",
+        ),
+        (
+            "iris_clone",
+            "iris_clone to clone a git repository and index its content",
+        ),
+        (
+            "iris_task",
+            "iris_task to poll background fetch/clone tasks (deprecated — prefer MCP tasks/get)",
+        ),
+        (
+            "iris_symbols",
+            "iris_symbols to search the code symbol index",
+        ),
+        (
+            "iris_definition",
+            "iris_definition to get the full source definition of a symbol",
+        ),
+        (
+            "iris_references",
+            "iris_references to find all references to a symbol",
+        ),
+        (
+            "iris_bridge",
+            "iris_bridge to query cross-language bridge links",
+        ),
     ];
 
     let mut parts: Vec<&str> = Vec::new();

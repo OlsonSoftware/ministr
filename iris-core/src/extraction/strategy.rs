@@ -244,9 +244,9 @@ impl CompressionQuality {
 /// Extract key terms from text: lowercase words ≥4 chars, excluding stop words.
 fn extract_key_terms(text: &str) -> std::collections::HashSet<String> {
     const STOP_WORDS: &[&str] = &[
-        "this", "that", "with", "from", "have", "been", "were", "will", "would", "could",
-        "should", "about", "their", "there", "which", "where", "when", "what", "into", "also",
-        "each", "than", "more", "some", "such", "does", "them", "then", "very", "just",
+        "this", "that", "with", "from", "have", "been", "were", "will", "would", "could", "should",
+        "about", "their", "there", "which", "where", "when", "what", "into", "also", "each",
+        "than", "more", "some", "such", "does", "them", "then", "very", "just",
     ];
 
     text.split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -472,7 +472,8 @@ mod tests {
     #[test]
     fn salience_weighted_falls_back_without_keywords() {
         let strategy = SalienceWeightedStrategy::new(vec![], 1.0);
-        let text = "Rust is great. Python is popular. Go is fast. Java is enterprise. C is low-level.";
+        let text =
+            "Rust is great. Python is popular. Go is fast. Java is enterprise. C is low-level.";
         let result = strategy.compress(text, 2);
         assert!(result.is_some());
     }
@@ -628,9 +629,21 @@ mod tests {
                          Many developers enjoy using Rust for systems programming.";
         let compressed = "iris MCP server uses ONNX embeddings. Borrow checker ensures safety.";
         let q = CompressionQuality::evaluate(original, compressed);
-        assert!(q.ratio < 0.5, "should show significant compression: {}", q.ratio);
-        assert!(q.retention > 0.0, "should retain some key terms: {}", q.retention);
-        assert!(q.score > 0.3, "combined score should be reasonable: {}", q.score);
+        assert!(
+            q.ratio < 0.5,
+            "should show significant compression: {}",
+            q.ratio
+        );
+        assert!(
+            q.retention > 0.0,
+            "should retain some key terms: {}",
+            q.retention
+        );
+        assert!(
+            q.score > 0.3,
+            "combined score should be reasonable: {}",
+            q.score
+        );
     }
 
     #[test]

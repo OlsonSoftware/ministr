@@ -248,7 +248,10 @@ async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
         let resolved = iris_core::config::RepoConfig::discover(project_dir)
             .ok()
             .flatten()
-            .map_or_else(|| vec![path.clone()], |(base, rc)| rc.resolve_local_paths(&base));
+            .map_or_else(
+                || vec![path.clone()],
+                |(base, rc)| rc.resolve_local_paths(&base),
+            );
 
         if let Err(e) = state.registry.register(&resolved).await {
             tracing::warn!(error = %e, path, "failed to auto-register project");

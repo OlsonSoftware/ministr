@@ -4,8 +4,8 @@ use std::path::Path;
 
 use tracing::{debug, info, warn};
 
-use crate::code::bridge::linker::{BridgeLinker, SourceFile as BridgeSourceFile};
 use crate::code::bridge::BridgeEndpoint;
+use crate::code::bridge::linker::{BridgeLinker, SourceFile as BridgeSourceFile};
 use crate::code::package_graph::PackageGraph;
 use crate::code::refs::extract_refs;
 use crate::code::{AstParser, GrammarRegistry, extract_symbols, generic_extract_symbols};
@@ -379,9 +379,7 @@ pub(super) async fn resolve_and_store_refs<S: Storage + ?Sized>(
     }
 
     if resolved.is_empty() {
-        return Ok(ResolveResult {
-            pending,
-        });
+        return Ok(ResolveResult { pending });
     }
 
     let mut inserted = 0usize;

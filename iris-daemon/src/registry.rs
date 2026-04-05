@@ -391,11 +391,7 @@ fn project_root_from_paths(paths: &[String]) -> String {
     if paths.len() == 1 {
         // Single path: go up one level (src → project root).
         let p = std::path::Path::new(&paths[0]);
-        return p
-            .parent()
-            .unwrap_or(p)
-            .to_string_lossy()
-            .into_owned();
+        return p.parent().unwrap_or(p).to_string_lossy().into_owned();
     }
     // Multi-path: find common ancestor.
     let segments: Vec<Vec<&str>> = paths
@@ -441,10 +437,7 @@ mod tests {
 
     #[test]
     fn project_root_deeply_nested() {
-        let paths = vec![
-            "/a/b/c/src/lib".to_string(),
-            "/a/b/c/src/bin".to_string(),
-        ];
+        let paths = vec!["/a/b/c/src/lib".to_string(), "/a/b/c/src/bin".to_string()];
         assert_eq!(project_root_from_paths(&paths), "/a/b/c/src");
     }
 

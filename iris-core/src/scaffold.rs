@@ -23,7 +23,7 @@ use std::path::Path;
 use tracing::{debug, info};
 
 use crate::code::bridge::detector::FrameworkDetector;
-use crate::config::{RepoConfig, CORPUS_CONFIG_FILENAME};
+use crate::config::{CORPUS_CONFIG_FILENAME, RepoConfig};
 
 /// Result of a scaffold operation.
 #[derive(Debug, Clone, Copy, Default)]
@@ -93,8 +93,7 @@ pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
 
     // ── GitHub Copilot: .github/copilot-instructions.md (advisory) ──────
     let github_dir = project_root.join(".github");
-    let copilot_files: &[(&str, &str)] =
-        &[("copilot-instructions.md", COPILOT_INSTRUCTIONS)];
+    let copilot_files: &[(&str, &str)] = &[("copilot-instructions.md", COPILOT_INSTRUCTIONS)];
     result.merge(write_files(&github_dir, copilot_files, false));
 
     // ── Windsurf: .windsurf/hooks.json (hooks — autoheal) ───────────────
@@ -271,10 +270,18 @@ fn write_claude_hooks(project_root: &Path) -> ScaffoldResult {
         Ok(()) => {
             if is_heal {
                 info!(file = %settings_path.display(), "healed stale Claude Code hooks");
-                ScaffoldResult { created: 0, healed: 1, ..Default::default() }
+                ScaffoldResult {
+                    created: 0,
+                    healed: 1,
+                    ..Default::default()
+                }
             } else {
                 debug!(file = %settings_path.display(), "wrote Claude Code hooks");
-                ScaffoldResult { created: 1, healed: 0, ..Default::default() }
+                ScaffoldResult {
+                    created: 1,
+                    healed: 0,
+                    ..Default::default()
+                }
             }
         }
         Err(e) => {
@@ -345,9 +352,10 @@ fn deny_hook(if_pattern: &str, reason: &str) -> serde_json::Value {
     });
 
     if !if_pattern.is_empty() {
-        hook.as_object_mut()
-            .unwrap()
-            .insert("if".to_string(), serde_json::Value::String(if_pattern.to_string()));
+        hook.as_object_mut().unwrap().insert(
+            "if".to_string(),
+            serde_json::Value::String(if_pattern.to_string()),
+        );
     }
 
     hook
@@ -1018,13 +1026,15 @@ mod tests {
         let hooks = val["hooks"]["PreToolUse"].as_array().unwrap();
         assert!(hooks.len() >= 2); // Grep|Glob + Bash matchers
         // Verify the Bash matcher has hooks with "if" patterns
-        let bash_matcher = hooks.iter().find(|h| {
-            h["matcher"].as_str() == Some("Bash")
-        }).unwrap();
+        let bash_matcher = hooks
+            .iter()
+            .find(|h| h["matcher"].as_str() == Some("Bash"))
+            .unwrap();
         assert!(bash_matcher["hooks"].as_array().unwrap().len() >= 6);
 
         // Verify Copilot CLI hooks contain preToolUse (camelCase) and version
-        let copilot = std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap();
+        let copilot =
+            std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap();
         let cval: serde_json::Value = serde_json::from_str(&copilot).unwrap();
         assert_eq!(cval["version"], 1);
         assert!(cval["hooks"]["preToolUse"].is_array());
@@ -1146,7 +1156,8 @@ mod tests {
         assert_eq!(second.healed, 3); // All three hook files healed.
 
         // Verify content was restored.
-        let copilot = std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap();
+        let copilot =
+            std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap();
         let cval: serde_json::Value = serde_json::from_str(&copilot).unwrap();
         assert!(cval["hooks"]["preToolUse"].is_array());
     }
@@ -1178,10 +1189,7 @@ mod tests {
         let bash_hooks = bash["hooks"].as_array().unwrap();
 
         // Collect all "if" patterns from the Bash hooks.
-        let patterns: Vec<&str> = bash_hooks
-            .iter()
-            .filter_map(|h| h["if"].as_str())
-            .collect();
+        let patterns: Vec<&str> = bash_hooks.iter().filter_map(|h| h["if"].as_str()).collect();
 
         // Should block direct search commands.
         for cmd in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
@@ -1242,8 +1250,14 @@ mod tests {
         let bash = hook["bash"].as_str().unwrap();
 
         // Should block built-in Grep/Glob tool names.
-        assert!(bash.contains("grep|Grep)"), "bash should block grep/Grep tool");
-        assert!(bash.contains("glob|Glob)"), "bash should block glob/Glob tool");
+        assert!(
+            bash.contains("grep|Grep)"),
+            "bash should block grep/Grep tool"
+        );
+        assert!(
+            bash.contains("glob|Glob)"),
+            "bash should block glob/Glob tool"
+        );
 
         // Should block shell search commands.
         for cmd in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
@@ -1280,9 +1294,7 @@ mod tests {
         let val: serde_json::Value = serde_json::from_str(CURSOR_HOOKS).unwrap();
         assert_eq!(val["version"], 1, "Cursor hooks must use version: 1");
 
-        let hooks = val["hooks"]["beforeShellExecution"]
-            .as_array()
-            .unwrap();
+        let hooks = val["hooks"]["beforeShellExecution"].as_array().unwrap();
         assert_eq!(hooks.len(), 1, "single beforeShellExecution hook");
 
         let cmd = hooks[0]["command"].as_str().unwrap();
@@ -1320,10 +1332,16 @@ mod tests {
 
         let cmd = hooks[0]["command"].as_str().unwrap();
         assert!(cmd.starts_with("bash -c"), "must be a bash -c command");
-        assert!(hooks[0]["show_output"].as_bool().unwrap(), "show_output must be true");
+        assert!(
+            hooks[0]["show_output"].as_bool().unwrap(),
+            "show_output must be true"
+        );
 
         // Should extract command from tool_info.command_line.
-        assert!(cmd.contains("tool_info.command_line"), "should read tool_info.command_line");
+        assert!(
+            cmd.contains("tool_info.command_line"),
+            "should read tool_info.command_line"
+        );
 
         // Should block search commands.
         for tool in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
@@ -1335,7 +1353,10 @@ mod tests {
         assert!(cmd.contains("fd"), "should block fd");
 
         // Should block piped search.
-        assert!(cmd.contains("(grep|rg|ag|ack)"), "should detect piped search");
+        assert!(
+            cmd.contains("(grep|rg|ag|ack)"),
+            "should detect piped search"
+        );
 
         // Exit code 2 to block (Windsurf convention).
         assert!(cmd.contains("exit 2"), "should use exit 2 to block");
@@ -1544,7 +1565,10 @@ mod tests {
             .unwrap()
             .modified()
             .unwrap();
-        assert_eq!(copilot_mtime, copilot_mtime2, "unchanged file should not be rewritten");
+        assert_eq!(
+            copilot_mtime, copilot_mtime2,
+            "unchanged file should not be rewritten"
+        );
     }
 
     /// Verify that completely deleting a hook file causes re-creation (not heal).
@@ -1665,7 +1689,10 @@ mod tests {
         scaffold_agent_config(root);
 
         let path = root.join(".claude/rules/iris-lang-rules.md");
-        assert!(path.exists(), "iris-lang-rules.md should be created for Rust projects");
+        assert!(
+            path.exists(),
+            "iris-lang-rules.md should be created for Rust projects"
+        );
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("## Rust"));
         assert!(content.contains("Result<T, E>"));

@@ -131,7 +131,10 @@ pub fn strip_root_prefix(path: &str) -> Option<&str> {
 }
 
 /// Determine which source root a file belongs to (longest prefix match).
-pub(super) fn find_root_for_file<'a>(file: &Path, roots: &'a [(PathBuf, String)]) -> Option<&'a str> {
+pub(super) fn find_root_for_file<'a>(
+    file: &Path,
+    roots: &'a [(PathBuf, String)],
+) -> Option<&'a str> {
     let canonical = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
     let mut best: Option<(&str, usize)> = None;
     for (root_path, root_id) in roots {

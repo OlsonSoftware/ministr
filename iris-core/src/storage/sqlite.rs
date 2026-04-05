@@ -2122,8 +2122,7 @@ enum TokenMode {
     Or,
 }
 
-const SYMBOL_COLUMNS: &str =
-    "id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end, cyclomatic_complexity";
+const SYMBOL_COLUMNS: &str = "id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end, cyclomatic_complexity";
 
 /// Build and execute a symbol query against the database.
 fn query_symbols(
@@ -2447,7 +2446,11 @@ mod tests {
             ..Default::default()
         };
         let results = storage.list_symbols(&filter).await.unwrap();
-        assert_eq!(results.len(), 0, "name filter should not search doc_comment");
+        assert_eq!(
+            results.len(),
+            0,
+            "name filter should not search doc_comment"
+        );
 
         // "create" appears in the name — should match.
         let filter = SymbolFilter {

@@ -554,7 +554,12 @@ mod tests {
         let source = std::fs::read("src/ingestion/pipeline.rs").expect("cannot read pipeline.rs");
         let mut parser = AstParser::new();
         let tree = parser.parse(&source).unwrap();
-        let symbols = extract_symbols(&tree, &source, "src/ingestion/pipeline.rs", &["ingestion", "pipeline"]);
+        let symbols = extract_symbols(
+            &tree,
+            &source,
+            "src/ingestion/pipeline.rs",
+            &["ingestion", "pipeline"],
+        );
 
         // Should have IngestionStats struct
         let stats = symbols
