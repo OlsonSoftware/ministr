@@ -158,6 +158,32 @@ impl MemoryTracker {
             .map_or(0.0, |s| s.retrievability(current_turn))
     }
 
+    /// Get salience-adjusted retrievability.
+    ///
+    /// When `salience` > 0, the effective stability is boosted before computing
+    /// retrievability: `S_eff = S * (1 + 2 * salience)`. This means high-salience
+    /// items forget slower without mutating the underlying memory state.
+    ///
+    /// Returns 0.0 for untracked sections (salience alone does not create memory).
+    #[must_use]
+    pub fn salience_adjusted_retrievability(
+        &self,
+        content_id: &str,
+        current_turn: u32,
+        salience: f64,
+    ) -> f64 {
+        self.states.get(content_id).map_or(0.0, |s| {
+            if salience <= 0.0 {
+                return s.retrievability(current_turn);
+            }
+            // Boost stability by up to 3x at full salience
+            let boosted_stability = s.stability * (1.0 + 2.0 * salience);
+            let t = f64::from(current_turn.saturating_sub(s.last_access_turn));
+            let s_eff = boosted_stability.max(MIN_STABILITY);
+            (1.0 + t / (9.0 * s_eff)).powi(-1)
+        })
+    }
+
     /// Get the memory state for a section, if tracked.
     #[must_use]
     pub fn get_state(&self, content_id: &str) -> Option<&MemoryState> {
@@ -354,5 +380,58 @@ mod tests {
             state.stability
         );
         assert_eq!(state.last_access_turn, 0, "turn should reset to 0");
+    }
+
+    // --- Salience-adjusted retrievability tests ---
+
+    #[test]
+    fn salience_adjusted_equals_plain_at_zero_salience() {
+        let mut tracker = MemoryTracker::new();
+        tracker.record_access("s1", 0, AccessRating::Good);
+
+        let plain = tracker.retrievability("s1", 10);
+        let adjusted = tracker.salience_adjusted_retrievability("s1", 10, 0.0);
+        assert!(
+            (plain - adjusted).abs() < f64::EPSILON,
+            "zero salience should match plain: {plain} vs {adjusted}"
+        );
+    }
+
+    #[test]
+    fn salience_adjusted_boosts_retrievability() {
+        let mut tracker = MemoryTracker::new();
+        tracker.record_access("s1", 0, AccessRating::Good);
+
+        let plain = tracker.retrievability("s1", 10);
+        let boosted = tracker.salience_adjusted_retrievability("s1", 10, 1.0);
+        assert!(
+            boosted > plain,
+            "full salience should boost R: plain={plain}, boosted={boosted}"
+        );
+    }
+
+    #[test]
+    fn salience_adjusted_returns_zero_for_unknown() {
+        let tracker = MemoryTracker::new();
+        let r = tracker.salience_adjusted_retrievability("unknown", 10, 1.0);
+        assert!(
+            (r - 0.0).abs() < f64::EPSILON,
+            "untracked section should return 0 even with salience"
+        );
+    }
+
+    #[test]
+    fn salience_boost_is_proportional() {
+        let mut tracker = MemoryTracker::new();
+        tracker.record_access("s1", 0, AccessRating::Good);
+
+        let low = tracker.salience_adjusted_retrievability("s1", 10, 0.2);
+        let mid = tracker.salience_adjusted_retrievability("s1", 10, 0.5);
+        let high = tracker.salience_adjusted_retrievability("s1", 10, 1.0);
+
+        assert!(
+            high > mid && mid > low,
+            "boost should be proportional: low={low}, mid={mid}, high={high}"
+        );
     }
 }
