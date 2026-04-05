@@ -73,9 +73,11 @@ impl super::DocumentParser for CodeParser {
             let mut ast_parser = AstParser::with_language(ts_lang)?;
             ast_parser.parse(source)?
         } else {
-            // No grammar available: use Rust parser as fallback (will produce
-            // a parse tree with errors, but the generic extractor can still
-            // find some symbols via heuristics). For now, return an empty tree.
+            // No tree-sitter grammar available.
+            // Use heuristic assembly parser for assembly files.
+            if super::assembly::is_assembly_extension(ext) {
+                return Ok(super::assembly::parse_assembly(path, content));
+            }
             return Ok(build_fallback_tree(path, content));
         };
 
