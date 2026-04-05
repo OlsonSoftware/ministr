@@ -15,14 +15,8 @@ export function SessionDashboard({ status }: Props) {
     let cancelled = false;
     async function load() {
       try {
-        const all: SessionDetail[] = [];
-        for (const c of status.corpora) {
-          const s = await invoke<SessionDetail[]>("list_sessions", {
-            corpusId: c.id,
-          });
-          all.push(...s);
-        }
-        if (!cancelled) setSessions(all);
+        const s = await invoke<SessionDetail[]>("list_sessions");
+        if (!cancelled) setSessions(s);
       } catch {
         /* ignore */
       }
@@ -33,7 +27,7 @@ export function SessionDashboard({ status }: Props) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [status.corpora]);
+  }, []);
 
   return (
     <div className="space-y-3">

@@ -8,6 +8,7 @@
 paths = [
     # Source code
     "iris-api/src",
+    "iris-app/src",
     "iris-app/src-tauri/src",
     "iris-cli/src",
     "iris-core/src",
