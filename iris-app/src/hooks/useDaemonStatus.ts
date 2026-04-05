@@ -12,6 +12,7 @@ export function useDaemonStatus(intervalMs = 2000) {
       setStatus(s);
       setError(null);
     } catch (e) {
+      console.error("[iris] daemon_status invoke failed:", e);
       setError(String(e));
     }
   }, []);
