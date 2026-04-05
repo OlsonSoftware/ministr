@@ -510,9 +510,13 @@ pub async fn symbol_references(
 pub struct IngestionProgressInfo {
     pub corpus_id: String,
     pub status: u8,
+    pub phase: String,
     pub files_total: usize,
     pub files_done: usize,
+    pub sections_done: usize,
+    pub embeddings_total: usize,
     pub embeddings_done: usize,
+    pub current_file: String,
 }
 
 /// Get ingestion progress for all corpora.
@@ -526,9 +530,13 @@ pub async fn ingestion_progress(
         .map(|(corpus_id, handle)| IngestionProgressInfo {
             corpus_id: corpus_id.clone(),
             status: handle.progress.status(),
+            phase: handle.progress.phase().as_str().to_string(),
             files_total: handle.progress.files_total(),
             files_done: handle.progress.files_done(),
+            sections_done: handle.progress.sections_done(),
+            embeddings_total: handle.progress.embeddings_total(),
             embeddings_done: handle.progress.embeddings_done(),
+            current_file: handle.progress.current_file(),
         })
         .collect())
 }

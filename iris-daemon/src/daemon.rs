@@ -521,10 +521,13 @@ fn progress_stream(
             };
             let event = iris_api::corpus::IngestionProgressEvent {
                 status: status.to_string(),
+                phase: progress.phase().as_str().to_string(),
                 files_total: progress.files_total(),
                 files_done: progress.files_done(),
+                sections_done: progress.sections_done(),
                 embeddings_total: progress.embeddings_total(),
                 embeddings_done: progress.embeddings_done(),
+                current_file: progress.current_file(),
             };
             if let Ok(json) = serde_json::to_string(&event) {
                 yield Ok(Event::default().data(json));

@@ -101,6 +101,48 @@ pub struct ContentIngestionStats {
 
 // ── Progress tracker ─────────────────────────────────────────────────────────
 
+/// Ingestion phase for granular progress tracking.
+///
+/// These correspond to the major stages of the ingestion pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum IngestionPhase {
+    /// Waiting to start.
+    Idle = 0,
+    /// Walking directories to discover files.
+    Discovering = 1,
+    /// Parsing files, extracting sections and symbols.
+    Parsing = 2,
+    /// Generating embeddings for sections.
+    Embedding = 3,
+    /// Resolving cross-references and cleaning up stale data.
+    Finalizing = 4,
+}
+
+impl IngestionPhase {
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Discovering,
+            2 => Self::Parsing,
+            3 => Self::Embedding,
+            4 => Self::Finalizing,
+            _ => Self::Idle,
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Discovering => "discovering",
+            Self::Parsing => "parsing",
+            Self::Embedding => "embedding",
+            Self::Finalizing => "finalizing",
+        }
+    }
+}
+
 /// Shared progress tracker for background ingestion.
 ///
 /// Uses atomics so it can be read from tool handlers while the ingestion
@@ -109,7 +151,7 @@ pub struct ContentIngestionStats {
 /// # Examples
 ///
 /// ```
-/// use iris_core::ingestion::IngestionProgress;
+/// use iris_core::ingestion::{IngestionProgress, IngestionPhase};
 /// use std::sync::Arc;
 ///
 /// let progress = Arc::new(IngestionProgress::new());
@@ -119,8 +161,17 @@ pub struct ContentIngestionStats {
 /// assert_eq!(progress.embeddings_total(), 0);
 /// assert!(progress.is_running());
 ///
+/// progress.set_phase(IngestionPhase::Parsing);
+/// assert_eq!(progress.phase(), IngestionPhase::Parsing);
+///
+/// progress.set_current_file("src/main.rs");
+/// assert_eq!(progress.current_file(), "src/main.rs");
+///
 /// progress.increment_done();
 /// assert_eq!(progress.files_done(), 1);
+///
+/// progress.add_sections_done(5);
+/// assert_eq!(progress.sections_done(), 5);
 ///
 /// progress.add_embeddings_total(10);
 /// progress.add_embeddings_done(5);
@@ -132,10 +183,13 @@ pub struct ContentIngestionStats {
 /// ```
 pub struct IngestionProgress {
     status: std::sync::atomic::AtomicU8,
+    phase: std::sync::atomic::AtomicU8,
     files_total: AtomicUsize,
     files_done: AtomicUsize,
+    sections_done: AtomicUsize,
     embeddings_total: AtomicUsize,
     embeddings_done: AtomicUsize,
+    current_file: std::sync::Mutex<String>,
 }
 
 impl IngestionProgress {
@@ -143,23 +197,43 @@ impl IngestionProgress {
     pub fn new() -> Self {
         Self {
             status: std::sync::atomic::AtomicU8::new(0),
+            phase: std::sync::atomic::AtomicU8::new(0),
             files_total: AtomicUsize::new(0),
             files_done: AtomicUsize::new(0),
+            sections_done: AtomicUsize::new(0),
             embeddings_total: AtomicUsize::new(0),
             embeddings_done: AtomicUsize::new(0),
+            current_file: std::sync::Mutex::new(String::new()),
         }
     }
 
     pub fn start(&self, total_files: usize) {
         self.files_total.store(total_files, Ordering::Relaxed);
         self.files_done.store(0, Ordering::Relaxed);
+        self.sections_done.store(0, Ordering::Relaxed);
         self.embeddings_total.store(0, Ordering::Relaxed);
         self.embeddings_done.store(0, Ordering::Relaxed);
+        self.set_phase(IngestionPhase::Parsing);
         self.status.store(1, Ordering::Relaxed);
+    }
+
+    pub fn set_phase(&self, phase: IngestionPhase) {
+        self.phase.store(phase as u8, Ordering::Relaxed);
+    }
+
+    pub fn set_current_file(&self, file: &str) {
+        if let Ok(mut guard) = self.current_file.lock() {
+            guard.clear();
+            guard.push_str(file);
+        }
     }
 
     pub fn increment_done(&self) {
         self.files_done.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn add_sections_done(&self, count: usize) {
+        self.sections_done.fetch_add(count, Ordering::Relaxed);
     }
 
     pub fn add_embeddings_total(&self, count: usize) {
@@ -171,12 +245,27 @@ impl IngestionProgress {
     }
 
     pub fn complete(&self) {
+        self.set_phase(IngestionPhase::Idle);
+        self.set_current_file("");
         self.status.store(2, Ordering::Relaxed);
     }
 
     #[must_use]
     pub fn is_running(&self) -> bool {
         self.status.load(Ordering::Relaxed) == 1
+    }
+
+    #[must_use]
+    pub fn phase(&self) -> IngestionPhase {
+        IngestionPhase::from_u8(self.phase.load(Ordering::Relaxed))
+    }
+
+    #[must_use]
+    pub fn current_file(&self) -> String {
+        self.current_file
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 
     #[must_use]
@@ -187,6 +276,11 @@ impl IngestionProgress {
     #[must_use]
     pub fn files_done(&self) -> usize {
         self.files_done.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
+    pub fn sections_done(&self) -> usize {
+        self.sections_done.load(Ordering::Relaxed)
     }
 
     #[must_use]
@@ -679,6 +773,10 @@ impl IngestionPipeline {
         };
         let active_graph = self.package_graph.as_ref().or(detected_graph.as_ref());
 
+        if let Some(ref progress) = self.progress {
+            progress.set_phase(IngestionPhase::Discovering);
+        }
+
         let files = discover_files(dir)?;
         let mut stats = IngestionStats {
             files_discovered: files.len(),
@@ -769,6 +867,9 @@ impl IngestionPipeline {
             );
 
             while let Some((_file_path, relative, result)) = parse_stream.next().await {
+                if let Some(ref progress) = self.progress {
+                    progress.set_current_file(&relative);
+                }
                 match result {
                     Ok(FileResult::Skipped) => {
                         debug!(path = %relative, "unchanged, skipping");
@@ -787,6 +888,10 @@ impl IngestionPipeline {
                         stats.total_claims += claims;
                         all_pending_refs.extend(pending_refs);
                         all_bridge_endpoints.extend(bridge_endpoints);
+
+                        if let Some(ref progress) = self.progress {
+                            progress.add_sections_done(sections);
+                        }
 
                         if let Some(rid) = root_id {
                             let doc_id = crate::types::ContentId(relative.clone());
@@ -856,6 +961,11 @@ impl IngestionPipeline {
             return Err(IngestionError::Cancelled);
         }
 
+        if let Some(ref progress) = self.progress {
+            progress.set_phase(IngestionPhase::Finalizing);
+            progress.set_current_file("");
+        }
+
         let (_resolved, still_pending) =
             resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
         persist_pending_refs(&still_pending, storage).await;
@@ -923,6 +1033,10 @@ impl IngestionPipeline {
         I: VectorIndex + ?Sized,
     {
         let active_graph = self.package_graph.as_ref();
+
+        if let Some(ref progress) = self.progress {
+            progress.set_phase(IngestionPhase::Discovering);
+        }
 
         let files = discover_paths(paths)?;
         let mut stats = IngestionStats {
@@ -1080,6 +1194,9 @@ impl IngestionPipeline {
             );
 
             while let Some((_file_path, relative, root_id, result)) = parse_stream.next().await {
+                if let Some(ref progress) = self.progress {
+                    progress.set_current_file(&relative);
+                }
                 match result {
                     Ok(FileResult::Skipped) => {
                         debug!(path = %relative, "unchanged, skipping");
@@ -1098,6 +1215,10 @@ impl IngestionPipeline {
                         stats.total_claims += claims;
                         all_pending_refs.extend(pending_refs);
                         all_bridge_endpoints.extend(bridge_endpoints);
+
+                        if let Some(ref progress) = self.progress {
+                            progress.add_sections_done(sections);
+                        }
 
                         if let Some(ref rid) = root_id {
                             let doc_id = crate::types::ContentId(relative.clone());
@@ -1156,6 +1277,11 @@ impl IngestionPipeline {
 
         let ((), embed_result) = futures::join!(producer, consumer);
         stats.total_embeddings = embed_result?;
+
+        if let Some(ref progress) = self.progress {
+            progress.set_phase(IngestionPhase::Finalizing);
+            progress.set_current_file("");
+        }
 
         let (_resolved, still_pending) =
             resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
