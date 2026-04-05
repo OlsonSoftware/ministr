@@ -9,6 +9,9 @@
 //! - `.cursor/hooks.json` — Cursor hooks (blocks shell search/find/pipes)
 //! - `.github/hooks/iris-enforce.json` — Copilot CLI + cloud agent hooks
 //! - `.github/copilot-instructions.md` — GitHub Copilot instructions
+//! - `.windsurf/hooks.json` — Windsurf hooks (blocks shell search/find/pipes)
+//! - `windsurf/rules/iris.md` — Windsurf rules
+//! - `.continue/rules/iris.md` — Continue.dev rules
 //! - `AGENTS.md` — Universal agent instructions
 //!
 //! Files are never overwritten — only missing files are created.
@@ -86,6 +89,21 @@ pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     let copilot_files: &[(&str, &str)] =
         &[("copilot-instructions.md", COPILOT_INSTRUCTIONS)];
     result.merge(write_files(&github_dir, copilot_files, false));
+
+    // ── Windsurf: .windsurf/hooks.json (hooks — autoheal) ───────────────
+    let windsurf_dir = project_root.join(".windsurf");
+    let windsurf_hooks: &[(&str, &str)] = &[("hooks.json", WINDSURF_HOOKS)];
+    result.merge(write_files(&windsurf_dir, windsurf_hooks, true));
+
+    // ── Windsurf: windsurf/rules/ (advisory — never overwrite) ──────────
+    let windsurf_rules_dir = project_root.join("windsurf").join("rules");
+    let windsurf_rules: &[(&str, &str)] = &[("iris.md", WINDSURF_RULES)];
+    result.merge(write_files(&windsurf_rules_dir, windsurf_rules, false));
+
+    // ── Continue.dev: .continue/rules/ (advisory — never overwrite) ─────
+    let continue_rules_dir = project_root.join(".continue").join("rules");
+    let continue_rules: &[(&str, &str)] = &[("iris.md", CONTINUE_RULES)];
+    result.merge(write_files(&continue_rules_dir, continue_rules, false));
 
     // ── Universal: AGENTS.md (advisory) ─────────────────────────────────
     let agents_files: &[(&str, &str)] = &[("AGENTS.md", AGENTS_MD)];
@@ -363,6 +381,71 @@ const CURSOR_HOOKS: &str = r#"{
   }
 }
 "#;
+
+/// Windsurf hooks (`.windsurf/hooks.json`).
+///
+/// Windsurf reads `.windsurf/hooks.json` (workspace-level).
+/// Uses `pre_run_command` to block grep/rg/find/fd and piped exploration.
+/// Hook scripts receive JSON on stdin with `tool_info.command_line` field.
+/// Exit code 2 blocks the action.
+const WINDSURF_HOOKS: &str = r#"{
+  "hooks": {
+    "pre_run_command": [
+      {
+        "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".tool_info.command_line // \\\"\\\"\"); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo \"Blocked: use iris_survey instead of shell search.\"; exit 2;; find\\ *|fd\\ *) echo \"Blocked: use iris_toc instead of shell file-find.\"; exit 2;; esac; if echo \"$CMD\" | grep -qE \"\\\\|\\\\s*(grep|rg|ag|ack)\"; then echo \"Blocked: do not pipe to search tools. Use iris_survey.\"; exit 2; fi'",
+        "show_output": true
+      }
+    ]
+  }
+}
+"#;
+
+/// Windsurf rules (`windsurf/rules/iris.md`).
+///
+/// Windsurf reads rules from `windsurf/rules/` in the workspace root.
+/// Standard markdown format — no frontmatter required.
+const WINDSURF_RULES: &str = r#"# iris MCP — Codebase Navigation (MANDATORY)
+
+This project uses iris as an MCP server for semantic code search.
+
+## CRITICAL: Tool Restrictions
+
+**You MUST use iris MCP tools for ALL codebase exploration.**
+
+### Prohibited Tools and Patterns
+
+- ❌ `grep`, `rg`, `ag`, `ack` in terminal — use `iris_survey` instead
+- ❌ `find`, `fd`, `ls -R` in terminal — use `iris_toc` instead
+- ❌ `cat | grep`, piped shell commands — use iris tools
+- ❌ Reading files for exploration — use `iris_symbols` → `iris_definition`
+
+### Allowed Uses of Shell
+
+Shell is ONLY acceptable for: building code, running tests, installing dependencies, git operations, and running the project. NEVER for searching, file discovery, or piped exploration.
+
+### Required Tool Mapping
+
+| Instead of… | Use… |
+|-------------|------|
+| Grep / text search | `iris_survey(query: "...")` |
+| Find / file listing | `iris_toc` |
+| Reading files for exploration | `iris_symbols` → `iris_definition` |
+| Finding references | `iris_references(symbol_id: "...")` |
+
+### Workflow
+
+1. `iris_survey` → find relevant code
+2. `iris_symbols` → locate specific symbols
+3. `iris_definition` / `iris_read` → get full source
+4. `iris_references` → check impact before modifying
+5. Only then: Read → Edit
+"#;
+
+/// Continue.dev rules (`.continue/rules/iris.md`).
+///
+/// Continue.dev reads rules from `.continue/rules/` in the workspace root.
+/// Standard markdown — no frontmatter, no hooks system.
+const CONTINUE_RULES: &str = WINDSURF_RULES;
 
 /// Mandatory tool scope rules — always the same regardless of project type.
 const IRIS_SCOPE: &str = r#"# iris MCP — Codebase Navigation
@@ -753,8 +836,9 @@ mod tests {
         let result = scaffold_agent_config(root);
 
         // Should create: 3 claude rules + 1 settings.json + 1 copilot hooks
-        //   + 1 cursor rule + 1 cursor hooks + 1 copilot instructions + 1 AGENTS.md = 9
-        assert_eq!(result.created, 9);
+        //   + 1 cursor rule + 1 cursor hooks + 1 windsurf hooks + 1 windsurf rules
+        //   + 1 copilot instructions + 1 AGENTS.md = 11
+        assert_eq!(result.created, 12);
         assert_eq!(result.healed, 0);
 
         // Claude Code files
@@ -772,6 +856,13 @@ mod tests {
 
         // Copilot files
         assert!(root.join(".github/copilot-instructions.md").exists());
+
+        // Windsurf files
+        assert!(root.join(".windsurf/hooks.json").exists());
+        assert!(root.join("windsurf/rules/iris.md").exists());
+
+        // Continue.dev files
+        assert!(root.join(".continue/rules/iris.md").exists());
 
         // Universal
         assert!(root.join("AGENTS.md").exists());
@@ -798,6 +889,11 @@ mod tests {
         let curval: serde_json::Value = serde_json::from_str(&cursor).unwrap();
         assert_eq!(curval["version"], 1);
         assert!(curval["hooks"]["beforeShellExecution"].is_array());
+
+        // Verify Windsurf hooks contain pre_run_command
+        let windsurf = std::fs::read_to_string(root.join(".windsurf/hooks.json")).unwrap();
+        let wval: serde_json::Value = serde_json::from_str(&windsurf).unwrap();
+        assert!(wval["hooks"]["pre_run_command"].is_array());
     }
 
     #[test]
@@ -806,7 +902,7 @@ mod tests {
         let root = tmp.path();
 
         let first = scaffold_agent_config(root);
-        assert_eq!(first.created, 9);
+        assert_eq!(first.created, 12);
         assert_eq!(first.healed, 0);
 
         let second = scaffold_agent_config(root);
@@ -885,7 +981,7 @@ mod tests {
 
         // First scaffold creates everything.
         let first = scaffold_agent_config(root);
-        assert_eq!(first.created, 9);
+        assert_eq!(first.created, 12);
 
         // Corrupt a hook file (machine-generated — should be healed).
         std::fs::write(
@@ -897,9 +993,12 @@ mod tests {
         // Corrupt cursor hooks too.
         std::fs::write(root.join(".cursor/hooks.json"), "{}").unwrap();
 
+        // Corrupt windsurf hooks too.
+        std::fs::write(root.join(".windsurf/hooks.json"), "{}").unwrap();
+
         let second = scaffold_agent_config(root);
         assert_eq!(second.created, 0);
-        assert_eq!(second.healed, 2); // Both hook files healed.
+        assert_eq!(second.healed, 3); // All three hook files healed.
 
         // Verify content was restored.
         let copilot = std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap();
@@ -1066,6 +1165,37 @@ mod tests {
         assert!(cmd.contains("userMessage"), "should have userMessage");
     }
 
+    /// Verify Windsurf hooks JSON structure and bash script blocking patterns.
+    #[test]
+    fn windsurf_hooks_structure_and_patterns() {
+        let val: serde_json::Value = serde_json::from_str(WINDSURF_HOOKS).unwrap();
+
+        let hooks = val["hooks"]["pre_run_command"].as_array().unwrap();
+        assert_eq!(hooks.len(), 1, "single pre_run_command hook");
+
+        let cmd = hooks[0]["command"].as_str().unwrap();
+        assert!(cmd.starts_with("bash -c"), "must be a bash -c command");
+        assert!(hooks[0]["show_output"].as_bool().unwrap(), "show_output must be true");
+
+        // Should extract command from tool_info.command_line.
+        assert!(cmd.contains("tool_info.command_line"), "should read tool_info.command_line");
+
+        // Should block search commands.
+        for tool in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
+            assert!(cmd.contains(tool), "windsurf hook should block: {tool}");
+        }
+
+        // Should block file-finding.
+        assert!(cmd.contains("find"), "should block find");
+        assert!(cmd.contains("fd"), "should block fd");
+
+        // Should block piped search.
+        assert!(cmd.contains("(grep|rg|ag|ack)"), "should detect piped search");
+
+        // Exit code 2 to block (Windsurf convention).
+        assert!(cmd.contains("exit 2"), "should use exit 2 to block");
+    }
+
     /// Verify deny_hook produces correctly structured JSON.
     #[test]
     fn deny_hook_structure() {
@@ -1109,6 +1239,13 @@ mod tests {
         )
         .unwrap();
         assert!(cursor["hooks"]["beforeShellExecution"].is_array());
+
+        // Windsurf hooks
+        let windsurf: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join(".windsurf/hooks.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(windsurf["hooks"]["pre_run_command"].is_array());
     }
 
     // -----------------------------------------------------------------------
@@ -1126,6 +1263,7 @@ mod tests {
         let hook_files = [
             ".github/hooks/iris-enforce.json",
             ".cursor/hooks.json",
+            ".windsurf/hooks.json",
         ];
         let originals: Vec<String> = hook_files
             .iter()
@@ -1211,6 +1349,8 @@ mod tests {
             ".claude/rules/iris-playbook.md",
             ".cursor/rules/iris.mdc",
             ".github/copilot-instructions.md",
+            "windsurf/rules/iris.md",
+            ".continue/rules/iris.md",
             "AGENTS.md",
         ];
 
@@ -1240,7 +1380,7 @@ mod tests {
         let root = tmp.path();
 
         let first = scaffold_agent_config(root);
-        assert_eq!(first.created, 9);
+        assert_eq!(first.created, 12);
         assert_eq!(first.healed, 0);
 
         // Record modification times.
