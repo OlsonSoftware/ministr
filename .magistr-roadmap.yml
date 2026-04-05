@@ -1622,7 +1622,7 @@ phases:
   - text: 'Implement salience scoring: combine recency, frequency, semantic relevance to current task, and dependency graph position (Zhang AAAI 2026)'
     checked: true
   - text: 'Integrate salience with FSRS: salience score modulates FSRS difficulty parameter — high-salience items decay slower'
-    checked: false
+    checked: true
   - text: 'Task-aware eviction: use recent iris_survey queries and tool call patterns to infer current task context, boost related sections'
     checked: true
   - text: 'Eval suite comparison: benchmark salience-aware vs current FSRS-only eviction on context retention quality using eval harness'
