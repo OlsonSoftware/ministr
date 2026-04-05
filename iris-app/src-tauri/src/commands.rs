@@ -126,18 +126,17 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
 /// Trigger a full re-index of a corpus.
 #[tauri::command]
 pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> Result<(), String> {
-    // Get the paths for this corpus, then re-register (which triggers re-indexing).
+    // Get the paths for this corpus.
     let paths = {
         let guard = state.registry.corpora().read().await;
-        guard
-            .get(&corpus_id)
-            .map(|h| h.info.blocking_read().paths.clone())
-    };
-    let Some(paths) = paths else {
-        return Err(format!("corpus '{corpus_id}' not found"));
+        match guard.get(&corpus_id) {
+            Some(h) => h.info.read().await.paths.clone(),
+            None => return Err(format!("corpus '{corpus_id}' not found")),
+        }
     };
 
-    // Re-registering with the same paths triggers re-indexing.
+    // Unregister first, then re-register to force a fresh indexing run.
+    let _ = state.registry.unregister(&corpus_id).await;
     state
         .registry
         .register(&paths)
