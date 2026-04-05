@@ -8,9 +8,13 @@
 pub mod abstractive;
 pub mod claims;
 pub mod relationships;
+pub mod strategy;
 pub mod summary;
 
 pub use abstractive::{AbstractiveCompressor, CompressError};
 pub use claims::{ClaimExtractor, HeuristicClaimExtractor};
 pub use relationships::{HeuristicRelationshipDetector, RelationshipDetector};
+pub use strategy::{
+    AutoCompressor, CompressStrategy, ContentType, ExtractiveStrategy, SalienceWeightedStrategy,
+};
 pub use summary::{ExtractiveSummaryGenerator, SummaryGenerator};
