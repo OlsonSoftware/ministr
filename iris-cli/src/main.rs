@@ -887,6 +887,13 @@ async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
 
     eprintln!("iris: starting MCP proxy on stdio");
     let proxy = iris_mcp::proxy::ProxyServer::new(corpus_paths.to_vec());
+
+    // Eagerly create a daemon session so the GUI shows it immediately.
+    if let Err(e) = proxy.initialize().await {
+        eprintln!("iris: warning — eager session init failed: {e}");
+    }
+
+    let proxy_handle = proxy.clone();
     let service = proxy
         .serve(rmcp::transport::stdio())
         .await
@@ -895,6 +902,9 @@ async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
 
     // Keep the service alive until the client disconnects.
     let _ = service.waiting().await;
+
+    // Clean up the daemon session so the GUI doesn't show stale entries.
+    proxy_handle.shutdown().await;
     Ok(())
 }
 

@@ -246,6 +246,34 @@ impl ProxyServer {
         Ok(resp.corpus_id)
     }
 
+    /// Eagerly register the corpus and create a daemon session.
+    ///
+    /// Call this at startup so the daemon (and GUI) can see the session
+    /// immediately, rather than waiting for the first tool call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError`] if the daemon is unreachable or registration fails.
+    pub async fn initialize(&self) -> Result<(), McpError> {
+        let _session_id = self.ensure_session().await?;
+        Ok(())
+    }
+
+    /// Destroy the daemon session created by this proxy.
+    ///
+    /// Best-effort cleanup — errors are logged but not propagated.
+    pub async fn shutdown(&self) {
+        let corpus_id = self.corpus_id.lock().await.clone();
+        let session_id = self.session_id.lock().await.clone();
+        if let (Some(cid), Some(sid)) = (corpus_id, session_id) {
+            if let Err(e) = self.client.destroy_session(&cid, &sid).await {
+                warn!(error = %e, "failed to destroy daemon session on shutdown");
+            } else {
+                info!(session_id = %sid, "destroyed daemon session");
+            }
+        }
+    }
+
     /// Ensure a daemon session exists for this proxy, creating one lazily.
     async fn ensure_session(&self) -> Result<String, McpError> {
         {
