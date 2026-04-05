@@ -52,7 +52,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/coherence", get(coherence_stream))
         .route("/api/v1/corpora/{id}/prefetch", get(prefetch_metrics))
         .route("/api/v1/corpora/import", post(import_bundle))
-        .route("/api/v1/corpora/{id}/sessions", post(create_session))
+        .route(
+            "/api/v1/corpora/{id}/sessions",
+            post(create_session).delete(clear_sessions),
+        )
         .route(
             "/api/v1/corpora/{id}/sessions/{sid}/budget",
             get(session_budget),
@@ -851,6 +854,35 @@ async fn destroy_session(
         )
         .into_response()
     }
+}
+
+/// Remove all sessions for a corpus (e.g. on proxy reconnect).
+async fn clear_sessions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let guard = get_corpus!(&state, &id);
+    let handle = &guard[&id];
+    let data_dir = handle.data_dir.clone();
+
+    let mut sessions = handle.sessions.lock().await;
+    let ids: Vec<String> = sessions.session_ids();
+    let count = ids.len();
+    for sid in &ids {
+        sessions.remove_session(sid);
+    }
+    drop(sessions);
+
+    // Remove persisted sessions.
+    let db_path = data_dir.join("sessions.db");
+    for sid in &ids {
+        if let Err(e) = crate::persistence::delete_session(&db_path, &id, sid) {
+            tracing::warn!(error = %e, session_id = %sid, "failed to delete persisted session");
+        }
+    }
+
+    tracing::info!(corpus_id = %id, cleared = count, "cleared all sessions");
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn evict_content(

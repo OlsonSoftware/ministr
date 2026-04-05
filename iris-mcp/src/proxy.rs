@@ -255,6 +255,15 @@ impl ProxyServer {
     ///
     /// Returns [`McpError`] if the daemon is unreachable or registration fails.
     pub async fn initialize(&self) -> Result<(), McpError> {
+        // Register corpus first (needed to get corpus_id for clear_sessions).
+        let corpus_id = self.ensure_corpus().await?;
+
+        // Clear stale sessions from previous proxy connections that didn't
+        // shut down cleanly (e.g. crashes, old binary without shutdown()).
+        if let Err(e) = self.client.clear_sessions(&corpus_id).await {
+            warn!(error = %e, "failed to clear stale sessions");
+        }
+
         let _session_id = self.ensure_session().await?;
         Ok(())
     }

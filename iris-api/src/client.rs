@@ -398,6 +398,20 @@ impl DaemonClient {
         Ok(())
     }
 
+    /// Remove all sessions for a corpus.
+    ///
+    /// Useful when a proxy reconnects and wants to clean up stale sessions
+    /// from a previous connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection failure.
+    pub async fn clear_sessions(&self, corpus_id: &str) -> Result<(), ClientError> {
+        self.delete(&format!("/api/v1/corpora/{corpus_id}/sessions"))
+            .await?;
+        Ok(())
+    }
+
     /// Signal that content has been evicted from the agent's context window.
     ///
     /// # Errors
