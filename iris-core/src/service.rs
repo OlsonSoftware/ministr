@@ -15,6 +15,7 @@ use crate::embedding::{Embedder, Reranker, SparseEmbedder};
 use crate::error::{IndexError, StorageError};
 use crate::extraction::abstractive::AbstractiveCompressor;
 use crate::extraction::claims::{ClaimExtractor, HeuristicClaimExtractor};
+use crate::extraction::strategy::{AutoCompressor, CompressStrategy, ExtractiveStrategy};
 use crate::extraction::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
 use crate::index::{SparseIndex, VectorIndex};
 use crate::search::{MultiResolutionSearch, SearchConfig};
@@ -591,13 +592,38 @@ impl QueryService {
 
     /// Compress content items into shorter summaries for eviction.
     ///
-    /// For each content ID, looks up the section text and generates an
-    /// extractive summary (2 sentences). Returns the original and compressed
-    /// token counts so the agent knows how much budget it saves.
+    /// Uses the given [`CompressStrategy`] for section text. Falls back to
+    /// symbol stub compression for content IDs starting with `sym-`.
     ///
-    /// Content IDs that don't match any section are silently skipped.
-    /// Sections too small to compress (where the summary would be as long
-    /// as the original) are also skipped.
+    /// Content IDs that don't match any section or symbol are silently skipped.
+    /// Sections too small to compress are also skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] if a database operation fails.
+    #[instrument(skip(self, strategy))]
+    pub async fn compress_content_with(
+        &self,
+        content_ids: &[String],
+        strategy: &dyn CompressStrategy,
+    ) -> Result<Vec<CompressedItem>, QueryError> {
+        let mut results = Vec::with_capacity(content_ids.len());
+
+        for id in content_ids {
+            if let Some(item) = self.try_compress_section_with(id, strategy).await? {
+                results.push(item);
+            } else if let Some(item) = self.try_compress_symbol(id).await? {
+                results.push(item);
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Compress content items using the default extractive strategy.
+    ///
+    /// Convenience wrapper around [`compress_content_with`] using TF-IDF
+    /// extractive summarization (2 sentences).
     ///
     /// # Errors
     ///
@@ -607,28 +633,63 @@ impl QueryService {
         &self,
         content_ids: &[String],
     ) -> Result<Vec<CompressedItem>, QueryError> {
-        let summarizer = ExtractiveSummaryGenerator::new();
+        self.compress_content_with(content_ids, &ExtractiveStrategy::default())
+            .await
+    }
+
+    /// Compress content with auto-tier selection based on content type.
+    ///
+    /// Code → symbol summary, Documentation → extractive TF-IDF, Claims → skip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] if a database operation fails.
+    #[instrument(skip(self))]
+    pub async fn compress_content_auto(
+        &self,
+        content_ids: &[String],
+    ) -> Result<Vec<CompressedItem>, QueryError> {
+        let auto = AutoCompressor::default();
         let mut results = Vec::with_capacity(content_ids.len());
 
         for id in content_ids {
-            // Try section lookup first, then fall back to symbol lookup
-            if let Some(item) = self.try_compress_section(id, &summarizer).await? {
-                results.push(item);
-            } else if let Some(item) = self.try_compress_symbol(id).await? {
-                results.push(item);
+            // For symbols, always use symbol stub compression
+            if id.starts_with("sym-") {
+                if let Some(item) = self.try_compress_symbol(id).await? {
+                    results.push(item);
+                }
+                continue;
             }
-            // Silently skip truly unknown content IDs
+
+            // For sections, use auto-tier
+            let sid = SectionId(id.clone());
+            if let Some(section) = self.storage.get_section(&sid).await? {
+                let original_tokens = count_tokens(&section.text);
+
+                if let Some((summary, method)) = auto.compress_auto(id, &section.text, 2) {
+                    let compressed_tokens = count_tokens(&summary);
+                    if compressed_tokens < original_tokens {
+                        results.push(CompressedItem {
+                            original_id: id.clone(),
+                            summary,
+                            original_tokens,
+                            compressed_tokens,
+                            method: method.to_string(),
+                        });
+                    }
+                }
+            }
         }
 
         Ok(results)
     }
 
-    /// Try to compress a section by its ID. Returns `None` if not found or
-    /// if compression achieves no reduction.
-    async fn try_compress_section(
+    /// Try to compress a section using the given strategy.
+    /// Returns `None` if not found or if compression achieves no reduction.
+    async fn try_compress_section_with(
         &self,
         id: &str,
-        summarizer: &ExtractiveSummaryGenerator,
+        strategy: &dyn CompressStrategy,
     ) -> Result<Option<CompressedItem>, QueryError> {
         let sid = SectionId(id.to_string());
         let Some(section) = self.storage.get_section(&sid).await? else {
@@ -637,11 +698,16 @@ impl QueryService {
 
         let summary = section
             .summary
-            .unwrap_or_else(|| summarizer.summarize(&section.text, 2));
+            .or_else(|| strategy.compress(&section.text, 2))
+            .unwrap_or_default();
+
+        if summary.is_empty() {
+            return Ok(None);
+        }
+
         let original_tokens = count_tokens(&section.text);
         let compressed_tokens = count_tokens(&summary);
 
-        // Skip sections where compression achieves no reduction
         if compressed_tokens >= original_tokens {
             return Ok(None);
         }
@@ -651,7 +717,7 @@ impl QueryService {
             summary,
             original_tokens,
             compressed_tokens,
-            method: "extractive".to_string(),
+            method: strategy.method_name().to_string(),
         }))
     }
 

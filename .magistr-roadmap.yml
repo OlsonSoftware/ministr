@@ -1628,7 +1628,7 @@ phases:
   - text: 'Eval suite comparison: benchmark salience-aware vs current FSRS-only eviction on context retention quality using eval harness'
     checked: false
   - text: 'Eviction explainability: iris_budget reports why each section was recommended for eviction (staleness, low salience, redundancy)'
-    checked: false
+    checked: true
 - id: COMPRESS2
   name: Adaptive Compression Pipeline
   tagline: Compress smarter, not just smaller
