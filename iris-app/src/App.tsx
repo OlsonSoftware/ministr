@@ -163,8 +163,11 @@ export function App() {
         {/* Content area */}
         <main className="flex-1 overflow-y-auto p-4">
           {!status ? (
-            <div className="flex items-center justify-center h-full text-text-dim text-sm">
-              Connecting to daemon...
+            <div className="flex flex-col items-center justify-center h-full text-text-dim text-sm gap-2">
+              <span>Connecting to daemon...</span>
+              {error && (
+                <span className="text-xs text-danger max-w-md text-center">{error}</span>
+              )}
             </div>
           ) : tab === "projects" ? (
             <div className="flex gap-4 h-full">
