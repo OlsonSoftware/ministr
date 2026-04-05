@@ -90,14 +90,22 @@ pub struct ListCorporaResponse {
 pub struct IngestionProgressEvent {
     /// Phase: `"pending"`, `"running"`, or `"complete"`.
     pub status: String,
+    /// Current ingestion phase: `"idle"`, `"discovering"`, `"parsing"`,
+    /// `"embedding"`, or `"finalizing"`.
+    pub phase: String,
     /// Total files discovered for ingestion.
     pub files_total: usize,
     /// Files processed so far.
     pub files_done: usize,
+    /// Sections created so far.
+    pub sections_done: usize,
     /// Total embeddings to generate.
     pub embeddings_total: usize,
     /// Embeddings generated so far.
     pub embeddings_done: usize,
+    /// Relative path of the file currently being processed (empty if idle).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub current_file: String,
 }
 
 /// Compact bundle manifest for API responses.

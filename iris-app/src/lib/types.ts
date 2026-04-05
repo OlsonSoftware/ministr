@@ -87,7 +87,11 @@ export interface SymbolRef {
 export interface IngestionProgressInfo {
   corpus_id: string;
   status: number;
+  phase: string;
   files_total: number;
   files_done: number;
+  sections_done: number;
+  embeddings_total: number;
   embeddings_done: number;
+  current_file: string;
 }

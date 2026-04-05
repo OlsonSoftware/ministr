@@ -4426,10 +4426,26 @@ async fn run_ingestion_progress_notifier(
 
         let done = progress.files_done();
         let total = progress.files_total();
+        let phase = progress.phase();
 
         // Only send if progress actually changed.
         if done != last_done {
             last_done = done;
+            let phase_str = phase.as_str();
+            let msg = match phase {
+                iris_core::ingestion::IngestionPhase::Discovering => {
+                    "Discovering files…".to_string()
+                }
+                iris_core::ingestion::IngestionPhase::Embedding => {
+                    let ed = progress.embeddings_done();
+                    let et = progress.embeddings_total();
+                    format!("Embedding ({ed}/{et}) · {done}/{total} files parsed")
+                }
+                iris_core::ingestion::IngestionPhase::Finalizing => {
+                    format!("Finalizing · {done}/{total} files parsed")
+                }
+                _ => format!("{phase_str}: {done}/{total} files"),
+            };
             let peer = peer_lock.lock().await;
             if let Some(ref p) = *peer {
                 #[allow(clippy::cast_precision_loss)]
@@ -4437,7 +4453,7 @@ async fn run_ingestion_progress_notifier(
                     progress_token: token.clone(),
                     progress: done as f64,
                     total: Some(total as f64),
-                    message: Some(format!("Checking {done}/{total} files")),
+                    message: Some(msg.clone()),
                 })
                 .await
                 .is_err()

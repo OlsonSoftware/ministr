@@ -1577,7 +1577,7 @@ phases:
 - id: SCHEMA1
   name: Tool Schema Optimization
   tagline: Minimize the hidden token tax from tool definitions
-  status: in_progress
+  status: done
   problem: Hasan et al. (2026) showed MCP tool descriptions are bloated — iris has 15 tools whose schemas consume context tokens on every turn
   solution: Audit tool schemas for redundancy, compress descriptions, merge related tools, measure schema token footprint
   tasks:
@@ -1588,7 +1588,7 @@ phases:
   - text: 'Tool consolidation analysis: identify tools that could merge (e.g., iris_read + iris_extract, iris_symbols + iris_definition) without UX loss'
     checked: true
   - text: 'Lazy tool registration: only expose tools relevant to corpus type (skip bridge tools if no cross-language code, skip web tools if local-only)'
-    checked: false
+    checked: true
   - text: 'Schema token budget metric: report total schema overhead in iris_budget response so agents and users can see the cost'
     checked: true
 - id: SCAFFOLD2

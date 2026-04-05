@@ -28,7 +28,9 @@ mod symbols;
 mod tests;
 
 // Primary public API
-pub use pipeline::{ContentIngestionStats, IngestionPipeline, IngestionProgress, IngestionStats};
+pub use pipeline::{
+    ContentIngestionStats, IngestionPhase, IngestionPipeline, IngestionProgress, IngestionStats,
+};
 
 // Re-export utility functions used by other crates
 pub use discovery::discover_paths;
