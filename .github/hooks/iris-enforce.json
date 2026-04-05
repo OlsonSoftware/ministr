@@ -1,0 +1,61 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead of built-in search. iris provides semantic code search. See .claude/rules/iris-scope.md.\"}}'",
+        "if": "Grep"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc or iris_survey instead of built-in file listing. See .claude/rules/iris-scope.md.\"}}'",
+        "if": "Glob"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of shell search tools. Do not shell out for code search.\"}}'",
+        "if": "Bash(grep *)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of shell search tools.\"}}'",
+        "if": "Bash(rg *)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of shell file-finding tools.\"}}'",
+        "if": "Bash(find *)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of shell file-finding tools.\"}}'",
+        "if": "Bash(fd *)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search/filter tools. Use iris_survey for search, iris_toc for structure.\"}}'",
+        "if": "Bash(*|*grep*)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search/filter tools. Use iris_survey for search, iris_toc for structure.\"}}'",
+        "if": "Bash(*|*rg*)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to head/tail/wc. Use iris tools for exploration.\"}}'",
+        "if": "Bash(*|*head*)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to head/tail/wc. Use iris tools for exploration.\"}}'",
+        "if": "Bash(*|*tail*)"
+      },
+      {
+        "type": "command",
+        "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to head/tail/wc. Use iris tools for exploration.\"}}'",
+        "if": "Bash(*|*wc*)"
+      }
+    ]
+  }
+}

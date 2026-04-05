@@ -6,6 +6,8 @@
 //! - `.claude/rules/` — Claude Code tool rules, scope, and playbook
 //! - `.claude/settings.json` — PreToolUse hooks that redirect Grep/Glob to iris
 //! - `.cursor/rules/iris.mdc` — Cursor IDE rules
+//! - `.cursor/hooks.json` — Cursor hooks (blocks shell search/find/pipes)
+//! - `.github/hooks/iris-enforce.json` — Copilot CLI + cloud agent hooks
 //! - `.github/copilot-instructions.md` — GitHub Copilot instructions
 //! - `AGENTS.md` — Universal agent instructions
 //!
@@ -53,6 +55,13 @@ pub fn scaffold_agent_config(project_root: &Path) -> usize {
     let cursor_rules_dir = project_root.join(".cursor").join("rules");
     let cursor_rules: &[(&str, &str)] = &[("iris.mdc", CURSOR_RULES)];
     created += write_files(&cursor_rules_dir, cursor_rules);
+
+    // ── Cursor: .cursor/hooks.json (beforeShellExecution enforcement) ────
+    // Cursor reads .cursor/hooks.json with version:1 format.
+    // Uses beforeShellExecution to block search/exploration shell commands.
+    let cursor_dir = project_root.join(".cursor");
+    let cursor_hooks: &[(&str, &str)] = &[("hooks.json", CURSOR_HOOKS)];
+    created += write_files(&cursor_dir, cursor_hooks);
 
     // ── GitHub Copilot: .github/copilot-instructions.md ─────────────────
     let github_dir = project_root.join(".github");
@@ -286,6 +295,27 @@ const COPILOT_HOOKS: &str = r#"{
         "bash": "INPUT=$(cat); TN=$(echo \"$INPUT\" | jq -r '.toolName'); TA=$(echo \"$INPUT\" | jq -r '.toolArgs // \"\"'); case \"$TN\" in grep|Grep) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of grep. iris provides semantic code search.\"}'; exit 0;; glob|Glob) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of glob. iris provides structural overview.\"}'; exit 0;; bash|Bash|shell) CMD=$(echo \"$TA\" | jq -r '.command // \"\"'); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of shell search commands.\"}'; exit 0;; find\\ *|fd\\ *) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of shell file-finding commands.\"}'; exit 0;; esac; if echo \"$CMD\" | grep -qE '\\|\\s*(grep|rg|ag|ack|head|tail|wc)'; then echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search/filter tools. Use iris_survey, iris_toc, or iris_read.\"}'; exit 0; fi;; esac",
         "powershell": "$input = [Console]::In.ReadToEnd() | ConvertFrom-Json; $tn = $input.toolName; $ta = if ($input.toolArgs) { $input.toolArgs } else { '' }; $blocked = @('grep','Grep','glob','Glob'); if ($blocked -contains $tn) { @{permissionDecision='deny'; permissionDecisionReason='Use iris MCP tools instead of built-in search.'} | ConvertTo-Json -Compress; exit 0 }; if ($tn -in @('bash','Bash','shell')) { $cmd = ($ta | ConvertFrom-Json).command; if ($cmd -match '^(grep|egrep|fgrep|rg|ag|ack|find|fd)\\s') { @{permissionDecision='deny'; permissionDecisionReason='Use iris MCP tools instead of shell search.'} | ConvertTo-Json -Compress; exit 0 }; if ($cmd -match '\\|\\s*(grep|rg|ag|ack|head|tail|wc)') { @{permissionDecision='deny'; permissionDecisionReason='Do not pipe to search/filter tools. Use iris tools.'} | ConvertTo-Json -Compress; exit 0 } }",
         "timeoutSec": 5
+      }
+    ]
+  }
+}
+"#;
+
+/// Cursor hooks (`.cursor/hooks.json`).
+///
+/// Cursor reads `.cursor/hooks.json` (project), `~/.cursor/hooks.json` (user).
+/// Uses `beforeShellExecution` to block grep/rg/find/fd and piped exploration.
+/// Cursor's hook events differ from Claude Code / Copilot CLI:
+/// - `beforeShellExecution` — fires before any shell command
+/// - `beforeReadFile` — fires before reading files (informational only here)
+/// - No generic "preToolUse" — built-in tools like grep/glob aren't shell commands
+///   in Cursor, so we rely on `.cursor/rules/iris.mdc` for those.
+const CURSOR_HOOKS: &str = r#"{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".command // \\\"\\\"\"); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Use iris_survey instead of shell search. iris provides semantic code search.\\\",\\\"userMessage\\\":\\\"Blocked: shell search command. Use iris_survey.\\\"}\"; exit 0;; find\\ *|fd\\ *) echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Use iris_toc instead of shell file-finding. iris provides structural overview.\\\",\\\"userMessage\\\":\\\"Blocked: shell file-find. Use iris_toc.\\\"}\"; exit 0;; esac; if echo \"$CMD\" | grep -qE \"\\\\|\\\\s*(grep|rg|ag|ack|head|tail|wc)\"; then echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Do not pipe to search/filter tools. Use iris_survey, iris_toc, or iris_read.\\\",\\\"userMessage\\\":\\\"Blocked: piped exploration. Use iris tools.\\\"}\"; exit 0; fi'"
       }
     ]
   }
@@ -680,9 +710,9 @@ mod tests {
 
         let created = scaffold_agent_config(root);
 
-        // Should create: 3 claude rules + 1 settings.json + 1 vscode hooks
-        //   + 1 cursor rule + 1 copilot instructions + 1 AGENTS.md = 8
-        assert_eq!(created, 8);
+        // Should create: 3 claude rules + 1 settings.json + 1 copilot hooks
+        //   + 1 cursor rule + 1 cursor hooks + 1 copilot instructions + 1 AGENTS.md = 9
+        assert_eq!(created, 9);
 
         // Claude Code files
         assert!(root.join(".claude/rules/iris-scope.md").exists());
@@ -690,11 +720,12 @@ mod tests {
         assert!(root.join(".claude/rules/iris-playbook.md").exists());
         assert!(root.join(".claude/settings.json").exists());
 
-        // VS Code hooks
+        // Copilot CLI hooks
         assert!(root.join(".github/hooks/iris-enforce.json").exists());
 
         // Cursor files
         assert!(root.join(".cursor/rules/iris.mdc").exists());
+        assert!(root.join(".cursor/hooks.json").exists());
 
         // Copilot files
         assert!(root.join(".github/copilot-instructions.md").exists());
@@ -718,6 +749,12 @@ mod tests {
         let cval: serde_json::Value = serde_json::from_str(&copilot).unwrap();
         assert_eq!(cval["version"], 1);
         assert!(cval["hooks"]["preToolUse"].is_array());
+
+        // Verify Cursor hooks contain beforeShellExecution and version
+        let cursor = std::fs::read_to_string(root.join(".cursor/hooks.json")).unwrap();
+        let curval: serde_json::Value = serde_json::from_str(&cursor).unwrap();
+        assert_eq!(curval["version"], 1);
+        assert!(curval["hooks"]["beforeShellExecution"].is_array());
     }
 
     #[test]
@@ -726,7 +763,7 @@ mod tests {
         let root = tmp.path();
 
         let first = scaffold_agent_config(root);
-        assert_eq!(first, 8);
+        assert_eq!(first, 9);
 
         let second = scaffold_agent_config(root);
         assert_eq!(second, 0);

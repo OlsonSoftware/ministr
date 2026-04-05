@@ -645,6 +645,7 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
     eprintln!("  ✓ .claude/settings.json   (PreToolUse hooks — blocks Grep/Glob/Bash search)");
     eprintln!("  ✓ .github/hooks/          (Copilot CLI + cloud agent hooks — same enforcement)");
     eprintln!("  ✓ .cursor/rules/iris.mdc  (Cursor rules — aggressive advisory)");
+    eprintln!("  ✓ .cursor/hooks.json      (Cursor hooks — blocks shell search/find/pipes)");
     eprintln!("  ✓ .github/copilot-instructions.md");
     eprintln!("  ✓ AGENTS.md               (universal)");
     eprintln!();

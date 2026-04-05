@@ -1,4 +1,97 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead of shell search tools. iris provides semantic code search with better results. See .claude/rules/iris-scope.md for the full tool guide.\"}}'",
+            "type": "command"
+          }
+        ],
+        "matcher": "Grep|Glob"
+      },
+      {
+        "hooks": [
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead of shell search tools. iris provides semantic code search with better results. See .claude/rules/iris-scope.md for the full tool guide.\"}}'",
+            "if": "Bash(grep *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead of shell search tools. iris provides semantic code search with better results. See .claude/rules/iris-scope.md for the full tool guide.\"}}'",
+            "if": "Bash(egrep *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead of shell search tools. iris provides semantic code search with better results. See .claude/rules/iris-scope.md for the full tool guide.\"}}'",
+            "if": "Bash(fgrep *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead of shell search tools. iris provides semantic code search with better results. See .claude/rules/iris-scope.md for the full tool guide.\"}}'",
+            "if": "Bash(rg *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead of shell search tools. iris provides semantic code search with better results. See .claude/rules/iris-scope.md for the full tool guide.\"}}'",
+            "if": "Bash(ag *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey or iris_symbols instead of shell search tools. iris provides semantic code search with better results. See .claude/rules/iris-scope.md for the full tool guide.\"}}'",
+            "if": "Bash(ack *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc or iris_survey instead of shell file-finding tools.\"}}'",
+            "if": "Bash(find *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc or iris_survey instead of shell file-finding tools.\"}}'",
+            "if": "Bash(fd *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
+            "if": "Bash(*|*grep *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
+            "if": "Bash(*|*rg *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
+            "if": "Bash(*|*ag *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
+            "if": "Bash(*|*ack *)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
+            "if": "Bash(*|*wc*)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
+            "if": "Bash(*|*head*)",
+            "type": "command"
+          },
+          {
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
+            "if": "Bash(*|*tail*)",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Read",

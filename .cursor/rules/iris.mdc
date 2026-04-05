@@ -1,0 +1,50 @@
+---
+description: iris MCP codebase navigation — REQUIRED for all code search and exploration
+globs:
+  - "**/*"
+---
+
+# iris MCP — Codebase Navigation (MANDATORY)
+
+iris is an MCP server providing semantic code search. **You MUST use iris tools for ALL codebase exploration.**
+
+## Available Tools
+
+| Tool | Purpose |
+|------|---------|
+| `iris_survey` | Semantic search across docs and code. **Start here.** |
+| `iris_symbols` | Find structs, functions, traits, enums by name/kind/module. |
+| `iris_definition` | Get full source of a symbol by ID. |
+| `iris_references` | Find callers, implementors, importers of a symbol. |
+| `iris_read` | Read a section by ID (with deduplication and delta delivery). |
+| `iris_extract` | Get atomic claims from a section, optionally filtered by query. |
+| `iris_toc` | Structural overview of the indexed corpus. |
+| `iris_bridge` | Cross-language bridge links (Tauri, PyO3, NAPI, etc.). |
+
+## PROHIBITED — Do NOT Use These for Exploration
+
+**NEVER use these tools for code discovery, search, or exploration:**
+
+- ❌ `grep`, `rg`, `ripgrep`, `ag`, `ack` — use `iris_survey` instead
+- ❌ `find`, `fd`, `ls -R`, directory traversal — use `iris_toc` instead
+- ❌ `cat file | grep`, `cmd | head`, `cmd | tail`, `cmd | wc` — use iris tools
+- ❌ Built-in file search / text search / Grep tool — use `iris_survey`
+- ❌ Built-in Glob / file listing — use `iris_toc`
+- ❌ Reading files to discover structure — use `iris_toc` or `iris_symbols`
+- ❌ Shell/Bash/Terminal for ANY search, file discovery, or piped exploration
+
+The ONLY acceptable use of file Read is immediately before Edit.
+The ONLY acceptable use of Shell/Bash is for building, testing, and running commands (not exploration).
+
+## Rules
+
+1. **Use `iris_survey` instead of ANY search** for discovering code and documentation.
+2. **Use `iris_symbols` instead of grep** for finding functions, structs, traits, or enums.
+3. **Use `iris_definition` instead of reading whole files** to get a symbol's source.
+4. **Use `iris_references` before modifying any shared symbol** to find all callers.
+5. **Use `iris_bridge` before modifying any cross-language boundary** (Tauri commands, FFI, etc.).
+6. **NEVER use Bash/Shell for code search, file discovery, or piped exploration.**
+
+## Workflow
+
+`iris_survey` → `iris_symbols` → `iris_definition` / `iris_read` → `iris_references` / `iris_bridge`
