@@ -231,6 +231,9 @@ async fn main() -> Result<()> {
         cli.corpus.clone()
     };
 
+    // Config directory for hot-reload watching (if .iris.toml was discovered).
+    let repo_config_dir: Option<PathBuf> = corpus_config.as_ref().map(|(dir, _)| dir.clone());
+
     // Collect git repos from .iris.toml for post-startup cloning.
     let git_includes: Vec<iris_core::config::GitInclude> = corpus_config
         .as_ref()
@@ -280,6 +283,7 @@ async fn main() -> Result<()> {
                     &config_path,
                     &config,
                     &resolved_model,
+                    repo_config_dir.as_deref(),
                 )
                 .await
             }
@@ -301,6 +305,7 @@ async fn main() -> Result<()> {
                     port,
                     oauth_config,
                     &resolved_model,
+                    repo_config_dir.as_deref(),
                 )
                 .await
             }
@@ -1221,6 +1226,7 @@ async fn cmd_serve_stdio(
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
     resolved_model: &str,
+    repo_config_dir: Option<&Path>,
 ) -> Result<()> {
     // Compute the corpus data dir early for lock detection.
     let corpus_name = corpus_data_dir_name(corpus_paths);
@@ -1255,6 +1261,16 @@ async fn cmd_serve_stdio(
             // Ingest in background AFTER the MCP server is running.
             spawn_background_ingestion(corpus_paths, git_includes, &ctx, &ingestion_progress);
 
+            // Watch .iris.toml for path changes and re-index automatically.
+            let _config_watcher_handle = repo_config_dir.and_then(|dir| {
+                spawn_config_watcher(
+                    dir.to_path_buf(),
+                    corpus_paths.to_vec(),
+                    &ctx,
+                    &ingestion_progress,
+                )
+            });
+
             mcp_service
                 .waiting()
                 .await
@@ -1280,6 +1296,7 @@ async fn cmd_serve_http(
     port: u16,
     oauth_config: Option<iris_mcp::auth::OAuthConfig>,
     resolved_model: &str,
+    repo_config_dir: Option<&Path>,
 ) -> Result<()> {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -1345,6 +1362,16 @@ async fn cmd_serve_http(
 
     // Ingest in background AFTER the HTTP server is bound.
     spawn_background_ingestion(corpus_paths, git_includes, &ctx, &ingestion_progress);
+
+    // Watch .iris.toml for path changes and re-index automatically.
+    let _config_watcher_handle = repo_config_dir.and_then(|dir| {
+        spawn_config_watcher(
+            dir.to_path_buf(),
+            corpus_paths.to_vec(),
+            &ctx,
+            &ingestion_progress,
+        )
+    });
 
     axum::serve(listener, app)
         .await
@@ -1464,6 +1491,144 @@ fn spawn_coherence(
     );
 
     Ok(Some(handle))
+}
+
+/// Spawn a background task that watches `.iris.toml` for changes and re-indexes
+/// new corpus paths automatically.
+///
+/// When the config file is modified, the watcher:
+/// 1. Re-reads and re-resolves corpus paths from `.iris.toml`
+/// 2. Diffs against the set of paths that were indexed at startup
+/// 3. Runs ingestion for any newly added paths
+///
+/// This lets users add paths to `.iris.toml` without restarting the MCP session.
+fn spawn_config_watcher(
+    config_dir: PathBuf,
+    initial_paths: Vec<String>,
+    ctx: &InfrastructureContext,
+    ingestion_progress: &Arc<iris_core::ingestion::IngestionProgress>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    use notify::{RecursiveMode, Watcher};
+
+    let config_file = config_dir.join(iris_core::config::CORPUS_CONFIG_FILENAME);
+    if !config_file.exists() {
+        return None;
+    }
+
+    // Use a raw notify watcher (not FileWatcher) because FileWatcher filters
+    // by indexable file types and would silently drop .toml events.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<PathBuf>(32);
+    let config_filename = std::ffi::OsString::from(iris_core::config::CORPUS_CONFIG_FILENAME);
+
+    let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+        if let Ok(event) = res {
+            // Only forward events that touch .iris.toml.
+            for path in &event.paths {
+                if path.file_name() == Some(&config_filename) {
+                    let _ = tx.try_send(path.clone());
+                    break;
+                }
+            }
+        }
+    }) {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to watch .iris.toml — config hot-reload disabled");
+            return None;
+        }
+    };
+
+    // Watch the config directory non-recursively (just need .iris.toml changes).
+    if let Err(e) = watcher.watch(&config_dir, RecursiveMode::NonRecursive) {
+        tracing::warn!(error = %e, "failed to watch config directory — config hot-reload disabled");
+        return None;
+    }
+
+    let storage = Arc::clone(&ctx.storage);
+    let embedder = Arc::clone(&ctx.embedder);
+    let index = Arc::clone(&ctx.index);
+    let corpus_dir = ctx.corpus_dir.clone();
+    let index_dir = ctx.index_dir.clone();
+    let progress = Arc::clone(ingestion_progress);
+
+    tracing::info!(
+        config = %config_file.display(),
+        "watching .iris.toml for path changes"
+    );
+
+    let handle = tokio::spawn(async move {
+        // Keep the watcher alive for the lifetime of this task.
+        let _watcher = watcher;
+        let mut known_paths: std::collections::HashSet<String> =
+            initial_paths.into_iter().collect();
+
+        while rx.recv().await.is_some() {
+            // Debounce: editors often write tmp files then rename.
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            while rx.try_recv().is_ok() {}
+
+            tracing::info!("detected .iris.toml change — checking for new corpus paths");
+
+            // Re-read the config.
+            let repo_config: iris_core::config::RepoConfig = match std::fs::read_to_string(&config_file) {
+                Ok(contents) => match toml::from_str(&contents) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to parse .iris.toml");
+                        continue;
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to read .iris.toml");
+                    continue;
+                }
+            };
+
+            let fresh_paths: std::collections::HashSet<String> =
+                repo_config.resolve_local_paths(&config_dir).into_iter().collect();
+
+            let new_paths: Vec<String> = fresh_paths
+                .difference(&known_paths)
+                .cloned()
+                .collect();
+
+            if new_paths.is_empty() {
+                tracing::info!("no new corpus paths found");
+                continue;
+            }
+
+            tracing::info!(
+                new_count = new_paths.len(),
+                paths = ?new_paths,
+                "new corpus paths detected — starting ingestion"
+            );
+
+            let git_includes = repo_config.corpus.git.clone();
+
+            match run_corpus_ingestion(
+                &new_paths,
+                &git_includes,
+                &corpus_dir,
+                &storage,
+                &*embedder,
+                &*index,
+                &index_dir,
+                &progress,
+            )
+            .await
+            {
+                Ok(()) => {
+                    known_paths.extend(new_paths);
+                    tracing::info!("config-triggered ingestion complete");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "config-triggered ingestion failed");
+                }
+            }
+        }
+    });
+
+    Some(handle)
 }
 
 /// Classify corpus paths and run the appropriate ingestion pipeline for each source type.
