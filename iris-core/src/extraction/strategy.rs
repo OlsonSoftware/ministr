@@ -191,6 +191,90 @@ impl CompressStrategy for StructuredClaimStrategy {
 }
 
 // ---------------------------------------------------------------------------
+// Compression quality scoring (COMPRESS2.3)
+// ---------------------------------------------------------------------------
+
+/// Quality metrics for a single compression result.
+#[derive(Debug, Clone)]
+pub struct CompressionQuality {
+    /// Compression ratio: compressed_tokens / original_tokens (lower = more compression).
+    pub ratio: f64,
+    /// Information retention: fraction of original key terms preserved in summary.
+    pub retention: f64,
+    /// Information density: unique key terms per token in the compressed output.
+    pub density: f64,
+    /// Combined quality score (0.0–1.0): balances compression and retention.
+    pub score: f64,
+}
+
+impl CompressionQuality {
+    /// Evaluate compression quality by comparing original and compressed text.
+    ///
+    /// Extracts key terms (words ≥4 chars, not stop words) from both texts
+    /// and measures their overlap. The combined score favours high retention
+    /// at a reasonable compression ratio.
+    #[must_use]
+    pub fn evaluate(original: &str, compressed: &str) -> Self {
+        let orig_tokens = token_count(original);
+        let comp_tokens = token_count(compressed);
+
+        let ratio = if orig_tokens == 0 {
+            1.0
+        } else {
+            comp_tokens as f64 / orig_tokens as f64
+        };
+
+        let orig_terms = extract_key_terms(original);
+        let comp_terms = extract_key_terms(compressed);
+
+        let retention = if orig_terms.is_empty() {
+            1.0
+        } else {
+            let retained = orig_terms.intersection(&comp_terms).count();
+            retained as f64 / orig_terms.len() as f64
+        };
+
+        let density = if comp_tokens == 0 {
+            0.0
+        } else {
+            comp_terms.len() as f64 / comp_tokens as f64
+        };
+
+        // Combined score: retention matters most (0.6), ratio reward (0.3),
+        // density bonus (0.1). Ratio is inverted: lower ratio → higher score.
+        let ratio_score = (1.0 - ratio).clamp(0.0, 1.0);
+        let score = (0.6 * retention + 0.3 * ratio_score + 0.1 * density.min(1.0)).clamp(0.0, 1.0);
+
+        Self {
+            ratio,
+            retention,
+            density,
+            score,
+        }
+    }
+}
+
+/// Extract key terms from text: lowercase words ≥4 chars, excluding stop words.
+fn extract_key_terms(text: &str) -> std::collections::HashSet<String> {
+    const STOP_WORDS: &[&str] = &[
+        "this", "that", "with", "from", "have", "been", "were", "will", "would", "could",
+        "should", "about", "their", "there", "which", "where", "when", "what", "into", "also",
+        "each", "than", "more", "some", "such", "does", "them", "then", "very", "just",
+    ];
+
+    text.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| w.len() >= 4)
+        .map(|w| w.to_lowercase())
+        .filter(|w| !STOP_WORDS.contains(&w.as_str()))
+        .collect()
+}
+
+/// Simple whitespace token count (consistent with the rest of the module).
+fn token_count(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+// ---------------------------------------------------------------------------
 // Strategy 4: Auto-tier selection (COMPRESS2.4)
 // ---------------------------------------------------------------------------
 
@@ -539,5 +623,47 @@ mod tests {
     fn structured_claims_method_name() {
         let strategy = StructuredClaimStrategy::default();
         assert_eq!(strategy.method_name(), "structured_claims");
+    }
+
+    // --- Compression quality scoring tests ---
+
+    #[test]
+    fn quality_identical_texts() {
+        let q = CompressionQuality::evaluate("hello world", "hello world");
+        assert!((q.ratio - 1.0).abs() < f64::EPSILON);
+        assert!((q.retention - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn quality_empty_compressed() {
+        let q = CompressionQuality::evaluate("hello world foo bar", "");
+        assert!(q.ratio < f64::EPSILON);
+        assert!(q.retention < f64::EPSILON);
+    }
+
+    #[test]
+    fn quality_good_compression() {
+        let original = "The iris MCP server uses 128-dimensional ONNX embeddings for semantic search. \
+                         It provides memory safety without garbage collection. \
+                         The borrow checker ensures data race freedom. \
+                         Many developers enjoy using Rust for systems programming.";
+        let compressed = "iris MCP server uses ONNX embeddings. Borrow checker ensures safety.";
+        let q = CompressionQuality::evaluate(original, compressed);
+        assert!(q.ratio < 0.5, "should show significant compression: {}", q.ratio);
+        assert!(q.retention > 0.0, "should retain some key terms: {}", q.retention);
+        assert!(q.score > 0.3, "combined score should be reasonable: {}", q.score);
+    }
+
+    #[test]
+    fn quality_extractive_vs_original() {
+        let strategy = ExtractiveStrategy::default();
+        let text = "Rust is a systems language. It provides memory safety. \
+                     The borrow checker ensures freedom. Many enjoy Rust. \
+                     Cargo is the package manager.";
+        if let Some(compressed) = strategy.compress(text, 2) {
+            let q = CompressionQuality::evaluate(text, &compressed);
+            assert!(q.ratio < 1.0, "should compress");
+            assert!(q.score > 0.0, "should have positive quality score");
+        }
     }
 }
