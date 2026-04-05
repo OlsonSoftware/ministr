@@ -36,7 +36,6 @@ pub(super) struct PendingRef {
 }
 
 pub(super) struct ResolveResult {
-    pub(super) inserted: usize,
     pub(super) pending: Vec<PendingRef>,
 }
 
@@ -295,7 +294,6 @@ pub(super) async fn resolve_and_store_refs<S: Storage + ?Sized>(
     let raw_refs = extract_refs(tree, source, language);
     if raw_refs.is_empty() {
         return Ok(ResolveResult {
-            inserted: 0,
             pending: Vec::new(),
         });
     }
@@ -349,23 +347,20 @@ pub(super) async fn resolve_and_store_refs<S: Storage + ?Sized>(
 
         let primary = filter_primary(&matches);
 
-        let target = match disambiguate_target(
+        let Some(target) = disambiguate_target(
             &primary,
             file_path,
             raw.target_crate.as_deref(),
             package_graph,
-        ) {
-            Some(t) => t,
-            None => {
-                pending.push(PendingRef {
-                    from_id,
-                    target_name: raw.target_name.clone(),
-                    kind: raw.kind,
-                    file_path: file_path.to_owned(),
-                    target_crate: raw.target_crate.clone(),
-                });
-                continue;
-            }
+        ) else {
+            pending.push(PendingRef {
+                from_id,
+                target_name: raw.target_name.clone(),
+                kind: raw.kind,
+                file_path: file_path.to_owned(),
+                target_crate: raw.target_crate.clone(),
+            });
+            continue;
         };
 
         if from_id == target.id {
@@ -385,12 +380,11 @@ pub(super) async fn resolve_and_store_refs<S: Storage + ?Sized>(
 
     if resolved.is_empty() {
         return Ok(ResolveResult {
-            inserted: 0,
             pending,
         });
     }
 
-    let mut inserted = 0;
+    let mut inserted = 0usize;
     for r in &resolved {
         if storage
             .insert_symbol_refs(std::slice::from_ref(r))
@@ -410,7 +404,7 @@ pub(super) async fn resolve_and_store_refs<S: Storage + ?Sized>(
         );
     }
 
-    Ok(ResolveResult { inserted, pending })
+    Ok(ResolveResult { pending })
 }
 
 /// Second-pass: resolve refs whose targets weren't indexed during first pass.
@@ -438,17 +432,14 @@ pub(super) async fn resolve_pending_refs<S: Storage + ?Sized>(
 
         let primary = filter_primary(&matches);
 
-        let target = match disambiguate_target(
+        let Some(target) = disambiguate_target(
             &primary,
             &pr.file_path,
             pr.target_crate.as_deref(),
             package_graph,
-        ) {
-            Some(t) => t,
-            None => {
-                still_unresolved.push(pr.clone());
-                continue;
-            }
+        ) else {
+            still_unresolved.push(pr.clone());
+            continue;
         };
 
         if pr.from_id == target.id {

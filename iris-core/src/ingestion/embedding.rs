@@ -2,9 +2,9 @@
 
 use tracing::{debug, info};
 
-use crate::embedding::{Embedder, SparseEmbedder};
+use crate::embedding::Embedder;
 use crate::error::IngestionError;
-use crate::index::{SparseIndex, VectorIndex};
+use crate::index::VectorIndex;
 use crate::mem_profile;
 use crate::storage::Storage;
 use crate::types::{DocumentTree, Section, VectorId};
@@ -116,53 +116,6 @@ pub(super) async fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex 
 
     info!(embeddings = total, "batch embedding complete");
     Ok(total)
-}
-
-/// Embed a document tree into the sparse index.
-///
-/// # Errors
-///
-/// Returns [`IngestionError::Embedding`] if sparse embedding or insertion fails.
-pub fn embed_document_sparse<SE: SparseEmbedder + ?Sized, SI: SparseIndex + ?Sized>(
-    doc: &DocumentTree,
-    sparse_embedder: &SE,
-    sparse_index: &SI,
-) -> Result<usize, IngestionError> {
-    let mut texts: Vec<String> = Vec::new();
-    let mut ids: Vec<VectorId> = Vec::new();
-
-    if let Some(ref summary) = doc.summary {
-        if !summary.trim().is_empty() {
-            ids.push(VectorId::doc_summary(doc.id.as_ref()));
-            texts.push(summary.clone());
-        }
-    }
-
-    collect_embeddable_items(&doc.sections, &mut ids, &mut texts);
-
-    if texts.is_empty() {
-        return Ok(0);
-    }
-
-    let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-    let sparse_vecs =
-        sparse_embedder
-            .embed_sparse(&text_refs)
-            .map_err(|e| IngestionError::Embedding {
-                reason: format!("sparse embedding failed: {e}"),
-            })?;
-
-    for (vid, sv) in ids.iter().zip(sparse_vecs.iter()) {
-        sparse_index
-            .insert_sparse(vid.as_str(), &sv.indices, &sv.values)
-            .map_err(|e| IngestionError::Embedding {
-                reason: format!("failed to insert sparse vector {vid}: {e}"),
-            })?;
-    }
-
-    let count = ids.len();
-    debug!(sparse_embeddings = count, doc_id = %doc.id, "sparse-embedded document");
-    Ok(count)
 }
 
 /// Recursively collect embeddable items (section summaries, section texts, claims).

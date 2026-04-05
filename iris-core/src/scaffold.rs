@@ -17,6 +17,7 @@
 //! Files are never overwritten — only missing files are created.
 //! Machine-generated hook files are auto-healed if their content is stale.
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use tracing::{debug, info};
@@ -162,7 +163,7 @@ fn load_custom_rules(project_root: &Path) -> Option<(String, usize)> {
     let mut md = String::from("# Project-Specific Rules\n\n");
     md.push_str("Custom rules from `.iris.toml [agent] rules`:\n\n");
     for rule in &config.agent.rules {
-        md.push_str(&format!("- {rule}\n"));
+        let _ = writeln!(md, "- {rule}");
     }
     Some((md, count))
 }
@@ -912,7 +913,7 @@ File Read is ONLY acceptable immediately before Edit — never for exploration o
 ///
 /// Supported by GitHub Copilot CLI (via `AGENTS.md` at project root) and
 /// other agents that follow the agents.md convention.
-const AGENTS_MD: &str = r#"# Agent Instructions
+const AGENTS_MD: &str = r"# Agent Instructions
 
 This project uses **iris** as an MCP server for semantic code search and navigation.
 All AI agents working on this codebase **MUST** use iris tools instead of built-in alternatives.
@@ -965,7 +966,7 @@ iris is automatically configured via `.mcp.json` (Claude Code), `.vscode/mcp.jso
 4. `iris_references` → check impact before modifying
 5. `iris_bridge` → check cross-language boundaries
 6. Only then: `Read` → `Edit`
-"#;
+";
 
 #[cfg(test)]
 mod tests {

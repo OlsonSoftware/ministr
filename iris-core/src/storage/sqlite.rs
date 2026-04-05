@@ -2104,7 +2104,7 @@ fn split_camel_case(word: &str, out: &mut Vec<String>) {
     let mut current = String::new();
     for ch in word.chars() {
         if ch.is_uppercase() && !current.is_empty() {
-            out.push(current.drain(..).collect::<String>().to_lowercase());
+            out.push(std::mem::take(&mut current).to_lowercase());
         }
         current.push(ch);
     }

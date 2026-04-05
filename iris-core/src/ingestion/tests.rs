@@ -1372,7 +1372,7 @@ pub fn compute_hash(content: &str) -> String {
         let tree = parser.parse(source, None).unwrap();
 
         let local_symbols = vec![mod_sym.clone(), struct_sym];
-        let result = resolve_and_store_refs(
+        let _result = resolve_and_store_refs(
             &tree,
             source,
             "test.rs",
@@ -1384,9 +1384,8 @@ pub fn compute_hash(content: &str) -> String {
         .await
         .unwrap();
 
-        assert_eq!(result.inserted, 1, "should resolve one import ref");
-
         let refs = storage.query_refs(&mod_sym.id, None).await.unwrap();
+        assert_eq!(refs.len(), 1, "should resolve one import ref");
         assert!(
             !refs.is_empty(),
             "the mod symbol should be the from_symbol in the ref"

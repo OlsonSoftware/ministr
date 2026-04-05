@@ -474,10 +474,10 @@ fn dedup_section_ids_recursive(
     for section in sections.iter_mut() {
         let original = section.id.as_ref().to_string();
         if seen.contains(&original) {
-            let deduped = (2u64..)
+            let deduped = (2u64..u64::MAX)
                 .map(|n| format!("{original}-{n}"))
                 .find(|candidate| !seen.contains(candidate))
-                .expect("infinite iterator always finds a candidate");
+                .expect("dedup always finds a candidate");
 
             section.id = SectionId(deduped.clone());
             for (i, claim) in section.claims.iter_mut().enumerate() {

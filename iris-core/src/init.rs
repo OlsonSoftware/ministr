@@ -179,6 +179,7 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
 /// The output includes inline comments explaining each section and is
 /// suitable for writing directly to `.iris.toml`.
 #[must_use]
+#[allow(clippy::too_many_lines)] // template rendering — splitting would scatter the template
 pub fn render_toml(detection: &ProjectDetection) -> String {
     let mut out = String::new();
 

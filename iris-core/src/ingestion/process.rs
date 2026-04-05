@@ -54,6 +54,7 @@ pub(super) struct ProcessOptions<'a> {
 /// 7. Insert enriched document
 /// 8. Detect and store claim relationships
 /// 9. Update file hash record
+#[allow(clippy::too_many_arguments)] // domain orchestration — needs all inputs
 pub(super) async fn store_enriched_document<S, I>(
     doc: &mut DocumentTree,
     source_path: &str,

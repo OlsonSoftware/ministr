@@ -20,7 +20,7 @@ pub trait CompressStrategy: Send + Sync {
     fn compress(&self, text: &str, max_sentences: usize) -> Option<String>;
 
     /// Name of the compression method (for reporting in `CompressedItem.method`).
-    fn method_name(&self) -> &str;
+    fn method_name(&self) -> &'static str;
 }
 
 // ---------------------------------------------------------------------------
@@ -28,16 +28,9 @@ pub trait CompressStrategy: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Wraps `ExtractiveSummaryGenerator` as a `CompressStrategy`.
+#[derive(Default)]
 pub struct ExtractiveStrategy {
     inner: ExtractiveSummaryGenerator,
-}
-
-impl Default for ExtractiveStrategy {
-    fn default() -> Self {
-        Self {
-            inner: ExtractiveSummaryGenerator::new(),
-        }
-    }
 }
 
 impl CompressStrategy for ExtractiveStrategy {
@@ -50,7 +43,7 @@ impl CompressStrategy for ExtractiveStrategy {
         }
     }
 
-    fn method_name(&self) -> &str {
+    fn method_name(&self) -> &'static str {
         "extractive"
     }
 }
@@ -68,7 +61,8 @@ pub struct SalienceWeightedStrategy {
     inner: ExtractiveSummaryGenerator,
     keywords: Vec<String>,
     /// Multiplicative boost for sentences matching keywords.
-    salience_boost: f64,
+    /// Reserved for future scoring refinement.
+    _salience_boost: f64,
 }
 
 impl SalienceWeightedStrategy {
@@ -81,7 +75,7 @@ impl SalienceWeightedStrategy {
         Self {
             inner: ExtractiveSummaryGenerator::new(),
             keywords,
-            salience_boost: boost,
+            _salience_boost: boost,
         }
     }
 }
@@ -137,7 +131,7 @@ impl CompressStrategy for SalienceWeightedStrategy {
         }
     }
 
-    fn method_name(&self) -> &str {
+    fn method_name(&self) -> &'static str {
         "salience_extractive"
     }
 }
@@ -151,16 +145,9 @@ impl CompressStrategy for SalienceWeightedStrategy {
 /// Uses `HeuristicClaimExtractor` to identify factual assertions, then
 /// joins them with " | " separators. Achieves higher information density
 /// than extractive summarization for documentation-heavy content.
+#[derive(Default)]
 pub struct StructuredClaimStrategy {
     extractor: HeuristicClaimExtractor,
-}
-
-impl Default for StructuredClaimStrategy {
-    fn default() -> Self {
-        Self {
-            extractor: HeuristicClaimExtractor::new(),
-        }
-    }
 }
 
 impl CompressStrategy for StructuredClaimStrategy {
@@ -185,7 +172,7 @@ impl CompressStrategy for StructuredClaimStrategy {
         }
     }
 
-    fn method_name(&self) -> &str {
+    fn method_name(&self) -> &'static str {
         "structured_claims"
     }
 }
@@ -264,7 +251,7 @@ fn extract_key_terms(text: &str) -> std::collections::HashSet<String> {
 
     text.split(|c: char| !c.is_alphanumeric() && c != '_')
         .filter(|w| w.len() >= 4)
-        .map(|w| w.to_lowercase())
+        .map(str::to_lowercase)
         .filter(|w| !STOP_WORDS.contains(&w.as_str()))
         .collect()
 }
@@ -294,16 +281,9 @@ pub enum ContentType {
 /// - **Code** → symbol summary (signature + doc comment only)
 /// - **Documentation** → extractive TF-IDF
 /// - **Claims** → returns `None` (already maximally compressed)
+#[derive(Default)]
 pub struct AutoCompressor {
     extractive: ExtractiveStrategy,
-}
-
-impl Default for AutoCompressor {
-    fn default() -> Self {
-        Self {
-            extractive: ExtractiveStrategy::default(),
-        }
-    }
 }
 
 impl AutoCompressor {
@@ -313,17 +293,17 @@ impl AutoCompressor {
     /// - IDs containing `.rs`, `.py`, `.ts`, `.js`, `.go` etc. → Code
     /// - IDs containing `:c` (claim suffix) → Claim
     /// - Everything else → Documentation
+    #[must_use]
     pub fn compress_auto(
         &self,
         content_id: &str,
         text: &str,
         max_sentences: usize,
-    ) -> Option<(String, &str)> {
+    ) -> Option<(String, &'static str)> {
         let content_type = classify_content(content_id);
         match content_type {
             ContentType::Claim => None, // already compressed
             ContentType::Code => {
-                // For code: keep only the first line (signature) and any doc comment
                 let summary = compress_code(text);
                 if summary.len() >= text.len() {
                     None
@@ -341,6 +321,12 @@ impl AutoCompressor {
 
 /// Classify content type from a content ID.
 fn classify_content(content_id: &str) -> ContentType {
+    const CODE_EXTENSIONS: &[&str] = &[
+        ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".c", ".cpp", ".h", ".hpp",
+        ".cs", ".rb", ".swift", ".kt", ".scala", ".zig", ".lua", ".sh", ".bash", ".toml", ".yaml",
+        ".yml", ".json",
+    ];
+
     // Claim IDs end with `:cN` (e.g., "file.md#heading:c0")
     if content_id
         .rsplit_once(':')
@@ -348,13 +334,6 @@ fn classify_content(content_id: &str) -> ContentType {
     {
         return ContentType::Claim;
     }
-
-    // Code files detected by extension in the content ID
-    const CODE_EXTENSIONS: &[&str] = &[
-        ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".c", ".cpp", ".h", ".hpp",
-        ".cs", ".rb", ".swift", ".kt", ".scala", ".zig", ".lua", ".sh", ".bash", ".toml", ".yaml",
-        ".yml", ".json",
-    ];
 
     let id_lower = content_id.to_lowercase();
     if CODE_EXTENSIONS.iter().any(|ext| id_lower.contains(ext)) {
