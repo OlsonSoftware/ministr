@@ -653,6 +653,12 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
     eprintln!("  ✓ .continue/rules/iris.md (Continue.dev rules)");
     eprintln!("  ✓ .github/copilot-instructions.md");
     eprintln!("  ✓ AGENTS.md               (universal)");
+    if scaffolded.custom_rules > 0 {
+        eprintln!(
+            "  ✓ iris-custom.md           ({} custom rules injected)",
+            scaffolded.custom_rules
+        );
+    }
     eprintln!();
     eprintln!("Next steps:");
     eprintln!("  1. Start a new session in your preferred agent (Claude Code, Cursor, Copilot)");

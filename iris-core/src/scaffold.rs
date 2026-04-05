@@ -22,6 +22,7 @@ use std::path::Path;
 use tracing::{debug, info};
 
 use crate::code::bridge::detector::FrameworkDetector;
+use crate::config::{RepoConfig, CORPUS_CONFIG_FILENAME};
 
 /// Result of a scaffold operation.
 #[derive(Debug, Clone, Copy, Default)]
@@ -30,12 +31,15 @@ pub struct ScaffoldResult {
     pub created: usize,
     /// Number of existing files overwritten because their content was stale.
     pub healed: usize,
+    /// Number of custom rules injected from `.iris.toml`.
+    pub custom_rules: usize,
 }
 
 impl ScaffoldResult {
     fn merge(&mut self, other: Self) {
         self.created += other.created;
         self.healed += other.healed;
+        self.custom_rules += other.custom_rules;
     }
 
     /// Total files touched (created + healed).
@@ -55,6 +59,7 @@ impl ScaffoldResult {
 /// Returns a [`ScaffoldResult`] with created/healed counts.
 pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     let playbook = playbook_for_project(project_root);
+    let custom_rules = load_custom_rules(project_root);
     let mut result = ScaffoldResult::default();
 
     // ── Claude Code: .claude/rules/ (advisory — never overwrite) ────────
@@ -109,6 +114,17 @@ pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     let agents_files: &[(&str, &str)] = &[("AGENTS.md", AGENTS_MD)];
     result.merge(write_files(project_root, agents_files, false));
 
+    // ── Custom rules from .iris.toml [agent] section (autoheal) ─────────
+    if let Some((ref rules_content, count)) = custom_rules {
+        result.custom_rules = count;
+        let custom: &[(&str, &str)] = &[("iris-custom.md", rules_content)];
+        // Write to all advisory directories (auto-healed, since rules may change)
+        result.merge(write_files(&claude_rules_dir, custom, true));
+        result.merge(write_files(&cursor_rules_dir, custom, true));
+        result.merge(write_files(&windsurf_rules_dir, custom, true));
+        result.merge(write_files(&continue_rules_dir, custom, true));
+    }
+
     if result.touched() > 0 {
         info!(
             created = result.created,
@@ -119,6 +135,27 @@ pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     }
 
     result
+}
+
+/// Load custom agent rules from `.iris.toml` `[agent]` section.
+///
+/// Returns `(formatted_markdown, rule_count)` if rules are defined, `None` otherwise.
+fn load_custom_rules(project_root: &Path) -> Option<(String, usize)> {
+    let config_path = project_root.join(CORPUS_CONFIG_FILENAME);
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let config: RepoConfig = toml::from_str(&content).ok()?;
+
+    if config.agent.rules.is_empty() {
+        return None;
+    }
+
+    let count = config.agent.rules.len();
+    let mut md = String::from("# Project-Specific Rules\n\n");
+    md.push_str("Custom rules from `.iris.toml [agent] rules`:\n\n");
+    for rule in &config.agent.rules {
+        md.push_str(&format!("- {rule}\n"));
+    }
+    Some((md, count))
 }
 
 /// Write a set of files into a directory. Creates the directory if needed.
@@ -224,10 +261,10 @@ fn write_claude_hooks(project_root: &Path) -> ScaffoldResult {
         Ok(()) => {
             if is_heal {
                 info!(file = %settings_path.display(), "healed stale Claude Code hooks");
-                ScaffoldResult { created: 0, healed: 1 }
+                ScaffoldResult { created: 0, healed: 1, ..Default::default() }
             } else {
                 debug!(file = %settings_path.display(), "wrote Claude Code hooks");
-                ScaffoldResult { created: 1, healed: 0 }
+                ScaffoldResult { created: 1, healed: 0, ..Default::default() }
             }
         }
         Err(e) => {
@@ -1422,5 +1459,90 @@ mod tests {
         )
         .unwrap();
         assert!(copilot["hooks"]["preToolUse"].is_array());
+    }
+
+    #[test]
+    fn custom_rules_injected_from_iris_toml() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Write a .iris.toml with custom agent rules.
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+
+            [agent]
+            rules = [
+                "Always use snake_case for variable names",
+                "Maximum function length is 50 lines",
+            ]
+        "#;
+        std::fs::write(root.join(".iris.toml"), toml).unwrap();
+
+        let result = scaffold_agent_config(root);
+        assert!(result.created > 0);
+
+        // Verify iris-custom.md was written to all advisory directories.
+        let dirs = [
+            ".claude/rules",
+            ".cursor/rules",
+            "windsurf/rules",
+            ".continue/rules",
+        ];
+        for dir in &dirs {
+            let path = root.join(dir).join("iris-custom.md");
+            assert!(path.exists(), "missing iris-custom.md in {dir}");
+            let content = std::fs::read_to_string(&path).unwrap();
+            assert!(content.contains("snake_case"), "rule missing in {dir}");
+            assert!(content.contains("50 lines"), "rule missing in {dir}");
+        }
+    }
+
+    #[test]
+    fn no_custom_rules_when_agent_section_absent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // .iris.toml without [agent] section.
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+        "#;
+        std::fs::write(root.join(".iris.toml"), toml).unwrap();
+
+        scaffold_agent_config(root);
+
+        // No iris-custom.md should be created.
+        assert!(!root.join(".claude/rules/iris-custom.md").exists());
+        assert!(!root.join(".cursor/rules/iris-custom.md").exists());
+    }
+
+    #[test]
+    fn custom_rules_healed_when_stale() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+
+            [agent]
+            rules = ["Rule version 2"]
+        "#;
+        std::fs::write(root.join(".iris.toml"), toml).unwrap();
+
+        // First scaffold creates iris-custom.md.
+        scaffold_agent_config(root);
+        let path = root.join(".claude/rules/iris-custom.md");
+        assert!(path.exists());
+
+        // Tamper with the file.
+        std::fs::write(&path, "stale content").unwrap();
+
+        // Second scaffold should heal it (custom rules use heal=true).
+        let result = scaffold_agent_config(root);
+        assert!(result.healed > 0, "stale iris-custom.md should be healed");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("Rule version 2"));
     }
 }

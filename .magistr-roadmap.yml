@@ -1632,7 +1632,7 @@ phases:
 - id: COMPRESS2
   name: Adaptive Compression Pipeline
   tagline: Compress smarter, not just smaller
-  status: in_progress
+  status: done
   problem: TF-IDF compression is a single strategy — papers show multi-tier compression (extractive → abstractive → structured) yields better results
   solution: Pluggable compression backends, salience-weighted extractive compression, structured claim compression, compression quality scoring
   tasks:
@@ -1643,7 +1643,7 @@ phases:
   - text: 'Structured claim compression: compress sections into atomic claim lists (claim_id, text, confidence) for maximum density'
     checked: true
   - text: 'Compression quality scoring: measure information loss by comparing query relevance before/after compression via eval suite'
-    checked: false
+    checked: true
   - text: 'Auto-tier selection: automatically choose compression strategy based on section type (code → symbol summary, docs → extractive, claims → structured)'
     checked: true
 - id: EMBED2

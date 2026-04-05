@@ -341,6 +341,20 @@ fn default_data_dir() -> PathBuf {
 pub struct RepoConfig {
     /// What to index.
     pub corpus: CorpusSpec,
+    /// Agent configuration: custom rules and preferences.
+    #[serde(default)]
+    pub agent: AgentConfig,
+}
+
+/// Custom agent configuration in `.iris.toml`.
+///
+/// Rules listed here are appended to all generated advisory files
+/// (`.claude/rules/`, `.cursor/rules/`, `.github/copilot-instructions.md`, etc.).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentConfig {
+    /// Custom rules appended to generated agent instruction files.
+    pub rules: Vec<String>,
 }
 
 /// Specification of what to index from a repo.
@@ -845,6 +859,7 @@ mod tests {
                 paths: vec!["src".to_string(), "nonexistent-dir".to_string()],
                 ..Default::default()
             },
+            ..Default::default()
         };
         let tmp = tempfile::TempDir::new().unwrap();
         let root = tmp.path();
@@ -874,6 +889,7 @@ mod tests {
                 paths: vec!["src".to_string()],
                 ..Default::default()
             },
+            ..Default::default()
         };
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("src")).unwrap();
@@ -893,6 +909,7 @@ mod tests {
                 }],
                 ..Default::default()
             },
+            ..Default::default()
         };
         let tmp = tempfile::TempDir::new().unwrap();
 
@@ -933,6 +950,7 @@ mod tests {
                 model: Some("jina-embeddings-v2-base-code".into()),
                 ..Default::default()
             },
+            ..Default::default()
         };
         assert_eq!(
             resolve_model_name(Some(&repo), Some(&corpus), &global),
@@ -952,6 +970,7 @@ mod tests {
                 model: None,
                 ..Default::default()
             },
+            ..Default::default()
         };
         assert_eq!(
             resolve_model_name(Some(&repo), Some(&corpus), &global),
