@@ -50,6 +50,7 @@ pub async fn unregister_corpus(
 #[tauri::command]
 pub async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonStatus, String> {
     let corpora = state.registry.list().await;
+    tracing::debug!(corpora_count = corpora.len(), "daemon_status polled");
     let rss = iris_core::mem_profile::rss_mb().unwrap_or(0.0);
     let total_sessions: usize = corpora.iter().map(|c| c.active_sessions).sum();
 

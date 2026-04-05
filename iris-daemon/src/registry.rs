@@ -458,4 +458,32 @@ mod tests {
         let b = corpus_id_from_paths(&["src".into(), "docs".into()]);
         assert_ne!(a, b, "different path sets should produce different IDs");
     }
+
+    #[test]
+    fn project_root_mixed_depth_paths() {
+        // iris-rs case: mix of /*/src dirs and top-level files like README.md
+        let paths = vec![
+            "/Users/x/Code/iris-rs/iris-api/src".to_string(),
+            "/Users/x/Code/iris-rs/iris-core/src".to_string(),
+            "/Users/x/Code/iris-rs/README.md".to_string(),
+            "/Users/x/Code/iris-rs/docs".to_string(),
+        ];
+        assert_eq!(project_root_from_paths(&paths), "/Users/x/Code/iris-rs");
+    }
+
+    #[test]
+    fn project_roots_distinct_projects() {
+        let a = project_root_from_paths(&["/Users/x/Code/shader-art/src".into()]);
+        let b = project_root_from_paths(&[
+            "/Users/x/Code/pretext/src".into(),
+            "/Users/x/Code/pretext/README.md".into(),
+        ]);
+        let c = project_root_from_paths(&[
+            "/Users/x/Code/iris-rs/iris-api/src".into(),
+            "/Users/x/Code/iris-rs/README.md".into(),
+        ]);
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+    }
 }
