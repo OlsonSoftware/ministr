@@ -5,7 +5,9 @@
 //! content-type-aware. The `AutoCompressor` selects the best strategy
 //! based on content type (code → symbol summary, docs → extractive).
 
+use super::claims::{ClaimExtractor, HeuristicClaimExtractor};
 use super::summary::{ExtractiveSummaryGenerator, SummaryGenerator};
+use crate::types::SectionId;
 
 /// Pluggable backend for compressing a text section.
 ///
@@ -141,7 +143,55 @@ impl CompressStrategy for SalienceWeightedStrategy {
 }
 
 // ---------------------------------------------------------------------------
-// Strategy 3: Auto-tier selection (COMPRESS2.4)
+// Strategy 3: Structured claim compression (COMPRESS2.2)
+// ---------------------------------------------------------------------------
+
+/// Compresses prose into a compact list of atomic claims.
+///
+/// Uses `HeuristicClaimExtractor` to identify factual assertions, then
+/// joins them with " | " separators. Achieves higher information density
+/// than extractive summarization for documentation-heavy content.
+pub struct StructuredClaimStrategy {
+    extractor: HeuristicClaimExtractor,
+}
+
+impl Default for StructuredClaimStrategy {
+    fn default() -> Self {
+        Self {
+            extractor: HeuristicClaimExtractor::new(),
+        }
+    }
+}
+
+impl CompressStrategy for StructuredClaimStrategy {
+    fn compress(&self, text: &str, _max_sentences: usize) -> Option<String> {
+        let section_id = SectionId("compress".into());
+        let claims = self.extractor.extract(text, &section_id);
+
+        if claims.is_empty() {
+            return None;
+        }
+
+        let summary: String = claims
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ");
+
+        if summary.len() >= text.len() {
+            None
+        } else {
+            Some(summary)
+        }
+    }
+
+    fn method_name(&self) -> &str {
+        "structured_claims"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Strategy 4: Auto-tier selection (COMPRESS2.4)
 // ---------------------------------------------------------------------------
 
 /// Content type classification for auto-tier compression.
@@ -457,5 +507,37 @@ mod tests {
         assert_eq!(sentences.len(), 3);
         assert_eq!(sentences[0], "First sentence.");
         assert_eq!(sentences[1], "Second sentence.");
+    }
+
+    #[test]
+    fn structured_claims_extracts_assertions() {
+        let strategy = StructuredClaimStrategy::default();
+        // Mix of claim-worthy and filler sentences — claims strategy should drop filler
+        let text = "In this section we discuss the compression pipeline. \
+                     The iris MCP server uses 128-dimensional ONNX embeddings for semantic search. \
+                     See the documentation for more details on configuration. \
+                     SQLite stores approximately 2,229 sections across 6 Cargo workspace members. \
+                     Consider the trade-offs carefully before proceeding. \
+                     The HNSW index supports up to 100,000 vectors with cosine similarity. \
+                     Let us now turn to the next topic in this overview. \
+                     TF-IDF scoring achieves 60-80% compression on documentation content. \
+                     Remember to check the configuration before deploying.";
+        let result = strategy.compress(text, 2);
+        assert!(result.is_some(), "should extract claims from mixed text");
+        let summary = result.unwrap();
+        assert!(
+            summary.contains('|'),
+            "structured claims should use | separator: {summary}"
+        );
+        assert!(
+            summary.len() < text.len(),
+            "claims should be shorter than original (filler removed)"
+        );
+    }
+
+    #[test]
+    fn structured_claims_method_name() {
+        let strategy = StructuredClaimStrategy::default();
+        assert_eq!(strategy.method_name(), "structured_claims");
     }
 }
