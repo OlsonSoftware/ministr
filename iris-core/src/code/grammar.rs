@@ -367,6 +367,11 @@ pub const ALL_CODE_EXTENSIONS: &[&str] = &[
     "dockerfile",
     // Protobuf
     "proto",
+    // Assembly
+    "asm",
+    "s",
+    "S",
+    "inc",
 ];
 
 #[cfg(test)]
@@ -432,6 +437,16 @@ mod tests {
     #[test]
     fn all_code_extensions_is_nonempty() {
         assert!(ALL_CODE_EXTENSIONS.len() > 30);
+    }
+
+    #[test]
+    fn assembly_extensions_recognized() {
+        for ext in &["asm", "s", "S", "inc"] {
+            assert!(
+                ALL_CODE_EXTENSIONS.contains(ext),
+                "assembly extension '{ext}' missing from ALL_CODE_EXTENSIONS"
+            );
+        }
     }
 
     #[test]

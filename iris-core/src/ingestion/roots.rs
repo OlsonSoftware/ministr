@@ -167,6 +167,7 @@ pub(super) fn language_for_extension(ext: &str) -> &'static str {
         "kt" | "kts" => "kotlin",
         "c" | "h" => "c",
         "cpp" | "cc" | "cxx" | "hpp" | "hxx" => "cpp",
+        "asm" | "s" | "S" | "inc" => "assembly",
         "cs" => "csharp",
         "swift" => "swift",
         "lua" => "lua",
