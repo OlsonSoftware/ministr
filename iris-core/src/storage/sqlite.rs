@@ -2140,16 +2140,13 @@ fn query_symbols(
     } else if let Some(ref name) = filter.name {
         let tokens = tokenize_symbol_query(name);
         if tokens.len() <= 1 {
-            // Single token: search across name, doc_comment, and signature.
+            // Single token: match against the symbol name only.
             let tok = tokens.first().map_or(name.as_str(), |t| t.as_str());
-            sql.push_str(
-                " AND (name LIKE ? OR COALESCE(doc_comment, '') LIKE ? OR signature LIKE ?)",
-            );
+            sql.push_str(" AND name LIKE ?");
             let pat = format!("%{tok}%");
-            params.push(Box::new(pat.clone()));
-            params.push(Box::new(pat.clone()));
             params.push(Box::new(pat));
         } else {
+            // Multi-token: all (or any) tokens must appear in the name.
             let joiner = match mode {
                 TokenMode::And => " AND ",
                 TokenMode::Or => " OR ",
@@ -2159,12 +2156,8 @@ fn query_symbols(
                 if i > 0 {
                     sql.push_str(joiner);
                 }
-                sql.push_str(
-                    "(name LIKE ? OR COALESCE(doc_comment, '') LIKE ? OR signature LIKE ?)",
-                );
+                sql.push_str("name LIKE ?");
                 let pat = format!("%{token}%");
-                params.push(Box::new(pat.clone()));
-                params.push(Box::new(pat.clone()));
                 params.push(Box::new(pat));
             }
             sql.push(')');
@@ -2436,7 +2429,7 @@ mod tests {
     // ── Integration: query_symbols with AND/OR ───────────────────────
 
     #[tokio::test]
-    async fn query_symbols_single_token_searches_all_fields() {
+    async fn query_symbols_single_token_matches_name_only() {
         let storage = test_storage().await;
         insert_test_symbol(
             &storage,
@@ -2448,12 +2441,21 @@ mod tests {
         )
         .await;
 
+        // "account" appears in doc_comment but not in the name — should NOT match.
         let filter = SymbolFilter {
             name: Some("account".into()),
             ..Default::default()
         };
         let results = storage.list_symbols(&filter).await.unwrap();
-        assert_eq!(results.len(), 1, "should find via doc_comment");
+        assert_eq!(results.len(), 0, "name filter should not search doc_comment");
+
+        // "create" appears in the name — should match.
+        let filter = SymbolFilter {
+            name: Some("create".into()),
+            ..Default::default()
+        };
+        let results = storage.list_symbols(&filter).await.unwrap();
+        assert_eq!(results.len(), 1, "name filter should match symbol name");
         assert_eq!(results[0].name, "create_user");
     }
 

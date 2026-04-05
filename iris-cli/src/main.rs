@@ -561,6 +561,10 @@ async fn build_server(
         )?
     };
 
+    // Prune tools that are irrelevant for this corpus configuration.
+    let mut server = server;
+    server.prune_tools(&local_paths);
+
     Ok((server, ctx, coherence_handle))
 }
 

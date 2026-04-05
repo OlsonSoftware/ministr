@@ -186,6 +186,9 @@ pub struct IrisServer {
     tool_router: ToolRouter<Self>,
     /// Macro-generated prompt router for dispatching prompt requests.
     prompt_router: PromptRouter<Self>,
+    /// Dynamic instructions string, updated by `prune_tools()` to only
+    /// mention tools that are actually registered.
+    custom_instructions: Option<String>,
 }
 
 /// Tool response wrapper that includes budget status alongside the result data.
@@ -899,6 +902,28 @@ fn apply_response_size_guard(mut v: serde_json::Value) -> serde_json::Value {
 #[prompt_handler]
 impl ServerHandler for IrisServer {
     fn get_info(&self) -> ServerInfo {
+        let default_instructions =
+            "iris is a context cache controller for LLM agents. Use iris_toc to get \
+             a structural overview of the indexed corpus, iris_survey to search for \
+             relevant content, iris_read to retrieve full section text, iris_extract \
+             to get atomic claims from a section, iris_related to follow dependency \
+             chains between claims, iris_budget to check context budget status and \
+             get eviction recommendations, iris_compress to generate compressed \
+             summaries of content you want to evict, iris_evicted to signal when \
+             content has been dropped from your context window, iris_fetch to \
+             fetch web content by URL and add it to the corpus, iris_refresh \
+             to check cached web sources for staleness and re-fetch changed content, \
+             iris_clone to clone a git repository and index its content, \
+             iris_task to poll background fetch/clone tasks (deprecated — prefer MCP tasks/get), \
+             iris_symbols to search the code symbol index, \
+             iris_definition to get the full source definition of a symbol, \
+             and iris_references to find all references to a symbol.";
+
+        let instructions = self
+            .custom_instructions
+            .as_deref()
+            .unwrap_or(default_instructions);
+
         ServerInfo::new(
             ServerCapabilities::builder()
                 .enable_tools()
@@ -916,23 +941,7 @@ impl ServerHandler for IrisServer {
                      predictive prefetching, budget management, and coherence.",
             ),
         )
-        .with_instructions(
-            "iris is a context cache controller for LLM agents. Use iris_toc to get \
-             a structural overview of the indexed corpus, iris_survey to search for \
-             relevant content, iris_read to retrieve full section text, iris_extract \
-             to get atomic claims from a section, iris_related to follow dependency \
-             chains between claims, iris_budget to check context budget status and \
-             get eviction recommendations, iris_compress to generate compressed \
-             summaries of content you want to evict, iris_evicted to signal when \
-             content has been dropped from your context window, iris_fetch to \
-             fetch web content by URL and add it to the corpus, iris_refresh \
-             to check cached web sources for staleness and re-fetch changed content, \
-             iris_clone to clone a git repository and index its content, \
-             iris_task to poll background fetch/clone tasks (deprecated — prefer MCP tasks/get), \
-             iris_symbols to search the code symbol index, \
-             iris_definition to get the full source definition of a symbol, \
-             and iris_references to find all references to a symbol.",
-        )
+        .with_instructions(instructions)
     }
 
     // ── Extension Negotiation (SEP-1724) ─────────────────────────────
@@ -2970,6 +2979,7 @@ impl IrisServer {
             negotiated_extensions: Arc::new(Mutex::new(NegotiatedExtensions::default())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
+            custom_instructions: None,
         }
     }
 
@@ -3027,6 +3037,7 @@ impl IrisServer {
             negotiated_extensions: Arc::new(Mutex::new(NegotiatedExtensions::default())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
+            custom_instructions: None,
         }
     }
 
@@ -3082,6 +3093,77 @@ impl IrisServer {
             self.index = Some(index);
         }
         self
+    }
+
+    /// Remove tools that are irrelevant for the current corpus configuration.
+    ///
+    /// Inspects the server's capabilities (web fetcher, git fetcher) and scans
+    /// corpus paths for code files and cross-language bridge frameworks to
+    /// decide which tools to expose. Hidden tools are removed from the router
+    /// so they don't appear in `tools/list`, saving agent schema tokens.
+    ///
+    /// Call this once after constructing the server, before the MCP handshake.
+    pub fn prune_tools(&mut self, corpus_paths: &[std::path::PathBuf]) {
+        let mut pruned = Vec::new();
+
+        // Web tools: hide if no web fetcher configured
+        if self.web_fetcher.is_none() {
+            for name in &["iris_fetch", "iris_refresh"] {
+                self.tool_router.remove_route(name);
+                pruned.push(*name);
+            }
+        }
+
+        // Git tools: hide if no git fetcher configured
+        if self.git_fetcher.is_none() {
+            self.tool_router.remove_route("iris_clone");
+            pruned.push("iris_clone");
+        }
+
+        // Task tool: hide if neither fetch nor clone are available (it's deprecated)
+        if self.web_fetcher.is_none() && self.git_fetcher.is_none() {
+            self.tool_router.remove_route("iris_task");
+            pruned.push("iris_task");
+        }
+
+        // Code intelligence: hide if no code files in corpus
+        let has_code_files = corpus_paths.iter().any(|root| has_code_files_in_dir(root));
+        if !has_code_files {
+            for name in &["iris_symbols", "iris_definition", "iris_references"] {
+                self.tool_router.remove_route(name);
+                pruned.push(*name);
+            }
+        }
+
+        // Bridge tool: hide if no cross-language bridge frameworks detected
+        if has_code_files {
+            let has_bridges = corpus_paths.iter().any(|root| {
+                !iris_core::code::bridge::detector::FrameworkDetector::detect(root).is_empty()
+            });
+            if !has_bridges {
+                self.tool_router.remove_route("iris_bridge");
+                pruned.push("iris_bridge");
+            }
+        } else {
+            self.tool_router.remove_route("iris_bridge");
+            pruned.push("iris_bridge");
+        }
+
+        if pruned.is_empty() {
+            tracing::info!("tool pruning: all tools retained");
+        } else {
+            let remaining = self.tool_router.list_all().len();
+            tracing::info!(
+                pruned_count = pruned.len(),
+                remaining,
+                pruned_tools = ?pruned,
+                "tool pruning complete — {} tools hidden",
+                pruned.len(),
+            );
+        }
+
+        // Build dynamic instructions that only mention registered tools.
+        self.custom_instructions = Some(build_instructions(&self.tool_router));
     }
 
     /// Access the query service `Arc` for external use (e.g. A2A task handlers).
@@ -4197,6 +4279,101 @@ fn format_query_error(err: &QueryError) -> String {
             format!("Symbol not found: '{id}'. Use iris_symbols to search for valid symbol IDs.")
         }
     }
+}
+
+/// Check whether a directory tree contains any code files (by extension).
+///
+/// Uses a bounded BFS (max depth 6, max 500 entries) to keep this fast.
+/// Returns `true` as soon as a file with a known code extension is found.
+fn has_code_files_in_dir(root: &std::path::Path) -> bool {
+    use iris_core::code::grammar::ALL_CODE_EXTENSIONS;
+    use std::collections::VecDeque;
+
+    if !root.is_dir() {
+        return false;
+    }
+
+    const SKIP_DIRS: &[&str] = &[
+        "node_modules",
+        "target",
+        "__pycache__",
+        "vendor",
+        ".git",
+        ".hg",
+        "dist",
+        "build",
+    ];
+
+    let mut queue: VecDeque<(std::path::PathBuf, u8)> = VecDeque::new();
+    queue.push_back((root.to_path_buf(), 0));
+    let mut checked = 0u32;
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name_str = name.to_str().unwrap_or("");
+
+            if path.is_dir() {
+                if depth < 6
+                    && !name_str.starts_with('.')
+                    && !SKIP_DIRS.contains(&name_str)
+                {
+                    queue.push_back((path, depth + 1));
+                }
+            } else if path.is_file() {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if ALL_CODE_EXTENSIONS.contains(&ext) {
+                        return true;
+                    }
+                }
+                checked += 1;
+                if checked >= 500 {
+                    return false;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Build the dynamic instructions string based on which tools are registered.
+fn build_instructions(router: &ToolRouter<IrisServer>) -> String {
+    // Map of tool name → description fragment for the instructions string
+    let tool_descriptions: &[(&str, &str)] = &[
+        ("iris_toc", "iris_toc to get a structural overview of the indexed corpus"),
+        ("iris_survey", "iris_survey to search for relevant content"),
+        ("iris_read", "iris_read to retrieve full section text"),
+        ("iris_extract", "iris_extract to get atomic claims from a section"),
+        ("iris_related", "iris_related to follow dependency chains between claims"),
+        ("iris_budget", "iris_budget to check context budget status and get eviction recommendations"),
+        ("iris_compress", "iris_compress to generate compressed summaries of content you want to evict"),
+        ("iris_evicted", "iris_evicted to signal when content has been dropped from your context window"),
+        ("iris_fetch", "iris_fetch to fetch web content by URL and add it to the corpus"),
+        ("iris_refresh", "iris_refresh to check cached web sources for staleness and re-fetch changed content"),
+        ("iris_clone", "iris_clone to clone a git repository and index its content"),
+        ("iris_task", "iris_task to poll background fetch/clone tasks (deprecated — prefer MCP tasks/get)"),
+        ("iris_symbols", "iris_symbols to search the code symbol index"),
+        ("iris_definition", "iris_definition to get the full source definition of a symbol"),
+        ("iris_references", "iris_references to find all references to a symbol"),
+        ("iris_bridge", "iris_bridge to query cross-language bridge links"),
+    ];
+
+    let mut parts: Vec<&str> = Vec::new();
+    for (name, desc) in tool_descriptions {
+        if router.has_route(name) {
+            parts.push(desc);
+        }
+    }
+
+    format!(
+        "iris is a context cache controller for LLM agents. Use {}.",
+        parts.join(", "),
+    )
 }
 
 /// Well-known progress token for iris ingestion notifications.
@@ -6824,5 +7001,171 @@ mod tests {
 
         // Only budget_status and result should remain
         assert_eq!(obj.len(), 2, "should only have budget_status and result");
+    }
+
+    // --- Lazy tool registration (prune_tools) tests ---
+
+    #[test]
+    fn prune_tools_removes_web_tools_when_no_fetcher() {
+        let mut server = setup_server_sync();
+        assert!(server.web_fetcher.is_none());
+        assert!(server.git_fetcher.is_none());
+
+        // Before pruning: all tools present
+        assert!(server.tool_router.has_route("iris_fetch"));
+        assert!(server.tool_router.has_route("iris_refresh"));
+
+        server.prune_tools(&[]);
+
+        // Web tools removed
+        assert!(!server.tool_router.has_route("iris_fetch"));
+        assert!(!server.tool_router.has_route("iris_refresh"));
+    }
+
+    #[test]
+    fn prune_tools_removes_git_tools_when_no_fetcher() {
+        let mut server = setup_server_sync();
+        assert!(server.git_fetcher.is_none());
+
+        assert!(server.tool_router.has_route("iris_clone"));
+        server.prune_tools(&[]);
+        assert!(!server.tool_router.has_route("iris_clone"));
+    }
+
+    #[test]
+    fn prune_tools_removes_task_when_no_web_or_git() {
+        let mut server = setup_server_sync();
+        assert!(server.tool_router.has_route("iris_task"));
+        server.prune_tools(&[]);
+        assert!(!server.tool_router.has_route("iris_task"));
+    }
+
+    #[test]
+    fn prune_tools_keeps_core_tools() {
+        let mut server = setup_server_sync();
+        server.prune_tools(&[]);
+
+        // Core context tools should always remain
+        for name in &[
+            "iris_survey",
+            "iris_read",
+            "iris_extract",
+            "iris_related",
+            "iris_budget",
+            "iris_compress",
+            "iris_evicted",
+            "iris_toc",
+        ] {
+            assert!(
+                server.tool_router.has_route(name),
+                "core tool {name} should not be pruned"
+            );
+        }
+    }
+
+    #[test]
+    fn prune_tools_removes_code_tools_for_non_code_dir() {
+        let mut server = setup_server_sync();
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create a docs-only corpus (markdown files only)
+        std::fs::write(tmp.path().join("README.md"), "# Hello").unwrap();
+        std::fs::write(tmp.path().join("guide.txt"), "text").unwrap();
+
+        server.prune_tools(&[tmp.path().to_path_buf()]);
+
+        assert!(!server.tool_router.has_route("iris_symbols"));
+        assert!(!server.tool_router.has_route("iris_definition"));
+        assert!(!server.tool_router.has_route("iris_references"));
+        assert!(!server.tool_router.has_route("iris_bridge"));
+    }
+
+    #[test]
+    fn prune_tools_keeps_code_tools_for_code_dir() {
+        let mut server = setup_server_sync();
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create a corpus with a Rust file
+        std::fs::write(tmp.path().join("main.rs"), "fn main() {}").unwrap();
+
+        server.prune_tools(&[tmp.path().to_path_buf()]);
+
+        assert!(server.tool_router.has_route("iris_symbols"));
+        assert!(server.tool_router.has_route("iris_definition"));
+        assert!(server.tool_router.has_route("iris_references"));
+    }
+
+    #[test]
+    fn prune_tools_generates_custom_instructions() {
+        let mut server = setup_server_sync();
+        assert!(server.custom_instructions.is_none());
+
+        server.prune_tools(&[]);
+
+        let instructions = server.custom_instructions.as_ref().unwrap();
+        // Instructions should mention core tools
+        assert!(instructions.contains("iris_survey"));
+        assert!(instructions.contains("iris_read"));
+        assert!(instructions.contains("iris_toc"));
+
+        // Instructions should NOT mention pruned tools
+        assert!(!instructions.contains("iris_fetch"));
+        assert!(!instructions.contains("iris_clone"));
+        assert!(!instructions.contains("iris_task"));
+    }
+
+    #[test]
+    fn prune_tools_instructions_used_in_get_info() {
+        let mut server = setup_server_sync();
+        server.prune_tools(&[]);
+
+        let info = server.get_info();
+        let instructions = info.instructions.unwrap();
+        // Should use the custom instructions (without fetch/clone/task)
+        assert!(!instructions.contains("iris_fetch"));
+        assert!(instructions.contains("iris_survey"));
+    }
+
+    #[test]
+    fn has_code_files_detects_rust() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("lib.rs"), "pub fn foo() {}").unwrap();
+        assert!(has_code_files_in_dir(tmp.path()));
+    }
+
+    #[test]
+    fn has_code_files_detects_nested_python() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("src");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("main.py"), "print('hello')").unwrap();
+        assert!(has_code_files_in_dir(tmp.path()));
+    }
+
+    #[test]
+    fn has_code_files_returns_false_for_docs_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("README.md"), "# hello").unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), "notes").unwrap();
+        assert!(!has_code_files_in_dir(tmp.path()));
+    }
+
+    #[test]
+    fn has_code_files_skips_hidden_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hidden = tmp.path().join(".hidden");
+        std::fs::create_dir(&hidden).unwrap();
+        std::fs::write(hidden.join("main.rs"), "fn main() {}").unwrap();
+        // Only a hidden dir with code — should not be found
+        assert!(!has_code_files_in_dir(tmp.path()));
+    }
+
+    #[test]
+    fn has_code_files_skips_node_modules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nm = tmp.path().join("node_modules");
+        std::fs::create_dir(&nm).unwrap();
+        std::fs::write(nm.join("index.js"), "module.exports = {}").unwrap();
+        assert!(!has_code_files_in_dir(tmp.path()));
     }
 }
