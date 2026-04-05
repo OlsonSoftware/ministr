@@ -76,14 +76,26 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
 
   async function removeProject(e: React.MouseEvent, corpusId: string) {
     e.stopPropagation();
-    await invoke("remove_project", { corpusId });
-    onRefresh();
+    try {
+      console.log("[iris] remove_project", corpusId);
+      await invoke("remove_project", { corpusId });
+      console.log("[iris] remove_project OK");
+      onRefresh();
+    } catch (err) {
+      console.error("[iris] remove_project failed:", err);
+    }
   }
 
   async function reindex(e: React.MouseEvent, corpusId: string) {
     e.stopPropagation();
-    await invoke("trigger_reindex", { corpusId });
-    onRefresh();
+    try {
+      console.log("[iris] trigger_reindex", corpusId);
+      await invoke("trigger_reindex", { corpusId });
+      console.log("[iris] trigger_reindex OK");
+      onRefresh();
+    } catch (err) {
+      console.error("[iris] trigger_reindex failed:", err);
+    }
   }
 
   return (
