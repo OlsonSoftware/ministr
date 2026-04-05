@@ -906,4 +906,381 @@ mod tests {
         let cval: serde_json::Value = serde_json::from_str(&copilot).unwrap();
         assert!(cval["hooks"]["preToolUse"].is_array());
     }
+
+    // -----------------------------------------------------------------------
+    // STABLE1.2 — Hook enforcement test suite
+    // -----------------------------------------------------------------------
+
+    /// Verify Claude Code hooks block grep/glob/find and pass legitimate commands.
+    #[test]
+    fn claude_hooks_block_search_tools() {
+        let hooks = build_claude_hooks();
+        let pre = hooks["hooks"]["PreToolUse"].as_array().unwrap();
+
+        // First entry: Grep|Glob matcher — unconditional deny.
+        let grep_glob = &pre[0];
+        assert_eq!(grep_glob["matcher"].as_str().unwrap(), "Grep|Glob");
+        let inner_hooks = grep_glob["hooks"].as_array().unwrap();
+        assert_eq!(inner_hooks.len(), 1);
+        // No "if" pattern — blanket deny for all Grep/Glob invocations.
+        assert!(inner_hooks[0].get("if").is_none());
+        let cmd = inner_hooks[0]["command"].as_str().unwrap();
+        assert!(cmd.contains("permissionDecision"));
+        assert!(cmd.contains("deny"));
+
+        // Second entry: Bash matcher — conditional deny per pattern.
+        let bash = &pre[1];
+        assert_eq!(bash["matcher"].as_str().unwrap(), "Bash");
+        let bash_hooks = bash["hooks"].as_array().unwrap();
+
+        // Collect all "if" patterns from the Bash hooks.
+        let patterns: Vec<&str> = bash_hooks
+            .iter()
+            .filter_map(|h| h["if"].as_str())
+            .collect();
+
+        // Should block direct search commands.
+        for cmd in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
+            let expected = format!("Bash({cmd} *)");
+            assert!(
+                patterns.contains(&expected.as_str()),
+                "missing pattern for direct search: {cmd}"
+            );
+        }
+
+        // Should block file-finding commands.
+        for cmd in &["find", "fd"] {
+            let expected = format!("Bash({cmd} *)");
+            assert!(
+                patterns.contains(&expected.as_str()),
+                "missing pattern for file-finding: {cmd}"
+            );
+        }
+
+        // Should block piped search.
+        for cmd in &["grep", "rg", "ag", "ack"] {
+            let expected = format!("Bash(*|*{cmd} *)");
+            assert!(
+                patterns.contains(&expected.as_str()),
+                "missing pattern for piped search: {cmd}"
+            );
+        }
+
+        // Should NOT block head/tail/wc (false positives we fixed).
+        for cmd in &["head", "tail", "wc"] {
+            let pipe_pattern = format!("Bash(*|*{cmd}*)");
+            let direct_pattern = format!("Bash({cmd} *)");
+            assert!(
+                !patterns.contains(&pipe_pattern.as_str()),
+                "should NOT block piped {cmd}"
+            );
+            assert!(
+                !patterns.contains(&direct_pattern.as_str()),
+                "should NOT block direct {cmd}"
+            );
+        }
+    }
+
+    /// Verify Copilot CLI hooks JSON structure and bash script blocking patterns.
+    #[test]
+    fn copilot_hooks_structure_and_patterns() {
+        let val: serde_json::Value = serde_json::from_str(COPILOT_HOOKS).unwrap();
+        assert_eq!(val["version"], 1, "Copilot hooks must use version: 1");
+
+        let hooks = val["hooks"]["preToolUse"].as_array().unwrap();
+        assert_eq!(hooks.len(), 1, "single preToolUse hook entry");
+
+        let hook = &hooks[0];
+        assert_eq!(hook["type"].as_str().unwrap(), "command");
+        assert!(hook["bash"].is_string(), "must have bash key");
+        assert!(hook["powershell"].is_string(), "must have powershell key");
+
+        let bash = hook["bash"].as_str().unwrap();
+
+        // Should block built-in Grep/Glob tool names.
+        assert!(bash.contains("grep|Grep)"), "bash should block grep/Grep tool");
+        assert!(bash.contains("glob|Glob)"), "bash should block glob/Glob tool");
+
+        // Should block shell search commands.
+        for cmd in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
+            assert!(
+                bash.contains(cmd),
+                "bash script should reference search command: {cmd}"
+            );
+        }
+
+        // Should block file-finding commands.
+        assert!(bash.contains("find"), "should block find");
+        assert!(bash.contains("fd"), "should block fd");
+
+        // Should block piped search.
+        assert!(
+            bash.contains("grep -qE"),
+            "should use regex to detect piped search"
+        );
+        assert!(
+            bash.contains("(grep|rg|ag|ack)"),
+            "pipe regex should target search tools"
+        );
+
+        // Should NOT block head/tail/wc in the pipe regex.
+        assert!(
+            !bash.contains("head|tail|wc"),
+            "pipe regex must NOT block head/tail/wc"
+        );
+    }
+
+    /// Verify Cursor hooks JSON structure and bash script blocking patterns.
+    #[test]
+    fn cursor_hooks_structure_and_patterns() {
+        let val: serde_json::Value = serde_json::from_str(CURSOR_HOOKS).unwrap();
+        assert_eq!(val["version"], 1, "Cursor hooks must use version: 1");
+
+        let hooks = val["hooks"]["beforeShellExecution"]
+            .as_array()
+            .unwrap();
+        assert_eq!(hooks.len(), 1, "single beforeShellExecution hook");
+
+        let cmd = hooks[0]["command"].as_str().unwrap();
+        assert!(cmd.starts_with("bash -c"), "must be a bash -c command");
+
+        // Should block search commands.
+        for tool in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
+            assert!(cmd.contains(tool), "cursor hook should block: {tool}");
+        }
+
+        // Should block file-finding.
+        assert!(cmd.contains("find"), "should block find");
+        assert!(cmd.contains("fd"), "should block fd");
+
+        // Should block piped search.
+        assert!(
+            cmd.contains("(grep|rg|ag|ack)"),
+            "should detect piped search"
+        );
+
+        // Output format: permission deny with agentMessage and userMessage.
+        assert!(cmd.contains("permission"), "should contain permission key");
+        assert!(cmd.contains("deny"), "should contain deny value");
+        assert!(cmd.contains("agentMessage"), "should have agentMessage");
+        assert!(cmd.contains("userMessage"), "should have userMessage");
+    }
+
+    /// Verify deny_hook produces correctly structured JSON.
+    #[test]
+    fn deny_hook_structure() {
+        let hook = deny_hook("Bash(grep *)", "reason text");
+        assert_eq!(hook["type"].as_str().unwrap(), "command");
+        assert_eq!(hook["if"].as_str().unwrap(), "Bash(grep *)");
+        let cmd = hook["command"].as_str().unwrap();
+        assert!(cmd.contains("permissionDecision"));
+        assert!(cmd.contains("deny"));
+        assert!(cmd.contains("reason text"));
+
+        // Empty if_pattern should omit the "if" key entirely.
+        let blanket = deny_hook("", "blanket deny");
+        assert!(blanket.get("if").is_none());
+    }
+
+    /// Verify all four platforms' generated files are valid JSON.
+    #[test]
+    fn all_platform_hooks_are_valid_json() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        scaffold_agent_config(root);
+
+        // Claude Code settings.json
+        let settings: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join(".claude/settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(settings["hooks"]["PreToolUse"].is_array());
+
+        // Copilot CLI hooks
+        let copilot: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(copilot["hooks"]["preToolUse"].is_array());
+
+        // Cursor hooks
+        let cursor: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join(".cursor/hooks.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(cursor["hooks"]["beforeShellExecution"].is_array());
+    }
+
+    // -----------------------------------------------------------------------
+    // STABLE1.3 — Autoheal regression tests
+    // -----------------------------------------------------------------------
+
+    /// Corrupt each machine-generated hook file individually, verify heal restores it.
+    #[test]
+    fn autoheal_restores_each_hook_file_individually() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        scaffold_agent_config(root);
+
+        // Record original contents of all hook files.
+        let hook_files = [
+            ".github/hooks/iris-enforce.json",
+            ".cursor/hooks.json",
+        ];
+        let originals: Vec<String> = hook_files
+            .iter()
+            .map(|f| std::fs::read_to_string(root.join(f)).unwrap())
+            .collect();
+
+        // Corrupt each file one at a time and verify heal.
+        for (i, &path) in hook_files.iter().enumerate() {
+            std::fs::write(root.join(path), "CORRUPTED").unwrap();
+
+            let result = scaffold_agent_config(root);
+            assert_eq!(result.created, 0, "no new files for {path}");
+            assert_eq!(result.healed, 1, "should heal exactly one file: {path}");
+
+            // Verify content was restored.
+            let restored = std::fs::read_to_string(root.join(path)).unwrap();
+            assert_eq!(
+                restored.trim(),
+                originals[i].trim(),
+                "content mismatch after heal: {path}"
+            );
+        }
+    }
+
+    /// Corrupt Claude settings.json hooks key, verify heal restores hooks
+    /// while preserving other keys.
+    #[test]
+    fn autoheal_claude_settings_preserves_user_keys() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Create settings with custom permissions AND correct hooks.
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        let hooks_val = build_claude_hooks();
+        let mut combined = serde_json::json!({
+            "permissions": {"allow": ["Bash(cargo build)"]},
+            "custom_key": "preserved"
+        });
+        combined
+            .as_object_mut()
+            .unwrap()
+            .insert("hooks".to_string(), hooks_val["hooks"].clone());
+        std::fs::write(
+            root.join(".claude/settings.json"),
+            serde_json::to_string_pretty(&combined).unwrap(),
+        )
+        .unwrap();
+
+        // Now corrupt only the hooks.
+        let mut corrupted = combined.clone();
+        corrupted["hooks"] = serde_json::json!({"PostToolUse": []});
+        std::fs::write(
+            root.join(".claude/settings.json"),
+            serde_json::to_string_pretty(&corrupted).unwrap(),
+        )
+        .unwrap();
+
+        let result = write_claude_hooks(root);
+        assert_eq!(result.healed, 1, "stale hooks should be healed");
+
+        let after: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join(".claude/settings.json")).unwrap(),
+        )
+        .unwrap();
+
+        // Hooks should be restored.
+        assert!(after["hooks"]["PreToolUse"].is_array());
+        // User keys should be preserved.
+        assert_eq!(after["permissions"]["allow"][0], "Bash(cargo build)");
+        assert_eq!(after["custom_key"], "preserved");
+    }
+
+    /// Advisory files (.md, .mdc) should NEVER be overwritten even if content differs.
+    #[test]
+    fn autoheal_never_touches_advisory_files() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        scaffold_agent_config(root);
+
+        let advisory_files = [
+            ".claude/rules/iris-scope.md",
+            ".claude/rules/tools.md",
+            ".claude/rules/iris-playbook.md",
+            ".cursor/rules/iris.mdc",
+            ".github/copilot-instructions.md",
+            "AGENTS.md",
+        ];
+
+        // Overwrite all advisory files with custom content.
+        for f in &advisory_files {
+            std::fs::write(root.join(f), "user customized content").unwrap();
+        }
+
+        let result = scaffold_agent_config(root);
+        assert_eq!(result.created, 0);
+        assert_eq!(result.healed, 0, "advisory files must not be healed");
+
+        // Verify custom content is preserved.
+        for f in &advisory_files {
+            let content = std::fs::read_to_string(root.join(f)).unwrap();
+            assert_eq!(
+                content, "user customized content",
+                "advisory file was overwritten: {f}"
+            );
+        }
+    }
+
+    /// Verify heal works correctly when files are up-to-date (no unnecessary writes).
+    #[test]
+    fn autoheal_noop_when_content_matches() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let first = scaffold_agent_config(root);
+        assert_eq!(first.created, 9);
+        assert_eq!(first.healed, 0);
+
+        // Record modification times.
+        let copilot_mtime = std::fs::metadata(root.join(".github/hooks/iris-enforce.json"))
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        // Run again — nothing should change.
+        let second = scaffold_agent_config(root);
+        assert_eq!(second.created, 0);
+        assert_eq!(second.healed, 0);
+
+        // File should not have been rewritten (mtime preserved).
+        let copilot_mtime2 = std::fs::metadata(root.join(".github/hooks/iris-enforce.json"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(copilot_mtime, copilot_mtime2, "unchanged file should not be rewritten");
+    }
+
+    /// Verify that completely deleting a hook file causes re-creation (not heal).
+    #[test]
+    fn deleted_hook_file_is_recreated() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        scaffold_agent_config(root);
+
+        std::fs::remove_file(root.join(".github/hooks/iris-enforce.json")).unwrap();
+        std::fs::remove_file(root.join(".cursor/hooks.json")).unwrap();
+
+        let result = scaffold_agent_config(root);
+        assert_eq!(result.created, 2, "deleted hook files should be re-created");
+        assert_eq!(result.healed, 0, "re-creation is not heal");
+
+        // Verify they're valid JSON.
+        let copilot: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(copilot["hooks"]["preToolUse"].is_array());
+    }
 }
