@@ -2264,7 +2264,7 @@ mod tests {
     use serde::Serialize;
 
     use crate::server::helpers::{
-        apply_response_size_guard, has_code_files_in_dir, MAX_RESPONSE_BYTES,
+        MAX_RESPONSE_BYTES, apply_response_size_guard, has_code_files_in_dir,
     };
 
     /// Extract the text string from the first Content item.
