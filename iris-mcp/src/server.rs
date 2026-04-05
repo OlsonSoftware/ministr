@@ -328,6 +328,10 @@ struct BudgetResponse {
     prefetch_metrics: iris_core::session::PrefetchMetrics,
     /// Cumulative session token economics.
     session_metrics: SessionMetricsResponse,
+    /// Total tokens consumed by MCP tool schemas (descriptions + parameters).
+    schema_tokens: usize,
+    /// Number of registered tools.
+    tool_count: usize,
     /// Pending coherence alerts (present when underlying content has changed).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     #[schemars(default)]
@@ -1286,7 +1290,7 @@ impl IrisServer {
     /// Results that were already delivered in this session are filtered out.
     #[tool(
         name = "iris_survey",
-        description = "Search the indexed corpus for sections relevant to a natural language query. Returns ranked summaries with relevance scores. Already-delivered content is filtered out.",
+        description = "Search the indexed corpus for sections relevant to a natural language query. Returns ranked results with relevance scores.",
         output_schema = tool_output_schema::<ToolResponse<SurveyResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1526,7 +1530,7 @@ impl IrisServer {
     ///    of re-delivering the full text.
     #[tool(
         name = "iris_read",
-        description = "Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count. Returns deltas for changed content and skips re-delivery of unchanged content.",
+        description = "Read the full content of a section by ID. Returns deltas for changed content and skips re-delivery of unchanged content.",
         output_schema = tool_output_schema::<ToolResponse<ReadOutputData>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1715,7 +1719,7 @@ impl IrisServer {
     /// across documents.
     #[tool(
         name = "iris_related",
-        description = "Follow dependency chains between claims. Given a claim ID, returns related claims with relationship type (references, contradicts, depends_on, updates) and source section.",
+        description = "Find claims related to a given claim by relationship type (references, contradicts, depends_on, updates).",
         output_schema = tool_output_schema::<ToolResponse<RelatedResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1854,7 +1858,7 @@ impl IrisServer {
     /// to understand budget health and decide what to evict.
     #[tool(
         name = "iris_budget",
-        description = "Get the current context budget status: total budget, estimated usage, pressure level, and eviction recommendations. Call this to understand budget health.",
+        description = "Get the current context budget status: total budget, estimated usage, pressure level.",
         output_schema = tool_output_schema::<BudgetResponse>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1945,6 +1949,8 @@ impl IrisServer {
                 }
             }
 
+            let (schema_tokens, tool_count) = self.schema_token_overhead();
+
             let response = BudgetResponse {
                 total_budget: status.tokens_used + status.tokens_remaining,
                 estimated_used: status.tokens_used,
@@ -1964,6 +1970,8 @@ impl IrisServer {
                     delta_updates: metrics.delta_updates,
                     dedup_hits: metrics.dedup_hits,
                 },
+                schema_tokens,
+                tool_count,
                 coherence_alerts: alerts,
                 elicitation_evicted,
             };
@@ -1979,7 +1987,7 @@ impl IrisServer {
     /// with no extra cost.
     #[tool(
         name = "iris_compress",
-        description = "Generate compressed summaries for sections the agent wants to evict from context. Uses extractive TF-IDF compression (60-80% reduction). Returns summaries with original/compressed token counts.",
+        description = "Generate compressed summaries for sections the agent wants to evict from context. Uses extractive TF-IDF compression (60-80% reduction).",
         output_schema = tool_output_schema::<ToolResponse<CompressResponse>>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]
@@ -2046,7 +2054,7 @@ impl IrisServer {
     /// orientation. Optionally filtered to a single document.
     #[tool(
         name = "iris_toc",
-        description = "Return a table of contents for the indexed corpus. Lists documents and sections with metadata (heading path, depth, claim count, token count) but no text content. Paginated: returns up to `limit` entries (default 100) starting at `offset` (default 0). Use `corpus_stats.sections` to know the total count. Optionally filter to a single document by ID.",
+        description = "Get a structural overview (table of contents) of the indexed corpus.",
         output_schema = tool_output_schema::<ToolResponse<TocResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2144,7 +2152,7 @@ impl IrisServer {
     /// searchable via `iris_survey`.
     #[tool(
         name = "iris_fetch",
-        description = "Fetch web content by URL and add it to the indexed corpus. Tries llms.txt strategies first, then falls back to direct page fetch. Content is immediately searchable after fetching. Supports MCP Tasks for async execution.",
+        description = "Fetch a URL from the web and index its content. Tries llms.txt first, falls back to direct page fetch.",
         output_schema = tool_output_schema::<FetchOutputData>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = true),
         execution(task_support = "optional")
@@ -2256,7 +2264,7 @@ impl IrisServer {
     /// re-indexes it with embeddings, and reports what was updated.
     #[tool(
         name = "iris_refresh",
-        description = "Check cached web and git sources for staleness. Re-fetches changed web content and re-clones stale git repos. If url is provided, checks only that source. If omitted, checks all cached sources. Reports what was updated.",
+        description = "Check cached web and git sources for staleness and re-fetch changed content.",
         output_schema = tool_output_schema::<ToolResponse<RefreshResponse>>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true)
     )]
@@ -2302,7 +2310,7 @@ impl IrisServer {
     /// embedded, and immediately searchable via `iris_survey`.
     #[tool(
         name = "iris_clone",
-        description = "Clone a git repository and index its content. Supports sparse checkout via paths parameter. Cached clones are reused when the remote HEAD hasn't changed. Content is immediately searchable after cloning. Supports MCP Tasks for async execution.",
+        description = "Clone a git repository and index its content. Supports sparse checkout. Cached clones are reused.",
         output_schema = tool_output_schema::<CloneOutputData>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = true),
         execution(task_support = "optional")
@@ -2371,7 +2379,7 @@ impl IrisServer {
     /// for backward compatibility.
     #[tool(
         name = "iris_task",
-        description = "Poll a background task. Deprecated: prefer the MCP tasks/get protocol method. Returns task status (working, completed, failed, cancelled).",
+        description = "Poll a background task status. Deprecated: prefer MCP tasks/get.",
         output_schema = tool_output_schema::<TaskStatusResponse>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2403,7 +2411,7 @@ impl IrisServer {
     /// and `iris_references`.
     #[tool(
         name = "iris_symbols",
-        description = "Search the code symbol index. Filter by name (fuzzy), kind, module, or visibility. Returns symbol IDs for use with iris_definition and iris_references. Paginated: returns up to `limit` entries (default 100) starting at `offset` (default 0). Use `total` to know the full count.",
+        description = "Search for code symbols (functions, structs, traits) by name, kind, module, or visibility.",
         output_schema = tool_output_schema::<ToolResponse<SymbolsResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2496,7 +2504,7 @@ impl IrisServer {
     /// module hierarchy, and all metadata.
     #[tool(
         name = "iris_definition",
-        description = "Get the full source definition of a code symbol by ID. Returns source code with surrounding context and module hierarchy.",
+        description = "Get the full source definition of a code symbol by its ID.",
         output_schema = tool_output_schema::<ToolResponse<iris_core::service::SymbolDefinition>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2543,7 +2551,7 @@ impl IrisServer {
     /// with source locations.
     #[tool(
         name = "iris_references",
-        description = "Find all references to a code symbol: callers, implementors, importers, and cross-language bridge links. Optionally filter by reference kind. Paginated: returns up to `limit` entries (default 100) starting at `offset` (default 0). Use `total` to know the full count.",
+        description = "Find all callers, implementors, and importers of a code symbol.",
         output_schema = tool_output_schema::<ToolResponse<ReferencesResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2614,7 +2622,7 @@ impl IrisServer {
     /// search query, bridge kind, language, or file path.
     #[tool(
         name = "iris_bridge",
-        description = "Search cross-language bridge links (e.g. Tauri commands, NAPI exports, PyO3 bindings). Filter by query, bridge_kind, language, or file_path. Returns matched export↔import pairs with confidence scores.",
+        description = "Query cross-language bridge links (FFI, NAPI, PyO3, etc.) between source and target languages.",
         output_schema = tool_output_schema::<ToolResponse<BridgeResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -3869,6 +3877,35 @@ impl IrisServer {
             .take(CompletionInfo::MAX_VALUES)
             .map(|d| d.source_path)
             .collect()
+    }
+
+    /// Compute the total token overhead of all registered tool schemas.
+    ///
+    /// Concatenates tool names, descriptions, and parameter descriptions,
+    /// then counts tokens using cl100k_base. Cached via `OnceLock` since
+    /// schemas are immutable after initialization.
+    fn schema_token_overhead(&self) -> (usize, usize) {
+        use std::sync::OnceLock;
+        static CACHED: OnceLock<(usize, usize)> = OnceLock::new();
+        *CACHED.get_or_init(|| {
+            let tools = self.tool_router.list_all();
+            let tool_count = tools.len();
+            let mut schema_text = String::new();
+            for tool in &tools {
+                schema_text.push_str(&tool.name);
+                schema_text.push(' ');
+                if let Some(desc) = &tool.description {
+                    schema_text.push_str(desc);
+                    schema_text.push(' ');
+                }
+                if let Ok(json) = serde_json::to_string(&*tool.input_schema) {
+                    schema_text.push_str(&json);
+                    schema_text.push(' ');
+                }
+            }
+            let tokens = iris_core::token::count_tokens(&schema_text);
+            (tokens, tool_count)
+        })
     }
 
     /// Build the `mcp://server-card.json` server card (SEP-1649).
