@@ -619,7 +619,7 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
     // Scaffold agent config files (Claude Code hooks, Cursor rules, etc.).
     let scaffolded = iris_core::scaffold::scaffold_agent_config(root);
 
-    eprintln!("Detected project: {}", detection.project_name);
+    eprintln!("Detected project: {} ({})", detection.project_name, detection.project_type);
     for ws in &detection.workspaces {
         eprintln!("  {} workspace ({} members)", ws.kind, ws.members.len());
     }

@@ -22,11 +22,43 @@ use crate::code::bridge::detector::FrameworkDetector;
 use crate::config::CORPUS_CONFIG_FILENAME;
 use crate::workspace::{WorkspaceInfo, WorkspaceKind, detect_all_workspaces};
 
+/// Classified project type, inferred from manifests and directory structure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProjectType {
+    /// Multi-package workspace (Cargo workspace, npm workspaces, pnpm, etc.).
+    Monorepo,
+    /// Reusable library crate/package (no binaries, lib-only).
+    Library,
+    /// Command-line tool (binary with no web server indicators).
+    Cli,
+    /// Web application (frontend framework or fullstack with UI).
+    WebApp,
+    /// HTTP API service (server with routes, no frontend).
+    Api,
+    /// Could not determine a specific type.
+    Unknown,
+}
+
+impl std::fmt::Display for ProjectType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Monorepo => "monorepo",
+            Self::Library => "library",
+            Self::Cli => "cli",
+            Self::WebApp => "web-app",
+            Self::Api => "api",
+            Self::Unknown => "unknown",
+        })
+    }
+}
+
 /// Summary of what was detected in a project directory.
 #[derive(Debug, Clone)]
 pub struct ProjectDetection {
     /// Human-readable project name (derived from directory name or manifest).
     pub project_name: String,
+    /// Classified project type (monorepo, library, cli, web-app, api).
+    pub project_type: ProjectType,
     /// Detected workspace layouts (Cargo, npm, pnpm, etc.).
     pub workspaces: Vec<WorkspaceInfo>,
     /// Detected cross-language bridge frameworks.
@@ -82,9 +114,11 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
     let source_paths = detect_source_paths(root, &workspaces, has_rust, has_node, has_python);
     let doc_paths = detect_doc_paths(root);
     let ignore_patterns = default_ignore_patterns(has_rust, has_node, has_python);
+    let project_type = classify_project_type(root, &workspaces, &bridges, has_rust, has_node);
 
     ProjectDetection {
         project_name,
+        project_type,
         workspaces,
         bridges,
         has_rust,
@@ -467,6 +501,115 @@ fn relative_path(base: &Path, target: &Path) -> Option<String> {
         .map(|rel| rel.to_string_lossy().to_string())
 }
 
+/// Classify the project type from detected signals.
+///
+/// Priority order (first match wins):
+/// 1. **Monorepo** — any workspace with ≥2 members
+/// 2. **WebApp** — Tauri bridge, or frontend framework indicators
+/// 3. **Api** — HTTP route bridges, or server framework dependencies
+/// 4. **Cli** — Rust binary with clap/structopt, or Node bin field
+/// 5. **Library** — Rust lib-only crate, or npm package without bin
+/// 6. **Unknown** — fallback
+fn classify_project_type(
+    root: &Path,
+    workspaces: &[WorkspaceInfo],
+    bridges: &[BridgeKind],
+    has_rust: bool,
+    has_node: bool,
+) -> ProjectType {
+    // Monorepo: any workspace with 2+ members.
+    if workspaces.iter().any(|w| w.members.len() >= 2) {
+        return ProjectType::Monorepo;
+    }
+
+    // WebApp: Tauri/Wasm bridges, or frontend indicators.
+    if bridges
+        .iter()
+        .any(|b| matches!(b, BridgeKind::TauriCommand | BridgeKind::WasmBindgen))
+    {
+        return ProjectType::WebApp;
+    }
+    if has_node && has_frontend_framework(root) {
+        return ProjectType::WebApp;
+    }
+
+    // Api: HTTP route bridges, or server framework deps.
+    if bridges
+        .iter()
+        .any(|b| matches!(b, BridgeKind::HttpRoute))
+    {
+        return ProjectType::Api;
+    }
+    if has_rust && has_server_dependency(root) {
+        return ProjectType::Api;
+    }
+
+    // Cli: binary crate with CLI deps, or Node bin.
+    if has_rust && is_rust_cli(root) {
+        return ProjectType::Cli;
+    }
+    if has_node && has_node_bin(root) {
+        return ProjectType::Cli;
+    }
+
+    // Library: lib-only Rust crate, or npm without bin.
+    if has_rust && is_rust_lib_only(root) {
+        return ProjectType::Library;
+    }
+
+    ProjectType::Unknown
+}
+
+/// Check if `package.json` references a frontend framework.
+fn has_frontend_framework(root: &Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(root.join("package.json")) else {
+        return false;
+    };
+    // Quick substring checks — avoids pulling in a JSON parser for a heuristic.
+    ["\"react\"", "\"vue\"", "\"svelte\"", "\"next\"", "\"nuxt\"", "\"angular\"", "\"astro\""]
+        .iter()
+        .any(|fw| content.contains(fw))
+}
+
+/// Check if `Cargo.toml` has server-framework dependencies.
+fn has_server_dependency(root: &Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+        return false;
+    };
+    ["actix-web", "axum", "rocket", "warp", "tide", "poem", "salvo"]
+        .iter()
+        .any(|dep| content.contains(dep))
+}
+
+/// Check if the Rust project is a CLI (has binary targets + CLI deps).
+fn is_rust_cli(root: &Path) -> bool {
+    let has_main = root.join("src/main.rs").exists();
+    if !has_main {
+        return false;
+    }
+    let Ok(content) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+        return false;
+    };
+    ["clap", "structopt", "argh", "bpaf"]
+        .iter()
+        .any(|dep| content.contains(dep))
+}
+
+/// Check if the Rust project is lib-only (no binary targets).
+fn is_rust_lib_only(root: &Path) -> bool {
+    let has_lib = root.join("src/lib.rs").exists();
+    let has_main = root.join("src/main.rs").exists();
+    has_lib && !has_main
+}
+
+/// Check if `package.json` has a `"bin"` field.
+fn has_node_bin(root: &Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(root.join("package.json")) else {
+        return false;
+    };
+    content.contains("\"bin\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -699,5 +842,95 @@ version = "0.1.0"
 
         let py_patterns = default_ignore_patterns(false, false, true);
         assert!(py_patterns.contains(&"*_test.py".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Project type classification tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn classify_monorepo_from_workspace() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"a\", \"b\"]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("a/src")).unwrap();
+        fs::create_dir_all(root.join("b/src")).unwrap();
+
+        let detection = detect_project(root);
+        assert_eq!(detection.project_type, ProjectType::Monorepo);
+    }
+
+    #[test]
+    fn classify_library_from_lib_only() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        fs::write(root.join("Cargo.toml"), "[package]\nname = \"mylib\"\n").unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn hello() {}").unwrap();
+
+        let detection = detect_project(root);
+        assert_eq!(detection.project_type, ProjectType::Library);
+    }
+
+    #[test]
+    fn classify_cli_from_clap_dep() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"mytool\"\n\n[dependencies]\nclap = \"4\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+
+        let detection = detect_project(root);
+        assert_eq!(detection.project_type, ProjectType::Cli);
+    }
+
+    #[test]
+    fn classify_api_from_axum_dep() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"myapi\"\n\n[dependencies]\naxum = \"0.7\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+
+        let detection = detect_project(root);
+        assert_eq!(detection.project_type, ProjectType::Api);
+    }
+
+    #[test]
+    fn classify_webapp_from_react() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        fs::write(
+            root.join("package.json"),
+            r#"{"name": "myapp", "dependencies": {"react": "^18"}}"#,
+        )
+        .unwrap();
+
+        let detection = detect_project(root);
+        assert_eq!(detection.project_type, ProjectType::WebApp);
+    }
+
+    #[test]
+    fn classify_unknown_for_empty() {
+        let tmp = TempDir::new().unwrap();
+        let detection = detect_project(tmp.path());
+        assert_eq!(detection.project_type, ProjectType::Unknown);
     }
 }
