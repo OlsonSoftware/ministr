@@ -184,7 +184,16 @@ mod tests {
             ContentId("sec-1".to_string()),
         ];
 
-        save_session(&db, "corpus-a", "sess-1", 50_000, 3, &delivered, &trajectory).unwrap();
+        save_session(
+            &db,
+            "corpus-a",
+            "sess-1",
+            50_000,
+            3,
+            &delivered,
+            &trajectory,
+        )
+        .unwrap();
 
         let loaded = load_sessions(&db, "corpus-a").unwrap();
         assert_eq!(loaded.len(), 1);
@@ -212,7 +221,16 @@ mod tests {
         // Simulate more deliveries and updated turn.
         delivered.insert("sec-2".to_string(), make_delivered("sec-2", 300, 2).1);
         let trajectory = vec![ContentId("sec-2".to_string())];
-        save_session(&db, "corpus-a", "sess-1", 50_000, 2, &delivered, &trajectory).unwrap();
+        save_session(
+            &db,
+            "corpus-a",
+            "sess-1",
+            50_000,
+            2,
+            &delivered,
+            &trajectory,
+        )
+        .unwrap();
 
         let loaded = load_sessions(&db, "corpus-a").unwrap();
         assert_eq!(loaded.len(), 1, "should upsert, not duplicate");

@@ -31,7 +31,7 @@ pub use prefetch::{
 };
 pub use registry::{SessionEntry, SessionRegistry};
 pub use types::{
-    AccessMode, CoherenceAlert, CompressionTier, DeliveredItem, EvictionPolicy, Session,
-    SessionId, SessionMetrics,
+    AccessMode, CoherenceAlert, CompressionTier, DeliveredItem, EvictionPolicy, Session, SessionId,
+    SessionMetrics,
 };
 pub use window::{WindowEstimator, WindowStatus};

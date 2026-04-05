@@ -79,10 +79,7 @@ where
         .collect();
 
     // 2. Coalesce small adjacent sections
-    doc.sections = coalesce_small_sections(
-        std::mem::take(&mut doc.sections),
-        min_section_tokens,
-    );
+    doc.sections = coalesce_small_sections(std::mem::take(&mut doc.sections), min_section_tokens);
 
     // 3. Deduplicate section/claim IDs to prevent UNIQUE constraint violations
     doc.deduplicate_ids();

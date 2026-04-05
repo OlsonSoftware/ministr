@@ -10,14 +10,18 @@ mod tests {
     use crate::storage::traits::{Storage, SymbolRecord};
     use crate::types::{CorpusRoot, RootKind, Section, SectionId, SymbolId, VectorId};
 
-    use super::super::discovery::{discover_files, discover_paths, is_in_ignored_dir, is_supported_file};
+    use super::super::discovery::{
+        discover_files, discover_paths, is_in_ignored_dir, is_supported_file,
+    };
     use super::super::embedding::embed_document;
     use super::super::pipeline::{IngestionPipeline, IngestionProgress};
     use super::super::roots::{
         compute_relative_path, compute_root_id, compute_sha256, find_root_for_file,
         language_for_extension, module_path_from_file, namespace_path, strip_root_prefix,
     };
-    use super::super::sections::{coalesce_small_sections, enrich_sections, split_large_headingless_section};
+    use super::super::sections::{
+        coalesce_small_sections, enrich_sections, split_large_headingless_section,
+    };
     use super::super::symbols::resolve_and_store_refs;
 
     // --- Ignored directory guard ---

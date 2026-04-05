@@ -109,14 +109,10 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
         guard.get(&corpus_id).map(|h| h.data_dir.clone())
     };
 
-    state
-        .registry
-        .unregister(&corpus_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(corpus_id = %corpus_id, error = %e, "unregister failed");
-            e.to_string()
-        })?;
+    state.registry.unregister(&corpus_id).await.map_err(|e| {
+        tracing::error!(corpus_id = %corpus_id, error = %e, "unregister failed");
+        e.to_string()
+    })?;
 
     // Clean up index data.
     if let Some(dir) = data_dir {
@@ -349,10 +345,7 @@ pub async fn list_corpus_files(
         .map_err(|e| e.to_string())?;
 
     // Count sections per source_path by querying documents then sections.
-    let docs = storage
-        .list_documents()
-        .await
-        .map_err(|e| e.to_string())?;
+    let docs = storage.list_documents().await.map_err(|e| e.to_string())?;
 
     let mut section_counts: std::collections::HashMap<String, usize> =
         std::collections::HashMap::new();

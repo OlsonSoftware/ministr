@@ -287,10 +287,7 @@ pub fn render_toml(detection: &ProjectDetection) -> String {
         "# Each entry is a line appended to .claude/rules/, .cursor/rules/, etc."
     );
     let _ = writeln!(out, "# rules = [");
-    let _ = writeln!(
-        out,
-        "#     \"Always use snake_case for function names.\","
-    );
+    let _ = writeln!(out, "#     \"Always use snake_case for function names.\",");
     let _ = writeln!(
         out,
         "#     \"Prefer Result<T, E> over panic in library code.\","
@@ -613,10 +610,7 @@ fn classify_project_type(
     }
 
     // Api: HTTP route bridges, or server framework deps.
-    if bridges
-        .iter()
-        .any(|b| matches!(b, BridgeKind::HttpRoute))
-    {
+    if bridges.iter().any(|b| matches!(b, BridgeKind::HttpRoute)) {
         return ProjectType::Api;
     }
     if has_rust && has_server_dependency(root) {
@@ -645,9 +639,17 @@ fn has_frontend_framework(root: &Path) -> bool {
         return false;
     };
     // Quick substring checks — avoids pulling in a JSON parser for a heuristic.
-    ["\"react\"", "\"vue\"", "\"svelte\"", "\"next\"", "\"nuxt\"", "\"angular\"", "\"astro\""]
-        .iter()
-        .any(|fw| content.contains(fw))
+    [
+        "\"react\"",
+        "\"vue\"",
+        "\"svelte\"",
+        "\"next\"",
+        "\"nuxt\"",
+        "\"angular\"",
+        "\"astro\"",
+    ]
+    .iter()
+    .any(|fw| content.contains(fw))
 }
 
 /// Check if `Cargo.toml` has server-framework dependencies.
@@ -655,9 +657,17 @@ fn has_server_dependency(root: &Path) -> bool {
     let Ok(content) = std::fs::read_to_string(root.join("Cargo.toml")) else {
         return false;
     };
-    ["actix-web", "axum", "rocket", "warp", "tide", "poem", "salvo"]
-        .iter()
-        .any(|dep| content.contains(dep))
+    [
+        "actix-web",
+        "axum",
+        "rocket",
+        "warp",
+        "tide",
+        "poem",
+        "salvo",
+    ]
+    .iter()
+    .any(|dep| content.contains(dep))
 }
 
 /// Check if the Rust project is a CLI (has binary targets + CLI deps).

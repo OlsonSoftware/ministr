@@ -12,10 +12,10 @@ use futures::stream::{self, StreamExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 
+use crate::code::AstParser;
 use crate::code::bridge::linker::BridgeLinker;
 use crate::code::bridge::{BridgeEndpoint, BridgeKind, create_linker_for_kinds, detector};
 use crate::code::package_graph::PackageGraph;
-use crate::code::AstParser;
 use crate::embedding::Embedder;
 use crate::error::IngestionError;
 use crate::extraction::claims::HeuristicClaimExtractor;
@@ -31,7 +31,7 @@ use crate::types::{CorpusRoot, RootKind, VectorId};
 
 use super::discovery::{discover_files, discover_paths, is_in_ignored_dir};
 use super::embedding::{
-    batch_embed_and_insert, collect_document_embeddings, embed_document, EMBED_FLUSH_THRESHOLD,
+    EMBED_FLUSH_THRESHOLD, batch_embed_and_insert, collect_document_embeddings, embed_document,
 };
 use super::process::{ProcessOptions, store_enriched_document};
 use super::roots::{
@@ -466,10 +466,7 @@ impl IngestionPipeline {
                 .to_string_lossy()
                 .to_string();
 
-            match self
-                .ingest_file(file_path, &relative, storage)
-                .await
-            {
+            match self.ingest_file(file_path, &relative, storage).await {
                 Ok(FileResult::Skipped) => {
                     debug!(path = %relative, "unchanged, skipping");
                     stats.files_skipped += 1;
@@ -1236,12 +1233,8 @@ impl IngestionPipeline {
             cancelled
         };
 
-        let consumer = Self::run_embedding_consumer(
-            embed_rx,
-            embedder,
-            index,
-            self.progress.as_ref(),
-        );
+        let consumer =
+            Self::run_embedding_consumer(embed_rx, embedder, index, self.progress.as_ref());
 
         let (was_cancelled, embed_result) = futures::join!(producer, consumer);
         let embed_count = embed_result?;
@@ -1251,7 +1244,12 @@ impl IngestionPipeline {
             progress.set_current_file("");
         }
 
-        Ok((was_cancelled, embed_count, all_pending_refs, all_bridge_endpoints))
+        Ok((
+            was_cancelled,
+            embed_count,
+            all_pending_refs,
+            all_bridge_endpoints,
+        ))
     }
 
     /// Consume embedding pairs from the producer channel, batch them, and insert.
@@ -1597,9 +1595,7 @@ impl IngestionPipeline {
                     1 => primary[0],
                     _ => {
                         let crate_filtered: Vec<_> = if let Some(tc) = &raw.target_crate {
-                            if let Some(dir_prefix) =
-                                combined_graph.dir_prefix_for_crate(tc)
-                            {
+                            if let Some(dir_prefix) = combined_graph.dir_prefix_for_crate(tc) {
                                 primary
                                     .iter()
                                     .filter(|s| s.file_path.starts_with(dir_prefix))
