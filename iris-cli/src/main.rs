@@ -206,9 +206,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Scaffold agent config files on first run (idempotent — skips existing files).
-    iris_core::scaffold::scaffold_agent_config(&cwd);
-
     // Resolve corpus paths: .iris.toml > --corpus CLI > config.toml corpus_paths
     let corpus_paths: Vec<String> = if let Some((ref base_dir, ref cc)) = corpus_config {
         cc.resolve_local_paths(base_dir)
@@ -247,7 +244,11 @@ async fn main() -> Result<()> {
             proxy,
             oauth,
             oauth_issuer,
-        } => match transport {
+        } => {
+            // Scaffold on every serve (autoheal stale hook files).
+            iris_core::scaffold::scaffold_agent_config(&cwd);
+
+            match transport {
             Transport::Stdio if proxy => cmd_serve_proxy_stdio(&corpus_paths).await,
             Transport::Stdio
                 if !proxy && iris_api::client::DaemonClient::new().is_healthy().await =>
@@ -286,6 +287,7 @@ async fn main() -> Result<()> {
                     &resolved_model,
                 )
                 .await
+            }
             }
         },
         Command::Index => {
@@ -640,7 +642,7 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
     eprintln!("  ✓ .vscode/mcp.json (VS Code / GitHub Copilot)");
     eprintln!("  ✓ .cursor/mcp.json (Cursor)");
     eprintln!();
-    eprintln!("Agent instructions ({scaffolded} new files):");
+    eprintln!("Agent instructions ({} created, {} healed):", scaffolded.created, scaffolded.healed);
     eprintln!("  ✓ .claude/rules/          (tool scope, playbook)");
     eprintln!("  ✓ .claude/settings.json   (PreToolUse hooks — blocks Grep/Glob/Bash search)");
     eprintln!("  ✓ .github/hooks/          (Copilot CLI + cloud agent hooks — same enforcement)");
