@@ -11,7 +11,8 @@
 //! - `.github/copilot-instructions.md` — GitHub Copilot instructions
 //! - `AGENTS.md` — Universal agent instructions
 //!
-//! Files are never overwritten — only missing files are created (idempotent).
+//! Files are never overwritten — only missing files are created.
+//! Machine-generated hook files are auto-healed if their content is stale.
 
 use std::path::Path;
 
@@ -19,88 +20,129 @@ use tracing::{debug, info};
 
 use crate::code::bridge::detector::FrameworkDetector;
 
+/// Result of a scaffold operation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScaffoldResult {
+    /// Number of brand-new files written.
+    pub created: usize,
+    /// Number of existing files overwritten because their content was stale.
+    pub healed: usize,
+}
+
+impl ScaffoldResult {
+    fn merge(&mut self, other: Self) {
+        self.created += other.created;
+        self.healed += other.healed;
+    }
+
+    /// Total files touched (created + healed).
+    #[must_use]
+    pub fn touched(&self) -> usize {
+        self.created + self.healed
+    }
+}
+
 /// Scaffold agent configuration files in the given project root.
 ///
-/// Creates `.claude/rules/` with iris tool guides, scope rules, and a
-/// project-aware playbook. Skips any file that already exists.
+/// - Advisory files (`.md`, `.mdc`) are created if missing but never overwritten
+///   (users may customise them).
+/// - Machine-generated hook files (`.json`) are auto-healed: if the on-disk
+///   content differs from the current template, the file is overwritten.
 ///
-/// Returns the number of files created (0 if everything was already in place).
-pub fn scaffold_agent_config(project_root: &Path) -> usize {
+/// Returns a [`ScaffoldResult`] with created/healed counts.
+pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     let playbook = playbook_for_project(project_root);
+    let mut result = ScaffoldResult::default();
 
-    let mut created = 0;
-
-    // ── Claude Code: .claude/rules/ ─────────────────────────────────────
+    // ── Claude Code: .claude/rules/ (advisory — never overwrite) ────────
     let claude_rules_dir = project_root.join(".claude").join("rules");
     let claude_rules: &[(&str, &str)] = &[
         ("iris-scope.md", IRIS_SCOPE),
         ("tools.md", TOOLS),
         ("iris-playbook.md", playbook),
     ];
-    created += write_files(&claude_rules_dir, claude_rules);
+    result.merge(write_files(&claude_rules_dir, claude_rules, false));
 
-    // ── Claude Code + VS Code Copilot: .claude/settings.json (PreToolUse hooks)
-    // VS Code Copilot reads .claude/settings.json by default (Feb 2026+).
-    created += write_claude_hooks(project_root);
+    // ── Claude Code + VS Code: .claude/settings.json (hooks — autoheal) ─
+    result.merge(write_claude_hooks(project_root));
 
-    // ── Copilot CLI / cloud agent: .github/hooks/ (native hook format) ──
-    // Copilot CLI reads .github/hooks/*.json with version:1 format.
-    // VS Code Copilot also reads these + .claude/settings.json.
+    // ── Copilot CLI: .github/hooks/ (hooks — autoheal) ──────────────────
     let hooks_dir = project_root.join(".github").join("hooks");
-    let hooks_files: &[(&str, &str)] =
-        &[("iris-enforce.json", COPILOT_HOOKS)];
-    created += write_files(&hooks_dir, hooks_files);
+    let hooks_files: &[(&str, &str)] = &[("iris-enforce.json", COPILOT_HOOKS)];
+    result.merge(write_files(&hooks_dir, hooks_files, true));
 
-    // ── Cursor: .cursor/rules/ ──────────────────────────────────────────
+    // ── Cursor: .cursor/rules/ (advisory — never overwrite) ─────────────
     let cursor_rules_dir = project_root.join(".cursor").join("rules");
     let cursor_rules: &[(&str, &str)] = &[("iris.mdc", CURSOR_RULES)];
-    created += write_files(&cursor_rules_dir, cursor_rules);
+    result.merge(write_files(&cursor_rules_dir, cursor_rules, false));
 
-    // ── Cursor: .cursor/hooks.json (beforeShellExecution enforcement) ────
-    // Cursor reads .cursor/hooks.json with version:1 format.
-    // Uses beforeShellExecution to block search/exploration shell commands.
+    // ── Cursor: .cursor/hooks.json (hooks — autoheal) ───────────────────
     let cursor_dir = project_root.join(".cursor");
     let cursor_hooks: &[(&str, &str)] = &[("hooks.json", CURSOR_HOOKS)];
-    created += write_files(&cursor_dir, cursor_hooks);
+    result.merge(write_files(&cursor_dir, cursor_hooks, true));
 
-    // ── GitHub Copilot: .github/copilot-instructions.md ─────────────────
+    // ── GitHub Copilot: .github/copilot-instructions.md (advisory) ──────
     let github_dir = project_root.join(".github");
     let copilot_files: &[(&str, &str)] =
         &[("copilot-instructions.md", COPILOT_INSTRUCTIONS)];
-    created += write_files(&github_dir, copilot_files);
+    result.merge(write_files(&github_dir, copilot_files, false));
 
-    // ── Universal: AGENTS.md ────────────────────────────────────────────
+    // ── Universal: AGENTS.md (advisory) ─────────────────────────────────
     let agents_files: &[(&str, &str)] = &[("AGENTS.md", AGENTS_MD)];
-    created += write_files(project_root, agents_files);
+    result.merge(write_files(project_root, agents_files, false));
 
-    if created > 0 {
+    if result.touched() > 0 {
         info!(
-            files = created,
+            created = result.created,
+            healed = result.healed,
             root = %project_root.display(),
             "scaffolded iris agent config"
         );
     }
 
-    created
+    result
 }
 
 /// Write a set of files into a directory. Creates the directory if needed.
-/// Skips files that already exist. Returns the number of files created.
-fn write_files(dir: &Path, files: &[(&str, &str)]) -> usize {
-    let mut created = 0;
+///
+/// When `heal` is `false`, existing files are skipped (advisory content the
+/// user may have customised). When `heal` is `true`, existing files whose
+/// content doesn't match the template are overwritten (machine-generated
+/// hooks that must stay in sync with the iris version).
+fn write_files(dir: &Path, files: &[(&str, &str)], heal: bool) -> ScaffoldResult {
+    let mut result = ScaffoldResult::default();
     for &(filename, content) in files {
         let path = dir.join(filename);
         if path.exists() {
-            debug!(file = %path.display(), "already exists, skipping");
+            if heal {
+                if let Ok(existing) = std::fs::read_to_string(&path) {
+                    if existing.trim() == content.trim() {
+                        debug!(file = %path.display(), "up to date");
+                        continue;
+                    }
+                    // Content is stale — overwrite.
+                    match std::fs::write(&path, content) {
+                        Ok(()) => {
+                            result.healed += 1;
+                            info!(file = %path.display(), "healed stale hook file");
+                        }
+                        Err(e) => {
+                            debug!(file = %path.display(), error = %e, "failed to heal");
+                        }
+                    }
+                }
+            } else {
+                debug!(file = %path.display(), "already exists, skipping");
+            }
             continue;
         }
         if let Err(e) = std::fs::create_dir_all(dir) {
             debug!(error = %e, dir = %dir.display(), "failed to create directory");
-            return created;
+            return result;
         }
         match std::fs::write(&path, content) {
             Ok(()) => {
-                created += 1;
+                result.created += 1;
                 debug!(file = %path.display(), "scaffolded");
             }
             Err(e) => {
@@ -108,31 +150,77 @@ fn write_files(dir: &Path, files: &[(&str, &str)]) -> usize {
             }
         }
     }
-    created
+    result
 }
 
 /// Write `.claude/settings.json` with `PreToolUse` hooks that redirect
-/// Grep/Glob/Bash-search usage to iris. Merges non-destructively — only
-/// adds the hooks key if not already present.
-fn write_claude_hooks(project_root: &Path) -> usize {
+/// Grep/Glob/Bash-search usage to iris.
+///
+/// Merges non-destructively with existing settings (preserves user keys).
+/// Auto-heals: if the file already has a `hooks` key but the content
+/// differs from what iris would generate, the `hooks` key is replaced.
+fn write_claude_hooks(project_root: &Path) -> ScaffoldResult {
     let settings_path = project_root.join(".claude").join("settings.json");
 
-    // Don't overwrite if the file already has hooks configured.
+    let hooks_value = build_claude_hooks();
+
+    // If the file exists and already has our exact hooks, nothing to do.
     if settings_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&settings_path) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                if val.get("hooks").is_some() {
-                    debug!(
-                        file = %settings_path.display(),
-                        "hooks already configured, skipping"
-                    );
-                    return 0;
+                if val.get("hooks") == Some(&hooks_value["hooks"]) {
+                    debug!(file = %settings_path.display(), "hooks up to date");
+                    return ScaffoldResult::default();
                 }
             }
         }
     }
 
-    // Deny messages per category.
+    let is_heal = settings_path.exists();
+
+    // Merge with existing settings (preserves user keys like "permissions").
+    let merged = if settings_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&settings_path) {
+            if let Ok(mut existing) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(obj) = existing.as_object_mut() {
+                    obj.insert("hooks".to_string(), hooks_value["hooks"].clone());
+                }
+                existing
+            } else {
+                hooks_value
+            }
+        } else {
+            hooks_value
+        }
+    } else {
+        hooks_value
+    };
+
+    if let Err(e) = std::fs::create_dir_all(settings_path.parent().unwrap_or(project_root)) {
+        debug!(error = %e, "failed to create .claude/");
+        return ScaffoldResult::default();
+    }
+
+    let json_str = serde_json::to_string_pretty(&merged).unwrap_or_default();
+    match std::fs::write(&settings_path, format!("{json_str}\n")) {
+        Ok(()) => {
+            if is_heal {
+                info!(file = %settings_path.display(), "healed stale Claude Code hooks");
+                ScaffoldResult { created: 0, healed: 1 }
+            } else {
+                debug!(file = %settings_path.display(), "wrote Claude Code hooks");
+                ScaffoldResult { created: 1, healed: 0 }
+            }
+        }
+        Err(e) => {
+            debug!(file = %settings_path.display(), error = %e, "failed to write");
+            ScaffoldResult::default()
+        }
+    }
+}
+
+/// Build the hooks JSON value for `.claude/settings.json`.
+fn build_claude_hooks() -> serde_json::Value {
     let deny_search = "Use iris_survey or iris_symbols instead of shell search tools. \
         iris provides semantic code search with better results. \
         See .claude/rules/iris-scope.md for the full tool guide.";
@@ -142,37 +230,25 @@ fn write_claude_hooks(project_root: &Path) -> usize {
 
     let mut bash_hooks: Vec<serde_json::Value> = Vec::new();
 
-    // Direct search commands.
     for cmd in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
         bash_hooks.push(deny_hook(&format!("Bash({cmd} *)"), deny_search));
     }
-
-    // Direct file-finding commands.
     for cmd in &["find", "fd"] {
         bash_hooks.push(deny_hook(&format!("Bash({cmd} *)"), deny_files));
     }
-
-    // Piped search/exploration patterns (covers `cmd | grep` and `cmd|grep`).
     for cmd in &["grep", "rg", "ag", "ack"] {
         bash_hooks.push(deny_hook(&format!("Bash(*|*{cmd} *)"), deny_pipe));
     }
-
-    // Piped reading/counting — agents chain these for file exploration.
     for cmd in &["wc", "head", "tail"] {
         bash_hooks.push(deny_hook(&format!("Bash(*|*{cmd}*)"), deny_pipe));
     }
 
-    let settings = serde_json::json!({
+    serde_json::json!({
         "hooks": {
             "PreToolUse": [
                 {
                     "matcher": "Grep|Glob",
-                    "hooks": [
-                        deny_hook(
-                            "",
-                            deny_search,
-                        )
-                    ]
+                    "hooks": [deny_hook("", deny_search)]
                 },
                 {
                     "matcher": "Bash",
@@ -180,42 +256,7 @@ fn write_claude_hooks(project_root: &Path) -> usize {
                 }
             ]
         }
-    });
-
-    // Merge with existing settings if the file exists.
-    let merged = if settings_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&settings_path) {
-            if let Ok(mut existing) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(obj) = existing.as_object_mut() {
-                    obj.insert("hooks".to_string(), settings["hooks"].clone());
-                }
-                existing
-            } else {
-                settings
-            }
-        } else {
-            settings
-        }
-    } else {
-        settings
-    };
-
-    if let Err(e) = std::fs::create_dir_all(settings_path.parent().unwrap_or(project_root)) {
-        debug!(error = %e, "failed to create .claude/");
-        return 0;
-    }
-
-    let json_str = serde_json::to_string_pretty(&merged).unwrap_or_default();
-    match std::fs::write(&settings_path, format!("{json_str}\n")) {
-        Ok(()) => {
-            debug!(file = %settings_path.display(), "wrote Claude Code hooks");
-            1
-        }
-        Err(e) => {
-            debug!(file = %settings_path.display(), error = %e, "failed to write");
-            0
-        }
-    }
+    })
 }
 
 /// Build a single PreToolUse deny hook entry.
@@ -708,11 +749,12 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let created = scaffold_agent_config(root);
+        let result = scaffold_agent_config(root);
 
         // Should create: 3 claude rules + 1 settings.json + 1 copilot hooks
         //   + 1 cursor rule + 1 cursor hooks + 1 copilot instructions + 1 AGENTS.md = 9
-        assert_eq!(created, 9);
+        assert_eq!(result.created, 9);
+        assert_eq!(result.healed, 0);
 
         // Claude Code files
         assert!(root.join(".claude/rules/iris-scope.md").exists());
@@ -763,10 +805,12 @@ mod tests {
         let root = tmp.path();
 
         let first = scaffold_agent_config(root);
-        assert_eq!(first, 9);
+        assert_eq!(first.created, 9);
+        assert_eq!(first.healed, 0);
 
         let second = scaffold_agent_config(root);
-        assert_eq!(second, 0);
+        assert_eq!(second.created, 0);
+        assert_eq!(second.healed, 0);
     }
 
     #[test]
@@ -774,13 +818,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // Pre-create a file with custom content.
+        // Pre-create an advisory file with custom content.
         std::fs::create_dir_all(root.join(".claude/rules")).unwrap();
         std::fs::write(root.join(".claude/rules/tools.md"), "custom content").unwrap();
 
         scaffold_agent_config(root);
 
-        // Should not overwrite.
+        // Advisory files should not be overwritten.
         let content = std::fs::read_to_string(root.join(".claude/rules/tools.md")).unwrap();
         assert_eq!(content, "custom content");
     }
@@ -790,7 +834,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // Pre-create settings with existing content.
+        // Pre-create settings with existing content (no hooks key).
         std::fs::create_dir_all(root.join(".claude")).unwrap();
         std::fs::write(
             root.join(".claude/settings.json"),
@@ -798,7 +842,9 @@ mod tests {
         )
         .unwrap();
 
-        write_claude_hooks(root);
+        let result = write_claude_hooks(root);
+        // File existed but had no hooks — treated as heal (overwrites hooks key).
+        assert_eq!(result.healed, 1);
 
         let settings = std::fs::read_to_string(root.join(".claude/settings.json")).unwrap();
         let val: serde_json::Value = serde_json::from_str(&settings).unwrap();
@@ -809,11 +855,11 @@ mod tests {
     }
 
     #[test]
-    fn claude_hooks_skip_when_hooks_exist() {
+    fn claude_hooks_heals_stale_hooks() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // Pre-create settings with existing hooks.
+        // Pre-create settings with outdated hooks content.
         std::fs::create_dir_all(root.join(".claude")).unwrap();
         std::fs::write(
             root.join(".claude/settings.json"),
@@ -821,7 +867,42 @@ mod tests {
         )
         .unwrap();
 
-        let created = write_claude_hooks(root);
-        assert_eq!(created, 0); // Should skip — hooks already present.
+        let result = write_claude_hooks(root);
+        assert_eq!(result.healed, 1); // Should heal — hooks are stale.
+        assert_eq!(result.created, 0);
+
+        // Verify the hooks were replaced with the correct content.
+        let settings = std::fs::read_to_string(root.join(".claude/settings.json")).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&settings).unwrap();
+        assert!(val["hooks"]["PreToolUse"].is_array());
+    }
+
+    #[test]
+    fn autoheal_overwrites_stale_hook_files() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // First scaffold creates everything.
+        let first = scaffold_agent_config(root);
+        assert_eq!(first.created, 9);
+
+        // Corrupt a hook file (machine-generated — should be healed).
+        std::fs::write(
+            root.join(".github/hooks/iris-enforce.json"),
+            r#"{"version": 1, "hooks": {}}"#,
+        )
+        .unwrap();
+
+        // Corrupt cursor hooks too.
+        std::fs::write(root.join(".cursor/hooks.json"), "{}").unwrap();
+
+        let second = scaffold_agent_config(root);
+        assert_eq!(second.created, 0);
+        assert_eq!(second.healed, 2); // Both hook files healed.
+
+        // Verify content was restored.
+        let copilot = std::fs::read_to_string(root.join(".github/hooks/iris-enforce.json")).unwrap();
+        let cval: serde_json::Value = serde_json::from_str(&copilot).unwrap();
+        assert!(cval["hooks"]["preToolUse"].is_array());
     }
 }
