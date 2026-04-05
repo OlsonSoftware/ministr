@@ -36,11 +36,20 @@ function statusBadge(status: IndexingStatus) {
 
 function projectName(paths: string[]): string {
   if (paths.length === 0) return "Unknown";
+  const root = projectRoot(paths);
+  const parts = root.split("/");
+  return parts[parts.length - 1] || root;
+}
+
+/** Derive the project root directory from corpus paths. */
+function projectRoot(paths: string[]): string {
+  if (paths.length === 0) return "";
   if (paths.length === 1) {
+    // Single path like /Users/x/project/src → go up to /Users/x/project
     const parts = paths[0].split("/");
-    return parts[parts.length - 1] || paths[0];
+    return parts.slice(0, -1).join("/") || paths[0];
   }
-  // Find common ancestor directory across all paths.
+  // Multi-path: find common ancestor directory.
   const segments = paths.map((p) => p.split("/"));
   let common = 0;
   outer: for (let i = 0; i < segments[0].length; i++) {
@@ -49,9 +58,7 @@ function projectName(paths: string[]): string {
     }
     common = i + 1;
   }
-  const ancestor = segments[0].slice(0, common).join("/");
-  const parts = ancestor.split("/");
-  return parts[parts.length - 1] || paths[0];
+  return segments[0].slice(0, common).join("/");
 }
 
 export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: ProjectListProps) {
@@ -117,7 +124,7 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
                   {statusBadge(corpus.status)}
                 </div>
                 <p className="text-xs text-text-dim font-mono truncate">
-                  {corpus.paths[0]}
+                  {projectRoot(corpus.paths)}
                 </p>
               </div>
               <div className="flex items-center gap-1 shrink-0">

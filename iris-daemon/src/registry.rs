@@ -125,6 +125,10 @@ impl CorpusRegistry {
 
     /// Register a corpus, initialize its resources, and spawn background indexing.
     ///
+    /// If an existing corpus shares the same project root (common ancestor
+    /// directory) but has a different path set, the stale entry is replaced.
+    /// This prevents duplicate registrations when `.iris.toml` paths change.
+    ///
     /// # Errors
     ///
     /// Returns [`RegistryError`] if storage or index initialization fails.
@@ -136,6 +140,27 @@ impl CorpusRegistry {
 
         if self.corpora.read().await.contains_key(&corpus_id) {
             return Ok((corpus_id, false));
+        }
+
+        // Check for an existing corpus with the same project root but different
+        // paths (e.g. user added a path in .iris.toml). Replace it.
+        let new_root = project_root_from_paths(paths);
+        let stale_id = {
+            let corpora = self.corpora.read().await;
+            let mut found = None;
+            for (id, handle) in corpora.iter() {
+                let info = handle.info.read().await;
+                if project_root_from_paths(&info.paths) == new_root {
+                    found = Some(id.clone());
+                    break;
+                }
+            }
+            found
+        };
+        if let Some(old_id) = stale_id {
+            info!(old_id = %old_id, new_id = %corpus_id, "replacing stale corpus (paths changed)");
+            // Best-effort unregister — ignore NotFound race.
+            let _ = self.unregister(&old_id).await;
         }
 
         let handle = self.create_handle(&corpus_id, paths)?;
@@ -348,4 +373,89 @@ pub fn corpus_id_from_paths(paths: &[String]) -> String {
         acc
     });
     format!("multi-{}", &hex[..8])
+}
+
+/// Derive the project root directory from corpus paths.
+///
+/// Computes the longest common ancestor of all paths. For single-path
+/// corpora like `["/Users/x/project/src"]`, returns the parent
+/// (`/Users/x/project`). For multi-path corpora, returns the deepest
+/// shared directory.
+fn project_root_from_paths(paths: &[String]) -> String {
+    if paths.is_empty() {
+        return String::new();
+    }
+    if paths.len() == 1 {
+        // Single path: go up one level (src → project root).
+        let p = std::path::Path::new(&paths[0]);
+        return p
+            .parent()
+            .unwrap_or(p)
+            .to_string_lossy()
+            .into_owned();
+    }
+    // Multi-path: find common ancestor.
+    let segments: Vec<Vec<&str>> = paths
+        .iter()
+        .map(|p| p.split('/').collect::<Vec<_>>())
+        .collect();
+    let mut common = 0;
+    'outer: for i in 0..segments[0].len() {
+        for seg in &segments[1..] {
+            if i >= seg.len() || seg[i] != segments[0][i] {
+                break 'outer;
+            }
+        }
+        common = i + 1;
+    }
+    segments[0][..common].join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_root_single_path() {
+        let paths = vec!["/Users/x/Code/pretext/src".to_string()];
+        assert_eq!(project_root_from_paths(&paths), "/Users/x/Code/pretext");
+    }
+
+    #[test]
+    fn project_root_multi_path() {
+        let paths = vec![
+            "/Users/x/Code/pretext/src".to_string(),
+            "/Users/x/Code/pretext/docs".to_string(),
+        ];
+        assert_eq!(project_root_from_paths(&paths), "/Users/x/Code/pretext");
+    }
+
+    #[test]
+    fn project_root_empty() {
+        let paths: Vec<String> = vec![];
+        assert_eq!(project_root_from_paths(&paths), "");
+    }
+
+    #[test]
+    fn project_root_deeply_nested() {
+        let paths = vec![
+            "/a/b/c/src/lib".to_string(),
+            "/a/b/c/src/bin".to_string(),
+        ];
+        assert_eq!(project_root_from_paths(&paths), "/a/b/c/src");
+    }
+
+    #[test]
+    fn corpus_id_deterministic() {
+        let a = corpus_id_from_paths(&["b".into(), "a".into()]);
+        let b = corpus_id_from_paths(&["a".into(), "b".into()]);
+        assert_eq!(a, b, "order should not matter");
+    }
+
+    #[test]
+    fn corpus_id_changes_with_paths() {
+        let a = corpus_id_from_paths(&["src".into()]);
+        let b = corpus_id_from_paths(&["src".into(), "docs".into()]);
+        assert_ne!(a, b, "different path sets should produce different IDs");
+    }
 }
