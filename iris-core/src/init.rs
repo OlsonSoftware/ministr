@@ -443,6 +443,18 @@ fn detect_source_paths(
                             paths.push(rel);
                         }
                     }
+                    // Tauri / Electron pattern: Cargo member at `app/src-tauri`
+                    // may have a co-located JS/TS frontend at `app/src`.
+                    // Also check the member dir itself for a package.json.
+                    for check_dir in [member.as_path(), member.parent().unwrap_or(member)] {
+                        if check_dir.join("package.json").exists() {
+                            if let Some(rel) = find_js_source_dir(root, check_dir) {
+                                if !paths.contains(&rel) {
+                                    paths.push(rel);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             WorkspaceKind::Npm
@@ -998,5 +1010,43 @@ version = "0.1.0"
         let tmp = TempDir::new().unwrap();
         let detection = detect_project(tmp.path());
         assert_eq!(detection.project_type, ProjectType::Unknown);
+    }
+
+    #[test]
+    fn detect_tauri_colocated_frontend() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Cargo workspace with a Tauri member at app/src-tauri
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"app/src-tauri\"]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("app/src-tauri/src")).unwrap();
+        fs::write(
+            root.join("app/src-tauri/Cargo.toml"),
+            "[package]\nname = \"my-app\"\n",
+        )
+        .unwrap();
+
+        // Frontend lives at app/src with a package.json at app/
+        fs::create_dir_all(root.join("app/src")).unwrap();
+        fs::write(root.join("app/package.json"), r#"{"name": "my-app"}"#).unwrap();
+
+        let detection = detect_project(root);
+
+        assert!(
+            detection
+                .source_paths
+                .contains(&"app/src-tauri/src".to_string()),
+            "should find Rust source: {:?}",
+            detection.source_paths
+        );
+        assert!(
+            detection.source_paths.contains(&"app/src".to_string()),
+            "should find co-located frontend: {:?}",
+            detection.source_paths
+        );
     }
 }
