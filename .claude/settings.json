@@ -71,21 +71,6 @@
             "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
             "if": "Bash(*|*ack *)",
             "type": "command"
-          },
-          {
-            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
-            "if": "Bash(*|*wc*)",
-            "type": "command"
-          },
-          {
-            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
-            "if": "Bash(*|*head*)",
-            "type": "command"
-          },
-          {
-            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Don't pipe to search/filter tools for code exploration. Use iris_survey for search, iris_toc for structure, iris_read for content.\"}}'",
-            "if": "Bash(*|*tail*)",
-            "type": "command"
           }
         ],
         "matcher": "Bash"

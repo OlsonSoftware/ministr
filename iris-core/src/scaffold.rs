@@ -239,9 +239,10 @@ fn build_claude_hooks() -> serde_json::Value {
     for cmd in &["grep", "rg", "ag", "ack"] {
         bash_hooks.push(deny_hook(&format!("Bash(*|*{cmd} *)"), deny_pipe));
     }
-    for cmd in &["wc", "head", "tail"] {
-        bash_hooks.push(deny_hook(&format!("Bash(*|*{cmd}*)"), deny_pipe));
-    }
+    // Note: we intentionally do NOT block `| head`, `| tail`, `| wc` —
+    // those are general-purpose and used legitimately with build/test output.
+    // The advisory rules discourage piped exploration; hooks only block
+    // unambiguous search tools.
 
     serde_json::json!({
         "hooks": {
@@ -333,8 +334,8 @@ const COPILOT_HOOKS: &str = r#"{
     "preToolUse": [
       {
         "type": "command",
-        "bash": "INPUT=$(cat); TN=$(echo \"$INPUT\" | jq -r '.toolName'); TA=$(echo \"$INPUT\" | jq -r '.toolArgs // \"\"'); case \"$TN\" in grep|Grep) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of grep. iris provides semantic code search.\"}'; exit 0;; glob|Glob) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of glob. iris provides structural overview.\"}'; exit 0;; bash|Bash|shell) CMD=$(echo \"$TA\" | jq -r '.command // \"\"'); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of shell search commands.\"}'; exit 0;; find\\ *|fd\\ *) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of shell file-finding commands.\"}'; exit 0;; esac; if echo \"$CMD\" | grep -qE '\\|\\s*(grep|rg|ag|ack|head|tail|wc)'; then echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search/filter tools. Use iris_survey, iris_toc, or iris_read.\"}'; exit 0; fi;; esac",
-        "powershell": "$input = [Console]::In.ReadToEnd() | ConvertFrom-Json; $tn = $input.toolName; $ta = if ($input.toolArgs) { $input.toolArgs } else { '' }; $blocked = @('grep','Grep','glob','Glob'); if ($blocked -contains $tn) { @{permissionDecision='deny'; permissionDecisionReason='Use iris MCP tools instead of built-in search.'} | ConvertTo-Json -Compress; exit 0 }; if ($tn -in @('bash','Bash','shell')) { $cmd = ($ta | ConvertFrom-Json).command; if ($cmd -match '^(grep|egrep|fgrep|rg|ag|ack|find|fd)\\s') { @{permissionDecision='deny'; permissionDecisionReason='Use iris MCP tools instead of shell search.'} | ConvertTo-Json -Compress; exit 0 }; if ($cmd -match '\\|\\s*(grep|rg|ag|ack|head|tail|wc)') { @{permissionDecision='deny'; permissionDecisionReason='Do not pipe to search/filter tools. Use iris tools.'} | ConvertTo-Json -Compress; exit 0 } }",
+        "bash": "INPUT=$(cat); TN=$(echo \"$INPUT\" | jq -r '.toolName'); TA=$(echo \"$INPUT\" | jq -r '.toolArgs // \"\"'); case \"$TN\" in grep|Grep) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of grep. iris provides semantic code search.\"}'; exit 0;; glob|Glob) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of glob. iris provides structural overview.\"}'; exit 0;; bash|Bash|shell) CMD=$(echo \"$TA\" | jq -r '.command // \"\"'); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_survey instead of shell search commands.\"}'; exit 0;; find\\ *|fd\\ *) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use iris_toc instead of shell file-finding commands.\"}'; exit 0;; esac; if echo \"$CMD\" | grep -qE '\\|\\s*(grep|rg|ag|ack)'; then echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search tools. Use iris_survey or iris_read.\"}'; exit 0; fi;; esac",
+        "powershell": "$input = [Console]::In.ReadToEnd() | ConvertFrom-Json; $tn = $input.toolName; $ta = if ($input.toolArgs) { $input.toolArgs } else { '' }; $blocked = @('grep','Grep','glob','Glob'); if ($blocked -contains $tn) { @{permissionDecision='deny'; permissionDecisionReason='Use iris MCP tools instead of built-in search.'} | ConvertTo-Json -Compress; exit 0 }; if ($tn -in @('bash','Bash','shell')) { $cmd = ($ta | ConvertFrom-Json).command; if ($cmd -match '^(grep|egrep|fgrep|rg|ag|ack|find|fd)\\s') { @{permissionDecision='deny'; permissionDecisionReason='Use iris MCP tools instead of shell search.'} | ConvertTo-Json -Compress; exit 0 }; if ($cmd -match '\\|\\s*(grep|rg|ag|ack)') { @{permissionDecision='deny'; permissionDecisionReason='Do not pipe to search tools. Use iris tools.'} | ConvertTo-Json -Compress; exit 0 } }",
         "timeoutSec": 5
       }
     ]
@@ -356,7 +357,7 @@ const CURSOR_HOOKS: &str = r#"{
   "hooks": {
     "beforeShellExecution": [
       {
-        "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".command // \\\"\\\"\"); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Use iris_survey instead of shell search. iris provides semantic code search.\\\",\\\"userMessage\\\":\\\"Blocked: shell search command. Use iris_survey.\\\"}\"; exit 0;; find\\ *|fd\\ *) echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Use iris_toc instead of shell file-finding. iris provides structural overview.\\\",\\\"userMessage\\\":\\\"Blocked: shell file-find. Use iris_toc.\\\"}\"; exit 0;; esac; if echo \"$CMD\" | grep -qE \"\\\\|\\\\s*(grep|rg|ag|ack|head|tail|wc)\"; then echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Do not pipe to search/filter tools. Use iris_survey, iris_toc, or iris_read.\\\",\\\"userMessage\\\":\\\"Blocked: piped exploration. Use iris tools.\\\"}\"; exit 0; fi'"
+        "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".command // \\\"\\\"\"); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Use iris_survey instead of shell search. iris provides semantic code search.\\\",\\\"userMessage\\\":\\\"Blocked: shell search command. Use iris_survey.\\\"}\"; exit 0;; find\\ *|fd\\ *) echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Use iris_toc instead of shell file-finding. iris provides structural overview.\\\",\\\"userMessage\\\":\\\"Blocked: shell file-find. Use iris_toc.\\\"}\"; exit 0;; esac; if echo \"$CMD\" | grep -qE \"\\\\|\\\\s*(grep|rg|ag|ack)\"; then echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Do not pipe to search tools. Use iris_survey or iris_read.\\\",\\\"userMessage\\\":\\\"Blocked: piped search. Use iris tools.\\\"}\"; exit 0; fi'"
       }
     ]
   }
