@@ -1641,7 +1641,7 @@ phases:
   - text: 'Salience-weighted extractive compression: TF-IDF + salience scores to retain high-value sentences, discard boilerplate'
     checked: true
   - text: 'Structured claim compression: compress sections into atomic claim lists (claim_id, text, confidence) for maximum density'
-    checked: false
+    checked: true
   - text: 'Compression quality scoring: measure information loss by comparing query relevance before/after compression via eval suite'
     checked: false
   - text: 'Auto-tier selection: automatically choose compression strategy based on section type (code → symbol summary, docs → extractive, claims → structured)'
