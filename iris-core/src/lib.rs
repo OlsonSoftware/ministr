@@ -3,6 +3,19 @@
 //! This crate contains the core types, error definitions, and service traits
 //! for iris. It has no transport dependencies and no knowledge of MCP.
 
+#![deny(unsafe_code)]
+// Pedantic lints that are acceptable in context:
+// - cast_precision_loss: intentional f64 casts for progress/stats (counts never exceed 2^52)
+// - missing_errors_doc: tracked separately, not blocking
+// - doc_markdown: snake_case identifiers in docs don't need backticks everywhere
+// - struct_excessive_bools: config/option structs legitimately use multiple bools
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::missing_errors_doc,
+    clippy::doc_markdown,
+    clippy::struct_excessive_bools
+)]
+
 pub mod analytics;
 pub mod bundle;
 pub mod code;

@@ -78,6 +78,23 @@ pub struct IngestionStats {
     pub total_embeddings: usize,
 }
 
+impl IngestionStats {
+    /// Create a new `IngestionStats` with the given discovered file count.
+    #[must_use]
+    fn new(files_discovered: usize) -> Self {
+        Self {
+            files_discovered,
+            files_skipped: 0,
+            files_indexed: 0,
+            files_removed: 0,
+            files_failed: 0,
+            total_sections: 0,
+            total_claims: 0,
+            total_embeddings: 0,
+        }
+    }
+}
+
 /// Result of ingesting raw content via [`IngestionPipeline::ingest_content`].
 ///
 /// # Examples
@@ -326,6 +343,13 @@ pub(super) enum FileResult {
     },
 }
 
+/// A file to be ingested, with its resolved relative path and optional root ID.
+struct FileItem {
+    path: PathBuf,
+    relative: String,
+    root_id: Option<String>,
+}
+
 // ── IngestionPipeline ────────────────────────────────────────────────────────
 
 /// Ingestion pipeline orchestrator.
@@ -427,16 +451,7 @@ impl IngestionPipeline {
         storage: &S,
     ) -> Result<IngestionStats, IngestionError> {
         let files = discover_files(dir)?;
-        let mut stats = IngestionStats {
-            files_discovered: files.len(),
-            files_skipped: 0,
-            files_indexed: 0,
-            files_removed: 0,
-            files_failed: 0,
-            total_sections: 0,
-            total_claims: 0,
-            total_embeddings: 0,
-        };
+        let mut stats = IngestionStats::new(files.len());
 
         if files.is_empty() {
             warn!("discovered 0 files for ingestion");
@@ -739,7 +754,7 @@ impl IngestionPipeline {
             .await
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)] // orchestration entry point — each step is unique
     pub async fn ingest_directory_with_embeddings_rooted<S, E, I>(
         &self,
         dir: &Path,
@@ -778,16 +793,7 @@ impl IngestionPipeline {
         }
 
         let files = discover_files(dir)?;
-        let mut stats = IngestionStats {
-            files_discovered: files.len(),
-            files_skipped: 0,
-            files_indexed: 0,
-            files_removed: 0,
-            files_failed: 0,
-            total_sections: 0,
-            total_claims: 0,
-            total_embeddings: 0,
-        };
+        let mut stats = IngestionStats::new(files.len());
 
         if files.is_empty() {
             warn!("discovered 0 files for ingestion (with embeddings)");
@@ -811,12 +817,9 @@ impl IngestionPipeline {
             );
         }
 
-        let mut all_pending_refs = Vec::new();
-        let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
-
         mem_profile::checkpoint("ingestion loop start (rooted)");
 
-        let file_items: Vec<(PathBuf, String)> = files
+        let file_items: Vec<FileItem> = files
             .iter()
             .map(|file_path| {
                 let raw_relative = file_path
@@ -828,150 +831,43 @@ impl IngestionPipeline {
                     Some(rid) => namespace_path(rid, &raw_relative),
                     None => raw_relative,
                 };
-                (file_path.clone(), relative)
+                FileItem {
+                    path: file_path.clone(),
+                    relative,
+                    root_id: root_id.map(String::from),
+                }
             })
             .collect();
 
-        let concurrency = self.concurrency.unwrap_or_else(default_concurrency);
-        info!(
-            concurrency,
-            files = file_items.len(),
-            "starting concurrent file ingestion"
-        );
-
-        let bridge_linker_ref = bridge_linker.as_ref();
-        let (embed_tx, mut embed_rx) = tokio::sync::mpsc::channel::<Vec<(VectorId, String)>>(16);
-
-        let producer = async {
-            let mut cancelled = false;
-            let mut parse_stream = std::pin::pin!(
-                stream::iter(file_items)
-                    .take_while(|_| {
-                        let stop = ct.is_some_and(CancellationToken::is_cancelled);
-                        async move { !stop }
-                    })
-                    .map(|(file_path, relative)| async move {
-                        let result = self
-                            .parse_and_store_file(
-                                &file_path,
-                                &relative,
-                                storage,
-                                index,
-                                active_graph,
-                                bridge_linker_ref,
-                            )
-                            .await;
-                        (file_path, relative, result)
-                    })
-                    .buffer_unordered(concurrency)
-            );
-
-            while let Some((_file_path, relative, result)) = parse_stream.next().await {
-                if let Some(ref progress) = self.progress {
-                    progress.set_current_file(&relative);
-                }
-                match result {
-                    Ok(FileResult::Skipped) => {
-                        debug!(path = %relative, "unchanged, skipping");
-                        stats.files_skipped += 1;
-                    }
-                    Ok(FileResult::Indexed {
-                        sections,
-                        claims,
-                        pending_refs,
-                        bridge_endpoints,
-                        embedding_pairs,
-                    }) => {
-                        debug!(path = %relative, sections, claims, "parsed and stored");
-                        stats.files_indexed += 1;
-                        stats.total_sections += sections;
-                        stats.total_claims += claims;
-                        all_pending_refs.extend(pending_refs);
-                        all_bridge_endpoints.extend(bridge_endpoints);
-
-                        if let Some(ref progress) = self.progress {
-                            progress.add_sections_done(sections);
-                        }
-
-                        if let Some(rid) = root_id {
-                            let doc_id = crate::types::ContentId(relative.clone());
-                            if let Err(e) = storage.set_document_root(&doc_id, rid).await {
-                                debug!(path = %relative, error = %e, "failed to set document root");
-                            }
-                        }
-
-                        if !embedding_pairs.is_empty() {
-                            if let Some(ref progress) = self.progress {
-                                progress.add_embeddings_total(embedding_pairs.len());
-                            }
-                            if embed_tx.send(embedding_pairs).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(path = %relative, error = %e, "failed to ingest file");
-                        stats.files_failed += 1;
-                    }
-                }
-
-                if let Some(ref progress) = self.progress {
-                    progress.increment_done();
-                }
-            }
-            drop(embed_tx);
-
-            if ct.is_some_and(CancellationToken::is_cancelled) {
-                cancelled = true;
-            }
-            cancelled
-        };
-
-        let progress_ref = self.progress.as_ref();
-        let consumer = async {
-            let mut total_embeddings = 0usize;
-            let mut buffer: Vec<(VectorId, String)> = Vec::new();
-
-            while let Some(pairs) = embed_rx.recv().await {
-                buffer.extend(pairs);
-                if buffer.len() >= EMBED_FLUSH_THRESHOLD {
-                    let count = batch_embed_and_insert(&buffer, embedder, index).await?;
-                    total_embeddings += count;
-                    if let Some(progress) = progress_ref {
-                        progress.add_embeddings_done(count);
-                    }
-                    buffer.clear();
-                }
-            }
-            if !buffer.is_empty() {
-                let count = batch_embed_and_insert(&buffer, embedder, index).await?;
-                total_embeddings += count;
-                if let Some(progress) = progress_ref {
-                    progress.add_embeddings_done(count);
-                }
-            }
-            Ok::<usize, IngestionError>(total_embeddings)
-        };
-
-        let (was_cancelled, embed_result) = futures::join!(producer, consumer);
-        stats.total_embeddings = embed_result?;
+        let (was_cancelled, embed_count, pending_refs, bridge_endpoints) = self
+            .run_producer_consumer(
+                file_items,
+                storage,
+                embedder,
+                index,
+                active_graph,
+                bridge_linker.as_ref(),
+                &mut stats,
+                ct,
+            )
+            .await?;
 
         if was_cancelled {
             info!(indexed = stats.files_indexed, "ingestion cancelled");
             return Err(IngestionError::Cancelled);
         }
+        stats.total_embeddings = embed_count;
 
-        if let Some(ref progress) = self.progress {
-            progress.set_phase(IngestionPhase::Finalizing);
-            progress.set_current_file("");
-        }
+        self.finalize_ingestion(
+            &pending_refs,
+            &bridge_endpoints,
+            bridge_linker.as_ref(),
+            active_graph,
+            storage,
+        )
+        .await;
 
-        let (_resolved, still_pending) =
-            resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
-        persist_pending_refs(&still_pending, storage).await;
-
-        store_bridge_links(&all_bridge_endpoints, bridge_linker.as_ref(), storage).await;
-
+        // Cleanup stale docs
         let existing_docs = if let Some(rid) = root_id {
             storage
                 .list_documents_by_root(rid)
@@ -1018,8 +914,8 @@ impl IngestionPipeline {
 
     // ── Entry point 5: multi-path with embeddings ────────────────────────
 
-    #[allow(clippy::too_many_lines)]
     #[instrument(skip(self, storage, embedder, index), fields(path_count = paths.len()))]
+    #[allow(clippy::too_many_lines)] // orchestration entry point — each step is unique
     pub async fn ingest_paths_with_embeddings<S, E, I>(
         &self,
         paths: &[PathBuf],
@@ -1039,16 +935,7 @@ impl IngestionPipeline {
         }
 
         let files = discover_paths(paths)?;
-        let mut stats = IngestionStats {
-            files_discovered: files.len(),
-            files_skipped: 0,
-            files_indexed: 0,
-            files_removed: 0,
-            files_failed: 0,
-            total_sections: 0,
-            total_claims: 0,
-            total_embeddings: 0,
-        };
+        let mut stats = IngestionStats::new(files.len());
 
         if files.is_empty() {
             warn!("discovered 0 files from multiple paths (with embeddings)");
@@ -1108,7 +995,6 @@ impl IngestionPipeline {
                 stats.files_skipped = files.len();
                 if let Some(ref progress) = self.progress {
                     progress.start(files.len());
-                    // All files skipped (unchanged) — mark them all done.
                     for _ in 0..files.len() {
                         progress.increment_done();
                     }
@@ -1148,146 +1034,45 @@ impl IngestionPipeline {
             );
         }
 
-        let mut all_pending_refs = Vec::new();
-        let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
-
         mem_profile::checkpoint("ingestion loop start (paths)");
 
         accumulate_language_stats(&files, &roots, &mut root_lang_stats, &mut root_file_counts);
 
-        let file_items: Vec<(PathBuf, String, Option<String>)> = files
+        let file_items: Vec<FileItem> = files
             .iter()
             .map(|file_path| {
                 let relative = compute_relative_path(file_path, paths);
                 let root_id = find_root_for_file(file_path, &roots).map(String::from);
-                (file_path.clone(), relative, root_id)
+                FileItem {
+                    path: file_path.clone(),
+                    relative,
+                    root_id,
+                }
             })
             .collect();
 
-        let concurrency = self.concurrency.unwrap_or_else(default_concurrency);
-        info!(
-            concurrency,
-            files = file_items.len(),
-            "starting concurrent file ingestion"
-        );
+        let (_was_cancelled, embed_count, pending_refs, bridge_endpoints) = self
+            .run_producer_consumer(
+                file_items,
+                storage,
+                embedder,
+                index,
+                active_graph,
+                bridge_linker.as_ref(),
+                &mut stats,
+                None,
+            )
+            .await?;
+        stats.total_embeddings = embed_count;
 
-        let bridge_linker_ref = bridge_linker.as_ref();
-        let (embed_tx, mut embed_rx) = tokio::sync::mpsc::channel::<Vec<(VectorId, String)>>(16);
-
-        let producer = async {
-            let mut parse_stream = std::pin::pin!(
-                stream::iter(file_items)
-                    .map(|(file_path, relative, root_id)| async move {
-                        let result = self
-                            .parse_and_store_file(
-                                &file_path,
-                                &relative,
-                                storage,
-                                index,
-                                active_graph,
-                                bridge_linker_ref,
-                            )
-                            .await;
-                        (file_path, relative, root_id, result)
-                    })
-                    .buffer_unordered(concurrency)
-            );
-
-            while let Some((_file_path, relative, root_id, result)) = parse_stream.next().await {
-                if let Some(ref progress) = self.progress {
-                    progress.set_current_file(&relative);
-                }
-                match result {
-                    Ok(FileResult::Skipped) => {
-                        debug!(path = %relative, "unchanged, skipping");
-                        stats.files_skipped += 1;
-                    }
-                    Ok(FileResult::Indexed {
-                        sections,
-                        claims,
-                        pending_refs,
-                        bridge_endpoints,
-                        embedding_pairs,
-                    }) => {
-                        debug!(path = %relative, sections, claims, "parsed and stored");
-                        stats.files_indexed += 1;
-                        stats.total_sections += sections;
-                        stats.total_claims += claims;
-                        all_pending_refs.extend(pending_refs);
-                        all_bridge_endpoints.extend(bridge_endpoints);
-
-                        if let Some(ref progress) = self.progress {
-                            progress.add_sections_done(sections);
-                        }
-
-                        if let Some(ref rid) = root_id {
-                            let doc_id = crate::types::ContentId(relative.clone());
-                            if let Err(e) = storage.set_document_root(&doc_id, rid).await {
-                                debug!(path = %relative, error = %e, "failed to set document root");
-                            }
-                        }
-
-                        if !embedding_pairs.is_empty() {
-                            if let Some(ref progress) = self.progress {
-                                progress.add_embeddings_total(embedding_pairs.len());
-                            }
-                            if embed_tx.send(embedding_pairs).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(path = %relative, error = %e, "failed to ingest file");
-                        stats.files_failed += 1;
-                    }
-                }
-
-                if let Some(ref progress) = self.progress {
-                    progress.increment_done();
-                }
-            }
-            drop(embed_tx);
-        };
-
-        let progress_ref = self.progress.as_ref();
-        let consumer = async {
-            let mut total_embeddings = 0usize;
-            let mut buffer: Vec<(VectorId, String)> = Vec::new();
-
-            while let Some(pairs) = embed_rx.recv().await {
-                buffer.extend(pairs);
-                if buffer.len() >= EMBED_FLUSH_THRESHOLD {
-                    let count = batch_embed_and_insert(&buffer, embedder, index).await?;
-                    total_embeddings += count;
-                    if let Some(progress) = progress_ref {
-                        progress.add_embeddings_done(count);
-                    }
-                    buffer.clear();
-                }
-            }
-            if !buffer.is_empty() {
-                let count = batch_embed_and_insert(&buffer, embedder, index).await?;
-                total_embeddings += count;
-                if let Some(progress) = progress_ref {
-                    progress.add_embeddings_done(count);
-                }
-            }
-            Ok::<usize, IngestionError>(total_embeddings)
-        };
-
-        let ((), embed_result) = futures::join!(producer, consumer);
-        stats.total_embeddings = embed_result?;
-
-        if let Some(ref progress) = self.progress {
-            progress.set_phase(IngestionPhase::Finalizing);
-            progress.set_current_file("");
-        }
-
-        let (_resolved, still_pending) =
-            resolve_pending_refs(&all_pending_refs, storage, active_graph).await;
-        persist_pending_refs(&still_pending, storage).await;
-
-        store_bridge_links(&all_bridge_endpoints, bridge_linker.as_ref(), storage).await;
+        self.finalize_ingestion(
+            &pending_refs,
+            &bridge_endpoints,
+            bridge_linker.as_ref(),
+            active_graph,
+            storage,
+        )
+        .await;
 
         // Cleanup stale docs per root
         for (_root_path, rid) in &roots {
@@ -1331,6 +1116,192 @@ impl IngestionPipeline {
         }
 
         Ok(stats)
+    }
+
+    // ── Shared producer/consumer pipeline ────────────────────────────────
+
+    /// Run the concurrent producer/consumer pipeline shared by both ingestion
+    /// entry points. Returns `(was_cancelled, embedding_count, pending_refs, bridge_endpoints)`.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    async fn run_producer_consumer<S, E, I>(
+        &self,
+        file_items: Vec<FileItem>,
+        storage: &S,
+        embedder: &E,
+        index: &I,
+        active_graph: Option<&PackageGraph>,
+        bridge_linker: Option<&BridgeLinker>,
+        stats: &mut IngestionStats,
+        ct: Option<&CancellationToken>,
+    ) -> Result<(bool, usize, Vec<PendingRef>, Vec<BridgeEndpoint>), IngestionError>
+    where
+        S: Storage + ?Sized,
+        E: Embedder + ?Sized,
+        I: VectorIndex + ?Sized,
+    {
+        let concurrency = self.concurrency.unwrap_or_else(default_concurrency);
+        info!(
+            concurrency,
+            files = file_items.len(),
+            "starting concurrent file ingestion"
+        );
+
+        let (embed_tx, embed_rx) = tokio::sync::mpsc::channel::<Vec<(VectorId, String)>>(16);
+
+        let mut all_pending_refs = Vec::new();
+        let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
+
+        let producer = async {
+            let mut cancelled = false;
+            let mut parse_stream = std::pin::pin!(
+                stream::iter(file_items)
+                    .take_while(|_| {
+                        let stop = ct.is_some_and(CancellationToken::is_cancelled);
+                        async move { !stop }
+                    })
+                    .map(|item| async {
+                        let result = self
+                            .parse_and_store_file(
+                                &item.path,
+                                &item.relative,
+                                storage,
+                                index,
+                                active_graph,
+                                bridge_linker,
+                            )
+                            .await;
+                        (item, result)
+                    })
+                    .buffer_unordered(concurrency)
+            );
+
+            while let Some((item, result)) = parse_stream.next().await {
+                if let Some(ref progress) = self.progress {
+                    progress.set_current_file(&item.relative);
+                }
+                match result {
+                    Ok(FileResult::Skipped) => {
+                        debug!(path = %item.relative, "unchanged, skipping");
+                        stats.files_skipped += 1;
+                    }
+                    Ok(FileResult::Indexed {
+                        sections,
+                        claims,
+                        pending_refs,
+                        bridge_endpoints,
+                        embedding_pairs,
+                    }) => {
+                        debug!(path = %item.relative, sections, claims, "parsed and stored");
+                        stats.files_indexed += 1;
+                        stats.total_sections += sections;
+                        stats.total_claims += claims;
+                        all_pending_refs.extend(pending_refs);
+                        all_bridge_endpoints.extend(bridge_endpoints);
+
+                        if let Some(ref progress) = self.progress {
+                            progress.add_sections_done(sections);
+                        }
+
+                        if let Some(ref rid) = item.root_id {
+                            let doc_id = crate::types::ContentId(item.relative.clone());
+                            if let Err(e) = storage.set_document_root(&doc_id, rid).await {
+                                debug!(path = %item.relative, error = %e, "failed to set document root");
+                            }
+                        }
+
+                        if !embedding_pairs.is_empty() {
+                            if let Some(ref progress) = self.progress {
+                                progress.add_embeddings_total(embedding_pairs.len());
+                            }
+                            if embed_tx.send(embedding_pairs).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(path = %item.relative, error = %e, "failed to ingest file");
+                        stats.files_failed += 1;
+                    }
+                }
+
+                if let Some(ref progress) = self.progress {
+                    progress.increment_done();
+                }
+            }
+            drop(embed_tx);
+
+            if ct.is_some_and(CancellationToken::is_cancelled) {
+                cancelled = true;
+            }
+            cancelled
+        };
+
+        let consumer = Self::run_embedding_consumer(
+            embed_rx,
+            embedder,
+            index,
+            self.progress.as_ref(),
+        );
+
+        let (was_cancelled, embed_result) = futures::join!(producer, consumer);
+        let embed_count = embed_result?;
+
+        if let Some(ref progress) = self.progress {
+            progress.set_phase(IngestionPhase::Finalizing);
+            progress.set_current_file("");
+        }
+
+        Ok((was_cancelled, embed_count, all_pending_refs, all_bridge_endpoints))
+    }
+
+    /// Consume embedding pairs from the producer channel, batch them, and insert.
+    async fn run_embedding_consumer<E, I>(
+        mut embed_rx: tokio::sync::mpsc::Receiver<Vec<(VectorId, String)>>,
+        embedder: &E,
+        index: &I,
+        progress: Option<&Arc<IngestionProgress>>,
+    ) -> Result<usize, IngestionError>
+    where
+        E: Embedder + ?Sized,
+        I: VectorIndex + ?Sized,
+    {
+        let mut total_embeddings = 0usize;
+        let mut buffer: Vec<(VectorId, String)> = Vec::new();
+
+        while let Some(pairs) = embed_rx.recv().await {
+            buffer.extend(pairs);
+            if buffer.len() >= EMBED_FLUSH_THRESHOLD {
+                let count = batch_embed_and_insert(&buffer, embedder, index).await?;
+                total_embeddings += count;
+                if let Some(p) = progress {
+                    p.add_embeddings_done(count);
+                }
+                buffer.clear();
+            }
+        }
+        if !buffer.is_empty() {
+            let count = batch_embed_and_insert(&buffer, embedder, index).await?;
+            total_embeddings += count;
+            if let Some(p) = progress {
+                p.add_embeddings_done(count);
+            }
+        }
+        Ok(total_embeddings)
+    }
+
+    /// Resolve pending cross-references and store bridge links.
+    async fn finalize_ingestion<S: Storage + ?Sized>(
+        &self,
+        pending_refs: &[PendingRef],
+        bridge_endpoints: &[BridgeEndpoint],
+        bridge_linker: Option<&BridgeLinker>,
+        active_graph: Option<&PackageGraph>,
+        storage: &S,
+    ) {
+        let (_resolved, still_pending) =
+            resolve_pending_refs(pending_refs, storage, active_graph).await;
+        persist_pending_refs(&still_pending, storage).await;
+        store_bridge_links(bridge_endpoints, bridge_linker, storage).await;
     }
 
     // ── Shared file processing (used by rooted + multi-path) ─────────────

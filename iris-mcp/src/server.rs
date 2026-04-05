@@ -3976,7 +3976,7 @@ impl IrisServer {
     /// Compute the total token overhead of all registered tool schemas.
     ///
     /// Concatenates tool names, descriptions, and parameter descriptions,
-    /// then counts tokens using cl100k_base. Cached via `OnceLock` since
+    /// then counts tokens using `cl100k_base`. Cached via `OnceLock` since
     /// schemas are immutable after initialization.
     fn schema_token_overhead(&self) -> (usize, usize) {
         use std::sync::OnceLock;
@@ -4289,10 +4289,6 @@ fn has_code_files_in_dir(root: &std::path::Path) -> bool {
     use iris_core::code::grammar::ALL_CODE_EXTENSIONS;
     use std::collections::VecDeque;
 
-    if !root.is_dir() {
-        return false;
-    }
-
     const SKIP_DIRS: &[&str] = &[
         "node_modules",
         "target",
@@ -4304,15 +4300,16 @@ fn has_code_files_in_dir(root: &std::path::Path) -> bool {
         "build",
     ];
 
+    if !root.is_dir() {
+        return false;
+    }
+
     let mut queue: VecDeque<(std::path::PathBuf, u8)> = VecDeque::new();
     queue.push_back((root.to_path_buf(), 0));
     let mut checked = 0u32;
 
     while let Some((dir, depth)) = queue.pop_front() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name();

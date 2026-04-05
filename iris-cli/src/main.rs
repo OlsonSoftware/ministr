@@ -329,7 +329,10 @@ async fn main() -> Result<()> {
         }
         Command::Import { bundle } => cmd_import(&corpus_paths, &config, &bundle),
         Command::Hooks { action } => match action {
-            HooksAction::Test => cmd_hooks_test(&cwd),
+            HooksAction::Test => {
+                cmd_hooks_test(&cwd);
+                Ok(())
+            }
         },
     }
 }
@@ -637,7 +640,7 @@ fn spawn_background_ingestion(
 }
 
 /// `iris hooks test` — validate installed hook files and simulate tool calls.
-fn cmd_hooks_test(root: &Path) -> Result<()> {
+fn cmd_hooks_test(root: &Path) {
     use std::collections::BTreeMap;
 
     /// A simulated tool call for testing.
@@ -742,7 +745,7 @@ fn cmd_hooks_test(root: &Path) -> Result<()> {
         };
 
         let icon = if ok { "✓" } else { "✗" };
-        let expect_str = if !ok { format!(" (expected {expected})") } else { String::new() };
+        let expect_str = if ok { String::new() } else { format!(" (expected {expected})") };
         eprintln!("  {icon} {cmd_display:<40} → {actual}{expect_str}");
     }
 
@@ -752,8 +755,6 @@ fn cmd_hooks_test(root: &Path) -> Result<()> {
     if fail > 0 {
         eprintln!("⚠ Some simulations did not match expected behavior.");
     }
-
-    Ok(())
 }
 
 /// Check if the Claude Code hooks would block a given tool/args combination.

@@ -137,13 +137,11 @@ pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> R
     // Get the paths for this corpus.
     let paths = {
         let guard = state.registry.corpora().read().await;
-        match guard.get(&corpus_id) {
-            Some(h) => h.info.read().await.paths.clone(),
-            None => {
-                tracing::warn!(corpus_id = %corpus_id, "trigger_reindex: corpus not found");
-                return Err(format!("corpus '{corpus_id}' not found"));
-            }
-        }
+        let Some(h) = guard.get(&corpus_id) else {
+            tracing::warn!(corpus_id = %corpus_id, "trigger_reindex: corpus not found");
+            return Err(format!("corpus '{corpus_id}' not found"));
+        };
+        h.info.read().await.paths.clone()
     };
 
     tracing::info!(corpus_id = %corpus_id, paths = ?paths, "trigger_reindex: unregister + re-register");
@@ -384,7 +382,7 @@ pub struct SearchResult {
     pub heading_path: Vec<String>,
 }
 
-/// Search a corpus by query (wraps QueryService::survey).
+/// Search a corpus by query (wraps `QueryService::survey`).
 #[tauri::command]
 pub async fn search_corpus(
     state: State<'_, AppState>,
