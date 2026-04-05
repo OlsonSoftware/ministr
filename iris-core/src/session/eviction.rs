@@ -33,6 +33,30 @@ pub struct EvictionCandidate {
     pub tokens_recoverable: usize,
     /// Composite eviction score (higher = better candidate for eviction).
     pub score: f64,
+    /// Breakdown of individual factor scores (for explainability).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    pub factors: Option<EvictionFactors>,
+}
+
+/// Individual factor scores that compose the eviction score.
+///
+/// All values are in `[0.0, 1.0]`. Higher = stronger signal to evict
+/// (except `salience`, which is inverted: high salience = keep).
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct EvictionFactors {
+    /// Recency/forgetting factor (1.0 = very old, 0.0 = just accessed).
+    pub recency: f64,
+    /// Token weight factor (1.0 = largest item, 0.0 = smallest).
+    pub token_weight: f64,
+    /// Attention position factor (1.0 = deep middle, 0.0 = start/end).
+    pub position: f64,
+    /// Resolution factor (1.0 = summary/easy to re-fetch, 0.0 = claim/hard).
+    pub resolution: f64,
+    /// Task salience factor (inverted: 1.0 = unrelated, 0.0 = highly relevant).
+    pub salience: f64,
+    /// Contiguity bonus (0.0+ from neighboring high-scorers).
+    pub contiguity: f64,
 }
 
 /// Ranks delivered content items by eviction priority.
@@ -143,8 +167,8 @@ impl EvictionRanker {
         let mut sorted_items: Vec<&DeliveredItem> = items.clone();
         sorted_items.sort_by_key(|item| item.turn_delivered);
 
-        // Pass 1: compute base scores (without contiguity)
-        let base_scores: Vec<f64> = sorted_items
+        // Pass 1: compute base scores with factor breakdown (without contiguity)
+        let scored: Vec<(f64, EvictionFactors)> = sorted_items
             .iter()
             .map(|item| {
                 Self::compute_base_score(
@@ -159,22 +183,25 @@ impl EvictionRanker {
             })
             .collect();
 
+        let base_scores: Vec<f64> = scored.iter().map(|(s, _)| *s).collect();
+
         let mut candidates: Vec<EvictionCandidate> = sorted_items
             .iter()
-            .zip(&base_scores)
-            .map(|(item, &score)| {
+            .zip(&scored)
+            .map(|(item, (score, factors))| {
                 let reason =
                     Self::describe_reason(item, current_turn, min_turn, max_turn, &task_keywords);
                 EvictionCandidate {
                     content_id: item.content_id.0.clone(),
                     reason,
                     tokens_recoverable: item.token_count,
-                    score,
+                    score: *score,
+                    factors: Some(factors.clone()),
                 }
             })
             .collect();
 
-        // Pass 2: apply contiguity bonuses
+        // Pass 2: apply contiguity bonuses (also updates factor breakdown)
         Self::apply_contiguity_bonus(&mut candidates, &base_scores);
 
         // Sort by score descending (best eviction candidates first)
@@ -206,7 +233,7 @@ impl EvictionRanker {
         max_turn: u32,
         memory: Option<&super::memory::MemoryTracker>,
         task_keywords: &[String],
-    ) -> f64 {
+    ) -> (f64, EvictionFactors) {
         const RECENCY_WEIGHT: f64 = 0.30;
         const TOKEN_WEIGHT: f64 = 0.15;
         const POSITION_WEIGHT: f64 = 0.15;
@@ -250,11 +277,22 @@ impl EvictionRanker {
         // 1.0 = no salience (evict-friendly), 0.0 = highly salient (keep).
         let salience_score = 1.0 - salience;
 
-        recency * RECENCY_WEIGHT
+        let composite = recency * RECENCY_WEIGHT
             + token_score * TOKEN_WEIGHT
             + position_score * POSITION_WEIGHT
             + resolution_score * RESOLUTION_WEIGHT
-            + salience_score * SALIENCE_WEIGHT
+            + salience_score * SALIENCE_WEIGHT;
+
+        let factors = EvictionFactors {
+            recency,
+            token_weight: token_score,
+            position: position_score,
+            resolution: resolution_score,
+            salience: salience_score,
+            contiguity: 0.0, // filled in by apply_contiguity_bonus
+        };
+
+        (composite, factors)
     }
 
     /// Apply contiguity bonuses to base scores.
@@ -300,6 +338,9 @@ impl EvictionRanker {
 
         for (candidate, bonus) in candidates.iter_mut().zip(bonuses) {
             candidate.score += bonus;
+            if let Some(ref mut factors) = candidate.factors {
+                factors.contiguity = bonus;
+            }
         }
     }
 
@@ -639,10 +680,34 @@ mod tests {
             reason: "stale content".into(),
             tokens_recoverable: 200,
             score: 0.75,
+            factors: Some(EvictionFactors {
+                recency: 0.8,
+                token_weight: 0.5,
+                position: 0.3,
+                resolution: 0.6,
+                salience: 0.9,
+                contiguity: 0.1,
+            }),
         };
         let json = serde_json::to_string(&candidate).unwrap();
         assert!(json.contains("test-id"));
         assert!(json.contains("tokens_recoverable"));
+        assert!(json.contains("factors"));
+        assert!(json.contains("recency"));
+        assert!(json.contains("salience"));
+    }
+
+    #[test]
+    fn candidate_without_factors_omits_field() {
+        let candidate = EvictionCandidate {
+            content_id: "test-id".into(),
+            reason: "stale content".into(),
+            tokens_recoverable: 200,
+            score: 0.75,
+            factors: None,
+        };
+        let json = serde_json::to_string(&candidate).unwrap();
+        assert!(!json.contains("factors"), "None factors should be omitted");
     }
 
     // --- Attention-position-aware scoring tests ---
@@ -986,6 +1051,48 @@ mod tests {
         assert_eq!(
             candidates[0].content_id, "s1",
             "without queries, recency should still dominate"
+        );
+    }
+
+    // --- Factor explainability tests ---
+
+    #[test]
+    fn ranked_candidates_have_factor_breakdown() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+        session.record_delivery(&cid("s2"), Resolution::Summary, 500, 5, "h2".into());
+
+        let candidates = EvictionRanker::rank(&session, 10, None);
+        for c in &candidates {
+            let factors = c.factors.as_ref().expect("factors should always be present");
+            assert!(factors.recency >= 0.0 && factors.recency <= 1.0);
+            assert!(factors.token_weight >= 0.0 && factors.token_weight <= 1.0);
+            assert!(factors.position >= 0.0 && factors.position <= 1.0);
+            assert!(factors.resolution >= 0.0 && factors.resolution <= 1.0);
+            assert!(factors.salience >= 0.0 && factors.salience <= 1.0);
+            assert!(factors.contiguity >= 0.0);
+        }
+    }
+
+    #[test]
+    fn factor_breakdown_sums_approximately_to_score() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+
+        let candidates = EvictionRanker::rank(&session, 10, None);
+        let c = &candidates[0];
+        let factors = c.factors.as_ref().unwrap();
+
+        // Weighted sum should approximate the score (minus contiguity which is additive)
+        let weighted = factors.recency * 0.30
+            + factors.token_weight * 0.15
+            + factors.position * 0.15
+            + factors.resolution * 0.10
+            + factors.salience * 0.20
+            + factors.contiguity;
+        assert!(
+            (weighted - c.score).abs() < 0.01,
+            "weighted factor sum {weighted} should approximate score {}", c.score
         );
     }
 }
