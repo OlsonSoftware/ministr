@@ -60,6 +60,7 @@ impl ScaffoldResult {
 pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     let playbook = playbook_for_project(project_root);
     let custom_rules = load_custom_rules(project_root);
+    let lang_rules = language_rules_for_project(project_root);
     let mut result = ScaffoldResult::default();
 
     // ── Claude Code: .claude/rules/ (advisory — never overwrite) ────────
@@ -118,11 +119,19 @@ pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     if let Some((ref rules_content, count)) = custom_rules {
         result.custom_rules = count;
         let custom: &[(&str, &str)] = &[("iris-custom.md", rules_content)];
-        // Write to all advisory directories (auto-healed, since rules may change)
         result.merge(write_files(&claude_rules_dir, custom, true));
         result.merge(write_files(&cursor_rules_dir, custom, true));
         result.merge(write_files(&windsurf_rules_dir, custom, true));
         result.merge(write_files(&continue_rules_dir, custom, true));
+    }
+
+    // ── Language-specific rules (advisory — never overwrite) ─────────────
+    if let Some(ref lang_content) = lang_rules {
+        let lang: &[(&str, &str)] = &[("iris-lang-rules.md", lang_content)];
+        result.merge(write_files(&claude_rules_dir, lang, false));
+        result.merge(write_files(&cursor_rules_dir, lang, false));
+        result.merge(write_files(&windsurf_rules_dir, lang, false));
+        result.merge(write_files(&continue_rules_dir, lang, false));
     }
 
     if result.touched() > 0 {
@@ -685,8 +694,106 @@ Decision guide for using iris tools effectively in this project.
 "#;
 
 // ---------------------------------------------------------------------------
-// Cursor rules
+// Language-specific rule templates
 // ---------------------------------------------------------------------------
+
+const RUST_RULES: &str = "\
+## Rust
+
+- Use `Result<T, E>` for fallible operations; avoid `.unwrap()` and `.expect()` in library code
+- Prefer `&str` over `String` in function parameters; return `String` when ownership is needed
+- Use `clippy` lints: `cargo clippy -- -D warnings`
+- Prefer iterators and combinators over manual loops
+- Use `#[must_use]` on functions returning values that should not be silently ignored
+- Derive `Debug` on all public types; derive `Clone`, `PartialEq` where appropriate
+- Prefer `thiserror` for library error types, `anyhow`/`miette` for application errors
+- Use `cargo fmt` (rustfmt) for consistent formatting
+- Place unit tests in the same file with `#[cfg(test)]`; integration tests in `tests/`
+";
+
+const TYPESCRIPT_RULES: &str = "\
+## TypeScript
+
+- Enable `strict` mode in `tsconfig.json` — never use `any` (use `unknown` if needed)
+- Prefer `interface` for object shapes, `type` for unions/intersections
+- Use `const` by default; `let` only when mutation is required; never `var`
+- Use optional chaining (`?.`) and nullish coalescing (`??`) over manual null checks
+- Prefer `async/await` over raw Promise chains
+- Use `eslint` + `prettier` for consistent formatting and linting
+- Export types alongside values; prefer named exports over default exports
+- Use `zod` or similar for runtime validation at API boundaries
+- Place tests next to source files (`foo.test.ts`) or in `__tests__/`
+";
+
+const PYTHON_RULES: &str = "\
+## Python
+
+- Use type hints on all function signatures (PEP 484); run `mypy` or `pyright`
+- Prefer `pathlib.Path` over `os.path` for filesystem operations
+- Use `dataclasses` or `pydantic` for structured data; avoid raw dicts for domain objects
+- Follow PEP 8 naming: `snake_case` for functions/variables, `PascalCase` for classes
+- Use `ruff` or `black` for formatting, `ruff` for linting
+- Prefer context managers (`with`) for resource management
+- Use `pytest` for testing; prefer `fixtures` over `setUp`/`tearDown`
+- Use virtual environments (`venv`, `uv`, or `poetry`) for dependency isolation
+- Prefer f-strings over `.format()` or `%` formatting
+";
+
+const GO_RULES: &str = "\
+## Go
+
+- Accept interfaces, return concrete types
+- Handle every error explicitly; never ignore with `_`
+- Use `go fmt` and `go vet`; run `golangci-lint` for comprehensive linting
+- Prefer table-driven tests with `t.Run` subtests
+- Use `context.Context` as the first parameter for cancellation and deadlines
+- Keep packages small and focused; avoid `package utils` catch-all packages
+- Use `errors.Is`/`errors.As` for error checking; wrap with `fmt.Errorf(\"%w\", err)`
+- Prefer `io.Reader`/`io.Writer` interfaces over concrete types in function params
+- Use `struct{}` for signal channels; close channels to broadcast
+";
+
+const JAVA_RULES: &str = "\
+## Java / Kotlin
+
+- Use immutable types where possible (`final` fields, `record` types in Java 16+)
+- Prefer composition over inheritance; program to interfaces
+- Use `Optional<T>` instead of returning `null` for absent values
+- Follow standard naming: `camelCase` for methods/variables, `PascalCase` for classes
+- Use `try-with-resources` for `AutoCloseable` resources
+- Prefer `Stream` API for collection transformations
+- Use `JUnit 5` with `@Nested` for structured test classes
+- Use `Gradle` or `Maven` — keep build files minimal and declarative
+- For Kotlin: prefer `data class`, `sealed class`, and null-safe types
+";
+
+/// Compose language-specific rules based on detected project languages.
+///
+/// Returns `None` if no known languages are detected.
+fn language_rules_for_project(root: &Path) -> Option<String> {
+    let detection = crate::init::detect_project(root);
+    let languages = detection.detected_languages();
+
+    if languages.is_empty() {
+        return None;
+    }
+
+    let mut md = String::from("# Language Best Practices\n\n");
+    md.push_str("Auto-generated rules based on detected project languages.\n\n");
+
+    for lang in &languages {
+        match lang {
+            crate::init::Language::Rust => md.push_str(RUST_RULES),
+            crate::init::Language::TypeScript => md.push_str(TYPESCRIPT_RULES),
+            crate::init::Language::Python => md.push_str(PYTHON_RULES),
+            crate::init::Language::Go => md.push_str(GO_RULES),
+            crate::init::Language::Java => md.push_str(JAVA_RULES),
+        }
+        md.push('\n');
+    }
+
+    Some(md)
+}
 
 /// Cursor IDE rules file (`.cursor/rules/iris.mdc`).
 ///
@@ -1544,5 +1651,87 @@ mod tests {
         assert!(result.healed > 0, "stale iris-custom.md should be healed");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("Rule version 2"));
+    }
+
+    #[test]
+    fn language_rules_generated_for_rust_project() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Create a Cargo.toml to signal Rust project.
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+
+        scaffold_agent_config(root);
+
+        let path = root.join(".claude/rules/iris-lang-rules.md");
+        assert!(path.exists(), "iris-lang-rules.md should be created for Rust projects");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("## Rust"));
+        assert!(content.contains("Result<T, E>"));
+        assert!(!content.contains("## TypeScript"));
+    }
+
+    #[test]
+    fn language_rules_generated_for_polyglot_project() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Rust + Node.js + Python
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+        std::fs::write(root.join("pyproject.toml"), "[project]\nname = \"test\"").unwrap();
+
+        scaffold_agent_config(root);
+
+        let content =
+            std::fs::read_to_string(root.join(".claude/rules/iris-lang-rules.md")).unwrap();
+        assert!(content.contains("## Rust"));
+        assert!(content.contains("## TypeScript"));
+        assert!(content.contains("## Python"));
+    }
+
+    #[test]
+    fn language_rules_written_to_all_advisory_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("go.mod"), "module test").unwrap();
+
+        scaffold_agent_config(root);
+
+        for dir in &[
+            ".claude/rules",
+            ".cursor/rules",
+            "windsurf/rules",
+            ".continue/rules",
+        ] {
+            let path = root.join(dir).join("iris-lang-rules.md");
+            assert!(path.exists(), "missing iris-lang-rules.md in {dir}");
+            let content = std::fs::read_to_string(&path).unwrap();
+            assert!(content.contains("## Go"));
+        }
+    }
+
+    #[test]
+    fn language_rules_not_generated_without_manifests() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        scaffold_agent_config(root);
+
+        assert!(!root.join(".claude/rules/iris-lang-rules.md").exists());
+    }
+
+    #[test]
+    fn java_project_detected_from_pom_xml() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("pom.xml"), "<project/>").unwrap();
+
+        scaffold_agent_config(root);
+
+        let content =
+            std::fs::read_to_string(root.join(".claude/rules/iris-lang-rules.md")).unwrap();
+        assert!(content.contains("## Java"));
+        assert!(content.contains("Optional<T>"));
     }
 }

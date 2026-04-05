@@ -1607,7 +1607,7 @@ phases:
   - text: 'Hook testing CLI: iris hooks test — simulates tool calls against installed hooks, reports which would be blocked/allowed'
     checked: false
   - text: 'Custom rule injection: support user-defined rules in .iris.toml [agent.rules] that get merged into generated config files'
-    checked: false
+    checked: true
   - text: 'Windsurf / Aider / Continue.dev support: extend scaffold to generate configs for emerging agent platforms'
     checked: true
   - text: 'Documentation: dedicated docs page for iris init — platform matrix, hook formats, customization guide, troubleshooting'

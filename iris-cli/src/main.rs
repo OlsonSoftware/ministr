@@ -627,6 +627,11 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
         let names: Vec<_> = detection.bridges.iter().map(|b| format!("{b:?}")).collect();
         eprintln!("  Bridges: {}", names.join(", "));
     }
+    let langs = detection.detected_languages();
+    if !langs.is_empty() {
+        let names: Vec<_> = langs.iter().map(|l| format!("{l:?}")).collect();
+        eprintln!("  Languages: {}", names.join(", "));
+    }
     eprintln!();
     let config_path = root.join(".iris.toml");
     let total_paths = detection.source_paths.len() + detection.doc_paths.len();
@@ -657,6 +662,13 @@ fn cmd_init(root: &Path, force: bool) -> Result<()> {
         eprintln!(
             "  ✓ iris-custom.md           ({} custom rules injected)",
             scaffolded.custom_rules
+        );
+    }
+    if !langs.is_empty() {
+        let names: Vec<_> = langs.iter().map(|l| format!("{l:?}")).collect();
+        eprintln!(
+            "  ✓ iris-lang-rules.md       ({} language playbook)",
+            names.join(", ")
         );
     }
     eprintln!();
