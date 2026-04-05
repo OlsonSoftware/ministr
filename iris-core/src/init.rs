@@ -230,6 +230,28 @@ pub fn render_toml(detection: &ProjectDetection) -> String {
         let _ = writeln!(out, "]");
     }
 
+    // [agent] section — custom rules injected into generated agent configs
+    let _ = writeln!(out);
+    let _ = writeln!(out, "# [agent]");
+    let _ = writeln!(
+        out,
+        "# Custom rules appended to all generated agent instruction files."
+    );
+    let _ = writeln!(
+        out,
+        "# Each entry is a line appended to .claude/rules/, .cursor/rules/, etc."
+    );
+    let _ = writeln!(out, "# rules = [");
+    let _ = writeln!(
+        out,
+        "#     \"Always use snake_case for function names.\","
+    );
+    let _ = writeln!(
+        out,
+        "#     \"Prefer Result<T, E> over panic in library code.\","
+    );
+    let _ = writeln!(out, "# ]");
+
     out
 }
 
