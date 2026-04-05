@@ -206,7 +206,7 @@ pub struct IngestionProgress {
     sections_done: AtomicUsize,
     embeddings_total: AtomicUsize,
     embeddings_done: AtomicUsize,
-    current_file: std::sync::Mutex<String>,
+    current_file: parking_lot::Mutex<String>,
 }
 
 impl IngestionProgress {
@@ -220,7 +220,7 @@ impl IngestionProgress {
             sections_done: AtomicUsize::new(0),
             embeddings_total: AtomicUsize::new(0),
             embeddings_done: AtomicUsize::new(0),
-            current_file: std::sync::Mutex::new(String::new()),
+            current_file: parking_lot::Mutex::new(String::new()),
         }
     }
 
@@ -239,10 +239,9 @@ impl IngestionProgress {
     }
 
     pub fn set_current_file(&self, file: &str) {
-        if let Ok(mut guard) = self.current_file.lock() {
-            guard.clear();
-            guard.push_str(file);
-        }
+        let mut guard = self.current_file.lock();
+        guard.clear();
+        guard.push_str(file);
     }
 
     pub fn increment_done(&self) {
@@ -279,10 +278,7 @@ impl IngestionProgress {
 
     #[must_use]
     pub fn current_file(&self) -> String {
-        self.current_file
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.current_file.lock().clone()
     }
 
     #[must_use]

@@ -67,6 +67,7 @@ impl IrisConfig {
     ///
     /// Returns [`StorageError::Io`] if the file exists but cannot be read,
     /// or [`StorageError::Serialization`] if the TOML is malformed.
+    #[must_use = "returns the loaded config"]
     pub fn load(path: &Path) -> Result<Self, StorageError> {
         if !path.exists() {
             return Ok(Self::default());
@@ -100,6 +101,7 @@ impl IrisConfig {
     /// # Errors
     ///
     /// Returns [`StorageError::Serialization`] if the TOML cannot be parsed.
+    #[must_use = "returns the parsed config"]
     pub fn from_toml(s: &str) -> Result<Self, StorageError> {
         toml::from_str(s).map_err(|e| StorageError::Serialization {
             reason: e.to_string(),
@@ -168,6 +170,7 @@ impl CorpusConfig {
     ///
     /// Returns [`StorageError::Io`] if the file cannot be read, or
     /// [`StorageError::Serialization`] if the TOML is malformed.
+    #[must_use = "returns the loaded config"]
     pub fn load(path: &Path) -> Result<Self, StorageError> {
         let contents = std::fs::read_to_string(path)?;
         toml::from_str(&contents).map_err(|e| StorageError::Serialization {
@@ -491,6 +494,7 @@ impl RepoConfig {
     /// # Errors
     ///
     /// Returns [`StorageError`] if the file exists but cannot be parsed.
+    #[must_use = "returns the discovered config"]
     pub fn discover(start_dir: &Path) -> Result<Option<(PathBuf, Self)>, StorageError> {
         let mut dir = start_dir.to_path_buf();
         loop {

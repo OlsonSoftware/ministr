@@ -122,6 +122,7 @@ impl BudgetTracker {
     /// Returns the content IDs of any entries evicted from the window model
     /// to make room for this delivery. Callers should apply bookmark
     /// compression to evicted IDs so the agent retains structural awareness.
+    #[must_use]
     pub fn record_tokens(&mut self, content_id: &str, token_count: usize) -> Vec<String> {
         self.window.record(content_id, token_count)
     }
@@ -290,7 +291,7 @@ mod tests {
     fn normal_pressure_below_threshold() {
         let mut tracker = tracker_with_capacity(1000);
 
-        tracker.record_tokens("s1", 500);
+        let _ = tracker.record_tokens("s1", 500);
         assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
         assert!((tracker.utilization() - 0.5).abs() < f64::EPSILON);
     }
@@ -299,7 +300,7 @@ mod tests {
     fn elevated_pressure_at_threshold() {
         let mut tracker = tracker_with_capacity(1000);
 
-        tracker.record_tokens("s1", 800);
+        let _ = tracker.record_tokens("s1", 800);
         assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
         assert!((tracker.utilization() - 0.8).abs() < f64::EPSILON);
     }
@@ -308,7 +309,7 @@ mod tests {
     fn elevated_pressure_between_thresholds() {
         let mut tracker = tracker_with_capacity(1000);
 
-        tracker.record_tokens("s1", 900);
+        let _ = tracker.record_tokens("s1", 900);
         assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
     }
 
@@ -316,7 +317,7 @@ mod tests {
     fn critical_pressure_at_critical_threshold() {
         let mut tracker = tracker_with_capacity(1000);
 
-        tracker.record_tokens("s1", 950);
+        let _ = tracker.record_tokens("s1", 950);
         assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
     }
 
@@ -324,7 +325,7 @@ mod tests {
     fn critical_pressure_at_capacity() {
         let mut tracker = tracker_with_capacity(1000);
 
-        tracker.record_tokens("s1", 1000);
+        let _ = tracker.record_tokens("s1", 1000);
         assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
     }
 
@@ -332,8 +333,8 @@ mod tests {
     fn budget_status_snapshot() {
         let mut tracker = tracker_with_capacity(1000);
 
-        tracker.record_tokens("s1", 300);
-        tracker.record_tokens("s2", 200);
+        let _ = tracker.record_tokens("s1", 300);
+        let _ = tracker.record_tokens("s2", 200);
 
         let status = tracker.budget_status();
         assert_eq!(status.tokens_used, 500);
@@ -346,17 +347,17 @@ mod tests {
     fn pressure_transitions_with_accumulation() {
         let mut tracker = tracker_with_capacity(1000);
 
-        tracker.record_tokens("s1", 300);
+        let _ = tracker.record_tokens("s1", 300);
         assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
 
-        tracker.record_tokens("s2", 300);
+        let _ = tracker.record_tokens("s2", 300);
         assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
 
-        tracker.record_tokens("s3", 300);
+        let _ = tracker.record_tokens("s3", 300);
         // 900/1000 = 0.9 -> Elevated (>= 0.8, < 0.95)
         assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
 
-        tracker.record_tokens("s4", 100);
+        let _ = tracker.record_tokens("s4", 100);
         // 1000/1000 = 1.0 -> Critical (>= 0.95)
         // Window eviction only triggers when > capacity, and 1000 == 1000, so no eviction
         assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
@@ -371,13 +372,13 @@ mod tests {
         };
         let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
 
-        tracker.record_tokens("s1", 400);
+        let _ = tracker.record_tokens("s1", 400);
         assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
 
-        tracker.record_tokens("s2", 100);
+        let _ = tracker.record_tokens("s2", 100);
         assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
 
-        tracker.record_tokens("s3", 250);
+        let _ = tracker.record_tokens("s3", 250);
         assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
     }
 
@@ -402,7 +403,7 @@ mod tests {
     #[test]
     fn is_in_window_delegates() {
         let mut tracker = tracker_with_capacity(1000);
-        tracker.record_tokens("s1", 100);
+        let _ = tracker.record_tokens("s1", 100);
 
         assert!(tracker.is_in_window("s1"));
         assert!(!tracker.is_in_window("nonexistent"));
@@ -421,8 +422,8 @@ mod tests {
         let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
 
         // Fill past capacity: s1=50, s2=60 -> 110 > 100, s1 evicted -> 60
-        tracker.record_tokens("s1", 50);
-        tracker.record_tokens("s2", 60);
+        let _ = tracker.record_tokens("s1", 50);
+        let _ = tracker.record_tokens("s2", 60);
 
         // After eviction: 60/100 = 0.6 -> Normal
         assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
@@ -439,8 +440,8 @@ mod tests {
         };
         let mut tracker = BudgetTracker::new(config, EvictionPolicy::Lru);
 
-        tracker.record_tokens("s1", 200);
-        tracker.record_tokens("s2", 200);
+        let _ = tracker.record_tokens("s1", 200);
+        let _ = tracker.record_tokens("s2", 200);
         // At 400/500 = 0.8 -> Elevated
         assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
 
@@ -448,7 +449,7 @@ mod tests {
         tracker.touch("s1");
 
         // Add s3, triggers eviction of s2 (LRU)
-        tracker.record_tokens("s3", 200);
+        let _ = tracker.record_tokens("s3", 200);
         // Would be 600 > 500, evict s2 (LRU) -> 400
         assert!(!tracker.is_in_window("s2"), "s2 should be evicted (LRU)");
         assert!(tracker.is_in_window("s1"), "s1 was touched, should survive");
@@ -466,13 +467,13 @@ mod tests {
         };
         let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
 
-        tracker.record_tokens("s1", 30);
-        tracker.record_tokens("s2", 30);
-        tracker.record_tokens("s3", 30);
+        let _ = tracker.record_tokens("s1", 30);
+        let _ = tracker.record_tokens("s2", 30);
+        let _ = tracker.record_tokens("s3", 30);
         // At 90/100
 
         // This pushes past capacity: 90 + 20 = 110 > 100, evict s1 -> 80
-        tracker.record_tokens("s4", 20);
+        let _ = tracker.record_tokens("s4", 20);
 
         let status = tracker.budget_status();
         assert_eq!(status.tokens_used, 80);
@@ -487,7 +488,7 @@ mod tests {
         // Record items rapidly crossing Normal -> Elevated -> Critical
         let mut levels = vec![];
         for i in 0..20 {
-            tracker.record_tokens(&format!("s{i}"), 5);
+            let _ = tracker.record_tokens(&format!("s{i}"), 5);
             levels.push(tracker.pressure_level());
         }
 
@@ -507,11 +508,11 @@ mod tests {
     fn re_recording_same_content_updates_window() {
         let mut tracker = tracker_with_capacity(1000);
 
-        tracker.record_tokens("s1", 300);
+        let _ = tracker.record_tokens("s1", 300);
         assert_eq!(tracker.budget_status().tokens_used, 300);
 
         // Re-record with smaller count — replaces the old entry
-        tracker.record_tokens("s1", 100);
+        let _ = tracker.record_tokens("s1", 100);
         assert_eq!(tracker.budget_status().tokens_used, 100);
         assert!(tracker.is_in_window("s1"));
     }
@@ -527,7 +528,7 @@ mod tests {
     fn utilization_capped_at_one() {
         let mut tracker = tracker_with_capacity(10);
         // Single large entry: 20 > 10, evicts itself -> 0
-        tracker.record_tokens("big", 20);
+        let _ = tracker.record_tokens("big", 20);
         // After eviction, utilization should be 0
         assert!(tracker.utilization() <= 1.0);
     }
@@ -590,7 +591,7 @@ mod tests {
             EvictionPolicy::Fifo,
         );
 
-        tracker.record_tokens("s1", 300);
+        let _ = tracker.record_tokens("s1", 300);
         session.record_delivery(
             &crate::types::ContentId::from("s1".to_string()),
             crate::types::Resolution::Section,
@@ -617,7 +618,7 @@ mod tests {
             EvictionPolicy::Fifo,
         );
 
-        tracker.record_tokens("s1", 300);
+        let _ = tracker.record_tokens("s1", 300);
         session.record_delivery(
             &crate::types::ContentId::from("s1".to_string()),
             crate::types::Resolution::Section,
@@ -626,7 +627,7 @@ mod tests {
             "h1".into(),
         );
 
-        tracker.record_tokens("s2", 600);
+        let _ = tracker.record_tokens("s2", 600);
         session.record_delivery(
             &crate::types::ContentId::from("s2".to_string()),
             crate::types::Resolution::Section,
@@ -653,7 +654,7 @@ mod tests {
             EvictionPolicy::Fifo,
         );
 
-        tracker.record_tokens("s1", 960);
+        let _ = tracker.record_tokens("s1", 960);
         session.record_delivery(
             &crate::types::ContentId::from("s1".to_string()),
             crate::types::Resolution::Section,
@@ -707,7 +708,7 @@ mod tests {
 
         // Deliver at turn 1, then advance session to turn 10
         // so the item is old enough to be promoted (age 9 > protection 3)
-        tracker.record_tokens("s1", 900);
+        let _ = tracker.record_tokens("s1", 900);
         session.record_delivery(
             &crate::types::ContentId::from("s1".to_string()),
             crate::types::Resolution::Section,
@@ -749,7 +750,7 @@ mod tests {
         );
 
         // Record at current turn (turn 10) — within recency protection
-        tracker.record_tokens("s1", 900);
+        let _ = tracker.record_tokens("s1", 900);
         session.record_delivery(
             &crate::types::ContentId::from("s1".to_string()),
             crate::types::Resolution::Section,
@@ -776,7 +777,7 @@ mod tests {
         );
 
         // Recent item but critical pressure — should still promote
-        tracker.record_tokens("s1", 960);
+        let _ = tracker.record_tokens("s1", 960);
         session.record_delivery(
             &crate::types::ContentId::from("s1".to_string()),
             crate::types::Resolution::Section,

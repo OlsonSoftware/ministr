@@ -137,6 +137,7 @@ impl AstParser {
     /// # Errors
     ///
     /// Returns [`ParseError::Failed`] if the language grammar cannot be loaded.
+    #[must_use = "constructors return a new value"]
     pub fn with_language(language: &tree_sitter::Language) -> Result<Self, ParseError> {
         let mut parser = tree_sitter::Parser::new();
         parser
@@ -154,6 +155,7 @@ impl AstParser {
     ///
     /// Returns [`ParseError::Failed`] if tree-sitter fails to produce a tree
     /// (e.g. due to a timeout or cancellation).
+    #[must_use = "returns the parsed syntax tree"]
     pub fn parse(&mut self, source: &[u8]) -> Result<tree_sitter::Tree, ParseError> {
         self.parser
             .parse(source, None)

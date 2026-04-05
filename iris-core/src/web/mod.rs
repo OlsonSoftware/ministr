@@ -79,6 +79,7 @@ impl HttpClient {
     /// # Errors
     ///
     /// Returns [`WebError::Request`] if the underlying client cannot be built.
+    #[must_use = "constructors return a new value"]
     pub fn new(config: HttpClientConfig) -> Result<Self, WebError> {
         let inner = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs))
@@ -93,6 +94,7 @@ impl HttpClient {
     /// # Errors
     ///
     /// Returns [`WebError::Request`] if the underlying client cannot be built.
+    #[must_use = "constructors return a new value"]
     pub fn with_defaults() -> Result<Self, WebError> {
         Self::new(HttpClientConfig::default())
     }
@@ -232,6 +234,7 @@ impl HttpClient {
 /// assert_eq!(url.as_str(), "https://example.com/docs/");
 /// assert!(url.fragment().is_none());
 /// ```
+#[must_use = "returns the normalized URL"]
 pub fn normalize_url(raw: &str) -> Result<Url, WebError> {
     let mut url = Url::parse(raw).map_err(|e| WebError::InvalidUrl {
         url: raw.to_owned(),
@@ -279,6 +282,7 @@ pub fn normalize_url(raw: &str) -> Result<Url, WebError> {
 /// let resolved = resolve_url(&base, "getting-started").unwrap();
 /// assert_eq!(resolved.as_str(), "https://example.com/docs/getting-started/");
 /// ```
+#[must_use = "returns the resolved URL"]
 pub fn resolve_url(base: &Url, relative: &str) -> Result<Url, WebError> {
     let resolved = base.join(relative).map_err(|e| WebError::InvalidUrl {
         url: relative.to_owned(),

@@ -19,15 +19,10 @@ use crate::infra::InfrastructureContext;
 /// - Local paths are ingested via the standard file ingestion pipeline.
 /// - Web URLs are fetched and ingested via `WebFetcher`.
 /// - Git URLs are cloned and their content is ingested as local files.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_corpus_ingestion(
     corpus_paths: &[String],
     git_includes: &[iris_core::config::GitInclude],
-    corpus_dir: &Path,
-    storage: &iris_core::storage::SqliteStorage,
-    embedder: &dyn iris_core::embedding::Embedder,
-    index: &dyn iris_core::index::VectorIndex,
-    index_dir: &std::path::Path,
+    ctx: &InfrastructureContext,
     progress: &Arc<iris_core::ingestion::IngestionProgress>,
 ) -> Result<()> {
     use iris_core::config::{CorpusSource, classify_corpus_path};
@@ -51,6 +46,10 @@ pub(crate) async fn run_corpus_ingestion(
         local_paths = ?local_paths,
         "classified corpus sources"
     );
+
+    let storage = &*ctx.storage;
+    let embedder = &*ctx.embedder;
+    let index = &*ctx.index;
 
     let start = std::time::Instant::now();
     let pipeline =
@@ -86,7 +85,15 @@ pub(crate) async fn run_corpus_ingestion(
 
     // Fetch and ingest web URLs.
     if !web_urls.is_empty() {
-        ingest_web_sources(&web_urls, corpus_dir, &pipeline, storage, embedder, index).await?;
+        ingest_web_sources(
+            &web_urls,
+            &ctx.corpus_dir,
+            &pipeline,
+            storage,
+            embedder,
+            index,
+        )
+        .await?;
     }
 
     // Clone and ingest git repositories (from --corpus args and .iris.toml).
@@ -98,7 +105,7 @@ pub(crate) async fn run_corpus_ingestion(
     }
 
     index
-        .persist(index_dir)
+        .persist(&ctx.index_dir)
         .into_diagnostic()
         .wrap_err("failed to persist vector index")?;
 
@@ -488,11 +495,7 @@ pub(crate) fn spawn_config_watcher(
         return None;
     }
 
-    let storage = Arc::clone(&ctx.storage);
-    let embedder = Arc::clone(&ctx.embedder);
-    let index = Arc::clone(&ctx.index);
-    let corpus_dir = ctx.corpus_dir.clone();
-    let index_dir = ctx.index_dir.clone();
+    let bg_ctx = ctx.clone();
     let progress = Arc::clone(ingestion_progress);
 
     tracing::info!(
@@ -549,18 +552,7 @@ pub(crate) fn spawn_config_watcher(
 
             let git_includes = repo_config.corpus.git.clone();
 
-            match run_corpus_ingestion(
-                &new_paths,
-                &git_includes,
-                &corpus_dir,
-                &storage,
-                &*embedder,
-                &*index,
-                &index_dir,
-                &progress,
-            )
-            .await
-            {
+            match run_corpus_ingestion(&new_paths, &git_includes, &bg_ctx, &progress).await {
                 Ok(()) => {
                     known_paths.extend(new_paths);
                     tracing::info!("config-triggered ingestion complete");
