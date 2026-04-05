@@ -1406,6 +1406,10 @@ impl IrisServer {
                         .get_session_mut(&self.active_session_id)
                         .expect("active session exists");
                     let turn = entry.session.current_turn() + 1;
+
+                    // Track query for task-aware salience scoring
+                    entry.session.record_query(&params.query);
+
                     for r in &results {
                         let token_count = count_tokens(&r.text);
                         let hash = content_hash(&r.text);
@@ -2423,6 +2427,14 @@ impl IrisServer {
 
         async {
             debug!(?params.query, ?params.kind, ?params.module, ?params.visibility, "iris_symbols request");
+
+            // Track query for task-aware salience scoring
+            if let Some(ref q) = params.query {
+                let mut reg = self.registry.lock().await;
+                if let Some(entry) = reg.get_session_mut(&self.active_session_id) {
+                    entry.session.record_query(q);
+                }
+            }
 
             let filter = SymbolFilter {
                 name: params.query,
