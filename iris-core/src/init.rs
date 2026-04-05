@@ -69,12 +69,50 @@ pub struct ProjectDetection {
     pub has_node: bool,
     /// Whether a Python project was detected (`pyproject.toml` or `setup.py`).
     pub has_python: bool,
+    /// Whether a Go project was detected (`go.mod` present).
+    pub has_go: bool,
+    /// Whether a Java/Kotlin project was detected (`pom.xml` or `build.gradle`).
+    pub has_java: bool,
     /// Relative paths to source directories.
     pub source_paths: Vec<String>,
     /// Relative paths to documentation files/directories.
     pub doc_paths: Vec<String>,
     /// Suggested ignore patterns for `.iris.toml`.
     pub ignore_patterns: Vec<String>,
+}
+
+/// Primary language detected in a project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Language {
+    Rust,
+    TypeScript,
+    Python,
+    Go,
+    Java,
+}
+
+impl ProjectDetection {
+    /// Return the list of primary languages detected in this project.
+    #[must_use]
+    pub fn detected_languages(&self) -> Vec<Language> {
+        let mut langs = Vec::new();
+        if self.has_rust {
+            langs.push(Language::Rust);
+        }
+        if self.has_node {
+            langs.push(Language::TypeScript);
+        }
+        if self.has_python {
+            langs.push(Language::Python);
+        }
+        if self.has_go {
+            langs.push(Language::Go);
+        }
+        if self.has_java {
+            langs.push(Language::Java);
+        }
+        langs
+    }
 }
 
 /// Errors that can occur during `iris init`.
@@ -109,6 +147,10 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
     let has_rust = root.join("Cargo.toml").exists();
     let has_node = root.join("package.json").exists();
     let has_python = root.join("pyproject.toml").exists() || root.join("setup.py").exists();
+    let has_go = root.join("go.mod").exists();
+    let has_java = root.join("pom.xml").exists()
+        || root.join("build.gradle").exists()
+        || root.join("build.gradle.kts").exists();
 
     let project_name = derive_project_name(root);
     let source_paths = detect_source_paths(root, &workspaces, has_rust, has_node, has_python);
@@ -124,6 +166,8 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
         has_rust,
         has_node,
         has_python,
+        has_go,
+        has_java,
         source_paths,
         doc_paths,
         ignore_patterns,
