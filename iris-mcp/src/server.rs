@@ -203,16 +203,20 @@ struct ToolResponse<T: Serialize + schemars::JsonSchema> {
     /// Current budget status snapshot (stable across consecutive calls).
     budget_status: BudgetStatus,
     /// Pending coherence alerts (present when underlying content has changed).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[schemars(default)]
     coherence_alerts: Vec<CoherenceAlert>,
     /// True when background corpus ingestion is still running.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    #[schemars(default)]
     indexing_in_progress: bool,
     /// Human-readable ingestion status message (e.g. "Checking 12/42 files").
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(default)]
     indexing_message: Option<String>,
     /// Proactive eviction recommendations when budget pressure is elevated or critical.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[schemars(default)]
     eviction_recommendations: Vec<EvictionCandidate>,
     /// The tool-specific result data (varying — placed last for prefix stability).
     result: T,
@@ -323,11 +327,13 @@ struct BudgetResponse {
     /// Prefetch cache hit/miss metrics by strategy.
     prefetch_metrics: iris_core::session::PrefetchMetrics,
     /// Pending coherence alerts (present when underlying content has changed).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[schemars(default)]
     coherence_alerts: Vec<CoherenceAlert>,
     /// Content IDs evicted via interactive elicitation (empty if elicitation
     /// was unavailable, declined, or pressure was normal).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[schemars(default)]
     elicitation_evicted: Vec<String>,
 }
 
