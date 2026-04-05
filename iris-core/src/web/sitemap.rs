@@ -100,6 +100,7 @@ impl Default for SitemapConfig {
 /// assert_eq!(entries[0].url, "https://example.com/");
 /// assert_eq!(entries[1].lastmod.as_deref(), Some("2026-01-15"));
 /// ```
+#[must_use = "returns parsed sitemap entries"]
 pub fn parse_sitemap(xml: &str) -> Result<Vec<SitemapEntry>, WebError> {
     let trimmed = xml.trim();
 
@@ -119,6 +120,7 @@ pub fn parse_sitemap(xml: &str) -> Result<Vec<SitemapEntry>, WebError> {
 /// # Errors
 ///
 /// Returns [`WebError::SitemapParse`] on malformed XML.
+#[must_use = "returns parsed sitemap entries"]
 pub fn parse_urlset(xml: &str) -> Result<Vec<SitemapEntry>, WebError> {
     use quick_xml::Reader;
     use quick_xml::events::Event;
@@ -199,6 +201,7 @@ pub fn parse_urlset(xml: &str) -> Result<Vec<SitemapEntry>, WebError> {
 /// # Errors
 ///
 /// Returns [`WebError::SitemapParse`] on malformed XML.
+#[must_use = "returns parsed sitemap entries"]
 pub fn parse_sitemap_index(xml: &str) -> Result<Vec<SitemapEntry>, WebError> {
     use quick_xml::Reader;
     use quick_xml::events::Event;

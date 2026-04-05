@@ -21,6 +21,7 @@ pub struct RawSection {
 
 /// Convert a flat list of [`RawSection`]s into a vec of [`Section`]s with
 /// stable IDs, then nest them into a tree based on heading depth.
+#[must_use]
 pub fn build_section_tree(source_path: &str, raw_sections: Vec<RawSection>) -> Vec<Section> {
     let flat: Vec<Section> = raw_sections
         .into_iter()

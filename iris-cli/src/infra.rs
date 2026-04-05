@@ -16,6 +16,7 @@ use iris_core::session::BudgetConfig;
 use iris_core::storage::Storage as _;
 
 /// Shared infrastructure components initialized at startup.
+#[derive(Clone)]
 pub(crate) struct InfrastructureContext {
     pub(crate) corpus_dir: PathBuf,
     pub(crate) index_dir: PathBuf,
@@ -289,21 +290,13 @@ pub(crate) fn spawn_background_ingestion(
     }
     let bg_corpus_paths = corpus_paths.to_vec();
     let bg_git_includes = git_includes.to_vec();
-    let bg_corpus_dir = ctx.corpus_dir.clone();
-    let bg_storage = Arc::clone(&ctx.storage);
-    let bg_embedder = Arc::clone(&ctx.embedder);
-    let bg_index = Arc::clone(&ctx.index);
-    let bg_index_dir = ctx.index_dir.clone();
+    let bg_ctx = ctx.clone();
     let bg_progress = Arc::clone(ingestion_progress);
     tokio::spawn(async move {
         match crate::ingestion::run_corpus_ingestion(
             &bg_corpus_paths,
             &bg_git_includes,
-            &bg_corpus_dir,
-            &bg_storage,
-            &*bg_embedder,
-            &*bg_index,
-            &bg_index_dir,
+            &bg_ctx,
             &bg_progress,
         )
         .await

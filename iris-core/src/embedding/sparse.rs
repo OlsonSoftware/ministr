@@ -51,6 +51,7 @@ impl FastSparseEmbedder {
     /// Returns [`IndexError::EmbeddingFailed`] if the model name is unknown or
     /// the model cannot be loaded.
     #[instrument(skip_all, fields(model = model_name))]
+    #[must_use = "constructors return a new value"]
     pub fn new(model_name: &str, cache_dir: Option<&str>) -> Result<Self, IndexError> {
         let sparse_model = parse_sparse_model(model_name)?;
 
@@ -79,6 +80,7 @@ impl FastSparseEmbedder {
     /// # Errors
     ///
     /// Returns [`IndexError::EmbeddingFailed`] if the model cannot be loaded.
+    #[must_use = "constructors return a new value"]
     pub fn with_data_dir(model_name: &str, data_dir: &Path) -> Result<Self, IndexError> {
         let cache_dir = data_dir.join("models");
         let cache_str = cache_dir.to_string_lossy();

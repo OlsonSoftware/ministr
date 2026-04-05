@@ -72,6 +72,7 @@ impl FileWatcher {
     /// Returns [`CoherenceError::WatcherInit`] if the platform watcher cannot
     /// be created, or [`CoherenceError::WatchFailed`] if a directory cannot
     /// be watched.
+    #[must_use = "constructors return a new value"]
     pub fn new(directories: &[PathBuf]) -> Result<Self, CoherenceError> {
         let (tx, rx) = mpsc::channel(256);
 
@@ -125,6 +126,7 @@ impl FileWatcher {
     }
 
     /// Drain all currently pending events without blocking.
+    #[must_use]
     pub fn drain_pending(&mut self) -> Vec<CoherenceEvent> {
         let mut events = Vec::new();
         while let Ok(event) = self.receiver.try_recv() {
@@ -276,6 +278,7 @@ impl CoherenceEngine {
     /// session for the transport layer to deliver.
     ///
     /// Returns the number of items invalidated.
+    #[must_use]
     pub fn invalidate_session(session: &mut Session, affected_sections: &[String]) -> usize {
         session.invalidate_sections(affected_sections)
     }

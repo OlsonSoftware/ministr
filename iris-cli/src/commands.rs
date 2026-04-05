@@ -278,17 +278,7 @@ pub(crate) async fn cmd_index(
     let ctx = infra::init_infrastructure(corpus_paths, config, Some(resolved_model)).await?;
 
     let progress = Arc::new(iris_core::ingestion::IngestionProgress::new());
-    ingestion::run_corpus_ingestion(
-        corpus_paths,
-        git_includes,
-        &ctx.corpus_dir,
-        &ctx.storage,
-        &*ctx.embedder,
-        &*ctx.index,
-        &ctx.index_dir,
-        &progress,
-    )
-    .await?;
+    ingestion::run_corpus_ingestion(corpus_paths, git_includes, &ctx, &progress).await?;
 
     tracing::info!("indexing complete");
     Ok(())

@@ -279,7 +279,7 @@ mod tests {
             1,
             "h1".into(),
         );
-        entry.budget.record_tokens("s1", 100);
+        let _ = entry.budget.record_tokens("s1", 100);
 
         let entry = registry.get_session("agent-1").unwrap();
         assert_eq!(entry.session.delivered_count(), 1);
@@ -353,7 +353,7 @@ mod tests {
 
         // Record tokens only in agent-1
         let entry1 = registry.get_session_mut("agent-1").unwrap();
-        entry1.budget.record_tokens("s1", 900);
+        let _ = entry1.budget.record_tokens("s1", 900);
         assert_eq!(entry1.budget.pressure_level(), PressureLevel::Elevated);
 
         // agent-2 should still be at normal
@@ -525,7 +525,7 @@ mod tests {
         // Record same amount to both
         for id in &["small", "large"] {
             let entry = registry.get_session_mut(id).unwrap();
-            entry.budget.record_tokens("s1", 450);
+            let _ = entry.budget.record_tokens("s1", 450);
         }
 
         // small should be elevated, large should be normal
@@ -589,7 +589,7 @@ mod tests {
                     i / 10,
                     format!("h1-{i}"),
                 );
-                entry.budget.record_tokens(&format!("s1-{i}"), 10);
+                let _ = entry.budget.record_tokens(&format!("s1-{i}"), 10);
             }
         });
 
@@ -605,7 +605,7 @@ mod tests {
                     i / 10,
                     format!("h2-{i}"),
                 );
-                entry.budget.record_tokens(&format!("s2-{i}"), 10);
+                let _ = entry.budget.record_tokens(&format!("s2-{i}"), 10);
             }
         });
 

@@ -171,6 +171,7 @@ impl HnswIndex {
     /// # Errors
     ///
     /// Returns [`IndexError::EmbeddingFailed`] if the dimension is zero.
+    #[must_use = "constructors return a new value"]
     pub fn new(dimension: usize, max_elements: usize) -> Result<Self, IndexError> {
         Self::with_config(HnswIndexConfig::new(dimension, max_elements))
     }
@@ -202,6 +203,7 @@ impl HnswIndex {
     ///
     /// Returns [`IndexError::EmbeddingFailed`] if the dimension is zero.
     #[instrument(skip_all, fields(dim = config.dimension, max = config.max_elements, m = config.m))]
+    #[must_use = "constructors return a new value"]
     pub fn with_config(config: HnswIndexConfig) -> Result<Self, IndexError> {
         if config.dimension == 0 {
             return Err(IndexError::EmbeddingFailed {

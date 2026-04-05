@@ -75,6 +75,9 @@ glob = "0.3"
 # File walking with .gitignore support
 ignore = "0.4"
 
+# Efficient sync primitives (no poisoning, smaller, faster)
+parking_lot = "0.12"
+
 # Tree-sitter parsing
 tree-sitter = "0.26"
 tree-sitter-language = "0.1"

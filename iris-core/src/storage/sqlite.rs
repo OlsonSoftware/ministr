@@ -45,6 +45,7 @@ impl SqliteStorage {
     /// Returns [`StorageError::Database`] if the connection cannot be opened,
     /// or [`StorageError::MigrationFailed`] if migrations fail.
     #[instrument(skip_all, fields(path = %path.as_ref().display()))]
+    #[must_use = "constructors return a new value"]
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let mut conn = Connection::open(path.as_ref()).map_err(|e| StorageError::Database {
             reason: format!("failed to open database: {e}"),
@@ -61,6 +62,7 @@ impl SqliteStorage {
     /// # Errors
     ///
     /// Returns [`StorageError`] if connection setup fails.
+    #[must_use = "constructors return a new value"]
     pub fn open_in_memory() -> Result<Self, StorageError> {
         let mut conn = Connection::open_in_memory().map_err(|e| StorageError::Database {
             reason: format!("failed to open in-memory database: {e}"),

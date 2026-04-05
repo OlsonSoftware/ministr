@@ -78,6 +78,7 @@ pub(super) fn is_in_ignored_dir(path: &Path) -> bool {
 /// Discover all supported files in a directory recursively.
 ///
 /// Respects `.gitignore` rules and skips well-known junk directories and file patterns.
+#[must_use = "returns discovered files"]
 pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
     use ignore::WalkBuilder;
     use ignore::overrides::OverrideBuilder;
@@ -141,6 +142,7 @@ pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
 /// ];
 /// let files = discover_paths(&paths).unwrap();
 /// ```
+#[must_use = "returns discovered files"]
 pub fn discover_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>, IngestionError> {
     use std::collections::HashSet;
 

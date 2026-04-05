@@ -526,6 +526,7 @@ impl Session {
     ///
     /// Returns `true` if the content was delivered and is now marked stale.
     /// Returns `false` if the content was not in the session shadow.
+    #[must_use]
     pub fn mark_stale(&mut self, content_id: &ContentId) -> bool {
         if self.delivered.contains_key(&content_id.0) {
             self.stale.insert(content_id.0.clone());
@@ -556,6 +557,7 @@ impl Session {
     ///
     /// Marks matching delivered items as stale and enqueues a coherence alert.
     /// Returns the number of items that were invalidated.
+    #[must_use]
     pub fn invalidate_sections(&mut self, changed_section_ids: &[String]) -> usize {
         let mut stale_ids = Vec::new();
 
@@ -583,6 +585,7 @@ impl Session {
     /// Returns the alerts and removes them from the queue. The transport
     /// layer should call this on each tool response to deliver pending
     /// alerts to the agent.
+    #[must_use]
     pub fn drain_alerts(&mut self) -> Vec<CoherenceAlert> {
         self.pending_alerts.drain(..).collect()
     }
@@ -1062,8 +1065,8 @@ mod tests {
         session.record_delivery(&cid("s2"), Resolution::Section, 100, 1, "h2".into());
         session.record_delivery(&cid("s3"), Resolution::Section, 150, 1, "h3".into());
 
-        session.mark_stale(&cid("s1"));
-        session.mark_stale(&cid("s3"));
+        let _ = session.mark_stale(&cid("s1"));
+        let _ = session.mark_stale(&cid("s3"));
 
         let stale = session.stale_content_ids();
         assert_eq!(stale.len(), 2);
@@ -1076,7 +1079,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
 
-        session.mark_stale(&cid("s1"));
+        let _ = session.mark_stale(&cid("s1"));
         assert!(session.is_stale(&cid("s1")));
 
         session.clear_stale(&cid("s1"));
@@ -1120,7 +1123,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
 
-        session.invalidate_sections(&["s1".into()]);
+        let _ = session.invalidate_sections(&["s1".into()]);
         assert!(session.has_pending_alerts());
 
         let alerts = session.drain_alerts();
@@ -1138,8 +1141,8 @@ mod tests {
         session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
         session.record_delivery(&cid("s2"), Resolution::Section, 100, 1, "h2".into());
 
-        session.invalidate_sections(&["s1".into()]);
-        session.invalidate_sections(&["s2".into()]);
+        let _ = session.invalidate_sections(&["s1".into()]);
+        let _ = session.invalidate_sections(&["s2".into()]);
 
         let alerts = session.drain_alerts();
         assert_eq!(alerts.len(), 2);
@@ -1160,7 +1163,7 @@ mod tests {
     fn re_delivery_clears_stale() {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
-        session.mark_stale(&cid("s1"));
+        let _ = session.mark_stale(&cid("s1"));
         assert!(session.is_stale(&cid("s1")));
 
         // Re-deliver with updated content
