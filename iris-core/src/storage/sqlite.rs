@@ -1465,97 +1465,19 @@ impl Storage for SqliteStorage {
     async fn list_symbols(&self, filter: &SymbolFilter) -> Result<Vec<SymbolRecord>, StorageError> {
         let filter = filter.clone();
         self.with_conn(move |conn| {
-            let mut sql = String::from(
-                "SELECT id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end, cyclomatic_complexity
-                 FROM symbols WHERE 1=1",
-            );
-            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+            let results = query_symbols(conn, &filter, TokenMode::And)?;
 
-            if let Some(ref exact) = filter.name_exact {
-                sql.push_str(" AND name = ?");
-                params.push(Box::new(exact.clone()));
-            } else if let Some(ref name) = filter.name {
-                // Split multi-word queries into tokens and AND them together,
-                // matching each against name, doc_comment, or signature.
-                let tokens: Vec<&str> = name.split_whitespace().collect();
-                if tokens.len() <= 1 {
-                    // Single word: fast substring match on name only (original behavior).
-                    sql.push_str(" AND name LIKE ?");
-                    params.push(Box::new(format!("%{name}%")));
-                } else {
-                    // Multi-word: each token must appear in name OR doc_comment OR signature.
-                    sql.push_str(" AND (");
-                    for (i, token) in tokens.iter().enumerate() {
-                        if i > 0 {
-                            sql.push_str(" AND ");
-                        }
-                        sql.push_str(
-                            "(name LIKE ? OR COALESCE(doc_comment, '') LIKE ? OR signature LIKE ?)",
-                        );
-                        let pattern = format!("%{token}%");
-                        params.push(Box::new(pattern.clone()));
-                        params.push(Box::new(pattern.clone()));
-                        params.push(Box::new(pattern));
+            // Fallback: if AND yielded nothing and we have multiple tokens, try OR.
+            if results.is_empty() {
+                if let Some(ref name) = filter.name {
+                    let tokens = tokenize_symbol_query(name);
+                    if tokens.len() > 1 {
+                        return query_symbols(conn, &filter, TokenMode::Or);
                     }
-                    sql.push(')');
                 }
             }
-            if let Some(ref kind) = filter.kind {
-                sql.push_str(" AND kind = ?");
-                params.push(Box::new(kind.clone()));
-            }
-            if let Some(ref visibility) = filter.visibility {
-                sql.push_str(" AND visibility = ?");
-                params.push(Box::new(visibility.clone()));
-            }
-            if let Some(ref module) = filter.module {
-                // Prefix match on module_path, or substring match on file_path
-                // so "mcp" matches files under iris-mcp/ even if module_path is "server".
-                sql.push_str(
-                    " AND (module_path = ? OR module_path LIKE ? OR file_path LIKE ?)",
-                );
-                params.push(Box::new(module.clone()));
-                params.push(Box::new(format!("{module}::%")));
-                params.push(Box::new(format!("%{module}%")));
-            }
-            if let Some(ref file_path) = filter.file_path {
-                sql.push_str(" AND file_path = ?");
-                params.push(Box::new(file_path.clone()));
-            }
 
-            sql.push_str(" ORDER BY file_path, line_start");
-
-            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                params.iter().map(std::convert::AsRef::as_ref).collect();
-
-            let mut stmt = conn.prepare(&sql).map_err(|e| StorageError::Database {
-                reason: e.to_string(),
-            })?;
-
-            let rows = stmt
-                .query_map(param_refs.as_slice(), |row| {
-                    Ok(SymbolRecord {
-                        id: SymbolId(row.get(0)?),
-                        file_path: row.get(1)?,
-                        name: row.get(2)?,
-                        kind: row.get(3)?,
-                        visibility: row.get(4)?,
-                        signature: row.get(5)?,
-                        doc_comment: row.get(6)?,
-                        module_path: row.get(7)?,
-                        line_start: row.get(8)?,
-                        line_end: row.get(9)?,
-                        cyclomatic_complexity: row.get(10)?,
-                    })
-                })
-                .map_err(|e| StorageError::Database {
-                    reason: e.to_string(),
-                })?;
-
-            rows.collect::<Result<Vec<_>, _>>()
-                .map_err(|e| StorageError::Database {
-                    reason: e.to_string(),
-                })
+            Ok(results)
         })
         .await
     }
@@ -2153,7 +2075,154 @@ impl Storage for SqliteStorage {
     }
 }
 
-/// Parse a `corpus_roots` row into a [`CorpusRoot`].
+/// Tokenize a symbol query into searchable terms.
+///
+/// Handles whitespace splitting, CamelCase splitting (`ToolRouter` → `["tool", "router"]`),
+/// and snake_case splitting (`list_symbols` → `["list", "symbols"]`). Deduplicates and
+/// lowercases all tokens. Filters tokens shorter than 2 characters.
+fn tokenize_symbol_query(query: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    for word in query.split_whitespace() {
+        // Split on underscores (snake_case).
+        let snake_parts: Vec<&str> = word.split('_').filter(|s| !s.is_empty()).collect();
+        if snake_parts.len() > 1 {
+            for part in &snake_parts {
+                split_camel_case(part, &mut tokens);
+            }
+        } else {
+            split_camel_case(word, &mut tokens);
+        }
+    }
+    tokens.sort_unstable();
+    tokens.dedup();
+    tokens.retain(|t| t.len() >= 2);
+    tokens
+}
+
+/// Split a CamelCase word into lowercase tokens.
+fn split_camel_case(word: &str, out: &mut Vec<String>) {
+    let mut current = String::new();
+    for ch in word.chars() {
+        if ch.is_uppercase() && !current.is_empty() {
+            out.push(current.drain(..).collect::<String>().to_lowercase());
+        }
+        current.push(ch);
+    }
+    if !current.is_empty() {
+        out.push(current.to_lowercase());
+    }
+}
+
+/// How to combine multiple tokens in a name query.
+#[derive(Clone, Copy)]
+enum TokenMode {
+    /// All tokens must match (high precision).
+    And,
+    /// Any token may match (high recall, used as fallback).
+    Or,
+}
+
+const SYMBOL_COLUMNS: &str =
+    "id, file_path, name, kind, visibility, signature, doc_comment, module_path, line_start, line_end, cyclomatic_complexity";
+
+/// Build and execute a symbol query against the database.
+fn query_symbols(
+    conn: &rusqlite::Connection,
+    filter: &SymbolFilter,
+    mode: TokenMode,
+) -> Result<Vec<SymbolRecord>, StorageError> {
+    let mut sql = format!("SELECT {SYMBOL_COLUMNS} FROM symbols WHERE 1=1");
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(ref exact) = filter.name_exact {
+        sql.push_str(" AND name = ?");
+        params.push(Box::new(exact.clone()));
+    } else if let Some(ref name) = filter.name {
+        let tokens = tokenize_symbol_query(name);
+        if tokens.len() <= 1 {
+            // Single token: search across name, doc_comment, and signature.
+            let tok = tokens.first().map_or(name.as_str(), |t| t.as_str());
+            sql.push_str(
+                " AND (name LIKE ? OR COALESCE(doc_comment, '') LIKE ? OR signature LIKE ?)",
+            );
+            let pat = format!("%{tok}%");
+            params.push(Box::new(pat.clone()));
+            params.push(Box::new(pat.clone()));
+            params.push(Box::new(pat));
+        } else {
+            let joiner = match mode {
+                TokenMode::And => " AND ",
+                TokenMode::Or => " OR ",
+            };
+            sql.push_str(" AND (");
+            for (i, token) in tokens.iter().enumerate() {
+                if i > 0 {
+                    sql.push_str(joiner);
+                }
+                sql.push_str(
+                    "(name LIKE ? OR COALESCE(doc_comment, '') LIKE ? OR signature LIKE ?)",
+                );
+                let pat = format!("%{token}%");
+                params.push(Box::new(pat.clone()));
+                params.push(Box::new(pat.clone()));
+                params.push(Box::new(pat));
+            }
+            sql.push(')');
+        }
+    }
+    if let Some(ref kind) = filter.kind {
+        sql.push_str(" AND kind = ?");
+        params.push(Box::new(kind.clone()));
+    }
+    if let Some(ref visibility) = filter.visibility {
+        sql.push_str(" AND visibility = ?");
+        params.push(Box::new(visibility.clone()));
+    }
+    if let Some(ref module) = filter.module {
+        sql.push_str(" AND (module_path = ? OR module_path LIKE ? OR file_path LIKE ?)");
+        params.push(Box::new(module.clone()));
+        params.push(Box::new(format!("{module}::%")));
+        params.push(Box::new(format!("%{module}%")));
+    }
+    if let Some(ref file_path) = filter.file_path {
+        sql.push_str(" AND file_path = ?");
+        params.push(Box::new(file_path.clone()));
+    }
+
+    sql.push_str(" ORDER BY file_path, line_start");
+
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        params.iter().map(std::convert::AsRef::as_ref).collect();
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| StorageError::Database {
+        reason: e.to_string(),
+    })?;
+
+    let rows = stmt
+        .query_map(param_refs.as_slice(), |row| {
+            Ok(SymbolRecord {
+                id: SymbolId(row.get(0)?),
+                file_path: row.get(1)?,
+                name: row.get(2)?,
+                kind: row.get(3)?,
+                visibility: row.get(4)?,
+                signature: row.get(5)?,
+                doc_comment: row.get(6)?,
+                module_path: row.get(7)?,
+                line_start: row.get(8)?,
+                line_end: row.get(9)?,
+                cyclomatic_complexity: row.get(10)?,
+            })
+        })
+        .map_err(|e| StorageError::Database {
+            reason: e.to_string(),
+        })?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| StorageError::Database {
+            reason: e.to_string(),
+        })
+}
 ///
 /// Expected column order: `id`, `path`, `kind`, `display_name`, `file_count`,
 /// `language_stats`, `repo_url`, `branch`, `commit_sha`, `clone_timestamp`, `sparse_paths`.
@@ -2302,5 +2371,199 @@ impl SqliteStorage {
             Ok(result)
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::traits::Storage;
+    use crate::types::SymbolId;
+
+    // ── Tokenizer tests ──────────────────────────────────────────────
+
+    #[test]
+    fn tokenize_single_word() {
+        assert_eq!(tokenize_symbol_query("Session"), vec!["session"]);
+    }
+
+    #[test]
+    fn tokenize_camel_case() {
+        let tokens = tokenize_symbol_query("ToolRouter");
+        assert_eq!(tokens, vec!["router", "tool"]);
+    }
+
+    #[test]
+    fn tokenize_snake_case() {
+        let tokens = tokenize_symbol_query("list_symbols");
+        assert_eq!(tokens, vec!["list", "symbols"]);
+    }
+
+    #[test]
+    fn tokenize_multi_word_with_camel_and_snake() {
+        let tokens = tokenize_symbol_query("ToolRouter list_symbols");
+        assert_eq!(tokens, vec!["list", "router", "symbols", "tool"]);
+    }
+
+    #[test]
+    fn tokenize_filters_short_tokens() {
+        let tokens = tokenize_symbol_query("a fn");
+        assert_eq!(tokens, vec!["fn"]);
+    }
+
+    #[test]
+    fn tokenize_deduplicates() {
+        let tokens = tokenize_symbol_query("tool_list ToolList");
+        assert_eq!(tokens, vec!["list", "tool"]);
+    }
+
+    // ── CamelCase splitter edge cases ────────────────────────────────
+
+    #[test]
+    fn split_camel_uppercase_run() {
+        // After tokenize_symbol_query filters <2 chars: only "parser" survives.
+        let tokens = tokenize_symbol_query("HTMLParser");
+        assert!(tokens.contains(&"parser".to_string()));
+    }
+
+    #[test]
+    fn split_camel_all_lowercase() {
+        let mut out = Vec::new();
+        split_camel_case("session", &mut out);
+        assert_eq!(out, vec!["session"]);
+    }
+
+    // ── Integration: query_symbols with AND/OR ───────────────────────
+
+    #[tokio::test]
+    async fn query_symbols_single_token_searches_all_fields() {
+        let storage = test_storage().await;
+        insert_test_symbol(
+            &storage,
+            "sym-1",
+            "create_user",
+            "function",
+            Some("Create a new user account."),
+            "pub fn create_user(name: &str) -> User",
+        )
+        .await;
+
+        let filter = SymbolFilter {
+            name: Some("account".into()),
+            ..Default::default()
+        };
+        let results = storage.list_symbols(&filter).await.unwrap();
+        assert_eq!(results.len(), 1, "should find via doc_comment");
+        assert_eq!(results[0].name, "create_user");
+    }
+
+    #[tokio::test]
+    async fn query_symbols_multi_token_and_fallback_to_or() {
+        let storage = test_storage().await;
+        insert_test_symbol(
+            &storage,
+            "sym-1",
+            "create_user",
+            "function",
+            Some("Create a new user."),
+            "pub fn create_user()",
+        )
+        .await;
+        insert_test_symbol(
+            &storage,
+            "sym-2",
+            "delete_session",
+            "function",
+            Some("Delete a session."),
+            "pub fn delete_session()",
+        )
+        .await;
+
+        // "create session" — no single symbol has BOTH tokens.
+        // AND should return 0, OR fallback should return both.
+        let filter = SymbolFilter {
+            name: Some("create session".into()),
+            ..Default::default()
+        };
+        let results = storage.list_symbols(&filter).await.unwrap();
+        assert_eq!(results.len(), 2, "OR fallback should find both");
+    }
+
+    #[tokio::test]
+    async fn query_symbols_camel_case_splitting() {
+        let storage = test_storage().await;
+        insert_test_symbol(
+            &storage,
+            "sym-1",
+            "build_router",
+            "function",
+            Some("Build the HTTP router."),
+            "pub fn build_router() -> Router",
+        )
+        .await;
+
+        // "ToolRouter" splits to ["tool", "router"] — should match "router" in name.
+        let filter = SymbolFilter {
+            name: Some("ToolRouter".into()),
+            ..Default::default()
+        };
+        let results = storage.list_symbols(&filter).await.unwrap();
+        assert!(
+            results.iter().any(|r| r.name == "build_router"),
+            "should find build_router via 'router' token (OR fallback)"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_symbols_and_succeeds_no_fallback() {
+        let storage = test_storage().await;
+        insert_test_symbol(
+            &storage,
+            "sym-1",
+            "create_session",
+            "function",
+            Some("Create a new session."),
+            "pub fn create_session()",
+        )
+        .await;
+
+        // "create session" — both tokens in name.
+        let filter = SymbolFilter {
+            name: Some("create session".into()),
+            ..Default::default()
+        };
+        let results = storage.list_symbols(&filter).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "create_session");
+    }
+
+    // ── Test helpers ─────────────────────────────────────────────────
+
+    async fn test_storage() -> SqliteStorage {
+        SqliteStorage::open_in_memory().expect("in-memory storage")
+    }
+
+    async fn insert_test_symbol(
+        storage: &SqliteStorage,
+        id: &str,
+        name: &str,
+        kind: &str,
+        doc: Option<&str>,
+        sig: &str,
+    ) {
+        let record = SymbolRecord {
+            id: SymbolId(id.to_string()),
+            file_path: "test.rs".to_string(),
+            name: name.to_string(),
+            kind: kind.to_string(),
+            visibility: "pub".to_string(),
+            signature: sig.to_string(),
+            doc_comment: doc.map(String::from),
+            module_path: "test".to_string(),
+            line_start: 1,
+            line_end: 10,
+            cyclomatic_complexity: None,
+        };
+        Storage::insert_symbols(storage, &[record]).await.unwrap();
     }
 }
