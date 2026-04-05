@@ -14,13 +14,19 @@
 ## Workspace Structure
 
 ```
-iris-core/     — domain logic, no transport dependencies
-iris-mcp/      — MCP server, depends on iris-core + rmcp
-iris-cli/      — binary entry point, depends on iris-mcp
+iris-core/          — domain logic, no transport dependencies
+iris-api/           — shared request/response types for daemon ↔ MCP/CLI communication
+iris-daemon/        — HTTP API over Unix domain socket, depends on iris-core + iris-api
+iris-mcp/           — MCP server adapter, depends on iris-core + iris-api + rmcp
+iris-cli/           — binary entry point, depends on iris-mcp
+iris-app/src-tauri/ — Tauri v2 desktop app, depends on iris-core + iris-api + iris-daemon
 ```
 
 iris-core MUST NOT depend on rmcp or any MCP protocol types. The service layer
 in iris-core exposes plain Rust traits and types; iris-mcp adapts them to MCP.
+
+iris-api MUST NOT depend on iris-core — it contains only shared request/response
+types and the `DaemonClient` for UDS communication.
 
 ## Layered Architecture
 
