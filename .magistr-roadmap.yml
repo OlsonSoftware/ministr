@@ -1605,7 +1605,7 @@ phases:
   - text: 'Interactive wizard: iris init --interactive prompts for project type, agent platforms, hook strictness level (strict/moderate/advisory)'
     checked: false
   - text: 'Hook testing CLI: iris hooks test — simulates tool calls against installed hooks, reports which would be blocked/allowed'
-    checked: false
+    checked: true
   - text: 'Custom rule injection: support user-defined rules in .iris.toml [agent.rules] that get merged into generated config files'
     checked: true
   - text: 'Windsurf / Aider / Continue.dev support: extend scaffold to generate configs for emerging agent platforms'
