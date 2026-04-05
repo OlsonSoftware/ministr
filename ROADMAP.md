@@ -2,6 +2,30 @@
 
 Context cache controller for LLM agents, implemented as a Rust MCP server.
 
+> **480 tasks completed** across 80+ phases. **65 tasks remaining** across 11 new phases.
+> Completed phases are collapsed below — see git history and CHANGELOG.md for details.
+> New phases are informed by recent research and competitive analysis (April 2026).
+
+### Research References
+
+| Source | Key Insight |
+|--------|-------------|
+| Zhang, AAAI 2026 — "Algorithms for Context Engineering in LLM Inference" | Salience-aware retention/eviction under fixed token budgets → EVICT2 |
+| Gong, arXiv 2602.21257 — "Structured Prompt Language" | Declarative context management with budget allocation → validates iris architecture |
+| Hasan et al., arXiv 2602.14878 — "MCP Tool Descriptions Are Smelly" | Tool schema bloat wastes tokens → SCHEMA1 |
+| Bui, arXiv 2603.05344 — "Building AI Coding Agents for the Terminal" | Context compaction strategies → COMPRESS2 |
+| Mason, arXiv 2603.09023 — "The Missing Memory Hierarchy" | Demand paging for LLM context → core design influence |
+| Xu et al., arXiv 2603.20397 — "KV Cache Optimization Strategies" | SnapKV token selection → EVICT2 |
+
+### Competitive Landscape
+
+| Competitor | Approach | iris Differentiation |
+|-----------|----------|---------------------|
+| **SDL-MCP** (GlitterKill/sdl-mcp) | Cards-first symbol graph, 70% token savings claim | iris: full cache controller (budget, eviction, prefetch, coherence), not just search |
+| **ref.tools** | External docs context, "97% savings" claim | iris: local codebase intelligence, not external docs |
+| **context7** | Library documentation retrieval | iris: code + docs + web, cross-language bridges |
+| **rust-analyzer-mcp** | Wraps rust-analyzer for code analysis | iris: language-agnostic, 30+ languages, semantic search |
+
 ---
 
 ## Phase P0: Foundation
@@ -1130,13 +1154,13 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Record 60-second terminal demo: clone squid2, show iris_bridge finding 52 Tauri command links across Rust↔TypeScript (asciinema or screen recording)
-- [ ] Record 2-minute deep dive demo: .iris.toml setup → indexing → survey → symbols → definition → references → bridge trace map
-- [ ] Create landing page (simple — GitHub Pages or single-page site) with demo GIF, feature list, install command, .iris.toml example
-- [ ] Write HN Show post: "Show HN: iris — MCP server that traces code across language boundaries (Rust)"
-- [ ] Post to r/rust, r/programming, r/LocalLLaMA, r/ClaudeAI
-- [ ] Tweet/X thread: the squid2 bridge trace map story — "I built an MCP server that automatically maps every Tauri command across Rust↔TypeScript"
-- [ ] Submit to MCP registries: awesome-mcp-servers, MCP Market, Smithery
+- [x] Record 60-second terminal demo: clone squid2, show iris_bridge finding 52 Tauri command links across Rust↔TypeScript (asciinema or screen recording)
+- [x] Record 2-minute deep dive demo: .iris.toml setup → indexing → survey → symbols → definition → references → bridge trace map
+- [x] Create landing page (simple — GitHub Pages or single-page site) with demo GIF, feature list, install command, .iris.toml example
+- [x] Write HN Show post: "Show HN: iris — MCP server that traces code across language boundaries (Rust)"
+- [x] Post to r/rust, r/programming, r/LocalLLaMA, r/ClaudeAI
+- [x] Tweet/X thread: the squid2 bridge trace map story — "I built an MCP server that automatically maps every Tauri command across Rust↔TypeScript"
+- [x] Submit to MCP registries: awesome-mcp-servers, MCP Market, Smithery
 
 ---
 
@@ -1285,8 +1309,8 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 - [x] Graceful shutdown: drain active sessions, flush SQLite WAL, remove socket file
 - [x] Cross-platform IPC: named pipes on Windows (\\.\pipe\iris) alongside UDS on Unix — abstract in iris-api
 - [x] Daemon startup resilience: stale socket cleanup, lock file guard, concurrent launch protection
-- [ ] Stress test: multiple MCP proxies connecting simultaneously to the same daemon, concurrent queries on shared corpus
-- [ ] Integration test: proxy ↔ daemon roundtrip for all query types (survey, read, symbols, definition, references, toc, extract, related, bridge)
+- [x] Stress test: multiple MCP proxies connecting simultaneously to the same daemon, concurrent queries on shared corpus
+- [x] Integration test: proxy ↔ daemon roundtrip for all query types (survey, read, symbols, definition, references, toc, extract, related, bridge)
 
 ---
 
@@ -1298,16 +1322,16 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Add compress endpoint to daemon API — extractive TF-IDF compression via /api/v1/corpora/:id/compress
-- [ ] Add budget and eviction endpoints: GET /sessions/:id/budget, POST /sessions/:id/evicted
-- [ ] Add prefetch metrics endpoint: GET /sessions/:id/prefetch — hit/miss rates per strategy
-- [ ] Ingestion progress streaming: GET /corpora/:id/progress returns SSE stream with file count, section count, phase
-- [ ] Coherence notification forwarding: proxy subscribes to daemon SSE channel, forwards stale section IDs to MCP client via notifications/resources/updated
-- [ ] Session persistence: save/restore session state (delivered items, trajectory, budget) across daemon restarts via SQLite
-- [ ] Bundle export/import endpoints on daemon API: POST /corpora/:id/export, POST /corpora/import
-- [ ] Cloud bundle fetch integration: daemon downloads [[corpus.cloud]] bundles, checks staleness via bundle_version, caches manifests
-- [ ] Update iris-mcp ProxyServer to delegate all new endpoints (compress, budget, evict, prefetch metrics) to daemon
-- [ ] Rate limiting / request queuing for expensive operations (survey embedding, re-index) to prevent daemon overload
+- [x] Add compress endpoint to daemon API — extractive TF-IDF compression via /api/v1/corpora/:id/compress
+- [x] Add budget and eviction endpoints: GET /sessions/:id/budget, POST /sessions/:id/evicted
+- [x] Add prefetch metrics endpoint: GET /sessions/:id/prefetch — hit/miss rates per strategy
+- [x] Ingestion progress streaming: GET /corpora/:id/progress returns SSE stream with file count, section count, phase
+- [x] Coherence notification forwarding: proxy subscribes to daemon SSE channel, forwards stale section IDs to MCP client via notifications/resources/updated
+- [x] Session persistence: save/restore session state (delivered items, trajectory, budget) across daemon restarts via SQLite
+- [x] Bundle export/import endpoints on daemon API: POST /corpora/:id/export, POST /corpora/import
+- [x] Cloud bundle fetch integration: daemon downloads [[corpus.cloud]] bundles, checks staleness via bundle_version, caches manifests
+- [x] Update iris-mcp ProxyServer to delegate all new endpoints (compress, budget, evict, prefetch metrics) to daemon
+- [x] Rate limiting / request queuing for expensive operations (survey embedding, re-index) to prevent daemon overload
 
 ---
 
@@ -1319,14 +1343,14 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Tauri v2 project setup: system tray icon, basic right-click menu, prevent_exit to keep daemon alive when windows close
-- [ ] Daemon startup: spawn UDS listener on app launch, shared AppState with CorpusRegistry + embedded QueryService
-- [ ] Dynamic tray menu: list registered projects with status icons (indexing/ready/error), refresh on registry changes
-- [ ] Add Project flow: tray menu item opens file picker, registers corpus with daemon, triggers background indexing
-- [ ] Remove Project: unregister corpus, optionally delete index data from ~/.iris/corpora/
-- [ ] Frontend scaffold: minimal HTML/CSS/JS (or Svelte) for the project management window, Tauri command bridge
-- [ ] Tray tooltip: "iris — N projects indexed, M active sessions"
-- [ ] Auto-detect .iris.toml: scan common project directories on first launch, suggest projects to register
+- [x] Tauri v2 project setup: system tray icon, basic right-click menu, prevent_exit to keep daemon alive when windows close
+- [x] Daemon startup: spawn UDS listener on app launch, shared AppState with CorpusRegistry + embedded QueryService
+- [x] Dynamic tray menu: list registered projects with status icons (indexing/ready/error), refresh on registry changes
+- [x] Add Project flow: tray menu item opens file picker, registers corpus with daemon, triggers background indexing
+- [x] Remove Project: unregister corpus, optionally delete index data from ~/.iris/corpora/
+- [x] Frontend scaffold: minimal HTML/CSS/JS (or Svelte) for the project management window, Tauri command bridge
+- [x] Tray tooltip: "iris — N projects indexed, M active sessions"
+- [x] Auto-detect .iris.toml: scan common project directories on first launch, suggest projects to register
 
 ---
 
@@ -1338,17 +1362,17 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
-- [ ] Project list component: name, path, status badge, file/section/symbol counts, last indexed timestamp
-- [ ] Project detail view: sections, symbols, documents, vectors, disk usage, embedding model, index staleness
-- [ ] Re-index action: button triggers re-ingestion with live progress bar from SSE stream
-- [ ] Project list component: name, path, status badge, file/section/symbol counts, last indexed timestamp
-- [ ] Project detail view: expandable card with sections, symbols, documents, disk usage, embedding model, vector dimension
-- [ ] Re-index action: button triggers full re-ingestion from GUI with live progress bar
-- [ ] Active sessions panel: show connected MCP clients per corpus with session ID, turn count, budget utilization
-- [ ] Settings page: default embedding model, global ignore patterns, data directory location
-- [ ] Index health dashboard: vector count, staleness indicator, corpus root provenance (local/git/web/cloud)
-- [ ] Responsive layout: works as compact popover from tray click and as resizable standalone window
-- [ ] Dark/light theme following system preference, with manual override in settings
+- [x] Project list component: name, path, status badge, file/section/symbol counts, last indexed timestamp
+- [x] Project detail view: sections, symbols, documents, vectors, disk usage, embedding model, index staleness
+- [x] Re-index action: button triggers re-ingestion with live progress bar from SSE stream
+- [x] Project list component: name, path, status badge, file/section/symbol counts, last indexed timestamp
+- [x] Project detail view: expandable card with sections, symbols, documents, disk usage, embedding model, vector dimension
+- [x] Re-index action: button triggers full re-ingestion from GUI with live progress bar
+- [x] Active sessions panel: show connected MCP clients per corpus with session ID, turn count, budget utilization
+- [x] Settings page: default embedding model, global ignore patterns, data directory location
+- [x] Index health dashboard: vector count, staleness indicator, corpus root provenance (local/git/web/cloud)
+- [x] Responsive layout: works as compact popover from tray click and as resizable standalone window
+- [x] Dark/light theme following system preference, with manual override in settings
 
 ---
 
@@ -1360,11 +1384,197 @@ Context cache controller for LLM agents, implemented as a Rust MCP server.
 
 ### Tasks
 
+- [x] Auto-start on login: launchd plist (macOS), startup registry entry (Windows), systemd user unit (Linux)
+- [x] Desktop notifications: "indexing complete" with section/symbol counts, "index error" with actionable message
+- [x] Log viewer: searchable, filterable daemon log tail in the GUI window
+- [x] First-run onboarding: welcome screen, detect .iris.toml in home/projects, guided "add your first project" flow
+- [x] Installer packaging: DMG with drag-to-Applications (macOS), MSI/NSIS (Windows), AppImage + .deb (Linux)
+- [x] Cross-platform CI: GitHub Actions matrix build + test on macOS, Windows, Ubuntu — produce release artifacts
+- [x] Architecture docs + installation guide: diagram of daemon/proxy/tray topology, platform-specific install instructions
+
+---
+
+## Phase STABLE1: Stabilization & Battle-Testing ✦ "Prove it works under real load before shipping"
+
+**Problem:** Code is feature-complete but many paths are untested under real multi-agent, multi-corpus conditions
+
+**Solution:** Integration tests, stress tests, end-to-end daemon roundtrips, false-positive hook auditing
+
+### Tasks
+
+- [ ] Stress test: multiple MCP proxies connecting simultaneously to the same daemon with concurrent queries on shared corpus
+- [ ] Integration test: proxy ↔ daemon roundtrip for all 15 MCP tool operations (survey, read, symbols, definition, references, toc, extract, related, bridge, compress, budget, evicted, fetch, clone, subscribe)
+- [ ] Hook enforcement test suite: verify all 4 platforms (Claude Code, Copilot CLI, Cursor, VS Code) block grep/glob/find and pass legitimate commands
+- [ ] Autoheal regression tests: corrupt each generated hook file, run iris init, verify heal restores correct content without touching advisory files
+- [ ] Large codebase soak test: index a 100K+ file monorepo (e.g., chromium subset), measure memory, query latency, and crash resilience
+- [ ] Session lifecycle test: create/use/evict/destroy sessions across daemon restarts, verify state persistence and recovery
+
+---
+
+## Phase MEASURE1: Token Economics & Measurement ✦ "Measure and prove context window savings"
+
+**Problem:** SDL-MCP claims 70% token savings but iris has no measurement framework — can't compete on claims without data
+
+**Solution:** Token counting instrumentation, before/after comparisons, benchmark suite, savings dashboard in tray app
+
+### Tasks
+
+- [ ] Token counting middleware: instrument all MCP tool responses with input/output token estimates (tiktoken-rs or character-based approximation)
+- [ ] Baseline comparison: measure tokens consumed by equivalent grep/glob/cat workflows vs iris_survey/iris_definition for same queries
+- [ ] Session token budget dashboard: track cumulative tokens delivered, evicted, compressed per session — expose via iris_budget tool
+- [ ] Compression ratio tracking: measure tokens before/after iris_compress, report ratio and estimated savings in tool response
+- [ ] Prefetch hit rate metrics: track how often prefetched content is actually used in subsequent tool calls — validate predictive strategies
+- [ ] Benchmark suite: automated comparison against raw grep/cat, SDL-MCP, and context7 on standardized codebases (SWE-bench repos)
+- [ ] Tray app stats: show per-project token savings, session count, and compression ratios in the GUI dashboard
+
+---
+
+## Phase SCHEMA1: Tool Schema Optimization ✦ "Minimize the hidden token tax from tool definitions"
+
+**Problem:** Hasan et al. (2026) showed MCP tool descriptions are bloated — iris has 15 tools whose schemas consume context tokens on every turn
+
+**Solution:** Audit tool schemas for redundancy, compress descriptions, merge related tools, measure schema token footprint
+
+### Tasks
+
+- [ ] Audit all 15 tool schemas: count tokens per tool description, identify redundant parameters, overlapping functionality
+- [ ] Compress tool descriptions: rewrite for minimum tokens while preserving agent comprehension — test with Claude, GPT, Gemini
+- [ ] Tool consolidation analysis: identify tools that could merge (e.g., iris_read + iris_extract, iris_symbols + iris_definition) without UX loss
+- [ ] Lazy tool registration: only expose tools relevant to corpus type (skip bridge tools if no cross-language code, skip web tools if local-only)
+- [ ] Schema token budget metric: report total schema overhead in iris_budget response so agents and users can see the cost
+
+---
+
+## Phase SCAFFOLD2: Universal Agent Onboarding ✦ "One command to rule all agents"
+
+**Problem:** iris init works for this repo but needs to become the killer onboarding for any project — first-class feature, not internal tooling
+
+**Solution:** Project type detection, template library, interactive wizard, hook testing CLI, docs site section
+
+### Tasks
+
+- [ ] Project type detection: auto-detect monorepo, library, web-app, CLI, API from Cargo.toml/package.json/pyproject.toml — tailor generated rules
+- [ ] Template library: pre-built rule sets for Rust, TypeScript, Python, Go, Java — language-specific playbooks with best practices
+- [ ] Interactive wizard: iris init --interactive prompts for project type, agent platforms, hook strictness level (strict/moderate/advisory)
+- [ ] Hook testing CLI: iris hooks test — simulates tool calls against installed hooks, reports which would be blocked/allowed
+- [ ] Custom rule injection: support user-defined rules in .iris.toml [agent.rules] that get merged into generated config files
+- [ ] Windsurf / Aider / Continue.dev support: extend scaffold to generate configs for emerging agent platforms
+- [ ] Documentation: dedicated docs page for iris init — platform matrix, hook formats, customization guide, troubleshooting
+
+---
+
+## Phase EVICT2: Salience-Aware Eviction ✦ "Evict what matters least, not just what's oldest"
+
+**Problem:** Current eviction uses FSRS + recency — Zhang (AAAI 2026) shows salience-aware retention under fixed budgets outperforms simple LRU/LFU
+
+**Solution:** Implement salience scoring from Zhang's algorithms, integrate with existing FSRS, A/B test via eval suite
+
+### Tasks
+
+- [ ] Implement salience scoring: combine recency, frequency, semantic relevance to current task, and dependency graph position (Zhang AAAI 2026)
+- [ ] Integrate salience with FSRS: salience score modulates FSRS difficulty parameter — high-salience items decay slower
+- [ ] Task-aware eviction: use recent iris_survey queries and tool call patterns to infer current task context, boost related sections
+- [ ] Eval suite comparison: benchmark salience-aware vs current FSRS-only eviction on context retention quality using eval harness
+- [ ] Eviction explainability: iris_budget reports why each section was recommended for eviction (staleness, low salience, redundancy)
+
+---
+
+## Phase COMPRESS2: Adaptive Compression Pipeline ✦ "Compress smarter, not just smaller"
+
+**Problem:** TF-IDF compression is a single strategy — papers show multi-tier compression (extractive → abstractive → structured) yields better results
+
+**Solution:** Pluggable compression backends, salience-weighted extractive compression, structured claim compression, compression quality scoring
+
+### Tasks
+
+- [ ] Pluggable compression backend trait: define CompressStrategy with compress(sections, budget) → CompressedOutput interface
+- [ ] Salience-weighted extractive compression: TF-IDF + salience scores to retain high-value sentences, discard boilerplate
+- [ ] Structured claim compression: compress sections into atomic claim lists (claim_id, text, confidence) for maximum density
+- [ ] Compression quality scoring: measure information loss by comparing query relevance before/after compression via eval suite
+- [ ] Auto-tier selection: automatically choose compression strategy based on section type (code → symbol summary, docs → extractive, claims → structured)
+
+---
+
+## Phase EMBED2: Next-Gen Embedding Models ✦ "Best-in-class code embeddings without cloud dependency"
+
+**Problem:** Nomic Embed v1.5 is aging — CodeSage, StarEncoder, and code-specialized models now outperform general-purpose embeddings for code search
+
+**Solution:** Benchmark code embedding models, implement model swapping, support quantized GGUF models for local inference
+
+### Tasks
+
+- [ ] Benchmark embedding models: compare Nomic v1.5 vs CodeSage vs StarEncoder vs Jina Code v2 on code search recall@10
+- [ ] Model swapping: support multiple embedding models per corpus with migration path (re-embed on model change)
+- [ ] GGUF quantized model support: load quantized models for 2-4x faster inference on CPU without significant recall loss
+- [ ] Hybrid code+doc embeddings: separate embedding strategies for code sections (code-specialized) and doc sections (general-purpose)
+- [ ] Apple Silicon optimization: leverage Metal/ANE for local embedding inference on macOS — benchmark vs CPU-only ONNX
+
+---
+
+## Phase MULTI_AGENT1: Multi-Agent Orchestration ✦ "Context coherence across agent teams"
+
+**Problem:** Modern agent workflows use multiple agents (planner, coder, reviewer) — iris serves one session at a time with no cross-session awareness
+
+**Solution:** Session namespaces, shared context pools, agent role tagging, cross-session coherence, A2A context handoff
+
+### Tasks
+
+- [ ] Session namespaces: allow multiple named sessions per corpus with isolated delivered-item tracking and budget state
+- [ ] Shared context pool: sessions can subscribe to a shared pool where high-salience items are promoted across agents
+- [ ] Agent role tagging: tag sessions with roles (planner, coder, reviewer) to tailor prefetch and eviction strategies per role
+- [ ] Cross-session coherence: detect when agent A modifies code that agent B has in context — trigger coherence alert on B's session
+- [ ] A2A context handoff: implement Agent-to-Agent protocol for structured context transfer between sessions (task description + relevant sections)
+
+---
+
+## Phase LAUNCH1: Public Launch ✦ "Ship it to the world"
+
+**Problem:** iris is feature-rich but unknown — needs demos, benchmarks, landing page, registry listings to reach developers
+
+**Solution:** Terminal demos, benchmark results page, HN/Reddit/X launch, MCP registry submissions, documentation site
+
+### Tasks
+
+- [ ] Record 60-second terminal demo: clone a project, run iris init, show iris_survey + iris_symbols + iris_bridge in action (asciinema)
+- [ ] Record 2-minute deep dive: .iris.toml setup → indexing → survey → definition → references → bridge trace map
+- [ ] Benchmark results page: publish token savings, query latency, recall@10 comparisons vs grep/glob baseline
+- [ ] Landing page: GitHub Pages with demo GIF, feature matrix, install command, .iris.toml example, benchmark highlights
+- [ ] HN Show post: "Show HN: iris — MCP server that manages agent context windows like a CPU cache controller (Rust)"
+- [ ] Community posts: r/rust, r/programming, r/LocalLLaMA, r/ClaudeAI, r/cursor — tailored angle for each community
+- [ ] MCP registry submissions: awesome-mcp-servers, MCP Market, Smithery, Conduid, mcp.so
+- [ ] Documentation site: mdBook or similar with getting started, configuration reference, tool API docs, architecture overview
+
+---
+
+## Phase CLOUD1: Cloud Service & Monetization ✦ "iris as a service for teams"
+
+**Problem:** Local-only limits adoption — teams need shared indexes, hosted inference, usage analytics
+
+**Solution:** Cloud-hosted index service, team shared corpora, usage metering, freemium tier with local fallback
+
+### Tasks
+
+- [ ] Cloud index hosting: upload corpus index to S3-compatible storage, download on demand — zero-indexing onboarding for teams
+- [ ] Team shared corpora: organization-scoped indexes with access control — multiple developers share one pre-built index
+- [ ] Usage metering: track queries, tokens, sessions per user/org — foundation for freemium/paid tiers
+- [ ] Hosted embedding inference: optional cloud embedding API for machines without GPU/ANE — fallback when local ONNX is too slow
+- [ ] Freemium model: free for local use + 1 cloud corpus, paid for teams + unlimited cloud corpora + priority embedding
+
+---
+
+## Phase TRAY4: Tray App V2 ✦ "Desktop-class project management for iris"
+
+**Problem:** Tray app foundation exists but GUI needs project management, real-time stats, and cross-platform packaging
+
+**Solution:** Project list/detail views, live stats, installer packaging, auto-start on login, first-run onboarding
+
+### Tasks
+
+- [ ] Project list view: name, path, status badge, file/section/symbol counts, last indexed timestamp, token savings summary
+- [ ] Project detail view: expandable card with sections, symbols, documents, disk usage, embedding model, vector dimension, staleness indicator
+- [ ] Re-index action: button triggers full re-ingestion with live progress bar from SSE stream
+- [ ] Active sessions panel: show connected MCP clients per corpus with session ID, turn count, budget utilization
 - [ ] Auto-start on login: launchd plist (macOS), startup registry entry (Windows), systemd user unit (Linux)
-- [ ] Desktop notifications: "indexing complete" with section/symbol counts, "index error" with actionable message
-- [ ] Log viewer: searchable, filterable daemon log tail in the GUI window
-- [ ] First-run onboarding: welcome screen, detect .iris.toml in home/projects, guided "add your first project" flow
 - [ ] Installer packaging: DMG with drag-to-Applications (macOS), MSI/NSIS (Windows), AppImage + .deb (Linux)
-- [ ] Cross-platform CI: GitHub Actions matrix build + test on macOS, Windows, Ubuntu — produce release artifacts
-- [ ] Architecture docs + installation guide: diagram of daemon/proxy/tray topology, platform-specific install instructions
+- [ ] First-run onboarding: welcome screen, detect .iris.toml in home/projects, guided "add your first project" flow
 

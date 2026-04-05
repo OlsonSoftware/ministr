@@ -7,6 +7,14 @@
         "stdio"
       ],
       "command": "iris"
+    },
+    "magistr": {
+      "args": [
+        "mcp-serve",
+        "/Users/alrik/Code/iris-rs"
+      ],
+      "command": "magistr",
+      "type": "stdio"
     }
   }
 }
