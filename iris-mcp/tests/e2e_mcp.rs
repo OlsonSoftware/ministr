@@ -3411,3 +3411,569 @@ async fn iris_symbols_includes_budget_status() {
         "iris_symbols response should include budget_status"
     );
 }
+
+// ===========================================================================
+// STABLE1.0: Stress test — multiple concurrent clients on shared corpus
+// ===========================================================================
+
+/// Spawn N concurrent MCP clients against the same `IrisServer` and run
+/// queries in parallel. Verifies no panics, deadlocks, or data corruption.
+#[tokio::test]
+async fn stress_concurrent_clients_on_shared_corpus() {
+    let server = setup_server_with_symbols().await;
+    let num_clients = 8;
+    let queries_per_client = 5;
+
+    let mut handles = Vec::new();
+
+    for client_id in 0..num_clients {
+        let server_clone = server.clone();
+        handles.push(tokio::spawn(async move {
+            let (client, _server_handle) = wrap_as_client(server_clone).await;
+
+            for query_idx in 0..queries_per_client {
+                // Alternate between different tool types to stress shared state
+                match query_idx % 5 {
+                    0 => {
+                        // Survey
+                        let result = call_tool(
+                            &client,
+                            "iris_survey",
+                            json!({"query": format!("client {client_id} query {query_idx}"), "top_k": 5}),
+                        )
+                        .await;
+                        assert!(
+                            result.is_error.is_none() || result.is_error == Some(false),
+                            "client {client_id} survey {query_idx} failed"
+                        );
+                    }
+                    1 => {
+                        // Read
+                        let result = call_tool(
+                            &client,
+                            "iris_read",
+                            json!({"section_id": "docs/auth.md#tokens"}),
+                        )
+                        .await;
+                        assert!(
+                            result.is_error.is_none() || result.is_error == Some(false),
+                            "client {client_id} read {query_idx} failed"
+                        );
+                    }
+                    2 => {
+                        // Symbols
+                        let result = call_tool(
+                            &client,
+                            "iris_symbols",
+                            json!({"query": "Config"}),
+                        )
+                        .await;
+                        assert!(
+                            result.is_error.is_none() || result.is_error == Some(false),
+                            "client {client_id} symbols {query_idx} failed"
+                        );
+                    }
+                    3 => {
+                        // TOC
+                        let result = call_tool(&client, "iris_toc", json!({})).await;
+                        assert!(
+                            result.is_error.is_none() || result.is_error == Some(false),
+                            "client {client_id} toc {query_idx} failed"
+                        );
+                    }
+                    4 => {
+                        // Budget
+                        let result = call_tool(&client, "iris_budget", json!({})).await;
+                        assert!(
+                            result.is_error.is_none() || result.is_error == Some(false),
+                            "client {client_id} budget {query_idx} failed"
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            // Final: verify budget is consistent
+            let budget = call_tool(&client, "iris_budget", json!({})).await;
+            let text = extract_text(&budget.content);
+            let json: serde_json::Value = serde_json::from_str(text).unwrap();
+            assert!(
+                json["total_budget"].is_number(),
+                "client {client_id} budget should be valid after stress"
+            );
+        }));
+    }
+
+    // Await all clients — any panic propagates here
+    for (i, handle) in handles.into_iter().enumerate() {
+        handle.await.unwrap_or_else(|e| {
+            panic!("client {i} panicked: {e}");
+        });
+    }
+}
+
+/// Stress test with interleaved read/evict cycles to exercise concurrent
+/// session state mutations.
+#[tokio::test]
+async fn stress_concurrent_read_evict_cycles() {
+    let server = setup_server().await;
+    let num_clients = 6;
+
+    let mut handles = Vec::new();
+    let sections = [
+        "docs/auth.md#tokens",
+        "docs/auth.md#oauth",
+        "docs/api.md#rate-limits",
+    ];
+
+    for client_id in 0..num_clients {
+        let server_clone = server.clone();
+        handles.push(tokio::spawn(async move {
+            let (client, _server_handle) = wrap_as_client(server_clone).await;
+
+            // Each client: read all sections, evict them, read again
+            for cycle in 0..3 {
+                // Read all sections
+                for section in &sections {
+                    let result = call_tool(
+                        &client,
+                        "iris_read",
+                        json!({"section_id": section}),
+                    )
+                    .await;
+                    assert!(
+                        result.is_error.is_none() || result.is_error == Some(false),
+                        "client {client_id} cycle {cycle} read {section} failed"
+                    );
+                }
+
+                // Evict all sections
+                let evict_ids: Vec<&str> = sections.to_vec();
+                let result = call_tool(
+                    &client,
+                    "iris_evicted",
+                    json!({"content_ids": evict_ids}),
+                )
+                .await;
+                assert!(
+                    result.is_error.is_none() || result.is_error == Some(false),
+                    "client {client_id} cycle {cycle} evict failed"
+                );
+            }
+
+            // Final budget should be consistent
+            let budget = call_tool(&client, "iris_budget", json!({})).await;
+            let text = extract_text(&budget.content);
+            let json: serde_json::Value = serde_json::from_str(text).unwrap();
+            assert!(json["total_budget"].is_number());
+            assert!(json["estimated_used"].is_number());
+        }));
+    }
+
+    for (i, handle) in handles.into_iter().enumerate() {
+        handle.await.unwrap_or_else(|e| {
+            panic!("client {i} panicked: {e}");
+        });
+    }
+}
+
+// ===========================================================================
+// STABLE1.1: Integration test — roundtrip for all MCP tool operations
+// ===========================================================================
+
+/// Exercise every MCP tool (survey, read, symbols, definition, references,
+/// toc, extract, related, bridge, compress, budget, evicted) in a single test
+/// to verify the full proxy ↔ server roundtrip.
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn integration_roundtrip_all_mcp_tools() {
+    let server = setup_server_with_symbols().await;
+    let (client, _server) = wrap_as_client(server).await;
+
+    // 1. iris_survey — semantic search
+    let survey = call_tool(
+        &client,
+        "iris_survey",
+        json!({"query": "JWT authentication tokens", "top_k": 5}),
+    )
+    .await;
+    assert!(
+        survey.is_error.is_none() || survey.is_error == Some(false),
+        "iris_survey failed"
+    );
+    let survey_json: serde_json::Value =
+        serde_json::from_str(extract_text(&survey.content)).unwrap();
+    assert!(tool_result(&survey_json)["results"].is_array());
+
+    // 2. iris_read — full section content
+    let read = call_tool(
+        &client,
+        "iris_read",
+        json!({"section_id": "docs/auth.md#tokens"}),
+    )
+    .await;
+    assert!(
+        read.is_error.is_none() || read.is_error == Some(false),
+        "iris_read failed"
+    );
+    let read_json: serde_json::Value =
+        serde_json::from_str(extract_text(&read.content)).unwrap();
+    let read_data = tool_result(&read_json);
+    assert!(
+        read_data["text"].is_string() || read_data["status"] == "already_delivered",
+        "iris_read should return text or already_delivered"
+    );
+
+    // 3. iris_extract — atomic claims
+    let extract = call_tool(
+        &client,
+        "iris_extract",
+        json!({"section_id": "docs/auth.md#tokens"}),
+    )
+    .await;
+    assert!(
+        extract.is_error.is_none() || extract.is_error == Some(false),
+        "iris_extract failed"
+    );
+    let extract_json: serde_json::Value =
+        serde_json::from_str(extract_text(&extract.content)).unwrap();
+    assert!(tool_result(&extract_json)["claims"].is_array());
+
+    // 4. iris_related — claim dependency chains
+    let related = call_tool(
+        &client,
+        "iris_related",
+        json!({"claim_id": "auth-c1"}),
+    )
+    .await;
+    assert!(
+        related.is_error.is_none() || related.is_error == Some(false),
+        "iris_related failed"
+    );
+    let related_json: serde_json::Value =
+        serde_json::from_str(extract_text(&related.content)).unwrap();
+    assert!(tool_result(&related_json)["related"].is_array());
+
+    // 5. iris_toc — table of contents
+    let toc = call_tool(&client, "iris_toc", json!({})).await;
+    assert!(
+        toc.is_error.is_none() || toc.is_error == Some(false),
+        "iris_toc failed"
+    );
+    let toc_json: serde_json::Value =
+        serde_json::from_str(extract_text(&toc.content)).unwrap();
+    let toc_data = tool_result(&toc_json);
+    assert!(toc_data["entries"].is_array());
+    assert!(toc_data["corpus_stats"].is_object());
+
+    // 6. iris_compress — section compression
+    let compress = call_tool(
+        &client,
+        "iris_compress",
+        json!({"content_ids": ["docs/auth.md#tokens"]}),
+    )
+    .await;
+    assert!(
+        compress.is_error.is_none() || compress.is_error == Some(false),
+        "iris_compress failed"
+    );
+    let compress_json: serde_json::Value =
+        serde_json::from_str(extract_text(&compress.content)).unwrap();
+    assert!(tool_result(&compress_json)["summaries"].is_array());
+
+    // 7. iris_budget — budget status
+    let budget = call_tool(&client, "iris_budget", json!({})).await;
+    assert!(
+        budget.is_error.is_none() || budget.is_error == Some(false),
+        "iris_budget failed"
+    );
+    let budget_json: serde_json::Value =
+        serde_json::from_str(extract_text(&budget.content)).unwrap();
+    assert!(budget_json["total_budget"].is_number());
+    assert!(budget_json["estimated_used"].is_number());
+    assert!(budget_json["pressure_level"].is_string());
+    assert!(budget_json["eviction_candidates"].is_array());
+
+    // 8. iris_evicted — eviction signaling
+    let evicted = call_tool(
+        &client,
+        "iris_evicted",
+        json!({"content_ids": ["docs/auth.md#tokens"]}),
+    )
+    .await;
+    assert!(
+        evicted.is_error.is_none() || evicted.is_error == Some(false),
+        "iris_evicted failed"
+    );
+    let evicted_json: serde_json::Value =
+        serde_json::from_str(extract_text(&evicted.content)).unwrap();
+    let evicted_data = tool_result(&evicted_json);
+    assert!(evicted_data["evicted"].is_array());
+    assert!(evicted_data["not_found"].is_array());
+
+    // 9. iris_symbols — code symbol search
+    let symbols = call_tool(
+        &client,
+        "iris_symbols",
+        json!({"query": "IrisConfig"}),
+    )
+    .await;
+    assert!(
+        symbols.is_error.is_none() || symbols.is_error == Some(false),
+        "iris_symbols failed"
+    );
+    let symbols_json: serde_json::Value =
+        serde_json::from_str(extract_text(&symbols.content)).unwrap();
+    let symbols_data = tool_result(&symbols_json);
+    assert!(symbols_data["symbols"].is_array());
+    let syms = symbols_data["symbols"].as_array().unwrap();
+    assert!(!syms.is_empty(), "should find IrisConfig symbol");
+
+    // 10. iris_definition — symbol source code
+    let definition = call_tool(
+        &client,
+        "iris_definition",
+        json!({"symbol_id": "sym-config::IrisConfig"}),
+    )
+    .await;
+    assert!(
+        definition.is_error.is_none() || definition.is_error == Some(false),
+        "iris_definition failed"
+    );
+    let def_json: serde_json::Value =
+        serde_json::from_str(extract_text(&definition.content)).unwrap();
+    let def_data = tool_result(&def_json);
+    assert!(def_data["name"].is_string());
+    assert_eq!(def_data["name"].as_str().unwrap(), "IrisConfig");
+
+    // 11. iris_references — symbol cross-references
+    let references = call_tool(
+        &client,
+        "iris_references",
+        json!({"symbol_id": "sym-storage::Storage"}),
+    )
+    .await;
+    assert!(
+        references.is_error.is_none() || references.is_error == Some(false),
+        "iris_references failed"
+    );
+    let refs_json: serde_json::Value =
+        serde_json::from_str(extract_text(&references.content)).unwrap();
+    let refs_data = tool_result(&refs_json);
+    assert!(
+        refs_data["references"].is_array(),
+        "iris_references should return references array"
+    );
+
+    // 12. iris_bridge — cross-language bridge links
+    let bridge = call_tool(&client, "iris_bridge", json!({})).await;
+    assert!(
+        bridge.is_error.is_none() || bridge.is_error == Some(false),
+        "iris_bridge failed"
+    );
+    let bridge_json: serde_json::Value =
+        serde_json::from_str(extract_text(&bridge.content)).unwrap();
+    let bridge_data = tool_result(&bridge_json);
+    assert!(
+        bridge_data["links"].is_array(),
+        "iris_bridge should return links array"
+    );
+
+    // 13. iris_fetch — should return error (not configured)
+    let fetch = call_tool(
+        &client,
+        "iris_fetch",
+        json!({"url": "https://example.com"}),
+    )
+    .await;
+    assert_eq!(
+        fetch.is_error,
+        Some(true),
+        "iris_fetch should fail when not configured"
+    );
+
+    // 14. iris_clone — should return error (not configured)
+    let clone = call_tool(
+        &client,
+        "iris_clone",
+        json!({"repo": "https://github.com/test/test"}),
+    )
+    .await;
+    assert_eq!(
+        clone.is_error,
+        Some(true),
+        "iris_clone should fail when not configured"
+    );
+
+    // Verify all tools are listed
+    let tools = client.list_all_tools().await.unwrap();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+    let expected_tools = [
+        "iris_survey",
+        "iris_read",
+        "iris_extract",
+        "iris_related",
+        "iris_toc",
+        "iris_compress",
+        "iris_budget",
+        "iris_evicted",
+        "iris_symbols",
+        "iris_definition",
+        "iris_references",
+        "iris_bridge",
+        "iris_fetch",
+        "iris_clone",
+    ];
+    for tool in &expected_tools {
+        assert!(
+            tool_names.contains(tool),
+            "tool listing should include {tool}, got: {tool_names:?}"
+        );
+    }
+}
+
+// ===========================================================================
+// STABLE1.4: Large corpus soak test — index many files, measure performance
+// ===========================================================================
+
+/// Generate a synthetic corpus with many files, index it, run queries,
+/// and verify correctness and performance under load.
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn soak_large_corpus_indexing_and_query() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let num_files = 200;
+
+    // Generate 200 markdown files covering different "topics"
+    let topics = [
+        "authentication",
+        "authorization",
+        "rate-limiting",
+        "caching",
+        "logging",
+        "monitoring",
+        "deployment",
+        "testing",
+        "security",
+        "performance",
+    ];
+
+    for i in 0..num_files {
+        let topic = topics[i % topics.len()];
+        let content = format!(
+            "# {topic} Module {i}\n\n\
+             ## Overview\n\n\
+             This document covers {topic} patterns for component {i}. \
+             The {topic} subsystem handles critical operations \
+             including request validation, state management, and error recovery.\n\n\
+             ## Implementation\n\n\
+             The {topic} implementation in module {i} uses a layered approach \
+             with dependency injection for testability. Configuration is loaded \
+             from environment variables and validated at startup.\n\n\
+             ## API Reference\n\n\
+             The {topic} API for module {i} exposes three endpoints: \
+             create, update, and delete. All endpoints require authentication \
+             and return standard JSON error responses on failure.\n"
+        );
+        std::fs::write(
+            dir.path().join(format!("{topic}_{i:04}.md")),
+            content,
+        )
+        .unwrap();
+    }
+
+    let dim = 16;
+    let embedder = Arc::new(MockEmbedder { dim });
+    let index = Arc::new(HnswIndex::new(dim, 10_000).unwrap());
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Time the indexing
+    let start = std::time::Instant::now();
+    let pipeline = iris_core::ingestion::IngestionPipeline::new();
+    let stats = pipeline
+        .ingest_directory_with_embeddings(dir.path(), &storage, embedder.as_ref(), index.as_ref())
+        .await
+        .unwrap();
+    let index_duration = start.elapsed();
+
+    assert_eq!(
+        stats.files_indexed, num_files,
+        "should index all {num_files} files, got: {stats:?}"
+    );
+    assert!(
+        stats.total_sections >= num_files * 2,
+        "should have at least 2 sections per file, got: {}",
+        stats.total_sections
+    );
+    // Sanity: indexing 200 files with mock embedder should be fast
+    assert!(
+        index_duration.as_secs() < 30,
+        "indexing {num_files} files took {index_duration:?} — too slow"
+    );
+
+    // Set up MCP server
+    let storage = Arc::new(storage);
+    let service = Arc::new(QueryService::new(
+        (*storage).clone(),
+        embedder as Arc<dyn Embedder>,
+        index as Arc<dyn VectorIndex>,
+    ));
+    let budget_config = BudgetConfig::default();
+    let server = IrisServer::with_persistence(
+        service,
+        budget_config,
+        storage,
+        Some("soak-test".into()),
+    )
+    .await;
+    let (client, _server) = wrap_as_client(server).await;
+
+    // Query latency test: run multiple surveys and verify speed
+    // Use simple queries that the mock embedder can match against indexed content
+    let query_start = std::time::Instant::now();
+    let num_queries = 20;
+    for i in 0..num_queries {
+        let topic = topics[i % topics.len()];
+        let result = call_tool(
+            &client,
+            "iris_survey",
+            json!({"query": format!("{topic} Module"), "top_k": 10}),
+        )
+        .await;
+        assert!(
+            result.is_error.is_none() || result.is_error == Some(false),
+            "survey query {i} for topic '{topic}' returned error"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(extract_text(&result.content)).unwrap();
+        let data = tool_result(&json);
+        // With mock embedder, results may be empty for some queries — that's OK.
+        // We're testing that queries *succeed* (no panics/errors), not semantic relevance.
+        assert!(data["results"].is_array(), "survey {i} should return results array");
+    }
+    let query_duration = query_start.elapsed();
+    let avg_query_ms = query_duration.as_millis() / num_queries as u128;
+    assert!(
+        avg_query_ms < 500,
+        "average query latency {avg_query_ms}ms is too high for mock embedder"
+    );
+
+    // TOC should list all files
+    let toc = call_tool(&client, "iris_toc", json!({})).await;
+    let toc_json: serde_json::Value =
+        serde_json::from_str(extract_text(&toc.content)).unwrap();
+    let toc_data = tool_result(&toc_json);
+    let toc_stats = &toc_data["corpus_stats"];
+    assert_eq!(
+        toc_stats["documents"].as_u64().unwrap(),
+        num_files as u64,
+        "TOC should report all {num_files} documents"
+    );
+
+    // Budget should reflect the large amount of delivered content
+    let budget = call_tool(&client, "iris_budget", json!({})).await;
+    let budget_json: serde_json::Value =
+        serde_json::from_str(extract_text(&budget.content)).unwrap();
+    assert!(budget_json["total_budget"].is_number());
+    assert!(budget_json["estimated_used"].is_number());
+}
