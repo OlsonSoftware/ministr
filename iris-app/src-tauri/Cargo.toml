@@ -23,7 +23,7 @@ tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
 
 # iris crates
-iris-core = { workspace = true }
+iris-core = { workspace = true, features = ["candle"] }
 iris-api = { workspace = true }
 iris-daemon = { workspace = true }
 

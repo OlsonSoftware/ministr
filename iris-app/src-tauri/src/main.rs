@@ -9,10 +9,8 @@
 
 mod commands;
 
-use std::sync::Arc;
-
 use iris_core::config::IrisConfig;
-use iris_core::embedding::FastEmbedder;
+use iris_core::embedding;
 use iris_daemon::daemon;
 use iris_daemon::registry::CorpusRegistry;
 use iris_daemon::state::AppState;
@@ -55,10 +53,9 @@ fn main() {
                 .unwrap_or_else(|_| IrisConfig::default());
 
             // Load embedding model (once for all corpora).
-            let raw_embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
-                FastEmbedder::with_data_dir(&config.default_model, &config.data_dir)
-                    .expect("failed to initialize embedding model"),
-            );
+            // Uses Candle Metal on macOS when supported, falls back to ONNX.
+            let raw_embedder = embedding::create_embedder(&config.default_model, &config.data_dir)
+                .expect("failed to initialize embedding model");
 
             info!(
                 model = %config.default_model,
