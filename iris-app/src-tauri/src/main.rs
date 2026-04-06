@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod setup;
 
 use iris_core::config::IrisConfig;
 use iris_core::embedding;
@@ -48,6 +49,11 @@ fn main() {
         ))
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            // --- First-launch setup (install CLI, PATH, launchd) ---
+            if let Err(e) = setup::run_first_launch_setup(app) {
+                tracing::warn!(error = %e, "first-launch setup had errors");
+            }
+
             // --- Initialize the iris daemon ---
             let config = IrisConfig::load(&IrisConfig::default_path())
                 .unwrap_or_else(|_| IrisConfig::default());
