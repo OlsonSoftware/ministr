@@ -48,6 +48,14 @@ export interface SessionDetail {
   tokens_remaining: number;
   utilization: number;
   pressure_level: string;
+  // Token economics metrics
+  total_deliveries: number;
+  cumulative_tokens_delivered: number;
+  total_tokens_saved: number;
+  total_evictions: number;
+  total_compressions: number;
+  dedup_hits: number;
+  compression_ratio: number;
 }
 
 export interface FileInfo {

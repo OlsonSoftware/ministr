@@ -115,3 +115,7 @@ harness = false
 [[bench]]
 name = "prefetch"
 harness = false
+
+[[bench]]
+name = "token_economics"
+harness = false

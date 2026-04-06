@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Users, Gauge, Zap } from "lucide-react";
+import { Users, TrendingDown, Repeat, Copy } from "lucide-react";
 import { Card } from "./ui/card";
 import type { SessionDetail, DaemonStatus } from "../lib/types";
 
@@ -63,6 +63,32 @@ export function SessionDashboard({ status }: Props) {
                 </div>
                 <BudgetBar utilization={s.utilization} pressure={s.pressure_level} />
               </div>
+
+              {s.total_deliveries > 0 && (
+                <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-surface-overlay">
+                  <div className="text-center">
+                    <div className="flex items-center justify-center gap-1 text-green-500 mb-0.5">
+                      <TrendingDown className="h-3 w-3" />
+                      <span className="text-xs font-medium">{formatTokens(s.total_tokens_saved)}</span>
+                    </div>
+                    <span className="text-[10px] text-text-dim">saved</span>
+                  </div>
+                  <div className="text-center">
+                    <div className="flex items-center justify-center gap-1 text-accent mb-0.5">
+                      <Repeat className="h-3 w-3" />
+                      <span className="text-xs font-medium">{(s.compression_ratio * 100).toFixed(0)}%</span>
+                    </div>
+                    <span className="text-[10px] text-text-dim">compression</span>
+                  </div>
+                  <div className="text-center">
+                    <div className="flex items-center justify-center gap-1 text-blue-400 mb-0.5">
+                      <Copy className="h-3 w-3" />
+                      <span className="text-xs font-medium">{s.dedup_hits}</span>
+                    </div>
+                    <span className="text-[10px] text-text-dim">dedup hits</span>
+                  </div>
+                </div>
+              )}
             </Card>
           ))}
         </div>

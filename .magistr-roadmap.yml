@@ -1537,33 +1537,33 @@ phases:
 - id: STABLE1
   name: Stabilization & Battle-Testing
   tagline: Prove it works under real load before shipping
-  status: in_progress
+  status: done
   problem: Code is feature-complete but many paths are untested under real multi-agent, multi-corpus conditions
   solution: Integration tests, stress tests, end-to-end daemon roundtrips, false-positive hook auditing
   tasks:
   - text: 'Stress test: multiple MCP proxies connecting simultaneously to the same daemon with concurrent queries on shared corpus'
-    checked: false
+    checked: true
   - text: 'Integration test: proxy ↔ daemon roundtrip for all 15 MCP tool operations (survey, read, symbols, definition, references, toc, extract, related, bridge, compress, budget, evicted, fetch, clone, subscribe)'
-    checked: false
+    checked: true
   - text: 'Hook enforcement test suite: verify all 4 platforms (Claude Code, Copilot CLI, Cursor, VS Code) block grep/glob/find and pass legitimate commands'
     checked: true
   - text: 'Autoheal regression tests: corrupt each generated hook file, run iris init, verify heal restores correct content without touching advisory files'
     checked: true
   - text: 'Large codebase soak test: index a 100K+ file monorepo (e.g., chromium subset), measure memory, query latency, and crash resilience'
-    checked: false
+    checked: true
   - text: 'Session lifecycle test: create/use/evict/destroy sessions across daemon restarts, verify state persistence and recovery'
     checked: true
 - id: MEASURE1
   name: Token Economics & Measurement
   tagline: Measure and prove context window savings
-  status: in_progress
+  status: done
   problem: SDL-MCP claims 70% token savings but iris has no measurement framework — can't compete on claims without data
   solution: Token counting instrumentation, before/after comparisons, benchmark suite, savings dashboard in tray app
   tasks:
   - text: 'Token counting middleware: instrument all MCP tool responses with input/output token estimates (tiktoken-rs or character-based approximation)'
     checked: true
   - text: 'Baseline comparison: measure tokens consumed by equivalent grep/glob/cat workflows vs iris_survey/iris_definition for same queries'
-    checked: false
+    checked: true
   - text: 'Session token budget dashboard: track cumulative tokens delivered, evicted, compressed per session — expose via iris_budget tool'
     checked: true
   - text: 'Compression ratio tracking: measure tokens before/after iris_compress, report ratio and estimated savings in tool response'
@@ -1571,9 +1571,9 @@ phases:
   - text: 'Prefetch hit rate metrics: track how often prefetched content is actually used in subsequent tool calls — validate predictive strategies'
     checked: true
   - text: 'Benchmark suite: automated comparison against raw grep/cat, SDL-MCP, and context7 on standardized codebases (SWE-bench repos)'
-    checked: false
+    checked: true
   - text: 'Tray app stats: show per-project token savings, session count, and compression ratios in the GUI dashboard'
-    checked: false
+    checked: true
 - id: SCHEMA1
   name: Tool Schema Optimization
   tagline: Minimize the hidden token tax from tool definitions
@@ -1594,7 +1594,7 @@ phases:
 - id: SCAFFOLD2
   name: Universal Agent Onboarding
   tagline: One command to rule all agents
-  status: in_progress
+  status: done
   problem: iris init works for this repo but needs to become the killer onboarding for any project — first-class feature, not internal tooling
   solution: Project type detection, template library, interactive wizard, hook testing CLI, docs site section
   tasks:
@@ -1603,7 +1603,7 @@ phases:
   - text: 'Template library: pre-built rule sets for Rust, TypeScript, Python, Go, Java — language-specific playbooks with best practices'
     checked: true
   - text: 'Interactive wizard: iris init --interactive prompts for project type, agent platforms, hook strictness level (strict/moderate/advisory)'
-    checked: false
+    checked: true
   - text: 'Hook testing CLI: iris hooks test — simulates tool calls against installed hooks, reports which would be blocked/allowed'
     checked: true
   - text: 'Custom rule injection: support user-defined rules in .iris.toml [agent.rules] that get merged into generated config files'
@@ -1611,11 +1611,11 @@ phases:
   - text: 'Windsurf / Aider / Continue.dev support: extend scaffold to generate configs for emerging agent platforms'
     checked: true
   - text: 'Documentation: dedicated docs page for iris init — platform matrix, hook formats, customization guide, troubleshooting'
-    checked: false
+    checked: true
 - id: EVICT2
   name: Salience-Aware Eviction
   tagline: Evict what matters least, not just what's oldest
-  status: in_progress
+  status: done
   problem: Current eviction uses FSRS + recency — Zhang (AAAI 2026) shows salience-aware retention under fixed budgets outperforms simple LRU/LFU
   solution: Implement salience scoring from Zhang's algorithms, integrate with existing FSRS, A/B test via eval suite
   tasks:
@@ -1626,7 +1626,7 @@ phases:
   - text: 'Task-aware eviction: use recent iris_survey queries and tool call patterns to infer current task context, boost related sections'
     checked: true
   - text: 'Eval suite comparison: benchmark salience-aware vs current FSRS-only eviction on context retention quality using eval harness'
-    checked: false
+    checked: true
   - text: 'Eviction explainability: iris_budget reports why each section was recommended for eviction (staleness, low salience, redundancy)'
     checked: true
 - id: COMPRESS2

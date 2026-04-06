@@ -29,3 +29,5 @@
     - [iris_budget](tools/budget.md)
     - [iris_compress](tools/compress.md)
     - [iris_evicted](tools/evicted.md)
+- [CLI Commands](tools/README.md)
+    - [iris init](tools/init.md)
