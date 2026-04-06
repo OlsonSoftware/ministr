@@ -276,22 +276,32 @@ impl CandleEmbedder {
     fn mean_pool(embeddings: &Tensor, attention_mask: &Tensor) -> Result<Tensor, IndexError> {
         // embeddings: [batch, seq_len, hidden]
         // attention_mask: [batch, seq_len]
-        let mask_expanded = attention_mask
+        let (batch, _seq_len, hidden) = embeddings.dims3().map_err(candle_err)?;
+
+        let mask_f32 = attention_mask.to_dtype(DType::F32).map_err(candle_err)?;
+
+        // Expand mask to [batch, seq_len, hidden] to match embeddings shape.
+        // Candle's Metal backend doesn't auto-broadcast [b,s,1] * [b,s,h].
+        let mask_expanded = mask_f32
             .unsqueeze(2)
             .map_err(candle_err)?
-            .to_dtype(DType::F32)
+            .broadcast_as(embeddings.shape())
             .map_err(candle_err)?;
 
-        // Masked sum.
+        // Masked sum over seq_len dimension.
         let sum = embeddings
             .mul(&mask_expanded)
             .map_err(candle_err)?
             .sum(1)
             .map_err(candle_err)?;
 
-        // Count non-masked tokens.
-        let count = mask_expanded
+        // Count non-masked tokens per batch item: [batch, 1] → [batch, hidden].
+        let count = mask_f32
             .sum(1)
+            .map_err(candle_err)?
+            .unsqueeze(1)
+            .map_err(candle_err)?
+            .broadcast_as(&[batch, hidden])
             .map_err(candle_err)?
             .clamp(1e-9, f64::MAX)
             .map_err(candle_err)?;
@@ -301,6 +311,7 @@ impl CandleEmbedder {
 
     /// L2-normalize a batch of vectors.
     fn l2_normalize(tensor: &Tensor) -> Result<Tensor, IndexError> {
+        // tensor: [batch, hidden]
         let norm = tensor
             .sqr()
             .map_err(candle_err)?
@@ -309,6 +320,8 @@ impl CandleEmbedder {
             .sqrt()
             .map_err(candle_err)?
             .clamp(1e-12, f64::MAX)
+            .map_err(candle_err)?
+            .broadcast_as(tensor.shape())
             .map_err(candle_err)?;
         tensor.div(&norm).map_err(candle_err)
     }
