@@ -6,6 +6,13 @@ export interface CorpusInfo {
   sections_count: number;
   embeddings_count: number;
   active_sessions: number;
+  last_indexed?: number;
+  symbols_count: number;
+}
+
+export interface DetectedProject {
+  path: string;
+  name: string;
 }
 
 export type IndexingStatus =

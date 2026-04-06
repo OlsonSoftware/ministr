@@ -9,6 +9,7 @@ pub mod cache;
 #[cfg(feature = "candle")]
 mod candle_impl;
 mod fastembed_impl;
+pub mod hybrid;
 #[cfg(feature = "candle")]
 mod metal_bert;
 mod rerank;
@@ -18,10 +19,78 @@ pub use cache::CachedEmbedder;
 #[cfg(feature = "candle")]
 pub use candle_impl::{CandleEmbedder, CandleModelInfo, candle_supported_models, is_candle_model};
 pub use fastembed_impl::{FastEmbedder, ModelInfo, TruncatingEmbedder, supported_models};
+pub use hybrid::HybridEmbedder;
 pub use rerank::FastReranker;
 pub use sparse::FastSparseEmbedder;
 
 use crate::error::IndexError;
+
+/// Supported model serialization formats.
+///
+/// Tracks which runtime backend a model uses, enabling format-aware
+/// loading and future GGUF quantized model support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModelFormat {
+    /// ONNX Runtime format (used by FastEmbed / `ort`).
+    Onnx,
+    /// Candle native format (Hugging Face safetensors, Metal-accelerated).
+    Candle,
+    /// GGUF quantized format (future support).
+    Gguf,
+}
+
+/// Result of a model compatibility check against a stored index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelCompatibility {
+    /// Models match — no re-embedding needed.
+    Compatible,
+    /// The stored model differs from the current model; re-embedding is required.
+    IncompatibleModel {
+        /// The model name stored in the index.
+        stored: String,
+        /// The model name currently configured.
+        current: String,
+    },
+    /// No model was previously stored (fresh index); embedding can proceed.
+    NoPreviousModel,
+}
+
+/// Check whether the current embedding model is compatible with what was
+/// previously used to build the index.
+///
+/// Returns [`ModelCompatibility::Compatible`] when the names match,
+/// [`ModelCompatibility::NoPreviousModel`] when no model was stored (first run),
+/// or [`ModelCompatibility::IncompatibleModel`] when they differ and
+/// re-embedding is required.
+///
+/// # Examples
+///
+/// ```
+/// use iris_core::embedding::{check_model_compatibility, ModelCompatibility};
+///
+/// let result = check_model_compatibility("all-MiniLM-L6-v2", Some("all-MiniLM-L6-v2"));
+/// assert_eq!(result, ModelCompatibility::Compatible);
+///
+/// let result = check_model_compatibility("bge-small-en-v1.5", Some("all-MiniLM-L6-v2"));
+/// assert!(matches!(result, ModelCompatibility::IncompatibleModel { .. }));
+///
+/// let result = check_model_compatibility("all-MiniLM-L6-v2", None);
+/// assert_eq!(result, ModelCompatibility::NoPreviousModel);
+/// ```
+#[must_use]
+pub fn check_model_compatibility(
+    current_model: &str,
+    stored_model: Option<&str>,
+) -> ModelCompatibility {
+    match stored_model {
+        None => ModelCompatibility::NoPreviousModel,
+        Some(stored) if stored == current_model => ModelCompatibility::Compatible,
+        Some(stored) => ModelCompatibility::IncompatibleModel {
+            stored: stored.to_owned(),
+            current: current_model.to_owned(),
+        },
+    }
+}
 
 /// A sparse embedding: parallel arrays of token indices and their weights.
 #[derive(Debug, Clone, PartialEq)]

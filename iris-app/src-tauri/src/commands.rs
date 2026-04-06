@@ -245,6 +245,93 @@ pub async fn reset_onboarding() -> Result<(), String> {
     Ok(())
 }
 
+/// Detected project for onboarding.
+#[derive(Serialize)]
+pub struct DetectedProject {
+    pub path: String,
+    pub name: String,
+}
+
+/// Scan common directories for projects with `.iris.toml` files.
+#[tauri::command]
+pub async fn detect_projects() -> Result<Vec<DetectedProject>, String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let scan_dirs = [
+        home.clone(),
+        format!("{home}/Code"),
+        format!("{home}/Projects"),
+        format!("{home}/Developer"),
+        format!("{home}/src"),
+    ];
+
+    let mut found = Vec::new();
+    for dir in &scan_dirs {
+        let dir_path = std::path::Path::new(dir);
+        if !dir_path.is_dir() {
+            continue;
+        }
+        // Check the directory itself for .iris.toml
+        if dir != &home && dir_path.join(".iris.toml").exists() {
+            let name = dir_path
+                .file_name()
+                .map_or_else(|| dir.clone(), |n| n.to_string_lossy().into_owned());
+            found.push(DetectedProject {
+                path: dir.clone(),
+                name,
+            });
+            continue;
+        }
+        // Scan one level deep
+        let Ok(entries) = std::fs::read_dir(dir_path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_dir() && entry_path.join(".iris.toml").exists() {
+                let name = entry_path
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                found.push(DetectedProject {
+                    path: entry_path.display().to_string(),
+                    name,
+                });
+            }
+        }
+    }
+
+    // Deduplicate by path
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found.dedup_by(|a, b| a.path == b.path);
+
+    Ok(found)
+}
+
+/// Register multiple projects at once (for onboarding batch import).
+#[tauri::command]
+pub async fn register_projects_batch(
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let mut registered = Vec::new();
+    for path in &paths {
+        let project_dir = std::path::Path::new(path);
+        let resolved = iris_core::config::RepoConfig::discover(project_dir)
+            .ok()
+            .flatten()
+            .map_or_else(
+                || vec![path.clone()],
+                |(base, rc)| rc.resolve_local_paths(&base),
+            );
+        match state.registry.register(&resolved).await {
+            Ok((corpus_id, _)) => registered.push(corpus_id),
+            Err(e) => {
+                tracing::warn!(error = %e, path, "failed to register project in batch");
+            }
+        }
+    }
+    Ok(registered)
+}
+
 /// Remove a project by ID (called from tray menu).
 #[allow(dead_code)]
 pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result<(), String> {

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.iris.desktop</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/iris.app/Contents/MacOS/iris</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/com.iris.desktop.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/com.iris.desktop.stderr.log</string>
+</dict>
+</plist>

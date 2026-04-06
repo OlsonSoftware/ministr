@@ -85,6 +85,18 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
             registry
                 .update_stats(corpus_id, total_files, total_sections, index.len())
                 .await;
+
+            // Update symbol count separately (not part of ingestion stats).
+            let total_symbols = match storage.symbol_count().await {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!(corpus_id, error = %e, "failed to count symbols");
+                    0
+                }
+            };
+            registry
+                .update_symbols_count(corpus_id, total_symbols)
+                .await;
         }
         Err(iris_core::error::IngestionError::Cancelled) => {
             info!(corpus_id, "indexing cancelled");

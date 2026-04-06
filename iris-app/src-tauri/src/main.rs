@@ -137,6 +137,8 @@ fn main() {
             commands::search_symbols,
             commands::symbol_references,
             commands::ingestion_progress,
+            commands::detect_projects,
+            commands::register_projects_batch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running iris app");
