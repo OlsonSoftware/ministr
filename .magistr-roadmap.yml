@@ -1649,7 +1649,7 @@ phases:
 - id: EMBED2
   name: Next-Gen Embedding Models
   tagline: Best-in-class code embeddings without cloud dependency
-  status: pending
+  status: in_progress
   problem: Nomic Embed v1.5 is aging — CodeSage, StarEncoder, and code-specialized models now outperform general-purpose embeddings for code search
   solution: Benchmark code embedding models, implement model swapping, support quantized GGUF models for local inference
   tasks:
@@ -1662,7 +1662,7 @@ phases:
   - text: 'Hybrid code+doc embeddings: separate embedding strategies for code sections (code-specialized) and doc sections (general-purpose)'
     checked: false
   - text: 'Apple Silicon optimization: leverage Metal/ANE for local embedding inference on macOS — benchmark vs CPU-only ONNX'
-    checked: false
+    checked: true
 - id: MULTI_AGENT1
   name: Multi-Agent Orchestration
   tagline: Context coherence across agent teams

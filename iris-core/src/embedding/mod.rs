@@ -76,6 +76,67 @@ pub trait Reranker: Send + Sync {
     fn rerank(&self, query: &str, documents: &[&str]) -> Result<Vec<RerankScore>, IndexError>;
 }
 
+/// Create an embedding model using the best available backend.
+///
+/// Checks the `IRIS_BACKEND` environment variable:
+/// - `"candle"` — force Candle Metal backend (requires `candle` feature)
+/// - `"onnx"` or `"fastembed"` — force ONNX/FastEmbed backend
+/// - empty/unset — auto-detect: on macOS with the `candle` feature,
+///   use Candle if the model is supported; otherwise fall back to FastEmbed
+///
+/// # Errors
+///
+/// Returns [`IndexError::EmbeddingFailed`] if the selected backend fails to
+/// initialize (e.g. model download failure, unsupported model name).
+pub fn create_embedder(
+    model_name: &str,
+    data_dir: &std::path::Path,
+) -> Result<std::sync::Arc<dyn Embedder>, IndexError> {
+    let backend = std::env::var("IRIS_BACKEND").unwrap_or_default();
+
+    match backend.as_str() {
+        "candle" => {
+            #[cfg(feature = "candle")]
+            {
+                tracing::info!(model = %model_name, "using Candle Metal backend (IRIS_BACKEND=candle)");
+                let embedder = CandleEmbedder::with_data_dir(model_name, data_dir)?;
+                return Ok(std::sync::Arc::new(embedder));
+            }
+            #[cfg(not(feature = "candle"))]
+            {
+                tracing::warn!(
+                    "IRIS_BACKEND=candle requested but candle feature not enabled, falling back to ONNX"
+                );
+            }
+        }
+        "onnx" | "fastembed" => {
+            tracing::info!(model = %model_name, "using ONNX/FastEmbed backend (IRIS_BACKEND={backend})");
+        }
+        "" =>
+        {
+            #[cfg(all(feature = "candle", target_os = "macos"))]
+            if is_candle_model(model_name) {
+                tracing::info!(
+                    model = %model_name,
+                    "auto-selected Candle Metal backend (Apple Silicon detected, model supported)"
+                );
+                let embedder = CandleEmbedder::with_data_dir(model_name, data_dir)?;
+                return Ok(std::sync::Arc::new(embedder));
+            }
+        }
+        other => {
+            tracing::warn!(
+                backend = other,
+                "unknown IRIS_BACKEND value, falling back to ONNX"
+            );
+        }
+    }
+
+    // Default: FastEmbed/ONNX Runtime.
+    let embedder = FastEmbedder::with_data_dir(model_name, data_dir)?;
+    Ok(std::sync::Arc::new(embedder))
+}
+
 /// Interface for text embedding models.
 ///
 /// Implementations must be `Send + Sync` so they can be shared across async
