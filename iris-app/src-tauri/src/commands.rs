@@ -285,6 +285,14 @@ pub struct SessionDetail {
     pub utilization: f64,
     pub delivered_count: usize,
     pub current_turn: u32,
+    // Token economics metrics
+    pub total_deliveries: u64,
+    pub cumulative_tokens_delivered: u64,
+    pub total_tokens_saved: u64,
+    pub total_evictions: u64,
+    pub total_compressions: u64,
+    pub dedup_hits: u64,
+    pub compression_ratio: f64,
 }
 
 /// List all active sessions across all corpora.
@@ -298,6 +306,13 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDeta
         for sid in reg.session_ids() {
             if let Some(entry) = reg.get_session(&sid) {
                 let status = entry.budget.budget_status();
+                let metrics = entry.session.metrics();
+                #[allow(clippy::cast_precision_loss)]
+                let compression_ratio = if metrics.cumulative_tokens_delivered > 0 {
+                    metrics.total_tokens_saved() as f64 / metrics.cumulative_tokens_delivered as f64
+                } else {
+                    0.0
+                };
                 sessions.push(SessionDetail {
                     session_id: sid.clone(),
                     corpus_id: corpus_id.clone(),
@@ -312,6 +327,13 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDeta
                     utilization: status.utilization,
                     delivered_count: entry.session.delivered_ids().len(),
                     current_turn: entry.session.current_turn(),
+                    total_deliveries: metrics.total_deliveries,
+                    cumulative_tokens_delivered: metrics.cumulative_tokens_delivered,
+                    total_tokens_saved: metrics.total_tokens_saved(),
+                    total_evictions: metrics.total_evictions,
+                    total_compressions: metrics.total_compressions,
+                    dedup_hits: metrics.dedup_hits,
+                    compression_ratio,
                 });
             }
         }

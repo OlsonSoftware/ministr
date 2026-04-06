@@ -113,6 +113,11 @@ enum Command {
         /// Overwrite existing .iris.toml if present.
         #[arg(long)]
         force: bool,
+
+        /// Run interactive setup wizard with prompts for project type,
+        /// agent platforms, and hook strictness level.
+        #[arg(long, short)]
+        interactive: bool,
     },
 
     /// Export the corpus index to a portable `.iris-index` bundle.
@@ -337,7 +342,13 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
         Command::Search { query, top_k } => {
             commands::cmd_daemon_search(&rc.corpus_paths, &query, top_k).await
         }
-        Command::Init { force } => commands::cmd_init(&rc.cwd, force),
+        Command::Init { force, interactive } => {
+            if interactive {
+                commands::cmd_init_interactive(&rc.cwd, force)
+            } else {
+                commands::cmd_init(&rc.cwd, force)
+            }
+        }
         Command::Export { output } => {
             commands::cmd_export(
                 &rc.corpus_paths,
