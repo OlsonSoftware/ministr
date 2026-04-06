@@ -15,10 +15,10 @@
     clippy::semicolon_if_nothing_returned
 )]
 
-use candle_core::{DType, Device, Module, Result, Tensor, D};
-use candle_nn::{embedding, Embedding, VarBuilder};
+use candle_core::{D, DType, Device, Module, Result, Tensor};
+use candle_nn::{Embedding, VarBuilder, embedding};
 use candle_transformers::models::bert::{Config, HiddenAct};
-use candle_transformers::models::with_tracing::{linear, Linear};
+use candle_transformers::models::with_tracing::{Linear, linear};
 
 // ---------------------------------------------------------------------------
 // MetalLayerNorm — decomposed into ops Metal supports
@@ -135,8 +135,7 @@ impl BertEmbeddings {
         if let Some(ref position_embeddings) = self.position_embeddings {
             let position_ids = (0..seq_len as u32).collect::<Vec<_>>();
             let position_ids = Tensor::new(&position_ids[..], input_ids.device())?;
-            embeddings =
-                embeddings.broadcast_add(&position_embeddings.forward(&position_ids)?)?;
+            embeddings = embeddings.broadcast_add(&position_embeddings.forward(&position_ids)?)?;
         }
         self.layer_norm.forward(&embeddings)
     }
@@ -191,8 +190,7 @@ impl BertSelfAttention {
         let value_layer = self.transpose_for_scores(&value_layer)?;
 
         let attention_scores = query_layer.matmul(&key_layer.t()?)?;
-        let attention_scores =
-            (attention_scores / (self.attention_head_size as f64).sqrt())?;
+        let attention_scores = (attention_scores / (self.attention_head_size as f64).sqrt())?;
         let attention_scores = attention_scores.broadcast_add(attention_mask)?;
         let attention_probs = candle_nn::ops::softmax(&attention_scores, D::Minus1)?;
 
