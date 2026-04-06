@@ -3535,12 +3535,8 @@ async fn stress_concurrent_read_evict_cycles() {
             for cycle in 0..3 {
                 // Read all sections
                 for section in &sections {
-                    let result = call_tool(
-                        &client,
-                        "iris_read",
-                        json!({"section_id": section}),
-                    )
-                    .await;
+                    let result =
+                        call_tool(&client, "iris_read", json!({"section_id": section})).await;
                     assert!(
                         result.is_error.is_none() || result.is_error == Some(false),
                         "client {client_id} cycle {cycle} read {section} failed"
@@ -3549,12 +3545,8 @@ async fn stress_concurrent_read_evict_cycles() {
 
                 // Evict all sections
                 let evict_ids: Vec<&str> = sections.to_vec();
-                let result = call_tool(
-                    &client,
-                    "iris_evicted",
-                    json!({"content_ids": evict_ids}),
-                )
-                .await;
+                let result =
+                    call_tool(&client, "iris_evicted", json!({"content_ids": evict_ids})).await;
                 assert!(
                     result.is_error.is_none() || result.is_error == Some(false),
                     "client {client_id} cycle {cycle} evict failed"
@@ -3616,8 +3608,7 @@ async fn integration_roundtrip_all_mcp_tools() {
         read.is_error.is_none() || read.is_error == Some(false),
         "iris_read failed"
     );
-    let read_json: serde_json::Value =
-        serde_json::from_str(extract_text(&read.content)).unwrap();
+    let read_json: serde_json::Value = serde_json::from_str(extract_text(&read.content)).unwrap();
     let read_data = tool_result(&read_json);
     assert!(
         read_data["text"].is_string() || read_data["status"] == "already_delivered",
@@ -3640,12 +3631,7 @@ async fn integration_roundtrip_all_mcp_tools() {
     assert!(tool_result(&extract_json)["claims"].is_array());
 
     // 4. iris_related — claim dependency chains
-    let related = call_tool(
-        &client,
-        "iris_related",
-        json!({"claim_id": "auth-c1"}),
-    )
-    .await;
+    let related = call_tool(&client, "iris_related", json!({"claim_id": "auth-c1"})).await;
     assert!(
         related.is_error.is_none() || related.is_error == Some(false),
         "iris_related failed"
@@ -3660,8 +3646,7 @@ async fn integration_roundtrip_all_mcp_tools() {
         toc.is_error.is_none() || toc.is_error == Some(false),
         "iris_toc failed"
     );
-    let toc_json: serde_json::Value =
-        serde_json::from_str(extract_text(&toc.content)).unwrap();
+    let toc_json: serde_json::Value = serde_json::from_str(extract_text(&toc.content)).unwrap();
     let toc_data = tool_result(&toc_json);
     assert!(toc_data["entries"].is_array());
     assert!(toc_data["corpus_stats"].is_object());
@@ -3712,12 +3697,7 @@ async fn integration_roundtrip_all_mcp_tools() {
     assert!(evicted_data["not_found"].is_array());
 
     // 9. iris_symbols — code symbol search
-    let symbols = call_tool(
-        &client,
-        "iris_symbols",
-        json!({"query": "IrisConfig"}),
-    )
-    .await;
+    let symbols = call_tool(&client, "iris_symbols", json!({"query": "IrisConfig"})).await;
     assert!(
         symbols.is_error.is_none() || symbols.is_error == Some(false),
         "iris_symbols failed"
@@ -3780,12 +3760,7 @@ async fn integration_roundtrip_all_mcp_tools() {
     );
 
     // 13. iris_fetch — should return error (not configured)
-    let fetch = call_tool(
-        &client,
-        "iris_fetch",
-        json!({"url": "https://example.com"}),
-    )
-    .await;
+    let fetch = call_tool(&client, "iris_fetch", json!({"url": "https://example.com"})).await;
     assert_eq!(
         fetch.is_error,
         Some(true),
@@ -3875,11 +3850,7 @@ async fn soak_large_corpus_indexing_and_query() {
              create, update, and delete. All endpoints require authentication \
              and return standard JSON error responses on failure.\n"
         );
-        std::fs::write(
-            dir.path().join(format!("{topic}_{i:04}.md")),
-            content,
-        )
-        .unwrap();
+        std::fs::write(dir.path().join(format!("{topic}_{i:04}.md")), content).unwrap();
     }
 
     let dim = 16;
@@ -3919,13 +3890,9 @@ async fn soak_large_corpus_indexing_and_query() {
         index as Arc<dyn VectorIndex>,
     ));
     let budget_config = BudgetConfig::default();
-    let server = IrisServer::with_persistence(
-        service,
-        budget_config,
-        storage,
-        Some("soak-test".into()),
-    )
-    .await;
+    let server =
+        IrisServer::with_persistence(service, budget_config, storage, Some("soak-test".into()))
+            .await;
     let (client, _server) = wrap_as_client(server).await;
 
     // Query latency test: run multiple surveys and verify speed
@@ -3944,12 +3911,14 @@ async fn soak_large_corpus_indexing_and_query() {
             result.is_error.is_none() || result.is_error == Some(false),
             "survey query {i} for topic '{topic}' returned error"
         );
-        let json: serde_json::Value =
-            serde_json::from_str(extract_text(&result.content)).unwrap();
+        let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
         let data = tool_result(&json);
         // With mock embedder, results may be empty for some queries — that's OK.
         // We're testing that queries *succeed* (no panics/errors), not semantic relevance.
-        assert!(data["results"].is_array(), "survey {i} should return results array");
+        assert!(
+            data["results"].is_array(),
+            "survey {i} should return results array"
+        );
     }
     let query_duration = query_start.elapsed();
     let avg_query_ms = query_duration.as_millis() / num_queries as u128;
@@ -3960,8 +3929,7 @@ async fn soak_large_corpus_indexing_and_query() {
 
     // TOC should list all files
     let toc = call_tool(&client, "iris_toc", json!({})).await;
-    let toc_json: serde_json::Value =
-        serde_json::from_str(extract_text(&toc.content)).unwrap();
+    let toc_json: serde_json::Value = serde_json::from_str(extract_text(&toc.content)).unwrap();
     let toc_data = tool_result(&toc_json);
     let toc_stats = &toc_data["corpus_stats"];
     assert_eq!(

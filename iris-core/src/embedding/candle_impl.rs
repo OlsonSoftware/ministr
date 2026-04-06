@@ -23,8 +23,8 @@ use parking_lot::Mutex;
 use tokenizers::Tokenizer;
 use tracing::{info, instrument};
 
-use super::metal_bert::MetalBertModel;
 use super::Embedder;
+use super::metal_bert::MetalBertModel;
 use crate::error::IndexError;
 
 /// Maximum batch size for Candle inference.
@@ -222,10 +222,9 @@ impl CandleEmbedder {
             },
         )?;
 
-        let model =
-            MetalBertModel::load(vb, &config).map_err(|e| IndexError::EmbeddingFailed {
-                reason: format!("failed to load BERT model: {e}"),
-            })?;
+        let model = MetalBertModel::load(vb, &config).map_err(|e| IndexError::EmbeddingFailed {
+            reason: format!("failed to load BERT model: {e}"),
+        })?;
 
         info!(
             model = model_name,
