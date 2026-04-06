@@ -63,12 +63,15 @@ pub(crate) async fn init_infrastructure(
     tracing::info!(model = %model_name, "resolved embedding model");
 
     // Initialize embedder with content-addressable cache.
+    //
+    // Backend selection:
+    // - IRIS_BACKEND=candle  → Candle with Metal GPU (fastest on Apple Silicon)
+    // - IRIS_BACKEND=onnx    → FastEmbed/ONNX Runtime with CoreML (default)
+    // - unset on macOS with candle feature → auto-detect: use Candle if the model
+    //   is supported, otherwise fall back to ONNX.
     iris_core::mem_profile::checkpoint("before embedding model init");
-    let raw_embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
-        iris_core::embedding::FastEmbedder::with_data_dir(&model_name, &config.data_dir)
-            .into_diagnostic()
-            .wrap_err("failed to initialize embedding model")?,
-    );
+    let raw_embedder: Arc<dyn iris_core::embedding::Embedder> =
+        create_embedder(&model_name, &config.data_dir)?;
     iris_core::mem_profile::checkpoint("after embedding model init");
     let embedding_cache = iris_core::embedding::cache::EmbeddingCache::new(storage.conn());
     let embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
@@ -105,6 +108,59 @@ pub(crate) async fn init_infrastructure(
         embedder,
         index,
     })
+}
+
+/// Create the raw embedding model based on backend preference.
+///
+/// Checks `IRIS_BACKEND` env var first, then auto-detects:
+/// - On macOS: use Candle (Metal GPU) if the model is supported
+/// - Otherwise: use FastEmbed/ONNX Runtime
+fn create_embedder(
+    model_name: &str,
+    data_dir: &Path,
+) -> Result<Arc<dyn iris_core::embedding::Embedder>> {
+    let backend = std::env::var("IRIS_BACKEND").unwrap_or_default();
+
+    match backend.as_str() {
+        "candle" => {
+            tracing::info!(model = %model_name, "using Candle Metal backend (IRIS_BACKEND=candle)");
+            let embedder =
+                iris_core::embedding::CandleEmbedder::with_data_dir(model_name, data_dir)
+                    .into_diagnostic()
+                    .wrap_err("failed to initialize Candle embedding model")?;
+            return Ok(Arc::new(embedder));
+        }
+        "onnx" | "fastembed" => {
+            tracing::info!(model = %model_name, "using ONNX/FastEmbed backend (IRIS_BACKEND={backend})");
+        }
+        "" => {
+            // Auto-detect: prefer Candle on macOS if the model is supported.
+            #[cfg(target_os = "macos")]
+            if iris_core::embedding::is_candle_model(model_name) {
+                tracing::info!(
+                    model = %model_name,
+                    "auto-selected Candle Metal backend (Apple Silicon detected, model supported)"
+                );
+                let embedder =
+                    iris_core::embedding::CandleEmbedder::with_data_dir(model_name, data_dir)
+                        .into_diagnostic()
+                        .wrap_err("failed to initialize Candle embedding model")?;
+                return Ok(Arc::new(embedder));
+            }
+        }
+        other => {
+            tracing::warn!(
+                backend = other,
+                "unknown IRIS_BACKEND value, falling back to ONNX"
+            );
+        }
+    }
+
+    // Default: FastEmbed/ONNX Runtime.
+    let embedder = iris_core::embedding::FastEmbedder::with_data_dir(model_name, data_dir)
+        .into_diagnostic()
+        .wrap_err("failed to initialize embedding model")?;
+    Ok(Arc::new(embedder))
 }
 
 /// Load an existing HNSW index or create a fresh one.
