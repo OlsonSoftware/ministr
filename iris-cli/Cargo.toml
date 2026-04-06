@@ -19,7 +19,7 @@ workspace = true
 
 [dependencies]
 iris-api.workspace = true
-iris-core.workspace = true
+iris-core = { workspace = true, features = ["candle"] }
 iris-mcp.workspace = true
 clap.workspace = true
 rmcp.workspace = true

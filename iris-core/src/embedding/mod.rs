@@ -6,11 +6,15 @@
 //! `fastembed` crate for local ONNX-based inference with automatic model download.
 
 pub mod cache;
+#[cfg(feature = "candle")]
+mod candle_impl;
 mod fastembed_impl;
 mod rerank;
 mod sparse;
 
 pub use cache::CachedEmbedder;
+#[cfg(feature = "candle")]
+pub use candle_impl::{CandleEmbedder, CandleModelInfo, candle_supported_models, is_candle_model};
 pub use fastembed_impl::{FastEmbedder, ModelInfo, TruncatingEmbedder, supported_models};
 pub use rerank::FastReranker;
 pub use sparse::FastSparseEmbedder;

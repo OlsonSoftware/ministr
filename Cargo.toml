@@ -57,6 +57,13 @@ fastembed = "5"
 # Must match fastembed's pinned ort version for CoreML support.
 ort = { version = "=2.0.0-rc.11", default-features = false, features = ["coreml"] }
 
+# Candle — native Rust ML framework with Metal GPU acceleration
+candle-core = "0.10"
+candle-nn = "0.10"
+candle-transformers = "0.10"
+hf-hub = "0.5"
+tokenizers = "0.22"
+
 # Vector index
 hnsw_rs = "0.3"
 

@@ -60,8 +60,16 @@ tar.workspace = true
 zstd.workspace = true
 tempfile.workspace = true
 
+# Candle (optional — Metal GPU embedding backend)
+candle-core = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+hf-hub = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
+
 [features]
 default = ["lang-all"]
+candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub", "dep:tokenizers"]
 lang-all = [
     "lang-python",
     "lang-javascript",
