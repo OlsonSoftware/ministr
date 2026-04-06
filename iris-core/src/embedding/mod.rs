@@ -9,6 +9,8 @@ pub mod cache;
 #[cfg(feature = "candle")]
 mod candle_impl;
 mod fastembed_impl;
+#[cfg(feature = "candle")]
+mod metal_bert;
 mod rerank;
 mod sparse;
 
