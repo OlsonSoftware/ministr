@@ -31,3 +31,8 @@
     - [iris_evicted](tools/evicted.md)
 - [CLI Commands](tools/README.md)
     - [iris init](tools/init.md)
+
+# Launch
+
+- [Landing Page](landing.md)
+- [Benchmarks](benchmarks.md)

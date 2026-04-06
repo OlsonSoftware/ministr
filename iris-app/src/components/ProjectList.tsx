@@ -8,6 +8,8 @@ import {
   Box,
   Plus,
   Users,
+  Code2,
+  Clock,
 } from "lucide-react";
 import type { CorpusInfo, IndexingStatus } from "../lib/types";
 import { Badge } from "./ui/badge";
@@ -161,7 +163,7 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
               </div>
             </div>
 
-            <div className="flex gap-4 mt-2 text-xs text-text-dim">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-text-dim">
               <span className="flex items-center gap-1">
                 <FileText className="h-3 w-3" /> {corpus.files_indexed} files
               </span>
@@ -169,11 +171,19 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
                 <Layers className="h-3 w-3" /> {corpus.sections_count} sections
               </span>
               <span className="flex items-center gap-1">
+                <Code2 className="h-3 w-3" /> {corpus.symbols_count ?? 0} symbols
+              </span>
+              <span className="flex items-center gap-1">
                 <Box className="h-3 w-3" /> {corpus.embeddings_count} vectors
               </span>
               {corpus.active_sessions > 0 && (
                 <span className="flex items-center gap-1 text-accent">
                   <Users className="h-3 w-3" /> {corpus.active_sessions} {corpus.active_sessions === 1 ? "session" : "sessions"}
+                </span>
+              )}
+              {corpus.last_indexed && (
+                <span className="flex items-center gap-1" title={new Date(corpus.last_indexed * 1000).toLocaleString()}>
+                  <Clock className="h-3 w-3" /> {formatRelativeTime(corpus.last_indexed)}
                 </span>
               )}
             </div>
@@ -204,4 +214,15 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
       )}
     </div>
   );
+}
+
+/** Format a Unix timestamp as a human-readable relative time string. */
+function formatRelativeTime(unixSeconds: number): string {
+  const now = Math.floor(Date.now() / 1000);
+  const diff = now - unixSeconds;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return new Date(unixSeconds * 1000).toLocaleDateString();
 }

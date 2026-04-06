@@ -1649,18 +1649,18 @@ phases:
 - id: EMBED2
   name: Next-Gen Embedding Models
   tagline: Best-in-class code embeddings without cloud dependency
-  status: in_progress
+  status: done
   problem: Nomic Embed v1.5 is aging — CodeSage, StarEncoder, and code-specialized models now outperform general-purpose embeddings for code search
   solution: Benchmark code embedding models, implement model swapping, support quantized GGUF models for local inference
   tasks:
   - text: 'Benchmark embedding models: compare Nomic v1.5 vs CodeSage vs StarEncoder vs Jina Code v2 on code search recall@10'
-    checked: false
+    checked: true
   - text: 'Model swapping: support multiple embedding models per corpus with migration path (re-embed on model change)'
-    checked: false
+    checked: true
   - text: 'GGUF quantized model support: load quantized models for 2-4x faster inference on CPU without significant recall loss'
-    checked: false
+    checked: true
   - text: 'Hybrid code+doc embeddings: separate embedding strategies for code sections (code-specialized) and doc sections (general-purpose)'
-    checked: false
+    checked: true
   - text: 'Apple Silicon optimization: leverage Metal/ANE for local embedding inference on macOS — benchmark vs CPU-only ONNX'
     checked: true
 - id: MULTI_AGENT1
@@ -1683,26 +1683,26 @@ phases:
 - id: LAUNCH1
   name: Public Launch
   tagline: Ship it to the world
-  status: pending
+  status: done
   problem: iris is feature-rich but unknown — needs demos, benchmarks, landing page, registry listings to reach developers
   solution: Terminal demos, benchmark results page, HN/Reddit/X launch, MCP registry submissions, documentation site
   tasks:
   - text: 'Record 60-second terminal demo: clone a project, run iris init, show iris_survey + iris_symbols + iris_bridge in action (asciinema)'
-    checked: false
+    checked: true
   - text: 'Record 2-minute deep dive: .iris.toml setup → indexing → survey → definition → references → bridge trace map'
-    checked: false
+    checked: true
   - text: 'Benchmark results page: publish token savings, query latency, recall@10 comparisons vs grep/glob baseline'
-    checked: false
+    checked: true
   - text: 'Landing page: GitHub Pages with demo GIF, feature matrix, install command, .iris.toml example, benchmark highlights'
-    checked: false
+    checked: true
   - text: 'HN Show post: "Show HN: iris — MCP server that manages agent context windows like a CPU cache controller (Rust)"'
-    checked: false
+    checked: true
   - text: 'Community posts: r/rust, r/programming, r/LocalLLaMA, r/ClaudeAI, r/cursor — tailored angle for each community'
-    checked: false
+    checked: true
   - text: 'MCP registry submissions: awesome-mcp-servers, MCP Market, Smithery, Conduid, mcp.so'
-    checked: false
+    checked: true
   - text: 'Documentation site: mdBook or similar with getting started, configuration reference, tool API docs, architecture overview'
-    checked: false
+    checked: true
 - id: CLOUD1
   name: Cloud Service & Monetization
   tagline: iris as a service for teams
@@ -1723,21 +1723,21 @@ phases:
 - id: TRAY4
   name: Tray App V2
   tagline: Desktop-class project management for iris
-  status: pending
+  status: done
   problem: Tray app foundation exists but GUI needs project management, real-time stats, and cross-platform packaging
   solution: Project list/detail views, live stats, installer packaging, auto-start on login, first-run onboarding
   tasks:
   - text: 'Project list view: name, path, status badge, file/section/symbol counts, last indexed timestamp, token savings summary'
-    checked: false
+    checked: true
   - text: 'Project detail view: expandable card with sections, symbols, documents, disk usage, embedding model, vector dimension, staleness indicator'
-    checked: false
+    checked: true
   - text: 'Re-index action: button triggers full re-ingestion with live progress bar from SSE stream'
-    checked: false
+    checked: true
   - text: 'Active sessions panel: show connected MCP clients per corpus with session ID, turn count, budget utilization'
-    checked: false
+    checked: true
   - text: 'Auto-start on login: launchd plist (macOS), startup registry entry (Windows), systemd user unit (Linux)'
-    checked: false
+    checked: true
   - text: 'Installer packaging: DMG with drag-to-Applications (macOS), MSI/NSIS (Windows), AppImage + .deb (Linux)'
-    checked: false
+    checked: true
   - text: 'First-run onboarding: welcome screen, detect .iris.toml in home/projects, guided "add your first project" flow'
-    checked: false
+    checked: true

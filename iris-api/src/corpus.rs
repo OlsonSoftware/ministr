@@ -56,6 +56,12 @@ pub struct CorpusInfo {
     /// Number of active MCP sessions using this corpus.
     #[serde(default)]
     pub active_sessions: usize,
+    /// Unix timestamp (seconds) of last completed indexing, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_indexed: Option<i64>,
+    /// Number of code symbols extracted.
+    #[serde(default)]
+    pub symbols_count: usize,
 }
 
 /// Current indexing status of a corpus.

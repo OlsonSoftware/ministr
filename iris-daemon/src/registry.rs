@@ -258,6 +258,18 @@ impl CorpusRegistry {
             info.files_indexed = files_indexed;
             info.sections_count = sections_count;
             info.embeddings_count = embeddings_count;
+            #[allow(clippy::cast_possible_wrap)]
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64);
+            info.last_indexed = Some(ts);
+        }
+    }
+
+    /// Update the symbols count for a corpus (called after symbol extraction).
+    pub async fn update_symbols_count(&self, corpus_id: &str, symbols_count: usize) {
+        if let Some(handle) = self.corpora.read().await.get(corpus_id) {
+            handle.info.write().await.symbols_count = symbols_count;
         }
     }
 
@@ -330,6 +342,8 @@ impl CorpusRegistry {
                 sections_count: 0,
                 embeddings_count: index.len(),
                 active_sessions: 0,
+                last_indexed: None,
+                symbols_count: 0,
             }),
             storage,
             index,

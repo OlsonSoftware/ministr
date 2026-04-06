@@ -238,6 +238,8 @@ fn build_corpus_handle(
             sections_count: 3,
             embeddings_count: index.len(),
             active_sessions: 0,
+            last_indexed: None,
+            symbols_count: 0,
         }),
         storage,
         index,
