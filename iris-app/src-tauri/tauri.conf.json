@@ -40,6 +40,7 @@
       "resources/*"
     ],
     "macOS": {
+      "signingIdentity": "-",
       "minimumSystemVersion": "13.0",
       "dmg": {
         "appPosition": {
