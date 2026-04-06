@@ -17,12 +17,13 @@ use std::path::{Path, PathBuf};
 
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
-use candle_transformers::models::bert::{BertModel, Config as BertConfig};
+use candle_transformers::models::bert::Config as BertConfig;
 use hf_hub::api::sync::ApiBuilder;
 use parking_lot::Mutex;
 use tokenizers::Tokenizer;
 use tracing::{info, instrument};
 
+use super::metal_bert::MetalBertModel;
 use super::Embedder;
 use crate::error::IndexError;
 
@@ -145,7 +146,7 @@ fn select_device() -> Result<Device, IndexError> {
 /// # Ok::<(), iris_core::error::IndexError>(())
 /// ```
 pub struct CandleEmbedder {
-    model: BertModel,
+    model: MetalBertModel,
     tokenizer: Mutex<Tokenizer>,
     device: Device,
     dim: usize,
@@ -221,9 +222,10 @@ impl CandleEmbedder {
             },
         )?;
 
-        let model = BertModel::load(vb, &config).map_err(|e| IndexError::EmbeddingFailed {
-            reason: format!("failed to load BERT model: {e}"),
-        })?;
+        let model =
+            MetalBertModel::load(vb, &config).map_err(|e| IndexError::EmbeddingFailed {
+                reason: format!("failed to load BERT model: {e}"),
+            })?;
 
         info!(
             model = model_name,
