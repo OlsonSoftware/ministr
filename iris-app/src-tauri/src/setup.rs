@@ -23,7 +23,10 @@ pub fn run_first_launch_setup(app: &tauri::App) -> Result<(), Box<dyn std::error
     let version_path = data_dir.join(SETUP_VERSION_FILE);
     if let Ok(installed) = fs::read_to_string(&version_path) {
         if installed.trim() == current_version {
-            info!(version = current_version, "setup already completed for this version");
+            info!(
+                version = current_version,
+                "setup already completed for this version"
+            );
             return Ok(());
         }
     }
@@ -33,13 +36,18 @@ pub fn run_first_launch_setup(app: &tauri::App) -> Result<(), Box<dyn std::error
     // 1. Create ~/.iris/bin/
     fs::create_dir_all(&bin_dir)?;
 
-    // 2. Copy the sidecar CLI binary into ~/.iris/bin/iris
-    if let Err(e) = install_cli_binary(app, &bin_dir) {
+    // 2. Copy the sidecar CLI binary — skip if PKG installer already placed
+    //    the CLI at /usr/local/bin/iris (detected by /etc/paths.d/iris).
+    if pkg_installed_cli() {
+        info!("CLI already installed by PKG — skipping sidecar copy");
+    } else if let Err(e) = install_cli_binary(app, &bin_dir) {
         warn!(error = %e, "could not install CLI binary — continuing without it");
     }
 
-    // 3. Ensure ~/.iris/bin is on the user's PATH
-    if let Err(e) = ensure_path(&bin_dir) {
+    // 3. Ensure PATH is set up — skip if PKG handled it via /etc/paths.d.
+    if pkg_installed_cli() {
+        info!("PATH already configured by PKG installer");
+    } else if let Err(e) = ensure_path(&bin_dir) {
         warn!(error = %e, "could not update shell profile for PATH");
     }
 
@@ -79,9 +87,9 @@ fn install_cli_binary(app: &tauri::App, bin_dir: &Path) -> Result<(), Box<dyn st
         })
         .or_else(|| {
             // Fallback: look next to the current executable.
-            std::env::current_exe().ok().and_then(|exe| {
-                exe.parent().map(|dir| dir.join(sidecar_name))
-            })
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.join(sidecar_name)))
         });
 
     let sidecar = match sidecar_path {
@@ -122,7 +130,10 @@ fn ensure_path(bin_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let home = home_dir()?;
-    let export_line = format!("\n# Added by iris installer\nexport PATH=\"{}:$PATH\"\n", bin_str);
+    let export_line = format!(
+        "\n# Added by iris installer\nexport PATH=\"{}:$PATH\"\n",
+        bin_str
+    );
 
     // Patch whichever shell profiles exist.
     for profile in &[".zshrc", ".bashrc", ".bash_profile", ".profile"] {
@@ -170,6 +181,12 @@ fn install_launchd_plist() -> Result<(), Box<dyn std::error::Error>> {
         .output();
 
     Ok(())
+}
+
+/// Check if the PKG installer placed the CLI at /usr/local/bin/iris.
+/// The PKG also creates /etc/paths.d/iris, which is a reliable marker.
+fn pkg_installed_cli() -> bool {
+    Path::new("/etc/paths.d/iris").exists() && Path::new("/usr/local/bin/iris").exists()
 }
 
 fn iris_data_dir() -> PathBuf {

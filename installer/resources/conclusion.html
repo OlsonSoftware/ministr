@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    margin: 0; padding: 28px 32px;
+    color: #1d1d1f;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #f5f5f7; }
+    .card { background: #2d2d30 !important; border-color: #424245 !important; }
+    .subtle { color: #a1a1a6 !important; }
+    code { background: #1d1d1f !important; color: #f5f5f7 !important; }
+  }
+  h1 {
+    font-size: 22px; font-weight: 700;
+    letter-spacing: -0.3px;
+    margin: 0 0 8px 0;
+  }
+  p { font-size: 13px; margin: 0 0 16px 0; }
+  .card {
+    padding: 14px 18px;
+    border-radius: 10px;
+    background: #f5f5f7;
+    border: 1px solid #d2d2d7;
+    margin: 0 0 12px 0;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 600;
+    margin: 0 0 4px 0;
+  }
+  .card-body {
+    font-size: 12px;
+    margin: 0;
+  }
+  code {
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #e8e8ed;
+  }
+  .subtle { font-size: 12px; color: #86868b; margin: 20px 0 0 0; }
+</style>
+</head>
+<body>
+  <h1>You're all set.</h1>
+  <p>iris has been installed successfully.</p>
+
+  <div class="card">
+    <p class="card-title">Quick start</p>
+    <p class="card-body">
+      Open a new terminal and run <code>iris init</code> in any project
+      to configure MCP integration with your AI coding tools.
+    </p>
+  </div>
+
+  <div class="card">
+    <p class="card-title">Desktop app</p>
+    <p class="card-body">
+      Launch <strong>iris</strong> from Applications or Spotlight.
+      It runs as a system tray daemon &mdash; look for the iris icon
+      in your menu bar.
+    </p>
+  </div>
+
+  <p class="subtle">
+    You may need to open a new terminal window for the
+    <code>iris</code> command to be available on your PATH.
+  </p>
+</body>
+</html>

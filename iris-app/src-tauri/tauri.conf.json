@@ -40,7 +40,8 @@
       "resources/*"
     ],
     "macOS": {
-      "signingIdentity": "-",
+      "signingIdentity": null,
+      "entitlements": "./Entitlements.plist",
       "minimumSystemVersion": "13.0",
       "dmg": {
         "appPosition": {

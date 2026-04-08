@@ -1,0 +1,9 @@
+# Generated staging artifacts — only source templates are committed
+/staging/
+
+# Generated background images (regenerate with ./generate-backgrounds.sh)
+resources/background.png
+resources/background-dark.png
+
+# Signing guide contains account-specific instructions
+SIGNING-GUIDE.md

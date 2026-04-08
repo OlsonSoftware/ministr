@@ -20,3 +20,6 @@ Cargo.lock
 .mcp.json
 .fastembed_cache
 eval/model-comparison.json
+
+# Signing credentials
+.env.signing
