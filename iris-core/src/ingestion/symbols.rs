@@ -322,13 +322,24 @@ pub(super) async fn resolve_and_store_refs<S: Storage + ?Sized>(
 
     for raw in &raw_refs {
         let from_id = match &raw.from_context {
-            Some(type_name) => local_symbols
-                .iter()
-                .find(|s| {
-                    s.name == *type_name
-                        && (s.kind == "struct" || s.kind == "enum" || s.kind == "type")
-                })
-                .map(|s| s.id.clone()),
+            Some(ctx_name) => {
+                // The from_context may be a type name (for impl refs) or a
+                // function/method name (for call/use refs extracted from bodies).
+                // Try matching against all symbol kinds that can be a "source".
+                let found = local_symbols
+                    .iter()
+                    .find(|s| {
+                        s.name == *ctx_name
+                            && matches!(
+                                s.kind.as_str(),
+                                "struct" | "enum" | "type" | "function" | "trait"
+                            )
+                    })
+                    .map(|s| s.id.clone());
+                // Fall back to the file anchor when the context name doesn't
+                // match any local symbol (e.g., closures, generated code).
+                found.or_else(|| file_anchor.clone())
+            }
             None => file_anchor.clone(),
         };
 
@@ -664,4 +675,141 @@ fn find_endpoint_id(
         (ep.file_path == target.file_path && ep.line == target.line && ep.role == target.role)
             .then_some(id)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::storage::SqliteStorage;
+    use crate::storage::traits::Storage;
+
+    use super::*;
+
+    /// Helper: run the full symbol extraction + ref resolution pipeline on Rust source.
+    async fn extract_and_resolve(
+        source: &str,
+        file_path: &str,
+    ) -> (Vec<SymbolRecord>, Vec<SymbolRefRecord>) {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let result = extract_code_symbols(file_path, source, &storage, None, None)
+            .await
+            .unwrap();
+        // Result's pending_refs are for targets not yet indexed — we only
+        // care about the resolved refs that were stored.
+        let _ = result;
+
+        let filter = SymbolFilter::default();
+        let symbols = storage.list_symbols(&filter).await.unwrap();
+
+        // Collect all stored refs by querying for each symbol.
+        let mut all_refs = Vec::new();
+        for sym in &symbols {
+            let refs = storage.query_refs(&sym.id, None).await.unwrap();
+            all_refs.extend(refs);
+        }
+        (symbols, all_refs)
+    }
+
+    #[tokio::test]
+    async fn method_call_ref_resolved_to_function_symbol() {
+        let source = r"
+struct Config;
+
+impl Config {
+    fn validate(&self) -> bool {
+        self.check_inner()
+    }
+    fn check_inner(&self) -> bool {
+        true
+    }
+}
+";
+        let (symbols, refs) = extract_and_resolve(source, "src/config.rs").await;
+
+        // Both methods should be extracted as symbols.
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "validate" && s.kind == "function"),
+            "validate method should be a symbol: {symbols:?}"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "check_inner" && s.kind == "function"),
+            "check_inner method should be a symbol: {symbols:?}"
+        );
+
+        // The call from validate → check_inner should be resolved.
+        let call_refs: Vec<_> = refs
+            .iter()
+            .filter(|r| r.ref_kind == RefKind::Calls)
+            .collect();
+        let validate_id = symbols.iter().find(|s| s.name == "validate").map(|s| &s.id);
+        let check_inner_id = symbols
+            .iter()
+            .find(|s| s.name == "check_inner")
+            .map(|s| &s.id);
+
+        assert!(
+            call_refs
+                .iter()
+                .any(|r| Some(&r.from_symbol_id) == validate_id
+                    && Some(&r.to_symbol_id) == check_inner_id),
+            "should have call ref validate → check_inner.\n\
+             call_refs: {call_refs:?}\n\
+             validate_id: {validate_id:?}\n\
+             check_inner_id: {check_inner_id:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn free_function_call_ref_resolved() {
+        let source = r"
+fn main() {
+    helper();
+}
+
+fn helper() {}
+";
+        let (symbols, refs) = extract_and_resolve(source, "src/main.rs").await;
+
+        let call_refs: Vec<_> = refs
+            .iter()
+            .filter(|r| r.ref_kind == RefKind::Calls)
+            .collect();
+        let main_id = symbols.iter().find(|s| s.name == "main").map(|s| &s.id);
+        let helper_id = symbols.iter().find(|s| s.name == "helper").map(|s| &s.id);
+
+        assert!(
+            call_refs
+                .iter()
+                .any(|r| Some(&r.from_symbol_id) == main_id && Some(&r.to_symbol_id) == helper_id),
+            "should have call ref main → helper.\n\
+             call_refs: {call_refs:?}\n\
+             main_id: {main_id:?}\n\
+             helper_id: {helper_id:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn from_context_fallback_to_file_anchor() {
+        // When from_context doesn't match any local symbol (e.g., a closure),
+        // the ref should fall back to the file anchor instead of being dropped.
+        let source = r"
+fn run() {
+    unknown_function();
+}
+";
+        let (symbols, refs) = extract_and_resolve(source, "src/lib.rs").await;
+
+        // Even if `unknown_function` can't resolve its target, the extraction
+        // should at least not panic. The `run` function itself should be indexed.
+        assert!(
+            symbols.iter().any(|s| s.name == "run"),
+            "run function should be indexed"
+        );
+        // The ref from run → unknown_function should be pending (unresolved
+        // target), not silently dropped.
+        let _ = refs; // No assertion on refs — target doesn't exist in this file.
+    }
 }

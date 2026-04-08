@@ -1632,4 +1632,43 @@ fn process(config: Config) {}
             "should find struct field type ref inside mod block: {uses:?}"
         );
     }
+
+    // --- Method-level from_context ---
+
+    #[test]
+    fn impl_method_call_has_function_from_context() {
+        let source = r"
+            struct Player;
+            impl Player {
+                fn check(&self) {
+                    self.validate();
+                }
+            }
+        ";
+        let refs = parse_and_extract(source);
+        let calls: Vec<_> = refs.iter().filter(|r| r.kind == RefKind::Calls).collect();
+        assert!(
+            calls
+                .iter()
+                .any(|r| r.target_name == "validate" && r.from_context == Some("check".into())),
+            "method call should have enclosing method as from_context: {calls:?}"
+        );
+    }
+
+    #[test]
+    fn free_function_call_has_function_from_context() {
+        let source = r"
+            fn main() {
+                helper();
+            }
+        ";
+        let refs = parse_and_extract(source);
+        let calls: Vec<_> = refs.iter().filter(|r| r.kind == RefKind::Calls).collect();
+        assert!(
+            calls
+                .iter()
+                .any(|r| r.target_name == "helper" && r.from_context == Some("main".into())),
+            "call should have enclosing function as from_context: {calls:?}"
+        );
+    }
 }
