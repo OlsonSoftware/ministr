@@ -1128,6 +1128,8 @@ phases:
     checked: true
   - text: 'Indexing-in-progress graceful degradation: during first-session indexing, survey returns "[claim not found]" and "[symbol not found]" placeholders — either block results until index is ready or filter out unresolvable entries'
     checked: true
+  - text: Fix method-level cross-reference resolution — expand from_id kind filter to match functions, add fallback to file anchor
+    checked: true
 - id: PG1
   name: Unified Response Pagination
   tagline: Prevent buffer overflows with consistent pagination across all tools
