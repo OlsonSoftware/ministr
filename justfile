@@ -84,6 +84,18 @@ docker-build:
 docker-run *args:
     docker run -p 8080:8080 -v iris_data:/data iris {{args}}
 
+# Build signed + notarized macOS .pkg installer
+pkg:
+    ./scripts/build-pkg.sh
+
+# Build macOS .pkg without notarization (for local testing)
+pkg-dev:
+    SKIP_NOTARIZE=1 ./scripts/build-pkg.sh
+
+# Generate installer background images (requires librsvg)
+pkg-backgrounds:
+    ./installer/generate-backgrounds.sh
+
 # Run all quality gates: format check + build + test + lint
 validate: fmt-check lint test
 

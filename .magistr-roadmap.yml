@@ -1743,3 +1743,5 @@ phases:
     checked: true
   - text: 'First-run onboarding: welcome screen, detect .iris.toml in home/projects, guided "add your first project" flow'
     checked: true
+  - text: macOS PKG installer with code signing, notarization, and custom distribution UI
+    checked: true
