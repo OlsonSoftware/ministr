@@ -1,0 +1,483 @@
+                                         ACCEPTED FOR PUBLICATION IN THE PROCEEDINGS OF ASP-DAC 2026                                                                                      1
+
+
+
+
+                                         pHNSW: PCA-Based Filtering to Accelerate HNSW
+                                             Approximate Nearest Neighbor Search
+                                                                     Zheng Li1 Guangyi Zeng1 Paul Delestrac2 Enyi Yao1 Simei Yang1∗
+                                                  1                                                              2
+                                                      South China University of Technology, Guangzhou, China       KTH Royal Institute of Technology, Stockholm, Sweden
+                                                                                        ∗
+                                                                                          Corresponding Email: yangsimei@scut.edu.cn
+
+
+                                            Abstract—Hierarchical Navigable Small World (HNSW) has                         each 128-dimensional vector occupies 512 Bytes. The HNSW
+                                         demonstrated impressive accuracy and low latency for high-                        algorithm requires intensive distance computations and sorting
+                                         dimensional nearest neighbor searches. However, its high compu-                   operations, with computational costs growing rapidly due to
+                                         tational demands and irregular, large-volume data access patterns
+
+
+
+
+arXiv:2602.19242v1 [cs.AR] 22 Feb 2026
+                                         present significant challenges to search efficiency. To address                   increasing data dimensionality or dataset size. Additionally,
+                                         these challenges, we introduce pHNSW, an algorithm-hardware                       it demands extensive off-chip memory access, since each
+                                         co-optimized solution that accelerates HNSW through Principal                     graph node can have multiple neighbors across various lay-
+                                         Component Analysis (PCA) filtering. On the algorithm side,                        ers. Moreover, efficient HNSW traversal demands irregular
+                                         we apply PCA filtering to reduce the dimensionality of the                        memory access patterns, as graph structures inherently lack
+                                         dataset, thereby lowering the volume of neighbor access and
+                                         decreasing the computational load for distance calculations. On                   a predictable, contiguous layout in memory.
+                                         the hardware side, we design the pHNSW processor with custom                         To address HNSW’s computational and memory bottle-
+                                         instructions to optimize search throughput and energy efficiency.                 necks, prior works focus on optimizing computational paral-
+                                         In the experiments, we synthesized the pHNSW processor RTL                        lelism through specialized hardware units for distance com-
+                                         design with a 65nm technology node and evaluated it using DDR4                    putation and sorting [5], [6], and on improving off-chip data
+                                         and HBM1.0 DRAM standards. The results show that pHNSW
+                                         boosts Queries per Second (QPS) by 14.47×∼21.37× on a CPU                         access bandwidth using processing-in-memory (PIM) architec-
+                                         and 5.37×∼8.46× on a GPU, while reducing energy consumption                       tures [7], [8]. Orthogonal to prior works, our work adopts a
+                                         by up to 57.4% compared to standard HNSW implementation.                          different strategy by prioritizing data dimensionality reduction
+                                           Index Terms—HNSW, PCA Filtering, Nearest Neighbor                               based on the Principal Component Analysis (PCA) filtering [9]
+                                         Search, Algorithm-Hardware Co-optimization, QPS, Energy                           to improve search efficiency. PCA is a technique that re-
+                                                                                                                           duces a dataset’s dimensionality by projecting it into a lower-
+                                                                                                                           dimensional space via an orthogonal transformation [9]. This
+                                                                    I. I NTRODUCTION                                       process preserves the most significant features by capturing the
+                                            Approximate Nearest Neighbor (ANN) search is a funda-                          maximum variance within the dataset. The studies in [10], [11]
+                                         mental technique widely used in artificial intelligence and                       explore the use of PCA filtering for the K-Nearest Neighbors
+                                         machine learning, aiming to efficiently identify the closest                      (KNN) problem. These studies first reduce dataset dimension-
+                                         feature vectors to a given query in high-dimensional datasets.                    ality through PCA transformation, then project the filtered top-
+                                         It plays a critical role in large-scale data retrieval tasks,                     k candidates back into the original high-dimensional space to
+                                         including information retrieval, recommendation systems, and                      preserve search accuracy. We consider [10], [11], denoted as
+                                         other applications involving vector similarity search [1]. Hier-                  pKNN, the most closely related works to ours.
+                                         archical Navigable Small World (HNSW) [2] is a graph-based                           In this paper, we integrate PCA filtering into HNSW and
+                                         ANN algorithm, which can achieve top performance (e.g.,                           present pHNSW, an algorithm-hardware co-optimization de-
+                                         speed, accuracy, scalability) in ANN-benchmarks [3]. Its high                     sign to accelerate graph search. We summarize the main
+                                         search efficiency primarily comes from its hierarchical graph                     contributions and novelties of this work as follows:
+                                         structure with multiple graph layers, where each forms a small-                      • Algorithm Optimization: We propose the pHNSW algo-
+                                         world graph that captures varying levels of data proximity.                             rithm, which optimizes HNSW based on PCA filtering
+                                            However, HNSW faces significant computational and mem-                               to reduce data dimensionality and introduces a k-value
+                                         ory challenges due to the demands of high-dimensional data                              selection method to balance accuracy and performance.
+                                         processing. For instance, in the ANN benchmark SIFT1M [4],                              Unlike pKNN [10], [11], which uses a single k-value,
+                                                                                                                                 pHNSW employs a hierarchical graph structure where
+                                            Permission to make digital or hard copies of all or part of this work for            the k-value varies across different hierarchical layers.
+                                         personal or classroom use is granted without fee provided that copies are not
+                                         made or distributed for profit or commercial advantage and that copies bear          • DataSbase Organization: We optimize the database struc-
+                                         this notice and the full citation on the first page. Copyrights for components          ture to eliminate irregular data access, enabling par-
+                                         of this work owned by others than ACM must be honored. Abstracting with                 allel processing of computations and sorting. In con-
+                                         credit is permitted. To copy otherwise, or republish, to post on servers or to
+                                         redistribute to lists, requires prior specific permission and/or a fee. Request         trast, pKNN [11] performs distance calculations for low-
+                                         permissions from permissions@acm.org.                                                   dimensional data sequentially with irregular data access.
+                                         ASP-DAC ’26, January 13–16, 2026, Hong Kong, China                                   • Hardware Design: We design the pHNSW processor
+                                         © 2026 Association for Computing Machinery.
+                                                                                                                                 with a custom instruction set architecture (ISA) and a
+                                                                                                                                 dedicated search module to optimize search throughput
+ACCEPTED FOR PUBLICATION IN THE PROCEEDINGS OF ASP-DAC 2026                                                                                               2
+
+
+
+     and energy efficiency, whereas pKNN [11] utilizes High-                  specialized units to optimize data access, distance calculation,
+     Level Synthesis (HLS), which typically delivers lower                    and sorting. In particular, the works in [7], [8] introduce
+     performance compared to a custom hardware design.                        processing-in-memory (PIM) architectures for graph-based
+   • We synthesize the RTL of the pHNSW processor using                       ANNs, integrating computation units within both main mem-
+     a 65nm technology node and evaluate search throughput                    ory and Solid State Drives (SSDs) to maximize data access
+     (QPS) and energy consumption with DDR4 and HBM1.0                        bandwidth. Instead of optimizing computational parallelism
+     DRAM standards. Experiments on SIFT1M show up to                         or memory access through dedicated hardware accelerators
+     21.37× higher QPS and 57.4% lower energy consumption                     or PIM architectures, the works in [10], [11] focus on re-
+     than standard HNSW implementation.                                       ducing data dimensionality to improve search efficiency. The
+   The remainder of the paper is organized as follows. Sec-                   pKNN [11] work implements a hardware accelerator for the
+tion II discusses the related work. Then, Section III intro-                  PCA-based filtering algorithm for the KNN problem [10].
+duces the proposed pHNSW algorithm. Section IV details the                    Similarly, our algorithm–hardware co-design, pHNSW, incor-
+optimized database organization and the pHNSW processor                       porates PCA filtering into HNSW to improve search efficiency.
+design. Section V provides experimental evaluations of the                    Compared to pKNN [10], [11], our pHNSW design introduces
+processor’s area, search performance, and energy consump-                     three key innovations across the algorithm, database organiza-
+tion. Finally, Section VI concludes the paper and outlines                    tion, and hardware architecture, as detailed in the contribution
+potential directions for future work.                                         part of Section I.
+                                                                                 A recent work, Flash [15], optimizes the HNSW graph index
+                    II. R ELATED W ORK                                        during the C phase by first reducing storage costs through PCA
+  This section reviews existing work on addressing the com-                   and product quantization for dimensionality compression, and
+putational and memory bottlenecks of graph-based ANNs,                        then optimizing the index layout to improve memory access
+with a particular emphasis on HNSW.                                           efficiency in CPU SIMD (Single Instruction Multiple Data)
+                                                                              execution. Unlike [15], which uses PCA as a preprocessing
+       TABLE I: Summary of State-of-the-Art Research                          step without modifying the HNSW algorithm, our proposed
+    Paper-Year         Algorithm Optimization     Hardware Optimization
+                                                                              pHNSW algorithm performs the initial candidate search in
+                                                                              a PCA-based low-dimensional space, then back-projects the
+  HNSW [2]-2018         Propose HNSW (C+S)          CPU Implementation
+                                                                              top-k filtered candidates to the high-dimensional space for
+     [12]-2023;        Propose GB-ANN (C+S)      GPU batch processing; Data
+     [13]-2024                                     structure optimization     accurate distance computation. Additionally, while [15] builds
+      [14]-2025         Consider GB-ANN (S)        CPU+GPU collaboration      the HNSW graph on a CPU, we introduce a custom pHNSW
+  [5]-2021; [6]-2022                                  HNSW-ACC (S)
+                                                                              processor with a dedicated ISA to accelerate the search phase
+                                  /                                           through algorithm–hardware co-design.
+  [7]-2023; [8]-2024                               GB-ANN-ACC (S), PIM
+  pKNN [11]-2022       PCA Filtering KNN [10]        KNN-ACC(S), HLS
+                        Optimize HNSW with       HNSW-ACC (S) with custom
+                                                                                                         III. P HNSW A LGORITHM
+     Our work
+                          PCA filtering (S)      ISA, Database Optimization     This section presents the pHNSW algorithm and discusses
+   Flash [15]-2025
+                        Data preprocessing for
+                                                 CPU SIMD implementation      the selection of its key parameter filter size k, which highly
+                             HNSW (C)
+                                                                              impacts memory access efficiency and search accuracy.
+  *Note: C and S represent the graph construction and query search phases,
+  respectively; GB-ANN refers to graph-based ANNs; ACC stands for
+  accelerator design; PIM denotes Processing-In-Memory architecture.          A. pHNSW Algorithm
+   Table I summarizes state-of-the-art research on both algo-                              entry
+rithmic and hardware-level optimizations. The work in [2]                     Layer 2                                     High-dimensional Data
+introduces the HNSW algorithm, which, similar to other                                                              ❶               PCA
+graph-based ANN approaches, consists of two main phases:                      Layer 1                                     Low-dimensional Data
+graph construction (C) and query search (S). The C phase
+                                                                              Layer 0
+                                                                                                                    ❷
+constructs a multi-layered graph from the dataset, while the
+                                                                                                                                           Filter Top-k
+S phase searches for the approximate nearest neighbors of a                                        (a)                  Project Back
+given query. The original HNSW algorithm [2] is implemented                                                         ❸
+                                                                                        High-dimensional Data
+on a CPU. The studies in [12], [13] exploit the parallelism of
+graph-based ANNs on GPUs through batch processing and de-
+velop GPU-friendly data structures to optimize memory access                            Target     (b)                     Target         (c)
+efficiency in both C and S phases. The work in [14] introduces
+a CPU/GPU collaborative filtering strategy, where the CPU                     Fig. 1: (a) Hierarchical graph of HNSW; (b) HNSW searches
+handles initial vector selection and sends only the selective                 from a list of neighbors in high-dimensional space; (c)
+query vector IDs to the GPU. This approach eliminates the                     pHNSW searches based on PCA filtering in three steps.
+need to transfer high-dimensional raw data to GPU, thereby
+reducing data transfer overhead in S phase.                                     Fig.1 highlights the differences between the standard
+   To optimize both search performance and energy efficiency,                 HNSW and the proposed pHNSW. Fig.1 (a) shows HNSW’s
+the works of [5]–[8] propose hardware accelerators with                       hierarchical graph, where the search moves from higher layers
+ACCEPTED FOR PUBLICATION IN THE PROCEEDINGS OF ASP-DAC 2026                                                                                                  3
+
+
+
+ Algorithm 1: pHNSW Algorithm                                                                          Recall           QPS
+                                                                                   0.96                                                   26
+
+
+
+                                                                                                                                               QPS x 10000
+  Input: query q, enter-point ep, number of nearest to return
+                                                                                   0.92                                                   22
+
+                                                                       Recall@10
+         ef , layer number l, low-dimensional query in q pca
+  Output: ef closest neighbors to q                                                0.88                                                   18
+                                                                                                                          Recall=0.921;
+  Params: V : visited list, C: candidate list, F : final list,                     0.84                                   QPS=211579      14
+           C pca: candidate list in low-dimensional space,
+           C pca tmp: temporary heap of C pca, k: filter                    0.8                                                           10
+           size by PCA filtering                                       k(Layer1): 31      42 63 84 105 126      7    8 9 108 811 12 13
+1 V, C, F ← ep                                                         k(Layer0):              1616                 13 14 15 16 17 18
+2 while |C| > 0 do                                                                              (a)                          (b)
+3     c ← extract nearest element from C to q
+4     f ← extract furthest element from F to q                       Fig. 2: Recall@10 and QPS evolutions: (a) Different k(Layer1)
+5     f pca ← get furthest element from C pca to q pca               with k(Layer0)=16; (b) Different k(Layer0) with k(Layer1)=8.
+6     C pca ←∅
+7     if Dist(c, q) > Dist(f, q) then                                the ef nearest points in this layer (e.g., for SIFT1M, ef = 1
+8         Break                                                      for Layer 1-5, ef = 10 for Layer 0). The search continues as
+ 9      //For-loop of step 2 in Fig 1(c)                             long as there are remaining candidates in C. If the distance
+10      for each e ∈ N eighbor(c) at layer l do                      from q to the nearest candidate in C exceeds the distance
+11          if Dist(e pca, q pca)<Dist(f pca, q pca) then            from q to the farthest point in F , pHNSW stops searching
+12               C pca ←e∪C pca
+                                                                     in the current layer and proceeds to the next layer (lines 7-8).
+13      Update C pca to keep top-k smallest element                  Otherwise, the search proceeds to the for-loop of step 2 (lines
+14      //For-loop of step 3 in Fig. 1(c)                            9–12), where C pca is updated based on distance comparisons
+15      for each m ∈ C pca do                                        to retain the top-k closest elements (line 13). This is the
+16          if m ∈ / V then                                          key distinction between pHNSW and HNSW [2], enabling
+17               V ← V ∪m
+18               f ← extract furthest element from F to q            most searches in a lower-dimensional space and limiting high-
+19               if Dist(m, q)<Dist(f, q) or |F | < ef then          dimensional iterations to k times in the subsequent step. In
+20                   C pca tmp ← C pca tmp∪m                         Step 3 (lines 14-23), the algorithm checks whether the point
+21                   C ← C∪m, F ← F ∪m                               has been visited (line 16) and then updates C pca tmp (the
+22                   if |F | > ef then                               temporary heap of C pca), C, and F based on distance
+23                        remove furthest element from F
+                                                                     comparison results (lines 19–23). This process repeats until no
+                                                                     candidates remain in the current layer, at which the elements
+24      Update C pca ← C pca tmp                                     in F become the entry point for the next layer.
+25   return F
+                                                                     B. Discussion on Top-k Parameter Selection
+(distant points) to lower layers (closer points) to progressively       The filter size k (in top-k, step 2 ) is a key parameter
+locate the nearest neighbors. Fig. 1 (b) shows HNSW’s goal           that significantly impacts both search accuracy and search
+of finding the data point(s) most similar to the query vector        throughput, typically measured by recall rate (e.g., Recall@10,
+from a list of neighbors in high-dimensional space. Fig. 1           the proportion of true nearest neighbors found among the
+(c) illustrates how pHNSW leverages PCA filtering to locate          top 10 results) and queries per second (QPS). Since point
+target data point(s) from a list of neighbors in three steps. Step   density increases at lower layer levels in pHNSW (or HNSW)
+ 1 applies PCA [10] to transform the database from a high-           graphs, as previously shown in Fig. 1, we adjust k differently
+dimensional space to a lower-dimensional space (e.g., for the        across layers to trade-off search performance and accuracy.
+ANN benchmark SIFT1M, from 128 to 15 dimensions, with                Given a six-layer-graph database of SIFT1M, the hierarchical
+each dimension occupying 4 Bytes). Step 2 performs distance          graph contains M (e.g.,16) neighbors from layers 1-5, and 2M
+calculations and sorting in the low-dimensional space to filter      (e.g.,32) neighbors at layer 0. We set the k-values for Layers
+the top-k candidates. Step 3 projects these top-k candidates         2–5 to 3, following the recommendation in [10], which sug-
+back into the high-dimensional space for precise distance com-       gests setting k to three times the number of search candidates
+putation. Compared to HNSW [2], pHNSW mainly operates                (ef = 1). In denser layers, we set higher k values due to the
+in low-dimensional space and computes distances in high-             increased number of candidates (e.g., ef = 10 for Layer 0).
+dimensional space only k times.                                      Based on our experimental evaluations in Fig. 2, we set k to 8
+   Algorithm 1 details the pHNSW search process. We assume           for Layer 1 and 16 for Layer 0, achieving a recall@10 of 0.92.
+that all PCA-transformed low-dimensional data corresponding          Our experiments show that increasing k beyond the selected
+to the preconstructed graph is stored in off-chip memory, with       values for Layers 0-1 does not significantly improve the recall
+the storage format detailed in Section IV-A. Similar to the          rate, but it can reduce QPS by up to 21.4% (when k for Layer
+original HNSW in [6], the pHNSW algorithm utilizes three             0 is 18, Fig. 2.b).
+lists, visited list V , candidate list C and final list F to find
+the closest neighbors. Parameters associated with the PCA                              IV. P HNSW P ROCESSOR
+transformation are denoted by the suffix pca. Given a target           In this section, we describe the off-chip memory organi-
+query q, the pHNSW algorithm starts the search at the top            zation of the database, as well as the hardware design and
+level with a randomly chosen entry point ep and searches for         dataflow of the custom pHNSW processor.
+ACCEPTED FOR PUBLICATION IN THE PROCEEDINGS OF ASP-DAC 2026                                                                                                                                                           4
+
+
+
+
+  DRAM                      Neighbor list index                    ③ Neighbor list of low-dim raw data                                P-HNSW Processor                               kSort.L Scheme
+                                                                                                                                           Controller                                                 Index(no.of>)
+                 index(0)    index(1)     …       index(m)              raw(0)               raw(1)    …     raw(m)                     State     Instruction                   4 = > < <        <        1
+                                                                                                                                      Registers      Mem
+            ① Neighbor list table (Layer top)                                           ① Neighbor list table (Layer 0)    enable
+
+                                                                          #Total points in
+                                                                                                                                       Instruction Decoder                      2 < = < <        <
+
+                                                         [all layers]
+                                                                                                                                                                                                           0
+ #Total points
+                 Layer top neighbor list                                                     Layer 0 neighbor list
+                 Layer top neighbor list                                                                                                         BUS
+                                                                                             Layer 0 neighbor list             Move                              Move           5 > > = <        <         2
+                                                                                                                                                 BUS
+  in layer top                                                                layer 0
+                            …                                                                          …
+                 Layer top neighbor list                 …                                   Layer 0 neighbor list              ALU                              Dist.H         8 > > > =        >         4
+                                                                                                                                CMP          Register            Min.H
+              ② Original high-dim raw data table                               ④ PCA raw data table, pKNN [11]                  RMF           Files              Dist.L         6 > > > = =                3
+
+
+      #Total points                                                     #Total points
+                      High-Dim raw data                                               Low-Dim raw data                                                                            4 2 5 8 6
+                                                                                                                                AGU                              kSort.L
+                      High-Dim raw data                                               Low-Dim raw data
+                               …                                                                                                                                  Visit                 MUX            ===
+                                                                                              …                                DMA               SPM                                                     =
+                      High-Dim raw data                                                                                                                           &Raw
+                                                                                      Low-Dim raw data                                                                                                   01234
+                                                                                                                                                                                    2 4 5 6 8
+                                                        (a)                                                                                      (b)                                            (c)
+
+Fig. 3: (a) Off-chip database organization; (b) pHNSW processor design (*Table II lists the functionalities of the components);
+(c) The full parallel sorting scheme of the kSort.L module, for an example of sorting five data elements.
+
+
+A. Database Organization                                                                                                  (V -list in Algorithm 1). Represented as a 1M-bit state for the
+   Fig. 3(a) illustrates the organization of the database in off-                                                         SIFT1M dataset, the visit list eliminates redundant computa-
+chip memory, consisting of two types of tables: 1 an index                                                                tions for previously visited points and requires frequent access.
+table for each layer, which stores lists of neighbor indexes                                                                           TABLE II: Custom Instruction Overview
+followed by low-dimensional raw data; and 2 an original
+raw data table, which contains the high-dimensional data for                                                               Category        ISA          Cycles                       Description
+each point. Compared to the prior work in [6], our database                                                                  Data         Move            1                  Move data between registers.
+organization introduces additional neighbor lists for low-                                                                  Access        DMA           Multi              Read data from off-chip memory.
+dimensional raw data (see 3 ). This increases memory usage                                                                              Visit&Raw       1 or 2       Read/Write index or raw data from SPM.
+by 1.8GB—approximately 2.92× the size of the SIFT1M                                                                                      kSort.L          7          Filter the top-k nearest low-dim distances.
+dataset—but allows retrieving the entire neighbor list in a                                                                Compute       Min.H            1           Get the minimum of high-dim distances.
+single access, significantly reducing irregular feature access.                                                                           RMF             8                 Remove indexes from F -list.
+In contrast, pKNN [11] stores low-dimensional data separately                                                               Control       JMP             1                  Conditional jump operation.
+( 4 in Fig. 3(a)), resulting in irregular access due to unpre-
+dictable neighboring feature indexes. A detailed comparison of                                                               3) Computation Units: Our pHNSW processor has dedi-
+low-dimensional raw data storage is provided in Section V-C.                                                              cated computation units to execute computation instructions
+                                                                                                                          (Table II) during the search process. The Dist.L units compute
+                                                                                                                          distances in parallel for low-dimensional data (e.g., processing
+B. pHNSW Processor Design                                                                                                 16 data points simultaneously), matching the SIFT1M graph’s
+   Fig.3(b) shows an overview of the pHNSW processor,                                                                     configuration where each node links to multiple neighbors. The
+including a controller, memory units, and compute units.                                                                  kSort.L unit performs fully parallel sorting of low-dimensional
+   1) Controller: The controller handles instruction fetch, de-                                                           distances, outputting the top-k nearest ones (step 2 in Al-
+code, and execution. Table II summarizes the proposed custom                                                              gorithm 1). Fig. 3(c) illustrates the kSort.L scheme, where
+instructions, each sized at 32 bits. Our design supports parallel                                                         all elements are compared simultaneously, and the sorting
+data movement between registers via two Move components                                                                   order is determined by counting > symbols in the compar-
+and two BUS units. The Move instructions manage data                                                                      ison matrix. Compared to conventional bubble sort, the fully
+movement between registers during operations like distance                                                                parallel kSort.L design delivers significantly higher search
+computation and sorting, which account for the majority of                                                                performance. For instance, while bubble sort requires 120
+instructions executed during a search (up to 72.8%). This dual                                                            cycles to sort 16 data elements, kSort.L completes the same
+data movement design can improve data transfer efficiency.                                                                operation in just 7 cycles (94.17% improvement). The Dist.H
+   2) Memory Units and Data Access: Unlike pKNN [11],                                                                     unit computes distances sequentially for high-dimensional data
+which relies on irregular DRAM access for low-dimensional                                                                 (step 3 in Algorithm 1), while the Min.H unit selects the
+data, our pHNSW processor ensures regular access via opti-                                                                minimum distance(s).
+mized DRAM organization ( 4 vs. 3 in Fig. 3). The Direct
+Memory Access (DMA) unit retrieves data, including indexes                                                                C. Dataflow of pHNSW Processor
+and raw data, from off-chip memory. In addition, instead of                                                                  With the database organized in DRAM and the pHNSW
+fetching high-dimensional data for all neighbors as in [5], [6],                                                          processor design, the dataflow for neighboring search can
+the pHNSW processor limits the number of irregular accesses                                                               be summarized in five steps. (1) The pHNSW processor
+to k (for-loop of step 3 in Algorithm 1). We use a scratchpad                                                             begins the search with the query vector q and a randomly
+memory (SPM) to store raw data and manage the visit list                                                                  selected entry point ep, both in high-dimensional space. (2)
+ACCEPTED FOR PUBLICATION IN THE PROCEEDINGS OF ASP-DAC 2026                                                                            5
+
+
+
+The Address Generation Unit (AGU) calculates the address of
+the neighboring list using the index of ep, and provides this                   2.90%
+                                                                        8.70%                         SPM
+address to the DMA, which accesses the neighboring indices
+and low-dimensional raw data, storing them in the SPM. (3)                                             Move
+                                                                                                      MOVE
+The Dist.L unit computes the distances between the neighbor-                            37.50%        LowDimCalc
+                                                                                                       Dist.L+kSort.L
+                                                                        13.90%
+ing raw data and the query q in the low-dimensional space, and
+the kSort.L unit sorts these distances. (4) The AGU and DMA             14.00%                        Register File
+units use the top-k indices from the low-dimensional space to                                         BUS
+access the corresponding high-dimensional data in DRAM and                       23.00%               Other Modules
+transfer it to the SPM. (5) As Dist.H computes the distances
+for the top-k points, the Visit&Raw unit checks whether the
+                                                                  Fig. 4: Area breakdown of pHNSW processor with a total area
+high-dimensional points have been considered. Throughout the
+                                                                  of 0.739mm2 .
+search process, the two BUS and two Move units manage the
+transfer of indices and raw data between registers.               by the data dimensions (e.g., 15 and 128 dimensions, each
+                                                                  occupying 4 Bytes) needed for distance calculations and
+                      V. E XPERIMENT                              sorting. The Move units occupy 23% of the area due to the
+A. Experiment setup                                               extensive use of ports to enable efficient parallel access to
+   1) Simulation: We implement pHNSW processor in Verilog         high-dimensional data. The Dist.L and kSort.L components
+and synthesize the RTL using Synopsys Design Compiler             together occupy 14.0% area, with kSort.L comprising a 16×16
+with the TSMC 65nm standard library at 1GHz to obtain the         comparator array and four 16-input multiplexers (i.e., for
+area and power consumption of each component. For the on-         sorting 16 data elements in SIFT1M database).
+chip SPM (128KB), we model area and energy using CACTI
+7.0 [16]. We use Ramulator [17] to model DRAM with two            C. Search Throughput Evaluation
+standards: 4GB DDR4 and High-Bandwidth Memory (HBM
+1.0), with bandwidths of 19.2GB/s and 128GB/s, respectively.      TABLE III: Single-query search throughput (QPS) on SIFT1M
+We configure the energy consumption at 18.75 pJ/bit for
+                                                                                 HNSW-CPU [2]      HNSW-GPU [13]        pHNSW-CPU
+DDR4 and 7 pJ/bit for HBM 1.0.                                       QPS
+   2) Dataset: We evaluate our P-HNSW design using the                              9900.35            ∼25000             10467.61
+                                                                   (Norm.QPS)         (1)               (2.53)             (1.06)
+SIFT1M dataset [4]. As previously described in Section III-B,
+we construct a six-layer search graph [2] and prepare low-                        HNSW-Std           pHNSW-Sep          pHNSW (Ours)
+dimensional raw data using PCA [9]. The throughput of our            DDR4          13290.45            32731.08           143285.14
+                                                                                    (1.74)              (3.31)             (14.47)
+pHNSW is evaluated with the recall of 0.92.
+   3) Baselines: We run the HNSW algorithm [2] on a 12th             HBM           18165.30            77645.78           211579.75
+                                                                                    (1.83)              (7.84)             (21.37)
+Gen Intel i9-12900H (2.5 GHz) CPU as our primary baseline,
+denoted as HNSW-CPU, and use the reported results from              *The value in each parenthesis is normalized to the QPS of HNSW-CPU.
+CAGRA [13] as our GPU baseline, denoted as HNSW-GPU.
+                                                                     Table III compares QPS for single-query searches, lead-
+To evaluate performance gains achieved through algorithmic
+                                                                  ing to several key observations. First, pHNSW-CPU shows
+optimization, we run the proposed pHNSW algorithm (see
+                                                                  our algorithm optimization increases QPS by 6% on the
+Section III-A) on the CPU, denoted as pHNSW-CPU. Due to
+                                                                  CPU. Second, HNSW-Std refers to hardware-only optimiza-
+differences in datasets and hardware configurations, a direct
+                                                                  tion, achieving a 1.74×∼1.83× QPS improvement for DDR4
+comparison with the results reported in [5], [11] (molecu-
+                                                                  and HBM, while pHNSW-Sep involves algorithm and hardware
+lar and quantum physics datasets) and [6]–[8] (million-scale
+                                                                  co-optimization without database optimization, resulting in
+SIFT1B dataset on multi-core or processing-in-memory sys-
+                                                                  a 3.31×∼7.84× QPS improvement. HNSW-Std and pHNSW-
+tems) is not feasible. Our work focuses on single-query search,
+                                                                  Sep have similar database structures ( 2 vs. 4 in Fig. 3(a)),
+with plans to scale the pHNSW processor to multicore systems
+                                                                  with the former operating in high-dimensional space and
+for multi-query search in future work. For a fair comparison,
+                                                                  the latter in low-dimensional space. Third, our proposed
+we adapt the instruction execution to our pHNSW processor,
+                                                                  pHNSW integrates algorithm and hardware co-optimization
+creating two variants: (1) HNSW-Std, the standard HNSW that
+                                                                  with database optimization. It achieves QPS improvements
+processes high-dimensional raw data, and (2) pHNSW-Sep, the
+                                                                  of 14.47× and 21.37× for DDR4 and HBM configurations,
+pHNSW algorithm designed to access low-dimensional raw
+                                                                  respectively, compared to HNSW-CPU (i.e., 5.37× and 8.46×
+data stored in a separate database (see 4 in Fig. 3).
+                                                                  improvement vs. HNSW-GPU). This is due to regular data ac-
+                                                                  cess to the sequential storage of low-dimensional neighbor data
+B. Area Evaluation                                                ( 3 in Fig.3(a)), but comes with a 2.92× increase in database
+  Fig.4 presents the area breakdown of the pHNSW processor,       memory usage, as explained in SectionIV-A. We consider
+with a total area of 0.739mm2 . For the on-chip memories,         the trade-off between search throughput and memory usage
+SPM and register files take 37.5% and 13.9% area respectively.    acceptable for the SIFT1M dataset. For larger datasets like
+The register files store temporary data, primarily determined     SIFT1B (512GB storage, exceeding typical DRAM capacity),
+ACCEPTED FOR PUBLICATION IN THE PROCEEDINGS OF ASP-DAC 2026                                                                                                                           6
+
+
+
+achieving a balance between the 3 and 4 in database of                                                 improve search efficiency by scaling the pHNSW processor
+Fig. 3(a) is crucial and will be further explored in future work.                                      to multi-core and PIM-based systems. Additionally, we plan
+                                                                                                       to extend our evaluation to the SIFT1B dataset to assess the
+D. Energy Evaluation of a Single Query Search                                                          scalability and performance of the processor on larger and
+                                                                                                       more complex datasets. A key challenge will be partitioning
+                           Others    Register File   Dist.L+kSort.L     BUS    Move    SPM    DRAM     the billion-scale database into smaller parts while preserving
+                     1.1
+                           18.71uJ                                    9.05uJ                           efficient coordination and search performance.
+                       1
+                     0.9
+
+
+
+
+ Normalized Energy
+                     0.8                 48.3%        54.0%                      51.8%        57.4%                                   R EFERENCES
+                     0.7                 9.67uJ       8.61uJ                     4.36uJ       3.86uJ
+                                                                                                        [1] X. Yin, C. Gao, Z. Zhao, and R. Gupta, “Panns: Enhancing graph-based
+                     0.6
+                                                                                                            approximate nearest neighbor search through recency-aware construction
+                     0.5                                              HBM                                   and parameterized search,” in Proceedings of the 30th ACM SIGPLAN
+                     0.4                                                                                    Annual Symposium on Principles and Practice of Parallel Programming,
+                     0.3                                                                                    2025, pp. 369–381.
+                            DDR4         DDR4         DDR4                       HBM          HBM
+                     0.2                                                                                [2] Y. A. Malkov and D. A. Yashunin, “Efficient and robust approxi-
+                           HNSW-Std pHNSW-Sep        pHNSW       HNSW-Std pHNSW-Sep          pHNSW          mate nearest neighbor search using hierarchical navigable small world
+                                                     (Ours)                                  (Ours)         graphs,” IEEE transactions on pattern analysis and machine intelligence,
+                                                                                                            vol. 42, no. 4, pp. 824–836, 2018.
+                       Fig. 5: Normalized energy of a single query search.                              [3] M. Aumüller, E. Bernhardsson, and A. Faithfull, “Ann-benchmarks:
+                                                                                                            A benchmarking tool for approximate nearest neighbor algorithms,”
+   Fig.5 compares the normalized energy consumption of a                                                    Information Systems, vol. 87, p. 101374, 2020.
+                                                                                                        [4] H. Jegou, M. Douze, and C. Schmid, “Product quantization for nearest
+single query search (vs. HNSW-Std). We have several obser-                                                  neighbor search,” IEEE transactions on pattern analysis and machine
+vations. First, DRAM accesses dominate energy consumption,                                                  intelligence, vol. 33, no. 1, pp. 117–128, 2010.
+making up about 82∼87% and 63∼72% of the total energy                                                   [5] H. Peng, S. Chen, Z. Wang, J. Yang, S. A. Weitze, T. Geng, A. Li, J. Bi,
+                                                                                                            M. Song, W. Jiang et al., “Optimizing fpga-based accelerator design
+for DDR4 and HBM configurations, respectively. Second,                                                      for large-scale molecular similarity search (special session paper),” in
+compared to HNSW-Std, pHNSW-Sep and pHNSW reduce                                                            2021 IEEE/ACM International Conference On Computer Aided Design
+energy consumption by up to 51.8% and 57.4%, respectively,                                                  (ICCAD). IEEE, 2021, pp. 1–7.
+                                                                                                        [6] J.-H. Kim, Y.-R. Park, J. Do, S.-Y. Ji, and J.-Y. Kim, “Accelerating large-
+showcasing the energy efficiency of our pHNSW design.                                                       scale graph-based nearest neighbor search on a computational storage
+Second, although pHNSW-Sep and pHNSW employ different                                                       platform,” IEEE Transactions on Computers, vol. 72, no. 1, pp. 278–290,
+access patterns (irregular vs. sequential, 4 vs. 3 in Fig. 3(a)),                                           2022.
+                                                                                                        [7] Z. Zhu, J. Liu, G. Dai, S. Zeng, B. Li, H. Yang, and Y. Wang,
+they retrieve the same amount of data from off-chip memory.                                                 “Processing-in-hierarchical-memory architecture for billion-scale ap-
+Compared to pHNSW-Sep, our pHNSW design reduces energy                                                      proximate nearest neighbor search,” in 2023 60th ACM/IEEE Design
+consumption by approximately 11% per query search. This                                                     Automation Conference (DAC). IEEE, 2023, pp. 1–6.
+                                                                                                        [8] Y. Wang, S. Li, Q. Zheng, L. Song, Z. Li, A. Chang, Y. Chen et al., “Nd-
+reduction is due to the lower latency of pHNSW’s regular                                                    search: Accelerating graph-traversal-based approximate nearest neighbor
+memory access (resulting in 2.73×∼4.37× higher QPS, in                                                      search through near data processing,” in 2024 ACM/IEEE 51st Annual
+Section V-C), which consequently reduces the energy con-                                                    International Symposium on Computer Architecture (ISCA).              IEEE,
+                                                                                                            2024, pp. 368–381.
+sumed by other components waiting for data. Third, the                                                  [9] H. Abdi and L. J. Williams, “Principal component analysis,” Wiley
+dedicated design of the low-dimensional computation mod-                                                    interdisciplinary reviews: computational statistics, vol. 2, no. 4, pp. 433–
+ule (Dist.L+kSort.L) enables high parallelism with negligible                                               459, 2010.
+                                                                                                       [10] H. Feng, D. Eyers, S. Mills, Y. Wu, and Z. Huang, “Principal component
+energy consumption (<1%).                                                                                   analysis based filtering for scalable, high precision k-nn search,” IEEE
+                                                                                                            Transactions on Computers, vol. 67, no. 2, pp. 252–267, 2017.
+                                             VI. C ONCLUSION                                           [11] X. Song, T. Xie, and S. Fischer, “Accelerating knn search in high
+                                                                                                            dimensional datasets on fpga by reducing external memory access,”
+   This paper proposes pHNSW, an algorithm-hardware co-                                                     Future Generation Computer Systems, vol. 137, pp. 189–200, 2022.
+design of HNSW for high-dimensional search tasks. We                                                   [12] F. Groh, L. Ruppert, P. Wieschollek, and H. P. Lensch, “Ggnn: Graph-
+                                                                                                            based gpu nearest neighbor search,” IEEE Transactions on Big Data,
+optimize the HNSW algorithm using PAC filtering, enabling                                                   vol. 9, no. 1, pp. 267–279, 2023.
+data access and computation in low-dimensional space while                                             [13] H. Ootomo, A. Naruse, C. Nolet, R. Wang, T. Feher, and Y. Wang,
+maintaining high search accuracy (recall = 0.92). Addition-                                                 “Cagra: Highly parallel graph construction and approximate nearest
+                                                                                                            neighbor search for gpus,” in 2024 IEEE 40th International Conference
+ally, we implement a pHNSW processor with a custom                                                          on Data Engineering (ICDE). IEEE, 2024, pp. 4236–4247.
+instruction set, leveraging an optimized data organization                                             [14] B. Tian, H. Liu, Y. Tang, S. Xiao, Z. Duan, X. Liao, H. Jin, X. Zhang,
+that stores low-dimensional data to reduce irregular memory                                                 J. Zhu, and Y. Zhang, “Towards high-throughput and low-latency billion-
+                                                                                                            scale vector search via {CPU/GPU} collaborative filtering and re-
+accesses. Experiments on the SIFT1M dataset show that                                                       ranking,” in 23rd USENIX Conference on File and Storage Technologies
+the proposed pHNSW processor improves search throughput                                                     (FAST 25), 2025, pp. 171–185.
+(QPS) by 14.47×∼21.37× over standard HNSW on CPU                                                       [15] M. Wang, H. Wu, X. Ke, Y. Gao, Y. Zhu, and W. Zhou, “Accel-
+                                                                                                            erating graph indexing for anns on modern cpus,” arXiv preprint
+and 5.37×∼8.46× on GPU. Moreover, our pHNSW design                                                          arXiv:2502.18113, 2025.
+can achieve up to 57.4% reduction in energy consumption,                                               [16] R. Balasubramonian, A. Kahng, N. Muralimanohar, A. Shafiee, and
+compared to the hardware implementation of the standard                                                     V. Srinivas, “Cacti 7: New tools for interconnect exploration in innova-
+                                                                                                            tive off-chip memories,” ACM Transactions on Architecture and Code
+HNSW in high-dimensional space.                                                                             Optimization, vol. 14, pp. 1–25, 06 2017.
+   For future work, since our proposed pHNSW algorithm and                                             [17] Y. Kim, W. Yang, and O. Mutlu, “Ramulator: A fast and extensible
+hardware design are orthogonal to prior work on multi-core                                                  dram simulator,” IEEE Computer architecture letters, vol. 15, no. 1, pp.
+                                                                                                            45–49, 2015.
+and processing-in-memory (PIM) architectures, we plan to
+

@@ -20,8 +20,12 @@ paths = [
     "CHANGELOG.md",
     "DESIGN.md",
     "docs",
+
+    # Research corpus (2026 ANN/HNSW/quantization/prefetch papers, text-extracted)
+    "docs/research",
 ]
 
 ignore = [
     "*.snap",
+    "*.pdf",
 ]
