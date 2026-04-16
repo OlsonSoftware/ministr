@@ -100,6 +100,27 @@ pkg-dev:
 pkg-backgrounds:
     ./installer/generate-backgrounds.sh
 
+# Clean rebuild + install CLI + Tauri app + restart daemon
+reinstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "==> Killing existing iris daemons..."
+    pkill -f "iris-app" || true
+    pkill -f "iris serve" || true
+    rm -f ~/.iris/irisd.sock ~/.iris/irisd.pid
+    sleep 1
+    echo "==> Clean rebuild (release)..."
+    cargo clean -p iris-mcp -p iris-cli -p iris-daemon -p iris-app
+    cargo build --release -p iris-cli -p iris-app
+    echo "==> Installing CLI..."
+    rm -f ~/.cargo/bin/iris
+    cp target/release/iris ~/.cargo/bin/iris
+    echo "==> Installing Tauri app..."
+    cp target/release/iris-app /Applications/iris.app/Contents/MacOS/iris-app
+    echo "==> Launching tray app..."
+    open /Applications/iris.app
+    echo "==> Done. Restart your Claude Code session to pick up the new binary."
+
 # Run all quality gates: format check + build + test + lint
 validate: fmt-check lint test
 

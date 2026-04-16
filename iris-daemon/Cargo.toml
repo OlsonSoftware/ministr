@@ -51,3 +51,7 @@ futures-core = "0.3"
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tower = "0.5"
+http = "1"
+http-body-util = "0.1"
+serde_json = { workspace = true }
