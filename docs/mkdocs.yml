@@ -1,5 +1,5 @@
 site_name: iris
-site_description: Context cache controller for LLM agents — MCP server with semantic search, code navigation, session tracking, and budget management.
+site_description: Context cache for LLM agents — MCP server with semantic search, code navigation, session tracking, and budget awareness.
 site_url: https://AlrikOlson.github.io/iris-rs/
 site_author: Alrik Olson
 repo_name: AlrikOlson/iris-rs

@@ -211,7 +211,7 @@ pub struct IrisServer {
 #[prompt_handler]
 impl ServerHandler for IrisServer {
     fn get_info(&self) -> ServerInfo {
-        let default_instructions = "iris is a context cache controller for LLM agents. Use iris_toc to get \
+        let default_instructions = "iris is a context cache for LLM agents. Use iris_toc to get \
              a structural overview of the indexed corpus, iris_survey to search for \
              relevant content, iris_read to retrieve full section text, iris_extract \
              to get atomic claims from a section, iris_related to follow dependency \
@@ -245,8 +245,8 @@ impl ServerHandler for IrisServer {
         )
         .with_server_info(
             Implementation::new("iris", env!("CARGO_PKG_VERSION")).with_description(
-                "A context cache controller for LLM agents — session tracking, \
-                     predictive prefetching, budget management, and coherence.",
+                "A context cache for LLM agents — session tracking, \
+                     predictive prefetching, budget awareness, and coherence.",
             ),
         )
         .with_instructions(instructions)

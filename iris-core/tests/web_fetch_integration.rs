@@ -14,7 +14,7 @@ use iris_core::web::fetcher::web_source_path;
 const SAMPLE_MARKDOWN: &str = "\
 # Getting Started with Iris
 
-Iris is a context cache controller for LLM agents.
+Iris is a context cache for LLM agents.
 
 ## Installation
 

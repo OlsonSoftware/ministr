@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Context cache controller for LLM agents</strong>
+  <strong>Context cache for LLM agents</strong>
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 
 ---
 
-iris is an [MCP server](https://modelcontextprotocol.io) that manages your agent's context window the way a CPU cache controller manages L1 cache. It runs locally, embeds locally, and works with any MCP client.
+iris is an [MCP server](https://modelcontextprotocol.io) that serves your agent's context the way an L1 cache serves the CPU — tracking what it has delivered, pre-warming what's likely next, and flagging budget pressure. Your agent still owns its context window; iris just keeps its own output lean. Runs locally, embeds locally, works with any MCP client.
 
 ```sh
 claude mcp add iris -- iris

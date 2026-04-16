@@ -1,7 +1,7 @@
 # iris — Design Specification
 
-**A context cache controller for LLM agents.**
-*Manage your agent's scarcest resource.*
+**A context cache for LLM agents.**
+*Don't waste your agent's scarcest resource.*
 
 Version 0.1 | March 2026
 
@@ -92,9 +92,9 @@ Every round-trip in this loop costs latency, tokens, and money. The quality of t
 
 ### 2.1 iris in one sentence
 
-iris is a Rust-native MCP server that manages an LLM agent's context window the way a CPU cache controller manages L1 cache — with state tracking, predictive prefetching, budget management, and coherence.
+iris is a Rust-native MCP server that serves context to an LLM agent the way an L1 cache serves the CPU — with state tracking, predictive prefetching, budget awareness, and coherence. iris doesn't (and can't) manipulate the agent's context window directly; it manages its own output — what it sends, when, and at what resolution — so the agent's window stays clear of redundant reads.
 
-### 2.2 The cache controller analogy
+### 2.2 The cache analogy
 
 Every design decision in iris derives from a single structural analogy:
 

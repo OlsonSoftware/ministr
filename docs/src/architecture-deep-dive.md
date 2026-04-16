@@ -1,8 +1,12 @@
 # iris-rs Architecture: The Deep Dive
 
-> **iris** is a Rust-native MCP server that manages LLM agent context windows
-> like a CPU cache controller — with session tracking, predictive prefetching,
-> budget management, and coherence.
+> **iris** is a Rust-native MCP server that serves context to LLM agents the way
+> an L1 cache serves the CPU — with session tracking, predictive prefetching,
+> budget awareness, and coherence.
+>
+> iris does not (and can't) edit the agent's context window directly. It manages
+> *its own output* — what it sends, when, and at what resolution — so the window
+> fills with signal instead of redundant reads.
 
 ---
 
@@ -11,7 +15,8 @@
 Think of iris as a **smart librarian** that sits between an LLM agent and a codebase.
 Instead of the agent naively reading files and losing track of what it's already seen,
 iris indexes everything, tracks what's been delivered, predicts what's needed next,
-and manages the agent's finite context window like a CPU manages its L1/L2 cache.
+and shapes its own output — resolution, compression, deduplication — so the agent's
+finite window stays as clear as a well-managed L1 cache.
 
 ```d2
 direction: down
