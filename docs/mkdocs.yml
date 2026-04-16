@@ -98,6 +98,15 @@ markdown_extensions:
 
 plugins:
   - search
+  - d2:
+      executable: d2
+      cache: true
+      cache_dir: .cache/d2
+      layout: elk
+      theme: 3
+      dark_theme: 201
+      sketch: false
+      pad: 40
 
 nav:
   - Home: index.md
