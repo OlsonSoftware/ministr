@@ -1,0 +1,50 @@
+# iris_toc
+
+Get a structural overview of the indexed corpus — documents, section counts, and ingestion state.
+
+## Parameters
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `document_id` | string | no | — | If provided, return the TOC for a single document |
+| `limit` | integer | no | — | Maximum number of entries |
+| `offset` | integer | no | 0 | Pagination offset |
+
+## Response
+
+```json
+{
+  "entries": [
+    {
+      "document_id": "src/auth.rs",
+      "title": "src/auth.rs",
+      "section_count": 12,
+      "claim_count": 34,
+      "symbol_count": 8,
+      "language": "rust"
+    },
+    {
+      "document_id": "docs/architecture.md",
+      "title": "Architecture",
+      "section_count": 7,
+      "claim_count": 21,
+      "symbol_count": 0,
+      "language": "markdown"
+    }
+  ],
+  "ingestion_state": {
+    "total_documents": 207,
+    "total_sections": 3197,
+    "total_symbols": 1842,
+    "last_indexed_at": "2026-04-15T12:34:56Z"
+  },
+  "budget_status": { ... }
+}
+```
+
+## Behavior
+
+- Without `document_id`, returns top-level entries for all documents in the corpus
+- With `document_id`, returns the section hierarchy within that document
+- Use for initial orientation when connecting to an unfamiliar corpus
+- `ingestion_state` shows whether indexing is in progress or complete

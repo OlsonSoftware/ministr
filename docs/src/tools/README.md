@@ -1,10 +1,8 @@
 # Tool Reference
 
-iris exposes MCP tools that give the agent explicit control over context retrieval. The tools cover document search, code navigation, cross-language bridges, and budget management.
+iris exposes MCP tools that give the agent explicit control over context retrieval. The tools cover document search, code navigation, cross-language bridges, budget management, and multi-source corpus ingestion.
 
-## Tool Overview
-
-### Document & Search
+## Search & retrieval
 
 | Tool | Purpose | Typical Token Cost | Latency |
 |---|---|---|---|
@@ -12,24 +10,32 @@ iris exposes MCP tools that give the agent explicit control over context retriev
 | [`iris_read`](read.md) | Read a section in full | 200-2000 | <10ms |
 | [`iris_extract`](extract.md) | Pull specific claims | 50-500 | <50ms cold, <5ms warm |
 | [`iris_related`](related.md) | Follow claim relationships | 50-300 | <20ms |
-| `iris_toc` | Structural overview of the corpus | 100-500 | <5ms |
+| [`iris_toc`](toc.md) | Structural overview of the corpus | 100-500 | <5ms |
 
-### Code Navigation
+## Code navigation
 
 | Tool | Purpose | Typical Token Cost | Latency |
 |---|---|---|---|
-| `iris_symbols` | Find structs, functions, traits, enums | 50-300 | <10ms |
-| `iris_definition` | Get full source of a symbol | 100-2000 | <5ms |
-| `iris_references` | Find callers, implementors, importers | 50-300 | <20ms |
-| `iris_bridge` | Query cross-language bindings | 50-200 | <10ms |
+| [`iris_symbols`](symbols.md) | Find structs, functions, traits, enums | 50-300 | <10ms |
+| [`iris_definition`](definition.md) | Get full source of a symbol | 100-2000 | <5ms |
+| [`iris_references`](references.md) | Find callers, implementors, importers | 50-300 | <20ms |
+| [`iris_bridge`](bridge.md) | Query cross-language bindings | 50-200 | <10ms |
 
-### Budget Management
+## Budget management
 
 | Tool | Purpose | Typical Token Cost | Latency |
 |---|---|---|---|
 | [`iris_budget`](budget.md) | Check budget status | minimal | <1ms |
 | [`iris_compress`](compress.md) | Get compressed summaries | 50-200 | <10ms |
 | [`iris_evicted`](evicted.md) | Signal evicted content | minimal | <1ms |
+
+## Multi-source corpora
+
+| Tool | Purpose | Typical Token Cost | Latency |
+|---|---|---|---|
+| [`iris_fetch`](fetch.md) | Fetch web content into the corpus | 50-200 | seconds (network) |
+| [`iris_clone`](clone.md) | Clone and index a git repo | 50-200 | seconds to minutes |
+| [`iris_refresh`](refresh.md) | Re-fetch changed sources | 50-200 | seconds (network) |
 
 ## Common Response Fields
 
