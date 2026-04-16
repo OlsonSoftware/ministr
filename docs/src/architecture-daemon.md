@@ -19,9 +19,9 @@
           │  ~/.iris/irisd.sock       │
           ▼                           ▼
     ┌─────────────────────────────────────┐
-    │        iris daemon (iris-daemon)     │
+    │       iris daemon (iris-daemon)     │
     │                                     │
-    │  ┌──────────┐  ���────────────────┐  │
+    │  ┌──────────┐  ┌────────────────┐  │
     │  │ axum     │  │ CorpusRegistry │  │
     │  │ router   │──│ + handles      │  │
     │  └──────────┘  └────────┬───────┘  │

@@ -20,7 +20,7 @@ After pushing a new `v*` tag and the release workflow completes:
 2. Update the `version` and `sha256` values in `Formula/iris.rb`
 3. Push to the `homebrew-iris` repository
 
-### Automation (optional)
+### Automation
 
 Add a step to the release workflow that auto-updates the tap:
 
@@ -34,4 +34,4 @@ Add a step to the release workflow that auto-updates the tap:
     COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 ```
 
-This requires a personal access token with `repo` scope stored as `HOMEBREW_TAP_TOKEN`.
+Requires a personal access token with `repo` scope stored as `HOMEBREW_TAP_TOKEN`.

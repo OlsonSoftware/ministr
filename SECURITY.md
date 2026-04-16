@@ -1,33 +1,42 @@
 # Security Policy
 
+## Reporting a vulnerability
+
+**Please do not open public GitHub issues for security vulnerabilities.**
+
+Email **olsonalrik@gmail.com** with:
+
+- A description of the vulnerability
+- Steps to reproduce or a proof of concept
+- Potential impact
+- Suggested mitigation, if any
+
+You should receive an acknowledgment within 72 hours. Confirmed vulnerabilities will be addressed in a patch release, and a CVE will be requested where applicable. Reporters will be credited in the release notes unless they prefer to remain anonymous.
+
 ## Supported versions
 
 | Version | Supported |
 |---------|-----------|
 | 0.1.x   | Yes       |
 
-## Reporting a vulnerability
-
-If you discover a security vulnerability in iris, please report it responsibly.
-
-**Do not open a public GitHub issue.**
-
-Instead, email **olsonalrik@gmail.com** with:
-
-- A description of the vulnerability
-- Steps to reproduce
-- Potential impact
-- Suggested fix (if any)
-
-You should receive a response within 72 hours. Once the issue is confirmed, a fix will be developed privately and released as a patch version.
+Older pre-release versions are not supported. If you're running a development snapshot, update to the latest tagged release before reporting.
 
 ## Scope
 
-iris runs locally and does not expose network services by default. The primary attack surface is:
+iris runs locally by default and does not expose network services without explicit configuration. The primary attack surface is:
 
-- **Corpus ingestion** — malicious files (Markdown, HTML, PDF) parsed during indexing
-- **MCP tool parameters** — input from the LLM agent via JSON-RPC
-- **Web fetching** — URLs provided via `iris_fetch` / `.iris.toml` config
-- **Git clone** — repositories cloned via `iris_clone`
+| Surface | Vector |
+|---|---|
+| Corpus ingestion | Malicious files (Markdown, HTML, PDF, source code) parsed during indexing |
+| MCP tool parameters | Input from the LLM agent via JSON-RPC |
+| Web fetching | URLs provided via `iris_fetch` or `.iris.toml` |
+| Git clone | Repositories cloned via `iris_clone` |
+| HTTP transport | When running `iris serve --transport http` for remote deployments |
 
-All external input is validated. `#![deny(unsafe_code)]` is enforced across every crate.
+## Hardening
+
+- `#![deny(unsafe_code)]` is enforced across every crate — no `unsafe` blocks.
+- All external input is validated at the transport boundary.
+- `cargo audit` and `cargo deny` run in CI as blocking gates.
+- Dependencies are reviewed via Dependabot pull requests.
+- OAuth 2.1 with scoped tokens is available for HTTP transport deployments.

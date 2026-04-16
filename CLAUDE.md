@@ -1,53 +1,48 @@
-# iris-rs
+# iris-rs — contributor notes for Claude Code
 
-A Rust-native MCP server that manages LLM agent context windows like a CPU cache controller — with session tracking, predictive prefetching, budget management, and coherence.
+This file is auto-loaded by Claude Code when working in this repo. It captures conventions and gotchas specific to developing iris itself (not using iris).
 
-## MCP Tool Priorities
+## Codebase navigation
 
-1. **Brave Search** (`brave_web_search`) — use liberally for research, best practices, API docs, ecosystem patterns. Always search before building.
-2. **iris** — use for all codebase navigation. Do NOT use Glob, Grep, or Read for discovery.
-3. **magistr** — use for quality gates, roadmap tracking, and workflow phase management.
+Always use iris MCP tools for exploring this codebase. iris indexes itself — use the live MCP tools, don't spawn a second instance.
 
-## Codebase Navigation
-
-**Always use iris MCP tools** for exploring this codebase. Do NOT use Glob, Grep, or Read for discovery.
-
-- `iris_survey` — semantic search across docs and source code. Start here.
-- `iris_symbols` — find structs, functions, traits, enums by name/kind/module.
-- `iris_definition` — get full source of a symbol by ID.
-- `iris_references` — find callers, implementors, importers of a symbol.
-- `iris_read` — read a section by ID (with deduplication and delta delivery).
-- `iris_extract` — get atomic claims from a section, optionally filtered by query.
-- `iris_toc` — structural overview of the indexed corpus.
+| Task | Tool |
+|---|---|
+| Vague question | `iris_survey` |
+| Find a symbol by name | `iris_symbols` |
+| Full source of a symbol | `iris_definition` |
+| Callers / implementors | `iris_references` |
+| Read a section | `iris_read` |
+| Structural overview | `iris_toc` |
 
 Use `Read` only immediately before `Edit`. For everything else, use iris.
 
-See `.claude/rules/tools.md` for the full tool guide including magistr workflow tools.
-
-## Quick Start
+## Quick start
 
 ```sh
-cargo build --workspace          # build
-cargo test --workspace           # test
-just validate                    # fmt-check + lint + test
-iris index --corpus ./iris-core/src  # pre-warm the index
+cargo build --workspace
+cargo test --workspace
+just validate                 # fmt-check + lint + test
+cargo install --path iris-cli # rebuild the live binary
 ```
 
-Always use `--release` when running iris (debug mode is unusably slow due to ONNX + XProtect).
+Always use `--release` when running iris manually — debug builds are unusably slow due to ONNX + macOS XProtect scanning.
 
-## Testing iris Changes
+## Testing iris changes
 
-**NEVER spin up a second iris instance against this repo.** The iris MCP server is already running on this codebase. A second instance causes conflicts — shared SQLite, shared HNSW indexes, shared session state — leading to corrupted results and false conclusions.
+**Never spin up a second iris instance against this repo.** The MCP server running in-session already indexes it. A second instance shares SQLite and HNSW with the first, corrupting results.
 
-- **Using the live MCP tools** (iris_survey, iris_symbols, etc.) in a session is fine — that's what they're for
-- **After implementing changes to iris**, run `cargo install --path iris-cli` to rebuild, then ask the user to restart the session so the new binary is picked up by the MCP server. **Wait for explicit go-ahead** before continuing — do not proceed until the user confirms the new session is ready
-- For automated tests: use `cargo test` with `tempdir()` fixtures — never point test harnesses at the live working directory
-- Never run `iris index --corpus ./iris-core/src` or spin up a CLI instance against this repo while the MCP server is running
+- Use the live MCP tools in your session — that's what they're for.
+- After code changes, run `cargo install --path iris-cli`, then ask the user to restart their session to pick up the new binary. Wait for confirmation before continuing.
+- Automated tests use `cargo test` with `tempdir()` fixtures — never point at the live working directory.
 
-## Key Conventions
+## Conventions
 
-- See `.claude/rules/conventions.md` for full coding conventions
-- See `.claude/rules/workflow.md` for the Research → Plan → Execute → Verify workflow
-- No `.unwrap()` or `.expect()` in library code (tests are fine)
+- Edition 2024 (Rust 1.85+)
 - `#![deny(unsafe_code)]` in every crate
-- All quality gates must pass before committing
+- No `.unwrap()` or `.expect()` in library code (tests are fine)
+- `thiserror` for iris-core errors, `miette` for iris-cli/iris-mcp diagnostics
+- `tracing` for instrumentation (not `log`)
+- Clippy pedantic must pass: `cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic`
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor guide.
