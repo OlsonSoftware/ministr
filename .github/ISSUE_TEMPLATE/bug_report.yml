@@ -1,0 +1,60 @@
+name: Bug Report
+description: Report a bug in iris
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the issue.
+      placeholder: |
+        1. Run `iris index --corpus ./src`
+        2. Connect via Claude Code
+        3. Call `iris_survey("auth")`
+        4. See error...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: iris version
+      description: Output of `iris --version`
+      placeholder: "iris 0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (x86_64)
+        - Linux (aarch64)
+        - Windows
+    validations:
+      required: true
+
+  - type: input
+    id: mcp-client
+    attributes:
+      label: MCP client
+      description: Which MCP client are you using?
+      placeholder: "Claude Code 1.x / Cursor / custom"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output with `RUST_LOG=debug`
+      render: text
