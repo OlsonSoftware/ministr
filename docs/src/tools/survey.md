@@ -1,12 +1,12 @@
 # iris_survey
 
-Search the indexed corpus for sections relevant to a natural language query. Returns ranked summaries with relevance scores. Already-delivered content is filtered out.
+Semantic search across the indexed corpus — documents, sections, claims, and code symbols. Returns ranked results with relevance scores. Already-delivered content is filtered out.
 
 ## Parameters
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `query` | string | yes | — | Natural language query to search the corpus |
+| `query` | string | yes | — | Natural language query |
 | `top_k` | integer | no | 10 | Maximum number of results to return |
 
 ## Response
@@ -15,21 +15,25 @@ Search the indexed corpus for sections relevant to a natural language query. Ret
 {
   "results": [
     {
-      "content_id": "docs/auth.md#jwt-validation",
-      "title": "JWT Validation",
-      "text": "Section summary text...",
+      "content_id": "src/auth.rs#validate_token",
+      "title": "validate_token",
+      "text": "Validates a JWT token against the configured public key...",
       "relevance_score": 0.87,
       "resolution": "section",
       "token_count": 245
+    },
+    {
+      "content_id": "sym-src/auth.rs::auth::Claims",
+      "title": "Claims",
+      "text": "pub struct Claims { sub: String, exp: i64, ... }",
+      "relevance_score": 0.82,
+      "resolution": "symbol_stub",
+      "heading_path": ["src/auth.rs", "struct Claims"],
+      "token_count": 180
     }
   ],
   "deduplicated_count": 2,
-  "budget_status": {
-    "total_budget": 100000,
-    "estimated_used": 245,
-    "estimated_remaining": 99755,
-    "pressure_level": "normal"
-  }
+  "budget_status": { ... }
 }
 ```
 
@@ -37,16 +41,19 @@ Search the indexed corpus for sections relevant to a natural language query. Ret
 
 | Field | Description |
 |---|---|
-| `results` | Ranked list of matching sections with summaries |
-| `results[].content_id` | Hierarchical section ID for use with `iris_read` |
+| `results` | Ranked list of matching content |
+| `results[].content_id` | Hierarchical ID — use with `iris_read` (sections) or `iris_definition` (symbols) |
 | `results[].relevance_score` | Similarity score (0.0-1.0) |
-| `results[].resolution` | Index level matched: `"summary"`, `"section"`, or `"claim"` |
+| `results[].resolution` | Match level: `"summary"`, `"section"`, `"claim"`, `"symbol_stub"`, or `"symbol_full"` |
+| `results[].heading_path` | Heading hierarchy or symbol path (when applicable) |
 | `results[].token_count` | Token count of the returned text |
 | `deduplicated_count` | Number of results filtered out (already delivered this session) |
 
 ## Behavior
 
-- Results that were already delivered in this session are filtered out automatically
-- The response text is recorded in the session shadow for future deduplication
+- Matches across all resolution levels — documents, sections, claims, and code symbols
+- Uses hybrid search (dense embeddings + optional sparse/SPLADE + optional cross-encoder rerank)
+- Results already delivered in this session are filtered out automatically
+- Delivered content is recorded in the session shadow for future deduplication
 - Token counts are added to the running budget
-- Matching occurs across all three resolution levels (summaries, sections, claims)
+- Under budget pressure, results are returned at higher resolution (claims instead of full sections)

@@ -30,7 +30,7 @@ iris init --interactive
 | Claude Code | `.claude/rules/iris-scope.md`, `iris-playbook.md`, `tools.md` | `.claude/settings.json` | Markdown rules + JSON PreToolUse hooks |
 | Cursor | `.cursor/rules/iris.mdc` | `.cursor/hooks.json` | MDC rules + JSON hooks |
 | GitHub Copilot | `.github/copilot-instructions.md` | `.github/hooks/iris-enforce.json` | Markdown instructions + JSON hooks |
-| Windsurf | `windsurf/rules/iris.md` | `.windsurf/hooks.json` | Markdown rules + JSON hooks |
+| Windsurf | `.windsurf/rules/iris.md` | `.windsurf/hooks.json` | Markdown rules + JSON hooks |
 | Continue.dev | `.continue/rules/iris.md` | — | Markdown rules only |
 | Universal | `AGENTS.md` | — | Markdown (agent-agnostic) |
 

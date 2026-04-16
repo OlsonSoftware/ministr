@@ -2,6 +2,16 @@
 
 iris supports Streamable HTTP transport, enabling remote deployment as an MCP server that any MCP client can connect to over HTTPS.
 
+## Contents
+
+- [Docker](#quick-start-docker) — build and run the image
+- [Fly.io](#flyio) — serverless deploy with a mounted volume
+- [Railway](#railway) — auto-deploy from the Dockerfile
+- [Reverse proxy: nginx](#reverse-proxy-nginx) — TLS termination, SSE passthrough
+- [Reverse proxy: Caddy](#reverse-proxy-caddy) — automatic TLS via ACME
+- [Connecting MCP clients](#connecting-mcp-clients) — URL + OAuth config
+- [Resource requirements](#resource-requirements) — RAM, CPU, storage
+
 ## Quick Start (Docker)
 
 ```bash
