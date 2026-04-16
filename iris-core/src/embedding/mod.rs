@@ -221,6 +221,7 @@ pub fn create_embedder(
     data_dir: &std::path::Path,
 ) -> Result<(std::sync::Arc<dyn Embedder>, BackendInfo), IndexError> {
     let backend_env = std::env::var("IRIS_BACKEND").unwrap_or_default();
+    #[cfg(all(feature = "candle", target_os = "macos"))]
     let force_cpu = std::env::var("IRIS_DEVICE")
         .map(|v| v.eq_ignore_ascii_case("cpu"))
         .unwrap_or(false);

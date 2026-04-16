@@ -121,14 +121,34 @@ pub struct PrefetchConfig {
 
     /// Number of recent sections to use for topical prefetch vector.
     pub topic_window: usize,
+
+    /// Initial EMA alpha for the topic tracker (0.0-1.0).
+    /// Higher means more weight on recent sections.
+    pub alpha: Option<f32>,
+
+    /// Whether to auto-tune alpha based on topical hit rate.
+    /// When enabled, alpha decreases when the topic is stable (high hits)
+    /// and increases when the agent jumps between topics (low hits).
+    pub adaptive_alpha: Option<bool>,
+
+    /// Whether to enable speculative prefetch-ahead scheduling.
+    /// When enabled, prefetch runs proactively during agent processing time.
+    pub speculative: Option<bool>,
+
+    /// Maximum candidates per strategy in a single prefetch cycle.
+    pub max_candidates_per_strategy: Option<usize>,
 }
 
 impl Default for PrefetchConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            cache_size: 50,
+            cache_size: 128,
             topic_window: 5,
+            alpha: None,
+            adaptive_alpha: None,
+            speculative: None,
+            max_candidates_per_strategy: None,
         }
     }
 }
@@ -659,7 +679,7 @@ mod tests {
         assert_eq!(config.log_format, "pretty");
         assert_eq!(config.default_context_budget, 100_000);
         assert!(config.prefetch.enabled);
-        assert_eq!(config.prefetch.cache_size, 50);
+        assert_eq!(config.prefetch.cache_size, 128);
     }
 
     #[test]
