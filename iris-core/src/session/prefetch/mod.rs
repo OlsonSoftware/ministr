@@ -1,9 +1,9 @@
-//! Prefetch engine and LRU cache for speculative context pre-warming.
+//! Prefetch engine and cache for speculative context pre-warming.
 //!
 //! The prefetch engine predicts what content an agent will need next based on
-//! access patterns and pre-computes it into a fast LRU cache. When the agent
+//! access patterns and pre-computes it into a cache. When the agent
 //! requests pre-warmed content, it is served in <1ms instead of requiring a
-//! full cold retrieval (50–200ms).
+//! full cold retrieval (50-200ms).
 //!
 //! # Strategies
 //!
@@ -18,12 +18,15 @@
 //!
 //! # Architecture
 //!
-//! - [`PrefetchCache`] — LRU cache with pre-computed text, token count, and
-//!   heading path. Default capacity 50 items.
-//! - [`PrefetchEngine`] — orchestrates prefetch strategies, triggers pre-warming
-//!   after tool calls, and serves warm cache hits.
-//! - [`TopicTracker`] — maintains an EMA-weighted running topic vector from
-//!   the last K section embeddings for topical prefetch prediction.
+//! - [`PrefetchCache`] — LRU cache (legacy, backward-compatible).
+//! - [`PriorityCache`] — Priority-scored cache with confidence-weighted eviction
+//!   based on SolidAttention (FAST '26) scheduling patterns.
+//! - [`PrefetchEngine`] — orchestrates prefetch strategies and serves warm hits.
+//! - [`TopicTracker`] — EMA-weighted running topic vector with adaptive alpha.
+
+pub mod priority;
+
+pub use priority::{PriorityCache, StrategyWeights};
 
 use std::collections::{HashMap, VecDeque};
 
@@ -350,6 +353,12 @@ pub struct TopicTracker {
     max_history: usize,
     /// EMA decay factor (0.0–1.0). Higher means more weight on recent vectors.
     alpha: f32,
+    /// Whether alpha should auto-tune based on topical hit rate.
+    adaptive: bool,
+    /// Rolling count of topical hits for adaptive alpha.
+    topical_hits: u32,
+    /// Rolling count of total lookups for adaptive alpha.
+    total_lookups: u32,
 }
 
 impl TopicTracker {
@@ -360,6 +369,9 @@ impl TopicTracker {
             recent_vectors: VecDeque::with_capacity(max_history),
             max_history,
             alpha,
+            adaptive: false,
+            topical_hits: 0,
+            total_lookups: 0,
         }
     }
 
@@ -367,6 +379,57 @@ impl TopicTracker {
     #[must_use]
     pub fn with_defaults() -> Self {
         Self::new(DEFAULT_TOPIC_HISTORY, DEFAULT_TOPIC_ALPHA)
+    }
+
+    /// Enable adaptive alpha tuning based on topical hit rate.
+    ///
+    /// When enabled, alpha is automatically adjusted every 10 lookups:
+    /// - High topical hit rate (>30%): decrease alpha toward 0.15 (stable topic)
+    /// - Low topical hit rate (<10%): increase alpha toward 0.6 (jumping topics)
+    #[must_use]
+    pub fn with_adaptive_alpha(mut self) -> Self {
+        self.adaptive = true;
+        self
+    }
+
+    /// Record a topical hit for adaptive alpha computation.
+    pub fn record_topical_hit(&mut self) {
+        self.topical_hits += 1;
+        self.total_lookups += 1;
+        self.maybe_adapt();
+    }
+
+    /// Record a lookup (hit or miss) for adaptive alpha computation.
+    pub fn record_lookup(&mut self) {
+        self.total_lookups += 1;
+        self.maybe_adapt();
+    }
+
+    /// Current alpha value (may have been adapted).
+    #[must_use]
+    pub fn alpha(&self) -> f32 {
+        self.alpha
+    }
+
+    /// Auto-tune alpha based on rolling hit rate, evaluated every 10 lookups.
+    fn maybe_adapt(&mut self) {
+        if !self.adaptive || self.total_lookups < 10 {
+            return;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let ratio = self.topical_hits as f32 / self.total_lookups as f32;
+        self.alpha = if ratio > 0.3 {
+            // Stable topic — slow drift
+            (self.alpha * 0.9).max(0.1)
+        } else if ratio < 0.1 {
+            // Jumping topics — fast adaptation
+            (self.alpha * 1.2).min(0.7)
+        } else {
+            self.alpha
+        };
+        // Reset rolling window
+        self.topical_hits = 0;
+        self.total_lookups = 0;
     }
 
     /// Record a section embedding after an access.
@@ -764,6 +827,27 @@ impl PrefetchEngine {
     #[must_use]
     pub fn predicted_section_ids(&self) -> &[String] {
         &self.intent_tracker.pending_survey_ids
+    }
+
+    /// Evict cache entries for sections that have been invalidated.
+    ///
+    /// Called by the coherence engine when source files change. Prevents
+    /// serving stale pre-warmed content after file modifications.
+    pub fn invalidate(&mut self, stale_section_ids: &[String]) {
+        for id in stale_section_ids {
+            self.cache.remove(id);
+        }
+    }
+
+    /// Clear all cached entries (useful after a full re-index).
+    pub fn clear_cache(&mut self) {
+        while self.cache.len() > 0 {
+            if self.cache.order.pop_front().is_some() {
+                // order drained one by one — corresponding entries remain
+            }
+        }
+        self.cache.entries.clear();
+        self.cache.order.clear();
     }
 }
 
