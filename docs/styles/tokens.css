@@ -1,0 +1,1134 @@
+/* ==========================================================================
+   iris docs — Tailwind v4 source
+   ==========================================================================
+
+   Compiled to docs/src/stylesheets/extra.css via:
+     tailwindcss -i docs/styles/tokens.css \
+                 -o docs/src/stylesheets/extra.css --minify
+
+   Design system: technical minimal + iridescent accents.
+   - Warm zinc neutrals (stone palette) for body surfaces
+   - Iris indigo scale (50 → 950) for accents + hero gradient
+   - Tailwind v4 @theme defines every token; components layer against tokens
+   - No specificity hacks — every component scoped to .md-typeset naturally
+   ========================================================================== */
+
+@import "tailwindcss";
+
+/* All MkDocs/Material interactivity lives outside .md-typeset; don't purge
+   content-layer utilities used inside <div markdown> blocks. */
+@source "../src/**/*.{md,html,svg}";
+@source "../overrides/**/*.html";
+
+/* =====================================================
+   @theme — design tokens (Tailwind v4 primitives)
+   ===================================================== */
+
+@theme {
+  /* Color scales — iris (indigo/violet brand) ------------------------- */
+  --color-iris-50:  oklch(0.96 0.02 285);
+  --color-iris-100: oklch(0.93 0.04 285);
+  --color-iris-200: oklch(0.87 0.07 280);
+  --color-iris-300: oklch(0.79 0.11 280);
+  --color-iris-400: oklch(0.70 0.16 278);
+  --color-iris-500: #6366f1;                /* brand anchor */
+  --color-iris-600: #4f46e5;
+  --color-iris-700: #4338ca;
+  --color-iris-800: #3730a3;
+  --color-iris-900: #312e81;
+  --color-iris-950: #1e1b4b;
+
+  /* Extra accent (violet) for iridescent gradients ------------------- */
+  --color-violet-400: #a78bfa;
+  --color-violet-500: #8b5cf6;
+  --color-fuchsia-400: #e879f9;
+
+  /* Stone (warm neutral) — same as Tailwind default ------------------- */
+  --color-stone-50:  #fafaf9;
+  --color-stone-100: #f5f5f4;
+  --color-stone-200: #e7e5e4;
+  --color-stone-300: #d6d3d1;
+  --color-stone-400: #a8a29e;
+  --color-stone-500: #78716c;
+  --color-stone-600: #57534e;
+  --color-stone-700: #44403c;
+  --color-stone-800: #292524;
+  --color-stone-900: #1c1917;
+  --color-stone-950: #0c0a09;
+
+  /* Custom dark surface scale — cool-tinted so iris accent pops ------ */
+  --color-ink-50:  #f5f5fa;
+  --color-ink-100: #e6e7f0;
+  --color-ink-200: #b9bacc;
+  --color-ink-300: #7c7e9a;
+  --color-ink-400: #4a4d6e;
+  --color-ink-500: #32344f;
+  --color-ink-600: #23253d;
+  --color-ink-700: #191b2f;
+  --color-ink-800: #111224;
+  --color-ink-900: #0a0b14;
+  --color-ink-950: #05060e;
+
+  /* Space scale (4px baseline) — Tailwind uses --spacing multiplier -- */
+  --spacing: 4px;
+
+  /* Type scale ------------------------------------------------------- */
+  --text-xs:   0.6875rem;     /* 11px */
+  --text-xs--line-height: 1rem;
+  --text-sm:   0.8125rem;     /* 13px */
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;     /* 15px */
+  --text-base--line-height: 1.5rem;
+  --text-lg:   1.0625rem;     /* 17px */
+  --text-lg--line-height: 1.6rem;
+  --text-xl:   1.25rem;       /* 20px */
+  --text-xl--line-height: 1.75rem;
+  --text-2xl:  1.5rem;        /* 24px */
+  --text-2xl--line-height: 2rem;
+  --text-3xl:  2rem;          /* 32px */
+  --text-3xl--line-height: 2.4rem;
+  --text-4xl:  2.75rem;       /* 44px */
+  --text-4xl--line-height: 1.05;
+  --text-5xl:  3.5rem;        /* 56px */
+  --text-5xl--line-height: 1;
+  --text-6xl:  4.5rem;        /* 72px */
+  --text-6xl--line-height: 0.95;
+  --text-7xl:  5.5rem;
+  --text-7xl--line-height: 0.9;
+
+  /* Radii ------------------------------------------------------------ */
+  --radius-sm:  4px;
+  --radius-md:  6px;
+  --radius-lg:  8px;
+  --radius-xl:  12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 24px;
+  --radius-full: 9999px;
+
+  /* Shadows — soft on light, deeper on dark (dark override below) --- */
+  --shadow-xs: 0 1px 2px rgb(17 24 39 / 0.03);
+  --shadow-sm: 0 1px 2px rgb(17 24 39 / 0.04), 0 1px 1px rgb(17 24 39 / 0.03);
+  --shadow-md: 0 2px 4px rgb(17 24 39 / 0.05), 0 4px 12px rgb(17 24 39 / 0.04);
+  --shadow-lg: 0 4px 6px rgb(17 24 39 / 0.04), 0 12px 24px rgb(17 24 39 / 0.06);
+  --shadow-xl: 0 8px 16px rgb(17 24 39 / 0.06), 0 24px 48px rgb(17 24 39 / 0.10);
+
+  /* Blurs ------------------------------------------------------------ */
+  --blur-sm: 8px;
+  --blur-md: 16px;
+  --blur-lg: 32px;
+
+  /* Motion ----------------------------------------------------------- */
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast:   140ms;
+  --duration-base:   200ms;
+  --duration-slow:   320ms;
+
+  /* Fonts — pull from Material's own font loader ---------------------- */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-display: var(--font-sans);
+}
+
+/* =====================================================
+   Semantic tokens — map brand primitives to roles.
+   Only these vary between light and dark.
+   ===================================================== */
+
+:root,
+[data-md-color-scheme="default"] {
+  --color-bg:             var(--color-stone-50);
+  --color-surface:        #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-surface-sunken: var(--color-stone-100);
+  --color-border:         var(--color-stone-200);
+  --color-border-strong:  var(--color-stone-300);
+  --color-text:           var(--color-stone-900);
+  --color-text-muted:     var(--color-stone-600);
+  --color-text-subtle:    var(--color-stone-500);
+  --color-text-faint:     var(--color-stone-400);
+  --color-accent:         var(--color-iris-600);
+  --color-accent-hover:   var(--color-iris-700);
+  --color-accent-soft:    var(--color-iris-50);
+  --color-accent-ring:    var(--color-iris-300);
+  --color-accent-fg-on:   #ffffff;
+  --color-code-bg:        var(--color-stone-900);
+  --color-code-surface:   var(--color-stone-100);
+  --color-code-border:    var(--color-stone-200);
+  --color-code-text:      #f1f5f9;
+  --color-kbd-bg:         var(--color-stone-100);
+  --color-kbd-border:     var(--color-stone-300);
+
+  --grain-opacity: 0;
+}
+
+[data-md-color-scheme="slate"] {
+  --color-bg:             var(--color-ink-900);
+  --color-surface:        var(--color-ink-800);
+  --color-surface-raised: var(--color-ink-700);
+  --color-surface-sunken: var(--color-ink-950);
+  --color-border:         var(--color-ink-600);
+  --color-border-strong:  var(--color-ink-500);
+  --color-text:           #e5e7eb;
+  --color-text-muted:     var(--color-ink-200);
+  --color-text-subtle:    #8e91b0;
+  --color-text-faint:     var(--color-ink-300);
+  --color-accent:         var(--color-iris-400);
+  --color-accent-hover:   var(--color-iris-300);
+  --color-accent-soft:    color-mix(in srgb, var(--color-iris-500) 12%, transparent);
+  --color-accent-ring:    color-mix(in srgb, var(--color-iris-400) 40%, transparent);
+  --color-accent-fg-on:   var(--color-ink-900);
+  --color-code-bg:        var(--color-ink-950);
+  --color-code-surface:   var(--color-ink-700);
+  --color-code-border:    var(--color-ink-600);
+  --color-code-text:      var(--color-ink-100);
+  --color-kbd-bg:         var(--color-ink-700);
+  --color-kbd-border:     var(--color-ink-500);
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.5);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 0.35), 0 4px 16px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 8px 24px rgb(0 0 0 / 0.45);
+  --shadow-xl: 0 12px 48px rgb(0 0 0 / 0.55);
+
+  --grain-opacity: 0.025;
+}
+
+/* Map Material's core CSS variables to our semantic tokens so the entire
+   theme (navigation, search, footer) picks up the new palette. */
+:root,
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: var(--color-bg);
+  --md-default-fg-color: var(--color-text);
+  --md-default-fg-color--light: var(--color-text-muted);
+  --md-default-fg-color--lighter: var(--color-text-subtle);
+  --md-default-fg-color--lightest: var(--color-border);
+  --md-code-bg-color: var(--color-code-bg);
+  --md-code-fg-color: var(--color-code-text);
+  --md-accent-fg-color: var(--color-accent);
+  --md-accent-fg-color--transparent: var(--color-accent-soft);
+  --md-typeset-a-color: var(--color-accent);
+  --md-primary-fg-color: var(--color-bg);
+  --md-primary-fg-color--light: var(--color-surface);
+  --md-primary-fg-color--dark: var(--color-surface-sunken);
+  --md-primary-bg-color: var(--color-text);
+  --md-primary-bg-color--light: var(--color-text-muted);
+  --md-footer-bg-color: var(--color-surface);
+  --md-footer-bg-color--dark: var(--color-surface-sunken);
+  --md-footer-fg-color: var(--color-text);
+  --md-footer-fg-color--light: var(--color-text-muted);
+  --md-footer-fg-color--lighter: var(--color-text-subtle);
+}
+
+/* =====================================================
+   Base — element-level polish (unlayered to beat Material)
+   ===================================================== */
+
+  html {
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  /* Subtle grain in dark mode for depth ----------------------------- */
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: var(--grain-opacity);
+    background-image:
+      radial-gradient(circle at 1px 1px, currentColor 0.8px, transparent 0);
+    background-size: 3px 3px;
+    color: var(--color-text-subtle);
+  }
+
+  /* Typography refinements ------------------------------------------ */
+  .md-typeset {
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.6;
+    color: var(--color-text);
+    font-feature-settings: "ss01", "cv11";
+  }
+  .md-typeset h1 {
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    color: var(--color-text);
+  }
+  .md-typeset h2 {
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    margin-top: calc(var(--spacing) * 14);
+  }
+  .md-typeset h3 {
+    font-weight: 600;
+    margin-top: calc(var(--spacing) * 8);
+  }
+  .md-typeset :where(h1, h2, h3, h4) {
+    scroll-margin-top: calc(var(--spacing) * 20);
+  }
+
+  /* Numbers — tabular by default in tables, stats, and code --------- */
+  .md-typeset code,
+  .md-typeset pre,
+  .md-typeset .highlight,
+  .md-typeset table td,
+  .md-typeset table th {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Inline code ----------------------------------------------------- */
+  .md-typeset :not(pre) > code {
+    background-color: var(--color-accent-soft);
+    border: 1px solid var(--color-accent-ring);
+    color: var(--color-accent);
+    border-radius: var(--radius-sm);
+    padding: 0.1em 0.35em;
+    font-size: 0.86em;
+    font-weight: 500;
+  }
+  .md-typeset a code {
+    text-decoration: none;
+    background-color: var(--color-accent-soft);
+    border-color: var(--color-accent-ring);
+    color: var(--color-accent);
+  }
+
+  /* Code blocks (headline fix) ------------------------------------- */
+  .md-typeset .highlight {
+    position: relative;
+    background: var(--color-code-bg);
+    border: 1px solid var(--color-code-border);
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    margin: calc(var(--spacing) * 5) 0;
+    box-shadow: var(--shadow-xs);
+  }
+  .md-typeset .highlight > pre,
+  .md-typeset pre > code {
+    background: transparent !important;
+  }
+  .md-typeset .highlight > pre {
+    margin: 0;
+    padding: calc(var(--spacing) * 5) calc(var(--spacing) * 6);
+    padding-right: calc(var(--spacing) * 14);
+    overflow-x: auto;
+  }
+  .md-typeset .highlight > pre > code {
+    font-size: var(--text-sm);
+    line-height: 1.65;
+    font-family: var(--font-mono);
+    color: var(--color-code-text);
+    font-variant-ligatures: none;
+    padding: 0;
+    display: block;
+  }
+
+  /* Line numbers gutter --------------------------------------------- */
+  .md-typeset .highlight .linenodiv pre,
+  .md-typeset .highlight .linenos {
+    color: var(--color-text-subtle) !important;
+    opacity: 0.5;
+    padding-right: calc(var(--spacing) * 4);
+    margin-right: calc(var(--spacing) * 4);
+    border-right: 1px solid var(--color-code-border);
+    user-select: none;
+  }
+
+  /* Copy button — the user's specific complaint -------------------- */
+  .md-typeset .highlight .md-clipboard {
+    top: calc(var(--spacing) * 3);
+    right: calc(var(--spacing) * 3);
+    width: 32px;
+    height: 32px;
+    color: var(--color-text-muted);
+    background: color-mix(in srgb, var(--color-code-bg) 60%, transparent);
+    border: 1px solid var(--color-code-border);
+    border-radius: var(--radius-md);
+    backdrop-filter: blur(4px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      color var(--duration-fast) var(--ease-standard),
+      border-color var(--duration-fast) var(--ease-standard),
+      background-color var(--duration-fast) var(--ease-standard),
+      transform var(--duration-fast) var(--ease-standard);
+  }
+  .md-typeset .highlight:hover .md-clipboard,
+  .md-typeset .highlight .md-clipboard:focus-visible {
+    color: var(--color-accent);
+    border-color: var(--color-accent-ring);
+  }
+  .md-typeset .highlight .md-clipboard::before,
+  .md-typeset .highlight .md-clipboard::after {
+    width: 14px;
+    height: 14px;
+  }
+  .md-typeset .highlight .md-clipboard:hover {
+    background: color-mix(in srgb, var(--color-accent) 12%, var(--color-code-bg));
+    transform: scale(1.04);
+  }
+
+  /* Tabbed code blocks ---------------------------------------------- */
+  .md-typeset .tabbed-set {
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--color-border);
+    overflow: hidden;
+    background: var(--color-surface);
+    margin: calc(var(--spacing) * 5) 0;
+  }
+  .md-typeset .tabbed-labels {
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface-sunken);
+    padding: 0 calc(var(--spacing) * 2);
+    gap: calc(var(--spacing) * 1);
+  }
+  .md-typeset .tabbed-labels > label {
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: var(--color-text-muted);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    transition: color var(--duration-fast) var(--ease-standard),
+                background-color var(--duration-fast) var(--ease-standard);
+  }
+  .md-typeset .tabbed-labels > label:hover {
+    color: var(--color-text);
+    background: var(--color-surface);
+  }
+  .md-typeset .tabbed-set > input:checked + label {
+    color: var(--color-accent);
+    border-bottom-color: currentColor;
+  }
+  .md-typeset .tabbed-content .highlight {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+  }
+
+  /* Tables ---------------------------------------------------------- */
+  .md-typeset table:not([class]) {
+    font-size: var(--text-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    box-shadow: none;
+  }
+  .md-typeset table:not([class]) th {
+    background: var(--color-surface-sunken);
+    font-weight: 600;
+    color: var(--color-text);
+    letter-spacing: 0;
+  }
+  .md-typeset table:not([class]) td,
+  .md-typeset table:not([class]) th {
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+    border-color: var(--color-border);
+  }
+
+  /* Links — subtle underline, accent hover -------------------------- */
+  .md-typeset a {
+    color: var(--color-accent);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+  }
+  .md-typeset a:hover {
+    color: var(--color-accent-hover);
+    border-bottom-color: var(--color-accent-ring);
+  }
+
+  /* Focus ring — consistent everywhere ------------------------------ */
+  *:focus-visible {
+    outline: 2px solid var(--color-accent-ring);
+    outline-offset: 3px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Blockquote admonition feel -------------------------------------- */
+  .md-typeset blockquote {
+    border-left: 2px solid var(--color-accent-ring);
+    background: var(--color-accent-soft);
+    color: var(--color-text);
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 5);
+    border-radius: var(--radius-md);
+  }
+
+/* =====================================================
+   Component classes — iris-* rebuilt against tokens.
+   Intentionally NOT wrapped in @layer components because
+   CSS cascade layers lose to any unlayered rule — and
+   Material for MkDocs' own CSS is unlayered. Keeping these
+   in the unlayered cascade lets our selectors compete on
+   normal specificity and win.
+   ===================================================== */
+
+  /* ---------- Icons (Phosphor sprite) ----------
+     Scoped to svg.icon to beat Material's .md-typeset svg { height: auto } */
+
+  svg.icon {
+    display: inline-block;
+    width: 1em !important;
+    height: 1em !important;
+    flex-shrink: 0;
+    vertical-align: -0.125em;
+    fill: currentColor;
+  }
+  svg.icon-xs { width: 12px !important; height: 12px !important; }
+  svg.icon-sm { width: 14px !important; height: 14px !important; }
+  svg.icon-md { width: 18px !important; height: 18px !important; }
+  svg.icon-lg { width: 24px !important; height: 24px !important; }
+  svg.icon-xl { width: 32px !important; height: 32px !important; }
+  svg.icon-accent { color: var(--color-accent); }
+  svg.icon-muted  { color: var(--color-text-muted); }
+  svg.icon-subtle { color: var(--color-text-subtle); }
+
+  /* ---------- Hide edit pencil on landing ---------- */
+
+  .md-typeset .md-content__button[title="Edit this page"],
+  [data-home] .md-content__button {
+    display: none;
+  }
+
+  /* ---------- Widen landing content area ---------- */
+
+  body[data-md-color-scheme] .md-main__inner .md-content article {
+    max-width: none;
+  }
+
+  /* ---------- Hero ---------- */
+
+  .iris-hero {
+    position: relative;
+    text-align: center;
+    padding: calc(var(--spacing) * 20) 0 calc(var(--spacing) * 12);
+    border-bottom: 1px solid var(--color-border);
+    margin-bottom: calc(var(--spacing) * 14);
+    isolation: isolate;
+  }
+  .iris-hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        ellipse 60% 50% at 50% 35%,
+        color-mix(in srgb, var(--color-iris-500) 12%, transparent) 0%,
+        transparent 65%
+      );
+  }
+  [data-md-color-scheme="slate"] .iris-hero::before {
+    background:
+      radial-gradient(
+        ellipse 70% 55% at 50% 35%,
+        color-mix(in srgb, var(--color-iris-400) 22%, transparent) 0%,
+        transparent 70%
+      );
+  }
+
+  .iris-hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+    background: var(--color-accent-soft);
+    border: 1px solid var(--color-accent-ring);
+    border-radius: var(--radius-full);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+    margin-bottom: calc(var(--spacing) * 8);
+  }
+
+  .md-typeset .iris-hero__title,
+  h1.iris-hero__title {
+    margin: 0 0 calc(var(--spacing) * 6);
+    font-family: var(--font-display);
+    font-size: var(--text-6xl);
+    font-weight: 800;
+    letter-spacing: -0.045em;
+    line-height: 0.92;
+
+    /* Iridescent gradient — iris-500 → violet-500 → iris-400 */
+    background: linear-gradient(
+      110deg,
+      var(--color-iris-600) 0%,
+      var(--color-violet-500) 35%,
+      var(--color-iris-500) 60%,
+      var(--color-fuchsia-400) 85%,
+      var(--color-iris-400) 100%
+    );
+    background-size: 260% 100%;
+    background-position: 0% 50%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+
+    /* Subtle shimmer animation — 18s cycle, respects prefers-reduced-motion */
+    animation: iris-shimmer 18s linear infinite;
+  }
+
+  [data-md-color-scheme="slate"] .md-typeset .iris-hero__title,
+  [data-md-color-scheme="slate"] h1.iris-hero__title {
+    background: linear-gradient(
+      110deg,
+      var(--color-iris-300) 0%,
+      var(--color-violet-400) 35%,
+      var(--color-iris-400) 60%,
+      var(--color-fuchsia-400) 85%,
+      var(--color-iris-300) 100%
+    );
+    background-size: 260% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  @keyframes iris-shimmer {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .md-typeset .iris-hero__title,
+    h1.iris-hero__title {
+      animation: none;
+    }
+  }
+
+  .md-typeset .iris-hero__tagline,
+  p.iris-hero__tagline {
+    font-size: var(--text-lg);
+    color: var(--color-text-muted);
+    max-width: 640px;
+    margin: 0 auto calc(var(--spacing) * 8);
+    line-height: 1.55;
+    text-wrap: balance;
+  }
+
+  .iris-hero__install {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 5);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--color-text);
+    box-shadow: var(--shadow-sm);
+    margin-bottom: calc(var(--spacing) * 8);
+  }
+  .iris-hero__install::before {
+    content: "$";
+    color: var(--color-accent);
+    font-weight: 600;
+    user-select: none;
+  }
+
+  .iris-hero__ctas {
+    display: flex;
+    gap: calc(var(--spacing) * 3);
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .iris-hero__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 1.5);
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 5);
+    border-radius: var(--radius-lg);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    border: 1px solid transparent;
+    text-decoration: none !important;
+    border-bottom: 1px solid transparent !important;
+    transition:
+      transform var(--duration-fast) var(--ease-standard),
+      background-color var(--duration-fast) var(--ease-standard),
+      border-color var(--duration-fast) var(--ease-standard),
+      box-shadow var(--duration-fast) var(--ease-standard);
+  }
+  .iris-hero__cta--primary {
+    background: var(--color-accent);
+    color: var(--color-accent-fg-on) !important;
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 25%, transparent),
+      var(--shadow-sm);
+  }
+  .iris-hero__cta--primary:hover {
+    background: var(--color-accent-hover);
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 25%, transparent),
+      var(--shadow-md);
+  }
+  .iris-hero__cta--secondary {
+    background: var(--color-surface);
+    color: var(--color-text) !important;
+    border-color: var(--color-border);
+  }
+  .iris-hero__cta--secondary:hover {
+    border-color: var(--color-accent-ring);
+    transform: translateY(-1px);
+  }
+
+  /* ---------- Stats strip ---------- */
+
+  .iris-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    margin: calc(var(--spacing) * 12) auto 0;
+    max-width: 840px;
+    border-top: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .iris-stats__item {
+    padding: calc(var(--spacing) * 5) calc(var(--spacing) * 2);
+    text-align: center;
+    border-right: 1px solid var(--color-border);
+  }
+  .iris-stats__item:last-child { border-right: none; }
+  .iris-stats__value {
+    font-family: var(--font-mono);
+    font-size: var(--text-2xl);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    color: var(--color-accent);
+    line-height: 1;
+    margin-bottom: calc(var(--spacing) * 1.5);
+    font-variant-numeric: tabular-nums;
+  }
+  .iris-stats__label {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--color-text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    line-height: 1.3;
+  }
+
+  /* ---------- Section headers ---------- */
+
+  .iris-section-header {
+    margin: calc(var(--spacing) * 16) 0 calc(var(--spacing) * 6);
+    text-align: center;
+  }
+  .iris-section-header h2 {
+    margin: 0 0 calc(var(--spacing) * 2);
+    font-size: var(--text-3xl);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  .iris-section-header p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-base);
+    max-width: 560px;
+    margin-left: auto;
+    margin-right: auto;
+    text-wrap: balance;
+  }
+  .iris-section-header__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 1.5);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--color-text-subtle);
+    margin-bottom: calc(var(--spacing) * 2);
+  }
+
+  /* ---------- Card common (why + features) ---------- */
+
+  .iris-card {
+    padding: calc(var(--spacing) * 5) calc(var(--spacing) * 5);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    transition:
+      border-color var(--duration-fast) var(--ease-standard),
+      transform var(--duration-fast) var(--ease-standard),
+      box-shadow var(--duration-fast) var(--ease-standard);
+  }
+  .iris-card:hover {
+    border-color: var(--color-accent-ring);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+  .iris-card h3 {
+    margin: 0 0 calc(var(--spacing) * 2);
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--color-text);
+    display: flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+  }
+  .iris-card h3 .icon {
+    color: var(--color-accent);
+  }
+  .iris-card p {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    line-height: 1.6;
+  }
+  .iris-card a,
+  .iris-card h3 a {
+    color: inherit;
+    border-bottom: none;
+    text-decoration: none;
+  }
+
+  /* Why cards — accent-colored heading for contrast ---------------- */
+  .iris-why {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: calc(var(--spacing) * 4);
+    margin: calc(var(--spacing) * 6) 0 calc(var(--spacing) * 12);
+  }
+  .iris-why__card {
+    padding: calc(var(--spacing) * 5) calc(var(--spacing) * 5);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    transition:
+      border-color var(--duration-fast) var(--ease-standard),
+      transform var(--duration-fast) var(--ease-standard),
+      box-shadow var(--duration-fast) var(--ease-standard);
+  }
+  .iris-why__card:hover {
+    border-color: var(--color-accent-ring);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+  .iris-why__card h3 {
+    margin: 0 0 calc(var(--spacing) * 2);
+    font-size: var(--text-base);
+    font-weight: 650;
+    letter-spacing: -0.005em;
+    color: var(--color-accent);
+    display: flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+  }
+  .iris-why__card h3 .icon {
+    color: var(--color-accent);
+  }
+  .iris-why__card p {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    line-height: 1.6;
+  }
+
+  /* Feature cards (same visual spec) ------------------------------- */
+  .iris-features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: calc(var(--spacing) * 3);
+    margin: calc(var(--spacing) * 6) 0 calc(var(--spacing) * 12);
+  }
+  .iris-features__card {
+    padding: calc(var(--spacing) * 5) calc(var(--spacing) * 5);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    transition:
+      border-color var(--duration-fast) var(--ease-standard),
+      transform var(--duration-fast) var(--ease-standard),
+      box-shadow var(--duration-fast) var(--ease-standard);
+  }
+  .iris-features__card:hover {
+    border-color: var(--color-accent-ring);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+  .iris-features__card h3 {
+    margin: 0 0 calc(var(--spacing) * 2);
+    font-size: var(--text-base);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    color: var(--color-text);
+  }
+  .iris-features__card h3 .icon {
+    color: var(--color-accent);
+  }
+  .iris-features__card h3 a {
+    color: inherit;
+    border: none;
+    text-decoration: none;
+  }
+  .iris-features__card h3 a:hover {
+    color: var(--color-accent);
+  }
+  .iris-features__card p {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    line-height: 1.6;
+  }
+
+  /* ---------- Diagram wrappers (D2) ---------- */
+
+  .iris-diagram {
+    margin: calc(var(--spacing) * 4) auto calc(var(--spacing) * 12);
+    max-width: 900px;
+    padding: calc(var(--spacing) * 6);
+    background: var(--color-surface-sunken);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-2xl);
+    box-shadow: var(--shadow-xs);
+  }
+  .iris-diagram .d2,
+  .iris-diagram svg {
+    max-width: 100%;
+    height: auto !important;
+    display: block;
+    margin: 0 auto;
+  }
+
+  /* ---------- Session trace (terminal-style) ---------- */
+
+  .iris-trace {
+    margin: calc(var(--spacing) * 4) auto calc(var(--spacing) * 12);
+    max-width: 860px;
+  }
+  .iris-trace pre {
+    position: relative;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-code-bg) 100%, transparent) 0%,
+      color-mix(in srgb, var(--color-code-bg) 90%, var(--color-accent) 4%) 100%
+    );
+    border: 1px solid var(--color-code-border);
+    border-radius: var(--radius-xl);
+    padding: calc(var(--spacing) * 10) calc(var(--spacing) * 6) calc(var(--spacing) * 6) !important;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--color-code-text);
+    line-height: 1.7;
+    overflow-x: auto;
+    box-shadow: var(--shadow-md);
+  }
+  .iris-trace pre::before {
+    content: "";
+    position: absolute;
+    top: 12px;
+    left: 16px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #ff5f57;
+    box-shadow:
+      16px 0 0 #febc2e,
+      32px 0 0 #28c840;
+  }
+  .iris-trace pre::after {
+    content: "iris session";
+    position: absolute;
+    top: 8px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-text-subtle);
+    letter-spacing: 0.05em;
+  }
+  .iris-trace code {
+    background: none !important;
+    border: none !important;
+    color: inherit !important;
+    padding: 0 !important;
+    font-size: inherit;
+  }
+
+  /* ---------- Language chips ---------- */
+
+  .iris-languages {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: calc(var(--spacing) * 2);
+    margin: calc(var(--spacing) * 6) auto calc(var(--spacing) * 12);
+    max-width: 780px;
+  }
+  .md-typeset .iris-lang {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 1.5);
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--color-text);
+    transition:
+      border-color var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard),
+      transform var(--duration-fast) var(--ease-standard);
+  }
+  .md-typeset .iris-lang::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-accent-ring);
+    flex-shrink: 0;
+    transition: background var(--duration-fast) var(--ease-standard);
+  }
+  .md-typeset .iris-lang:hover {
+    border-color: var(--color-accent-ring);
+    color: var(--color-accent);
+    transform: translateY(-1px);
+  }
+  .md-typeset .iris-lang:hover::before {
+    background: var(--color-accent);
+  }
+
+  /* ---------- Comparison table ---------- */
+
+  .iris-compare {
+    margin: calc(var(--spacing) * 4) auto calc(var(--spacing) * 12);
+    max-width: 900px;
+    overflow-x: auto;
+  }
+  .md-typeset .iris-compare table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: var(--text-sm);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    box-shadow: var(--shadow-xs);
+  }
+  .md-typeset .iris-compare th,
+  .md-typeset .iris-compare td {
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+    border-bottom: 1px solid var(--color-border);
+    border-right: none;
+  }
+  .md-typeset .iris-compare tr:last-child th,
+  .md-typeset .iris-compare tr:last-child td {
+    border-bottom: none;
+  }
+  .md-typeset .iris-compare th {
+    background: var(--color-surface-sunken);
+    font-weight: 650;
+    text-align: center;
+    font-size: var(--text-sm);
+    color: var(--color-text);
+  }
+  .md-typeset .iris-compare th:first-child { text-align: left; }
+  .md-typeset .iris-compare td:first-child {
+    font-weight: 500;
+    color: var(--color-text);
+    text-align: left;
+  }
+  .md-typeset .iris-compare th:last-child,
+  .md-typeset .iris-compare td:last-child {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+
+  /* ---------- Documentation quick-link table (index "Documentation" section) ---------- */
+
+  .md-typeset .iris-doclinks table {
+    border: none;
+    box-shadow: none;
+    background: transparent;
+  }
+  .md-typeset .iris-doclinks table td {
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+
+  /* ---------- Back-compat: .iris-bridge-diagram (legacy ASCII wrapper) ---------- */
+
+  .iris-bridge-diagram {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.55;
+    background: var(--color-code-bg);
+    color: var(--color-code-text);
+    border: 1px solid var(--color-code-border);
+    border-radius: var(--radius-xl);
+    padding: calc(var(--spacing) * 5);
+    overflow-x: auto;
+    margin: calc(var(--spacing) * 5) auto;
+    max-width: 860px;
+  }
+
+/* =====================================================
+   Utility helpers (unlayered for same reason)
+   ===================================================== */
+
+.tabular { font-variant-numeric: tabular-nums; }
+.text-muted { color: var(--color-text-muted); }
+.text-subtle { color: var(--color-text-subtle); }
+.text-accent { color: var(--color-accent); }
+
+/* =====================================================
+   Responsive
+   ===================================================== */
+
+@media (max-width: 768px) {
+  .iris-hero {
+    padding: calc(var(--spacing) * 12) 0 calc(var(--spacing) * 8);
+  }
+  .md-typeset .iris-hero__title,
+  h1.iris-hero__title {
+    font-size: var(--text-4xl);
+  }
+  .md-typeset .iris-hero__tagline,
+  p.iris-hero__tagline {
+    font-size: var(--text-base);
+    padding: 0 calc(var(--spacing) * 4);
+  }
+  .iris-hero__install {
+    font-size: var(--text-xs);
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  }
+  .iris-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .iris-stats__item:nth-child(2) { border-right: none; }
+  .iris-stats__item:nth-child(-n+2) {
+    border-bottom: 1px solid var(--color-border);
+  }
+  .iris-trace pre {
+    font-size: var(--text-xs);
+    padding: calc(var(--spacing) * 9) calc(var(--spacing) * 4) calc(var(--spacing) * 4) !important;
+  }
+  .iris-section-header h2 {
+    font-size: var(--text-2xl);
+  }
+}

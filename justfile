@@ -76,13 +76,25 @@ test-backend-equiv:
 docs-deps:
     pip install -r docs/requirements.txt
 
-# Build MkDocs documentation site
-docs:
+# Compile Tailwind v4 CSS (tokens.css → extra.css)
+docs-css:
+    tailwindcss -i docs/styles/tokens.css -o docs/src/stylesheets/extra.css --minify
+
+# Watch Tailwind source, recompile on changes (run alongside docs-serve)
+docs-css-watch:
+    tailwindcss -i docs/styles/tokens.css -o docs/src/stylesheets/extra.css --watch
+
+# Build MkDocs documentation site (Tailwind must be compiled first)
+docs: docs-css
     cd docs && mkdocs build --strict
 
 # Serve documentation locally with live reload
-docs-serve:
+docs-serve: docs-css
     cd docs && mkdocs serve --open
+
+# Rebuild Phosphor icon sprite from phosphor-icons/core
+docs-icons:
+    bash scripts/build-icon-sprite.sh
 
 # Build Docker image
 docker-build:
