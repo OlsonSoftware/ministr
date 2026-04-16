@@ -1,6 +1,6 @@
 [book]
 title = "iris"
-authors = ["Alrik"]
+authors = ["Alrik Olson"]
 description = "A context cache controller for LLM agents"
 language = "en"
 src = "src"

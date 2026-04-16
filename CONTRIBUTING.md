@@ -1,6 +1,8 @@
 # Contributing to iris
 
-Thank you for your interest in contributing to iris! This guide covers everything you need to get started.
+Contributions are welcome — whether it's a bug fix, new language grammar, documentation improvement, or a new feature. This guide covers everything you need to get started.
+
+If you're looking for a place to begin, check the [issues labeled `good first issue`](https://github.com/alrik/iris-rs/labels/good%20first%20issue).
 
 ## Development setup
 
