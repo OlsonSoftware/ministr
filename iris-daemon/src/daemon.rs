@@ -61,6 +61,10 @@ pub fn router(state: AppState) -> Router {
             get(session_budget),
         )
         .route(
+            "/api/v1/corpora/{id}/sessions/{sid}/read/{section}",
+            get(session_read_section),
+        )
+        .route(
             "/api/v1/corpora/{id}/sessions/{sid}/evicted",
             post(evict_content),
         )
@@ -342,6 +346,79 @@ async fn read_section(
 
     match read_result {
         Ok(detail) => {
+            // Clone Arcs before dropping the registry guard.
+            let storage = Arc::clone(&handle.storage);
+            let prefetch = Arc::clone(&handle.prefetch);
+            let section_clone = section.clone();
+            drop(guard);
+
+            // Spawn background prefetch (don't block the response).
+            tokio::spawn(async move {
+                trigger_prefetch(&section_clone, &storage, &prefetch).await;
+            });
+            Json(convert::section_detail(detail)).into_response()
+        }
+        Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+    }
+}
+
+/// Session-aware read: records delivery in the session shadow + budget tracker.
+///
+/// Used by the MCP proxy so that `iris_budget` reflects actual token usage.
+async fn session_read_section(
+    State(state): State<AppState>,
+    Path((id, sid, section)): Path<(String, String, String)>,
+) -> impl IntoResponse {
+    let guard = get_corpus!(&state, &id);
+    let handle = &guard[&id];
+
+    // Check prefetch cache for a warm hit.
+    let warm_detail = {
+        let mut prefetch = handle.prefetch.lock().await;
+        prefetch
+            .try_serve(&section)
+            .map(|entry| iris_core::service::SectionDetail {
+                section_id: entry.content_id.clone(),
+                heading_path: entry.heading_path.clone().unwrap_or_default(),
+                text: entry.text.clone(),
+                summary: entry.summary.clone(),
+                claims_available: entry.claims_available,
+            })
+    };
+
+    let read_result = if let Some(detail) = warm_detail {
+        tracing::debug!(section_id = %section, "daemon session_read: warm cache hit");
+        Ok(detail)
+    } else {
+        handle.service.read_section(&section).await
+    };
+
+    match read_result {
+        Ok(detail) => {
+            // Record delivery in the session shadow + budget tracker.
+            {
+                let token_count = iris_core::token::count_tokens(&detail.text);
+                let content_id = iris_core::types::ContentId(section.clone());
+                let content_hash = {
+                    let mut hasher = Sha256::new();
+                    hasher.update(detail.text.as_bytes());
+                    format!("{:x}", hasher.finalize())
+                };
+                let mut sessions = handle.sessions.lock().await;
+                // Get or create the session — the proxy may hold a stale
+                // session ID from before a daemon restart.
+                let entry = sessions.get_or_create(&sid, None, AccessMode::ReadWrite);
+                let turn = entry.session.current_turn() + 1;
+                entry.session.record_delivery(
+                    &content_id,
+                    iris_core::types::Resolution::Section,
+                    token_count,
+                    turn,
+                    content_hash,
+                );
+                let _ = entry.budget.record_tokens(&section, token_count);
+            }
+
             // Clone Arcs before dropping the registry guard.
             let storage = Arc::clone(&handle.storage);
             let prefetch = Arc::clone(&handle.prefetch);

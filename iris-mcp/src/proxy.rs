@@ -344,9 +344,10 @@ impl ProxyServer {
         Parameters(params): Parameters<ReadParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
         let resp = self
             .client
-            .read_section(&cid, &params.section_id)
+            .session_read_section(&cid, &sid, &params.section_id)
             .await
             .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
