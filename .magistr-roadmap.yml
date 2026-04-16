@@ -1722,6 +1722,31 @@ phases:
     checked: false
   - text: 'Freemium model: free for local use + 1 cloud corpus, paid for teams + unlimited cloud corpora + priority embedding'
     checked: false
+- id: EDIT0
+  name: Edit Infrastructure & Core Types
+  tagline: Foundation types and storage layer for structural code editing
+  status: pending
+  problem: iris is read-only — it can navigate and understand code but cannot modify it. Agents must fall back to fragile text-level Edit tools that break on formatting changes, miss callers, and produce silent regressions.
+  solution: 'Extend iris-core with edit primitives: an EditOperation enum, a SymbolLocator that resolves symbols to byte ranges via the existing SymbolRecord/AstParser infrastructure, and an EditResult type that captures before/after state. Reuse GrammarRegistry and AstParser — no new parsers needed.'
+  tasks:
+  - text: 'Define EditOperation enum in iris-core/src/edit/types.rs — variants: ReplaceSymbolBody { symbol_id, new_body }, InsertRelative { symbol_id, position: Before|After|InsideStart|InsideEnd, code }, DeleteSymbol { symbol_id }, ReplaceRange { file_path, byte_range, new_text }. Derive Debug, Clone. Each variant carries enough info to be self-describing in diffs.'
+    checked: false
+  - text: Define InsertPosition enum (Before, After, InsideStart, InsideEnd) in iris-core/src/edit/types.rs — Before/After insert sibling code adjacent to a symbol; InsideStart/InsideEnd insert within a symbol's body (e.g., add method at end of impl block). Single enum, used by InsertRelative and future refactoring operations.
+    checked: false
+  - text: 'Build SymbolLocator in iris-core/src/edit/locator.rs — resolves a SymbolId to a concrete byte range + file path. Two resolution strategies: (1) fast path via SymbolRecord from SQLite (line_start/line_end already stored), (2) precise path via AstParser re-parse to get exact byte_range from tree-sitter. Fast path for line-level ops, precise path for byte-level ops. Reuses existing SqliteStorage::get_symbol and AstParser::parse.'
+    checked: false
+  - text: 'Define EditResult struct — fields: file_path, original_content, modified_content, unified_diff (String), affected_symbols (Vec<SymbolId>). The unified_diff is pre-computed so the agent sees exactly what changed without needing a separate diff tool. affected_symbols lists symbols whose byte ranges shifted, enabling targeted coherence re-indexing.'
+    checked: false
+  - text: 'Define EditError enum with thiserror — variants: SymbolNotFound(SymbolId), AmbiguousSymbol { query, candidates: Vec<SymbolId> }, ParseError(ParseError), IoError(io::Error), FileNotInCorpus(PathBuf), InvalidByteRange, TransactionNotFound(String), TransactionConflict { file_path, txn_id }. Follows iris-core convention of one error enum per module.'
+    checked: false
+  - text: Add iris-core/src/edit/mod.rs module — re-export types (EditOperation, InsertPosition, EditResult, EditError), locator (SymbolLocator). Register as `pub mod edit` in iris-core/src/lib.rs. No service logic yet — this phase is pure types + resolution.
+    checked: false
+  - text: 'Add byte_range (start_byte, end_byte) columns to the symbols table in SQLite schema — currently only line_start/line_end are stored. Byte ranges enable precise tree-sitter-level editing without re-parsing. Migration: populate from existing indexed files during next coherence pass. Update SymbolRecord struct, SqliteStorage insert/query methods, and ingestion pipeline to persist byte offsets from Symbol::byte_range.'
+    checked: false
+  - text: 'Build unified diff generator utility in iris-core/src/edit/diff.rs — takes original and modified content strings, produces a unified diff string (with context lines, @@-hunks). Use the `similar` crate (already popular in the Rust ecosystem, MIT licensed) for the diff algorithm. Single function: fn unified_diff(path: &str, original: &str, modified: &str, context_lines: usize) -> String.'
+    checked: false
+  - text: 'Write unit tests for SymbolLocator — test cases: resolve known symbol by ID, resolve ambiguous name (two functions named `new` in different modules), symbol not found, stale byte range (file changed since indexing — fall back to re-parse). Use tempdir fixtures with known Rust/Python/TypeScript source files.'
+    checked: false
 - id: TRAY4
   name: Tray App V2
   tagline: Desktop-class project management for iris
@@ -1745,3 +1770,152 @@ phases:
     checked: true
   - text: macOS PKG installer with code signing, notarization, and custom distribution UI
     checked: true
+- id: EDIT1
+  name: Symbol-Level Editing Service
+  tagline: Replace, insert, and delete code at the symbol level — not the line level
+  status: pending
+  problem: Text-level edits (replace lines 47-92) are fragile — they break when comments, formatting, or other symbols shift line numbers. Symbol-level addressing (replace body of UserService::authenticate) is robust to all of these.
+  solution: Build an EditService in iris-core/src/service/edit.rs that composes SymbolLocator + AstParser + file I/O. Implements replace_symbol_body, insert_relative_to_symbol, and delete_symbol. Each operation re-parses with tree-sitter to find exact byte ranges, applies the edit, and returns a unified diff. Reuses existing Symbol, SymbolRecord, GrammarRegistry — zero duplication.
+  depends_on:
+  - EDIT0
+  tasks:
+  - text: 'Build EditService struct in iris-core/src/service/edit.rs — constructor takes Arc<SqliteStorage> + GrammarRegistry reference. Single responsibility: execute EditOperations against the filesystem. Composes SymbolLocator for resolution, AstParser for re-parsing, and the diff utility for output. Does NOT own file I/O directly — delegates to a FileEditor trait for testability.'
+    checked: false
+  - text: 'Define FileEditor trait in iris-core/src/edit/file_editor.rs — methods: read_file(path) -> Result<String>, write_file(path, content) -> Result<()>. Production impl wraps tokio::fs. Test impl uses in-memory HashMap<PathBuf, String>. This interface enables the transaction layer (EDIT3) to swap in an overlay-backed editor without changing EditService. Single trait, two impls — DRY.'
+    checked: false
+  - text: 'Implement replace_symbol_body on EditService — flow: (1) SymbolLocator resolves symbol_id to file_path + byte_range, (2) read file content, (3) re-parse with AstParser to get fresh tree, (4) walk tree to find the symbol node matching the stored name/kind at the expected location, (5) extract the body node (function_body, block, etc.) using tree-sitter field queries, (6) splice new_body into the byte range, (7) produce EditResult with unified diff. Preserves signature, doc comments, and decorators — only the body changes.'
+    checked: false
+  - text: 'Implement body node extraction per language — helper fn find_body_range(node: &tree_sitter::Node, lang: &str) -> Option<Range<usize>>. For Rust: function_item → body field. For Python: function_definition → block field. For TypeScript/JavaScript: function_declaration → statement_block field. For Go: function_declaration → block field. Use the LanguageRefinement trait to dispatch. Add a default fallback that uses the last child of type block/body/compound_statement.'
+    checked: false
+  - text: 'Implement insert_relative_to_symbol on EditService — flow: (1) resolve symbol_id to byte_range, (2) compute insertion point based on InsertPosition: Before → byte before symbol start (after any preceding whitespace/newline), After → byte after symbol end, InsideStart → first byte inside body, InsideEnd → last byte before closing brace/dedent, (3) splice code at insertion point with appropriate indentation, (4) produce EditResult. Indentation detection: measure the symbol''s own indentation and apply it to inserted code.'
+    checked: false
+  - text: 'Implement delete_symbol on EditService — flow: (1) resolve symbol_id, (2) determine deletion range including leading whitespace/blank lines and any doc comments/decorators attached above the symbol (use tree-sitter''s prev_sibling and parent to find the full extent), (3) remove the byte range, (4) clean up double blank lines at the deletion site, (5) produce EditResult. Return affected_symbols for any symbols whose line numbers shifted.'
+    checked: false
+  - text: Implement replace_range on EditService — the escape hatch for non-symbol edits (config files, JSON, prose). Simple byte-range splice with no AST awareness. Validates that byte_range is within file bounds. Produces EditResult with diff. This handles the cases where tree-sitter grammars don't exist.
+    checked: false
+  - text: Integrate edits with coherence engine — after any edit is flushed to disk, trigger CoherenceEngine::reindex_file for the modified file. This updates the symbol index, section content, and embeddings so subsequent iris_survey/iris_symbols/iris_references calls reflect the edit. Reuse the existing coherence infrastructure — no new watcher needed, just a direct reindex call.
+    checked: false
+  - text: 'Write comprehensive tests for EditService — test matrix: { replace_body, insert_before, insert_after, insert_inside_start, insert_inside_end, delete } × { Rust, Python, TypeScript }. Verify: correct byte splicing, preserved signatures, proper indentation, accurate diffs, no corruption of surrounding code. Use tempdir fixtures with multi-symbol source files. Test edge cases: empty body, single-line function, nested symbols, symbols at file start/end.'
+    checked: false
+- id: EDIT2
+  name: Structural Search & Replace (ast-grep)
+  tagline: Pattern-based code search and rewrite using AST structure, not regex
+  status: pending
+  problem: 'Regex find-and-replace is syntax-unaware: it can''t distinguish a function call from a variable name, can''t match nested structures, and produces false positives on comments and strings. Structural patterns match the AST directly.'
+  solution: Integrate ast-grep-core as a Rust dependency. Build an AstGrepService that wraps ast-grep's Pattern/Matcher/Replacer with iris's GrammarRegistry for language detection. Expose ast_search (find matches) and ast_rewrite (apply structural replacements) through the service layer. Reuses existing tree-sitter grammars — ast-grep-core operates on the same tree-sitter trees iris already builds.
+  depends_on:
+  - EDIT0
+  tasks:
+  - text: Add ast-grep-core dependency to iris-core/Cargo.toml — version 0.42+. ast-grep-core is a pure Rust library that operates on tree-sitter trees. It shares the same tree-sitter dependency iris already uses, so no grammar duplication. Feature-gate behind `structural-edit` feature flag so it's optional for minimal builds.
+    checked: false
+  - text: Build GrammarBridge in iris-core/src/edit/ast_grep_bridge.rs — adapter that maps iris's GrammarRegistry languages to ast-grep-core's Language trait. For each file extension, produce the ast-grep Language impl using the same tree-sitter grammar iris already loaded. This avoids loading grammars twice — single source of truth in GrammarRegistry, ast-grep consumes the same Language pointers.
+    checked: false
+  - text: 'Implement ast_search in iris-core/src/service/structural.rs — fn ast_search(pattern: &str, language: Option<&str>, paths: &[PathBuf], limit: usize) -> Result<Vec<AstMatch>>. Uses ast-grep-core''s Pattern + Matcher to find structural matches across files. AstMatch contains: file_path, matched_text, byte_range, line_range, and captured metavariables (HashMap<String, String>). Language auto-detected from file extension via GrammarRegistry if not specified.'
+    checked: false
+  - text: 'Implement ast_rewrite in iris-core/src/service/structural.rs — fn ast_rewrite(pattern: &str, rewrite: &str, language: Option<&str>, paths: &[PathBuf]) -> Result<Vec<EditResult>>. Uses ast-grep-core''s replacer module to apply structural find-and-replace. Each matched file produces an EditResult with the unified diff. Metavariables in the rewrite template ($VAR, $$$ARGS) are expanded from match captures. Returns all EditResults so the agent can preview before committing.'
+    checked: false
+  - text: Build StructuralSearchService struct — wraps ast_search/ast_rewrite with corpus-awareness. Automatically scopes file traversal to indexed corpus paths (from SqliteStorage::list_corpus_roots). Filters by language if specified. Respects .gitignore via the existing ignore patterns in the ingestion pipeline. Single struct composing GrammarBridge + corpus root resolution.
+    checked: false
+  - text: 'Write tests for structural search — test ast_search with patterns: `fn $NAME($$$PARAMS) { $$$BODY }` finds all Rust functions, `console.log($ARG)` finds JS log calls, `def $NAME(self, $$$ARGS):` finds Python methods. Test ast_rewrite: rename pattern `unwrap()` → `expect("reason")` across Rust files. Test metavariable capture and expansion. Test language auto-detection. Use tempdir fixtures.'
+    checked: false
+- id: EDIT3
+  name: Edit Transaction Layer
+  tagline: Propose, preview, and commit/abandon multi-step edits atomically
+  status: pending
+  problem: Agents make edits speculatively — they try something, realize it's wrong, and thrash. Without transactions, each edit hits disk immediately and there's no way to see the aggregate diff or detect regressions before committing.
+  solution: Build a TransactionManager in iris-core that maintains in-memory file overlays keyed by transaction ID. Edits stage into the overlay instead of disk. preview_transaction produces a unified diff across all touched files. commit_transaction flushes to disk and triggers coherence re-indexing. abandon_transaction discards. This is the single biggest leverage point over every existing tool.
+  depends_on:
+  - EDIT1
+  - EDIT2
+  tasks:
+  - text: 'Build TransactionManager in iris-core/src/edit/transaction.rs — manages concurrent edit transactions. State: HashMap<TransactionId, Transaction>. TransactionId is a UUID string. Transaction contains: created_at timestamp, overlay (HashMap<PathBuf, FileOverlay>), and status enum (Active, Previewed, Committed, Abandoned). Thread-safe via Arc<Mutex<...>>. Transactions auto-expire after configurable TTL (default 10 minutes) to prevent resource leaks from abandoned sessions.'
+    checked: false
+  - text: 'Define FileOverlay struct — fields: original_content (String, snapshotted at first touch), modified_content (String, accumulates edits). Methods: apply_edit(byte_range, new_text) for sequential edits within the same file, unified_diff() for on-demand diff generation. The overlay reads from disk on first access, then all subsequent edits operate on the in-memory copy. No disk writes until commit.'
+    checked: false
+  - text: 'Implement OverlayFileEditor — an impl of the FileEditor trait that reads from the transaction overlay first, falling back to disk for untouched files. Writes go to the overlay, not disk. This lets EditService operate identically whether inside or outside a transaction — the only difference is which FileEditor impl is injected. Open/Closed principle: EditService is closed for modification but open for extension via the FileEditor trait.'
+    checked: false
+  - text: Implement begin_transaction on TransactionManager — creates a new Transaction with a fresh UUID, returns the TransactionId. The agent uses this ID for all subsequent edits in the transaction. No files are touched at this point — it's a pure state allocation.
+    checked: false
+  - text: 'Implement preview_transaction — collects unified diffs from all FileOverlays in the transaction, concatenates into a multi-file diff, and returns a TransactionPreview { files_changed: usize, total_additions: usize, total_deletions: usize, unified_diff: String }. This is the critical agent UX moment: the agent sees the aggregate effect of all edits before deciding to commit or abandon.'
+    checked: false
+  - text: 'Implement commit_transaction — flushes all FileOverlay modified_content to disk via tokio::fs::write. After all writes succeed, triggers coherence reindex for each modified file. Removes the transaction from the manager. Returns CommitResult { files_written: Vec<PathBuf>, reindex_triggered: bool }. If any write fails, none are committed (atomic via write-to-temp + rename pattern).'
+    checked: false
+  - text: 'Implement abandon_transaction — drops the Transaction and all its overlays. No disk writes. Returns Ok(()) or TransactionNotFound. Simple but important: the agent can safely explore edit strategies without fear of leaving the codebase in a broken state.'
+    checked: false
+  - text: 'Implement conflict detection — when two transactions touch the same file, detect on preview/commit. ConflictStrategy enum: Reject (default — return TransactionConflict error), LastWriteWins (for advanced users). Check: compare the original_content snapshot in the overlay with current disk content — if disk changed since the snapshot was taken, the file was modified externally and the edit may be stale.'
+    checked: false
+  - text: Write tests for TransactionManager — test begin/edit/preview/commit flow, begin/edit/abandon flow, multi-file transactions, conflict detection (external modification between begin and commit), TTL expiration, concurrent transactions on disjoint files. Verify atomic commit (partial failure rolls back). Use in-memory FileEditor for fast tests.
+    checked: false
+- id: EDIT4
+  name: MCP Edit Tools
+  tagline: Expose structural editing as MCP tools for any agent to use
+  status: pending
+  problem: The editing capabilities exist in iris-core but aren't accessible to MCP clients. Need tool definitions with proper schemas, input validation, and response formatting that follow iris's existing ToolResponse pattern.
+  solution: 'Add MCP tool handlers in iris-mcp for: iris_replace_symbol, iris_insert_code, iris_delete_symbol, iris_ast_search, iris_ast_rewrite, iris_edit_begin, iris_edit_preview, iris_edit_commit, iris_edit_abandon. Follow the existing macro-based tool registration pattern (tool_router). Add corresponding API types in iris-api and daemon endpoints in iris-daemon. Prune edit tools when corpus has no code files (reuse prune_tools pattern).'
+  depends_on:
+  - EDIT3
+  tasks:
+  - text: 'Define API types in iris-api/src/edit.rs — request/response structs for all edit operations: ReplaceSymbolRequest { symbol_id, new_body, transaction_id? }, InsertCodeRequest { symbol_id, position, code, transaction_id? }, DeleteSymbolRequest { symbol_id, transaction_id? }, AstSearchRequest { pattern, language?, paths?, limit? }, AstRewriteRequest { pattern, rewrite, language?, paths?, transaction_id? }, BeginTransactionResponse { transaction_id }, PreviewTransactionRequest { transaction_id }, CommitTransactionRequest { transaction_id }, EditResponse { diff, files_changed, affected_symbols }. All derive Serialize/Deserialize/JsonSchema.'
+    checked: false
+  - text: Add daemon endpoints in iris-daemon — POST /edit/replace-symbol, POST /edit/insert-code, POST /edit/delete-symbol, POST /edit/ast-search, POST /edit/ast-rewrite, POST /edit/begin, POST /edit/preview, POST /edit/commit, POST /edit/abandon. Follow the existing router pattern in daemon::router(). Wire to EditService and TransactionManager via AppState. Add corresponding DaemonClient methods in iris-api/src/client.rs.
+    checked: false
+  - text: 'Implement iris_replace_symbol MCP tool handler — #[tool] macro on IrisServer. Parameters: symbol_id (string, required), new_body (string, required), transaction_id (string, optional). When transaction_id is provided, stages the edit; otherwise applies immediately to disk. Returns ToolResponse<EditResponse> with the unified diff and budget_status. Tool description guides agents: "Replace the body of a named symbol (function, method, struct). Preserves signature, doc comments, and decorators."'
+    checked: false
+  - text: 'Implement iris_insert_code MCP tool handler — parameters: symbol_id (string, required), position (enum: before|after|inside_start|inside_end, required), code (string, required), transaction_id (string, optional). Tool description: "Insert code relative to a named symbol. Use ''inside_end'' to add a method to a class/impl block, ''after'' to add a sibling function."'
+    checked: false
+  - text: 'Implement iris_delete_symbol MCP tool handler — parameters: symbol_id (string, required), transaction_id (string, optional). Includes a safety check: calls iris_references internally and warns if the symbol has active callers. Tool description: "Delete a symbol and its doc comments/decorators. Warning: check iris_references first to ensure nothing depends on this symbol."'
+    checked: false
+  - text: 'Implement iris_ast_search MCP tool handler — parameters: pattern (string, required), language (string, optional), limit (number, optional, default 20). Returns matches with file path, matched text, line range, and captured metavariables. Tool description: "Structural code search using AST patterns. Use $VAR for single-node wildcards, $$$ARGS for multi-node wildcards. Language auto-detected from files."'
+    checked: false
+  - text: 'Implement iris_ast_rewrite MCP tool handler — parameters: pattern (string, required), rewrite (string, required), language (string, optional), transaction_id (string, optional). Returns aggregate EditResponse with diffs for all modified files. Tool description: "Structural find-and-replace across the codebase. Metavariables captured in pattern are expanded in rewrite template."'
+    checked: false
+  - text: 'Implement iris_edit_begin / iris_edit_preview / iris_edit_commit / iris_edit_abandon MCP tool handlers — thin wrappers around TransactionManager. iris_edit_begin returns { transaction_id }. iris_edit_preview returns { diff, files_changed, additions, deletions }. iris_edit_commit returns { files_written, reindex_triggered }. iris_edit_abandon returns { status: "abandoned" }. Tool descriptions explain the propose → preview → commit/abandon workflow.'
+    checked: false
+  - text: Update prune_tools to conditionally expose edit tools — edit tools should only appear when the corpus contains code files (reuse the existing has_code_files_in_dir check). Transaction tools always appear if any edit tool is present. Update custom_instructions generation to include edit tool documentation when tools are active. This keeps the tool schema lean for documentation-only corpora.
+    checked: false
+  - text: Add output schemas for all edit tools — follow the existing tool_output_schema<T> pattern in iris-mcp/src/server/types.rs. Derive JsonSchema on all response types. This enables agents to understand the response structure from the tool schema alone, reducing discovery round-trips.
+    checked: false
+- id: EDIT5
+  name: Post-Edit Verification & Diagnostics
+  tagline: Every edit returns what it broke — diagnostics delta, not just success
+  status: pending
+  problem: An edit that returns "success" tells the agent nothing about whether it introduced errors. The agent needs pre/post diagnostics to self-correct without another round trip.
+  solution: Build a VerificationService that runs configurable check commands (cargo check, tsc --noEmit, etc.) before and after edits, diff the diagnostics, and include the delta in the edit response. Integrate with the transaction layer so preview_transaction includes diagnostics. Store check commands per-corpus in .iris.toml configuration. For Rust projects, parse cargo check JSON output; for others, use generic line-based diagnostic parsing.
+  depends_on:
+  - EDIT4
+  tasks:
+  - text: 'Define DiagnosticConfig in iris-core/src/edit/diagnostics.rs — per-language check commands loaded from .iris.toml: [diagnostics] section with entries like rust = "cargo check --message-format=json", typescript = "tsc --noEmit", python = "mypy --no-error-summary". Fallback: auto-detect from project files (Cargo.toml → cargo check, tsconfig.json → tsc, pyproject.toml → mypy/ruff). Single config struct, language-keyed HashMap.'
+    checked: false
+  - text: 'Build DiagnosticRunner in iris-core/src/edit/diagnostics.rs — async fn run_check(config: &DiagnosticConfig, corpus_root: &Path) -> Result<Vec<Diagnostic>>. Spawns the check command via tokio::process::Command, captures stderr/stdout, parses output into Vec<Diagnostic> where Diagnostic { file_path, line, column, severity: Error|Warning, message }. Rust JSON output parsed structurally; others parsed via generic "file:line:col: message" regex pattern.'
+    checked: false
+  - text: 'Build DiagnosticDiff utility — fn diff_diagnostics(before: &[Diagnostic], after: &[Diagnostic]) -> DiagnosticsDelta { introduced: Vec<Diagnostic>, resolved: Vec<Diagnostic> }. Compares by (file_path, line, message) tuple. This tells the agent exactly what the edit broke (introduced) and what it fixed (resolved). Include in TransactionPreview response.'
+    checked: false
+  - text: 'Integrate diagnostics into preview_transaction — when the agent calls iris_edit_preview, optionally run the diagnostic check before and after applying the overlay to a temp directory, then include the DiagnosticsDelta in the PreviewResponse. Gate behind a `check: bool` parameter (default false) since running cargo check is expensive. When true, the preview tells the agent "this edit introduces 3 new errors" before they commit.'
+    checked: false
+  - text: 'Implement iris_diagnostics MCP tool — standalone tool for checking current project diagnostics without editing. Parameters: file_path (optional — scope to one file), language (optional). Returns { diagnostics: Vec<Diagnostic>, error_count, warning_count }. Useful for agents to check project health before starting edits.'
+    checked: false
+  - text: 'Write tests for diagnostic integration — test Rust cargo check JSON parsing, TypeScript tsc output parsing, generic line-based parsing. Test DiagnosticDiff: introducing an error, resolving an error, no change. Test preview_transaction with check=true against a known-good Rust project where an edit introduces a type error. Use tempdir with a minimal Cargo.toml + source file.'
+    checked: false
+- id: EDIT6
+  name: Cross-File Rename & Refactoring
+  tagline: Rename a symbol everywhere — callers, importers, re-exports — atomically
+  status: pending
+  problem: Renaming a function means updating every call site across potentially dozens of files. iris already knows all references via iris_references — but currently can't act on that knowledge to perform the rename.
+  solution: Build a RefactorService that composes the reference index with the edit service. iris_rename takes a symbol ID and new name, queries all references, generates edits for each call site, and stages them as a single transaction. The agent previews the full cross-file diff before committing. Reuses the existing SymbolRefRecord/cross-reference infrastructure — the reference graph is already computed during ingestion.
+  depends_on:
+  - EDIT3
+  tasks:
+  - text: 'Build RefactorService in iris-core/src/service/refactor.rs — composes EditService + QueryService (for references). Single struct with constructor taking both services. Follows the same layered pattern as QueryService — service layer orchestrates storage + edit, MCP layer adapts to protocol. No circular dependencies: RefactorService depends on EditService and QueryService, neither depends on RefactorService.'
+    checked: false
+  - text: 'Implement rename_symbol on RefactorService — flow: (1) look up symbol by ID via QueryService::symbol_definition, (2) query all references via QueryService::find_references, (3) begin a transaction, (4) for each reference: read the file, locate the symbol name occurrence at the reference''s byte offset, replace with new_name, (5) rename the definition itself (in signature, not just body), (6) return the transaction ID so the agent can preview. Handles: function calls, type references, imports, re-exports. Does NOT handle: string literals, comments, or documentation — those are flagged as "manual review needed" in the response.'
+    checked: false
+  - text: 'Implement iris_rename MCP tool handler — parameters: symbol_id (string, required), new_name (string, required), auto_commit (bool, optional, default false). When auto_commit is false, returns a transaction_id + preview diff so the agent can review before committing. When true, commits immediately. Response includes: { transaction_id?, diff, references_updated: usize, files_touched: usize, needs_manual_review: Vec<{file, line, reason}> }.'
+    checked: false
+  - text: 'Handle cross-module rename edge cases — when renaming a public symbol: (1) check for re-exports (pub use) and update those too, (2) check for impl blocks that reference the type and update the type name in the impl header, (3) for Rust: update module path qualifiers (module::OldName → module::NewName). Use the existing cross-reference graph (SymbolRefRecord with RefKind::Exports, RefKind::Implements) to discover these automatically.'
+    checked: false
+  - text: 'Implement extract_function refactoring — given a symbol_id, a byte range within the symbol''s body, and a new function name: (1) extract the selected code, (2) analyze free variables (identifiers used but not defined in the selection) via tree-sitter scope analysis, (3) generate a new function with those free variables as parameters, (4) replace the selected code with a call to the new function, (5) insert the new function after the original symbol. Stage as a transaction for preview.'
+    checked: false
+  - text: 'Implement iris_extract_function MCP tool handler — parameters: symbol_id (string, required), start_byte (number, required), end_byte (number, required), new_name (string, required), transaction_id (string, optional). Returns EditResponse with the extraction diff. Tool description: "Extract a code region into a new function. Free variables in the selection become parameters. Stages as a transaction for preview."'
+    checked: false
+  - text: 'Write tests for rename — test matrix: rename a function with 5 callers across 3 files, rename a struct with impl blocks and type references, rename a method on a trait with multiple implementors, rename with re-exports. Verify all call sites updated, no false positives in strings/comments, correct diff output. Test extract_function: extract loop body, extract conditional branch, handle multiple free variables. Use tempdir with realistic multi-file project structure.'
+    checked: false
