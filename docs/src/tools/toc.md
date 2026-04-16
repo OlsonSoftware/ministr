@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#stack"/></svg>
+</div>
+
 # iris_toc
 
 Get a structural overview of the indexed corpus — documents, section counts, and ingestion state.

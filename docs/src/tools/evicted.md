@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#x"/></svg>
+</div>
+
 # iris_evicted
 
 Signal that content IDs have been evicted from the agent's context window. Updates session tracking for accurate budget and deduplication.

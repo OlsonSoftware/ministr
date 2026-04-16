@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#git-branch"/></svg>
+</div>
+
 # iris_related
 
 Follow dependency chains between claims. Given a claim ID, returns other claims that reference, depend on, contradict, or update it.

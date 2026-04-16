@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#arrow-up-right"/></svg>
+</div>
+
 # iris_references
 
 Find all references to a symbol — callers, implementors, importers, and cross-language binding sites.

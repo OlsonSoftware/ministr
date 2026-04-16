@@ -118,16 +118,22 @@ Tracks cumulative token usage, detects pressure, and provides eviction recommend
 ```
 ~/.iris/
 ├── config.toml                     # Global configuration
+├── corpora.json                    # Daemon's registered-corpus manifest
+├── irisd.sock                      # Daemon Unix domain socket
+├── irisd.pid                       # Daemon PID file
 └── corpora/
-    └── <corpus-name>/
-        ├── meta.toml               # Corpus config
-        ├── content.db              # SQLite: sections, claims, summaries
-        ├── vectors.hnsw            # Memory-mapped HNSW index
-        ├── vectors.meta            # Index metadata
-        ├── file_hashes.json        # For incremental re-indexing
-        └── sessions/
-            └── <session-id>.json   # Persisted session shadows
+    └── <corpus-id>/                # Stable hash derived from corpus paths
+        ├── content.db              # SQLite: sections, claims, summaries,
+        │                           # file hashes, and session shadows
+        └── index/
+            ├── iris_hnsw.hnsw.data # HNSW vector dump
+            ├── iris_hnsw.hnsw.graph
+            └── id_map.json         # Section ID ↔ vector slot mapping
 ```
+
+File hashes used for incremental re-indexing live in `content.db` (the
+`file_hashes` table), and session shadows are stored in the `sessions`
+table of the same database — neither is a standalone file on disk.
 
 ## Key Dependencies
 

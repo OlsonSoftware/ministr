@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#git-branch"/></svg>
+</div>
+
 # iris_clone
 
 Clone a git repository and index it into the corpus.

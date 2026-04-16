@@ -308,17 +308,17 @@ language boundaries with [`iris_references`](tools/references.md).
 
 <div class="iris-compare" markdown>
 
-|  | `grep` + `cat` | Naive RAG | **iris** |
+|  | **iris** | `grep` + `cat` | Naive RAG |
 |---|:---:|:---:|:---:|
-| Semantic search | no | yes | yes |
-| Code symbol index | no | no | **yes** |
-| Cross-language links | no | no | **yes** |
-| Tracks delivered content | no | no | **yes** |
-| Deduplicates across turns | no | no | **yes** |
-| Delta delivery on change | no | no | **yes** |
-| Predictive prefetch | no | no | **yes** |
-| Budget-aware compression | no | no | **yes** |
-| Runs locally, no API keys | yes | varies | **yes** |
+| Semantic search | **yes** | no | yes |
+| Code symbol index | **yes** | no | no |
+| Cross-language links | **yes** | no | no |
+| Tracks delivered content | **yes** | no | no |
+| Deduplicates across turns | **yes** | no | no |
+| Delta delivery on change | **yes** | no | no |
+| Predictive prefetch | **yes** | no | no |
+| Budget-aware compression | **yes** | no | no |
+| Runs locally, no API keys | **yes** | yes | varies |
 
 </div>
 
@@ -333,7 +333,7 @@ language boundaries with [`iris_references`](tools/references.md).
 === ":material-apple: macOS"
 
     ```sh
-    brew install AlrikOlson/tap/iris
+    curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
     ```
 
 === ":material-linux: Linux"
@@ -345,8 +345,10 @@ language boundaries with [`iris_references`](tools/references.md).
 === ":material-language-rust: Cargo"
 
     ```sh
-    cargo install iris-cli
+    cargo install --git https://github.com/AlrikOlson/iris-rs iris-cli
     ```
+
+A Homebrew tap and crates.io publish land with 1.0.
 
 Then initialize and connect:
 

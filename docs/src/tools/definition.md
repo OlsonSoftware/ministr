@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#terminal-window"/></svg>
+</div>
+
 # iris_definition
 
 Get the full source code of a symbol by ID. Returns the complete declaration including body, doc comments, and surrounding context.

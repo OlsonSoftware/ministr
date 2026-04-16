@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#magnifying-glass"/></svg>
+</div>
+
 # iris_survey
 
 Semantic search across the indexed corpus — documents, sections, claims, and code symbols. Returns ranked results with relevance scores. Already-delivered content is filtered out.

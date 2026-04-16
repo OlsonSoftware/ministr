@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#package"/></svg>
+</div>
+
 # iris_compress
 
 Generate compressed summaries for sections the agent wants to evict from context. Returns short extractive summaries preserving the gist, with original and compressed token counts.

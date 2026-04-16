@@ -2,19 +2,36 @@
 
 ## CLI
 
-### Homebrew (macOS)
-
-```sh
-brew install AlrikOlson/tap/iris
-```
-
 ### Install script (macOS & Linux)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
 ```
 
+The script detects your platform, downloads the matching archive from
+GitHub Releases, verifies the SHA-256 checksum, and installs `iris` to
+`/usr/local/bin` (or `$HOME/.local/bin` without sudo).
+
 ### Cargo (from source, requires Rust 1.85+)
+
+Install the latest `main` directly from the repository:
+
+```sh
+cargo install --git https://github.com/AlrikOlson/iris-rs iris-cli
+```
+
+### Homebrew (macOS) — coming with 1.0
+
+A formula lives in the `homebrew/` directory of this repo. Once the
+`AlrikOlson/homebrew-tap` repo is published, install with:
+
+```sh
+brew install AlrikOlson/tap/iris
+```
+
+### crates.io — coming with 1.0
+
+When the workspace is published to crates.io, install with:
 
 ```sh
 cargo install iris-cli

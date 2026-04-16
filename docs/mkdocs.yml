@@ -163,6 +163,9 @@ extra:
       link: https://github.com/AlrikOlson/iris-rs
       name: iris on GitHub
   generator: false
+  # Default social-share image (1200×630) for any page that doesn't set one.
+  # Referenced from overrides/main.html via {{ config.extra.social_image }}.
+  social_image: assets/og.png
 
 copyright: >
   Licensed under MIT OR Apache-2.0 —

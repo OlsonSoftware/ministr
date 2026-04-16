@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#circle"/></svg>
+</div>
+
 # iris_refresh
 
 Re-fetch changed web sources and pull updates for cloned git repositories.
