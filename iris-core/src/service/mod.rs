@@ -14,7 +14,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::embedding::{Embedder, Reranker, SparseEmbedder};
+use crate::embedding::{DualEmbedder, Embedder, Reranker, SparseEmbedder};
 use crate::error::{IndexError, StorageError};
 use crate::index::{SparseIndex, VectorIndex};
 use crate::storage::{SqliteStorage, Storage};
@@ -188,6 +188,10 @@ pub struct QueryService {
     sparse_embedder: Option<Arc<dyn SparseEmbedder>>,
     sparse_index: Option<Arc<dyn SparseIndex>>,
     reranker: Option<Arc<dyn Reranker>>,
+    /// Optional dual embedder for two-stage Matryoshka reranking at query time.
+    dual_embedder: Option<Arc<dyn DualEmbedder>>,
+    /// Number of coarse candidates to rescore with full-dim vectors.
+    matryoshka_rerank_depth: usize,
 }
 
 impl QueryService {
@@ -205,6 +209,8 @@ impl QueryService {
             sparse_embedder: None,
             sparse_index: None,
             reranker: None,
+            dual_embedder: None,
+            matryoshka_rerank_depth: 100,
         }
     }
 
@@ -217,6 +223,21 @@ impl QueryService {
     ) -> Self {
         self.sparse_embedder = Some(sparse_embedder);
         self.sparse_index = Some(sparse_index);
+        self
+    }
+
+    /// Enable two-stage Matryoshka reranking at query time.
+    ///
+    /// When set, survey results are rescored using full-dimension cosine
+    /// similarity before content resolution and cross-encoder reranking.
+    #[must_use]
+    pub fn with_matryoshka_rerank(
+        mut self,
+        dual_embedder: Arc<dyn DualEmbedder>,
+        rerank_depth: usize,
+    ) -> Self {
+        self.dual_embedder = Some(dual_embedder);
+        self.matryoshka_rerank_depth = rerank_depth;
         self
     }
 

@@ -8,8 +8,10 @@ use std::collections::HashSet;
 
 use tracing::instrument;
 
-use crate::embedding::Reranker;
-use crate::search::{MultiResolutionSearch, SearchConfig};
+use std::collections::HashMap;
+
+use crate::embedding::{DualEmbedder, Reranker};
+use crate::search::{MultiResolutionSearch, ScoredResult, SearchConfig};
 use crate::storage::Storage;
 use crate::types::{ClaimId, ContentId, Resolution, SectionId, SymbolId, VectorId};
 
@@ -50,6 +52,15 @@ impl QueryService {
         };
 
         let scored = searcher.search(query, config)?;
+
+        // Two-stage Matryoshka rescore: use full-dim vectors to re-rank the
+        // coarse truncated-dim results from HNSW.
+        let scored = if let Some(dual_emb) = &self.dual_embedder {
+            self.rescore_with_full_dim(query, scored, dual_emb.as_ref())
+                .await?
+        } else {
+            scored
+        };
 
         let mut results = Vec::with_capacity(scored.len());
         for sr in scored {
@@ -122,6 +133,14 @@ impl QueryService {
         };
 
         let scored = searcher.search(query, config)?;
+
+        // Two-stage Matryoshka rescore (same as in survey).
+        let scored = if let Some(dual_emb) = &self.dual_embedder {
+            self.rescore_with_full_dim(query, scored, dual_emb.as_ref())
+                .await?
+        } else {
+            scored
+        };
 
         let mut results = Vec::new();
         let mut deduplicated_count = 0;
@@ -461,5 +480,67 @@ impl QueryService {
                 }
             }
         }
+    }
+
+    /// Rescore coarse HNSW candidates using full-dimension cosine similarity.
+    ///
+    /// 1. Embed the query at full dimension using the dual embedder
+    /// 2. Retrieve stored full-dim vectors from SQLite for the top candidates
+    /// 3. Compute cosine similarity between full-dim query and candidates
+    /// 4. Re-sort by full-dim score
+    ///
+    /// Candidates without stored full-dim vectors keep their coarse score.
+    async fn rescore_with_full_dim(
+        &self,
+        query: &str,
+        mut candidates: Vec<ScoredResult>,
+        dual_embedder: &dyn DualEmbedder,
+    ) -> Result<Vec<ScoredResult>, QueryError> {
+        if candidates.is_empty() || self.matryoshka_rerank_depth == 0 {
+            return Ok(candidates);
+        }
+
+        // Limit to the rerank depth.
+        candidates.truncate(self.matryoshka_rerank_depth);
+
+        // Get full-dim query vector (single inference).
+        let dual = dual_embedder
+            .embed_dual(&[query])
+            .map_err(QueryError::Index)?;
+        let full_query = &dual.full[0];
+
+        // Fetch stored full-dim vectors for all candidate IDs.
+        let candidate_ids: Vec<&str> = candidates
+            .iter()
+            .map(|c| c.vector_id.as_str())
+            .collect();
+        let stored = self
+            .storage
+            .get_full_dim_vectors(&candidate_ids)
+            .await
+            .map_err(QueryError::Storage)?;
+
+        // Build a lookup map for fast access.
+        let stored_map: HashMap<&str, &[f32]> = stored
+            .iter()
+            .map(|(id, vec)| (id.as_str(), vec.as_slice()))
+            .collect();
+
+        // Rescore candidates that have stored full-dim vectors.
+        for candidate in &mut candidates {
+            if let Some(full_vec) = stored_map.get(candidate.vector_id.as_str()) {
+                candidate.score = cosine_similarity(full_query, full_vec);
+            }
+            // Candidates without full-dim vectors keep their coarse score.
+        }
+
+        // Re-sort by rescored values (descending).
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        Ok(candidates)
     }
 }
