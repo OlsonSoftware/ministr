@@ -18,7 +18,10 @@ mod sparse;
 pub use cache::CachedEmbedder;
 #[cfg(feature = "candle")]
 pub use candle_impl::{CandleEmbedder, CandleModelInfo, candle_supported_models, is_candle_model};
-pub use fastembed_impl::{FastEmbedder, ModelInfo, TruncatingEmbedder, supported_models};
+pub use fastembed_impl::{
+    DualEmbeddings, FastEmbedder, MatryoshkaEmbedder, ModelInfo, TruncatingEmbedder,
+    supported_models,
+};
 pub use hybrid::HybridEmbedder;
 pub use rerank::FastReranker;
 pub use sparse::FastSparseEmbedder;
@@ -206,6 +209,27 @@ pub fn create_embedder(
     // Default: FastEmbed/ONNX Runtime.
     let embedder = FastEmbedder::with_data_dir(model_name, data_dir)?;
     Ok(std::sync::Arc::new(embedder))
+}
+
+/// Interface for embedders that can produce both truncated and full-dimension
+/// vectors from a single inference pass.
+///
+/// Used by Matryoshka-capable models (e.g. `nomic-embed-text-v1.5`) where the
+/// HNSW index stores low-dim truncated vectors for fast coarse search, while
+/// the full-dim vectors are stored separately for two-stage reranking.
+pub trait DualEmbedder: Embedder {
+    /// Embed texts and return both truncated and full-dimension vectors.
+    ///
+    /// The truncated vectors are L2-normalized for cosine similarity.
+    /// Full-dimension vectors are returned as produced by the model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::EmbeddingFailed`] if inference fails.
+    fn embed_dual(&self, texts: &[&str]) -> Result<DualEmbeddings, IndexError>;
+
+    /// The full (un-truncated) dimension of the inner model.
+    fn full_dimension(&self) -> usize;
 }
 
 /// Interface for text embedding models.

@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 15;
+pub const CURRENT_SCHEMA_VERSION: usize = 16;
 
 /// Returns the migration set for the content database.
 ///
@@ -285,6 +285,18 @@ fn migrations() -> Migrations<'static> {
             );
             ",
         ),
+        // V16: Full-dimension vectors for two-stage Matryoshka retrieval.
+        // Stores the un-truncated embedding alongside the truncated one in HNSW,
+        // enabling coarse search at low dim + full-dim reranking.
+        M::up(
+            "
+            CREATE TABLE full_dim_vectors (
+                vector_id  TEXT PRIMARY KEY NOT NULL,
+                vector     BLOB NOT NULL,
+                dimension  INTEGER NOT NULL
+            );
+            ",
+        ),
     ])
 }
 
@@ -391,6 +403,7 @@ mod tests {
         assert!(tables.contains(&"bridge_links".to_string()));
         assert!(tables.contains(&"corpus_roots".to_string()));
         assert!(tables.contains(&"embedding_cache".to_string()));
+        assert!(tables.contains(&"full_dim_vectors".to_string()));
     }
 
     #[test]

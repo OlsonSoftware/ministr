@@ -2378,6 +2378,148 @@ impl SqliteStorage {
         })
         .await
     }
+
+    // ── Full-dimension vector storage (two-stage Matryoshka retrieval) ──
+
+    /// Store a full-dimension embedding vector for two-stage retrieval.
+    ///
+    /// Uses `INSERT OR REPLACE` so re-indexing overwrites stale vectors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the database insert fails.
+    pub async fn store_full_dim_vectors(
+        &self,
+        entries: &[(String, Vec<f32>)],
+    ) -> Result<(), StorageError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.clone();
+        let entries: Vec<(String, Vec<f32>)> = entries.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| StorageError::Database {
+                reason: format!("lock poisoned: {e}"),
+            })?;
+            let mut stmt = conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO full_dim_vectors (vector_id, vector, dimension) \
+                     VALUES (?1, ?2, ?3)",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("prepare failed: {e}"),
+                })?;
+            for (id, vec) in &entries {
+                let blob = encode_f32_blob(vec);
+                let dim = i64::try_from(vec.len()).unwrap_or(0);
+                stmt.execute(rusqlite::params![id, blob, dim])
+                    .map_err(|e| StorageError::Database {
+                        reason: format!("insert full_dim_vectors failed for {id}: {e}"),
+                    })?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| StorageError::Database {
+            reason: format!("spawn_blocking join error: {e}"),
+        })?
+    }
+
+    /// Retrieve full-dimension vectors for a batch of IDs.
+    ///
+    /// Returns `(vector_id, Vec<f32>)` pairs for IDs that exist in the table.
+    /// Missing IDs are silently skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the database query fails.
+    pub async fn get_full_dim_vectors(
+        &self,
+        ids: &[&str],
+    ) -> Result<Vec<(String, Vec<f32>)>, StorageError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.clone();
+        let ids: Vec<String> = ids.iter().map(|s| (*s).to_owned()).collect();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| StorageError::Database {
+                reason: format!("lock poisoned: {e}"),
+            })?;
+            let mut stmt = conn
+                .prepare_cached(
+                    "SELECT vector_id, vector FROM full_dim_vectors WHERE vector_id = ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("prepare failed: {e}"),
+                })?;
+            let mut results = Vec::with_capacity(ids.len());
+            for id in &ids {
+                if let Ok(row) = stmt.query_row(rusqlite::params![id], |row| {
+                    let blob: Vec<u8> = row.get(1)?;
+                    Ok((row.get::<_, String>(0)?, blob))
+                }) {
+                    results.push((row.0, decode_f32_blob(&row.1)));
+                }
+            }
+            Ok(results)
+        })
+        .await
+        .map_err(|e| StorageError::Database {
+            reason: format!("spawn_blocking join error: {e}"),
+        })?
+    }
+
+    /// Delete full-dimension vectors by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the database delete fails.
+    pub async fn delete_full_dim_vectors(&self, ids: &[&str]) -> Result<(), StorageError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.clone();
+        let ids: Vec<String> = ids.iter().map(|s| (*s).to_owned()).collect();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| StorageError::Database {
+                reason: format!("lock poisoned: {e}"),
+            })?;
+            let mut stmt = conn
+                .prepare_cached("DELETE FROM full_dim_vectors WHERE vector_id = ?1")
+                .map_err(|e| StorageError::Database {
+                    reason: format!("prepare failed: {e}"),
+                })?;
+            for id in &ids {
+                stmt.execute(rusqlite::params![id])
+                    .map_err(|e| StorageError::Database {
+                        reason: format!("delete full_dim_vectors failed for {id}: {e}"),
+                    })?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| StorageError::Database {
+            reason: format!("spawn_blocking join error: {e}"),
+        })?
+    }
+}
+
+/// Encode a `f32` slice as little-endian bytes.
+fn encode_f32_blob(vector: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(vector.len() * 4);
+    for &val in vector {
+        bytes.extend_from_slice(&val.to_le_bytes());
+    }
+    bytes
+}
+
+/// Decode little-endian bytes back into a `f32` vector.
+fn decode_f32_blob(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
 }
 
 #[cfg(test)]
