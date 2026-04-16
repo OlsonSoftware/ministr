@@ -1,12 +1,13 @@
+#![allow(clippy::uninlined_format_args)]
 //! Budget tracking hypothesis tests.
 //!
-//! Tests each hypothesis for why iris_budget shows 0 tokens after iris_read.
+//! Tests each hypothesis for why `iris_budget` shows 0 tokens after `iris_read`.
 
 use iris_core::session::{
-    AccessMode, BudgetConfig, BudgetTracker, EvictionPolicy, SessionEntry, SessionId,
+    AccessMode, BudgetConfig, BudgetTracker, EvictionPolicy, SessionId,
     SessionRegistry, WindowEstimator,
 };
-use iris_core::storage::SqliteStorage;
+use iris_core::storage::{SqliteStorage, Storage};
 use iris_core::types::{ContentId, Resolution};
 
 // ─── Hypothesis 1: WindowEstimator.record() doesn't update current_tokens ───
@@ -17,12 +18,23 @@ fn window_estimator_record_updates_tokens() {
     assert_eq!(w.estimated_used(), 0);
 
     let _ = w.record("sec-1", 500);
-    assert_eq!(w.estimated_used(), 500, "H1 FAIL: record() didn't update tokens");
+    assert_eq!(
+        w.estimated_used(),
+        500,
+        "H1 FAIL: record() didn't update tokens"
+    );
 
     let _ = w.record("sec-2", 300);
-    assert_eq!(w.estimated_used(), 800, "H1 FAIL: second record() didn't accumulate");
+    assert_eq!(
+        w.estimated_used(),
+        800,
+        "H1 FAIL: second record() didn't accumulate"
+    );
 
-    eprintln!("H1 PASS: WindowEstimator.record() correctly updates tokens: {}", w.estimated_used());
+    eprintln!(
+        "H1 PASS: WindowEstimator.record() correctly updates tokens: {}",
+        w.estimated_used()
+    );
 }
 
 // ─── Hypothesis 2: BudgetTracker.record_tokens() doesn't delegate to window ──
@@ -40,9 +52,16 @@ fn budget_tracker_record_tokens_updates_status() {
 
     let _ = tracker.record_tokens("sec-1", 500);
     let status_after = tracker.budget_status();
-    assert!(status_after.tokens_used > 0, "H2 FAIL: record_tokens didn't update budget: {}", status_after.tokens_used);
+    assert!(
+        status_after.tokens_used > 0,
+        "H2 FAIL: record_tokens didn't update budget: {}",
+        status_after.tokens_used
+    );
 
-    eprintln!("H2 PASS: BudgetTracker.record_tokens() → tokens_used = {}", status_after.tokens_used);
+    eprintln!(
+        "H2 PASS: BudgetTracker.record_tokens() → tokens_used = {}",
+        status_after.tokens_used
+    );
 }
 
 // ─── Hypothesis 3: SessionEntry budget resets when session is restored ────────
@@ -50,7 +69,7 @@ fn budget_tracker_record_tokens_updates_status() {
 #[tokio::test]
 async fn restored_session_budget_reflects_previous_deliveries() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    use iris_core::storage::Storage;
+
 
     let budget_config = BudgetConfig {
         max_context_tokens: 100_000,
@@ -61,11 +80,17 @@ async fn restored_session_budget_reflects_previous_deliveries() {
     let session_id = SessionId::from("test-budget-session".to_string());
     {
         let mut registry = SessionRegistry::new(budget_config.clone());
-        let entry = registry.create_session("test-budget-session", Some(budget_config.clone()), AccessMode::ReadWrite);
+        let entry = registry.create_session(
+            "test-budget-session",
+            Some(budget_config.clone()),
+            AccessMode::ReadWrite,
+        );
 
         // Deliver some content.
         let cid = ContentId("sec-1".into());
-        entry.session.record_delivery(&cid, Resolution::Section, 500, 1, "hash1".into());
+        entry
+            .session
+            .record_delivery(&cid, Resolution::Section, 500, 1, "hash1".into());
         let _ = entry.budget.record_tokens("sec-1", 500);
 
         let status = entry.budget.budget_status();
@@ -82,16 +107,29 @@ async fn restored_session_budget_reflects_previous_deliveries() {
         let restored = storage.load_session(&session_id).await.unwrap().unwrap();
 
         let delivered_count = restored.delivered_count();
-        eprintln!("Phase 2: restored session has {} delivered items", delivered_count);
-        assert!(delivered_count > 0, "H3 FAIL: restored session lost deliveries");
+        eprintln!(
+            "Phase 2: restored session has {} delivered items",
+            delivered_count
+        );
+        assert!(
+            delivered_count > 0,
+            "H3 FAIL: restored session lost deliveries"
+        );
 
         // This is what with_persistence does:
-        let entry = registry.create_session("test-budget-session", Some(budget_config.clone()), AccessMode::ReadWrite);
+        let entry = registry.create_session(
+            "test-budget-session",
+            Some(budget_config.clone()),
+            AccessMode::ReadWrite,
+        );
         entry.session = restored;
 
         // Check if the budget tracker knows about the restored content.
         let status = entry.budget.budget_status();
-        eprintln!("Phase 2: tokens_used = {} (BudgetTracker after restore)", status.tokens_used);
+        eprintln!(
+            "Phase 2: tokens_used = {} (BudgetTracker after restore)",
+            status.tokens_used
+        );
 
         if status.tokens_used == 0 {
             eprintln!("H3 CONFIRMED: BudgetTracker resets to 0 after session restore!");
@@ -118,7 +156,7 @@ async fn restored_session_budget_reflects_previous_deliveries() {
 #[tokio::test]
 async fn budget_replayed_after_restore() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    use iris_core::storage::Storage;
+
 
     let budget_config = BudgetConfig {
         max_context_tokens: 100_000,
@@ -128,9 +166,15 @@ async fn budget_replayed_after_restore() {
     // Phase 1: Create session, deliver, persist.
     {
         let mut registry = SessionRegistry::new(budget_config.clone());
-        let entry = registry.create_session("replay-test", Some(budget_config.clone()), AccessMode::ReadWrite);
+        let entry = registry.create_session(
+            "replay-test",
+            Some(budget_config.clone()),
+            AccessMode::ReadWrite,
+        );
         let cid = ContentId("sec-1".into());
-        entry.session.record_delivery(&cid, Resolution::Section, 500, 1, "hash1".into());
+        entry
+            .session
+            .record_delivery(&cid, Resolution::Section, 500, 1, "hash1".into());
         let _ = entry.budget.record_tokens("sec-1", 500);
         storage.save_session(&entry.session).await.unwrap();
     }
@@ -141,17 +185,26 @@ async fn budget_replayed_after_restore() {
         let mut registry = SessionRegistry::new(budget_config.clone());
         let restored = storage.load_session(&session_id).await.unwrap().unwrap();
 
-        let entry = registry.create_session("replay-test", Some(budget_config.clone()), AccessMode::ReadWrite);
+        let entry = registry.create_session(
+            "replay-test",
+            Some(budget_config.clone()),
+            AccessMode::ReadWrite,
+        );
 
         // THE FIX: replay delivered items into budget tracker.
         for item in restored.delivered_items() {
-            let _ = entry.budget.record_tokens(item.content_id.as_ref(), item.token_count);
+            let _ = entry
+                .budget
+                .record_tokens(item.content_id.as_ref(), item.token_count);
         }
         entry.session = restored;
 
         let status = entry.budget.budget_status();
         eprintln!("H3 FIX: tokens_used after replay = {}", status.tokens_used);
-        assert_eq!(status.tokens_used, 500, "budget should reflect replayed deliveries");
+        assert_eq!(
+            status.tokens_used, 500,
+            "budget should reflect replayed deliveries"
+        );
         eprintln!("H3 FIX PASS: budget correctly restored to 500 tokens");
     }
 }
@@ -161,7 +214,7 @@ async fn budget_replayed_after_restore() {
 #[tokio::test]
 async fn is_delivered_true_after_restore() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    use iris_core::storage::Storage;
+
 
     let session_id = SessionId::from("test-dedup".to_string());
     let budget_config = BudgetConfig::default();
@@ -169,9 +222,15 @@ async fn is_delivered_true_after_restore() {
     // Create session, deliver, persist.
     {
         let mut registry = SessionRegistry::new(budget_config.clone());
-        let entry = registry.create_session("test-dedup", Some(budget_config.clone()), AccessMode::ReadWrite);
+        let entry = registry.create_session(
+            "test-dedup",
+            Some(budget_config.clone()),
+            AccessMode::ReadWrite,
+        );
         let cid = ContentId("sec-x".into());
-        entry.session.record_delivery(&cid, Resolution::Section, 100, 1, "hashX".into());
+        entry
+            .session
+            .record_delivery(&cid, Resolution::Section, 100, 1, "hashX".into());
         storage.save_session(&entry.session).await.unwrap();
     }
 
@@ -185,7 +244,9 @@ async fn is_delivered_true_after_restore() {
         eprintln!("H4: is_delivered={is_delivered}, has_changed={has_changed}");
 
         if is_delivered && !has_changed {
-            eprintln!("H4 CONFIRMED: restored session marks content as 'already delivered, unchanged'");
+            eprintln!(
+                "H4 CONFIRMED: restored session marks content as 'already delivered, unchanged'"
+            );
             eprintln!("  → iris_read skips record_section_delivery → budget stays 0");
         } else if !is_delivered {
             eprintln!("H4 REJECTED: restored session does NOT mark content as delivered");

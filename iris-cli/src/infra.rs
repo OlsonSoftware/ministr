@@ -155,7 +155,10 @@ pub(crate) async fn init_infrastructure(
 fn create_embedder(
     model_name: &str,
     data_dir: &Path,
-) -> Result<(Arc<dyn iris_core::embedding::Embedder>, iris_core::embedding::BackendInfo)> {
+) -> Result<(
+    Arc<dyn iris_core::embedding::Embedder>,
+    iris_core::embedding::BackendInfo,
+)> {
     iris_core::embedding::create_embedder(model_name, data_dir)
         .into_diagnostic()
         .wrap_err("failed to initialize embedding model")
@@ -249,9 +252,14 @@ pub(crate) async fn build_server(
         tracing::info!(path = %path, "  corpus root");
     }
 
-    let ctx =
-        init_infrastructure(corpus_paths, config, resolved_model, resolved_dimension, rerank_depth)
-            .await?;
+    let ctx = init_infrastructure(
+        corpus_paths,
+        config,
+        resolved_model,
+        resolved_dimension,
+        rerank_depth,
+    )
+    .await?;
 
     let mut service = iris_core::service::QueryService::new(
         (*ctx.storage).clone(),

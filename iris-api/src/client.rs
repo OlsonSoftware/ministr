@@ -370,6 +370,23 @@ impl DaemonClient {
             .await
     }
 
+    /// Ask a question and get a synthesized answer from sub-inference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn ask(
+        &self,
+        corpus_id: &str,
+        query: &str,
+    ) -> Result<crate::query::AskResponse, ClientError> {
+        let req = crate::query::AskRequest {
+            query: query.to_string(),
+        };
+        self.post(&format!("/api/v1/corpora/{corpus_id}/ask"), &req)
+            .await
+    }
+
     // -- Sessions --
 
     /// Create a new session for a corpus.

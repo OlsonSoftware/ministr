@@ -133,9 +133,12 @@ impl PriorityCache {
             }
             entry.access_count += 1;
             entry.priority = compute_priority(
-                &self.weights, self.current_turn,
-                entry.confidence, entry.entry.strategy,
-                entry.insert_turn, entry.access_count,
+                &self.weights,
+                self.current_turn,
+                entry.confidence,
+                entry.entry.strategy,
+                entry.insert_turn,
+                entry.access_count,
             );
             Some(&entry.entry)
         } else {
@@ -153,6 +156,10 @@ impl PriorityCache {
     /// Insert an entry with confidence score.
     ///
     /// If at capacity, evicts the lowest-priority entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the key exists in the map but `get_mut` fails (should be unreachable).
     pub fn insert(&mut self, key: String, entry: CacheEntry, confidence: f32) {
         if self.capacity == 0 {
             return;
@@ -163,8 +170,12 @@ impl PriorityCache {
             existing.entry = entry;
             existing.confidence = confidence;
             existing.priority = compute_priority(
-                &self.weights, self.current_turn,
-                confidence, existing.entry.strategy, existing.insert_turn, existing.access_count,
+                &self.weights,
+                self.current_turn,
+                confidence,
+                existing.entry.strategy,
+                existing.insert_turn,
+                existing.access_count,
             );
             return;
         }
@@ -175,16 +186,23 @@ impl PriorityCache {
         }
 
         let priority = compute_priority(
-            &self.weights, self.current_turn,
-            confidence, entry.strategy, self.current_turn, 0,
-        );
-        self.entries.insert(key, PriorityCacheEntry {
-            entry,
-            priority,
-            insert_turn: self.current_turn,
-            access_count: 0,
+            &self.weights,
+            self.current_turn,
             confidence,
-        });
+            entry.strategy,
+            self.current_turn,
+            0,
+        );
+        self.entries.insert(
+            key,
+            PriorityCacheEntry {
+                entry,
+                priority,
+                insert_turn: self.current_turn,
+                access_count: 0,
+                confidence,
+            },
+        );
     }
 
     /// Insert with default confidence (1.0) for backward compatibility.
@@ -246,13 +264,30 @@ impl PriorityCache {
     }
 
     /// Find the key with the lowest priority score.
+    ///
+    /// Recomputes priorities using the current turn so recency decay is
+    /// reflected at eviction time, not just at insert time.
     fn lowest_priority_key(&self) -> Option<String> {
         self.entries
             .iter()
             .min_by(|a, b| {
-                a.1.priority
-                    .partial_cmp(&b.1.priority)
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                let pa = compute_priority(
+                    &self.weights,
+                    self.current_turn,
+                    a.1.confidence,
+                    a.1.entry.strategy,
+                    a.1.insert_turn,
+                    a.1.access_count,
+                );
+                let pb = compute_priority(
+                    &self.weights,
+                    self.current_turn,
+                    b.1.confidence,
+                    b.1.entry.strategy,
+                    b.1.insert_turn,
+                    b.1.access_count,
+                );
+                pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(k, _)| k.clone())
     }
@@ -270,7 +305,7 @@ fn compute_priority(
 ) -> f64 {
     let weight = f64::from(weights.weight_for(strategy));
     let conf = f64::from(confidence);
-    let turns_since = current_turn.saturating_sub(insert_turn) as f64;
+    let turns_since = f64::from(current_turn.saturating_sub(insert_turn));
     let recency = RECENCY_DECAY.powf(turns_since);
     let frequency = 1.0 + (1.0 + f64::from(access_count)).log2();
     conf * weight * recency * frequency
@@ -297,15 +332,33 @@ mod tests {
     #[test]
     fn eviction_removes_lowest_priority() {
         let mut cache = PriorityCache::new(2);
-        cache.insert("low".into(), make_entry("low", PrefetchStrategy::AgentPlan), 0.3);
-        cache.insert("high".into(), make_entry("high", PrefetchStrategy::Sequential), 1.0);
+        cache.insert(
+            "low".into(),
+            make_entry("low", PrefetchStrategy::AgentPlan),
+            0.3,
+        );
+        cache.insert(
+            "high".into(),
+            make_entry("high", PrefetchStrategy::Sequential),
+            1.0,
+        );
 
         // Cache is full — inserting a third should evict "low"
-        cache.insert("mid".into(), make_entry("mid", PrefetchStrategy::Structural), 0.7);
+        cache.insert(
+            "mid".into(),
+            make_entry("mid", PrefetchStrategy::Structural),
+            0.7,
+        );
 
         assert!(cache.peek("high").is_some(), "high-priority should survive");
-        assert!(cache.peek("mid").is_some(), "mid-priority should be present");
-        assert!(cache.peek("low").is_none(), "low-priority should be evicted");
+        assert!(
+            cache.peek("mid").is_some(),
+            "mid-priority should be present"
+        );
+        assert!(
+            cache.peek("low").is_none(),
+            "low-priority should be evicted"
+        );
     }
 
     #[test]
@@ -320,30 +373,59 @@ mod tests {
         }
 
         // Now insert enough entries to cause eviction — "b" should be evicted first
-        cache.insert("c".into(), make_entry("c", PrefetchStrategy::Sequential), 1.0);
+        cache.insert(
+            "c".into(),
+            make_entry("c", PrefetchStrategy::Sequential),
+            1.0,
+        );
         // Cache is full (a, b, c). Insert one more:
-        cache.insert("d".into(), make_entry("d", PrefetchStrategy::Sequential), 1.0);
+        cache.insert(
+            "d".into(),
+            make_entry("d", PrefetchStrategy::Sequential),
+            1.0,
+        );
 
-        assert!(cache.peek("a").is_some(), "frequently-accessed 'a' should survive");
-        assert!(cache.peek("b").is_none(), "rarely-accessed 'b' should be evicted");
+        assert!(
+            cache.peek("a").is_some(),
+            "frequently-accessed 'a' should survive"
+        );
+        assert!(
+            cache.peek("b").is_none(),
+            "rarely-accessed 'b' should be evicted"
+        );
     }
 
     #[test]
     fn recency_decay_reduces_old_entries() {
         let mut cache = PriorityCache::new(2);
-        cache.insert("old".into(), make_entry("old", PrefetchStrategy::Sequential), 1.0);
+        cache.insert(
+            "old".into(),
+            make_entry("old", PrefetchStrategy::Sequential),
+            1.0,
+        );
 
         // Advance many turns
         for _ in 0..20 {
             cache.advance_turn();
         }
 
-        cache.insert("new".into(), make_entry("new", PrefetchStrategy::Sequential), 1.0);
+        cache.insert(
+            "new".into(),
+            make_entry("new", PrefetchStrategy::Sequential),
+            1.0,
+        );
 
         // Cache is full. Insert one more — "old" should be evicted due to recency decay
-        cache.insert("newer".into(), make_entry("newer", PrefetchStrategy::Sequential), 1.0);
+        cache.insert(
+            "newer".into(),
+            make_entry("newer", PrefetchStrategy::Sequential),
+            1.0,
+        );
 
-        assert!(cache.peek("old").is_none(), "old entry should be evicted by recency decay");
+        assert!(
+            cache.peek("old").is_none(),
+            "old entry should be evicted by recency decay"
+        );
         assert!(cache.peek("new").is_some());
         assert!(cache.peek("newer").is_some());
     }
@@ -351,9 +433,21 @@ mod tests {
     #[test]
     fn invalidation_removes_by_id() {
         let mut cache = PriorityCache::new(10);
-        cache.insert("a".into(), make_entry("a", PrefetchStrategy::Sequential), 1.0);
-        cache.insert("b".into(), make_entry("b", PrefetchStrategy::Sequential), 1.0);
-        cache.insert("c".into(), make_entry("c", PrefetchStrategy::Sequential), 1.0);
+        cache.insert(
+            "a".into(),
+            make_entry("a", PrefetchStrategy::Sequential),
+            1.0,
+        );
+        cache.insert(
+            "b".into(),
+            make_entry("b", PrefetchStrategy::Sequential),
+            1.0,
+        );
+        cache.insert(
+            "c".into(),
+            make_entry("c", PrefetchStrategy::Sequential),
+            1.0,
+        );
 
         cache.invalidate(&["a".into(), "c".into()]);
 
@@ -366,14 +460,22 @@ mod tests {
     #[test]
     fn zero_capacity_accepts_nothing() {
         let mut cache = PriorityCache::new(0);
-        cache.insert("a".into(), make_entry("a", PrefetchStrategy::Sequential), 1.0);
+        cache.insert(
+            "a".into(),
+            make_entry("a", PrefetchStrategy::Sequential),
+            1.0,
+        );
         assert!(cache.is_empty());
     }
 
     #[test]
     fn metrics_track_hits_and_misses() {
         let mut cache = PriorityCache::new(10);
-        cache.insert("a".into(), make_entry("a", PrefetchStrategy::Sequential), 1.0);
+        cache.insert(
+            "a".into(),
+            make_entry("a", PrefetchStrategy::Sequential),
+            1.0,
+        );
 
         cache.get("a"); // hit
         cache.get("b"); // miss

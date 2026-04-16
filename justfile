@@ -113,8 +113,12 @@ reinstall:
     cargo clean -p iris-mcp -p iris-cli -p iris-daemon -p iris-app
     cargo build --release -p iris-cli -p iris-app
     echo "==> Installing CLI..."
+    # Canonical dev location: ~/.iris/bin/iris (first in PATH).
+    # Remove stale copies from other locations to prevent shadow binaries.
     rm -f ~/.cargo/bin/iris
-    cp target/release/iris ~/.cargo/bin/iris
+    rm -f /usr/local/bin/iris 2>/dev/null || true
+    mkdir -p ~/.iris/bin
+    cp target/release/iris ~/.iris/bin/iris
     echo "==> Installing Tauri app..."
     cp target/release/iris-app /Applications/iris.app/Contents/MacOS/iris-app
     echo "==> Launching tray app..."

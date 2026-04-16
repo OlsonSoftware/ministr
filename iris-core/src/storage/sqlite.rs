@@ -101,6 +101,155 @@ impl SqliteStorage {
             reason: format!("spawn_blocking join error: {e}"),
         })?
     }
+
+    // ── Answer cache (iris_ask) ──────────────────────────────────────
+
+    /// Look up a cached answer by query hash.
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    pub async fn get_cached_answer(
+        &self,
+        query_hash: &str,
+    ) -> Result<Option<super::traits::CachedAnswer>, StorageError> {
+        let hash = query_hash.to_string();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT query_hash, query_text, answer, model, token_count, created_at
+                     FROM answer_cache WHERE query_hash = ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("prepare get_cached_answer: {e}"),
+                })?;
+            let row = stmt
+                .query_row(rusqlite::params![hash], |row| {
+                    Ok(super::traits::CachedAnswer {
+                        query_hash: row.get(0)?,
+                        query_text: row.get(1)?,
+                        answer: row.get(2)?,
+                        model: row.get(3)?,
+                        token_count: row.get::<_, i64>(4)? as usize,
+                        created_at: row.get(5)?,
+                    })
+                })
+                .optional()
+                .map_err(|e| StorageError::Database {
+                    reason: format!("get_cached_answer: {e}"),
+                })?;
+            Ok(row)
+        })
+        .await
+    }
+
+    /// Get the source sections for a cached answer.
+    pub async fn get_cached_answer_sources(
+        &self,
+        query_hash: &str,
+    ) -> Result<Vec<super::traits::CachedAnswerSource>, StorageError> {
+        let hash = query_hash.to_string();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT section_id, section_hash
+                     FROM answer_cache_sources WHERE query_hash = ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("prepare get_cached_answer_sources: {e}"),
+                })?;
+            let rows = stmt
+                .query_map(rusqlite::params![hash], |row| {
+                    Ok(super::traits::CachedAnswerSource {
+                        section_id: row.get(0)?,
+                        section_hash: row.get(1)?,
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: format!("get_cached_answer_sources: {e}"),
+                })?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: format!("get_cached_answer_sources rows: {e}"),
+                })?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    /// Insert a cached answer with its source sections (upsert semantics).
+    #[allow(clippy::cast_possible_wrap)]
+    pub async fn insert_cached_answer(
+        &self,
+        answer: &super::traits::CachedAnswer,
+        sources: &[super::traits::CachedAnswerSource],
+    ) -> Result<(), StorageError> {
+        let answer = answer.clone();
+        let sources = sources.to_vec();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO answer_cache
+                 (query_hash, query_text, answer, model, token_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    answer.query_hash,
+                    answer.query_text,
+                    answer.answer,
+                    answer.model,
+                    answer.token_count as i64,
+                ],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: format!("insert answer_cache: {e}"),
+            })?;
+
+            // CASCADE delete clears old sources, then insert fresh ones.
+            for src in &sources {
+                conn.execute(
+                    "INSERT OR REPLACE INTO answer_cache_sources
+                     (query_hash, section_id, section_hash)
+                     VALUES (?1, ?2, ?3)",
+                    rusqlite::params![answer.query_hash, src.section_id, src.section_hash],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("insert answer_cache_sources: {e}"),
+                })?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Invalidate all cached answers that depend on any of the given section IDs.
+    ///
+    /// Uses the `answer_cache_sources` reverse index for efficient lookup.
+    /// Returns the number of answers invalidated.
+    pub async fn invalidate_answers_for_sections(
+        &self,
+        section_ids: &[String],
+    ) -> Result<usize, StorageError> {
+        if section_ids.is_empty() {
+            return Ok(0);
+        }
+        let ids = section_ids.to_vec();
+        self.with_conn(move |conn| {
+            let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "DELETE FROM answer_cache WHERE query_hash IN (
+                    SELECT DISTINCT query_hash FROM answer_cache_sources
+                    WHERE section_id IN ({placeholders})
+                )"
+            );
+            let params: Vec<&dyn rusqlite::types::ToSql> = ids
+                .iter()
+                .map(|s| s as &dyn rusqlite::types::ToSql)
+                .collect();
+            let deleted =
+                conn.execute(&sql, params.as_slice())
+                    .map_err(|e| StorageError::Database {
+                        reason: format!("invalidate_answers_for_sections: {e}"),
+                    })?;
+            Ok(deleted)
+        })
+        .await
+    }
 }
 
 /// Insert all sections (and their claims) for a document recursively.
@@ -2700,6 +2849,7 @@ mod tests {
 
     // ── Test helpers ─────────────────────────────────────────────────
 
+    #[allow(clippy::unused_async)]
     async fn test_storage() -> SqliteStorage {
         SqliteStorage::open_in_memory().expect("in-memory storage")
     }

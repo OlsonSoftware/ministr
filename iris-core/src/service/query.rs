@@ -510,10 +510,7 @@ impl QueryService {
         let full_query = &dual.full[0];
 
         // Fetch stored full-dim vectors for all candidate IDs.
-        let candidate_ids: Vec<&str> = candidates
-            .iter()
-            .map(|c| c.vector_id.as_str())
-            .collect();
+        let candidate_ids: Vec<&str> = candidates.iter().map(|c| c.vector_id.as_str()).collect();
         let stored = self
             .storage
             .get_full_dim_vectors(&candidate_ids)

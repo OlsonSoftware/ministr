@@ -660,7 +660,7 @@ impl super::DualEmbedder for MatryoshkaEmbedder {
                 let mut t = v[..self.target_dim].to_vec();
                 let norm: f32 = t.iter().map(|x| x * x).sum::<f32>().sqrt();
                 if norm > 0.0 {
-                    for x in t.iter_mut() {
+                    for x in &mut t {
                         *x /= norm;
                     }
                 }

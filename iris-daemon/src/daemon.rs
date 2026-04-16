@@ -47,6 +47,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/related", post(related))
         .route("/api/v1/corpora/{id}/bridge", post(bridge))
         .route("/api/v1/corpora/{id}/compress", post(compress_content))
+        .route("/api/v1/corpora/{id}/ask", post(ask_handler))
         .route("/api/v1/corpora/{id}/export", post(export_bundle))
         .route("/api/v1/corpora/{id}/progress", get(ingestion_progress))
         .route("/api/v1/corpora/{id}/coherence", get(coherence_stream))
@@ -564,6 +565,38 @@ async fn compress_content(
         })
         .into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "compress_failed", e).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ask (sub-inference)
+// ---------------------------------------------------------------------------
+
+async fn ask_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<query::AskRequest>,
+) -> impl IntoResponse {
+    let _permit = state.query_semaphore.acquire().await;
+    let guard = get_corpus!(&state, &id);
+    let handle = &guard[&id];
+
+    match crate::ask::ask(
+        &req.query,
+        &handle.service,
+        &handle.storage,
+        state.inference.as_ref(),
+    )
+    .await
+    {
+        Ok(result) => Json(query::AskResponse {
+            answer: result.answer,
+            source_ids: result.source_ids,
+            cached: result.cached,
+            model: result.model,
+        })
+        .into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "ask_failed", e).into_response(),
     }
 }
 

@@ -25,6 +25,7 @@ use crate::ingestion;
 /// On first invocation for a corpus, acquires an exclusive lock and starts
 /// as the primary (stdio + HTTP listener for secondaries). On subsequent
 /// invocations, detects the primary and runs as a transparent proxy.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) async fn cmd_serve_stdio(
     corpus_paths: &[String],
     git_includes: &[iris_core::config::GitInclude],

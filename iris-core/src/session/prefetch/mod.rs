@@ -841,7 +841,7 @@ impl PrefetchEngine {
 
     /// Clear all cached entries (useful after a full re-index).
     pub fn clear_cache(&mut self) {
-        while self.cache.len() > 0 {
+        while !self.cache.is_empty() {
             if self.cache.order.pop_front().is_some() {
                 // order drained one by one — corresponding entries remain
             }

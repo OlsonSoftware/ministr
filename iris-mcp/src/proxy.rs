@@ -12,9 +12,9 @@ use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData as McpError;
 use rmcp::model::{
-    CallToolResult, Implementation, InitializeRequestParams, InitializeResult, ListPromptsResult,
-    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams, ServerCapabilities,
-    ServerInfo,
+    CallToolResult, Content, Implementation, InitializeRequestParams, InitializeResult,
+    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::schemars;
 use rmcp::service::RequestContext;
@@ -115,6 +115,12 @@ pub struct CompressParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EvictedParams {
     pub content_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct AskParams {
+    /// Natural-language question about the codebase.
+    pub query: String,
 }
 
 impl ProxyServer {
@@ -317,10 +323,15 @@ impl ProxyServer {
         Ok(resp.session_id)
     }
 
+    /// Serialize a response into a `CallToolResult` using only the `content`
+    /// field (text JSON).  We intentionally avoid `CallToolResult::structured`
+    /// because it populates *both* `content` and `structured_content`, and
+    /// Claude Code sends both to the model — effectively doubling every
+    /// response's token cost in the conversation context.
     fn json_result<T: Serialize>(data: &T) -> Result<CallToolResult, McpError> {
-        let v = serde_json::to_value(data)
+        let text = serde_json::to_string(data)
             .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
-        Ok(CallToolResult::structured(v))
+        Ok(CallToolResult::success(vec![Content::text(text)]))
     }
 
     fn err(e: &iris_api::client::ClientError) -> McpError {
@@ -370,6 +381,11 @@ impl ProxyServer {
             let _ = budget.record_tokens(&params.section_id, token_count);
         }
 
+        // Compact: drop redundant fields and strip doc comment duplication
+        // from text to save context tokens.
+        let mut resp = resp;
+        resp.summary = None;
+        resp.budget_status = None;
         Self::json_result(&resp)
     }
 
@@ -411,11 +427,21 @@ impl ProxyServer {
             visibility: params.visibility,
             limit: params.limit,
         };
-        let resp = self
+        let mut resp = self
             .client
             .symbols(&cid, &req)
             .await
             .map_err(|e| Self::err(&e))?;
+
+        // Compact: in listing context, drop source_context (already empty from
+        // daemon), heading_path (derivable from file_path), and doc_comment
+        // (signature is sufficient for deciding which symbol to drill into).
+        for sym in &mut resp.symbols {
+            sym.source_context = String::new();
+            sym.heading_path.clear();
+            sym.doc_comment = None;
+        }
+
         Self::json_result(&resp)
     }
 
@@ -428,11 +454,21 @@ impl ProxyServer {
         Parameters(params): Parameters<DefinitionParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
-        let resp = self
+        let mut resp = self
             .client
             .definition(&cid, &params.symbol_id)
             .await
             .map_err(|e| Self::err(&e))?;
+
+        // Compact: when source_context is present, doc_comment and signature
+        // are redundant (both appear in the source lines). heading_path is
+        // derivable from file_path.
+        if !resp.source_context.is_empty() {
+            resp.doc_comment = None;
+            resp.signature = String::new();
+            resp.heading_path.clear();
+        }
+
         Self::json_result(&resp)
     }
 
@@ -445,11 +481,21 @@ impl ProxyServer {
         Parameters(params): Parameters<ReferencesParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
-        let resp = self
+        let mut resp = self
             .client
             .references(&cid, &params.symbol_id)
             .await
             .map_err(|e| Self::err(&e))?;
+
+        // Compact: the caller already knows the target symbol — drop
+        // redundant to_* fields from each reference.
+        for r in &mut resp.references {
+            r.to_symbol_id = String::new();
+            r.to_name = String::new();
+            r.to_file = String::new();
+            r.to_line = 0;
+        }
+
         Self::json_result(&resp)
     }
 
@@ -580,6 +626,32 @@ impl ProxyServer {
         let resp = self
             .client
             .evict_content(&cid, &sid, &req)
+            .await
+            .map_err(|e| Self::err(&e))?;
+
+        // Update local budget tracker so iris_budget reflects the evictions.
+        {
+            let mut budget = self.local_budget.lock().await;
+            for id in &resp.evicted {
+                budget.force_evict(id);
+            }
+        }
+
+        Self::json_result(&resp)
+    }
+
+    #[tool(
+        name = "iris_ask",
+        description = "Ask a question about the codebase and get a synthesized answer. Uses cached sub-inference — much cheaper than manually surveying + reading multiple sections."
+    )]
+    async fn ask(
+        &self,
+        Parameters(params): Parameters<AskParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let cid = self.ensure_corpus().await?;
+        let resp = self
+            .client
+            .ask(&cid, &params.query)
             .await
             .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)

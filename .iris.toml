@@ -23,6 +23,10 @@ paths = [
 
     # Research corpus (2026 ANN/HNSW/quantization/prefetch papers, text-extracted)
     "docs/research",
+
+    # Claude Code source (leaked source map mirror) — for understanding
+    # context management, tool result handling, and compaction internals.
+    "/Users/alrik/Code/claude-code-source/src",
 ]
 
 ignore = [

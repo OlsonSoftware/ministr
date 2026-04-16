@@ -284,6 +284,7 @@ async fn main() -> Result<()> {
     dispatch(cli.command.unwrap_or_default(), rc).await
 }
 
+#[allow(clippy::too_many_lines)]
 async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
     match command {
         Command::Serve {

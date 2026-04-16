@@ -1,4 +1,5 @@
-//! Backend equivalence tests — verify Candle and FastEmbed produce
+#![allow(clippy::cast_precision_loss)]
+//! Backend equivalence tests — verify Candle and `FastEmbed` produce
 //! compatible vectors for the same model.
 //!
 //! These tests require model downloads (~160MB) and run in --release mode
@@ -46,7 +47,7 @@ mod candle_vs_onnx {
         "A claim is an atomic factual statement extracted from a section of documentation.",
     ];
 
-    /// Verify that Candle and FastEmbed produce compatible vectors for a given model.
+    /// Verify that Candle and `FastEmbed` produce compatible vectors for a given model.
     ///
     /// "Compatible" means cosine similarity >= threshold for all text pairs.
     /// We use 0.95 as the threshold — both backends load the same model weights
@@ -60,7 +61,10 @@ mod candle_vs_onnx {
 
         for model_info in candle_supported_models() {
             let model_name = model_info.name;
-            eprintln!("\n--- Testing model: {model_name} ({}d) ---", model_info.dimension);
+            eprintln!(
+                "\n--- Testing model: {model_name} ({}d) ---",
+                model_info.dimension
+            );
 
             let candle = match CandleEmbedder::with_data_dir(model_name, data_dir.path()) {
                 Ok(e) => e,
@@ -77,8 +81,11 @@ mod candle_vs_onnx {
                 }
             };
 
-            assert_eq!(candle.dimension(), onnx.dimension(),
-                "dimension mismatch for {model_name}");
+            assert_eq!(
+                candle.dimension(),
+                onnx.dimension(),
+                "dimension mismatch for {model_name}"
+            );
 
             let candle_vecs = candle.embed(TEST_TEXTS).expect("candle embed failed");
             let onnx_vecs = onnx.embed(TEST_TEXTS).expect("onnx embed failed");

@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 16;
+pub const CURRENT_SCHEMA_VERSION: usize = 17;
 
 /// Returns the migration set for the content database.
 ///
@@ -297,6 +297,31 @@ fn migrations() -> Migrations<'static> {
             );
             ",
         ),
+        // V17: Answer cache for iris_ask sub-inference.
+        // answer_cache stores synthesized answers keyed by query hash.
+        // answer_cache_sources is a reverse index: given a changed section_id,
+        // find all cached answers to invalidate in O(changed_sections).
+        M::up(
+            "
+            CREATE TABLE answer_cache (
+                query_hash   TEXT PRIMARY KEY NOT NULL,
+                query_text   TEXT NOT NULL,
+                answer       TEXT NOT NULL,
+                model        TEXT NOT NULL,
+                token_count  INTEGER NOT NULL,
+                created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+
+            CREATE TABLE answer_cache_sources (
+                query_hash   TEXT NOT NULL REFERENCES answer_cache(query_hash) ON DELETE CASCADE,
+                section_id   TEXT NOT NULL,
+                section_hash TEXT NOT NULL,
+                PRIMARY KEY (query_hash, section_id)
+            );
+
+            CREATE INDEX idx_answer_cache_sources_section ON answer_cache_sources(section_id);
+            ",
+        ),
     ])
 }
 
@@ -404,6 +429,8 @@ mod tests {
         assert!(tables.contains(&"corpus_roots".to_string()));
         assert!(tables.contains(&"embedding_cache".to_string()));
         assert!(tables.contains(&"full_dim_vectors".to_string()));
+        assert!(tables.contains(&"answer_cache".to_string()));
+        assert!(tables.contains(&"answer_cache_sources".to_string()));
     }
 
     #[test]

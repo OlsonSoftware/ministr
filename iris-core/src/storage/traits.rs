@@ -321,6 +321,32 @@ pub struct BridgeLinkDetail {
     pub import_line: u32,
 }
 
+/// A cached answer from the `answer_cache` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedAnswer {
+    /// SHA-256 hash of the normalized query string.
+    pub query_hash: String,
+    /// Original query text (for debugging and display).
+    pub query_text: String,
+    /// The synthesized answer.
+    pub answer: String,
+    /// Model used for synthesis (e.g. "haiku").
+    pub model: String,
+    /// Token count of the answer.
+    pub token_count: usize,
+    /// ISO 8601 creation timestamp.
+    pub created_at: String,
+}
+
+/// A source section that contributed to a cached answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedAnswerSource {
+    /// Section ID that was retrieved for this answer.
+    pub section_id: String,
+    /// SHA-256 hash of the section's text at synthesis time.
+    pub section_hash: String,
+}
+
 /// Filter criteria for querying the symbol index.
 ///
 /// All fields are optional — `None` means "no filter" for that field.
