@@ -13,42 +13,57 @@ Instead of the agent naively reading files and losing track of what it's already
 iris indexes everything, tracks what's been delivered, predicts what's needed next,
 and manages the agent's finite context window like a CPU manages its L1/L2 cache.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      LLM Agent (Claude, etc.)               │
-│                                                             │
-│  "iris_survey('authentication')"                            │
-│  "iris_read('src/auth.rs#login')"                           │
-│  "iris_symbols(kind='struct', query='Session')"             │
-└──────────────┬──────────────────────────────────────────────┘
-               │  MCP Protocol (stdio or HTTP)
-               ▼
-┌──────────────────────────────────────────────────────────────┐
-│                     iris-mcp  (Transport Layer)              │
-│                                                              │
-│  IrisServer ─── tool routing, JSON-RPC, MCP protocol         │
-│       │                                                      │
-│       ├── SessionRegistry ─── manages multiple agent sessions│
-│       ├── PrefetchEngine ──── predictive pre-warming         │
-│       └── Analytics ───────── cross-session learning         │
-└──────────────┬───────────────────────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────────────────────┐
-│                     iris-core  (Domain Logic)                │
-│                                                              │
-│  QueryService ── survey, read, extract, symbols, refs        │
-│       │                                                      │
-│       ├── MultiResolutionSearch ── dense + sparse + rerank   │
-│       ├── IngestionPipeline ────── parse → extract → embed   │
-│       ├── CoherenceEngine ──────── file watch → re-index     │
-│       └── Session (Shadow) ─────── dedup, delta, budget      │
-│                                                              │
-│  ┌─────────┐  ┌───────────┐  ┌─────────┐  ┌─────────────┐  │
-│  │Embedding│  │  Storage   │  │  Index   │  │   Parser    │  │
-│  │(ONNX)   │  │ (SQLite)   │  │ (HNSW)  │  │(tree-sitter)│  │
-│  └─────────┘  └───────────┘  └─────────┘  └─────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+```d2
+direction: down
+
+agent: LLM Agent (Claude, etc.) {
+  call1: iris_survey('authentication')
+  call2: iris_read('src/auth.rs#login')
+  call3: iris_symbols(kind='struct', query='Session')
+}
+
+mcp: iris-mcp (Transport Layer) {
+  server: IrisServer — tool routing, JSON-RPC
+  sessions: SessionRegistry
+  prefetch: PrefetchEngine
+  analytics: Cross-session analytics
+
+  server -> sessions
+  server -> prefetch
+  server -> analytics
+}
+
+core: iris-core (Domain Logic) {
+  query: QueryService — survey, read, extract, symbols, refs
+  search: MultiResolutionSearch\ndense + sparse + rerank
+  ingest: IngestionPipeline\nparse → extract → embed
+  coherence: CoherenceEngine\nfile watch → re-index
+  session: Session shadow\ndedup, delta, budget
+
+  infra: {
+    embed: Embedding (ONNX) {
+      shape: rectangle
+    }
+    storage: Storage (SQLite) {
+      shape: cylinder
+    }
+    index: Index (HNSW) {
+      shape: cylinder
+    }
+    parser: Parser (tree-sitter) {
+      shape: rectangle
+    }
+  }
+
+  query -> search
+  search -> infra.embed
+  search -> infra.index
+  ingest -> infra.parser
+  ingest -> infra.storage
+}
+
+agent -> mcp: MCP Protocol\n(stdio or HTTP)
+mcp -> core
 ```
 
 ---
@@ -254,52 +269,29 @@ changed, the embedding is reused without re-running ONNX inference.
 
 This is the most important flow. Let's trace it end-to-end:
 
-```
-Agent calls: iris_survey(query: "authentication middleware")
-  │
-  ▼
-┌─ IrisServer (iris-mcp/src/server.rs) ─────────────────────────┐
-│                                                                │
-│  1. Check prefetch cache for warm hit                          │
-│     └─ PrefetchEngine.check("authentication middleware")       │
-│                                                                │
-│  2. Get session from registry                                  │
-│     └─ SessionRegistry.get_or_create(active_session_id)        │
-│                                                                │
-│  3. Call QueryService.survey_excluding(                         │
-│        query, top_k, already_delivered_ids                      │
-│     )                                                          │
-│     │                                                          │
-│     ▼                                                          │
-│  ┌─ QueryService (iris-core/src/service.rs) ─────────────┐    │
-│  │                                                        │    │
-│  │  4. Create MultiResolutionSearch(embedder, index)      │    │
-│  │     │                                                  │    │
-│  │     ├─ Embed query → 384-dim vector                    │    │
-│  │     ├─ HNSW kNN search → raw candidates                │    │
-│  │     ├─ Optional: SPLADE sparse search                  │    │
-│  │     ├─ RRF fusion of dense + sparse                    │    │
-│  │     └─ Optional: cross-encoder reranking               │    │
-│  │                                                        │    │
-│  │  5. For each candidate:                                │    │
-│  │     └─ Resolve content from SQLite                     │    │
-│  │        (section text + heading path)                    │    │
-│  │                                                        │    │
-│  │  6. Return Vec<SurveyResult>                           │    │
-│  └────────────────────────────────────────────────────────┘    │
-│                                                                │
-│  7. Session tracking:                                          │
-│     ├─ Record delivery in session shadow                       │
-│     ├─ Update budget tracker (add token count)                 │
-│     └─ Record analytics (access frequency)                     │
-│                                                                │
-│  8. Attach budget_status to response:                          │
-│     { pressure_level, tokens_used, tokens_remaining }          │
-│                                                                │
-│  9. Background: trigger prefetch for predicted next reads      │
-│                                                                │
-│  10. Return JSON response to agent                             │
-└────────────────────────────────────────────────────────────────┘
+```d2
+shape: sequence_diagram
+
+agent: Agent
+server: IrisServer
+prefetch: PrefetchEngine
+sessions: SessionRegistry
+query: QueryService
+search: MultiResSearch
+storage: SQLite + HNSW
+
+agent -> server: iris_survey("authentication middleware")
+server -> prefetch: "1. check warm cache"
+server -> sessions: "2. get_or_create(session_id)"
+server -> query: "3. survey_excluding(query, top_k, delivered_ids)"
+query -> search: "4. multi-resolution search"
+search -> search: "embed → HNSW kNN → optional SPLADE\n→ RRF fusion → optional rerank"
+search -> storage: "5. resolve content"
+storage -> query: "Vec<SurveyResult>"
+query -> server: "results"
+server -> sessions: "7. record delivery + budget + analytics"
+server -> prefetch: "9. pre-warm predicted next reads"
+server -> agent: "10. JSON response + budget_status"
 ```
 
 ### Key Insight: Deduplication
@@ -380,33 +372,41 @@ This is included in **every response** as `budget_status`:
 After each `iris_read`, the prefetch engine speculatively pre-warms sections the
 agent is likely to request next. It uses five strategies:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    PrefetchEngine                            │
-│                                                             │
-│  After agent reads section N:                               │
-│                                                             │
-│  1. Sequential     → Pre-warm section N+1, N+2              │
-│     (like CPU      (next sections in same document)          │
-│      cache line                                              │
-│      prefetch)                                               │
-│                                                             │
-│  2. Topical        → Query HNSW with running topic vector   │
-│     (like branch   (EMA of recent section embeddings)        │
-│      prediction)   Pre-warm similar sections                 │
-│                                                             │
-│  3. Structural     → Pre-warm sibling sections              │
-│     (like spatial  (same parent heading, adjacent depth)     │
-│      locality)                                               │
-│                                                             │
-│  4. Cross-Session  → Pre-warm frequently co-accessed         │
-│     (like shared   sections from historical analytics        │
-│      cache)                                                  │
-│                                                             │
-│  5. Survey Expand  → Pre-warm parent sections of             │
-│     (like TLB      claim-level survey hits                   │
-│      prefetch)                                               │
-└─────────────────────────────────────────────────────────────┘
+```d2
+direction: right
+
+read: "Agent reads\nsection N" {
+  shape: rectangle
+}
+
+engine: PrefetchEngine {
+  seq: "1. Sequential\n(cache line prefetch)" {
+    tooltip: Pre-warm section N+1, N+2 in same document
+  }
+  topical: "2. Topical\n(branch prediction)" {
+    tooltip: Query HNSW with running EMA topic vector
+  }
+  structural: "3. Structural\n(spatial locality)" {
+    tooltip: Pre-warm sibling sections at same depth
+  }
+  cross: "4. Cross-Session\n(shared cache)" {
+    tooltip: Pre-warm frequently co-accessed sections
+  }
+  survey: "5. Survey Expand\n(TLB prefetch)" {
+    tooltip: Pre-warm parent sections of claim hits
+  }
+}
+
+cache: "Prefetch cache\n(LRU, capacity=50)" {
+  shape: cylinder
+}
+
+read -> engine
+engine.seq -> cache
+engine.topical -> cache
+engine.structural -> cache
+engine.cross -> cache
+engine.survey -> cache
 ```
 
 ### The Topic Tracker
@@ -444,35 +444,37 @@ PrefetchCache (LRU, capacity=50)
 
 When files change on disk, iris needs to update the index AND notify active sessions.
 
-```
-┌──────────┐     notify       ┌───────────────┐
-│ File     │ ──────────────→  │ FileWatcher    │
-│ System   │                  │ (notify crate) │
-└──────────┘                  └───────┬────────┘
-                                      │ CoherenceEvent
-                                      │ (Created/Modified/Removed)
-                                      ▼
-                              ┌───────────────────┐
-                              │ CoherenceEngine    │
-                              │                    │
-                              │ 1. Re-parse file   │
-                              │ 2. Re-extract      │
-                              │ 3. Re-embed        │
-                              │ 4. Update SQLite   │
-                              │ 5. Update HNSW     │
-                              └───────┬────────────┘
-                                      │
-                                      ▼
-                              ┌───────────────────┐
-                              │ SessionRegistry    │
-                              │                    │
-                              │ For each session:  │
-                              │ Mark affected      │
-                              │ sections as stale  │
-                              │                    │
-                              │ Queue coherence    │
-                              │ alerts for agent   │
-                              └────────────────────┘
+```d2
+direction: right
+
+fs: File System {
+  shape: rectangle
+}
+
+watcher: FileWatcher\n(notify crate) {
+  shape: rectangle
+}
+
+engine: CoherenceEngine {
+  step1: "1. Re-parse file"
+  step2: "2. Re-extract claims"
+  step3: "3. Re-embed"
+  step4: "4. Update SQLite"
+  step5: "5. Update HNSW"
+
+  step1 -> step2 -> step3 -> step4 -> step5
+}
+
+sessions: SessionRegistry {
+  mark: Mark affected\nsections as stale
+  queue: Queue coherence\nalerts for agent
+
+  mark -> queue
+}
+
+fs -> watcher: notify
+watcher -> engine: "CoherenceEvent\n(Created/Modified/Removed)"
+engine -> sessions
 ```
 
 When the agent next calls any iris tool, it receives pending alerts:
@@ -555,21 +557,27 @@ tree-sitter AST parse
 
 iris can detect and link cross-language bindings:
 
-```
-┌─ Rust ──────────────┐         ┌─ JavaScript ──────────┐
-│                     │         │                       │
-│ #[napi]             │ ═══════ │ import { greet }      │
-│ fn greet(s: String) │  napi   │ from './native'       │
-│                     │         │                       │
-│ #[pyfunction]       │ ═══════ │ from mylib import     │
-│ fn compute(x: f64)  │  pyo3   │     compute           │
-│                     │         │                       │
-│ #[tauri::command]   │ ═══════ │ invoke('open_file',   │
-│ fn open_file(path)  │  tauri  │    { path })          │
-└─────────────────────┘         └───────────────────────┘
+```d2
+direction: right
 
-Also: wasm-bindgen, HTTP routes (server↔client matching)
+rust: Rust {
+  napi: "#[napi]\nfn greet(s: String)" { shape: rectangle }
+  pyo: "#[pyfunction]\nfn compute(x: f64)" { shape: rectangle }
+  tauri: "#[tauri::command]\nfn open_file(path)" { shape: rectangle }
+}
+
+other: JavaScript / Python {
+  js_native: "import { greet }\nfrom './native'" { shape: rectangle }
+  py_import: "from mylib import\n    compute" { shape: rectangle }
+  invoke: "invoke('open_file',\n   { path })" { shape: rectangle }
+}
+
+rust.napi -> other.js_native: napi { style.stroke-width: 3 }
+rust.pyo -> other.py_import: pyo3 { style.stroke-width: 3 }
+rust.tauri -> other.invoke: tauri { style.stroke-width: 3 }
 ```
+
+Also: wasm-bindgen, HTTP routes (server↔client matching).
 
 The `BridgeLinker` runs a two-pass pipeline:
 1. **Extract** endpoints from all source files

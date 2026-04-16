@@ -131,21 +131,9 @@ This analogy is not decorative. It constrains every design choice. When evaluati
 
 iris runs as a standalone process that any MCP-compatible agent can connect to. It is not embedded inside the agent, not a library linked into the agent's binary, and not a cloud service. It is a local sidecar process, the same way a language server (LSP) sits alongside an editor.
 
-```
-┌──────────────────┐       MCP (JSON-RPC)       ┌──────────────────┐
-│   Any LLM Agent  │ ◄──────────────────────── ► │      iris        │
-│                  │    tool calls / responses    │                  │
-│  Claude Code     │                              │  Rust binary     │
-│  Cursor          │                              │  ~30MB           │
-│  Custom agent    │                              │  Single process  │
-│  Python script   │                              │  Local or remote │
-└──────────────────┘                              └────────┬─────────┘
-                                                           │
-                                                  ┌────────▼─────────┐
-                                                  │  Document corpus │
-                                                  │  (local files)   │
-                                                  └──────────────────┘
-```
+<p align="center">
+  <img src="docs/src/assets/deployment-model.svg" alt="Deployment model: MCP client (agent) connects to iris, which reads from a local document corpus" width="780">
+</p>
 
 The MCP protocol (donated to the Linux Foundation's Agentic AI Foundation in December 2025, co-founded by Anthropic, Block, and OpenAI) is the universal interface. iris does not need to know anything about the agent's internals. It only needs to receive tool calls and return context.
 

@@ -1,0 +1,17 @@
+direction: right
+
+rust: Rust {
+  napi: "#[napi]\nfn greet(s: String)" { shape: rectangle }
+  pyo: "#[pyfunction]\nfn compute(x: f64)" { shape: rectangle }
+  tauri: "#[tauri::command]\nfn open_file(path: &str)" { shape: rectangle }
+}
+
+other: JavaScript / Python {
+  js_native: "import { greet }\nfrom './native'" { shape: rectangle }
+  py_import: "from mylib import\n    compute" { shape: rectangle }
+  invoke: "invoke('open_file',\n   { path })" { shape: rectangle }
+}
+
+rust.napi -> other.js_native: napi { style.stroke-width: 3 }
+rust.pyo -> other.py_import: pyo3 { style.stroke-width: 3 }
+rust.tauri -> other.invoke: tauri { style.stroke-width: 3 }

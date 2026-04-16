@@ -68,19 +68,9 @@ claude mcp add iris -- iris                                    # Claude Code
 
 iris detects and links cross-language bindings automatically:
 
-```
- Rust                              JavaScript / Python
-┌──────────────────────────┐      ┌──────────────────────────┐
-│ #[napi]                  │══════│ import { greet }          │
-│ fn greet(s: String)      │ napi │ from './native'           │
-│                          │      │                           │
-│ #[pyfunction]            │══════│ from mylib import         │
-│ fn compute(x: f64)       │ pyo3 │     compute               │
-│                          │      │                           │
-│ #[tauri::command]        │══════│ invoke('open_file',       │
-│ fn open_file(path: &str) │tauri │    { path })              │
-└──────────────────────────┘      └──────────────────────────┘
-```
+<p align="center">
+  <img src="docs/src/assets/bridges.svg" alt="Cross-language bridge diagram: Rust exports (napi, PyO3, Tauri) linked to JavaScript/Python consumers" width="720">
+</p>
 
 ## Installation
 
@@ -109,7 +99,7 @@ cargo install iris-cli
 | | |
 |---|---|
 | [Tool reference](https://AlrikOlson.github.io/iris-rs/tools/README.html) | All MCP tools with parameters and examples |
-| [Architecture](docs/ARCHITECTURE.md) | Crate structure, layering, and subsystem deep dive |
+| [Architecture](https://alrikolson.github.io/iris-rs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
 | [Design specification](DESIGN.md) | Research references and design rationale |
 | [Configuration](https://AlrikOlson.github.io/iris-rs/configuration.html) | `.iris.toml` options and CLI flags |
 | [Deployment](deploy/README.md) | Docker, Fly.io, Railway, nginx/Caddy reverse proxy |
