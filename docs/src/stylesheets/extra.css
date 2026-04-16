@@ -1,0 +1,370 @@
+/* ==========================================================================
+   iris — Material for MkDocs custom styles
+   ========================================================================== */
+
+/* Brand colors ---------------------------------------------------------- */
+
+:root {
+  --iris-accent: #6366f1;
+  --iris-accent-dim: #818cf8;
+  --iris-accent-bg: rgba(99, 102, 241, 0.08);
+  --iris-border: rgba(99, 102, 241, 0.22);
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #1f2233;
+  --md-primary-fg-color--light: #2a2f48;
+  --md-primary-fg-color--dark: #12142a;
+  --md-accent-fg-color: var(--iris-accent);
+  --md-accent-fg-color--transparent: var(--iris-accent-bg);
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0f1020;
+  --md-primary-fg-color--light: #1a1c30;
+  --md-primary-fg-color--dark: #050614;
+  --md-accent-fg-color: var(--iris-accent-dim);
+  --md-accent-fg-color--transparent: rgba(129, 140, 248, 0.12);
+  --md-default-bg-color: #0b0c16;
+  --md-code-bg-color: #14162a;
+}
+
+/* Typography ------------------------------------------------------------ */
+
+.md-typeset {
+  font-size: 0.78rem;
+  line-height: 1.65;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.md-typeset h2 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-top: 2em;
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+  margin-top: 1.6em;
+}
+
+/* Code blocks ----------------------------------------------------------- */
+
+.md-typeset code {
+  background-color: var(--iris-accent-bg);
+  border: 1px solid var(--iris-border);
+  border-radius: 4px;
+  padding: 0 0.3em;
+  font-size: 0.88em;
+}
+
+.md-typeset pre > code {
+  background-color: transparent;
+  border: none;
+  padding: 0;
+}
+
+.md-typeset .highlight pre {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+}
+
+/* ==========================================================================
+   Landing page (index.md)
+   ========================================================================== */
+
+/* Widen landing content and hide edit action */
+
+body[data-md-color-scheme] .md-content[data-md-component="content"] article {
+  max-width: none;
+}
+
+.md-content__button[title="Edit this page"] {
+  display: none;
+}
+
+/* Radial glow behind hero */
+
+.iris-hero {
+  position: relative;
+  padding: 4.5rem 0 2.5rem;
+  text-align: center;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  margin-bottom: 3rem;
+  isolation: isolate;
+}
+
+.iris-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(
+      ellipse 60% 55% at 50% 40%,
+      color-mix(in srgb, var(--iris-accent) 14%, transparent) 0%,
+      transparent 70%
+    );
+  pointer-events: none;
+}
+
+[data-md-color-scheme="slate"] .iris-hero::before {
+  background:
+    radial-gradient(
+      ellipse 60% 55% at 50% 40%,
+      color-mix(in srgb, var(--iris-accent-dim) 22%, transparent) 0%,
+      transparent 70%
+    );
+}
+
+.iris-hero__eyebrow {
+  display: inline-block;
+  font-family: var(--md-code-font, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--iris-accent);
+  padding: 0.3rem 0.8rem;
+  background-color: var(--iris-accent-bg);
+  border: 1px solid var(--iris-border);
+  border-radius: 999px;
+  margin-bottom: 1.5rem;
+}
+
+.md-typeset .iris-hero__title,
+h1.iris-hero__title {
+  font-size: 4.5rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  margin: 0 0 1.2rem;
+  background: linear-gradient(180deg, var(--md-default-fg-color) 0%, var(--md-default-fg-color--light) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.md-typeset .iris-hero__tagline,
+p.iris-hero__tagline {
+  font-size: 1.15rem;
+  color: var(--md-default-fg-color--light);
+  max-width: 640px;
+  margin: 0 auto 2rem;
+  line-height: 1.5;
+}
+
+.iris-hero__install {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 1.2rem;
+  background-color: var(--md-code-bg-color);
+  border: 1px solid var(--iris-border);
+  border-radius: 10px;
+  font-family: var(--md-code-font, monospace);
+  font-size: 0.9rem;
+  margin-bottom: 2rem;
+}
+
+.iris-hero__install::before {
+  content: "$";
+  color: var(--iris-accent);
+  font-weight: bold;
+  user-select: none;
+}
+
+.iris-hero__ctas {
+  display: flex;
+  gap: 0.8rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.iris-hero__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 0.85rem;
+  text-decoration: none;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.iris-hero__cta--primary {
+  background-color: var(--iris-accent);
+  color: white !important;
+}
+
+.iris-hero__cta--primary:hover {
+  transform: translateY(-1px);
+  background-color: var(--iris-accent-dim);
+}
+
+.iris-hero__cta--secondary {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  color: var(--md-default-fg-color) !important;
+}
+
+.iris-hero__cta--secondary:hover {
+  border-color: var(--iris-accent);
+  transform: translateY(-1px);
+}
+
+/* Why iris — problem cards --------------------------------------------- */
+
+.iris-why {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.2rem;
+  margin: 2rem 0 3rem;
+}
+
+.iris-why__card {
+  padding: 1.4rem 1.3rem;
+  background-color: var(--md-code-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 10px;
+  transition: border-color 160ms ease;
+}
+
+.iris-why__card:hover {
+  border-color: var(--iris-accent);
+}
+
+.iris-why__card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  color: var(--iris-accent);
+  letter-spacing: 0;
+}
+
+.iris-why__card p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--md-default-fg-color--light);
+  line-height: 1.55;
+}
+
+/* Feature grid ---------------------------------------------------------- */
+
+.iris-features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 3rem;
+}
+
+.iris-features__card {
+  padding: 1.2rem;
+  background-color: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+  transition: transform 140ms ease, border-color 140ms ease;
+}
+
+.iris-features__card:hover {
+  transform: translateY(-2px);
+  border-color: var(--iris-accent);
+}
+
+.iris-features__card h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--md-default-fg-color);
+}
+
+.iris-features__card h3 a {
+  color: var(--md-default-fg-color);
+  text-decoration: none;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.iris-features__card h3 a:hover {
+  color: var(--md-accent-fg-color);
+}
+
+.iris-features__card p {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--md-default-fg-color--light);
+  line-height: 1.55;
+}
+
+/* Inline code inside links on landing (fix bridge/references refs) ----- */
+
+.md-typeset a code {
+  background-color: var(--iris-accent-bg);
+  border-color: var(--iris-border);
+  color: var(--iris-accent);
+}
+
+/* Section separators --------------------------------------------------- */
+
+.iris-section-header {
+  margin: 3rem 0 1rem;
+  text-align: center;
+}
+
+.iris-section-header h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.iris-section-header p {
+  margin: 0;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.9rem;
+}
+
+/* Bridge diagram styling ------------------------------------------------ */
+
+.iris-bridge-diagram {
+  font-family: var(--md-code-font, monospace);
+  font-size: 0.72rem;
+  line-height: 1.55;
+  background-color: var(--md-code-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 10px;
+  padding: 1.5rem;
+  overflow-x: auto;
+  margin: 1.5rem 0;
+}
+
+/* Responsive ------------------------------------------------------------ */
+
+@media screen and (max-width: 768px) {
+  .iris-hero {
+    padding: 2rem 0 1.5rem;
+  }
+
+  .iris-hero__title {
+    font-size: 2.2rem;
+  }
+
+  .iris-hero__tagline {
+    font-size: 1rem;
+    padding: 0 1rem;
+  }
+
+  .iris-hero__install {
+    font-size: 0.78rem;
+    padding: 0.55rem 0.9rem;
+  }
+}
+
+/* Hide title on index (we use a custom hero instead) ------------------- */
+
+body[data-md-color-scheme] .md-content[data-home] h1:first-child {
+  display: none;
+}

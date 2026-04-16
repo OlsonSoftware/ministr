@@ -10,8 +10,10 @@ Thumbs.db
 *~
 # ── end magistr ──
 
-# mdBook output
+# MkDocs build output
 docs/book/
+docs/site/
+docs/.cache/
 
 # Research PDFs (keep .txt extracts, ignore large binaries)
 docs/research/*.pdf
@@ -49,3 +51,8 @@ eval/model-comparison.json
 
 # Signing credentials
 .env.signing
+
+# Screenshot/Playwright artifacts
+.playwright-mcp/
+iris-landing-*.png
+iris-docs-*.png
