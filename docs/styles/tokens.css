@@ -822,19 +822,22 @@
     text-decoration: none;
     transition: all var(--duration-fast) var(--ease-standard);
   }
-  .iris-404__cta--primary {
+  a.iris-404__cta--primary,
+  a.iris-404__cta--primary:visited {
     background: var(--color-accent);
     color: white;
   }
-  .iris-404__cta--primary:hover {
+  a.iris-404__cta--primary:hover {
     background: var(--color-iris-700);
+    color: white;
   }
-  .iris-404__cta--secondary {
+  a.iris-404__cta--secondary,
+  a.iris-404__cta--secondary:visited {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     color: var(--color-text);
   }
-  .iris-404__cta--secondary:hover {
+  a.iris-404__cta--secondary:hover {
     border-color: var(--color-accent-ring);
     color: var(--color-accent);
   }
