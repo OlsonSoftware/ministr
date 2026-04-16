@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#compass-tool"/></svg>
+</div>
+
 # iris_bridge
 
 Query cross-language binding links between exported symbols and their consumers across language boundaries.

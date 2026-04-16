@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#code"/></svg>
+</div>
+
 # iris_symbols
 
 Search the code symbol index for structs, functions, traits, enums, and other declarations by name, kind, module, or visibility.

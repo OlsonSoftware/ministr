@@ -74,25 +74,21 @@ iris detects and links cross-language bindings automatically:
 
 ## Installation
 
-**Homebrew** (macOS)
-
-```sh
-brew install AlrikOlson/tap/iris
-```
-
 **Install script** (macOS & Linux)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
 ```
 
-**Cargo**
+**Cargo** (latest `main`)
 
 ```sh
-cargo install iris-cli
+cargo install --git https://github.com/AlrikOlson/iris-rs iris-cli
 ```
 
 **Pre-built binaries** — download from [GitHub Releases](https://github.com/AlrikOlson/iris-rs/releases) for macOS, Linux, and Windows.
+
+A Homebrew tap (`AlrikOlson/homebrew-tap`) and a crates.io publish land with 1.0.
 
 ## Documentation
 

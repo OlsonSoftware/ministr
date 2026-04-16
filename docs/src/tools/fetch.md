@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#arrow-up-right"/></svg>
+</div>
+
 # iris_fetch
 
 Fetch a web URL and add its content to the corpus. Supports single pages, sitemaps, and llms.txt feeds.

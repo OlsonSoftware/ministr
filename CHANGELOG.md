@@ -50,12 +50,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hot-reload on `.iris.toml` changes
 - Retrieval evaluation suite with MRR/nDCG and CI regression gate
 
+#### Documentation
+- New documentation site built with Material for MkDocs, hosted on GitHub Pages
+- Tailwind v4 design tokens (`docs/styles/tokens.css`) compiled into Material's theme
+- Inline Phosphor icon sprite via a build-time MkDocs hook (`docs/hooks/inline_icons.py`)
+- D2 diagrams throughout the architecture docs (replacing ASCII art)
+
 ### Changed
 
 - Workspace expanded from 3 crates to 6 (`iris-api`, `iris-daemon`, `iris-app`)
 - Prefetch engine overhauled — `PriorityCache`, adaptive alpha, cache invalidation
 - Ingestion pipeline split into focused submodules
 - Session budget tracking integrated into daemon for cross-session awareness
+- Documentation site migrated from mdBook to Material for MkDocs
+- User-facing copy clarified: iris manages what it sends into context, it does
+  not edit the agent's context window
+
+### Fixed
+
+- Navigation router on the docs site no longer breaks on SVG `<use>` elements;
+  icons are inlined at build time so Material's URL normalizer has no
+  `SVGUseElement.href` to trip on
 
 ## [0.1.0] - 2026-03-21
 

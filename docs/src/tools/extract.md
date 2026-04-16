@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#graph"/></svg>
+</div>
+
 # iris_extract
 
 Extract atomic claims from a section, optionally filtered by relevance to a query. Claims are single factual statements that can stand alone.

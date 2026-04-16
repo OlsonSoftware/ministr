@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#gauge"/></svg>
+</div>
+
 # iris_budget
 
 Get the current context budget status: total budget, estimated usage, pressure level, and eviction recommendations.

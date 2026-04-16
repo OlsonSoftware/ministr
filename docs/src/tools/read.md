@@ -1,3 +1,7 @@
+<div class="iris-tool-head">
+<svg class="icon icon-xl iris-tool-icon"><use href="../assets/icons.svg#book-open"/></svg>
+</div>
+
 # iris_read
 
 Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count.
