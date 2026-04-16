@@ -1,181 +1,124 @@
-# iris
+<p align="center">
+  <h1 align="center">iris</h1>
+</p>
 
-[![CI](https://github.com/alrik/iris-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/alrik/iris-rs/actions/workflows/ci.yml)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
-[![Rust: 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
+<p align="center">
+  <strong>Context cache controller for LLM agents</strong>
+</p>
 
-**Context cache controller for LLM agents.**
+<p align="center">
+  <a href="https://github.com/alrik/iris-rs/actions/workflows/ci.yml"><img src="https://github.com/alrik/iris-rs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.85%2B-orange.svg" alt="Rust"></a>
+</p>
 
-iris is an [MCP server](https://modelcontextprotocol.io) that manages your agent's context window like L1 cache — tracking what it has seen, predicting what it needs next, and managing evictions when budget runs low. Local embeddings, 12-language code navigation, cross-language bridge detection. No API keys required.
+<p align="center">
+  <a href="https://alrik.github.io/iris-rs">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
+</p>
 
-```sh
-claude mcp add iris -- iris    # that's it
-```
+---
 
-## How it works
-
-iris treats the context window as cache, not memory. Every tool response includes budget tracking, and the prefetch engine speculatively pre-warms content before the agent asks for it:
-
-```
- Time   Agent Action                iris Response                Internal State
-─────┬──────────────────────┬──────────────────────────────┬─────────────────────
-  1  │ iris_survey(         │ Top 5 ranked results         │ Prefetch: pre-warm
-     │   "auth middleware") │ budget: 3% used              │ siblings of top hit
-     │                      │                              │
-  2  │ iris_read(           │ Full section text             │ Prefetch: pre-warm
-     │   "src/auth.rs#      │ budget: 5.5% used            │ logout (sequential)
-     │    login")           │                              │ validate (structural)
-     │                      │                              │
-  3  │ iris_read(           │ CACHE HIT — instant delivery │ Sequential prefetch
-     │   "src/auth.rs#      │ (was pre-warmed at step 2)   │ paid off
-     │    logout")          │ budget: 7% used              │
-     │                      │                              │
- ... │  (agent works)       │                              │ budget: 82% used
-     │                      │                              │
-  N  │ iris_survey(         │ Results at CLAIM resolution  │ Pressure: ELEVATED
-     │   "error handling")  │ + eviction_recommendations   │ Compressed responses
-     │                      │                              │
- N+1 │ iris_evicted(        │ Budget freed                 │ Session shadow
-     │   ["old-section"])   │ budget: 75% used             │ updated
-```
-
-## Quick start
-
-**1. Initialize**
+iris is an [MCP server](https://modelcontextprotocol.io) that manages your agent's context window the way a CPU cache controller manages L1 cache. It runs locally, embeds locally, and works with any MCP client.
 
 ```sh
-cd your-project
-iris init        # creates .iris.toml + .mcp.json
+claude mcp add iris -- iris
 ```
 
-Or write `.iris.toml` yourself:
+## Why iris
+
+LLM agents waste most of their context window. iris fixes the three root causes:
+
+**Re-reading** — iris tracks what the agent has already seen and deduplicates. When a section changes, it delivers only the delta.
+
+**Blind retrieval** — iris indexes your codebase at multiple resolutions (documents, sections, claims, symbols) and returns precisely what's relevant — not entire files.
+
+**No lookahead** — iris predicts what the agent will need next and pre-warms it. Sequential, structural, and topical prefetch strategies mean cache hits instead of cold reads.
+
+## Setup
+
+**1.** Create `.iris.toml` in your project root (or run `iris init`):
 
 ```toml
 [corpus]
 paths = ["src", "docs", "README.md"]
-ignore = ["*.snap", "node_modules"]
 ```
 
-**2. Connect your MCP client**
+**2.** Connect your MCP client:
 
 ```sh
-claude mcp add iris -- iris              # Claude Code
+claude mcp add iris -- iris                                    # Claude Code
 ```
+
 ```json
-{"mcpServers": {"iris": {"command": "iris", "args": []}}}
+{ "mcpServers": { "iris": { "command": "iris", "args": [] } } }
 ```
-<sup>`.cursor/mcp.json` for Cursor, `.mcp.json` for Claude Code</sup>
 
-**3. Use it**
-
-The agent now has semantic search, code navigation, and budget management. iris indexes on first connection — no manual step needed.
+<sup>Save as <code>.mcp.json</code> (Claude Code) or <code>.cursor/mcp.json</code> (Cursor). iris auto-discovers <code>.iris.toml</code> from the working directory.</sup>
 
 ## Features
 
-### Search & retrieval
-
-- **Semantic search** — embedding-based retrieval at document, section, and claim resolution
-- **Code symbol index** — structs, functions, traits, enums across 12 languages via tree-sitter
-- **Cross-language bridges** — automatic detection of Tauri, napi, PyO3, wasm-bindgen, and HTTP route bindings
-- **Multi-source corpora** — index local directories, web URLs, and git repositories
-
-### Session intelligence
-
-- **Session shadow** — tracks what the agent has seen, deduplicates deliveries, detects evictions
-- **Predictive prefetch** — pre-warms content using sequential, structural, topical, and cross-session locality
-- **Budget management** — monitors token usage, recommends evictions, provides compressed summaries under pressure
-- **Delta delivery** — only sends changed lines when re-reading a modified section
-
-### Infrastructure
-
-- **Local embeddings** — FastEmbed + ONNX (~5ms/embed), optional Metal GPU via Candle on Apple Silicon
-- **Live coherence** — watches the filesystem, re-indexes on change, alerts the agent about stale content
-- **Single instance** — automatic stdio-to-HTTP proxy when a second client connects to a running daemon
-- **Streamable HTTP** — remote deployment via Docker, Fly.io, or Railway
-
-## Tools
-
-| Tool | What it does |
-|------|-------------|
-| `iris_survey` | Semantic search across docs and code |
-| `iris_symbols` | Find symbols by name, kind, or module |
-| `iris_definition` | Full source of a symbol |
-| `iris_references` | Callers, implementors, importers |
-| `iris_read` | Read a section (with dedup and delta delivery) |
-| `iris_extract` | Atomic claims from a section |
-| `iris_bridge` | Cross-language binding links |
-| `iris_budget` | Context budget status and eviction advice |
-
-<details>
-<summary>All tools</summary>
-
-| Tool | What it does |
-|------|-------------|
-| `iris_compress` | Compressed summaries for eviction |
-| `iris_evicted` | Signal that content was dropped |
-| `iris_related` | Follow dependency chains between claims |
-| `iris_toc` | Structural overview of the corpus |
-| `iris_fetch` | Fetch web content into the corpus |
-| `iris_clone` | Clone and index a git repo |
-| `iris_refresh` | Re-fetch changed web sources |
-
-</details>
-
-## Installation
-
-**Homebrew** (macOS)
-```sh
-brew install alrik/tap/iris
-```
-
-**Install script** (macOS & Linux)
-```sh
-curl -fsSL https://raw.githubusercontent.com/alrik/iris-rs/main/install.sh | bash
-```
-
-**Cargo** (from source)
-```sh
-cargo install iris-cli
-```
-
-**Pre-built binaries** — [GitHub Releases](https://github.com/alrik/iris-rs/releases) for macOS (Apple Silicon & Intel), Linux (x86_64 & aarch64), Windows (x86_64).
+- **Semantic search** across docs and code at document, section, and claim resolution
+- **Code symbol navigation** — find and trace structs, functions, traits across 12 languages via tree-sitter
+- **Cross-language bridge detection** — Tauri commands, napi bindings, PyO3 functions, wasm-bindgen exports, HTTP routes
+- **Session tracking** with predictive prefetch, deduplication, and delta delivery
+- **Budget management** — token usage monitoring, eviction recommendations, compressed summaries under pressure
+- **Local embeddings** — FastEmbed + ONNX (~5ms/embed), optional Metal GPU acceleration on Apple Silicon
 
 ## Cross-language bridges
 
 iris detects and links cross-language bindings automatically:
 
 ```
-┌─ Rust ──────────────────┐         ┌─ JavaScript ──────────────┐
-│                         │         │                           │
-│ #[napi]                 │ ══napi══│ import { greet }          │
-│ fn greet(s: String)     │         │ from './native'           │
-│                         │         │                           │
-│ #[pyfunction]           │ ══pyo3══│ from mylib import         │
-│ fn compute(x: f64)      │         │     compute               │
-│                         │         │                           │
-│ #[tauri::command]       │ ═tauri══│ invoke('open_file',       │
-│ fn open_file(path)      │         │    { path })              │
-└─────────────────────────┘         └───────────────────────────┘
+ Rust                              JavaScript / Python
+┌──────────────────────────┐      ┌──────────────────────────┐
+│ #[napi]                  │══════│ import { greet }          │
+│ fn greet(s: String)      │ napi │ from './native'           │
+│                          │      │                           │
+│ #[pyfunction]            │══════│ from mylib import         │
+│ fn compute(x: f64)       │ pyo3 │     compute               │
+│                          │      │                           │
+│ #[tauri::command]        │══════│ invoke('open_file',       │
+│ fn open_file(path: &str) │tauri │    { path })              │
+└──────────────────────────┘      └──────────────────────────┘
 ```
 
-Use `iris_bridge` to query these links, or `iris_references` to trace a symbol across language boundaries.
+## Installation
 
-## Supported languages
+**Homebrew** (macOS)
 
-Tree-sitter parsing and symbol extraction for **Rust**, **Python**, **JavaScript**, **TypeScript**, **Go**, **Java**, **C**, **C++**, **Ruby**, **C#**, **Swift**, **Kotlin**.
+```sh
+brew install alrik/tap/iris
+```
+
+**Install script** (macOS & Linux)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/alrik/iris-rs/main/install.sh | bash
+```
+
+**Cargo**
+
+```sh
+cargo install iris-cli
+```
+
+**Pre-built binaries** — download from [GitHub Releases](https://github.com/alrik/iris-rs/releases) for macOS, Linux, and Windows.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) — deep dive into the crate structure and subsystems
-- [Design](DESIGN.md) — the full design specification and research references
-- [mdBook docs](https://alrik.github.io/iris-rs) — user guide, tool reference, and configuration
+| | |
+|---|---|
+| [Tool reference](https://alrik.github.io/iris-rs/tools/README.html) | All MCP tools with parameters and examples |
+| [Architecture](docs/ARCHITECTURE.md) | Crate structure, layering, and subsystem deep dive |
+| [Design specification](DESIGN.md) | Research references and design rationale |
+| [Configuration](https://alrik.github.io/iris-rs/configuration.html) | `.iris.toml` options and CLI flags |
+| [Deployment](deploy/README.md) | Docker, Fly.io, Railway, nginx/Caddy reverse proxy |
+| [Example configs](examples/) | `.iris.toml` templates for Rust, Tauri, PyO3, React |
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and PR guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## License
 
-MIT OR Apache-2.0, at your option. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
-
-Contributions are dual-licensed under the same terms unless explicitly stated otherwise.
+MIT OR Apache-2.0. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).

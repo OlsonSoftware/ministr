@@ -1,8 +1,8 @@
 # iris
 
-**A context cache controller for LLM agents.**
+**Context cache controller for LLM agents.**
 
-iris is a Rust-native MCP server that manages an LLM agent's context window the way a CPU cache controller manages L1 cache — with state tracking, predictive prefetching, budget management, and coherence.
+iris is an [MCP server](https://modelcontextprotocol.io) that manages your agent's context window the way a CPU cache controller manages L1 cache — tracking what the agent has seen, predicting what it needs next, and managing evictions when the budget runs low. It runs locally, embeds locally, and works with any MCP client.
 
 ## The Problem
 
