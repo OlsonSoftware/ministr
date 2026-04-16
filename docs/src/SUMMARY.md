@@ -27,10 +27,18 @@
     - [iris_read](tools/read.md)
     - [iris_extract](tools/extract.md)
     - [iris_related](tools/related.md)
+    - [iris_toc](tools/toc.md)
+    - [iris_symbols](tools/symbols.md)
+    - [iris_definition](tools/definition.md)
+    - [iris_references](tools/references.md)
+    - [iris_bridge](tools/bridge.md)
     - [iris_budget](tools/budget.md)
     - [iris_compress](tools/compress.md)
     - [iris_evicted](tools/evicted.md)
-- [CLI Commands](tools/init.md)
+    - [iris_fetch](tools/fetch.md)
+    - [iris_clone](tools/clone.md)
+    - [iris_refresh](tools/refresh.md)
+- [CLI: iris init](tools/init.md)
 
 # Reference
 

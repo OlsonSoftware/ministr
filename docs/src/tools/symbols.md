@@ -1,0 +1,56 @@
+# iris_symbols
+
+Search the code symbol index for structs, functions, traits, enums, and other declarations by name, kind, module, or visibility.
+
+## Parameters
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `query` | string | no | — | Name substring or semantic query |
+| `kind` | string | no | — | Filter by kind: `struct`, `function`, `trait`, `enum`, `const`, `impl`, `method` |
+| `module` | string | no | — | Filter by module path prefix |
+| `visibility` | string | no | — | Filter by visibility: `pub`, `pub(crate)`, `private` |
+| `top_k` | integer | no | 20 | Maximum number of results |
+
+At least one of `query`, `kind`, or `module` must be provided.
+
+## Response
+
+```json
+{
+  "symbols": [
+    {
+      "id": "sym-src/auth.rs::auth::validate_token",
+      "name": "validate_token",
+      "kind": "function",
+      "visibility": "pub",
+      "signature": "pub fn validate_token(token: &str) -> Result<Claims>",
+      "file_path": "src/auth.rs",
+      "line_start": 42,
+      "line_end": 67,
+      "heading_path": ["src/auth.rs", "function validate_token"]
+    }
+  ],
+  "budget_status": { ... }
+}
+```
+
+### Response Fields
+
+| Field | Description |
+|---|---|
+| `symbols[].id` | Symbol ID for use with `iris_definition` and `iris_references` |
+| `symbols[].name` | Declared name |
+| `symbols[].kind` | Symbol kind (struct, function, trait, etc.) |
+| `symbols[].visibility` | Visibility modifier |
+| `symbols[].signature` | Full declaration signature |
+| `symbols[].file_path` | Source file path |
+| `symbols[].line_start` / `line_end` | Line range in the source file |
+
+## Behavior
+
+- Supports exact-name, substring, and semantic embedding match
+- Multi-word queries are tokenized and matched against symbol names
+- Results are ranked by name similarity with kind and visibility boosts
+- Use `iris_definition` to get the full source of a symbol
+- Use `iris_references` to find callers, implementors, and importers
