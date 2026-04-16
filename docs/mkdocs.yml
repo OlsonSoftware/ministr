@@ -108,6 +108,12 @@ plugins:
       sketch: false
       pad: 40
 
+# Build-time hook: inline Phosphor icon sprite references so there are
+# no <use href> tags in output HTML — avoids Material's navigation.instant
+# URL normalizer crashing on SVGUseElement.href setter.
+hooks:
+  - hooks/inline_icons.py
+
 nav:
   - Home: index.md
   - Getting started:

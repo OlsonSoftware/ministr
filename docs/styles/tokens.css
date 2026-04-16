@@ -481,6 +481,17 @@
     flex-shrink: 0;
     vertical-align: -0.125em;
     fill: currentColor;
+
+    /* Click-through: prevents Material's navigation.instant router from
+       landing on the <svg>/<use> as a click target. Without this, routing
+       walks up and tries to set the element's href, which for SVGs is a
+       read-only SVGAnimatedString — breaking nav.instant on any page that
+       contains an icon inside an <a>. */
+    pointer-events: none;
+  }
+  svg.icon *,
+  svg.icon use {
+    pointer-events: none;
   }
   svg.icon-xs { width: 12px !important; height: 12px !important; }
   svg.icon-sm { width: 14px !important; height: 14px !important; }
