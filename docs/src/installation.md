@@ -1,76 +1,58 @@
 # Installation
 
-## CLI (all platforms)
+## CLI
 
-### From source
-
-```sh
-cargo install --path iris-cli
-```
-
-### From GitHub Releases
-
-Download the binary for your platform from the [Releases page](https://github.com/alrik/iris-rs/releases).
-
-## Desktop App
-
-### macOS
-
-1. Download `iris_x.x.x_aarch64.dmg` (Apple Silicon) or `iris_x.x.x_x64.dmg` (Intel)
-2. Open the DMG and drag iris to Applications
-3. Launch iris from Applications — it appears as a system tray icon
-4. Right-click the tray icon to add projects
-
-### Windows
-
-1. Download `iris_x.x.x_x64-setup.exe`
-2. Run the installer
-3. iris starts automatically and appears in the system tray
-4. Right-click the tray icon to manage projects
-
-### Linux
-
-#### AppImage
+### Homebrew (macOS)
 
 ```sh
-chmod +x iris_x.x.x_amd64.AppImage
-./iris_x.x.x_amd64.AppImage
+brew install alrik/tap/iris
 ```
 
-#### Debian/Ubuntu
+### Install script (macOS & Linux)
 
 ```sh
-sudo dpkg -i iris_x.x.x_amd64.deb
+curl -fsSL https://raw.githubusercontent.com/alrik/iris-rs/main/install.sh | bash
 ```
 
-## Auto-start
+### Cargo (from source, requires Rust 1.85+)
 
-The desktop app can be configured to start at login:
+```sh
+cargo install iris-cli
+```
 
-- **Settings > Startup > Start at login** toggle in the GUI
-- Or manually:
-  - **macOS**: Copy `com.iris.app.plist` to `~/Library/LaunchAgents/`
-  - **Windows**: Managed via registry by the autostart plugin
-  - **Linux**: XDG autostart entry at `~/.config/autostart/iris.desktop`
+### Pre-built binaries
+
+Download from [GitHub Releases](https://github.com/alrik/iris-rs/releases) — builds available for:
+
+| Platform | Archive |
+|----------|---------|
+| macOS (Apple Silicon) | `iris-aarch64-apple-darwin.tar.gz` |
+| macOS (Intel) | `iris-x86_64-apple-darwin.tar.gz` |
+| Linux (x86_64) | `iris-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux (aarch64) | `iris-aarch64-unknown-linux-gnu.tar.gz` |
+| Windows (x86_64) | `iris-x86_64-pc-windows-msvc.zip` |
+
+Each archive has a corresponding `.sha256` checksum file.
+
+## Desktop App (macOS)
+
+A macOS `.pkg` installer is available that includes both the desktop app (system tray) and CLI:
+
+```sh
+just pkg       # signed + notarized build
+just pkg-dev   # local testing (no notarization)
+```
+
+See `installer/SIGNING-GUIDE.md` for code signing setup.
 
 ## Configuration
 
-Global config file: `~/.iris/config.toml`
+Per-project config: `.iris.toml` in the project root (created by `iris init`):
 
 ```toml
-default_model = "nomic-embed-text-v1.5"
-
-[data]
-dir = "~/.iris"
+[corpus]
+paths = ["src", "docs", "README.md"]
+ignore = ["*.snap", "node_modules"]
 ```
 
-Per-project config: `.iris.toml` in the project root
-
-```toml
-[[corpus]]
-paths = ["src/", "docs/"]
-ignore = ["target/", "node_modules/"]
-
-[[corpus.cloud]]
-url = "https://example.com/project.iris-index"
-```
+See [Configuration](configuration.md) for full details.

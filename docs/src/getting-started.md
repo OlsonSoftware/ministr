@@ -2,10 +2,22 @@
 
 ## Installation
 
-### From source (requires Rust 1.85+)
+### Homebrew (macOS)
 
 ```sh
-cargo install --path iris-cli
+brew install alrik/tap/iris
+```
+
+### Install script (macOS & Linux)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/alrik/iris-rs/main/install.sh | bash
+```
+
+### Cargo (from source, requires Rust 1.85+)
+
+```sh
+cargo install iris-cli
 ```
 
 ### Pre-built binaries
@@ -14,88 +26,84 @@ Download from the [GitHub Releases](https://github.com/alrik/iris-rs/releases) p
 
 ## Quick Start
 
-### 1. Point iris at a document corpus
+### 1. Initialize iris in your project
 
 ```sh
-# iris indexes a directory of Markdown, HTML, or PDF files
-iris --corpus ./my-docs
+cd your-project
+iris init
 ```
 
-This starts the MCP server over stdio, ready to accept tool calls from any MCP client.
+This creates `.iris.toml` with auto-detected corpus paths and `.mcp.json` for Claude Code.
+
+Or create `.iris.toml` manually:
+
+```toml
+[corpus]
+paths = ["src", "docs", "README.md"]
+ignore = ["*.snap", "node_modules"]
+```
 
 ### 2. Configure your MCP client
 
-**Claude Code** — create `.mcp.json` at your project root:
+**Claude Code:**
+
+```sh
+claude mcp add iris -- iris
+```
+
+**Cursor** — create `.cursor/mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "iris": {
       "command": "iris",
-      "args": ["--corpus", "./docs"]
+      "args": []
     }
   }
 }
 ```
 
-**Cursor** — create `.cursor/mcp.json` in your project:
+iris auto-discovers `.iris.toml` by walking up from the working directory — no flags needed.
 
-```json
-{
-  "mcpServers": {
-    "iris": {
-      "command": "iris",
-      "args": ["--corpus", "./docs"]
-    }
-  }
-}
-```
-
-See the [MCP Client Setup](client-setup.md) guide for detailed instructions covering project/user/global scopes, the CLI shorthand, Cursor Settings UI, generic JSON-RPC clients, and troubleshooting.
+See the [MCP Client Setup](client-setup.md) guide for detailed instructions.
 
 ### 3. Use the tools
 
 Once connected, your agent has access to these tools:
 
-1. **`iris_survey`** — search the corpus with a natural language query. Returns ranked summaries.
-2. **`iris_read`** — read the full text of a specific section.
-3. **`iris_extract`** — pull atomic claims from a section, optionally filtered by relevance.
-4. **`iris_related`** — follow dependency chains between claims.
-5. **`iris_budget`** — check context budget status and get eviction recommendations.
-6. **`iris_compress`** — generate compressed summaries for sections to evict.
-7. **`iris_evicted`** — tell iris what you dropped from context.
+| Tool | Purpose |
+|------|---------|
+| `iris_survey` | Semantic search across docs and code |
+| `iris_read` | Read a section by ID (with deduplication & delta delivery) |
+| `iris_extract` | Get atomic claims from a section |
+| `iris_related` | Follow dependency chains between claims |
+| `iris_symbols` | Search the code symbol index |
+| `iris_definition` | Get full source of a symbol |
+| `iris_references` | Find callers, implementors, importers |
+| `iris_bridge` | Query cross-language bindings |
+| `iris_budget` | Check context budget and get eviction advice |
+| `iris_compress` | Generate compressed summaries for eviction |
+| `iris_evicted` | Signal that content has been dropped |
 
 ### Typical Workflow
-
-The tools mirror how a human researcher navigates a knowledge base:
 
 ```
 iris_survey("authentication")
   → 5 relevant sections found
 
-iris_read("docs/auth.md#jwt-validation")
+iris_read("src/auth.rs#login")
   → full section text, 847 tokens
 
-iris_extract("token expiry", section_id="docs/auth.md#jwt-validation")
-  → 3 claims about JWT expiry behavior
+iris_symbols("validate_token")
+  → symbol definition with signature and docs
 
-iris_related(claim_id="docs/auth.md#jwt-validation/claim-2")
-  → related claims about refresh token handling
+iris_references("src/auth.rs::validate_token")
+  → 3 callers across the codebase
 ```
 
 Each response includes a `budget_status` showing how much context budget has been consumed, so the agent can make informed decisions about what to read next.
 
 ## Configuration
 
-iris uses a global config file at `~/.iris/config.toml`. See the [Configuration](configuration.md) chapter for full details.
-
-A minimal config:
-
-```toml
-default_model = "all-MiniLM-L6-v2"
-default_context_budget = 100000
-
-[prefetch]
-enabled = true
-cache_size = 50
-```
+See the [Configuration](configuration.md) chapter for full details on `.iris.toml` options.
