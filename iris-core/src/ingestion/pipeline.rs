@@ -373,6 +373,12 @@ pub struct IngestionPipeline {
     progress: Option<Arc<IngestionProgress>>,
     package_graph: Option<PackageGraph>,
     concurrency: Option<usize>,
+    /// Optional dual embedder for two-stage Matryoshka retrieval.
+    /// When set, the embedding consumer stores full-dim vectors alongside
+    /// truncated ones during ingestion.
+    dual_embedder: Option<Arc<dyn crate::embedding::DualEmbedder>>,
+    /// Storage handle for full-dim vectors (used only when `dual_embedder` is set).
+    full_dim_storage: Option<crate::storage::SqliteStorage>,
 }
 
 impl Default for IngestionPipeline {
@@ -393,7 +399,25 @@ impl IngestionPipeline {
             progress: None,
             package_graph: None,
             concurrency: None,
+            dual_embedder: None,
+            full_dim_storage: None,
         }
+    }
+
+    /// Enable two-stage Matryoshka retrieval during ingestion.
+    ///
+    /// When set, the embedding consumer calls `embed_dual()` to produce both
+    /// truncated vectors (inserted into HNSW) and full-dimension vectors
+    /// (stored in SQLite for query-time reranking).
+    #[must_use]
+    pub fn with_dual_embedder(
+        mut self,
+        dual_embedder: Arc<dyn crate::embedding::DualEmbedder>,
+        storage: crate::storage::SqliteStorage,
+    ) -> Self {
+        self.dual_embedder = Some(dual_embedder);
+        self.full_dim_storage = Some(storage);
+        self
     }
 
     #[must_use]
@@ -1229,8 +1253,22 @@ impl IngestionPipeline {
             cancelled
         };
 
-        let consumer =
-            Self::run_embedding_consumer(embed_rx, embedder, index, self.progress.as_ref());
+        let dual = self.dual_embedder.as_ref().zip(self.full_dim_storage.as_ref());
+        let progress_ref = self.progress.as_ref();
+        let consumer = async {
+            if let Some((dual_emb, full_storage)) = dual {
+                Self::run_embedding_consumer_dual(
+                    embed_rx,
+                    dual_emb.as_ref(),
+                    index,
+                    full_storage,
+                    progress_ref,
+                )
+                .await
+            } else {
+                Self::run_embedding_consumer(embed_rx, embedder, index, progress_ref).await
+            }
+        };
 
         let (was_cancelled, embed_result) = futures::join!(producer, consumer);
         let embed_count = embed_result?;
@@ -1275,6 +1313,54 @@ impl IngestionPipeline {
         }
         if !buffer.is_empty() {
             let count = batch_embed_and_insert(&buffer, embedder, index).await?;
+            total_embeddings += count;
+            if let Some(p) = progress {
+                p.add_embeddings_done(count);
+            }
+        }
+        Ok(total_embeddings)
+    }
+
+    /// Consume embedding pairs using a [`DualEmbedder`], storing both truncated
+    /// vectors in HNSW and full-dimension vectors in SQLite.
+    async fn run_embedding_consumer_dual<I>(
+        mut embed_rx: tokio::sync::mpsc::Receiver<Vec<(VectorId, String)>>,
+        dual_embedder: &dyn crate::embedding::DualEmbedder,
+        index: &I,
+        full_dim_storage: &crate::storage::SqliteStorage,
+        progress: Option<&Arc<IngestionProgress>>,
+    ) -> Result<usize, IngestionError>
+    where
+        I: VectorIndex + ?Sized,
+    {
+        let mut total_embeddings = 0usize;
+        let mut buffer: Vec<(VectorId, String)> = Vec::new();
+
+        while let Some(pairs) = embed_rx.recv().await {
+            buffer.extend(pairs);
+            if buffer.len() >= EMBED_FLUSH_THRESHOLD {
+                let count = super::embedding::batch_embed_and_insert_dual(
+                    &buffer,
+                    dual_embedder,
+                    index,
+                    full_dim_storage,
+                )
+                .await?;
+                total_embeddings += count;
+                if let Some(p) = progress {
+                    p.add_embeddings_done(count);
+                }
+                buffer.clear();
+            }
+        }
+        if !buffer.is_empty() {
+            let count = super::embedding::batch_embed_and_insert_dual(
+                &buffer,
+                dual_embedder,
+                index,
+                full_dim_storage,
+            )
+            .await?;
             total_embeddings += count;
             if let Some(p) = progress {
                 p.add_embeddings_done(count);

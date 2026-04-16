@@ -385,6 +385,13 @@ pub struct CorpusSpec {
     /// re-normalized. Only useful with Matryoshka-capable models
     /// (e.g. `nomic-embed-text-v1.5`).
     pub dimension: Option<usize>,
+    /// Number of coarse HNSW candidates to retrieve for full-dimension
+    /// rescoring during two-stage Matryoshka retrieval.
+    ///
+    /// Only effective when `dimension` is set (Matryoshka truncation active).
+    /// Defaults to 100. Set to 0 to disable two-stage reranking while still
+    /// using truncated embeddings.
+    pub rerank_depth: Option<usize>,
 }
 
 /// An external local directory to include in the corpus.

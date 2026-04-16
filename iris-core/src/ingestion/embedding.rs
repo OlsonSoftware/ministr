@@ -2,11 +2,11 @@
 
 use tracing::{debug, info};
 
-use crate::embedding::Embedder;
+use crate::embedding::{DualEmbedder, Embedder};
 use crate::error::IngestionError;
 use crate::index::VectorIndex;
 use crate::mem_profile;
-use crate::storage::Storage;
+use crate::storage::{SqliteStorage, Storage};
 use crate::types::{DocumentTree, Section, VectorId};
 
 /// Maximum texts per embedding inference call.
@@ -115,6 +115,72 @@ pub(super) async fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex 
     }
 
     info!(embeddings = total, "batch embedding complete");
+    Ok(total)
+}
+
+/// Embed and insert a batch using a [`DualEmbedder`], storing both truncated
+/// vectors in the HNSW index and full-dimension vectors in SQLite.
+///
+/// Falls back to the single-embed path when `dual_embedder` is `None`.
+pub(super) async fn batch_embed_and_insert_dual<I: VectorIndex + ?Sized>(
+    pairs: &[(VectorId, String)],
+    dual_embedder: &dyn DualEmbedder,
+    index: &I,
+    storage: &SqliteStorage,
+) -> Result<usize, IngestionError> {
+    if pairs.is_empty() {
+        return Ok(0);
+    }
+    let mut total = 0;
+    let num_chunks = pairs.len().div_ceil(EMBED_BATCH_CHUNK);
+
+    for (i, chunk) in pairs.chunks(EMBED_BATCH_CHUNK).enumerate() {
+        let text_refs: Vec<&str> = chunk.iter().map(|(_, t)| t.as_str()).collect();
+        mem_profile::checkpoint_every(5, i, "before dual_embedder.embed_dual()");
+        let dual = dual_embedder
+            .embed_dual(&text_refs)
+            .map_err(|e| IngestionError::Embedding {
+                reason: e.to_string(),
+            })?;
+        mem_profile::checkpoint_every(5, i, "after dual_embedder.embed_dual()");
+
+        // Insert truncated vectors into HNSW index.
+        for ((vid, _), vector) in chunk.iter().zip(dual.truncated.iter()) {
+            index
+                .insert(vid.as_str(), vector)
+                .map_err(|e| IngestionError::Embedding {
+                    reason: format!("failed to insert vector {vid}: {e}"),
+                })?;
+        }
+
+        // Store full-dim vectors in SQLite.
+        let full_entries: Vec<(String, Vec<f32>)> = chunk
+            .iter()
+            .zip(dual.full.iter())
+            .map(|((vid, _), vec)| (vid.to_string(), vec.clone()))
+            .collect();
+        storage
+            .store_full_dim_vectors(&full_entries)
+            .await
+            .map_err(|e| IngestionError::Embedding {
+                reason: format!("failed to store full-dim vectors: {e}"),
+            })?;
+
+        total += chunk.len();
+        mem_profile::checkpoint_every(5, i, "after dual index+storage batch");
+
+        if num_chunks > 1 {
+            info!(
+                chunk = i + 1,
+                of = num_chunks,
+                embedded = total,
+                "dual embedding progress"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
+    info!(embeddings = total, "dual batch embedding complete");
     Ok(total)
 }
 
