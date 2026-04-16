@@ -2,40 +2,50 @@
 
 ## Topology
 
-```
-┌─────────────────────┐     ┌──────────────────┐
-│   Claude Code /     │     │   iris tray app   │
-│   other MCP client  │     │   (Tauri + React) │
-│                     │     │                   │
-│  ┌───────────────┐  │     │  ┌─────────────┐  │
-│  │  MCP Proxy    │  │     │  │ Dashboard   │  │
-│  │  (iris-mcp)   │  │     │  │ GUI         │  │
-│  └──────┬────────┘  │     │  └──────┬──────┘  │
-│         │ stdio     │     │         │ Tauri   │
-│         │           │     │         │ IPC     │
-└─────────┼───────────┘     └─────────┼─────────┘
-          │                           │
-          │  HTTP/1.1 over UDS        │  Direct Rust API
-          │  ~/.iris/irisd.sock       │
-          ▼                           ▼
-    ┌─────────────────────────────────────┐
-    │       iris daemon (iris-daemon)     │
-    │                                     │
-    │  ┌──────────┐  ┌────────────────┐  │
-    │  │ axum     │  │ CorpusRegistry │  │
-    │  │ router   │──│ + handles      │  │
-    │  └──────────┘  └────────┬───────┘  │
-    │                         │          │
-    │  ┌──────────┐  ┌───────┴───────┐  │
-    │  │ Session  │  │ QueryService  │  │
-    │  │ Registry │  │ (per corpus)  │  │
-    │  └──────────┘  └───────┬───────┘  │
-    │                        │          │
-    │  ┌─────────┐  ┌───────┴───────┐  │
-    │  │ Prefetch│  │   SQLite +    │  │
-    │  │ Engine  │  │   HNSW Index  │  │
-    │  └─────────┘  └───────────────┘  │
-    └─────────────────────────────────────┘
+```d2
+direction: down
+
+client: Claude Code / other MCP client {
+  proxy: MCP proxy (iris-mcp) {
+    shape: rectangle
+  }
+}
+
+tray: iris tray app (Tauri + React) {
+  dashboard: Dashboard GUI {
+    shape: rectangle
+  }
+}
+
+daemon: iris daemon (iris-daemon) {
+  router: axum router {
+    shape: rectangle
+  }
+  registry: CorpusRegistry\n+ handles {
+    shape: rectangle
+  }
+  sessions: Session registry {
+    shape: rectangle
+  }
+  query: QueryService\n(per corpus) {
+    shape: rectangle
+  }
+  prefetch: Prefetch engine {
+    shape: rectangle
+  }
+  storage: SQLite + HNSW index {
+    shape: cylinder
+  }
+
+  router -> registry
+  registry -> query
+  registry -> sessions
+  query -> storage
+  query -> prefetch
+}
+
+client.proxy -> daemon.router: "HTTP/1.1 over UDS\n~/.iris/irisd.sock"
+tray.dashboard -> daemon.router: "Direct Rust API"
 ```
 
 ## Component Responsibilities

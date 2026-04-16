@@ -29,20 +29,30 @@ iris-app/src-tauri/ — Tauri v2 desktop app, depends on iris-core + iris-api + 
 
 Each crate follows strict transport → service → storage layering:
 
-```
-┌─────────────────────────────────────────────┐
-│  Transport (iris-mcp)                       │
-│  MCP tool handlers, JSON-RPC, req/res map   │
-├─────────────────────────────────────────────┤
-│  Daemon API (iris-daemon)                   │
-│  HTTP over UDS, corpus routes, SSE streams  │
-├─────────────────────────────────────────────┤
-│  Service (iris-core)                        │
-│  Session shadow, prefetch, budget, query    │
-├─────────────────────────────────────────────┤
-│  Storage (iris-core)                        │
-│  SQLite, HNSW index, file system, mmap I/O  │
-└─────────────────────────────────────────────┘
+```d2
+direction: down
+
+transport: Transport (iris-mcp) {
+  tooltip: "MCP tool handlers, JSON-RPC, req/res map"
+  style.fill: "#6366f1"
+  style.font-color: "#ffffff"
+}
+
+daemon: Daemon API (iris-daemon) {
+  tooltip: "HTTP over UDS, corpus routes, SSE streams"
+}
+
+service: Service (iris-core) {
+  tooltip: "Session shadow, prefetch, budget, query"
+}
+
+storage: Storage (iris-core) {
+  tooltip: "SQLite, HNSW index, file system, mmap I/O"
+}
+
+transport -> daemon
+daemon -> service
+service -> storage
 ```
 
 No layer may skip a level. Transport calls service; service calls storage. Storage never calls service; service never calls transport.
@@ -51,23 +61,37 @@ No layer may skip a level. Transport calls service; service calls storage. Stora
 
 iris uses a daemon + proxy architecture. The daemon (iris-app or iris-daemon) owns heavy resources and persists across sessions. MCP-compatible agents connect to a thin MCP proxy (iris-cli) over stdio, which delegates to the daemon via UDS:
 
-```
-┌──────────────────┐     MCP (JSON-RPC)     ┌──────────────────┐
-│   Any LLM Agent  │ ◄───────────────────► │  iris-cli (MCP)  │
-│                  │   tool calls/responses  │  thin proxy      │
-│  Claude Code     │                         └────────┬─────────┘
-│  Cursor          │                                  │ UDS
-│  Custom agent    │                         ┌────────▼─────────┐
-└──────────────────┘                         │  iris-daemon     │
-                                             │  ONNX, HNSW,    │
-┌──────────────────┐                         │  SQLite, sessions│
-│  iris-app (GUI)  │─── embeds daemon ──────►│  ~/.iris/irisd   │
-│  system tray     │                         └────────┬─────────┘
-└──────────────────┘                                  │
-                                             ┌────────▼─────────┐
-                                             │  Document corpus │
-                                             │  (local files)   │
-                                             └──────────────────┘
+```d2
+direction: right
+
+agents: Any LLM Agent {
+  claude: Claude Code
+  cursor: Cursor
+  custom: Custom agent
+}
+
+proxy: iris-cli (MCP)\nthin proxy {
+  shape: rectangle
+}
+
+daemon: iris-daemon\nONNX · HNSW · SQLite\nsessions {
+  shape: rectangle
+}
+
+app: iris-app (GUI)\nsystem tray {
+  shape: rectangle
+}
+
+corpus: Document corpus\n(local files) {
+  shape: cylinder
+}
+
+agents.claude -> proxy: "MCP / JSON-RPC\n(stdio)"
+agents.cursor -> proxy
+agents.custom -> proxy
+proxy -> daemon: UDS\n~/.iris/irisd.sock
+app -> daemon: embeds
+daemon -> corpus
 ```
 
 ## The Five Mechanisms
