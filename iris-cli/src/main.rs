@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use miette::Result;
 
-/// iris — a context cache controller for LLM agents.
+/// iris — a context cache for LLM agents.
 ///
 /// Runs an MCP server that provides intelligent context retrieval
 /// tools (survey, read, extract) for a local document corpus.

@@ -256,7 +256,7 @@ pub(crate) fn build_instructions(router: &ToolRouter<IrisServer>) -> String {
     }
 
     format!(
-        "iris is a context cache controller for LLM agents. Use {}.",
+        "iris is a context cache for LLM agents. Use {}.",
         parts.join(", "),
     )
 }

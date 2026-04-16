@@ -1,4 +1,4 @@
-//! Core domain types for the iris context cache controller.
+//! Core domain types for the iris context cache.
 //!
 //! These types model the multi-resolution document index: documents contain
 //! sections, sections contain claims. Each level has a unique ID and can be

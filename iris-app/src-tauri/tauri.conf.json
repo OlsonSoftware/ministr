@@ -77,7 +77,7 @@
       }
     },
     "category": "DeveloperTool",
-    "shortDescription": "LLM context cache controller",
-    "longDescription": "iris manages LLM agent context windows like a CPU cache controller — with session tracking, predictive prefetching, budget management, and coherence."
+    "shortDescription": "Context cache for LLM agents",
+    "longDescription": "iris is an MCP server that serves context to LLM agents the way an L1 cache serves the CPU — with session tracking, predictive prefetching, budget awareness, and coherence. Your agent still owns its context window; iris keeps its own output tight."
   }
 }

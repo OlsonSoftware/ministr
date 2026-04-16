@@ -1,6 +1,6 @@
 ---
 title: iris
-description: Context cache controller for LLM agents — MCP server with semantic search, code navigation, session tracking, and budget management.
+description: Context cache for LLM agents — MCP server with semantic search, code navigation, session tracking, and budget awareness.
 hide:
   - navigation
   - toc
@@ -16,8 +16,8 @@ hide:
 # iris { .iris-hero__title }
 
 <p class="iris-hero__tagline">
-  Manage your LLM agent's context window like L1 cache — with session tracking,
-  predictive prefetch, budget management, and code navigation across 12 languages.
+  Serve context to your LLM agent like an L1 cache — with session tracking,
+  predictive prefetch, budget awareness, and code navigation across 12 languages.
 </p>
 
 <div class="iris-hero__install">claude mcp add iris -- iris</div>
@@ -61,8 +61,8 @@ hide:
 
 <div class="iris-why__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#stack"/></svg> Re-reading
-Agents fetch the same file over and over. iris tracks what the agent has seen and
-deduplicates. When a section changes, it delivers only the delta.
+Agents fetch the same file over and over. iris remembers what it sent this
+session and deduplicates. When a section changes, it delivers only the delta.
 </div>
 
 <div class="iris-why__card" markdown>
@@ -167,14 +167,14 @@ wasm-bindgen exports, and HTTP routes.
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#stack"/></svg> Session tracking
-Shadow the agent's context window. Deduplicate deliveries, detect evictions,
-deliver deltas instead of full re-reads.
+Mirror what iris has already sent. Deduplicate deliveries, detect
+fault-based re-reads, ship deltas instead of full sections.
 </div>
 
 <div class="iris-features__card" markdown>
-### <svg class="icon icon-md"><use href="assets/icons.svg#gauge"/></svg> Budget management
-Monitor token usage, flag pressure, rank eviction candidates, provide
-compressed summaries at claim-level resolution under pressure.
+### <svg class="icon icon-md"><use href="assets/icons.svg#gauge"/></svg> Budget awareness
+Estimate cumulative token usage, flag pressure, rank eviction candidates,
+offer compressed summaries when the budget tightens.
 </div>
 
 <div class="iris-features__card" markdown>
@@ -303,7 +303,7 @@ language boundaries with [`iris_references`](tools/references.md).
     Comparison
   </span>
   <h2>How it compares</h2>
-  <p>iris isn't a vector DB or a RAG framework. It's a cache controller.</p>
+  <p>iris isn't a vector DB or a RAG framework. It's a cache-aware MCP source that tracks, dedupes, and predicts.</p>
 </div>
 
 <div class="iris-compare" markdown>
