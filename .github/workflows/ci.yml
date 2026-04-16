@@ -24,7 +24,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install just
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v4
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
@@ -46,7 +46,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install just
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v4
 
       - name: Run retrieval regression gate
         run: just eval-gate
