@@ -20,7 +20,7 @@ hide:
 <div class="iris-hero__install">claude mcp add iris -- iris</div>
 
 <div class="iris-hero__ctas">
-  <a class="iris-hero__cta iris-hero__cta--primary" href="getting-started.md">Get started →</a>
+  <a class="iris-hero__cta iris-hero__cta--primary" href="getting-started/">Get started →</a>
   <a class="iris-hero__cta iris-hero__cta--secondary" href="https://github.com/AlrikOlson/iris-rs">GitHub</a>
 </div>
 
