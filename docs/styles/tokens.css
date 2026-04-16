@@ -310,7 +310,8 @@
     box-shadow: var(--shadow-xs);
   }
   .md-typeset .highlight > pre,
-  .md-typeset pre > code {
+  .md-typeset pre > code,
+  .md-typeset .highlight .md-code__content {
     background: transparent !important;
   }
   .md-typeset .highlight > pre {
@@ -319,7 +320,8 @@
     padding-right: calc(var(--spacing) * 14);
     overflow-x: auto;
   }
-  .md-typeset .highlight > pre > code {
+  .md-typeset .highlight > pre > code,
+  .md-typeset .highlight .md-code__content {
     font-size: var(--text-sm);
     line-height: 1.65;
     font-family: var(--font-mono);
@@ -340,38 +342,62 @@
     user-select: none;
   }
 
-  /* Copy button — the user's specific complaint -------------------- */
+  /* Code block nav + copy button.
+     Material 9.7 replaced the old .md-clipboard floater with a top-right
+     <nav class="md-code__nav"> containing <button class="md-code__button">.
+     Style the new structure; keep the old .md-clipboard selectors as a
+     fallback for any cached pages still referencing it. */
+  .md-typeset .highlight .md-code__nav {
+    position: absolute;
+    top: calc(var(--spacing) * 2);
+    right: calc(var(--spacing) * 2);
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 1);
+  }
+
+  .md-typeset .highlight .md-code__button,
   .md-typeset .highlight .md-clipboard {
-    top: calc(var(--spacing) * 3);
-    right: calc(var(--spacing) * 3);
     width: 32px;
     height: 32px;
+    padding: 0;
     color: var(--color-text-muted);
-    background: color-mix(in srgb, var(--color-code-bg) 60%, transparent);
+    background: color-mix(in srgb, var(--color-code-bg) 70%, transparent);
     border: 1px solid var(--color-code-border);
     border-radius: var(--radius-md);
     backdrop-filter: blur(4px);
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    cursor: pointer;
     transition:
       color var(--duration-fast) var(--ease-standard),
       border-color var(--duration-fast) var(--ease-standard),
       background-color var(--duration-fast) var(--ease-standard),
       transform var(--duration-fast) var(--ease-standard);
   }
-  .md-typeset .highlight:hover .md-clipboard,
-  .md-typeset .highlight .md-clipboard:focus-visible {
-    color: var(--color-accent);
-    border-color: var(--color-accent-ring);
-  }
+
+  /* Make the material icon inside the button visible + sized */
+  .md-typeset .highlight .md-code__button::before,
+  .md-typeset .highlight .md-code__button::after,
   .md-typeset .highlight .md-clipboard::before,
   .md-typeset .highlight .md-clipboard::after {
     width: 14px;
     height: 14px;
+    background-color: currentColor;
   }
+
+  .md-typeset .highlight .md-code__button:hover,
+  .md-typeset .highlight .md-clipboard:hover,
+  .md-typeset .highlight:hover .md-code__button,
+  .md-typeset .highlight:hover .md-clipboard {
+    color: var(--color-accent);
+    border-color: var(--color-accent-ring);
+  }
+  .md-typeset .highlight .md-code__button:hover,
   .md-typeset .highlight .md-clipboard:hover {
-    background: color-mix(in srgb, var(--color-accent) 12%, var(--color-code-bg));
+    background: color-mix(in srgb, var(--color-accent) 14%, var(--color-code-bg));
     transform: scale(1.04);
   }
 
