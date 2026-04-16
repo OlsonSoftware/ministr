@@ -68,6 +68,10 @@ bench-model model:
 bench-all:
     cargo bench -p iris-core
 
+# Test Candle vs ONNX vector equivalence (macOS only, requires ~160MB model downloads)
+test-backend-equiv:
+    cargo test --test backend_equivalence -p iris-core --features candle --release -- --ignored --nocapture
+
 # Build mdBook documentation site
 docs:
     mdbook build docs
