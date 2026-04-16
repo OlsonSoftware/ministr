@@ -8,7 +8,10 @@ hide:
 
 <div class="iris-hero" markdown>
 
-<span class="iris-hero__eyebrow">MCP server · written in Rust</span>
+<span class="iris-hero__eyebrow">
+  <svg class="icon icon-sm"><use href="assets/icons.svg#cube-focus"/></svg>
+  MCP server · written in Rust
+</span>
 
 # iris { .iris-hero__title }
 
@@ -20,7 +23,7 @@ hide:
 <div class="iris-hero__install">claude mcp add iris -- iris</div>
 
 <div class="iris-hero__ctas">
-  <a class="iris-hero__cta iris-hero__cta--primary" href="getting-started/">Get started →</a>
+  <a class="iris-hero__cta iris-hero__cta--primary" href="getting-started/">Get started <svg class="icon icon-sm"><use href="assets/icons.svg#arrow-right"/></svg></a>
   <a class="iris-hero__cta iris-hero__cta--secondary" href="https://github.com/AlrikOlson/iris-rs">GitHub</a>
 </div>
 
@@ -46,6 +49,10 @@ hide:
 </div>
 
 <div class="iris-section-header">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#circle"/></svg>
+    Problem
+  </span>
   <h2>Why iris</h2>
   <p>LLM agents waste most of their context window. iris fixes the three root causes.</p>
 </div>
@@ -53,20 +60,20 @@ hide:
 <div class="iris-why" markdown>
 
 <div class="iris-why__card" markdown>
-### Re-reading
+### <svg class="icon icon-md"><use href="assets/icons.svg#stack"/></svg> Re-reading
 Agents fetch the same file over and over. iris tracks what the agent has seen and
 deduplicates. When a section changes, it delivers only the delta.
 </div>
 
 <div class="iris-why__card" markdown>
-### Blind retrieval
+### <svg class="icon icon-md"><use href="assets/icons.svg#magnifying-glass"/></svg> Blind retrieval
 `grep` + `cat` burns tokens on irrelevant code. iris indexes your codebase at
 multiple resolutions — documents, sections, claims, symbols — and returns
 precisely what matters.
 </div>
 
 <div class="iris-why__card" markdown>
-### No lookahead
+### <svg class="icon icon-md"><use href="assets/icons.svg#lightning"/></svg> No lookahead
 Cold retrievals cost latency and tokens. iris predicts the next read and
 pre-warms it with sequential, structural, and topical prefetch strategies.
 </div>
@@ -74,6 +81,10 @@ pre-warms it with sequential, structural, and topical prefetch strategies.
 </div>
 
 <div class="iris-section-header">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#squares-four"/></svg>
+    Architecture
+  </span>
   <h2>How it fits together</h2>
   <p>One local binary sits between your MCP client and your corpus.</p>
 </div>
@@ -126,6 +137,10 @@ iris.query -> storage.embed
 </div>
 
 <div class="iris-section-header">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#sparkle-fill"/></svg>
+    Capabilities
+  </span>
   <h2>What iris does</h2>
   <p>Six capabilities, one local binary. No API keys.</p>
 </div>
@@ -133,37 +148,37 @@ iris.query -> storage.embed
 <div class="iris-features" markdown>
 
 <div class="iris-features__card" markdown>
-### Semantic search
+### <svg class="icon icon-md"><use href="assets/icons.svg#magnifying-glass"/></svg> Semantic search
 Embedding-based retrieval at document, section, and claim resolution.
 Hybrid dense + sparse search with optional cross-encoder rerank.
 </div>
 
 <div class="iris-features__card" markdown>
-### Code symbol navigation
+### <svg class="icon icon-md"><use href="assets/icons.svg#code"/></svg> Code symbol navigation
 Find and trace structs, functions, traits, and enums across 12 languages.
 Cross-crate references and method-level precision.
 </div>
 
 <div class="iris-features__card" markdown>
-### Cross-language bridges
+### <svg class="icon icon-md"><use href="assets/icons.svg#graph"/></svg> Cross-language bridges
 Automatic linking of Tauri commands, napi bindings, PyO3 functions,
 wasm-bindgen exports, and HTTP routes.
 </div>
 
 <div class="iris-features__card" markdown>
-### Session tracking
+### <svg class="icon icon-md"><use href="assets/icons.svg#stack"/></svg> Session tracking
 Shadow the agent's context window. Deduplicate deliveries, detect evictions,
 deliver deltas instead of full re-reads.
 </div>
 
 <div class="iris-features__card" markdown>
-### Budget management
+### <svg class="icon icon-md"><use href="assets/icons.svg#gauge"/></svg> Budget management
 Monitor token usage, flag pressure, rank eviction candidates, provide
 compressed summaries at claim-level resolution under pressure.
 </div>
 
 <div class="iris-features__card" markdown>
-### Local embeddings
+### <svg class="icon icon-md"><use href="assets/icons.svg#cpu"/></svg> Local embeddings
 FastEmbed + ONNX (~5 ms/embed). Optional Metal GPU acceleration via Candle
 on Apple Silicon. No network required.
 </div>
@@ -171,6 +186,10 @@ on Apple Silicon. No network required.
 </div>
 
 <div class="iris-section-header">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#terminal-window"/></svg>
+    Trace
+  </span>
   <h2>A typical session</h2>
   <p>Every response carries budget tracking, and the prefetch engine pre-warms what's next.</p>
 </div>
@@ -201,6 +220,10 @@ on Apple Silicon. No network required.
 </div>
 
 <div class="iris-section-header">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#git-branch"/></svg>
+    Bridges
+  </span>
   <h2>Cross-language bridges</h2>
   <p>Trace function calls across language boundaries automatically.</p>
 </div>
@@ -251,6 +274,10 @@ Query these links with [`iris_bridge`](tools/bridge.md) or trace a symbol across
 language boundaries with [`iris_references`](tools/references.md).
 
 <div class="iris-section-header">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#code"/></svg>
+    Languages
+  </span>
   <h2>Twelve languages, one symbol index</h2>
   <p>tree-sitter grammars power symbol extraction, reference tracing, and bridge detection.</p>
 </div>
@@ -271,6 +298,10 @@ language boundaries with [`iris_references`](tools/references.md).
 </div>
 
 <div class="iris-section-header">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#compass-tool"/></svg>
+    Comparison
+  </span>
   <h2>How it compares</h2>
   <p>iris isn't a vector DB or a RAG framework. It's a cache controller.</p>
 </div>
@@ -292,6 +323,10 @@ language boundaries with [`iris_references`](tools/references.md).
 </div>
 
 <div class="iris-section-header">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
+    Install
+  </span>
   <h2>Get started in 30 seconds</h2>
 </div>
 
@@ -323,31 +358,33 @@ claude mcp add iris -- iris        # Claude Code
 
 iris auto-discovers `.iris.toml` from the working directory. No flags needed.
 
----
-
 <div class="iris-section-header">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#book-open"/></svg>
+    Explore
+  </span>
   <h2>Dig deeper</h2>
 </div>
 
 <div class="iris-features" markdown>
 
 <div class="iris-features__card" markdown>
-### [Getting started →](getting-started.md)
+### [<svg class="icon icon-md"><use href="assets/icons.svg#arrow-up-right"/></svg> Getting started](getting-started.md)
 Installation, configuration, and first query.
 </div>
 
 <div class="iris-features__card" markdown>
-### [Tool reference →](tools/README.md)
+### [<svg class="icon icon-md"><use href="assets/icons.svg#arrow-up-right"/></svg> Tool reference](tools/README.md)
 Every MCP tool with parameters, response schemas, and behavior notes.
 </div>
 
 <div class="iris-features__card" markdown>
-### [Architecture →](architecture.md)
+### [<svg class="icon icon-md"><use href="assets/icons.svg#arrow-up-right"/></svg> Architecture](architecture.md)
 Crate structure, daemon topology, layered design, on-disk format.
 </div>
 
 <div class="iris-features__card" markdown>
-### [Benchmarks →](benchmarks.md)
+### [<svg class="icon icon-md"><use href="assets/icons.svg#arrow-up-right"/></svg> Benchmarks](benchmarks.md)
 Token savings, latency, recall quality, and indexing throughput.
 </div>
 
