@@ -72,13 +72,17 @@ bench-all:
 test-backend-equiv:
     cargo test --test backend_equivalence -p iris-core --features candle --release -- --ignored --nocapture
 
-# Build mdBook documentation site
+# Install documentation dependencies (Python: mkdocs-material)
+docs-deps:
+    pip install -r docs/requirements.txt
+
+# Build MkDocs documentation site
 docs:
-    mdbook build docs
+    cd docs && mkdocs build --strict
 
 # Serve documentation locally with live reload
 docs-serve:
-    mdbook serve docs --open
+    cd docs && mkdocs serve --open
 
 # Build Docker image
 docker-build:
