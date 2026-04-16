@@ -339,3 +339,28 @@ pub struct BridgeResponse {
     /// Bridge links.
     pub links: Vec<BridgeLink>,
 }
+
+// ---------------------------------------------------------------------------
+// Ask (sub-inference)
+// ---------------------------------------------------------------------------
+
+/// Request for `iris_ask` — synthesize an answer using sub-inference.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AskRequest {
+    /// Natural-language question to answer from the corpus.
+    pub query: String,
+}
+
+/// Response from `iris_ask`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AskResponse {
+    /// The synthesized answer.
+    pub answer: String,
+    /// Section IDs that contributed to the answer (for provenance).
+    pub source_ids: Vec<String>,
+    /// Whether the answer was served from cache.
+    pub cached: bool,
+    /// Model used for synthesis.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
+}

@@ -1253,7 +1253,10 @@ impl IngestionPipeline {
             cancelled
         };
 
-        let dual = self.dual_embedder.as_ref().zip(self.full_dim_storage.as_ref());
+        let dual = self
+            .dual_embedder
+            .as_ref()
+            .zip(self.full_dim_storage.as_ref());
         let progress_ref = self.progress.as_ref();
         let consumer = async {
             if let Some((dual_emb, full_storage)) = dual {

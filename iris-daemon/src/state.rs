@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::inference::{ClaudeCliInference, Inference};
 use crate::registry::CorpusRegistry;
 
 /// Default maximum concurrent expensive queries (survey, symbols, compress).
@@ -18,6 +19,8 @@ pub struct AppState {
     pub started_at: std::time::Instant,
     /// Semaphore limiting concurrent expensive operations (survey, symbols, compress).
     pub query_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Sub-inference engine for `iris_ask`.
+    pub inference: Arc<dyn Inference>,
 }
 
 impl AppState {
@@ -27,6 +30,7 @@ impl AppState {
             registry: Arc::new(registry),
             started_at: std::time::Instant::now(),
             query_semaphore: Arc::new(tokio::sync::Semaphore::new(DEFAULT_QUERY_CONCURRENCY)),
+            inference: Arc::new(ClaudeCliInference::new()),
         }
     }
 
@@ -37,7 +41,15 @@ impl AppState {
             registry,
             started_at: std::time::Instant::now(),
             query_semaphore: Arc::new(tokio::sync::Semaphore::new(DEFAULT_QUERY_CONCURRENCY)),
+            inference: Arc::new(ClaudeCliInference::new()),
         }
+    }
+
+    /// Override the inference engine (for testing).
+    #[must_use]
+    pub fn with_inference(mut self, inference: Arc<dyn Inference>) -> Self {
+        self.inference = inference;
+        self
     }
 
     #[must_use]

@@ -165,10 +165,21 @@ impl CorpusRegistry {
 
         let handle = self.create_handle(&corpus_id, paths)?;
 
+        // Subscribe to coherence broadcasts for answer cache invalidation
+        // BEFORE inserting the handle (the tx is on the handle).
+        let coherence_rx = handle.coherence_tx.subscribe();
+        let cache_storage = Arc::clone(&handle.storage);
+        let cache_cid = corpus_id.clone();
+
         self.corpora.write().await.insert(corpus_id.clone(), handle);
         info!(corpus_id = %corpus_id, "corpus registered");
 
         self.save_manifest().await;
+
+        // Spawn answer cache invalidation on coherence events.
+        tokio::spawn(async move {
+            crate::ask::spawn_cache_invalidator(cache_storage, coherence_rx, cache_cid).await;
+        });
 
         // Spawn background indexing (delegated to indexer module).
         let registry = Arc::clone(self);
@@ -398,14 +409,14 @@ pub fn corpus_id_from_paths(paths: &[String]) -> String {
 /// corpora like `["/Users/x/project/src"]`, returns the parent
 /// (`/Users/x/project`). For multi-path corpora, returns the deepest
 /// shared directory.
-fn project_root_from_paths(paths: &[String]) -> String {
+pub fn project_root_from_paths(paths: &[String]) -> std::path::PathBuf {
     if paths.is_empty() {
-        return String::new();
+        return std::path::PathBuf::new();
     }
     if paths.len() == 1 {
         // Single path: go up one level (src → project root).
         let p = std::path::Path::new(&paths[0]);
-        return p.parent().unwrap_or(p).to_string_lossy().into_owned();
+        return p.parent().unwrap_or(p).to_path_buf();
     }
     // Multi-path: find common ancestor.
     let segments: Vec<Vec<&str>> = paths
@@ -421,17 +432,19 @@ fn project_root_from_paths(paths: &[String]) -> String {
         }
         common = i + 1;
     }
-    segments[0][..common].join("/")
+    std::path::PathBuf::from(segments[0][..common].join("/"))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     #[test]
     fn project_root_single_path() {
         let paths = vec!["/Users/x/Code/pretext/src".to_string()];
-        assert_eq!(project_root_from_paths(&paths), "/Users/x/Code/pretext");
+        assert_eq!(project_root_from_paths(&paths), Path::new("/Users/x/Code/pretext"));
     }
 
     #[test]
@@ -440,19 +453,19 @@ mod tests {
             "/Users/x/Code/pretext/src".to_string(),
             "/Users/x/Code/pretext/docs".to_string(),
         ];
-        assert_eq!(project_root_from_paths(&paths), "/Users/x/Code/pretext");
+        assert_eq!(project_root_from_paths(&paths), Path::new("/Users/x/Code/pretext"));
     }
 
     #[test]
     fn project_root_empty() {
         let paths: Vec<String> = vec![];
-        assert_eq!(project_root_from_paths(&paths), "");
+        assert_eq!(project_root_from_paths(&paths), Path::new(""));
     }
 
     #[test]
     fn project_root_deeply_nested() {
         let paths = vec!["/a/b/c/src/lib".to_string(), "/a/b/c/src/bin".to_string()];
-        assert_eq!(project_root_from_paths(&paths), "/a/b/c/src");
+        assert_eq!(project_root_from_paths(&paths), Path::new("/a/b/c/src"));
     }
 
     #[test]
@@ -478,7 +491,7 @@ mod tests {
             "/Users/x/Code/iris-rs/README.md".to_string(),
             "/Users/x/Code/iris-rs/docs".to_string(),
         ];
-        assert_eq!(project_root_from_paths(&paths), "/Users/x/Code/iris-rs");
+        assert_eq!(project_root_from_paths(&paths), Path::new("/Users/x/Code/iris-rs"));
     }
 
     #[test]

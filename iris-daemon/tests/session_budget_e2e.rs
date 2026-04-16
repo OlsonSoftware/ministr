@@ -1,3 +1,4 @@
+#![allow(clippy::doc_markdown, clippy::items_after_statements, clippy::needless_pass_by_value)]
 //! End-to-end test: session-aware read records delivery in the budget tracker.
 //!
 //! Spins up the daemon router in-process (no UDS), registers a corpus,
@@ -28,14 +29,13 @@ async fn send(
     let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
         .await
         .unwrap();
-    let json: serde_json::Value =
-        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
 }
 
 fn test_app() -> axum::Router {
-    use std::sync::Arc;
     use iris_core::config::IrisConfig;
+    use std::sync::Arc;
 
     // Create a minimal embedder (needed by CorpusRegistry).
     // The NullVectorIndex means we won't actually embed, but the registry
@@ -109,9 +109,7 @@ async fn session_read_updates_budget() {
     let (status, _) = send(
         &app,
         "GET",
-        &format!(
-            "/api/v1/corpora/{corpus_id}/sessions/{session_id}/read/nonexistent%23section"
-        ),
+        &format!("/api/v1/corpora/{corpus_id}/sessions/{session_id}/read/nonexistent%23section"),
         None,
     )
     .await;

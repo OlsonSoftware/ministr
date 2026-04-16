@@ -216,6 +216,7 @@ pub fn suggest_quantized_model(model_name: &str) -> Option<&'static str> {
 ///
 /// Returns [`IndexError::EmbeddingFailed`] if the selected backend fails to
 /// initialize (e.g. model download failure, unsupported model name).
+#[allow(clippy::too_many_lines)]
 pub fn create_embedder(
     model_name: &str,
     data_dir: &std::path::Path,
@@ -254,7 +255,11 @@ pub fn create_embedder(
                 let info = BackendInfo {
                     format: ModelFormat::Candle,
                     model_name: model_name.to_owned(),
-                    device: if force_cpu { "cpu".into() } else { "metal".into() },
+                    device: if force_cpu {
+                        "cpu".into()
+                    } else {
+                        "metal".into()
+                    },
                 };
                 return Ok((std::sync::Arc::new(embedder), info));
             }
@@ -313,10 +318,8 @@ pub fn create_embedder(
             // On macOS, log when falling back from Candle to ONNX for unsupported models.
             #[cfg(all(feature = "candle", target_os = "macos"))]
             if !is_candle_model(model_name) {
-                let supported: Vec<&str> = candle_supported_models()
-                    .iter()
-                    .map(|m| m.name)
-                    .collect();
+                let supported: Vec<&str> =
+                    candle_supported_models().iter().map(|m| m.name).collect();
                 tracing::info!(
                     model = %model_name,
                     candle_models = ?supported,

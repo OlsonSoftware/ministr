@@ -4,10 +4,12 @@
 //! indexer, and type conversions. Used by `iris-app` (Tauri GUI) and
 //! testable without any GUI dependencies.
 
+pub mod ask;
 pub mod cloud;
 pub mod convert;
 pub mod daemon;
 pub mod indexer;
+pub mod inference;
 pub mod persistence;
 pub mod registry;
 pub mod state;
