@@ -90,6 +90,13 @@ impl IrisServer {
                 );
                 let entry =
                     registry.create_session(&sid, Some(budget_config), AccessMode::ReadWrite);
+                // Replay delivered items into the budget tracker so it reflects
+                // the token usage from the previous session run.
+                for item in restored.delivered_items() {
+                    let _ = entry
+                        .budget
+                        .record_tokens(item.content_id.as_ref(), item.token_count);
+                }
                 entry.session = restored;
             }
             _ => {

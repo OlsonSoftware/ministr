@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use iris_api::client::DaemonClient;
+use iris_core::session::{BudgetConfig, BudgetTracker, EvictionPolicy};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData as McpError;
@@ -30,6 +31,9 @@ pub struct ProxyServer {
     session_id: Arc<Mutex<Option<String>>>,
     corpus_paths: Vec<String>,
     tool_router: ToolRouter<Self>,
+    /// Local budget tracker — tracks tokens delivered through this proxy
+    /// independently of the daemon's session system.
+    local_budget: Arc<Mutex<BudgetTracker>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -116,12 +120,20 @@ pub struct EvictedParams {
 impl ProxyServer {
     #[must_use]
     pub fn new(corpus_paths: Vec<String>) -> Self {
+        let budget_config = BudgetConfig {
+            max_context_tokens: 100_000,
+            ..BudgetConfig::default()
+        };
         Self {
             client: Arc::new(DaemonClient::new()),
             corpus_id: Arc::new(Mutex::new(None)),
             session_id: Arc::new(Mutex::new(None)),
             corpus_paths,
             tool_router: Self::tool_router(),
+            local_budget: Arc::new(Mutex::new(BudgetTracker::new(
+                budget_config,
+                EvictionPolicy::Fifo,
+            ))),
         }
     }
 
@@ -350,6 +362,14 @@ impl ProxyServer {
             .session_read_section(&cid, &sid, &params.section_id)
             .await
             .map_err(|e| Self::err(&e))?;
+
+        // Track delivered tokens locally so iris_budget reflects actual usage.
+        let token_count = iris_core::token::count_tokens(&resp.text);
+        {
+            let mut budget = self.local_budget.lock().await;
+            let _ = budget.record_tokens(&params.section_id, token_count);
+        }
+
         Self::json_result(&resp)
     }
 
@@ -507,13 +527,20 @@ impl ProxyServer {
         description = "Get the current context budget status: total budget, estimated usage, pressure level."
     )]
     async fn budget(&self) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
-        let resp = self
-            .client
-            .session_budget(&cid, &sid)
-            .await
-            .map_err(|e| Self::err(&e))?;
+        // Use the local budget tracker — it reflects tokens delivered through
+        // this proxy session, independent of the daemon's session system.
+        let budget = self.local_budget.lock().await;
+        let status = budget.budget_status();
+        let resp = iris_api::session::SessionBudgetResponse {
+            pressure_level: match status.pressure_level {
+                iris_core::session::PressureLevel::Normal => "normal".into(),
+                iris_core::session::PressureLevel::Elevated => "elevated".into(),
+                iris_core::session::PressureLevel::Critical => "critical".into(),
+            },
+            tokens_used: status.tokens_used,
+            tokens_remaining: status.tokens_remaining,
+            utilization: status.utilization,
+        };
         Self::json_result(&resp)
     }
 

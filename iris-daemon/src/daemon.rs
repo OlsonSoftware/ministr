@@ -22,7 +22,7 @@ use iris_api::query;
 use iris_api::session::{CreateSessionRequest, CreateSessionResponse};
 use iris_api::status::DaemonStatus;
 use iris_core::session::AccessMode;
-use iris_core::storage::SymbolFilter;
+use iris_core::storage::{Storage as _, SymbolFilter};
 use iris_core::types::RelationType;
 use sha2::{Digest, Sha256};
 
@@ -417,6 +417,15 @@ async fn session_read_section(
                     content_hash,
                 );
                 let _ = entry.budget.record_tokens(&section, token_count);
+            }
+
+            // Persist session to SQLite so budget survives daemon restarts
+            // and the tray app can show accurate token usage.
+            {
+                let sessions = handle.sessions.lock().await;
+                if let Some(entry) = sessions.get_session(&sid) {
+                    let _ = handle.storage.save_session(&entry.session).await;
+                }
             }
 
             // Clone Arcs before dropping the registry guard.
@@ -894,19 +903,44 @@ async fn session_budget(
     let guard = get_corpus!(&state, &id);
     let handle = &guard[&id];
 
-    let sessions = handle.sessions.lock().await;
-    match sessions.get_session(&sid) {
-        Some(entry) => {
-            let status = entry.budget.budget_status();
-            Json(convert::budget_status(&status)).into_response()
+    let mut sessions = handle.sessions.lock().await;
+    // If session exists in memory but budget is 0, try reconstructing from
+    // persisted delivered items (handles daemon restart with stale budget).
+    if let Some(entry) = sessions.get_session_mut(&sid) {
+        let status = entry.budget.budget_status();
+        if status.tokens_used == 0 && entry.session.delivered_count() > 0 {
+            // Budget was reset (daemon restart) but session has deliveries.
+            // Replay delivered items to reconstruct the budget.
+            for item in entry.session.delivered_items() {
+                let _ = entry
+                    .budget
+                    .record_tokens(item.content_id.as_ref(), item.token_count);
+            }
         }
-        None => err(
-            StatusCode::NOT_FOUND,
-            "session_not_found",
-            format!("session {sid} not found"),
-        )
-        .into_response(),
+        let status = entry.budget.budget_status();
+        return Json(convert::budget_status(&status)).into_response();
     }
+
+    // Session not in memory — try loading from SQLite.
+    let session_id = iris_core::session::SessionId::from(sid.clone());
+    if let Ok(Some(restored)) = handle.storage.load_session(&session_id).await {
+        let entry = sessions.get_or_create(&sid, None, AccessMode::ReadWrite);
+        for item in restored.delivered_items() {
+            let _ = entry
+                .budget
+                .record_tokens(item.content_id.as_ref(), item.token_count);
+        }
+        entry.session = restored;
+        let status = entry.budget.budget_status();
+        return Json(convert::budget_status(&status)).into_response();
+    }
+
+    err(
+        StatusCode::NOT_FOUND,
+        "session_not_found",
+        format!("session {sid} not found"),
+    )
+    .into_response()
 }
 
 async fn destroy_session(
