@@ -16,8 +16,8 @@ body:
       label: Steps to reproduce
       description: Minimal steps to reproduce the issue.
       placeholder: |
-        1. Run `iris index --corpus ./src`
-        2. Connect via Claude Code
+        1. Create `.iris.toml` with corpus paths
+        2. Connect via Claude Code (`claude mcp add iris -- iris`)
         3. Call `iris_survey("auth")`
         4. See error...
     validations:
