@@ -114,15 +114,8 @@ release version:
     done
     # Add new section to CHANGELOG.md
     date=$(date +%Y-%m-%d)
-    sed -i'' -e "/^## \[/i\\
-## [{{version}}] - ${date}\\
-\\
-### Added\\
-\\
-### Changed\\
-\\
-### Fixed\\
-" CHANGELOG.md
+    printf '\n## [{{version}}] - %s\n\n### Added\n\n### Changed\n\n### Fixed\n\n' "$date" | \
+        sed -i'' -e "/^## \[/r /dev/stdin" CHANGELOG.md
     # Add link reference at bottom
     echo "[{{version}}]: https://github.com/alrik/iris-rs/releases/tag/v{{version}}" >> CHANGELOG.md
     # Validate the workspace compiles

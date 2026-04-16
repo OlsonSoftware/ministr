@@ -1,0 +1,1192 @@
+SolidAttention: Low-Latency SSD-based Serving on
+            Memory-Constrained PCs
+ Xinrui Zheng, Dongliang Wei, Jianxiang Gao, Yixin Song, and Zeyu Mi, and
+                Haibo Chen, Shanghai Jiao Tong University
+
+
+
+
+       https://www.usenix.org/conference/fast26/presentation/zheng
+
+      This paper is included in the Proceedings of the
+ 24th USENIX Conference on File and Storage Technologies.
+               February 24–26, 2026 • Santa Clara, CA, USA
+                            ISBN 978-1-939133-53-3
+
+
+                    Open access to the Proceedings of the
+            24th USENIX Conference on File and Storage Technologies
+                               is sponsored by
+    SolidAttention: Low-Latency SSD-based Serving on Memory-Constrained PCs
+
+               Xinrui Zheng, Dongliang Wei, Jianxiang Gao, Yixin Song, Zeyu Mi, Haibo Chen
+
+            Institute of Parallel and Distributed Systems (IPADS), Shanghai Jiao Tong University
+
+
+
+                         Abstract                                     context length of LLMs increases, 128k-token context has be-
+                                                                      come the default configuration. Even an 8B-parameter model
+   AI personal computers (AIPCs) enable the local deploy-
+                                                                      requires over 16 GB of memory solely for the key-value (KV)
+ment of large language model (LLM) inference, offering en-
+                                                                      cache during inference. This represents over 4× the memory
+hanced privacy guarantees and customizable serving. How-
+                                                                      footprint of the model weights alone. Such high memory us-
+ever, such deployments are constrained by limited memory ca-
+                                                                      age consumes a large portion of available system memory,
+pacity, primarily due to the substantial key-value (KV) cache
+                                                                      leaving little room for other processes. This exposes a pro-
+overhead. This paper introduces SolidAttention, an LLM in-
+                                                                      found disconnect between practical hardware conditions and
+ference engine which addresses these limitations through a
+                                                                      the assumptions made by many existing deployment solutions
+tight co-design of dynamic attention sparsity algorithms and
+                                                                      (e.g., llama.cpp [2], Ollama [3]) that the whole KV cache can
+SSD-based storage management. Specifically, to maximize
+                                                                      be accommodated in memory.
+SSD bandwidth utilization, SolidAttention consolidates mul-
+                                                                         To mitigate the memory overhead of the KV cache, one
+tiple KV pairs into coarse-grained blocks and implements
+                                                                      possible approach [26, 52, 55] is to apply INT4 or more ag-
+speculative prefetching mechanisms that exploit temporal lo-
+                                                                      gressive quantization schemes to the KV cache. However,
+cality in sparse attention. By fine-grained orchestration of
+                                                                      such methods typically degrade model accuracy significantly,
+computation and I/O operations while reusing synchroniza-
+                                                                      making them unsuitable for many practical applications.
+tion points, SolidAttention further minimizes SSD-induced
+blocking latency. With a 128k-token context, SolidAttention              Another widely explored approach [12, 40] leverages the
+improves the inference speed by up to 3.1× and reduces the            inherent dynamic attention sparsity in LLMs to offload KV
+KV cache memory footprint by up to 98% without compro-                caches to SSDs. Specifically, these methods selectively load
+mising inference accuracy.                                            relevant KV pairs and overlap I/O operations with compute-
+                                                                      intensive workloads of other concurrent requests to optimize
+                                                                      throughput. However, this throughput-oriented strategy per-
+1    Introduction                                                     forms poorly in latency-sensitive local deployments, making
+                                                                      SSD access a bottleneck during inference. The primary limi-
+Large language models (LLMs) have garnered significant at-            tation lies in the generally low request concurrency in local
+tention for their remarkable capabilities [20, 25, 27, 31], and       scenarios. Insufficient computational workloads induced by
+are widely used in personal assistance tasks such as coding,          small-batch inputs complete significantly faster than I/O op-
+summarization, and other applications. As these applications          erations and struggle to hide the SSD access latency.
+become increasingly integrated into daily workflows, consid-             In this paper, we argue that the root cause of the latency
+erations around privacy, customization, and deployment cost           issues when integrating dynamic attention sparsity and SSD
+have driven a rapidly growing trend toward running LLMs               offloading is the fundamental conflict between sparse at-
+locally on AI personal computers (AIPCs).                             tention computation and SSD characteristics. Specifically,
+   However, widespread adoption on AIPCs faces significant            SSDs achieve optimal performance only when processing
+hardware barriers. Market analysis [17, 37, 47] reveals that          coarse-grained sequential operations. In contrast, the dynamic
+most PCs currently shipping have constrained hardware con-            and irregular data access patterns inherent in the sparse at-
+figurations. These systems typically feature modest 8-16 GB           tention mechanism introduce numerous fine-grained random
+DRAM capacities and either integrated GPUs (iGPUs) or                 I/O requests. This mismatch results in inefficient hardware
+entry-level discrete GPUs with 6-8 GB VRAM. These con-                utilization and widens the latency gap between I/O and com-
+figurations are far from sufficient for running LLMs. As the          putation, causing overlap failure. Existing approaches treat
+
+
+
+USENIX Association                                                24th USENIX Conference on File and Storage Technologies        67
+attention sparsity and storage management as isolated con-         cesses at a larger granularity while remaining transparent to
+cerns, failing to account for the performance penalties induced    attention computations, thereby maximizing SSD bandwidth
+by their interaction. Therefore, we propose our core insight:      utilization without sacrificing accuracy.
+co-designing sparse attention algorithms and the storage man-         Second, SolidAttention introduces a speculative prefetcher
+agement system to align data access granularity and strategi-      to predict and prefetch KV blocks. The prefetcher exploits
+cally orchestrate computation-I/O overlap, thereby mitigating      the temporal locality inherent in attention sparsity to specula-
+SSD access latency.                                                tively fetch KV blocks based on historical selection outcomes.
+   Based on this insight, we propose SolidAttention, an SSD-       To handle incorrectly prefetched KV blocks, it retransmits
+based LLM inference system that enables low-latency infer-         missing blocks and overwrites incorrectly prefetched ones.
+ence on memory-constrained PCs with minimal accuracy loss.         Due to the relaxed ordering constraints on KV pairs during
+Specifically, SolidAttention consolidates multiple KV pairs        attention computation, existing KV blocks do not need costly
+into a block as the basic transfer unit. This transforms ir-       reordering. This approach effectively advances the issuance
+regular data access patterns into coarse-grained sequential        of I/O requests and eliminates blocking latency.
+ones. Additionally, SolidAttention preselects and prefetches          Third, to resolve the concurrency issues in the KV cache,
+critical KV blocks. This strategy provides sufficient time for     SolidAttention proposes an SSD-aware scheduler. This sched-
+computation-I/O overlap before attention computation. How-         uler decomposes the attention module into microtasks and
+ever, the pursuit of efficient SSD-based sparse attention sys-     schedules computational tasks in parallel with asynchronous
+tems encounters three significant challenges:                      I/O tasks according to their data dependencies. Furthermore,
+                                                                   non-critical tasks are grouped with those on the critical path
+1. Accuracy Loss: Consolidating KV pairs requires extract-         to share synchronization points. This approach reduces the
+   ing a representative vector for each block as the identifier    synchronization frequency and associated overhead while
+   involving the selection of attention sparsity. This presents    maximizing the utilization of both GPU computation capacity
+   a critical trade-off: large block sizes encode excessive KV     and SSD bandwidth.
+   pairs into a single representative, causing contextual infor-      SolidAttention is implemented on both CUDA and SYCL
+   mation loss and degraded accuracy. Smaller blocks, how-         backends with about 25k lines of C++ and CUDA code. When
+   ever, introduce inefficient fine-grained data accesses, lead-   evaluated on an AIPC prototype, SolidAttention demonstrates
+   ing to poor SSD bandwidth utilization and increased I/O         a performance improvement of up to 3.1× with a 128k-token
+   latency. This highlights the challenge of simultaneously        context. Experiments indicate that SolidAttention reduces the
+   maintaining model accuracy and hardware efficiency.             KV cache memory usage by up to 98% without compromising
+2. Prefetching Indeterminacy: Dynamic attention sparsity           model accuracy.
+   selects relevant KV blocks based on layer-specific input,
+   making the selection for the subsequent layer indeter-
+   minable prior to its attention computation. This indeter-       2     Background and Motivation
+   minacy prevents preselecting or proactively prefetching
+   KV blocks, thereby leaving insufficient time window for         2.1    Generative Inference and KV Cache
+   computation-I/O overlap. Consequently, this incurs signifi-
+   cant blocking latency while waiting for loading KV cache.       Transformer Architecture. The Transformer architec-
+3. Data Inconsistency: Computation-I/O overlap introduces          ture [23, 48] is the foundation of modern large language
+   concurrent accesses to the KV cache. For example, the           models (LLMs). It processes sequential data like text using
+   GPU reads input KV blocks from DRAM while asyn-                 a self-attention mechanism, which models dependencies be-
+   chronously prefetching the next layer’s KV cache from           tween tokens regardless of their positions in the sequence.
+   SSD. In memory-constrained scenarios, the prefetching           Input tokens are first embedded into vectors, and positional
+   may overwrite data that the GPU has not yet read. This          encodings are added to retain order information. By the pro-
+   risks data inconsistency. A naive solution would suspend        jection of weight matrices, the input embedding generates
+   attention computations until all I/O operations complete        Query (Q), Key (K), and Value (V) tensors. The self-attention
+   sequentially. However, this approach imposes substantial        mechanism is conducted using the Q, K,V ∈ RN×H as:
+   computational stalls and degrades system performance.
+                                                                                  QK T
+To address these challenges, SolidAttention introduces the                    S = √ , P = so f tmax(S), O = PV
+                                                                                   H
+following key innovations:
+   First, SolidAttention proposes a KV consolidator that trans-    where N denotes sequence length and H denotes hidden
+parently consolidates KV pairs. Concretely, leveraging the         dimension. S denotes attention scores. P denotes attention
+observation that K and V vectors share the same shape, Sol-        weights. The output O feeds into the Feed-Forward network
+idAttention interleaves them at token granularity to form          (FFN), whose output serves as the next layer’s input. Multiple
+coarse-grained data unit. This technique enables SSD ac-           layers of these components are stacked to form the full model
+
+
+
+68   24th USENIX Conference on File and Storage Technologies                                                USENIX Association
+                                               Throughput(GB/s)
+                                                                                                           High Request Concurrency
+             128                                                  6
+                         model
+
+  Size(GB)
+              96                                                                                           Request 1    FFN     KV Cache Loading    Attention     FFN        Timeline
+                         KVCache                                  4
+              64
+                                                                  2                                        Request 2             FFN       KV Cache Loading     Attention     FFN
+              32
+               0                                                  0
+                    1K   8K    32K 128K   1M                            2   4   16 64 256 1024             Request 3                         FFN    KV Cache Loading        Attention
+                              #Token                                        Transfer Unit(KB)
+                                                                                                           Low Request Concurrency
+              (a) Memory consumption                                  (b) SSD read throughput                                                                                Timeline
+                                                                                                           Request 1    FFN     KV Cache Loading    Attention     FFN
+Figure 1: (a) The memory usage of model and KV cache as the input
+                                                                                                                                      GPU Idle            SSD Idle
+length grows. The model is Llama-3.1-8B quantized in INT4. (b)
+Random read throughput of SSD with various transfer unit sizes.
+                                                                                                     Figure 2: Comparison of hiding SSD access latency by batching
+                                                                                                     requests under different request concurrency.
+and the final output is passed through a linear projection to
+generate predictions.
+                                                                                                     end-position observation window. StreamingLLM [53] high-
+Autoregressive Generation. LLM inference comprises the                                               lights the "attention sink" phenomenon, where initial tokens
+prefill phase and the decode phase. In the prefill phase, LLM                                        accumulate disproportionately high attention weights due to
+processes input tokens in parallel and produces the first output                                     asymmetric distribution. However, as previous works point
+token. This token then triggers the decode phase. In each                                            out [29, 45, 51], these approaches risk losing context informa-
+decoding step, the newly generated token is fed back into the                                        tion critical for future tokens by relying on current query data
+model to produce the next one, resulting in an autoregressive                                        for permanent eviction decisions.
+process for token generation. Because each step processes                                               Dynamic attention sparsity mitigates permanent informa-
+only one token, the decode phase has a lower compute-to-                                             tion loss by keeping the whole KV cache and dynamically
+memory ratio compared to the prefill phase, making it highly                                         performing the selection during the decode phase. To reduce
+latency-sensitive.                                                                                   computational overhead induced by the selection, these ap-
+Significant KV Cache Memory Overhead. The LLM’s au-                                                  proaches often partition the KV cache into blocks along the
+toregressive generation pattern presents computational chal-                                         dimension of context length and extract a representative vec-
+lenges for long sequences because keys and values must be                                            tor to serve as the identifier for each block. During the prefill
+recomputed for all tokens during each decode iteration. The                                          phase, Quest [45] extracts representative vectors by the max-
+KV cache optimization addresses this issue by storing the                                            min value in key vectors, while InfLLM [51] extracts those
+computed keys and values and reusing them for subsequent                                             with the highest attention scores. During the decode phase,
+token generation. This largely eliminates computational over-                                        KV blocks with the top-k query-identifier similarities would
+head and improves inference efficiency.                                                              involve in self-attention computation. Nevertheless, dynamic
+   However, as new tokens are processed, keys and values                                             access patterns require the entire KV cache to be stored in
+are continuously added to the cache, causing its size to grow                                        memory for potential activation, which offsets the benefits of
+linearly with the context length. As shown in Figure 1a, the                                         sparsity upon memory saving.
+size of KV cache reaches 16 GB as the context length reaches
+128k. This memory requirement greatly exceeds the capacity
+of memory-constrained devices like laptops, most of which
+                                                                                                     2.3      SSD-based Attention Sparsity
+are equipped with 8 GB or 16 GB memory.                                                              SSD offloading provides promising capacity for dynamic
+                                                                                                     attention sparsity systems to extend KV cache storage. With
+2.2                Attention Sparsity                                                                the entire KV cache residing in the SSD, systems only need to
+                                                                                                     fetch critical KV pairs from SSD. FlexGen [40] is an inference
+To address memory and computational challenges caused                                                system integrating SSD offloading and attention sparsity to
+by expanding KV cache, recent studies [28–30, 45, 51, 53,                                            reduce memory usage. As shown in Figure 2, through a zigzag
+58] exploit the inherent sparsity of attention computation,                                          scheduling, FlexGen batches requests and overlaps KV cache
+where a small subset of tokens dominates the attention outputs.                                      loading with computational workloads of other concurrent
+This enables KV cache compression by selecting KV pairs                                              requests without stalling during inference.
+of critical tokens to approximate the attention mechanism.                                              These approaches overlook the mismatch between data
+Attention sparsity methods typically prioritize tokens with                                          access patterns and SSD characteristics and load the KV cache
+higher attention scores and fall into Static Attention Sparsity                                      at token granularity. As shown in Figure 1b, SSDs achieve
+and Dynamic Attention Sparsity categories.                                                           optimal performance only with large transfer sizes, which
+  Static attention sparsity evicts irrelevant tokens from the                                        better exploit the internal parallelism of SSD (e.g., channel
+KV cache once after the prefill phase. SnapKV [30] identifies                                        parallelism) [10, 11, 49]. Therefore, FlexGen has to gather
+important tokens involved in attention computation via an                                            sufficient computational workloads to hide the I/O latency
+
+
+
+USENIX Association                                                                               24th USENIX Conference on File and Storage Technologies                                69
+                                                                                          Selection Result               1 3                Vec dot
+         KV Consolidator                     GPU
+
+                                                                                                                        Top-K               Init block
+        Weight Consolidator
+                                   KV cache     KV cache
+                                                                                                                                            Local block
+          KV Interleaver
+                                                                                          Similarity                      2         3
+                                          VRAM Buffer           SSD-aware Scheduler                              5                          Selected block
+
+                               prefetch                 store     Schedule threads                       Q
+      Speculative Prefetcher
+                                          DRAM Buffer                                     Rep. Vec
+         Selection History
+                               prefetch                 store      SSD I/O threads
+          Token Selector                                                                  K Cache
+                                          SSD Storage
+                                                                                                        0        1        2         3          4
+                                   Buffer Architecture
+                                                                                          V Cache
+
+
+
+         Figure 3: Architecture overview of SolidAttention.                           Figure 4: Partitioning and selection in SolidAttention’s block-wise
+                                                                                      dynamic attention sparsity. A representative vector is extracted from
+due to low bandwidth utilization.                                                     each block’s K cache and dotted with the query Q to obtain similarity
+   Additionally, such a throughput-prioritized approach per-                          scores. The blocks with the top-k scores (blocks 1 and 3) are selected
+forms poorly in local scenarios with insufficient request con-                        to participate in the attention computation, together with the init
+                                                                                      block (block 0) and the local block (block 4).
+currency. Without concurrent requests, systems must wait for
+KV cache loading before launching subsequent computational                            tion sink phenomenon [53] and the latest context, respectively.
+tasks. The blocking latency induced between block selection                           Additionally, the block size denotes the number of tokens per
+and self-attention computation significantly degrades perfor-                         block, and the context budget denotes the maximal number of
+mance. For example, loading a 1k-token KV cache (128 MB)                              tokens retained.
+from SSD takes about 40ms, which can account for nearly                                  We follow the design of InfLLM [51] to extract the rep-
+half of the time in a decode step.                                                    resentative vector as the identifier for each block. During
+                                                                                      the decode phase, init blocks and local blocks are required
+                                                                                      deterministically. Other blocks with the top-k similarities be-
+3     SolidAttention Overview
+                                                                                      tween the query and the block representatives are selected to
+                                                                                      participate in the attention computation.
+3.1     System Architecture
+                                                                                      KV Consolidator. Typically, K and V caches are stored
+The goal of SolidAttention is to resolve the fundamental con-                         and processed separately. KV consolidator applies token-wise
+flict between sparse attention computation and SSD charac-                            interleaving to K and V caches, constructing a novel data unit
+teristics, thereby maximizing SSD bandwidth utilization and                           for both transfer and computation. Based on this layout, the
+mitigating SSD access latency on memory-constrained PCs.                              KV Consolidator concatenates the K and V projection weight
+The system design follows two principles: (1) redesigning dy-                         matrices offline to enable efficient generation of interleaved
+namic sparse attention computation to produce SSD-friendly                            KV pairs. Furthermore, it provides GPU kernels for efficiently
+access patterns and (2) scheduling SSD I/O to overlap with                            generating interleaved KV pairs.
+computation at fine granularity.
+   Figure 3 presents the SolidAttention architecture. The en-                         Speculative Prefetcher. The inherent indeterminacy in KV
+tire KV cache resides on the SSD and is dynamically loaded                            block selection for subsequent layers prevents the system
+into GPU memory during inference. SolidAttention comprises                            from identifying which blocks to prefetch. To address this,
+three components: (a) a KV consolidator that transparently                            speculative prefetcher leverages temporal locality in block
+consolidates KV pairs into coarse-grained blocks, (b) a spec-                         selections to anticipate critical KV blocks. The prefetcher
+ulative prefetcher that preselects and prefetches critical KV                         proactively prefetches corresponding KV blocks from the
+blocks from the SSD to GPU memory, and (c) an SSD-aware                               SSD into GPU memory via host-mediated transfers, thereby
+scheduler that orchestrates GPU tasks and concurrent SSD                              preparing the KV cache for subsequent self-attention.
+I/O operations.                                                                       SSD-aware Scheduler. During inference, the scheduler re-
+Block-wise Attention Sparsity. SolidAttention adopts and                              ceives an execution plan from the inference framework and
+refines the block-wise attention sparsity [45, 51]. As shown in                       schedules GPU computations alongside concurrent SSD I/O.
+Figure 4, the KV cache is partitioned into blocks, which are                          By decomposing attention computation into microtasks, the
+classified into three types:                                                          scheduler orchestrates fine-grained computation-I/O over-
+                                                                                      lap according to their data dependencies. To minimize syn-
+• Init Blocks: Fixed-size window covering the initial tokens.                         chronization overhead caused by fine-grained scheduling, the
+• Local Blocks: Sliding window over the most recent tokens.                           scheduler groups non-critical tasks with critical tasks to share
+• Selected Blocks: Dynamically selected relevant blocks.                              synchronization points and eliminates redundant synchroniza-
+The init blocks and local blocks are designed to handle atten-                        tion operations.
+
+
+
+70    24th USENIX Conference on File and Storage Technologies                                                                       USENIX Association
+                                             incorrectly prefetched     new generated
+                                                                                                                                                                        K       K      K     K     K      ...            V        V        V        V         V         ...
+
+                   layer 1 KV cache: a c                     b        d e              layer 2 KV cache:               i k
+                                                                                                                                                   Typical                            Load        Store         SSD                       Load            Store
+                                     t1                 t2                  t3                t4                  t5     Timeline
+VRAM                                                                                                                                                                    K       V      K     V     K       V        K        V        K        V        ...       ...
+                                             a b             a b                 a c d e              a c d e           i k
+
+DRAM                                                                                                                                               Interleaved                                Load              SSD                    Store
+                       a b                   a b             a b                 a c                  i k d e           i k d e
+
+     SSD               a b                   a b             a c                 a c                  i k               i k d e         Figure 7: Comparison between operations with separate KV cache
+                       attention              FFN             select             kv proj.             attention              FFN        layout (Typical) and interleaved KV cache layout (Interleaved).
+                                   layer 0                                                  layer 1
+
+                                                                                                                                                                                              H
+                                                                                                                                                                    H                                                    H
+Figure 5: An illustrative example of how SolidAttention orchestrates                                                                                         B     Input              H    Weight K             B       Key
+                                                                                                                                                                                                                                                   Copy
+
+the dataflow over the KV cache for a single LLM layer.                                                                                                                                                                                                                  Key
+                                                                                                                                                                                                                                                                    Value
+                                                                                                                                                                                              H                                                                         ...
+                                                                                                                                         Typical                    H                                                    H                                              Key
+                                                                                                                                                                                                                                                                    Value
+                                                                   en                   zh                                                                   B     Input              H    Weight V             B       Value
+
+                                          Llama-3.1-8B                                        Qwen-2.5-7B
+
+
+
+
+Recall Rate(%)
+                 100                                                                                                                                                                                                                                                                H
+                                                                                                                                                                                             2H
+                 80                                                                                                                                          H                                                                   H                 H
+                                                                                                                                                                                                                                                                  Reshape
+                                                                                                                                                                                                                                                                                   Key
+                                                                                                                                                                                                                                                                                   Value
+                                                                                                                                                                                                                                                                                            1
+                                                                                                                                                                                                                                                                              2B    ...
+                 60                                                                                                                      Interleaved   B   Input            H       Weight K Weight V               B            Key           Value
+                                                                                                                                                                                                                                                                                   Key
+                                                                                                                                                                                                                                                                                   Value
+                 40
+                        32             64            128           256           32           64            128              256
+                                                                      Block Size                                                        Figure 8: Comparison between projection computations generat-
+Figure 6: Comparison of the recall rate under PassageRetrieval-en                                                                       ing interleaved KV cache with separate weights (Typical) and pre-
+(en) and PassageRetrieval-zh (zh) workloads from LongBench [8]                                                                          concatenated weights (Interleaved).
+as block size varies.
+                                                                                                                                        of tokens into a single representative vector, thereby incurring
+3.2                    Single Layer Example                                                                                             contextual information loss.
+Figure 5 illustrates the dataflow timeline for a single LLM                                                                                Instead of being caught in a dilemma of the trade-off be-
+layer. The process for a single layer (e.g., Layer 1) begins                                                                            tween accuracy and consolidation granularity, we seek a trans-
+after the previous layer’s computation completes. First, KV                                                                             parent approach to enlarge the transfer unit without exces-
+blocks predicted for Layer 1 are prefetched and loaded into                                                                             sively compressing tokens. Therefore, based on the observa-
+VRAM (t1 → t2 ). Next, Layer 1 performs token selection                                                                                 tion that K and V pairs have the same shape (as described in
+(select), identifying which blocks were correctly prefetched                                                                            §2.1), we apply token-level interleaving to K and V pairs, as
+and which were missing (t2 → t3 ). Missed blocks are loaded                                                                             shown in Figure 7. In SolidAttention, transfers across devices
+from the SSD to VRAM. Concurrently, the GPU computes the                                                                                are all issued using this pattern.
+new KV pair for the current token (kv proj.) and transfers it to                                                                           By reorganizing KV pairs in an alternating pattern, we
+DRAM, preparing for eventual write-back to the SSD (t3 →                                                                                unify previously distinct data accesses into aggregated bulk
+t4 ). During the self-attention computation, the next layer’s                                                                           transfers. This approach doubles the transfer unit size and
+KV blocks are prefetched from the SSD to DRAM for the                                                                                   halves the number of I/O operations, enabling better utiliza-
+subsequent attention computation (t4 → t5 ). Finally, during                                                                            tion of the SSD bandwidth. Note that interleaving K and V
+the FFN computation, the prefetched KV blocks are loaded                                                                                pairs does not increase the number of tokens in each block
+into VRAM, and the new KV pairs of Layer 1 are written                                                                                  and thus avoids the accuracy degradation aforementioned.
+back to the SSD, entering the next iteration of the dataflow.                                                                              As illustrated in Figure 8, a typical implementation of in-
+                                                                                                                                        terleaving would necessitate costly runtime reordering, as
+4                 KV Consolidator                                                                                                       K and V pairs are generated through two distinct matrix
+                                                                                                                                        multiplications. To mitigate this overhead, we propose pre-
+As depicted in §2.3, to maximize SSD bandwidth utilization,                                                                             concatenating the weight tensors of the K and V projections
+we need to consolidate multiple KV pairs to construct coarse-                                                                           into a unified tensor during the model initialization phase.
+grained blocks that satisfy the I/O granularity requirements.                                                                           This approach enables direct production of interleaved K and
+However, a critical trade-off arises between the consolidation                                                                          V outputs via a single matrix multiplication, thereby eliminat-
+granularity of these blocks and the preservation of model ac-                                                                           ing the need for post-processing steps. The unified projection
+curacy. As discussed in §3.1, the dynamic attention sparsity                                                                            weight tensors ensure structural coherence while preserving
+mechanism extracts a representative vector for each KV block                                                                            computational efficiency, as the interleaved ordering is inher-
+as the identifier for selecting relevant tokens. Figure 6 demon-                                                                        ently maintained during the projection process.
+strates a consistent decline in recall rates for long-context                                                                              For self-attention computation, this approach does not intro-
+retrieval as block size increases from 32 to 256. This observa-                                                                         duce additional computational complexity. Modern inference
+tion suggests that larger blocks encode an excessive number                                                                             frameworks such as PyTorch [38] and llama.cpp [2] support
+
+
+
+USENIX Association                                                                                                                  24th USENIX Conference on File and Storage Technologies                                                                                                71
+                                                 Llama-3.1-8B             Qwen-2.5-7B
+                 100                                                                                                                                                                         New Selection            4   3
+
+
+
+
+ Similarity(%)
+                                                                                                                    Selection History         4   6
+                 75                                                                                                                                                                          Selection History        4   6       3
+
+                 50                                                                                                 Memory            1       4       6       8       9                      Memory           1       4       3       8       9
+                 25                                                                                                                                                               prefetch                       load & overwrite
+                  0
+                        Qasper   GovReport   2WikiMQA   TriviaQA   HotpotQA MultiFieldQA   MuSiQue   NarrativeQA      1     2     3       4       5       6       7       8   9               1       2   3       4       5       6       7       8   9
+                                                            Workload
+                                                                                                                     Init             Selected        Selected            Local               Init        Selected                                Local
+
+Figure 9: Average similarity of selection results across consecutive
+                                                                                                                                (a) Prefetch cache data                                              (b) Load missing cache data
+iterations, evaluated across models and benchmarks in LongBench,
+with a 1k context budget                                                                                           Figure 10: (a) init block (block 1) and local blocks (blocks 8 and 9)
+                                                                                                                   are deterministically prefetched, while selected blocks (blocks 4 and
+                                                                                                                   6) are prefetched according to the historical selection results of the
+strided data access. By configuring the attention kernels to                                                       preceding iteration. (b) After formal selection and the selection result
+read K and V with a fixed stride of 2H (H denotes the hidden                                                       is corrected, the missing cache block (block 3) is loaded from SSD
+dimension of the model as discussed in §2.1), we can logically                                                     and the incorrectly prefetched block (block 6) is directly overwritten.
+separate the interleaved buffer into distinct K and V tensors
+without physical rearrangement. This eliminates the need to                                                        guaranteed to be used in subsequent layers and are therefore
+rewrite complex GPU kernels. Benchmarks show that this                                                             deterministically preloaded from the SSD into GPU mem-
+strided access pattern introduces negligible latency overhead                                                      ory. In contrast, selected blocks are prefetched speculatively,
+(≤ 2%) compared with contiguous layouts, confirming the                                                            guided by historical selection patterns: the prefetcher records
+practicality of the approach.                                                                                      each layer’s prior selection outcomes and proactively fetches
+                                                                                                                   the KV blocks chosen in the preceding inference iteration.
+5                 Speculative Prefetcher                                                                              As depicted in Figure 10a, blocks 4 and 6 are selected in
+                                                                                                                   the preceding iteration. Therefore, these blocks are predicted
+To avoid permanently losing context information, dynamic                                                           to be selected in this iteration and prefetched from SSD to
+attention sparsity approaches keep the whole KV cache and                                                          GPU memory, together with the init block 1 and local blocks
+select relevant KV blocks at each layer. The system calculates                                                     8 and 9. By utilizing idle SSD bandwidth during intervals
+the similarity between the input query and representative vec-                                                     of attention computation, this approach effectively mitigates
+tors of KV blocks. Only those KV blocks with the highest                                                           latency bottlenecks caused by limited SSD bandwidth, thereby
+similarities are considered to be contextually significant and                                                     improving the overall inference throughput.
+dynamically loaded into memory. However, this introduces
+a critical challenge: without prior knowledge of which data                                                        5.2          Out-of-Order Overwrite
+will be needed in future computation steps, the system cannot
+determine which tokens to prefetch. Therefore, KV cache can-                                                       Although the selection similarity can be as high as 81%, se-
+not be loaded asynchronously from SSD to GPU in advance,                                                           lection may still vary across iterations, leading to mismatches
+leaving an insufficient time window between token selection                                                        between prefetched and required cache blocks. In such cases,
+and self-attention computation for SSD I/O.                                                                        the system must promptly fetch the missing blocks from the
+   While inspecting cross-layer selection patterns of LLMs                                                         SSD into GPU memory. Naively correcting these mismatches
+under different workloads in LongBench [8] (please see §8.3                                                        would require an additional, costly reordering step for the
+for details), we observe approximately 81% similarity in block                                                     fetched KV blocks, consuming substantial memory band-
+selections across consecutive iterations. As shown in Figure 9,                                                    width for extensive copying and undermining the benefits
+this consistency holds across diverse models and benchmarks.                                                       of speculative prefetching.
+Motivated by this, we propose a speculative prefetcher to                                                             Fortunately, the flexibility of the self-attention mechanism
+leverage this inherent temporal locality. By recording and                                                         eliminates the need for reordering. As described in §2.1, self-
+analyzing historical selection results of previous iterations,                                                     attention requires only that each K and V pair align at the
+the prefetcher predicts the cache blocks required for the subse-                                                   same position for a given token. In other words, the global
+quent layer, enabling proactive data prefetch. In the remainder                                                    ordering of tokens within the KV cache can be arbitrary.
+of this section, we discuss the strategies for loading different                                                      Exploiting this property, the system converts potential
+categories of KV cache blocks and how the prefetcher deals                                                         cache mismatches into a lightweight correction process. In-
+with incorrectly prefetched data.                                                                                  correctly prefetched blocks are invalidated and directly over-
+                                                                                                                   written by newly loaded blocks, while valid blocks remain
+5.1                    Speculative Prefetching                                                                     untouched. This design is transparent to the GPU kernels and
+                                                                                                                   does not need additional memory allocation. As shown in Fig-
+Based on the cache-block categories described in §3.1, the                                                         ure 10b, if the computed selection differs from the historical
+prefetcher applies different strategies depending on whether                                                       prediction (e.g., block 3 is selected instead of the prefetched
+a block’s selection is deterministic. Init and local blocks are                                                    block 6), block 3 is loaded from the SSD and the incorrectly
+
+
+
+72                 24th USENIX Conference on File and Storage Technologies                                                                                                                                       USENIX Association
+                                                                           Sync           Sync                     Sync
+                                                                                                                                                     scheduler that orchestrates fine-grained overlap between com-
+       GPU ... q proj. 0 kv proj. 0                                                                 attention 0             ...      q proj. 1
+                                                                                                                                                     putations and I/O. Our scheduler is built upon two core or-
+ GPU   CPU                                                                      store 0
+
+ CPU   GPU                                              prefetch 0
+                                                                                                                                                     chestration principles:
+ SSD   CPU             prefetch 0                                                                                               prefetch 1
+                                                                                                                                                    1. Microtask decomposition and fine-grained overlap: We de-
+ CPU   SSD                                                                                         store 0
+                                                                                                                                   Timeline
+                                                                                                                                                       compose the attention module into microtasks and overlap
+             (a) The typical implementation without attention sparsity                                                                                 them according to the data dependencies.
+                                                                                                                                                    2. Synchronization point reuse: We minimize synchronization
+                                        Sync          Sync        Sync                       Sync             Sync
+                                                                                                                                                       overhead by consolidating and reusing synchronization
+       GPU ... q proj. 0 kv proj. 0                                                                 attention 0           ...     q proj 1             points across different microtasks.
+ GPU   CPU                                 store 0       select 0
+
+ CPU   GPU                 prefetch 0                                                 load 0                                                         As illustrated in Figure 11, these microtasks include attention
+ SSD   CPU prefetch 0                                                     load 0                                          prefetch 1                 projections for the query (q proj.) and key/value (kv proj.)
+ CPU   SSD                                                   store 0                                                                                 vectors, storing newly generated KV pairs (store), prefetching
+                                                                                                                                  Timeline
+                                                                                                                                                     and selecting relevant KV cache blocks (prefetch and select),
+                (b) The naive implementation with attention sparsity
+                                                                                                                                                     loading and overwriting missing blocks (load), and the self-
+                                   Sync                        Sync                Sync                                                              attention computation (attention). I/O operations are further
+       GPU ... q proj. 0                 kv proj. 0                    attention 0           ...       q proj. 1                                     partitioned at the KV block granularity. The following sec-
+ GPU   CPU                  select 0                   store 0                                                                                       tions detail how our scheduler orchestrates these microtasks
+ CPU   GPU     prefetch 0                             load 0                                 prefetch 1
+                                                                                                                                                     to achieve high parallelism and maintain data consistency.
+ SSD   CPU prefetch 0                     load 0                                     prefetch 1
+
+ CPU   SSD                                                                                store 0
+                                                                                                                                  Timeline
+
+                 (c) The SSD-aware schedule with attention sparsity
+                                                                                                                                                     6.1    Fine-grained Overlap
+Figure 11: The timeline of the attention module and I/O operations                                                                                   To model data dependencies and guide scheduler behavior, we
+in one LLM layer. Operations with data dependencies are connected                                                                                    formalize the inference process as a Directed Acyclic Graph
+by arrows. Sync denotes synchronization between CPU and GPU.                                                                                         (DAG), wherein each node represents a microtask and each
+                                                                                                                                                     directed edge denotes a data dependency. This representation
+prefetched block 6 is overwritten without any full-cache re-                                                                                         enables systematic analysis of dependencies across heteroge-
+ordering. This approach avoids costly reordering, thereby                                                                                            neous hardware. Algorithm 1 details the mechanism for our
+minimizing the overhead of misprediction.                                                                                                            fine-grained scheduling.
+                                                                                                                                                        The scheduler leverages the DAG representation to identify
+6      SSD-aware Scheduler                                                                                                                           the critical path—defined as the longest sequence of depen-
+                                                                                                                                                     dent tasks that determines the theoretical minimum latency.
+Optimizing the performance of LLMs on memory-constrained                                                                                             Tasks on the critical path are executed with the highest priority
+systems requires a fine-grained approach to overlap GPU com-                                                                                         once their dependencies are met, preventing stalls.
+putations with SSD I/O operations. The core challenge lies                                                                                              For non-critical tasks, I/O operations are initiated as early
+in orchestrating these activities without compromising data                                                                                          as possible to maximize overlap with GPU computation. For
+integrity. While prior studies [5, 12, 19] typically manipulate                                                                                      instance, the DAG analysis reveals that the select operation,
+data loading at the request or layer granularity and address                                                                                         which identifies and prefetches required KV blocks from the
+this by adding multi-tier buffers for both computation and I/O,                                                                                      SSD, depends solely on the completion of the q proj. task.
+this approach is infeasible for systems with limited memory.                                                                                         Upon completion of q proj., the scheduler immediately ini-
+Instead, sharing a constrained memory buffer introduces a                                                                                            tiates the select operation and subsequent load, effectively
+critical problem: data conflicts. For example, a concurrent                                                                                          hiding the latency of loading missing blocks by overlapping
+prefetch from the SSD could overwrite data in DRAM that                                                                                              with the concurrent kv proj. operation. This DAG-informed
+the GPU is actively using for its computations, leading to                                                                                           scheduling strategy ensures continuous GPU utilization by
+incorrect results.                                                                                                                                   eliminating idle periods associated with data availability.
+   As shown in Figures 11a and 11b, a naive approach to pre-                                                                                            When multiple microtasks become concurrently ready for
+vent these conflicts is to serialize all I/O operations, but this                                                                                    execution, the scheduler employs a latency-aware prioritiza-
+severely underutilizes GPU’s capacity and increases latency.                                                                                         tion scheme. Via reverse traversal, the scheduler estimates the
+Furthermore, integrating dynamic attention sparsity, which re-                                                                                       latest start time (LST) for each node. Ready microtasks with
+quires frequent GPU-SSD interactions, introduces significant                                                                                         smaller LST are executed first to minimize critical-path de-
+synchronization overhead that further degrade performance.                                                                                           lays. For example, correction processes frequently constitute
+The root cause of this inefficiency is the inability to recognize                                                                                    bottlenecks along the critical path and depend on the prefetch
+and resolve these data conflicts effectively.                                                                                                        of selected blocks. Consequently, the scheduler prioritizes
+   To overcome these limitations, we propose an SSD-aware                                                                                            the prefetch of selected blocks over transfers of init or local
+
+
+
+USENIX Association                                                                                                                               24th USENIX Conference on File and Storage Technologies          73
+Algorithm 1 DAG Scheduler                                          upon completion of the preceding GPU-side attention compu-
+Require: DAG G = (V, E) where V is the set of microtasks,          tation, eliminating the need for separate synchronization for
+    E is the set of dependencies                                   non-critical store tasks.
+Ensure: Scheduled execution order minimizing total latency            The scheduler further consolidates synchronization points
+ 1: Initialize: scheduled ← /0, V ← V \ {start_task},              across different cache block types to minimize overhead. Al-
+    ready ← {start_task}                                           though transfer processes for selected blocks and other KV
+ 2: critical_path ← IdentifyCriticalPath(G)                        cache blocks (init and local blocks) may be issued indepen-
+ 3: ComputeLST(G)                                                  dently, their synchronization requirements ultimately con-
+ 4: while scheduled ̸= V do                                        verge. The synchronization point employed to track the load-
+ 5:     for all v ∈ V \ (scheduled ∪ ready) do                     ing of missing blocks before the self-attention computation
+ 6:          if ∀(u, v) ∈ E : u ∈ scheduled then                   is repurposed to monitor the transfer of init and local blocks,
+ 7:              ready ← ready ∪ {v}                               thereby eliminating redundant status tracking and mitigating
+ 8:          end if                                                synchronization overhead.
+ 9:     end for                                                       On platforms featuring unified memory architectures (e.g.,
+10:     if ready ̸= 0/ then                                        integrated GPUs), where CPU and GPU memory spaces are
+11:          next_task ← SelectNext(ready, critical_path)          shared, explicit synchronization requirements can be substan-
+12:          Schedule(next_task)                                   tially reduced or eliminated. Through the allocation of KV
+13:          scheduled ← scheduled ∪ {next_task}                   cache within unified memory, data transfers between DRAM
+14:          ready ← ready \ {next_task}                           and VRAM are cut off that bypass explicit device handshake
+15:     end if                                                     requirements, thereby enhancing parallelism and reducing
+16: end while                                                      pipeline complexity.
+17: function S ELECT N EXT(ready, critical_path)
+18:     critical_ready ← ready ∩ critical_path
+19:     if critical_ready ̸= 0/ then                               7     Implementation
+20:          return arg mint∈critical_ready LST[t]
+21:     end if                                                     We implement SolidAttention on top of llama.cpp [2], us-
+22:     io_tasks ← {t ∈ ready : IsIOTask(t)}                       ing liburing [6] for SSD I/O. Our implementation comprises
+23:     if io_tasks ̸= 0/ then                                     about 25k lines of code (12k for GPU kernels, 1k for llama.cpp
+24:          return arg mint∈io_tasks LST[t]                       adapters), and we validate it on Llama and Qwen models. To
+25:     end if                                                     save CPU resources, we use one dedicated core for I/O tasks
+26:     return arg mint∈ready LST[t]                               and another for SSD-GPU coordination. Although frequent
+27: end function                                                   KV cache writes cause write amplification, we find its perfor-
+                                                                   mance overhead negligible compared to read operations. To
+blocks. This prioritization strategy proactively addresses po-     reduce SSD wear from this effect, we employ 32KB per-layer
+tential stall points before they impact overall system latency.    write buffers to consolidate writes into efficient chunks.
+                                                                      For inputs shorter than 4k tokens, the context budget cor-
+                                                                   responds to 25% of the input length. Otherwise, the context
+6.2    Synchronization Point Reuse                                 budget is maintained at 1k. Half of the context budget is allo-
+While fine-grained overlap enhances parallelism, it entails        cated to init and local blocks; the other half is used for selected
+frequent synchronization, which can introduce substantial          blocks. Additionally, the block size of SolidAttention is 32.
+overhead and stalls. Our approach mitigates these challenges
+through the consolidation of synchronization points, thereby
+reducing the frequency of device handshakes.                       8     Evaluation
+   We establish a task taxonomy that distinguishes between
+critical and non-critical operations to optimize synchroniza-      8.1    Experimental Setup
+tion management. Critical tasks, exemplified by cache block
+prefetch operations, reside on the critical path and directly      Hardware. Our experiments are conducted on two typical PC
+influence overall latency. Conversely, non-critical tasks (e.g.,   configurations: the CUDA [16] backend and the SYCL [22]
+the transfer of newly generated cache data from GPU to SSD)        backend. The CUDA backend is a Linux laptop (kernel ver-
+exhibit latency tolerance and do not impede subsequent oper-       sion v6.8.0, CUDA version 12.8) featuring a 16-core Intel
+ations. We minimize overhead by merging synchronization            Ultra 9 185H CPU and NVIDIA GeForce RTX 4070 Laptop
+points across these task categories. For instance, CPU-to-SSD      GPU with 8 GB GDDR6 VRAM. The SYCL backend is a
+store operations can execute concurrently with prefetch op-        Linux laptop (kernel version v6.11.0, oneAPI version 2025.0)
+erations for subsequent layers. Both task types synchronize        featuring a 16-core Intel Ultra 7 255H CPU and Intel Arc
+
+
+
+74    24th USENIX Conference on File and Storage Technologies                                                 USENIX Association
+                                                                   Offload             Offload+Sparse                       FlexGen                SolidAttention
+                                               Llama-3.2-3B                                      Llama-3.1-8B                                                     Qwen-2.5-7B
+
+
+
+
+             Speed(token/s)
+                              60                                             40
+                                                                                                                                           40
+
+                              30                                             20                                                            20
+
+                               0                                              0                                                                0
+                                   1   2   4      8   16   32    64 128           1      2   4      8   16             32    64 128                 1    2    4       8   16       32     64 128
+                                                                                                  Input Length(k)
+
+                                                                Figure 12: End-to-end performance on CUDA backend.
+
+                                                                             Offload          Offload+Sparse                          SolidAttention
+                                               Llama-3.2-3B                                      Llama-3.1-8B                                                     Qwen-2.5-7B
+
+
+
+
+             Speed(token/s)
+                              20                                             10                                                            10
+
+                              10                                              5                                                                5
+
+                              0                                               0                                                                0
+                                   1   2   4      8   16   32    64 128           1      2   4      8   16             32    64 128                 1    2    4       8   16       32     64 128
+                                                                                                  Input Length(k)
+
+                                                                Figure 13: End-to-end performance on SYCL backend.
+
+                                                                                                                                                         llama.cpp           SolidAttention
+140T integrated GPU. Both laptops are equipped with 64 GB                                                                        Llama-3.2-3B                       Llama-3.1-8B                   Qwen-2.5-7B
+                                                                                                                      20
+DDR5 memory and a 1 TB Samsung 990 PRO PCIe 4.0 SSD.
+
+                                                                                                         Memory(GB)
+                                                                                                                      15
+
+                                                                                                                      10
+Models. To avoid confounding effects from model scale and
+                                                                                                                      5
+type, we evaluate the following open-source models: Llama-                                                            0
+3.1-8B [35], Llama-3.2-3B [36] and Qwen-2.5-7B [46]. The                                                                    16    32      64       128       16      32     64      128       16    32    64     128
+                                                                                                                                                             Context Length(k)
+KV cache is stored and used in FP16, in line with prior
+                                                                                                                                 Figure 14: Memory consumption of KV cache.
+systems. All model weights are quantized to INT4. Note
+that Qwen-2.5-7B generates only half the size of KV cache                                                fload+Sparse for Llama-3.2-3B, Llama-3.1-8B, and Qwen-
+compared to Llama-3.1-8B, but its FFN is more compute-                                                   2.5-7B, respectively, with 128k input tokens. It also outper-
+intensive.                                                                                               forms FlexGen by up to 58.9× with 16k tokens. On the SYCL
+Baseline System. We compare SolidAttention with three                                                    backend, as shown in Figure 13, SolidAttention still outper-
+baseline systems. (1) Offload: It performs inference by of-                                              forms Offload+Sparse by up to 2.1×, 2.5×, and 1.9× for the
+floading the entire Key-Value (KV) cache to an SSD. (2)                                                  respective models. In contrast to Offload, both Offload+Sparse
+Offload+Sparse: It also offloads the entire KV cache to an                                               and SolidAttention maintain stable latency as input length
+SSD but integrates InfLLM [51] to reduce both attention                                                  exceeds 4k tokens. This stability arises from attention sparsity,
+computation and I/O overhead related to the KV cache. (3)                                                which reduces KV cache demands and consequently lowers
+FlexGen [40]: It offloads the entire KV cache to an SSD and                                              both I/O overhead and computational burden. Notably, Flex-
+selectively loads KV cache entries based on their attention                                              Gen exhibits severe performance degradation under memory
+scores. Note that FlexGen is only compatible with OPT [56]                                               constraints due to numerous page-fault-based fine-grained
+models on the CUDA platform. We extend its implementation                                                SSD accesses, which waste bandwidth and cannot be hidden
+to support both Llama and Qwen models.                                                                   by small-batch computation workload.
+
+Inference Configuration. To reflect local AIPC deployments                                                Memory Occupation. We record the memory allocation for
+with limited request concurrency, we set the batch size to 1 and                                          the KV cache during the inference. To minimize memory con-
+the maximum output length to 512 tokens in all experiments.                                               sumption, SolidAttention allocates a buffer only for one layer
+We also set the attention sparsity ratio to 10% for FlexGen.                                              of a 1k-token context’s KV cache, whereas typical systems
+                                                                                                          keep the entire KV cache in memory. Although additional
+                                                                                                          storage is required for representation vectors, this overhead
+8.2    End-to-End Performance                                                                             is negligible relative to the total KV cache size. As shown
+We restrict DRAM usage to 16 GB and evaluate end-to-end                                                   in Figure 14, SolidAttention reduces memory usage by up
+performance of SolidAttention using prompts truncated from                                                to 61.9×, 62.0× and 61.9× on Llama-3.2-3B, Llama-3.1-8B
+WikiText-2 [21] dataset. Notably, FlexGen encounters CUDA                                                 and Qwen-2.5-7B, respectively.
+out-of-memory (OOM) errors for context lengths larger than                                                Larger Model & Larger Memory. To demonstrate the scal-
+16k tokens.                                                                                               ability of SolidAttention with larger models and memory, we
+Throughput. Figure 12 illustrates the throughput of each                                                  further evaluated the INT4-quantized Qwen2.5-14B model
+inference system on the CUDA backend. SolidAttention                                                      on the SYCL backend. Although the high computational in-
+significantly outperforms baselines in long-context scenar-                                               tensity of FFNs dilutes the observed latency benefits, our
+ios, achieving speedups of 2.8×, 3.1×, and 2.4× over Of-                                                  method still reduces the KV cache memory footprint by 98%
+
+
+
+USENIX Association                                                                                24th USENIX Conference on File and Storage Technologies                                                          75
+                                                                                                                                                                    60
+
+
+
+
+                                                                                                                                                      Latency(ms)
+                                                                                                                                                                    40
+
+                                                                                                                                                                    20
+
+                                                                                                                                                                     0
+                                                                                                                                                                         Llama-3.2-3B        Llama-3.1-8B                  Qwen-2.5-7B
+                                                                                                                                                                                                Model
+
+           Model               Approach     Winogrande    Arc-Challenge       MMLU    GSM8K        LongBench     Average                                                          w/ prefetching                     w/o prefetching
+                               Origin         54.49           66.41           57.80       70.31        40.10      57.82                   30                                                                        60
+
+
+
+
+                                                                                                                            Latency(ms)                                                               Latency(ms)
+           Llama-3.2-3B        Quant          51.93           65.76           55.48       64.06        36.29      54.70
+                                                                                                                                          20                                                                        40
+                               Ours           55.25           66.28           58.29       70.30        38.25      57.67
+                               Origin         56.59           78.31           65.91       81.25        46.75      65.76                   10                                                                        20
+           Llama-3.1-8B        Quant          55.64           71.86           62.93       76.56        44.58      62.31
+                                                                                                                                          0                                                                         0
+                               Ours           57.46           80.00           66.16       80.69        45.35      65.93                        Llama-3.2-3B              Llama-3.1-8B   Qwen-2.5-7B                      Llama-3.2-3B   Llama-3.1-8B   Qwen-2.5-7B
+                               Origin         67.96           87.12           73.30       82.81        45.77      71.39                                                    Model                                                          Model
+           Qwen-2.5-7B         Quant          36.79           33.90           20.54        1.56         0.36      18.63
+                               Ours           67.88           87.46           73.46       81.25        43.75      70.76
+                                                                                                                                                                    (a) SYCL                                                       (b) CUDA
+ Table 1: Comparison of LLM inference accuracy. The evaluation                                                             Figure 16: Average blocking latencies induced by cache loading with
+ metrics include Winogrande [39], Arc Challenge [13], MMLU [24],                                                           or without speculative prefetching on SYCL and CUDA backend.
+ GSM8K [14], and LongBench [8].
+
+                                  InDRAM                 InDRAM+sparse                     SolidAttention                  InDRAM+sparse on the SYCL backend, where InDRAM
+                                   Llama-3.1-8B                                       Qwen-2.5-7B                          denotes llama.cpp with the KV cache entirely in DRAM,
+
+
+Speed(token/s)
+                 12
+                 8                                                                                                         while InDRAM+sparse further incorporates InfLLM [51] to
+                 4                                                                                                         accelerate attention computation via sparsity.
+                 0
+                      1    2     4      8    16   32     64 128           1     2     4     8     16    32     64 128
+                                                                                                                             As illustrated in Figure 15, SolidAttention achieves perfor-
+                                                           Input Length(k)                                                 mance comparable to its in-memory counterparts, exhibiting
+  Figure 15: End-to-end inference speeds of SolidAttention and in-                                                         ≤ 11% throughput degradation despite SSD offloading. This
+  memory counterparts on SYCL backend. InDRAM denotes the in-                                                              demonstrates its effectiveness in minimizing SSD interaction
+  memory inference system; InDRAM+sparse additionally applies                                                              overhead while preserving computational efficiency.
+  attention sparsity.
+
+                                                                                                                           8.4.2                   Impact of Speculative Prefetcher
+  and achieves up to 1.7× throughput improvement over Of-
+  fload+Sparse at a 128k-token context. These results confirm                                                              To evaluate the effectiveness of speculative prefetching in
+  that the efficacy of SolidAttention is driven by the I/O-to-                                                             reducing blocking latency from SSD-based KV cache load-
+  computation ratio rather than absolute memory capacity.                                                                  ing, we assess SolidAttention across diverse model architec-
+                                                                                                                           tures using 16k-token prompts truncated from the WikiText-2
+                                                                                                                           dataset [21]. We compare inference latency with and without
+  8.3                     Accuracy
+                                                                                                                           prefetching, specifically measuring the reduction in blocking
+ We evaluate accuracy using the OpenCompass bench-                                                                         latency during KV cache retrieval from SSD.
+ mark [15], comparing SolidAttention against two baselines:                                                                   As shown in Figures 16a and 16b, speculative prefetching
+ the original llama.cpp (Origin) and llama.cpp with INT4-                                                                  effectively reduces inference latency across both SYCL and
+ quantized KV cache (Quant). All model weights are INT4-                                                                   CUDA backends. It reduces blocking latency by up to 3.1×
+ quantized. As shown in Table 1, Quant suffers significant ac-                                                             on the SYCL backend, despite computational bottlenecks.
+ curacy degradation, especially on Qwen-2.5-7B. This is due to                                                             The CUDA backend shows an even greater 3.9× reduction,
+ outliers in the KV cache and loss of numerical precision under                                                            confirming that high-throughput architectures are more sensi-
+ aggressive quantization, highlighting the limitations of naive                                                            tive to I/O blocking latency.
+ KV cache quantization. In contrast, SolidAttention adopts                                                                    The efficacy of this technique is slightly diminished for
+ dynamic attention sparsity to maintain accuracy comparable                                                                models like Qwen-2.5-7B, which have smaller KV caches
+ to the original model.                                                                                                    than Llama models, leading to fewer gains from I/O latency
+    Furthermore, we use eight datasets from LongBench [8] to                                                               decline. However, it still provides significant latency improve-
+ evaluate the long-context performance of systems, including                                                               ments of 2.9× and 1.9× on the SYCL and CUDA backends,
+ 2WikiMQA, TriviaQA, HotpotQA, MultiFieldQA, MuSiQue,                                                                      respectively. This demonstrates SolidAttention’s adaptability
+ NarrativeQA, Qasper and GovReport. With context lengths                                                                   to various accelerator architectures, accommodating different
+ reaching up to 64k, these datasets cover a variety of tasks,                                                              computational capacities and SSD bandwidths.
+ such as single-doc QA, multi-doc QA, few-shot learning and
+ summarization, SolidAttention also maintains close accuracy                                                               8.4.3                   Impact of KV Consolidator
+ to the original model and exhibits a considerable accuracy
+ advantage compared to typical quantization approaches.                                                                    To investigate the impact of interleaved KV cache on band-
+                                                                                                                           width utilization, we also evaluate SolidAttention without the
+                                                                                                                           interleaved KV cache technique and compare their attention
+  8.4                     Ablation Study                                                                                   latency. The evaluation was conducted on CUDA backend
+  8.4.1                   Impact of SSD Offloading                                                                         where SSD accesses is the primary bottleneck and the infer-
+                                                                                                                           ence is more susceptible to I/O latency.
+ To investigate the impact of SSD offloading on overall per-                                                                  As shown in Figure 17a, interleaving the KV cache reduced
+ formance, we conduct tests of SolidAttention, InDRAM and                                                                  attention latency by up to 22% across various models. This
+
+
+
+  76                  24th USENIX Conference on File and Storage Technologies                                                                                                                                                   USENIX Association
+                                                                                                                                                 average                               p90                         p99
+
+
+
+                                                                                                                     Latency(ms)
+                                                                                                                                   200
+
+                                                                                                                                   100
+
+                                                                                                                                    0
+                                                                                                                                          1      4    16   64                  1     4     16   64        1    4     16    64
+                                                                                                                                                                                   Input Length(k)
+                                                                                                                                                                                                              SSD-high          SSD-low
+
+                              no-interleaved        interleaved                                    naive          +ol                    +sr
+                                                                                                                                                                                        average                           p90                     p99
+           1.0                                                              1.0
+
+
+
+
+                                                                                                                                                           Latency(ms)
+                                                                                                                                                                         200
+
+ Latency                                                          Latency
+           0.8                                                              0.8                                                                                          100
+
+           0.6                                                              0.6                                                                                           0
+                    Llama-3.2-3B    Llama-3.1-8B   Qwen-2.5-7B                            Llama-3.2-3B     Llama-3.1-8B            Qwen-2.5-7B                                     1     4    16     64         1      4     16   64      1   4     16   64
+                                      Model                                                                  Model                                                                                                   Input Length(k)
+
+       (a) w/wo. Interleaved KV Cache                                   (b) w/wo. SSD-aware Scheduler                                                                                                     (a) 1k Context Budget
+Figure 17: (a) Comparison of normalized attention latencies in de-
+                                                                                                                                                                                        average                           p90                     p99
+code phase with or without interleaved KV cache. (b) Comparison of
+
+                                                                                                                                                           Latency(ms)
+                                                                                                                                                                         200
+
+normalized attention latencies in decode phase without optimization                                                                                                      100
+(naive), with fine-grained overlap (+ol) and with synchronization                                                                                                         0
+                                                                                                                                                                                   1     4    16     64         1      4     16   64      1   4     16   64
+points reusing (+sr).                                                                                                                                                                                                Input Length(k)
+
+                                                                                                                                                                                                          (b) 4k Context Budget
+                             Block Size            16             32                           64                128                                       Figure 19: Average, P90 and P99 inference latency of SolidAttention
+                                                                                                                                                           on the SYCL backend.
+
+                                                                            Latency(ms)
+                    75                                                                    30
+
+
+
+      Latency(ms)
+                    50                                                                    20
+                    25                                                                    10
+                                                                                                                                                           latency increases slightly when the context budget is below 4k,
+                    0                                                                     0
+                         1            2        3              4                                1            2        3                           4         as I/O operations remain largely overlapped by computational
+                                   Context Budget(k)                                                     Context Budget(k)
+                                                                                                                                                           tasks. The increase of attention latency is primarily caused by
+    (a) Attention Computation Latency                                                       (b) I/O Blocking Latency                                       the growing computational workloads of attention.
+Figure 18: Average per-iteration attention-compute and I/O-blocking                                                                                           However, as the context budget reaches 4k, SolidAttention
+latencies on the SYCL backend while varying the context budget                                                                                             suffers a sharp increase in attention latency, primarily be-
+and block size.                                                                                                                                            cause the I/O latency can no longer be hidden by computation
+                                                                                                                                                           and becomes the performance bottleneck. Nevertheless, §8.3
+improvement is attributed to the interleaved KV cache, which                                                                                               shows that SolidAttention exhibits negligible long-context ac-
+enhances the utilization of bandwidth resources between the                                                                                                curacy degradation with a 1k context budget, so this increase
+CPU-GPU and SSD-CPU without requiring additional data                                                                                                      is not concerning.
+copies. The interleaved KV cache also had a negligible effect
+on the attention computation, as it did not significantly impact
+                                                                                                                                                           8.5.2                   Impact of Block Size
+the latency of operators.
+                                                                                                                                                           Figure 1b shows that I/O request granularity significantly af-
+8.4.4                    Impact of SSD-aware Scheduler                                                                                                     fects throughput. We evaluate this effect using SolidAttention
+                                                                                                                                                           on the SYCL backend. As shown in Figures 18a and 18b, a
+By leveraging computation-I/O overlap, SolidAttention effec-                                                                                               block size of 32 delivers approximately 14% higher through-
+tively mitigates blocking latency and hides SSD latency, espe-                                                                                             put than a block size of 16 because larger blocks better exploit
+cially on devices with limited computational capacity and high                                                                                             SSD-level parallelism. Finer-grained partitioning increases
+synchronization overhead. As shown in Figure 17b, experi-                                                                                                  random I/O overhead, reducing bandwidth utilization. As the
+ments on the SYCL backend demonstrate that fine-grained                                                                                                    block size increases further, both throughput and attention
+overlap improves performance by up to 25% by overlapping                                                                                                   latency plateau because the transfer size is large enough to
+computation with the latency of loading missing selected                                                                                                   fully utilize SSD bandwidth.
+blocks. The reuse of synchronization points provides an addi-
+tional 22% reduction in attention latency by decreasing the
+frequency of synchronization operations.                                                                                                                   8.5.3                   Impact of SSD Configuration
+   The performance gain from synchronization reuse is less
+                                                                                                                                                           To assess how SSD bandwidth affects token-generation la-
+pronounced for models with large computational workloads,
+                                                                                                                                                           tency, we measure inference latency using two PCIe 4.0
+such as Llama-3.1-8B. This is because the fixed delays re-
+                                                                                                                                                           NVMe SSDs: SSD-high (1 TB Samsung 990 PRO; up to
+duced by synchronization reuse are overshadowed by the
+                                                                                                                                                           7.5 GB/s, 1.2M IOPS) and SSD-low (1 TB KIOXIA BG6; up
+dominant computational workloads in the attention module.
+                                                                                                                                                           to 5.0 GB/s, 650k IOPS). As shown in Figure 19, under a 1k
+                                                                                                                                                           context budget, the average token-generation latency is simi-
+8.5                      Sensitivity Analysis                                                                                                              lar on both SSDs. With a 4k context budget, the tail latency on
+                                                                                                                                                           SSD-high remains stable, whereas SSD-low exhibits a 45%
+8.5.1                    Impact of Context Budget
+                                                                                                                                                           increase because the increased I/O demand exceeds what its
+The context budget significantly impacts the amount of data                                                                                                lower bandwidth can sustain. Additionally, tail latencies on
+communication during inference. As shown in Figure 18,                                                                                                     both SSDs remain stable as the input length increases even
+
+
+
+USENIX Association                                                                                                                                   24th USENIX Conference on File and Storage Technologies                                                  77
+though the selection space of critical KV blocks expands,                                       Framework            llama.cpp     SolidAttention
+owing to speculative prefetching and scheduling that over-
+lap compute and I/O. These results confirm SolidAttention’s                                     Peak Power (W)         32.98           36.27
+robustness across diverse NVMe SSD configurations.                                              Energy (J/token)       5.37            3.68
+                                                                                                    Table 2: Comparison of energy consumption.
+
+8.6                     SSD Performance Interference                                      LongBench [8], with input lengths averaging 10k tokens. We
+                                         SolidAttention        Offload+Sparse
+                                                                                          use joules per token (J/token) as the primary metric to quan-
+
+
+ Speed(token/s)
+                  30                                                                      tify energy efficiency during inference. Despite higher peak
+                  20
+                                                                                          power due to SSD accesses, SolidAttention achieves a mean
+                  10
+                  0
+                                                                                          energy consumption of 3.68 J/token, demonstrating a 46%
+                        0       1     2       3       4    0      2        4      6   8   improvement over llama.cpp (Table 2). This stems from Sol-
+                                Bandwidth(GB/s)                        IOPS(100k)
+                                                                                          idAttention’s ability to better utilize GPU computational re-
+Figure 20: Inference throughput on the CUDA backend under con-                            sources and SSD bandwidth, which accelerates inference and
+current I/O workloads.                                                                    improves energy efficiency.
+                                                    Avg.        99th
+
+
+
+
+   Latency(ms)
+                  160
+                  120                                                                     9   Related Works
+                   80
+                   40
+                            0    1     2       3      4    0      2        4      6   8
+                                 Bandwidth(GB/s)                       IOPS(100k)
+                                                                                          KV Cache Compression. Some memory-centric attention-
+                                                                                          sparsity mechanisms, such as H2O [58] and InfiniGen [28],
+Figure 21: Average and P99 inference latency of SolidAttention on                         select relevant KV pairs at the token granularity. These fine-
+the CUDA backend under concurrent I/O workloads.                                          grained selection patterns lead to significant read/write ampli-
+                                                                                          fication during SSD offloading, underutilizing SSD bandwidth
+   We evaluate the performance of SolidAttention and Of-
+                                                                                          and causing high latency.
+fload+Sparse under varying SSD resource contention from
+                                                                                             SolidAttention adapts block-wise dynamic attention spar-
+concurrent I/O-intensive applications. Experiments are con-
+                                                                                          sity to SSD characteristics, thereby addressing these latency
+ducted on CUDA backend (1 TB Samsung 990 PRO; up to
+                                                                                          issues. Recent works, such as RetrievalAttention [33] and
+7.5 GB/s, 1.2M IOPS). Using cgroups and fio [1], we sim-
+                                                                                          ClusterKV [34], mitigate internal fragmentation of block-wise
+ulate bandwidth-bound workloads through sequential reads
+                                                                                          attention sparsity by consolidating KV pairs via clustering,
+and IOPS-bound workloads via 4 KB random reads. Fig-
+                                                                                          thereby improving the efficiency of context-budget usage. Al-
+ure 20 illustrates the performance impact that SolidAttention’s
+                                                                                          though not the primary focus of this work, integrating such
+throughput drops by 58% under 4 GB/s background traffic
+                                                                                          techniques into SolidAttention could further improve model
+and 54% under 800k IOPS interference. Notably, as available
+                                                                                          accuracy and reduce the required context budget.
+bandwidth decreases, the performance gap between SolidAt-
+                                                                                             Other studies have explored KV-cache quantization, aiming
+tention and Offload+Sparse narrows. This occurs because
+                                                                                          to mitigate accuracy loss due to outliers during quantization.
+SolidAttention maximizes bandwidth utilization through ef-
+                                                                                          For example, AWQ [32] augments traditional quantization by
+ficient computation-I/O overlap, making it more sensitive to
+                                                                                          dynamically adjusting quantization levels according to the
+bandwidth scarcity than the baseline.
+                                                                                          weight distribution. These techniques are orthogonal to Soli-
+   Furthermore, we study the influence of interference on
+                                                                                          dAttention and can further reduce communication overhead.
+tail latency of the decode phase. As shown in Figure 21, the
+average latency increases 2.4× with bandwidth-bound in-                                   Model Offloading. PowerInfer [42, 43] and PowerInfer-
+terference, while the 99.9th percentile increases 2.9×. This                              2 [54] exploit ReLU [4,57] activation sparsity in feed-forward
+demonstrates that background interference introduces minor                                networks (FFNs), allowing them to offload inactive neurons
+performance fluctuations to SolidAttention. This pattern per-                             and reduce VRAM or DRAM usage. FlexInfer [18] proposes
+sists under IOPS-bound workloads. However, this disparity                                 balanced memory locking and flexible tensor preservation to
+becomes negligible for end-to-end inference request latency                               improve efficiency and adaptability for offloading. eMoE [44]
+due to amortization across multiple token outputs.                                        and ProMoE [41] leverage intermediate computations to pre-
+                                                                                          dict and prefetch future expert weights proactively. These
+                                                                                          techniques are orthogonal to SolidAttention, but I/O con-
+8.7                     Energy Consumption                                                tention between loading the KV cache and loading model
+                                                                                          weights may arise when integrating them. We leave this for
+We evaluate SolidAttention’s energy efficiency by measur-
+                                                                                          future work.
+ing energy consumption during inference using document
+summarization prompts from the GovReport workload in                                      KV Cache Offloading.         CachedAttention [19] and IM-
+
+
+
+78                 24th USENIX Conference on File and Storage Technologies                                                         USENIX Association
+PRESS [12] target cloud scenarios, using multi-tier caches            [4] Abien Fred Agarap. Deep Learning using Rectified
+to exploit cross-request locality and shared prefixes. While              Linear Units (ReLU). arXiv preprint arXiv:1803.08375,
+effective in reducing TTFT, their reliance on high concur-                2019.
+rency makes them ineffective for single-user local decoding
+where I/O latency poses the primary bottleneck. Crucially,            [5] Reza Yazdani Aminabadi, Samyam Rajbhandari, Am-
+IMPRESS leverages attention sparsity to prioritize cache re-              mar Ahmad Awan, Cheng Li, Du Li, Elton Zheng,
+tention, implicitly delegating I/O efficiency to the caching              Olatunji Ruwase, Shaden Smith, Minjia Zhang, Jeff
+policy rather than directly optimizing instantaneous GPU-                 Rasley, et al. Deepspeed-Inference: Enabling Efficient
+SSD data transmission.                                                    Inference of Transformer Models at Unprecedented
+                                                                          Scale. In Proceedings of the International Conference
+Emerging Storage Technologies. While SolidAttention is                    for High Performance Computing, Networking, Storage
+evaluated based on PCIe 4.0 consumer SSDs, emerging stor-                 and Analysis (SC’22), 2022.
+age technologies offer new opportunities. PCIe 5.0 SSDs dou-
+ble the bandwidth to 16 GB/s, potentially alleviating I/O bot-        [6] Jens Axboe. liburing: Library providing helpers for the
+tlenecks in KV cache offloading and supporting LLMs with                  Linux kernel io_uring support. https://github.com
+larger KV cache dimensions. Additionally, Zoned Namespace                 /axboe/liburing, 2025.
+SSDs (ZNS) [7, 9, 50] enable explicit data placement control,
+allowing systems to strategically arrange KV cache blocks             [7] Hanyeoreum Bae, Jiseon Kim, Miryeong Kwon, and
+across zones to maximize SSD-level parallelism and improve                Myoungsoo Jung. What You Can’t Forget: Exploiting
+throughput. SolidAttention continues to function effectively              Parallelism for Zoned Namespaces. In Proceedings of
+on these devices, because they share I/O characteristics with             the 14th ACM Workshop on Hot Topics in Storage and
+conventional block storage.                                               File Systems (HotStorage’22), 2022.
+
+                                                                      [8] Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai
+10    Conclusion                                                          Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Ao-
+                                                                          han Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi
+This paper presents SolidAttention, an SSD-based LLM in-                  Li. LongBench: A Bilingual, Multitask Benchmark
+ference system that enables long-context LLM inference with               for Long Context Understanding. arXiv preprint
+restricted memory. It co-designs the sparse attention algo-               arXiv:2308.14508, 2024.
+rithms and the storage management system to maximize the
+utilization of SSD bandwidth and GPU computation capacity.            [9] Matias Bjørling, Abutalib Aghayev, Hans Holmberg, Ar-
+Experiments demonstrate that SolidAttention achieves up to                avind Ramesh, Damien Le Moal, Gregory R Ganger, and
+3.1× speedup over existing solutions with minimal accuracy                George Amvrosiadis. ZNS: Avoiding the Block Inter-
+loss and up to 98% memory reduction on KV cache.                          face Tax for Flash-based SSDs . In Proceedings of the
+                                                                          2021 USENIX Annual Technical Conference (USENIX
+                                                                          ATC’21), 2021.
+11    Acknowledgments
+                                                                     [10] Matias Bjørling, Javier González, and Philippe Bonnet.
+We sincerely thank our shepherd Yuke Wang and anonymous                   LightNVM: the Linux open-channel SSD subsystem. In
+reviewers for their insightful suggestions. This work was par-            Proceedings of the 15th Usenix Conference on File and
+tially supported by NSFC (No. 62372287 and U24A20235)                     Storage Technologies (FAST’17), pages 359–373, 2017.
+and Fundamental and Interdisciplinary Disciplines Break-
+through Plan of the Ministry of Education of China. Zeyu Mi          [11] Feng Chen, Rubao Lee, and Xiaodong Zhang. Essen-
+(yzmizeyu@sjtu.edu.cn) is the corresponding author.                       tial Roles of Exploiting Internal Parallelism of Flash
+                                                                          Memory Based Solid State Drives in High-Speed Data
+References                                                                Processing. In Proceedings of the 2011 IEEE Inter-
+                                                                          national Symposium on High Performance Computer
+ [1] fio: Flexible i/o tester. https://github.com/axboe                   Architecture (HPCA’11), 2011.
+     /fio, 2025.
+                                                                     [12] Weijian Chen, Shuibing He, Haoyang Qu, Ruidong
+ [2] llama.cpp: LLM inference in C/C++. https://github                    Zhang, Siling Yang, Ping Chen, Yi Zheng, Baoxing Huai,
+     .com/ggml-org/llama.cpp, 2025.                                       and Gang Chen. IMPRESS: An Importance-Informed
+                                                                          Multi-Tier Prefix KV Storage System for Large Lan-
+ [3] Ollama: Get up and running with Llama 3.3, DeepSeek-                 guage Model Inference. In 23rd USENIX Conference
+     R1, Phi-4, Gemma 3, and other large language models.                 on File and Storage Technologies (FAST’25), pages 187–
+     https://github.com/ollama/ollama, 2025.                              201, 2025.
+
+
+
+USENIX Association                                               24th USENIX Conference on File and Storage Technologies      79
+[13] Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot,     [24] Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou,
+     Ashish Sabharwal, Carissa Schoenick, and Oyvind                Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+     Tafjord. Think you have Solved Question Answering?             Measuring Massive Multitask Language Understand-
+     Try ARC, the AI2 Reasoning Challenge. arXiv preprint           ing. arXiv preprint arXiv:2009.03300, 2020.
+     arXiv:1803.05457, 2018.
+                                                               [25] Amr Hendy, Mohamed Abdelrehim, Amr Sharaf,
+[14] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian,                Vikas Raunak, Mohamed Gabr, Hitokazu Matsushita,
+     Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plap-           Young Jin Kim, Mohamed Afify, and Hany Hassan
+     pert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano,            Awadalla. How Good Are GPT Models at Machine
+     Christopher Hesse, and John Schulman. Training Ver-            Translation? A Comprehensive Evaluation. arXiv
+     ifiers to Solve Math Word Problems. arXiv preprint             preprint arXiv:2302.09210, 2023.
+     arXiv:2110.14168, 2021.
+                                                               [26] Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh,
+[15] OpenCompass Contributors. Opencompass: A universal             Michael W Mahoney, Yakun Sophia Shao, Kurt Keutzer,
+     evaluation platform for foundation models. https:              and Amir Gholami. KVQuant: Towards 10 Million
+     //github.com/open-compass/opencompass, 2023.                   Context Length LLM Inference with KV Cache Quanti-
+[16] NVIDIA Corporation. Cuda toolkit - free tools and              zation. arXiv preprint arXiv:2401.18079, 2024.
+     training. https://developer.nvidia.com/cuda-t             [27] Ahmad Faraz Khan, Azal Ahmad Khan, Anas Mohamed,
+     oolkit, 2025.                                                  Haider Ali, Suchithra Moolinti, Sabaat Haroon, Usman
+[17] Valve Corporation. Steam Hardware & Software Survey.           Tahir, Mattia Fazzini, Ali R. Butt, and Ali Anwar. Lads:
+     https://store.steampowered.com/hwsurvey/St                     Leveraging llms for ai-driven devops. arXiv preprint
+     eam-Hardware-Software-Survey-Welcome-to-S                      arXiv:2502.20825, 2025.
+     team, 2025.
+                                                               [28] Wonbeom Lee, Jungi Lee, Junghwan Seo, and Jaewoong
+[18] Hongchao Du, Shangyu Wu, Arina Kharlamova, Nan                 Sim. InfiniGen: Efficient Generative Inference of Large
+     Guan, and Chun Jason Xue. FlexInfer: Breaking                  Language Models with Dynamic KV Cache Manage-
+     Memory Constraint via Flexible and Efficient Offload-          ment. In 18th USENIX Symposium on Operating Sys-
+     ing for On-Device LLM Inference. arXiv preprint                tems Design and Implementation (OSDI’24), 2024.
+     arXiv:2503.03777, 2025.
+                                                               [29] Haoyang Li, Yiming Li, Anxin Tian, Tianhao Tang,
+[19] Bin Gao, Zhuomin He, Puru Sharma, Qingxuan Kang,               Zhanchao Xu, Xuejia Chen, Nicole Hu, Wei Dong, Qing
+     Djordje Jevdjic, Junbo Deng, Xingkun Yang, Zhou Yu,            Li, and Lei Chen. A Survey on Large Language Model
+     and Pengfei Zuo. Cost-Efficient Large Language Model           Acceleration based on KV Cache Management. arXiv
+     Serving for Multi-Turn Conversations with CachedAt-            preprint arXiv:2412.19442, 2025.
+     tention. In Proceedings of the 2024 USENIX Confer-
+     ence on Usenix Annual Technical Conference (USENIX        [30] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat
+     ATC’24), 2024.                                                 Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai,
+                                                                    Patrick Lewis, and Deming Chen. SnapKV: LLM
+[20] Alireza Ghadimi and Hamid Beigy. Hybrid Multi-                 Knows What You are Looking for Before Generation.
+     Document Summarization using Pre-Trained Language              arXiv preprint arXiv:2404.14469, 2024.
+     Models. Expert Systems with Applications, 192:116292,
+     2022.                                                     [31] Hannah Lin, Martin Maas, Maximilian Roquemore, Ar-
+                                                                    man Hasanzadeh, Fred Lewis, Yusuf Simonson, Tzu-
+[21] Chengyue Gong, Di He, Xu Tan, Tao Qin, Liwei Wang,             Wei Yang, Amir Yazdanbakhsh, Deniz Altinbüken,
+     and Tie-Yan Liu. Frage: Frequency-Agnostic Word                Florin Papa, Maggie Nolan Edmonds, Aditya Patil,
+     Representation. In Proceedings of the 32nd Advances            Don Schwarz, Satish Chandra, Chris Kennelly, Milad
+     in Neural Information Processing Systems (NIPS’18),            Hashemi, and Parthasarathy Ranganathan. ECO: An
+     2018.                                                          LLM-Driven Efficient Code Optimizer for Warehouse
+[22] The Khronos® SYCL™ Working Group. Sycl™ 2020                   Scale Computers. arXiv preprint arXiv:2503.15669,
+     specification. https://registry.khronos.org/SYC                2025.
+     L/specs/sycl-2020/html/sycl-2020.html, 2025.
+                                                               [32] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Wei-
+[23] Kai Han, An Xiao, Enhua Wu, Jianyuan Guo, Chunjing             Ming Chen, Wei-Chen Wang, Guangxuan Xiao, Xingyu
+     XU, and Yunhe Wang. Transformer in Transformer. In             Dang, Chuang Gan, and Song Han. AWQ: Activation-
+     Proceedings of the 35th Advances in Neural Information         aware Weight Quantization for On-Device LLM Com-
+     Processing Systems (NIPS’21), volume 34, 2021.                 pression and Acceleration. In Proceedings of the 7th
+
+
+
+80   24th USENIX Conference on File and Storage Technologies                                          USENIX Association
+     Annual Conference on Machine Learning and Systems             [42] Yixin Song, Zeyu Mi, Haotong Xie, and Haibo Chen.
+     (MLSys’24), 2024.                                                  PowerInfer: Fast Large Language Model Serving with
+                                                                        a Consumer-grade GPU. In Proceedings of the ACM
+[33] Di Liu, Meng Chen, Baotong Lu, Huiqiang Jiang, Zhen-               SIGOPS 30th Symposium on Operating Systems Princi-
+     hua Han, Qianxi Zhang, Qi Chen, Chengruidong Zhang,                ples (SOSP’24), 2024.
+     Bailu Ding, Kai Zhang, Chen Chen, Fan Yang, Yuqing
+     Yang, and Lili Qiu. RetrievalAttention: Accelerat-            [43] Yixin Song, Haotong Xie, Zhengyan Zhang, Bo Wen,
+     ing Long-Context LLM Inference via Vector Retrieval.               Li Ma, Zeyu Mi, and Haibo Chen. Turbo sparse: Achiev-
+     arXiv preprint arXiv:2409.10516, 2024.                             ing llm sota performance with minimal activated param-
+                                                                        eters. arXiv preprint arXiv:2406.05955, 2024.
+[34] Guangda Liu, Chengwei Li, Jieru Zhao, Chenqi Zhang,
+     and Minyi Guo. ClusterKV: Manipulating LLM KV                 [44] Suraiya Tairin, Shohaib Mahmud, Haiying Shen, and
+     Cache in Semantic Space for Recallable Compression.                Anand Iyer. eMoE: Task-aware Memory Efficient
+     arXiv preprint arXiv:2412.03213, 2024.                             Mixture-of-Experts-Based (MoE) Model Inference.
+                                                                        arXiv preprint arXiv:2503.06823, 2025.
+[35] meta llama. Llama-3.1-8b. https://huggingface.
+     co/meta-llama/Llama-3.1-8B, 2024.                             [45] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao,
+                                                                        Baris Kasikci, and Song Han. Quest: Query-Aware
+[36] meta llama. Llama-3.2-3b. https://huggingface.                     Sparsity for Efficient Long-Context LLM Inference. In
+     co/meta-llama/Llama-3.2-3B, 2024.                                  Proceedings of the 41st International Conference on
+                                                                        Machine Learning (ICML’24), 2024.
+[37] Jowi Morales. Analysts say average laptop RAM quota
+     will reach 11.8GB in 2024 — up 12% year-on-year.              [46] Qwen Team. Qwen2.5: A party of foundation mod-
+     https://www.tomshardware.com/laptops/analy                         els. https://qwenlm.github.io/blog/qwen2.5/,
+     sts-say-average-laptop-ram-quota-will-rea                          2024.
+     ch-118gb-in-2024-up-12-year-on-year?utm_so
+                                                                   [47] TrendForce. CSPs to Expand into Edge AI, Driving
+     urce=openai, 2024.
+                                                                        Average NB DRAM Capacity Growth by at Least 7%
+                                                                        in 2025, Says TrendForce. https://www.trendforce
+[38] Adam Paszke, Sam Gross, Francisco Massa, Adam
+                                                                        .com/presscenter/news/20240625-12200.html,
+     Lerer, James Bradbury, Gregory Chanan, Trevor Killeen,
+                                                                        2025.
+     Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban
+     Desmaison, Andreas Köpf, Edward Yang, Zach DeVito,            [48] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob
+     Martin Raison, Alykhan Tejani, Sasank Chilamkurthy,                Uszkoreit, Llion Jones, Aidan N Gomez, Ł ukasz Kaiser,
+     Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chin-             and Illia Polosukhin. Attention is All you Need. In
+     tala. Pytorch: An imperative style, high-performance               Proceedings of the 31st Advances in Neural Information
+     deep learning library. arXiv preprint arXiv:1912.01703,            Processing Systems (NIPS’17), 2017.
+     2019.
+                                                                   [49] Yingjia Wang, Tao Lu, Yuhong Liang, Xiang Chen, and
+[39] Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhaga-                   Ming-Chang Yang. Reviving In-Storage Hardware Com-
+     vatula, and Yejin Choi. WinoGrande: An Adversarial                 pression on ZNS SSDs through Host-SSD Collabora-
+     Winograd Schema Challenge at Scale. arXiv preprint                 tion. In Proceedings of the 2025 IEEE International
+     arXiv:1907.10641, 2019.                                            Symposium on High Performance Computer Architec-
+                                                                        ture (HPCA’25), 2025.
+[40] Ying Sheng, Lianmin Zheng, Binhang Yuan, Zhuohan
+     Li, Max Ryabinin, Beidi Chen, Percy Liang, Christo-           [50] Yingjia Wang, You Zhou, Fei Wu, Jie Zhang, and Ming-
+     pher Ré, Ion Stoica, and Ce Zhang. FlexGen: High-                  Chang Yang. Land of Oz: Resolving Orderless Writes
+     Throughput Generative Inference of Large Language                  in Zoned Namespace SSDs. IEEE Transactions on
+     Models with a Single GPU. In Proceedings of the                    Computers, 73(11):2520–2533, 2024.
+     40th International Conference on Machine Learning
+     (ICML’23), 2023.                                              [51] Chaojun Xiao, Pengle Zhang, Xu Han, Guangxuan
+                                                                        Xiao, Yankai Lin, Zhengyan Zhang, Zhiyuan Liu, and
+[41] Xiaoniu Song, Zihang Zhong, Rong Chen, and Haibo                   Maosong Sun. InfLLM: Training-Free Long-Context
+     Chen. ProMoE: Fast MoE-based LLM Serving using                     Extrapolation for LLMs with an Efficient Context Mem-
+     Proactive Caching. arXiv preprint arXiv:2410.22134,                ory. In Proceedings of the 38th Advances in Neural
+     2025.                                                              Information Processing Systems (NIPS’24), 2024.
+
+
+
+USENIX Association                                             24th USENIX Conference on File and Storage Technologies     81
+[52] Guangxuan Xiao, Ji Lin, Mickael Seznec, Hao Wu,
+     Julien Demouth, and Song Han. SmoothQuant: Accu-
+     rate and Efficient Post-Training Quantization for Large
+     Language Models. In Proceedings of the 40th Inter-
+     national Conference on Machine Learning (ICML’23),
+     2023.
+
+[53] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song
+     Han, and Mike Lewis.     Efficient Streaming Lan-
+     guage Models with Attention Sinks. arXiv preprint
+     arXiv:2309.17453, 2023.
+
+[54] Zhenliang Xue, Yixin Song, Zeyu Mi, Xinrui Zheng,
+     Yubin Xia, and Haibo Chen. PowerInfer-2: Fast Large
+     Language Model Inference on a Smartphone. arXiv
+     preprint arXiv:2406.06282, 2024.
+[55] Zhewei Yao, Reza Yazdani Aminabadi, Minjia Zhang,
+     Xiaoxia Wu, Conglong Li, and Yuxiong He. ZeroQuant:
+     Efficient and Affordable Post-Training Quantization for
+     Large-Scale Transformers. In Proceedings of the 36th
+     International Conference on Neural Information Pro-
+     cessing Systems (NIPS’22), 2022.
+[56] Susan Zhang, Stephen Roller, Naman Goyal, Mikel
+     Artetxe, Moya Chen, Shuohui Chen, Christopher Dewan,
+     Mona Diab, Xian Li, Xi Victoria Lin, Todor Mihaylov,
+     Myle Ott, Sam Shleifer, Kurt Shuster, Daniel Simig,
+     Punit Singh Koura, Anjali Sridhar, Tianlu Wang, and
+     Luke Zettlemoyer. Opt: Open pre-trained transformer
+     language models. arXiv preprint arXiv:2205.01068,
+     2022.
+[57] Zhengyan Zhang, Yixin Song, Guanghui Yu, Xu Han,
+     Yankai Lin, Chaojun Xiao, Chenyang Song, Zhiyuan
+     Liu, Zeyu Mi, and Maosong Sun. Relu2 wins: Discover-
+     ing efficient activation functions for sparse llms, 2024.
+
+[58] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong
+     Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong
+     Tian, Christopher Ré, Clark Barrett, Zhangyang Wang,
+     and Beidi Chen. H2O: Heavy-Hitter Oracle for Effi-
+     cient Generative Inference of Large Language Models.
+     In Proceedings of the 37th International Conference
+     on Neural Information Processing Systems (NIPS’23),
+     2023.
+
+
+
+
+82   24th USENIX Conference on File and Storage Technologies     USENIX Association
+

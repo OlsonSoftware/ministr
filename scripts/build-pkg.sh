@@ -89,9 +89,19 @@ echo "▸ Building iris.app..."
 
 export APPLE_SIGNING_IDENTITY
 cd "$REPO_ROOT/iris-app"
-pnpm tauri build --bundles app --target "$RUST_TARGET" 2>&1 | tail -5
 
-APP_BUNDLE="$TAURI_DIR/target/${RUST_TARGET}/release/bundle/macos/${APP_NAME}.app"
+# When skipping notarization, fully unset the env vars that trigger
+# Tauri's built-in notarization so it only signs.
+if [[ "${SKIP_NOTARIZE:-}" == "1" ]]; then
+    (
+        unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_PATH
+        pnpm run tauri build --bundles app --target "$RUST_TARGET"
+    )
+else
+    pnpm run tauri build --bundles app --target "$RUST_TARGET"
+fi
+
+APP_BUNDLE="$REPO_ROOT/target/${RUST_TARGET}/release/bundle/macos/${APP_NAME}.app"
 if [[ ! -d "$APP_BUNDLE" ]]; then
     echo "error: app bundle not found at $APP_BUNDLE" >&2
     exit 1
@@ -104,7 +114,7 @@ echo "  ✓ App bundle: $APP_BUNDLE"
 echo "▸ Building iris CLI..."
 
 cd "$REPO_ROOT"
-cargo build --release --package iris-cli --target "$RUST_TARGET" 2>&1 | tail -3
+cargo build --release --package iris-cli --target "$RUST_TARGET"
 
 CLI_BINARY="$REPO_ROOT/target/${RUST_TARGET}/release/iris-cli"
 if [[ ! -f "$CLI_BINARY" ]]; then
@@ -164,13 +174,31 @@ echo "  ✓ iris-cli.pkg"
 echo "▸ Preparing installer resources..."
 
 DIST_XML="$STAGING/distribution.xml"
-sed "s/__VERSION__/${VERSION}/g" "$INSTALLER_DIR/distribution.xml" > "$DIST_XML"
-
 RESOURCES="$STAGING/resources"
 mkdir -p "$RESOURCES"
-for f in "$INSTALLER_DIR/resources/"*; do
-    sed "s/__VERSION__/${VERSION}/g" "$f" > "$RESOURCES/$(basename "$f")"
-done
+
+python3 -c "
+import os, shutil, sys
+version = sys.argv[1]
+src_dir = sys.argv[2]
+dist_src = sys.argv[3]
+dist_dst = sys.argv[4]
+res_dst = sys.argv[5]
+
+# Stamp distribution.xml
+with open(dist_src) as f:
+    open(dist_dst, 'w').write(f.read().replace('__VERSION__', version))
+
+# Copy resource files — stamp text files, copy binary files as-is
+for name in os.listdir(src_dir):
+    src = os.path.join(src_dir, name)
+    dst = os.path.join(res_dst, name)
+    if name.endswith(('.html', '.xml', '.txt', '.rtf')):
+        with open(src) as f:
+            open(dst, 'w').write(f.read().replace('__VERSION__', version))
+    else:
+        shutil.copy2(src, dst)
+" "$VERSION" "$INSTALLER_DIR/resources" "$INSTALLER_DIR/distribution.xml" "$DIST_XML" "$RESOURCES"
 
 # ── Step 6: Build the distribution package ────────────────────────────────────
 

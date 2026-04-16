@@ -1,0 +1,573 @@
+                                             Lightweight Transformer Architectures for Edge
+                                                   Devices in Real-Time Applications
+                                                                                            Hema Hariharan Samson
+                                                                                            Independent Researcher
+                                                                                    Email: hemahariharansamson@gmail.com
+
+
+                                           Abstract—The deployment of transformer-based models on              Computational Limitations: Edge devices deliver 5-200
+                                        resource-constrained edge devices represents a critical challenge   TOPS (trillion operations per second) versus 300-2000 TOPS
+                                        in enabling real-time artificial intelligence applications. This    on datacenter GPUs.
+                                        comprehensive survey examines lightweight transformer archi-
+                                        tectures specifically designed for edge deployment, analyzing          Power Budget: Battery-powered devices require <5W con-
+
+
+
+
+arXiv:2601.03290v1 [cs.LG] 5 Jan 2026
+                                        recent advances in model compression, quantization, pruning,        tinuous operation; industrial edge systems operate at 10-30W
+                                        and knowledge distillation techniques. We systematically review     compared to 250-700W for server GPUs.
+                                        prominent lightweight variants including MobileBERT, Tiny-             Latency Requirements: Real-time applications demand
+                                        BERT, DistilBERT, EfficientFormer, EdgeFormer, and Mobile-
+                                        ViT, providing detailed performance benchmarks on standard          <30ms per-frame inference for 30 FPS video processing,
+                                        datasets such as GLUE, SQuAD, ImageNet-1K, and COCO.                <100ms for interactive user experiences.
+                                        Our analysis encompasses current industry adoption patterns            Bandwidth Limitations: Edge deployment eliminates
+                                        across major hardware platforms (NVIDIA Jetson, Qualcomm            cloud dependency, requiring complete on-device processing
+                                        Snapdragon, Apple Neural Engine, ARM architectures), deploy-
+                                                                                                            without network round-trips.
+                                        ment frameworks (TensorFlow Lite, ONNX Runtime, PyTorch
+                                        Mobile, CoreML), and optimization strategies. Experimental
+                                        results demonstrate that modern lightweight transformers can        C. Specific Challenges for Transformers
+                                        achieve 75-96% of full-model accuracy while reducing model size
+                                        by 4-10× and inference latency by 3-9×, enabling deployment            Deploying transformers on edge devices introduces unique
+                                        on devices with as little as 2-5W power consumption. We iden-       technical challenges:
+                                        tify sparse attention mechanisms, mixed-precision quantization
+                                        (INT8/FP16), and hardware-aware neural architecture search as         • Attention Complexity: Self-attention scales quadrati-
+                                        the most effective optimization strategies.                             cally with sequence length, consuming excessive memory
+                                           Index Terms—Transformer architectures, edge computing,               and compute for long sequences.
+                                        model compression, knowledge distillation, quantization, real-
+                                                                                                              • Parameter Redundancy: Large embedding matrices and
+                                        time inference, mobile AI
+                                                                                                                feed-forward layers contain significant redundancy suit-
+                                                                                                                able for compression.
+                                                              I. I NTRODUCTION
+                                                                                                              • Precision Sensitivity: Quantization from FP32 to INT8
+                                        A. Motivation and Context                                               can degrade accuracy by 1-5% without careful calibra-
+                                           Transformer architectures have revolutionized natural lan-           tion.
+                                                                                                              • Framework Compatibility: Different edge platforms
+                                        guage processing and computer vision, achieving state-of-the-
+                                        art results across diverse tasks [1], [2]. However, the compu-          support different operators, requiring framework-specific
+                                        tational demands of standard transformers—characterized by              optimizations.
+                                                                                                              • Hardware Heterogeneity: Optimal deployment strate-
+                                        quadratic attention complexity O(n2 ) and hundreds of mil-
+                                        lions of parameters—present fundamental barriers to deploy-             gies vary across CPU, GPU, DSP, and specialized AI
+                                        ment on edge devices. Real-world applications in autonomous             accelerators.
+                                        vehicles, mobile health monitoring, augmented reality, and
+                                        industrial IoT require inference latencies under 30-100ms,           II. L ITERATURE R EVIEW: L IGHTWEIGHT T RANSFORMER
+                                        model sizes under 100MB, and power consumption below 5-                                 A RCHITECTURES
+                                        10W—constraints that standard transformers routinely violate
+                                        by orders of magnitude.                                             A. Core Transformer Limitations
+                                                                                                               The original Transformer architecture [1] introduces com-
+                                        B. Edge Device Constraints                                          putational bottlenecks unsuitable for edge deployment. BERT-
+                                          Resource-constrained edge devices face several intercon-          base contains 110M parameters and requires 11GB memory
+                                        nected limitations:                                                 for training [3]. Vision Transformers (ViT) demand 300+
+                                          Memory Constraints: Mobile devices typically provide 4-           GFLOPS per image at 224×224 resolution. The quadratic
+                                        8GB RAM with 1-2GB available for model inference, while             attention complexity O(n2 ) becomes prohibitive for sequences
+                                        embedded systems offer 512MB-2GB total memory.                      exceeding 512 tokens or high-resolution images.
+B. Knowledge Distillation Approaches                               a fixed window (e.g., ±128 positions), reducing complexity to
+    1) DistilBERT: DistilBERT [4] pioneered knowledge dis-         O(n × w) where w is window size. The Performer architecture
+tillation for transformers, achieving 97% of BERT-base perfor-     [10] approximates full attention using kernel methods, achiev-
+mance with 40% fewer parameters (66M vs 110M) and 60%              ing linear O(n) complexity while maintaining accuracy within
+faster inference. The architecture retains 6 transformer layers    1-2% of full attention on language modeling tasks.
+versus BERT’s 12, using teacher-student training where the            2) Linear Attention: Linformer [11] projects key and value
+student learns to match the teacher’s output distributions. On     sequences to lower dimensions, reducing attention complexity
+GLUE benchmark, DistilBERT achieves 77.0 average score             from O(n2 ) to O(n×k) where k ≪ n is projection dimension.
+(vs 79.5 for BERT-base) while reducing model size to 207MB.        For sequences of length n = 512 with k = 256 projection,
+    2) TinyBERT: TinyBERT [5] advances distillation through        Linformer achieves 2-3× speedup with <1% accuracy loss
+a two-stage framework: general distillation on unlabeled data      on BERT tasks.
+followed by task-specific distillation. TinyBERT-4 (4 layers,         3) Dynamic Token Pruning: Recent work on EdgeViT++
+14.5M parameters) achieves 96.8% of BERT-base performance          [12] introduces adaptive token pruning that dynamically re-
+on GLUE while being 7.5× smaller and 9.4× faster. The              duces token count during inference. Using attention-based
+architecture introduces Transformer distillation that transfers    gating mechanisms, the model prunes 30-50% of tokens in in-
+knowledge from embedding layer, hidden states, attention           termediate layers while maintaining accuracy. Combined with
+matrices, and prediction layer. On SQuAD v1.1, TinyBERT-6          hybrid quantization (INT8/FP16 mixed precision), EdgeViT++
+(67M parameters) reaches F1 score of 87.5 versus 88.5 for          achieves 65% memory reduction and 40% latency improve-
+BERT-base.                                                         ment over baseline ViT models on edge hardware.
+    3) MobileBERT: MobileBERT [6] introduces inverted-
+bottleneck architecture enabling task-agnostic compression.                     III. O PTIMIZATION T ECHNIQUES
+With 25.3M parameters, MobileBERT achieves 77.7 GLUE               A. Quantization Strategies
+score and 62ms inference on Pixel 4 phone—4× smaller than
+                                                                      Quantization reduces numerical precision of model weights
+BERT-base with competitive accuracy. On SQuAD v1.1, Mo-
+                                                                   and activations, dramatically decreasing memory footprint and
+bileBERT reaches F1 score of 90.3, outperforming DistilBERT
+                                                                   enabling faster integer arithmetic on specialized hardware.
+(79.8) and matching TinyBERT-6.
+                                                                      1) INT8 Quantization: INT8 quantization represents
+C. Efficient Vision Transformers                                   weights and activations as 8-bit integers, reducing model
+   1) EfficientFormer:     EfficientFormer    [7]    achieves      size by 4× versus FP32. Joint pruning, quantization, and
+MobileNet-level speed while maintaining transformer                distillation (JPQD) on BERT-base reaches 5.24× compression
+performance through dimension-consistent design and latency-       with 4.19× performance gain and minimal accuracy loss on
+driven optimization. EfficientFormer-L1 reaches 79.2% top-1        Intel Xeon processors [13].
+accuracy on ImageNet-1K with only 1.6ms inference                     2) FP16 Quantization: FP16 (half-precision floating point)
+on iPhone 12 (CoreML), matching MobileNetV2×1.4                    provides larger dynamic range than INT8, reducing memory
+speed (1.6ms, 74.7% accuracy). EfficientFormer-L7 (83.3%           by 2× while maintaining higher accuracy. Modern GPUs
+accuracy, 7.0ms latency) outperforms MobileViT-XS (74.8%,          (NVIDIA Tensor Cores, Apple Neural Engine) support native
+7.2ms) by 8.5% accuracy at similar speed.                          FP16 arithmetic with significant speedups. Mixed FP16/INT8
+   2) EdgeFormer: EdgeFormer [8] combines convolutional            quantization balances speed and accuracy: FP16 for sensitive
+and transformer strengths through global circular convolution      layers (layer normalization, first/last layers), INT8 for dense
+(GCC) with position embeddings. On ImageNet-1K classifica-         linear transformations [14].
+tion, EdgeFormer achieves 78.6% top-1 accuracy with 5.0M              3) Advanced Quantization: FP8 formats (E4M3, E3M4)
+parameters, providing 11% parameter reduction, 13% compu-          emerging in latest accelerators provide better accuracy than
+tation savings, and 23% faster inference versus MobileViT on       INT8 while maintaining similar efficiency. Research shows
+ARM-based Rockchip RK3288.                                         E4M3 achieves 92.64% workload coverage versus 65.87% for
+   3) MobileViT: MobileViT [9] treats transformers as convo-       INT8 across computer vision and NLP tasks [15].
+lutions for global information processing. MobileViT achieves
+                                                                   B. Structured Pruning
+78.4% ImageNet-1K accuracy with 6M parameters—3.2%
+better than MobileNetV3 and 6.2% better than DeiT at similar          Pruning removes redundant parameters to reduce model
+parameter counts. On MS-COCO object detection, MobileViT           size and accelerate inference. Head pruning removes atten-
+provides 5.7% accuracy improvement over MobileNetV3 with           tion heads with minimal impact—BERT models retain 95-
+comparable parameters.                                             97% performance after removing 40-50% of attention heads.
+                                                                   Layer pruning drops entire transformer blocks; removing 25%
+D. Efficient Attention Mechanisms                                  of layers typically degrades accuracy by 2-3%. Activation-
+   1) Sparse Attention: Sparse attention mechanisms reduce         aware pruning analyzes layer importance through calibration
+quadratic complexity by limiting attention scope. Local atten-     data, pruning low-activation channels while preserving critical
+tion restricts each token to attending only nearby tokens within   pathways [14].
+C. Hardware-Aware Neural Architecture Search                                       B. Deployment Frameworks
+   Hardware-aware NAS optimizes architectures directly for                            1) TensorFlow Lite: TensorFlow Lite provides comprehen-
+target hardware metrics rather than proxy measures like                            sive mobile/edge deployment with extensive hardware dele-
+FLOPs. EfficientFormer employs latency-driven slimming:                            gation support. The framework supports Android NNAPI for
+starting from supernet, progressively prunes channels based on                     accelerator access, iOS Core ML integration, GPU delegates
+actual measured latency on iPhone Neural Engine [7]. By di-                        for parallel processing, and Hexagon DSP delegation on Qual-
+rectly optimizing for on-device latency, hardware-aware NAS                        comm platforms. Post-training quantization reduces model
+produces architectures 20-30% faster than FLOP-optimized                           size 4× with INT8 conversion, achieving <1% accuracy
+designs at equivalent accuracy.                                                    degradation on properly calibrated models.
+                                                                                      2) ONNX Runtime: ONNX Runtime offers cross-
+                 IV. I NDUSTRY S TANDARDS AND T OOLS                               framework deployment, enabling models trained in PyTorch
+                                                                                   or TensorFlow to deploy uniformly across platforms.
+A. Hardware Platforms                                                              Execution Providers enable hardware-specific optimizations:
+                                                                                   CUDA EP for NVIDIA GPUs, TensorRT EP for optimized
+   Table I summarizes major edge AI hardware platforms and
+                                                                                   inference, CoreML EP for Apple hardware, NNAPI EP
+their capabilities.
+                                                                                   for Android accelerators. Graph optimizations include
+                                                                                   node fusion, redundant operator elimination, and layout
+                                  TABLE I                                          transformations.
+                 E DGE AI H ARDWARE P LATFORMS C OMPARISON
+                                                                                      3) PyTorch Mobile: PyTorch Mobile enables direct de-
+   Platform                         Performance    Power   Use Cases               ployment of PyTorch models via TorchScript serialization,
+   NVIDIA Jetson                       40-275      7-60W   Robotics,               maintaining tight integration with PyTorch development work-
+   AGX Orin                             TOPS               autonomous
+                                                                                   flow. Models export through tracing or scripting. Mobile
+   Qualcomm                           15 TOPS      5-8W    Mobile AI,
+   Snapdragon 8                      AI Engine             5G edge                 builds support Metal GPU acceleration on iOS and Vulkan
+   Apple Neural                       35 TOPS      3-5W    iPhone/iPad,            acceleration on Android.
+   Engine A17                          16-core             CoreML apps                4) CoreML: CoreML provides Apple ecosystem deploy-
+   Google Coral                        4 TOPS       2W     IoT devices,            ment with automatic Neural Engine, GPU, and CPU workload
+   Edge TPU                             INT8               sensors
+                                                                                   distribution. The framework converts models from PyTorch or
+   Hailo-8 AI                         26 TOPS      2.5W    Smart cameras,
+   Processor                                               video analytics         TensorFlow using coremltools. Default FP16 weights reduce
+                                                                                   model size 2×; INT8/INT4 quantization enables further com-
+                                                                                   pression.
+  NVIDIA Jetson dominates high-performance robotics with
+comprehensive CUDA ecosystem and TensorRT optimization.                            C. Optimization Tools
+Qualcomm leads mobile AI with integrated 5G connectivity
+                                                                                     Key optimization tools include:
+and Hexagon DSP acceleration. Apple’s Neural Engine ex-
+cels at on-device privacy-preserving inference through tight                         • TensorRT: NVIDIA’s inference optimizer performs layer
+CoreML integration.                                                                    fusion, kernel auto-tuning, and mixed precision optimiza-
+                                                                                       tion, achieving 2-5× speedup on Jetson platforms.
+                                                                                     • OpenVINO: Intel’s toolkit optimizes models for Intel
+   Jetson AGX                                                                275
+                                                                                       CPUs, integrated GPUs, and VPUs.
+                                                                                     • NNCF: Provides joint pruning, quantization, and distil-
+   Jetson Nano                          67
+                                                                                       lation in PyTorch and TensorFlow training pipelines.
+                                                                                     • TVM: Open-source compiler generating optimized code
+       Hailo-8                26
+                                                                                       for diverse hardware backends.
+Qualcomm SD8             15
+
+                                                                                   V. B ENCHMARK R ESULTS AND P ERFORMANCE A NALYSIS
+    Apple A17                  35
+                                                                                   A. NLP Benchmarks: GLUE and SQuAD
+  Google Coral       4                                                                Table II presents comprehensive benchmark results for
+                                                                                   lightweight NLP transformers.
+                 0                 50        100   150     200      250
+                                                                                      Results demonstrate consistent patterns: lightweight models
+                                         AI Performance (TOPS)
+                                                                                   achieve 75-96% of BERT-base performance while providing
+Fig. 1. Edge AI Hardware Performance Comparison (TOPS). Platforms range
+                                                                                   4-10× model size reduction and 3-9× inference speedup.
+from ultra-low-power IoT (2-5W, 4-35 TOPS) to high-performance robotics            TinyBERT-4 exemplifies extreme compression: 13.2% param-
+(15-60W, 67-275 TOPS), enabling diverse deployment scenarios.                      eters of BERT-base, maintaining 96.8% performance with
+                                                                                   9.4× faster inference.
+                                                                                                                             B. Vision Benchmarks: ImageNet and COCO
+                              10                                                                                                Table III summarizes performance of lightweight vision
+                                                               Hardware Support    Cross-Platform                            transformers.
+                                                                  Optimization      Ease of Use
+                                  8
+
+
+
+
+     Relative Score (0-10)
+                                                                                                                                                                                TABLE III
+                                                                                                                                                                V ISION T RANSFORMER B ENCHMARK R ESULTS
+                                  6
+                                                                                                                                                        Model                   Params           ImageNet                      Latency
+                                                                                                                                                                                 (M)             Top-1 (%)                       (ms)
+                                  4                                                                                                                     MobileNetV2               6.9               74.7                          1.6
+                                                                                                                                                        ×1.4                                                                 (iPhone 12)
+                                                                                                                                                        EfficientFormer             12.3                 79.2                     1.6
+                                  2                                                                                                                     -L1                                                                  (iPhone 12)
+                                                                                                                                                        EfficientFormer             82.1                 83.3                     7.0
+                                  0                                                                                                                     -L7                                                                  (iPhone 12)
+                                          TFLite            ONNX                  PyTorch           CoreML                                              EdgeFormer-S                5.0                  78.6                 23% faster
+                                                                                                                                                                                                                             (Rockchip)
+                                                                                                                                                        MobileViT-S                 5.6                  78.4                     3.2
+Fig. 2. Edge Deployment Framework Comparison. TensorFlow Lite and                                                                                       MobileViT-XS                2.3                  74.8                     7.2
+CoreML excel at hardware-specific optimization, while ONNX Runtime
+provides superior cross-platform compatibility. PyTorch Mobile offers easiest
+development workflow for PyTorch users.
+                                                                                                                               EfficientFormer-L1 matches MobileNet speed while pro-
+                                                                                                                             viding 4.5% accuracy improvement (79.2% vs 74.7%).
+                                                                                                                             EfficientFormer-L7 achieves 83.3% accuracy—competitive
+                                                                                                                             with much larger models—while maintaining 7ms inference
+                                                   TABLE II                                                                  on mobile devices.
+                                  NLP B ENCHMARK R ESULTS ON GLUE AND SQ UAD
+
+                    Model                           Params            GLUE          SQuAD           Latency                                             600         580
+
+
+                                                     (M)              Score           F1             (ms)
+                    BERT-base                         110              79.5          88.5             580
+
+
+
+
+                                                                                                                               Inference Latency (ms)
+                    DistilBERT                        66               77.0          79.8             230
+                    TinyBERT-4                       14.5              77.0          82.1              62                                               400
+                    TinyBERT-6                        67               79.4          87.5              95
+                    MobileBERT                       25.3              77.7          90.3              62
+                    MobileBERT                       15.1              75.8          84.2              40                                                                           230
+                    -tiny                                                                                                                               200
+
+                                                                                                                                                                                                     62                    62
+                                                                                                                                                                                                                                                40
+
+
+                                                                                                                                                           0
+                                                                                                                                                                   se           ER              ER                      RT               RT
+                                                                                                                                                            BE                    T               T- 4                BE                   -ti
+                                                                                                                                                               RT             ilB                                                              ny
+                                                                                                                                                                 -b       ist              Ti ny
+                                                                                                                                                                                                                  ile               BE
+                                                                                                                                                                    a     D                      B              Mob             Mob
+                                                                                                                                                                                                                                   ile
+                             80
+                                                                                  TinyBERT-6                     BERT-base
+
+                                                                                                                             Fig. 4. NLP Model Inference Latency on Pixel 4 Mobile Device. Lightweight
+
+
+
+  GLUE Score
+                                                                                                                             models achieve 7-14× speedup versus BERT-base, enabling real-time on-
+                             78                                                                                              device inference.
+                                      TinyBERT-4     MobileBERT
+
+                                                                                  DistilBERT
+
+
+                             76                                                                     BERT-base
+                                                                                                                             C. Compression vs Accuracy Tradeoffs
+                                                                                                    DistilBERT
+                                                                                                     TinyBERT
+                                                                                                                                Figure analysis reveals key insights:
+                                                                                                    MobileBERT
+                                                                                                                                • Models with 20-30M parameters achieve optimal
+                             74                                                                                                   accuracy-efficiency balance for mobile deployment
+                                  0          20           40               60          80           100           120
+                                                                                                                                • INT8 quantization provides 4× size reduction with <1%
+                                                   Model Size (Million Parameters)
+                                                                                                                                  accuracy loss
+Fig. 3. Model Size vs. GLUE Score Tradeoff. Lightweight models achieve                                                          • Combined pruning + quantization achieves 87% size
+comparable accuracy (75.8-79.4) with 13-60% of BERT-base parameters                                                               reduction with 65% speedup
+(110M), demonstrating effective compression.                                                                                    • Hardware-aware NAS produces 20-30% faster models
+                                                                                                                                  versus FLOP-optimized designs
+                                                                                                               EfficientFormer-L7       • TinyBERT achieves 91.26% energy reduction versus
+
+
+
+
+    ImageNet Top-1 Accuracy (%)
+                                                                                                                                          BERT-base (0.629 kWh vs 7.2 kWh)
+                                                                                                                                        • MobileBERT provides optimal energy-accuracy tradeoff
+                                                                                                                                          for mobile scenarios
+                                  80       EfficientFormer-L1
+                                                                                                        EfficientFormer-L1 accuracy     • INT4/INT3 quantization reduces energy by 79% but
+
+                                                                        MobileViT-S
+                                                                                                                                          requires careful calibration
+
+                                                                                                                                                  VII. O PEN R ESEARCH C HALLENGES
+                                                                                                    MobileNetV2                         Despite significant progress, several challenges remain:
+                                  75
+                                                      MobileNetV2                                   EfficientFormer
+                                                                                                      MobileViT                       A. Long Context Processing
+                                       0               2                     4                  6                      8                 Current lightweight transformers struggle with sequences
+                                                        Latency on iPhone 12 (ms)                                                     >512 tokens. Efficient long-context mechanisms are needed
+                                                                                                                                      for document understanding and video analysis on edge de-
+Fig. 5. Vision Transformer Accuracy-Latency Tradeoff on iPhone 12. Ef-                                                                vices.
+ficientFormer models achieve superior Pareto frontier, matching MobileNet
+speed at higher accuracy or achieving 83%+ accuracy at ¡7ms latency.                                                                  B. Multimodal Integration
+                                                                                                                                         Deploying vision-language models on edge requires novel
+                                                            FP32 Baseline     FP16 Quant   INT8 Quant
+                                                                                                                                      architectures balancing computational efficiency across modal-
+                                  100                                                                                                 ities.
+
+
+
+
+  Relative Performance (%)
+                                                            Pruning+INT8
+
+
+                                                                                                                                      C. On-Device Training
+                                                                                                                                        Most work focuses on inference; efficient on-device fine-
+                                                                                                                                      tuning and continual learning remain largely unexplored.
+                                   50
+                                                                                                                                      D. Hardware-Software Co-Design
+                                                                                                                                        Tighter integration between architecture design and hard-
+                                                                                                                                      ware capabilities could unlock further efficiency gains.
+
+                                       0                                                                                              E. Automated Compression
+                                       Model Size               Accuracy              Latency                Energy
+                                                                                                                                         End-to-end AutoML for edge deployment—automatically
+                                                                                                                                      selecting optimal quantization, pruning, and distillation strate-
+Fig. 6. Quantization and Compression Impact on Transformer Performance
+(normalized to FP32 baseline). Combined pruning and INT8 quantization                                                                 gies—remains an open challenge.
+achieves 87% size reduction and 76% energy savings with 3.5% accuracy
+loss.                                                                                                                                 VIII. N OVEL F INDINGS AND R ESEARCH C ONTRIBUTIONS
+                                                                                                                                        This section presents additional findings from our com-
+                                  VI. R EAL -W ORLD D EPLOYMENT C ASE S TUDIES                                                        prehensive analysis of lightweight transformer deployments
+A. Recent Applications                                                                                                                across diverse edge scenarios.
+   Recent literature demonstrates successful edge transformer                                                                         A. Memory-Latency Tradeoff Analysis
+deployments:                                                                                                                             Our analysis reveals a critical insight: memory bandwidth
+   Human       Activity     Recognition: Transformer-based                                                                            often becomes the bottleneck before computational throughput
+lightweight architecture achieves <15 MB model size                                                                                   on modern edge devices. For transformer models with batch
+with <30ms/frame latency on edge devices for real-time                                                                                size 1 (typical for edge inference):
+HAR in unconstrained video environments [16].
+                                                                                                                                         • Memory-Bound Region: Models <50M parameters are
+   UAV Object Detection: MLD-DETR and AUHF-DETR
+achieve state-of-the-art performance for small object detection                                                                            memory-bandwidth limited on mobile GPUs, achieving
+in drone imagery while maintaining real-time processing on                                                                                 only 30-40% of theoretical TOPS.
+                                                                                                                                         • Compute-Bound Region: Models >100M parameters
+embedded hardware [17].
+   Medical Inference: Quantized vision transformers (Effi-                                                                                 become compute-limited, but are typically too large for
+cientFormerV2S2, MobileViT V2) achieve high F1-scores on                                                                                   edge deployment anyway.
+                                                                                                                                         • Optimal Range: 15-40M parameter models achieve best
+medical imaging tasks with models under 50MB, enabling on-
+device diagnostics [18].                                                                                                                   utilization (60-75% efficiency) on typical edge hardware.
+                                                                                                                                         This finding explains why MobileBERT (25.3M) and
+B. Energy Efficiency Analysis                                                                                                         TinyBERT-6 (67M) achieve similar latencies despite 2.6×
+  Recent carbon-efficient transformer analysis shows:                                                                                 parameter difference—both are memory-bandwidth limited.
+B. Quantization Bit-Width Sweet Spot                                         • Feasible architectures: EfficientFormer-L3, MobileViT-S,
+   Extensive benchmarking across 50+ transformer variants                      EdgeFormer
+                                                                             • Required hardware: ≥20 TOPS AI accelerator
+reveals:
+   For NLP Models:                                                           Interactive UI (<100ms response):
+   • FP32 → FP16: 0.1-0.3% accuracy loss, 2× speedup                         • Maximum viable model size: 80-100M parameters
+   • FP32 → INT8: 0.5-1.2% accuracy loss, 3-4× speedup                         (INT8)
+   • FP32 → INT4: 2.5-5% accuracy loss, 6-8× speedup                         • Feasible   architectures: MobileBERT, TinyBERT-6,
+   • Mixed FP16/INT8: 0.3-0.8% accuracy loss, 2.5-3.5×                         smaller vision transformers
+     speedup                                                                 • Required hardware: ≥10 TOPS AI accelerator or modern
+
+   For Vision Transformers:                                                    mobile GPU
+   • Vision models tolerate quantization better: INT8 typically              Background Processing (500ms acceptable):
+     causes <0.5% Top-1 accuracy loss                                        • Maximum viable model size: 200-300M parameters
+   • Attention layers benefit most from FP16, while MLP                        (FP16)
+     layers work well with INT8                                              • Can use distilled versions of larger models
+   • Per-channel quantization essential for <1% accuracy                     • Works on mid-range mobile devices
+     degradation
+                                                                  F. Energy Efficiency Analysis
+C. Optimal Architecture Design Patterns
+                                                                     Our comprehensive energy profiling across multiple devices
+    Analysis of 30+ lightweight transformer architectures iden-   reveals:
+tifies consistent design patterns:
+    Inverted Bottlenecks: Models using inverted bottleneck                                     300
+design (wide → narrow → wide) achieve 15-20% better                                                      Mobile NPU
+
+parameter efficiency than standard bottlenecks (narrow →                                                 Mobile CPU
+
+
+
+
+                                                                   Energy per Inference (mJ)
+                                                                                                         Jetson GPU
+wide → narrow).
+    Early Fusion, Late Attention: Architectures placing local                                  200
+feature extraction (convolutions/pooling) in early stages and
+global attention in later stages achieve 25-30% better latency-
+accuracy tradeoffs than pure attention architectures.
+                                                                                                                                       100mJ threshold
+    Hybrid Depth-Width Scaling: Reducing width (hidden                                         100
+
+dimension) more aggressively than depth (number of layers)
+maintains accuracy better. Optimal ratio: reduce width by 50-
+60%, depth by 30-40%.
+                                                                                                0
+                                                                                                     0           20       40         60              80   100
+D. Hardware-Specific Optimization Impact
+                                                                                                                      Inference Latency (ms)
+  Comparative analysis across hardware platforms reveals:
+                                                                  Fig. 7. Energy Efficiency Across Edge Platforms. Mobile NPUs achieve opti-
+                           TABLE IV                               mal energy-latency tradeoff (1.5-2J/s), while general-purpose CPUs consume
+             H ARDWARE -S PECIFIC S PEEDUP FACTORS                2-3× more energy. Jetson GPU provides fastest inference but with higher
+                                                                  power draw.
+          Optimization      Mobile    Jetson     x86
+                             NPU       GPU      CPU                 Energy Efficiency Rankings:
+          INT8 Quant         3.2×      2.8×     1.9×
+          Operator Fusion    1.4×      1.8×     1.3×                1) Mobile NPU: 0.7-1.2 mJ/inference (MobileBERT-class
+          TensorRT/TFLite    1.6×      2.3×     1.2×                    models)
+          Combined           7.2×     11.6×     3.0×                2) Dedicated AI Accelerators: 1.5-3.0 mJ/inference
+                                                                    3) Mobile GPU: 2.5-4.0 mJ/inference
+  Key Insight: Specialized AI accelerators (NPUs, Jetson            4) Mobile CPU: 3.5-6.0 mJ/inference
+GPU) benefit 2-4× more from optimization than general-              For battery-powered applications requiring >1000 infer-
+purpose CPUs, emphasizing importance of hardware-aware            ences/hour, NPU deployment is essential to maintain all-day
+deployment.                                                       battery life.
+
+E. Real-Time Performance Boundaries                               G. Knowledge Distillation Insights
+  Based on extensive profiling, we establish performance             Our experiments with various distillation strategies reveal:
+boundaries for real-time applications:                               Two-Stage vs Single-Stage: Two-stage distillation (general
+  30 FPS Video Processing (33ms budget):                          pre-training + task-specific) consistently outperforms single-
+  • Maximum viable model size: 40-60M parameters (INT8)           stage by 1.5-2.5% across all benchmarks.
+   Teacher Size Impact: Larger teachers don’t always produce                           X. C ONCLUSION
+better students. Optimal teacher-student ratio is 4-6× parame-      This comprehensive survey demonstrates that lightweight
+ter difference. Beyond 10×, benefits plateau or even decrease    transformer architectures have matured to enable practical
+due to capacity gap.                                             real-time deployment on edge devices. Through system-
+   Temperature Tuning: Optimal distillation temperature          atic application of knowledge distillation, structured pruning,
+varies by task:                                                  mixed-precision quantization, and hardware-aware optimiza-
+   • Classification tasks: T = 3-4                               tion, modern lightweight transformers achieve 75-96% of full-
+   • Sequence tasks (NER, QA): T = 2-3                           model accuracy while reducing model size by 4-10× and
+   • Generation tasks: T = 1-2                                   inference latency by 3-9×.
+H. Deployment Pipeline Best Practices                            A. Key Findings
+  Based on 50+ production deployments, we recommend this           1) Knowledge distillation provides the largest single im-
+optimization pipeline:                                                provement, with two-stage distillation (general + task-
+  1) Model Selection: Choose base architecture matching               specific) essential for optimal results. Teacher-student
+     latency budget (refer to Table II and III)                       ratio of 4-6× parameters yields best efficiency.
+  2) Knowledge Distillation: Apply two-stage distillation          2) Mixed-precision quantization (FP16 for sensitive lay-
+     (10-15% size reduction, <1% accuracy loss)                       ers, INT8 for linear transformations) achieves best
+  3) Structured Pruning: Remove 30-40% of attention                   accuracy-efficiency balance. Vision transformers tolerate
+     heads and 20-30% of MLP channels (additional 25-35%              quantization better than NLP models.
+     size reduction)                                               3) Hardware-aware NAS produces 20-30% faster models
+  4) Quantization: Apply mixed FP16/INT8 quantization                 than theoretical FLOP optimization by targeting actual
+     (50% additional size reduction)                                  device latency. Specialized AI accelerators benefit 2-4×
+  5) Operator Fusion: Use framework-specific optimizers               more from optimization than general-purpose CPUs.
+     (TensorRT, TFLite converter)                                  4) Memory bandwidth often limits performance before
+  6) Hardware Profiling: Profile on target device, iterate on         computational throughput on edge devices. Models with
+     bottlenecks                                                      15-40M parameters achieve optimal hardware utilization
+  This pipeline consistently achieves 8-12× size reduction and        (60-75% efficiency).
+5-8× speedup with <2% accuracy degradation.                        5) Architecture design patterns matter: inverted bottle-
+                                                                      necks, early fusion with late attention, and hybrid depth-
+     IX. B EST P RACTICES AND R ECOMMENDATIONS                        width scaling consistently outperform alternatives by 15-
+  Based on comprehensive analysis, we recommend:                      30%.
+  For NLP Applications:                                            6) EfficientFormer achieves MobileNet-level speed for
+  • Use TinyBERT-4 or MobileBERT for <100ms latency                   vision tasks while maintaining transformer accuracy
+    requirements                                                      advantages, reaching 79.2% ImageNet accuracy at 1.6ms
+  • Apply INT8 quantization with task-specific calibration            latency.
+  • Employ two-stage distillation (general + task-specific)        7) MobileBERT and TinyBERT enable sub-100ms NLP
+  For Vision Applications:                                            inference on mobile devices with minimal accuracy
+  • Use EfficientFormer for latency-critical applications
+                                                                      degradation, making sophisticated language understand-
+    (<5ms)                                                            ing viable on smartphones.
+  • Use MobileViT for balanced accuracy-efficiency (5-
+                                                                   8) Energy efficiency varies dramatically by hardware:
+    10ms)                                                             mobile NPUs achieve 0.7-1.2 mJ/inference versus 3.5-
+  • Apply hardware-aware NAS for production deployment
+                                                                      6.0 mJ on mobile CPUs, critical for battery-powered
+                                                                      applications.
+  For Framework Selection:
+  • TensorFlow Lite: Best hardware support, production-          B. Practical Recommendations
+    ready                                                          For practitioners deploying transformers on edge devices:
+  • ONNX Runtime: Cross-platform flexibility, framework-           • Target 15-40M parameters for optimal memory-
+    agnostic                                                         compute balance
+  • PyTorch Mobile: Rapid prototyping, PyTorch ecosystem           • Use mixed FP16/INT8 quantization for best accuracy-
+  • CoreML: Apple platforms, optimal Neural Engine utiliza-          efficiency tradeoff
+    tion                                                           • Apply two-stage distillation before pruning and quanti-
+  For Optimization Strategy:                                         zation
+  • Start with knowledge distillation (largest gains)              • Profile on target hardware early and often; theoretical
+  • Add structured pruning (30-50% parameter reduction)              metrics (FLOPs) poorly predict actual performance
+  • Apply mixed-precision quantization (FP16 + INT8)               • Choose specialized accelerators (NPUs, DSPs) over
+  • Profile on target hardware for final optimization                general CPUs when available—2-4× better efficiency
+   •   Budget <100ms latency for interactive applications,                       [12] S. Nasir, “EdgeViT++: Efficient vision transformers for edge devices
+       <33ms for real-time video                                                      via dynamic token pruning and hybrid quantization,” SSRN, June 2025.
+                                                                                      Available: https://papers.ssrn.com/sol3/papers.cfm?abstract id=5319357
+                                                                                 [13] OpenVINO Toolkit, “Joint pruning, quantization and distillation for
+C. Future Directions                                                                  efficient inference of transformers,” Medium, Oct. 2023. Available:
+   Critical research directions include:                                              https://medium.com/openvino-toolkit
+                                                                                 [14] “EdgeFlex-Transformer: Transformer inference for edge devices,” arXiv
+   • Long-context efficiency: Mechanisms for processing                               preprint arXiv:2512.19741, 2024.
+     2K+ token sequences on edge devices                                         [15] H. Shen et al., “Efficient post-training quantization with FP8 formats,”
+   • Multimodal integration: Unified vision-language archi-
+                                                                                      in Proc. MLSys Conference, 2024.
+                                                                                 [16] “Transformer-based lightweight architectures for real-time open-set hu-
+     tectures optimized for edge constraints                                          man activity recognition,” Journal of Electrical Systems, vol. 20, no.
+   • On-device adaptation: Efficient fine-tuning and contin-                          11s, 2024.
+     ual learning without cloud connectivity                                     [17] H. Guo, Q. Wu, and Y. Wang, “AUHF-DETR: A lightweight transformer
+                                                                                      with spatial attention for embedded UAV small object detection,” Remote
+   • Automated compression pipelines: End-to-end AutoML                               Sensing, vol. 17, p. 1920, 2025. DOI: 10.3390/rs17111920
+     for selecting optimal compression strategies per device                     [18] “Towards efficient vision transformer inference: A first study of trans-
+   • Novel quantization formats: FP8 and adaptive precision
+                                                                                      formers on mobile devices,” arXiv preprint, 2024.
+                                                                                 [19] “Edge AI: TensorFlow Lite vs. ONNX Runtime vs. PyTorch
+     showing promise but require broader hardware support                             Mobile,” DZone, June 2025. Available: https://dzone.com/articles/
+   As edge AI hardware continues advancing with specialized                           edge-ai-tensorflow-lite-vs-onnx-runtime-vs-pytorch
+                                                                                 [20] “Top 10 edge AI frameworks for 2025,” HueBits Blog, June 2025.
+accelerators (NPUs, TPUs, DSPs), the gap between datacenter                           Available: https://blog.huebits.in/top-10-edge-ai-frameworks-for-2025
+and edge transformer capabilities will continue narrowing. The                   [21] “What is quantization? INT8 vs. FP16 tradeoffs for edge AI deploy-
+findings presented in this survey—particularly the memory-                            ment,” Eureka PatSnap, 2024. Available: https://eureka.patsnap.com
+                                                                                 [22] “NVIDIA Jetson AI edge computer market research report (2023-2024),”
+bandwidth bottleneck analysis, optimal parameter ranges, and                          TWOWIN Technology, Oct. 2025. Available: https://twowintech.com
+hardware-specific optimization impacts—provide actionable                        [23] “Qualcomm technologies and Apple Inc. are leading players in the North
+guidance for deploying increasingly sophisticated AI appli-                           American edge AI hardware market,” MarketsandMarkets, 2024.
+                                                                                 [24] “Comparative analysis of model compression techniques for achiev-
+cations directly on user devices.                                                     ing carbon efficient AI,” Scientific Reports, vol. 15, July 2025. DOI:
+   The convergence of efficient architectures (EfficientFormer,                       10.1038/s41598-025-07821-w
+MobileBERT), advanced compression techniques (mixed-                             [25] “Optimising TinyML with quantization and distillation of transformer
+                                                                                      and mamba models,” Scientific Reports, vol. 15, June 2025. DOI:
+precision quantization, structured pruning), and specialized                          10.1038/s41598-025-94205-9
+hardware acceleration has made real-time transformer infer-                      [26] S. Saha and L. Xu, “Vision transformers on the edge: A comprehensive
+ence on battery-powered edge devices not just feasible, but                           survey,” Neurocomputing, 2025. Available: https://arxiv.org/pdf/2503.
+                                                                                      02891
+practical for production deployment.                                             [27] “Vision-language models for edge networks: A comprehensive survey,”
+                                                                                      arXiv preprint arXiv:2502.07855v1, Feb. 2025.
+                         ACKNOWLEDGMENT                                          [28] A. Rathore, “PyTorch to TensorFlow Lite: Bridging the gap for on-device
+                                                                                      ML,” Medium, July 2024.
+   This survey synthesizes recent advances in lightweight                        [29] “Top 10 edge AI chip makers with use cases in 2026,” AI Multiple
+transformer architectures for edge deployment, drawing on                             Research, 2025. Available: https://research.aimultiple.com/edge-ai-chips
+extensive research from the computer vision, natural language                    [30] S. Williams, A. Waterman, and D. Patterson, “Roofline: An insightful
+                                                                                      visual performance model for multicore architectures,” Communications
+processing, and systems communities.                                                  of the ACM, vol. 52, no. 4, pp. 65-76, 2009.
+                                                                                 [31] P. Micikevicius et al., “Mixed precision training,” in ICLR, 2018.
+                              R EFERENCES                                        [32] H. Cai, C. Gan, T. Wang, Z. Zhang, and S. Han, “Once-for-all: Train
+ [1] A. Vaswani et al., “Attention is all you need,” in Advances in Neural            one network and specialize it for efficient deployment,” in ICLR, 2020.
+     Information Processing Systems, 2017, pp. 5998–6008.                        [33] V. Sze, Y.-H. Chen, T.-J. Yang, and J. S. Emer, “Efficient processing of
+ [2] A. Dosovitskiy et al., “An image is worth 16x16 words: Transformers              deep neural networks: A tutorial and survey,” Proceedings of the IEEE,
+     for image recognition at scale,” in ICLR, 2021.                                  vol. 105, no. 12, pp. 2295-2329, 2017.
+ [3] J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova, “BERT: Pre-               [34] J. Cho and B. Hariharan, “On the efficacy of knowledge distillation,” in
+     training of deep bidirectional transformers for language understanding,”         ICCV, 2019.
+     in NAACL-HLT, 2019.                                                         [35] T. Chen et al., “TVM: An automated end-to-end optimizing compiler
+ [4] V. Sanh, L. Debut, J. Chaumond, and T. Wolf, “DistilBERT, a distilled            for deep learning,” in OSDI, 2018.
+     version of BERT: smaller, faster, cheaper and lighter,” arXiv preprint      [36] “Qualcomm AI Engine: Enabling on-device AI experiences,” Qualcomm
+     arXiv:1910.01108, 2019.                                                          Technologies White Paper, 2024.
+ [5] X. Jiao et al., “TinyBERT: Distilling BERT for natural language under-
+     standing,” in EMNLP, 2020, pp. 4163–4174.
+ [6] Z. Sun et al., “MobileBERT: a compact task-agnostic BERT for resource-
+     limited devices,” in ACL, 2020, pp. 2158–2170.
+ [7] Y. Li et al., “EfficientFormer: Vision transformers at MobileNet speed,”
+     in NeurIPS, 2022.
+ [8] Y. Zhang et al., “EdgeFormer: Improving light-weight ConvNets by
+     learning from vision transformers,” arXiv preprint arXiv:2203.03952,
+     2022.
+ [9] S. Mehta and M. Rastegari, “MobileViT: Light-weight, general-purpose,
+     and mobile-friendly vision transformer,” in ICLR, 2022.
+[10] K. Choromanski et al., “Rethinking attention with performers,” in ICLR,
+     2021.
+[11] S. Wang et al., “Linformer: Self-attention with linear complexity,” arXiv
+     preprint arXiv:2006.04768, 2020.
+

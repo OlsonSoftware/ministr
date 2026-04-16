@@ -1,0 +1,469 @@
+AQR-HNSW: Accelerating Approximate Nearest Neighbor Search
+ via Density-aware !antization and Multi-stage Re-ranking
+           Ganap Ashit Tewary                        Nrusinga Charan Gantayat                               Je! Zhang
+              gtewary@asu.edu                              ngantaya@asu.edu                            je!zhang@asu.edu
+           Arizona State University                      Arizona State University                    Arizona State University
+               Tempe, AZ, USA                                Tempe, AZ, USA                              Tempe, AZ, USA
+
+Abstract
+Approximate Nearest Neighbor (ANN) search has become funda-
+mental to modern AI infrastructure, powering recommendation
+systems, search engines, and large language models across indus-
+try leaders from Google to OpenAI. Hierarchical Navigable Small
+World (HNSW) graphs have emerged as the dominant ANN algo-
+rithm, widely adopted in production systems due to their superior
+recall vs. latency balance. However, as vector databases scale to
+billions of embeddings, HNSW faces critical bottlenecks: memory
+consumption expands, distance computation overhead dominates
+query latency, and it su!ers suboptimal performance on heteroge-        Figure 1: (a) HNSW navigates from sparse to dense nodes to
+neous data distributions. This paper presents Adaptive Quantization     reach the nearest neighbor. (b) Distribution of node evalua-
+and Rerank HNSW (AQR-HNSW), a novel framework that syner-               tions during HNSW search.
+gistically integrates three strategies to enhance HNSW’s scalability.
+AQR-HNSW introduces (1) density-aware adaptive quantization,
+achieving 4× compression while preserving distance relationships;
+                                                                           The adoption of HNSW has accelerated across both academic
+(2) multi-state re-ranking that reduces unnecessary computations
+                                                                        and industrial domains. Production systems such as Meta [19] and
+by 35%; and (3) quantization-optimized SIMD implementations de-
+                                                                        Spotify [22] rely on HNSW-based implementations for datacenter
+livering 16-64 operations per cycle across architectures. Evaluation
+                                                                        applications, e.g., personalized recommendation engines serving
+on standard benchmarks demonstrates 2.5-3.3× higher queries per
+                                                                        billions of users, retrieval-augmented generation (RAG) systems
+second (QPS) than state-of-the-art HNSW implementations while
+                                                                        powering large language models, content-based search across mul-
+maintaining 98%+ recall, with 75% memory reduction for the index
+                                                                        timedia databases. Open-source vector databases such as Elastic-
+graph and 5× faster index construction.
+                                                                        Search [12], Pinecone [30], Weaviate [38], and Qdrant [33] have
+                                                                        standardized HNSW as their core indexing mechanism. However,
+1   Introduction                                                        HNSW still requires trillions of operations for production systems.
+The exponential growth of high-dimensional data has fundamen-              HNSW’s hierarchical structure exhibits density variations across
+tally transformed computational challenges in domains spanning          layers shown in Figure 1(a) on various datasets. The algorithm
+machine learning, computer vision, natural language processing,         begins search at sparse upper layers (L=2, shown in blue) where
+and information retrieval. Modern applications routinely process        data points are sparsely distributed, then progressively descends
+billion-scale datasets with embedding representations ranging from      through increasingly dense middle layers (L=1, orange nodes) be-
+128 to 4096 dimensions [8, 13, 25, 34, 36] where the traditional        fore reaching the densest base layer (L=0, red nodes) where the
+exact nearest neighbor search becomes computationally prohibi-          "nal nearest neighbors reside. This traversal requires evaluating
+tive on high-dimensional queries. This computational bottleneck         numerous candidate nodes at each layer, computing distances to
+has driven widespread adoption of Approximate Nearest Neighbor          determine which paths lead closer to the query point.
+(ANN) algorithms, which deliver orders-of-magnitude performance            However, Figure 1(b) showcase a critical ine#ciency in current
+improvements with marginal accuracy degradation, enabling real-         HNSW implementations: while 93% of evaluated nodes are ulti-
+time similarity search at scale [21].                                   mately rejected during the search process. Traditional approaches
+   Among ANN approaches, graph-based [6, 15, 35] approaches             compute full FP32 precision distances for all nodes uniformly which
+have emerged as the dominant paradigm due to their superior             creates a substantial wasted distance computation. Only a small
+recall-latency characteristics compared to tree-based [4, 26, 28]       fraction (7%) of evaluated nodes, as referred to as “decision nodes,”
+and quantization-based methods [3, 16, 24]. Hierarchical Navigable      actually in$uence the "nal search, but are treated equally in terms
+Small World (HNSW) graphs, introduced by Malkov and Yashunin,           of their precision as all evaluated nodes.
+designed for high-dimensional similarity search, demonstrating             To accelerate HNSW while maintaining high-quality search, we
+consistent superiority across diverse datasets and query distri-        leverage three key observations. First, the vast majority of rejected
+butions [23]. HNSW’s multi-layer probabilistic skip-list structure      nodes present an opportunity for aggressive computational sav-
+enables logarithmic search complexity while maintaining near-           ings through reduced-precision approximations, as these nodes
+optimal recall through navigation across hierarchical graph layers.     only need to be identi"ed as non-competitive rather than ranked
+                                                                                          Ganap Ashit Tewary, Nrusinga Charan Gantayat, and Je! Zhang
+
+
+precisely. Second, the density strati"cation visible in Figure 1(a) en-   standalone improvement, however, their synergistic integration
+ables adaptive precision allocation: sparse upper layers with widely      with HNSW algorithms are signi"cantly underexplored.
+separated nodes can tolerate coarse distance approximations, while        Quantization Quantization techniques have become central to
+dense lower layers with tightly clustered neighbors require higher        scaling vector search, with scalar and binary methods o!ering light-
+precision to distinguish between competitive candidates. Third, the       weight compression and product-based approaches enabling deeper
+hierarchical navigation naturally supports progressive re"nement,         optimization. Scalar quantization reduces $oating-point precision
+where approximate distances guide early layer traversal e#ciently,        to "xed-point formats, with Int8 variants achieving 4× compres-
+while exact computations are reserved for the critical later-layer        sion and 95% recall, as adopted in Pinecone [30] and Weaviate [38]
+decision nodes that determine "nal accuracy.                              binary quantization. FAISS [19] compresses vectors to single bit,
+    To this end, we present Adaptive Quantized and Reranking              yielding 32× compression but with a recall degradation to 75–80%
+HNSW (AQR-HNSW), a novel approach that fundamentally re-                  in high-dimensional spaces.
+thinks how distance computations are performed in graph-based             Dynamic Parameter Adjustment. Dynamic HNSW (DHNSW)
+ANN search. Our key insights are that di!erent regions of the vector      [18] adjusts M and ef_construction based on local density. How-
+space and di!erent stages of the search process require di!erent          ever, DHNSW only optimizes graph construction, not query-time
+levels of precision. The main contributions of this work are:             performance. Adaptive beam search in DiskANN [15] dynamically
+(1) Density-aware Adaptive Quantization: A novel quantization             adjusts search width based on intermediate recall estimates, improv-
+scheme that dynamically adjusts precision based on data density,          ing 99-percentile latency by 2×. Learning-based approaches like
+i.e., allocating more bits to dense regions while aggressively com-       NeuralLSH [32] and LearnedIndex [10] predict optimal parameters
+pressing sparse regions.                                                  using query features but require extensive training data.
+(2) Recall-aware Adaptive Re-ranking: An multi-stage re-ranking           Early Termination. Early termination strategies such as NSW-
+mechanism that progressively re"nes search using "xed-point for-          Flash [6] using local minimum detection, IVF [19] employing cell-
+mat and performs expensive FP32 distance computations only when           level pruning, and LSH [20] applying progressive candidate "ltering.
+necessary to maintain recall level.                                       The challenge is that terminating too early sacri"ces recall but con-
+(3) Comprehensive Empirical Validation: Across standard bench-            servative termination provide minimal speedup. Existing methods
+marks, AQR-HNSW achieves 1.8–2.5→ higher throughput and faster            either require training on query logs or use "xed thresholds that
+query-time latency with marginal recall loss. The index build time        are unsuitable for heterogeneous data.
+is reduced by 5→ via our density-aware quantization.                      Motivation for AQR-HNSW. (1) Current methods optimize either
+    The remainder of this paper is organized with Section II pro-         memory (through quantization) or computation (through parame-
+vides background on HNSW. Section III presents our AQR-HNSW               ter tuning) only. Existing quantization reduces storage but distance
+methodology. Section IV presents comprehensive experimental               computations remain expensive; dynamic parameter adjustment re-
+evaluation. Finally, Section V concludes the work.                        duces build time but not query-time latency. AQR-HNSW addresses
+                                                                          both through adaptive quantization and multi-stage re-ranking. (2)
+                                                                          Existing techniques overlook non-uniform data distribution and as-
+2   Background and Motivation                                             sume static performance requirements. Real production workloads
+HNSW algorithm constructs a hierarchical structure of a proximity         exhibits density variations and varying recall needs (e.g., 95% for rec-
+graph by assigning each graph element to multiple layers with ex-         ommendation [5, 11, 27], 99.9% for compliance[11, 21]). AQR-HNSW
+ponentially decreasing probability. The algorithm maintains three         adapts to these: quantization precision, re-ranking depth, early ter-
+critical parameters: M (the maximum number of connections per             mination thresholds, providing adaptive performance-recall trade-
+node), ef_construction (the size of the dynamic candidate list            o!s across diverse use-cases.
+during the graph construction) and ef_search (the size of the dy-         3     AQR-HNSW Framework
+namic candidate list during search). Navigation starts from an entry
+point in the highest layer and greedily traverses to lower layers,        This section introduces AQR-HNSW, a comprehensive framework
+progressively searching until the nearest-neighbors are found [23].       that achieves higher QPS while maintaining search quality through
+   Industrial deployments have driven signi"cant HNSW enhance-            density-aware quantization and multi-stage adaptive retrieval. The
+ments. Spotify’s Voyager [22] serves 1+ billion music embeddings          complete work$ow comprising two phases: the Build Phase as de-
+with memory-mapped indices and SIMD-accelerated systems, achiev-          scribed in Algorithm 1, which processes dataset insertion through
+ing 1M QPS in production. Elasticsearch’s [12] implementation adds        density-aware 8-bit quantization, and the Search Phase as de-
+real-time updates at 100K documents/second through concurrent             scribed in Algorithm 2, which performs coarse-to-exact retrieval
+graph construction. Academic advances include NSW-Flash [7] for           with early termination.
+SSD-optimized search, FilteredHNSW [31] for metadata-aware re-            3.1    Build Phase: Index Construction
+trieval achieving 95% "ltered recall, and LearnedHNSW [9] using           When a dataset D = {x1, . . . , x𝐿 } is inserted into AQR-HNSW, it
+GNNs to optimize graph topology. Despite these improvements,              undergoes a three-stage transformation process that constructs a
+fundamental bottlenecks persist: distance computations consume            quantized graph index optimized for search performance.
+70-85% of search time, and static hyper-parameters perform poorly            Stage 1: Density Characterization
+on heterogeneous data vector distribution.                                   Upon receiving the dataset, the system "rst analyzes the local
+E!cient ANN search and Their Limitations Several works                    data distribution to identify regions of varying point concentration.
+have explored e#cient techniques to optimize the ANN search as            For each data point x𝑀 ↑ D, we compute its local density using
+AQR-HNSW: Accelerating Approximate Nearest Neighbor Search via Density-aware "antization and Multi-stage Re-ranking
+
+
+𝐿-nearest neighbor analysis by 𝑀𝑀 = ¯ 1               where the average                Construction Search Depth. The search depth during con-
+                                            𝑁𝐿 (x𝑀 )+𝑂
+distance to 𝐿 nearest neighbors (typically 𝐿 = 10) is 𝑁¯𝑃 (x𝑀 ) =                   struction is inversely adjusted based on the expected connectivity
+ 1 !                             2                                                  increase in base search depth and given in Algorithm 1 (Line 18).
+𝑃 x 𝑁 ↑kNN(x𝑀 ,𝑃 ) ↓x𝑀 ↔ x 𝑄 ↓ with 𝑂 = 10
+                                                 ↔6 providing numerical
+
+stability mentioned in Algorithm 1 (Line 5).
+                                                                                   Algorithm 1 AQR-HNSW: Dataset Insertion and Graph Construc-
+    E!cient computation for large datasets. When x𝑀 > 10,000,
+                                                                                   tion
+we compute densities for a sample of 𝑃𝑅 = min(5000, 𝑃) points and
+                                                ! 𝑂                                  1: Input: Dataset D = {x1 , . . . , x𝐿 } ↘ R𝑁 , 𝑋0 , 𝑌 𝑍0construction
+assign the average sample density 𝑀¯ = 𝐿1𝑂 𝐿𝑀=1       𝑀𝑀 to the remaining
+                                                                                     2: Output: AQR-HNSW index G
+points. The global heterogeneity measure 𝑄 ↑ [0, 1] quanti"es
+                                                                                     3:
+density variation across the dataset de"ned in Algorithm 1 (Line
+                                                                                     4: // Stage 1: Density characterization
+6). Values approaching 1 indicate highly non-uniform distributions
+                                                                                     5: Compute {𝑀 1 , . . . , 𝑀𝐿 } using 𝐿-NN
+with distinct dense and sparse regions.
+                                                                                                       max𝑀 (𝑉𝑀 ) ↔min𝑀 (𝑉𝑀 )
+    Stage 2: Adaptive Quantization Training                                          6: Compute 𝑄 =
+                                                                                                              max𝑀 (𝑉𝑀 )+𝑂
+    After characterizing the data distribution, the system learns                    7: // Stage 2: Quantization training
+dimension-speci"c quantization parameters that preserve distance                     8: Determine 𝑆𝑆 = 𝑄 · 𝑆 max and 𝑆𝑇 = 1 ↔ 𝑄 · 𝑆 max
+relationships while achieving 4→ compression.                                        9: q𝑀 ≃ Quantize(x𝑀 )
+    Dimension-wise Range Determination. For each dimension                          10: for 𝑅 = 1 to 𝑁 do
+𝑅 ↑ {1, . . . , 𝑁 }, we determine quantization boundaries using adap-               11:      Compute min 𝑄 , max 𝑄 , scale 𝑄
+                                                                                                                !
+tive percentiles. This ensures that the encoding process dynam-                     12:      Compute 𝑈 𝑄 = 𝐿1 𝐿𝑀=1 𝑀𝑀
+ically balances coverage of the full distribution with robustness                   13: end for
+against outliers. The percentile bounds [𝑆𝑆 , 𝑆𝑇 ] adjust based on                  14: Compute 𝑇 dist , 𝑊 = 𝑈
+                                                                                                             𝑊𝑃
+                                                                                                              ¯                                           𝐿 Eq. 1
+the density variation factor 𝑄 with the relation of 𝑆𝑆 = 𝑄 · 𝑆 max                  15: // Stage 3: Graph construction
+and 𝑆𝑇 = 1 ↔ 𝑄 · 𝑆max where 𝑆max de"nes the maximum percentile                      16: G ≃ InitializeHNSW()
+width (sensitivity range) which are used in Algorithm 1 (line 8). The               17: Compute 𝑋𝑀 = ⇐𝑋0 · (1 + 𝑄 · (1 + 𝑊))⇒
+                                                                                                                    &                                '
+bounds are constrained such that 0 ↗ 𝑆𝑆 ↗ 𝑄 · 𝑆 max, 1 ↔𝑄 · 𝑆 max ↗                 18: Compute 𝑌 𝑍 construction =      𝑌 𝑍0construction · 1+𝑋1 ·𝑌
+𝑆𝑇 ↗ 100. For each dimension 𝑅, we extract values across all data
+                                                                                    19: for 𝑎 = 1 to 𝑃 do
+points and compute the lower bound min 𝑄 by taking the 𝑆𝑆 per-
+                                                                                    20:    G.Insert(q𝑀 , 𝑎, 𝑋𝑀 , 𝑌 𝑍 construction )
+centile and upper bound max 𝑄 by taking the 𝑆𝑇 percentile. The
+                                                                                    21:    Store x𝑀 for exact reranking
+scaling factor that maps this range to 8-bit representation is given
+                      255                                                           22: end for
+by scale 𝑄 = max 𝑁 ↔min         used as value in Algorithm 1 (Line 11).
+                           𝑁 +𝑂                                                     23: return G
+   Vector Encoding. Each incoming vector x ↑ R𝑁 is transformed
+into its quantized representation, which is element-wise shifted and                3.2    Search Phase: Progressive Re"nement
+scaled into the 0–255 range, clipped to stay within the percentile
+bound [𝑆𝑆 , 𝑆𝑇 ] range, and then rounded to the nearest integer to                 When a query q arrives, AQR-HNSW performs approximate 𝐿-NN
+get the vectors quantized form as given in Algorithm 1 (Line 9).                   retrieval through progressive re"nement across three stages. The
+   Distance Preservation. To maintain proportional distances                       query is "rst quantized using learned parameters from the Build
+after quantization, we compute a global scaling which is used for                  Phase.
+minimize the density error due to quantization. First, we calculate                   Stage 1: Coarse Quantized Search
+per-dimension density weights given in Algorithm 1 (Line 12). Then                    The initial retrieval operates entirely in the compressed 8-bit
+the distance scale factor is derived as:                                           space. Using the quantized query q̂, the distances are computed
+                          "
+                          #
+                          #                                                        using 8-bit quantized vectors x̂𝐿 from the relation 𝑁𝑎𝑇𝑏 quantized ( q̂, x̂)
+                          $ !𝑁 (max ↔ min ) 2 · 𝑈
+                             𝑄=1     𝑄        𝑄    𝑄                               given in Algorithm 2 (line 6). The graph traversal retrieves the top
+                 𝑇 dist =        !𝑁      2
+                                                                  (1)              𝑐𝑍 coarse candidates by exploring the HNSW structure with search
+                                  𝑄=1 255 · 𝑈 𝑄                                    depth 𝑌 𝑍search = 𝑐𝑍 → 𝑑𝑎 𝑏 , where 𝑑𝑎 𝑏 is a multiplier that controls
+                                                                                   the breadth of exploration. This produces a candidate set which
+    Dimension-wise Density Heterogeneity. To quantify how                          has the information of the vector and the distance di!erence with
+density varies across dimensions, we compute the coe#cient of                                                                  𝑐                    𝑐
+                                                                                   respect to the query x̂ in C = {( x̂1, 𝑁 1 ), . . . , ( x̂𝑑𝑄 , 𝑁 𝑑 )} sorted in
+variation%of per-dimension density weights where                                   ascending order bases of the distance di!erence.
+                                                                                                                                                      𝑄
+
+               !
+    𝑉𝑈 = 𝑁1 𝑁𝑄=1 (𝑈 𝑄 ↔ ¯     𝑈) 2 is the standard deviation of density               Stage 2: Asymmetric Distance Re"nement
+                                                                  !                   To improve ranking accuracy without accessing the full-precision
+weights {𝑈 1, . . . , 𝑈𝑁 } from Algorithm 1 (Line 12), and 𝑈¯ = 𝑁1 𝑁𝑄=1 𝑈 𝑄
+                                                                                   vectors, we employ asymmetric distance computation. Each quan-
+is their mean.The ratio of 𝑉𝑈 to 𝑈¯ results in the value of 𝑊 which
+                                                                                   tized candidate x̂𝑀 is decoded to its approximate original representa-
+is de"ned in Algorithm 1 (Line 14). High value of 𝑊 indicates that
+                                                                                                       𝑒ˆ ( 𝑁 ) + min producing reconstructed vector x̃ ↑ R𝑁 .
+                                                                                   tion by 𝑒˜ ( 𝑄 ) = scale
+density is unevenly distributed across dimensions.                                                             𝑁
+                                                                                                                     𝑄
+    Connectivity Adjustment. The number of connections per                         The asymmetric distance then compares the full-precision query
+node is increased when both overall density variation and dimen-                   against this reconstruction given in Algorithm 2 (line 9). This yields
+sional heterogeneity are high and the 𝑋𝑀 is adjusted and given in                  re"ned candidate ranking in the list A = {(𝑒˜ 1, 𝑁 1𝑓 ), . . . , (𝑒˜ 𝑑𝑄 , 𝑁 𝑑
+                                                                                                                                                               𝑓 )}
+                                                                                                                                                                 𝑄
+Algorithm 1 (Line 17).                                                             in ascending order based on the asymmetric distance di!erence.
+                                                                                              Ganap Ashit Tewary, Nrusinga Charan Gantayat, and Je! Zhang
+
+
+   Early Termination. Before committing to expensive exact dis-                3.3    Computational Acceleration via SIMD
+tance computations, the system analyzes the separation between                 To maximize computational e#ciency on modern processors, AQR-
+the top-𝐿 candidates and the remaining pool. When |A| > 𝐿, we                  HNSW incorporates architecture-speci"c Single Instruction Multi-
+                                                        𝑁 𝑅 ↔𝑁 𝑅        𝑁𝑅
+compute two separation metrics: gap = 𝐿+1     𝑁𝐿𝑅 +𝑂 and ratio = 𝑁𝐿𝑅 +𝑂
+                                                    𝐿                 𝐿+1      ple Data (SIMD) optimizations that exploit data-level parallelism
+where 𝑁𝑃𝑓 denotes the asymmetric distance to the 𝐿-th nearest can-             across the three-stage search pipeline described in Section 3.2.
+didate. These metrics quantify both the relative gap and the pro-                 For Stage 1’s coarse search, the 8-bit quantized distance com-
+portional separation at the decision boundary.                                 putation is vectorized by loading multiple uint8 dimensions from
+    If either metric exceeds its corresponding threshold (gap > 𝑓gap           both query and database vectors into SIMD registers, computing
+or ratio > 𝑓ratio ), the system concludes that the top-𝐿 results are           absolute di!erences in parallel, then unpacking these 8-bit values
+clearly separated from remaining candidates given in Algorithm 2               to 16-bit representations before squaring to prevent over$ow. The
+(line 16). In this case, exact reranking is limited to at most 𝐿 candi-        squared di!erences are accumulated using parallel multiply-add
+dates, as further re"nement is unlikely to alter the top-𝐿 ranking.            operations, with loop unrolling employed to hide memory latency.
+    Stage 3: Exact Distance Computation                                           Query encoding accelerates the $oat-to-uint8 conversion by vec-
+    When early termination is not triggered, indicating ambigu-                torizing the quantization pipeline: multiple $oating-point query
+ous ranking among candidates, the system evaluates the spread                  dimensions are loaded simultaneously, followed by parallel subtrac-
+of asymmetric distances.For the selected 𝑐 rerank candidates, the              tion of learned minimum values, multiplication by scaling factors,
+system retrieves their original full-precision vectors from storage            rounding to nearest integers, and clamping to the [0, 255] range to
+and computes exact Euclidean distances given in Algorithm 2(line               get all operations completed within SIMD registers.
+                                                                  𝑑 rerank        Stage 3’s exact distance computation leverages fused multiply-
+19). This produces the exact-distance list R exact = {(𝑒𝑀 , 𝑁𝑀𝑎 )}𝑀=1      .
+    Final Result Assembly The "nal result set R is formed by com-              add (FMA) instructions, which compute (𝑔 ( 𝑄 ) ↔ 𝑒 ( 𝑄 ) ) 2 + sum as a
+bining the exact-distance candidates with the remaining asymmetric-            single operation, reducing instruction count and register pressure
+distance candidates from A as needed to ensure at least 𝐿 results.             while improving numerical precision.
+After sorting by distance in ascending order, the top-𝐿 neighbors                 The system performs compile-time architecture detection with
+are returned as the "nal query result mentioned in Algorithm 2                 automatic fallback: prioritizing AVX-512 when available, degrading
+(Line 23-24).                                                                  gracefully to AVX2, SSE2, or NEON, and ultimately defaulting to
+                                                                               scalar code on unsupported platforms. This ensures maximizing
+                                                                               throughput on SIMD-capable processors without modifying the
+Algorithm 2 AQR-HNSW: Query Processing with Progressive                        algorithmic framework.
+Re"nement
+ 1: Input: Query q ↑ R𝑁 , index G, 𝐿                                           4 Evaluation
+ 2: Output: Top-𝐿 neighbors
+ 3:
+                                                                               4.1 Experimental Setup
+ 4: q̂ ≃ QuantizeQuery(q)                                                      All experiments were conducted on an Apple MacBook Pro with
+ 5: // Stage 1: Coarse quantized search                                        M4 Pro processor and 24GB uni"ed memory. To isolate algorithmic
+                                        !
+ 6: 𝑁𝑎𝑇𝑏 quantized ( q̂, x̂) = 𝑇 dist · 𝑁𝑄=1 (𝑔ˆ ( 𝑄 ) ↔ 𝑒ˆ ( 𝑄 ) ) 2          contributions, Sections 4.1-4.5 present scalar baseline results, while
+ 7: C ≃ G.Search(q̂, 𝑌 𝑍 = 𝑐𝑍 → 𝑑𝑎 𝑏 )                                         Section 4.6 evaluates SIMD-accelerated performance. We evaluate
+ 8: // Stage 2: Asymmetric re!nement                                           AQR-HNSW across four standard benchmark datasets spanning
+                              !       (                )2                      diverse dimensions and sizes (Table 1).
+ 9: 𝑁𝑎𝑇𝑏 asym (q, x̃𝑑𝑄 ) = 𝑁𝑄=1 𝑔 ( 𝑄 ) ↔ 𝑒˜ ( 𝑄 )
+                                                                                  To comprehensively evaluate performance and quantify the im-
+10: for each x̂𝑀 ↑ C do                                                        pact of each optimization, we compared the following HNSW al-
+                                𝑒ˆ ( 𝑁 ) + min and compute 𝑁 𝑓
+        Reconstruct 𝑒˜ ( 𝑄 ) = scale
+11:
+                                        𝑁
+                                              𝑄             𝑀                  gorithms: (1) Baseline HNSW [23] , serving as the unoptimized
+12: end for                                                                    reference; (2) Scalar Quantization, applying baseline 8-bit quan-
+13: A ≃ Sort by 𝑁 𝑓                                                            tization to HNSW; (3) Density-aware HNSW (DHNSW) [18], an
+14: // Early termination                                                       enhanced HNSW incorporating local density estimation; and (4)
+15: if |A| > 𝐿 then                                                            our AQR-HNSW.
+16:      Terminate early ⇑⇓ (gap > 𝑓gap ) ⇔ (ratio > 𝑓ratio )                     We measure performance using four key metrics. Queries Per
+17: end if                                                                     Second (QPS) measures the throughput which indicates the num-
+18: // Stage 3: Exact reranking                                                ber of nearest neighbor queries can be processed per second. Re-
+                    !                                                          call@10 measures the accuracy as the fraction of true top-10 near-
+19: 𝑁 exact (q, x) = 𝑁𝑄=1 (𝑔 ( 𝑄 ) ↔ 𝑒 ( 𝑄 ) ) 2
+20: for 𝑎 = 1 to 𝑐 rerank do                                                   est neighbors correctly identi"ed. Build Time captures the total
+21:      Retrieve x𝑀 and compute 𝑁𝑀𝑎                                           time to construct the index graph. Query latency represents the
+22: end for                                                                    performance for the queries processed during search phase.
+23: R ≃ R exact ↖ remaining from A                                             4.2    Query Performance vs. Recall
+24: return Top-𝐿 from sorted R                                                 Figure 2 presents the QPS-recall trade-o! across four datasets. The
+                                                                               results demonstrate distinct performance patterns that correlate
+                                                                               with dataset dimensionality and structure.
+AQR-HNSW: Accelerating Approximate Nearest Neighbor Search via Density-aware "antization and Multi-stage Re-ranking
+
+                                                                                        Table 2: Speedup Factor Comparison Across Datasets
+          Table 1: Benchmark Dataset Characteristics                                 Method              Fashion-MNIST         SIFT-1M    GIST-1M      GloVe-300D
+ Dataset              Vectors     Dimensions         Type             Size           Baseline HNSW            1.00→              1.00→     1.00→          1.00→
+ Fashion-MNIST [39]     60,000       784             Image          183 MB           DHNSW                    1.12→              1.18→     1.39→          1.12→
+ SIFT-1M [17]         1,000,000      128        SIFT descriptors    488 MB           AQR-HNSW                 5.36→             2.83→      3.81→          4.16→
+ GIST-1M [17]         1,000,000      960         GIST features      3.66 GB
+ GloVe-300D [29]       100,000       300        Word embeddings     114 MB
+
+
+
+
+Figure 2: Recall@10 vs. QPS for di#erent approaches — AQR-
+HNSW consistently achieves superior performance in the
+high-recall region (>90%).
+   High-Dimensional Superiority: On GIST-1M, AQR-HNSW
+sustains strong throughput even in the 0.9 recall regime where base-
+line HNSW degrades sharply. On Fashion-MNIST, AQR-HNSW
+has a high QPS while maintaining the recall at 0.99 as compared to
+baseline HNSW and DHNSW. AQR-HNSW’s density-aware quanti-
+zation preserves local ordering in dense neighborhoods, coupled                    Figure 3: Ablation Study — Impact of hyper-parameters on
+with early termination that exploits larger high-D distance gaps to                QPS (solid lines) and Recall@10 (dashed lines).
+stop con"dently without sacri"cing recall.                                            Across the datasets, we "nd that tuning coarse candidates to
+   Medium-Dimensional E!ciency: On SIFT-1M, AQR-HNSW                               about 45–70 maximizes recall improvements before they plateau
+gains 2–3 times high QPS and the recall approaches 0.95 as com-                    and QPS falls linearly, while a rerank top-K of 15–30 delivers
+pared to baseline HNSW and DHNSW. GloVe-300D shows the                             the best speed-accuracy trade-o! (with higher values reserved for
+similar trend of 2-2.5 times of QPS with a marginal recall loss com-               > 95% recall needs). Likewise, setting gap thresholds to 0.02–0.03
+pared to the baseline HNSW and DHNSW. The advantage comes                          and ratio thresholds to 1.01–1.02 preserves high recall but triggers
+from AQR-HNSW’s multi-stage (coarse-then-exact) re-ranking de-                     early termination for signi"cant speedups, and using an EF multi-
+sign, avoiding full-precision work on every possible candidate.                    plier of 2–3 o!ers optimal gains; further increases yield only mar-
+4.3    Index Construction E!ciency                                                 ginal recall bene"ts at disproportionate QPS cost. In well-quantized
+Table 2 shows that on million-point datasets (SIFT-1M and GIST-                    spaces, true nearest neighbors exhibit distinct distance gaps and
+1M) AQR-HNSW achieves a 3–5× speedup over baseline HNSW and                        ratios, allowing conservative, moderate-depth search strategies to
+a 2-4× speedup over DHNSW. On smaller collections like Fashion-                    maintain accuracy with minimal overhead. The green region in Fig-
+MNIST and GloVe-300D it exceeds a 4× reduction in build time                       ure 3 highlights the range of each parameters that lead to high QPS
+(and higher recall in search phase). These gains come from density-                with a consistent recall of 95% or higher. Based on extensive param-
+aware quantization during construction using the sampling, assigns                 eter sweeps, Table 3 summarizes the recommended con"gurations
+tighter per-dimension ranges where datapoints are clustered, and                   for di!erent target recall levels from this study.
+adjust proper construction parameters.
+                                                                                   Table 3: Recommended Parameter Settings for Target Recall
+4.4    Sensitivity Analysis                                                          Target Recall   Coarse Cand.   Rerank K    Gap Thresh.   Ratio Thresh.   EF Mult.
+                                                                                       0.85–0.90          35           12          0.020          1.015          2
+Figure 3 reveals how AQR-HNSW hyperparameters a!ect the per-                           0.90–0.95          45           16          0.015          1.012          2
+formance recall trade-o!s, providing crucial insights for deploy-                      0.95–0.97          55           20          0.012          1.010          3
+                                                                                         0.97+            70           28          0.010          1.008          3
+ment optimization.
+                                                                                       Ganap Ashit Tewary, Nrusinga Charan Gantayat, and Je! Zhang
+
+
+
+
+                                                                        Figure 5: Performance comparison of AQR-HNSW against
+                                                                        baseline HNSW with SIMD optimizations — The bars show
+                                                                        QPS at 95% recall on x86 (AVX2/AVX512) [14] and ARM
+                                                                        (NEON) [2] architectures, with average speedups of 2.8× and
+                                                                        3.1× respectively.
+Figure 4: Query latency distribution for HNSW-Baseline and
+AQR-HNSW. DHNSW shows the same latency as baseline
+HNSW. AQR-HNSW consistently achieves better latency,
+showing signi"cant improvements in both median (P50) and
+tail (P99) latencies.
+4.5    Query Latency Consistency Analysis
+Figure 4 demonstrates the query latency distribution, highlighting
+AQR-HNSW’s consistent high performance over the search phase.
+We queried 10K samples on Fashion MNIST and Glove and 100k on
+SIFT and GIST, respectively. Queries processed by AQR-HNSW have
+dramatically denser probability density across all datasets, indicat-
+ing more predictable performance. AQR-HNSW also mitigates the
+long tail latency via adaptive early termination and quantization-
+aware re-ranking, resulting in more stable latency performance
+under heavy query loads. Overall, AQR-HNSW achieves upto 3.23x          Figure 6: Comprehensive benchmark comparison of AQR-
+lower P99 (on GIST) and 3x lower P50 (on GloVe) latencies as com-       HNSW against state-of-the-art ANN algorithms on SIFT-1M
+pared to baseline HNSW and DHNSW.                                       dataset.All methods evaluated using scalar implementations
+                                                                        (no SIMD) on Apple M4 Pro, single-threaded, to isolate algo-
+4.6    SIMD Enhancement for AQR-HNSW                                    rithmic improvements. The plot is divided into three regions:
+To validate the computational bene"ts of the SIMD optimization          speed-optimized (< 90% recall), balanced (90↔95% recall), and
+layer described in Section 3.3, we evaluated AQR-HNSW with              accuracy-optimized (> 95% recall).
+and without SIMD acceleration on two architectures: Intel Xeon
+Gold 6444Y (x86 with AVX-512 [14]) and Apple M4 Pro (ARM with           our integrated optimization strategy: density-aware quantization
+NEON [2]).                                                              that minimizes approximation errors in pivotal regions, multi-stage
+   Figure 5 shows that SIMD enhancement boosts both AQR-HNSW            early termination that aborts unnecessary searches, and asymmet-
+and baseline HNSW’s performance at ISO-recall. Furthermore, AQR-        ric distance computation that accelerates exact re-ranking without
+HNSW bene"ts substantial QPS gains from SIMD acceleration: on           sacri"cing accuracy. In the speed-optimized zone (recall 0.4-0.7),
+x86 with AVX-512 [14], AQR-HNSW’s throughput rises from base-           quantization-only methods such as FAISS-PQ16 [16] and FAISS-SQ8
+line HNSW’s 15,742 QPS to 47,364 QPS (3.0×) on SIFT1M dataset;          [19] achieve the highest throughput through aggressive compres-
+and on ARM NEON [2], AQR-HNSW has a 3.2× higher QPS on                  sion but degrade rapidly as the recall increases. The balanced region
+GIST1M. Across the board, SIMD version of AQR-HNSW consis-              (0.7-0.9) favors graph-based approaches: HNSW-M16 [23], NSG [37],
+tently 2.5–3.3× high QPS on di!erent hardware platforms.                and DiskANN [15] form a competitive cluster, while hybrid meth-
+                                                                        ods (FAISS-IVFPQ, FAISS-HNSWSQ) [19] underperform despite
+4.7    Comparison with Other ANN Approaches                             combining quantization with graph navigation. Tree-based meth-
+Figure 6 presents a comprehensive QPS vs. Recall comparison             ods (Annoy variants [4], FLANN [26]) and LSH-based FALCONN
+against 12 leading ANN on the SIFT-1M benchmark which is an-            [1] show mediocre performance throughout. Most critically, in the
+alyzed in the following paragraph, benchmarking AQR-HNSW’s              accuracy-optimized region approaching perfect recall, AQR-HNSW
+performance in broader landscape of ANN search methods.                 maintains over 10,000 QPS at 95% recall while even strong com-
+   AQR-HNSW dominates the critical high-recall regime, delivering       petitors like HNSW-M16 [23] and DiskANN [15] drop below 5,000
+2 ↔ 2.5→ higher throughput than leading methods such as FAISS           QPS, demonstrating how its adaptive mechanisms speci"cally excel
+[19], NSG [37], and DiskANN [15]. This advantage stems from             where traditional algorithms face exponential slowdowns.
+AQR-HNSW: Accelerating Approximate Nearest Neighbor Search via Density-aware "antization and Multi-stage Re-ranking
+
+
+5     Conclusion                                                                           [21] Wen Li, Ying Zhang, Yifang Sun, Wei Wang, Mingjie Li, Wenjie Zhang, and
+                                                                                                Xuemin Lin. 2019. Approximate nearest neighbor search on high dimensional
+This paper presented AQR-HNSW, an accelerated graph-based sim-                                  data—experiments, analyses, and improvement. IEEE Transactions on Knowledge
+ilarity search framework via density-aware adaptive quantization                                and Data Engineering 32, 8 (2019), 1475–1488.
+                                                                                           [22] Henrik Lindstrom, Humberto Jesus Corona Pampin, Enrico Palumbo, and Alva
+and multi-stage reranking. AQR-HNSW jointly optimizes computa-                                  Liu. 2024. Encouraging Exploration in Spotify Search through Query Recom-
+tion and accuracy by achieving 4× data compression while preserv-                               mendations. In Proceedings of the 18th ACM Conference on Recommender Systems.
+ing neighborhood relationships, and reducing unnecessary exact                                  775–777.
+                                                                                           [23] Yu A Malkov and Dmitry A Yashunin. 2018. E#cient and robust approximate
+computations by 35-60%. Our evaluation on billion-scale datasets                                nearest neighbor search using hierarchical navigable small world graphs. IEEE
+demonstrates that AQR-HNSW can deliver 2.5-3.3× query through-                                  transactions on pattern analysis and machine intelligence 42, 4 (2018), 824–836.
+put improvement across 80-99% recall targets, with optimal per-                            [24] Yusuke Matsui, Ryota Hinami, and Shin’ichi Satoh. 2018. Recon"gurable inverted
+                                                                                                index. In Proceedings of the 26th ACM international conference on Multimedia.
+formance at 90-98% recall, which is critical for production deploy-                             1715–1723.
+ments. Vector databases are the backbone of AI infrastructure, from                        [25] Tomas Mikolov, Kai Chen, Greg Corrado, and Je!rey Dean. 2013. E#cient
+                                                                                                estimation of word representations in vector space. arXiv preprint arXiv:1301.3781
+trillion-scale RAG to billion-user recommendation engines, our                                  (2013).
+density-aware design will become essential patterns for scaling.                           [26] Marius Muja and David G. Lowe. 2014. Scalable Nearest Neighbor Algorithms
+                                                                                                for High Dimensional Data. Pattern Analysis and Machine Intelligence, IEEE
+                                                                                                Transactions on 36 (2014).
+References                                                                                 [27] Maxim Naumov, Dheevatsa Mudigere, Hao-Jun Michael Shi, Jianyu Huang,
+ [1] Alexandr Andoni, Piotr Indyk, Thijs Laarhoven, Ilya Razenshteyn, and Ludwig                Narayanan Sundaraman, Jongsoo Park, Xiaodong Wang, Udit Gupta, Carole-
+     Schmidt. 2015. Practical and optimal LSH for angular distance. Advances in                 Jean Wu, Alisson G Azzolini, et al. 2019. Deep learning recommendation model
+     neural information processing systems 28 (2015).                                           for personalization and recommendation systems. arXiv preprint arXiv:1906.00091
+ [2] Arm Limited. 2025. SIMD ISAs | Neon Intrinsics Reference. Arm Limited. 128-bit             (2019).
+     SIMD architecture for ARM processors.                                                 [28] James Jie Pan, Jianguo Wang, and Guoliang Li. 2024. Survey of vector database
+ [3] Dmitry Baranchuk, Artem Babenko, and Yury Malkov. 2018. Revisiting the                     management systems. The VLDB Journal 33, 5 (2024), 1591–1615.
+     inverted indices for billion-scale approximate nearest neighbors. In Proceedings      [29] Je!rey Pennington, Richard Socher, and Christopher D Manning. 2014. Glove:
+     of the European Conference on Computer Vision (ECCV). 202–216.                             Global vectors for word representation. Proceedings of the 2014 conference on
+ [4] Erik Bernhardsson and Spotify. 2018. Annoy: Approximate Nearest Neighbors Oh               empirical methods in natural language processing (EMNLP) (2014), 1532–1543.
+     Yeah. Spotify. GitHub repository.                                                     [30] Pinecone. 2023. Pinecone: The Vector Database for Machine Learning Applications.
+ [5] Paul Covington, Jay Adams, and Emre Sargin. 2016. Deep neural networks                [31] Liudmila Prokhorenkova and Aleksandr Shekhovtsov. 2020. Graph-based nearest
+     for youtube recommendations. In Proceedings of the 10th ACM conference on                  neighbor search: From practice to theory. International Conference on Machine
+     recommender systems. 191–198.                                                              Learning (2020), 7803–7813.
+ [6] Ronen David, Shahar Golan, and Ido Zimerman. 2023. NSW-Flash: E#cient                 [32] Liudmila Prokhorenkova and Aleksandr Shekhovtsov. 2020. Graph-based nearest
+     Nearest Neighbor Search on SSD. Proceedings of the VLDB Endowment 16 (2023),               neighbor search: From practice to theory. In International Conference on Machine
+     850–862.                                                                                   Learning. 7803–7813.
+ [7] Ronen David, Shahar Golan, and Ido Zimerman. 2023. NSW-Flash: E#cient                 [33] Qdrant. 2023. Qdrant: Vector Similarity Search Engine.
+     Nearest Neighbor Search on SSD. In Proceedings of the VLDB Endowment, Vol. 16.        [34] Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean
+     850–862.                                                                                   Ma, Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein, et al.
+ [8] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019. Bert:              2015. Imagenet large scale visual recognition challenge. International journal of
+     Pre-training of deep bidirectional transformers for language understanding. In             computer vision 115, 3 (2015), 211–252.
+     Proceedings of the 2019 conference of the North American chapter of the association   [35] Spotify. 2022. Voyager: An Open-Source Embeddings Similarity Search Engine.
+     for computational linguistics: human language technologies, volume 1 (long and        [36] Jizhe Wang, Pipei Huang, Huan Zhao, Zhibo Zhang, Binqiang Zhao, and Dik Lun
+     short papers). 4171–4186.                                                                  Lee. 2018. Billion-scale commodity embedding for e-commerce recommendation
+ [9] Yihe Dong, Piotr Indyk, Ilya Razenshteyn, and Tal Wagner. 2020. Learning to                in alibaba. In Proceedings of the 24th ACM SIGKDD international conference on
+     index for nearest neighbor search. In IEEE Transactions on Pattern Analysis and            knowledge discovery & data mining. 839–848.
+     Machine Intelligence, Vol. 42. 1964–1978.                                             [37] Jingdong Wang, Ting Zhang, Jingkuan Song, and Nicu Sebe. 2012. A graph-based
+[10] Yihe Dong, Piotr Indyk, Ilya Razenshteyn, and Tal Wagner. 2020. Learning to                nearest neighbor search algorithm: Nearest neighbor search using Navigating
+     Index for Nearest Neighbor Search. IEEE Transactions on Pattern Analysis and               Spreading-out Graph (NSG). In European Conference on Computer Vision.
+     Machine Intelligence 42, 8 (2020), 1964–1978.                                         [38] Weaviate. 2023. Weaviate: The AI-Native Vector Database.
+[11] Matthijs Douze, Alexandr Guzhva, Chengqi Deng, Je! Johnson, Gergely Szilvasy,         [39] Han Xiao, Kashif Rasul, and Roland Vollgraf. 2017. Fashion-mnist: a novel
+     Pierre-Emmanuel Mazaré, Maria Lomeli, Lucas Hosseini, and Hervé Jégou. 2025.               image dataset for benchmarking machine learning algorithms. arXiv preprint
+     The faiss library. IEEE Transactions on Big Data (2025).                                   arXiv:1708.07747.
+[12] Elastic. 2025. World’s most downloaded vector database: Elasticsearch.
+[13] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. 2015. Deep Residual
+     Learning for Image Recognition. arXiv preprint arXiv:1512.03385 (2015).
+[14] Intel Corporation. 2025. Intel® Intrinsics Guide. Intel Corporation. Interactive
+     reference for C-style intrinsic functions covering MMX, SSE, SSE2, SSE3, SSSE3,
+     SSE4.1, SSE4.2, AVX, AVX2, AVX-512, and other x86 SIMD extensions.
+[15] Suhas Jayaram Subramanya, Fnu Devvrit, Harsha Vardhan Simhadri, Ravishankar
+     Krishnawamy, and Rohan Kadekodi. 2019. DiskANN: Fast accurate billion-point
+     nearest neighbor search on a single node. In Advances in Neural Information
+     Processing Systems, Vol. 32.
+[16] Herve Jegou, Matthijs Douze, and Cordelia Schmid. 2010. Product quantization
+     for nearest neighbor search. IEEE transactions on pattern analysis and machine
+     intelligence 33, 1 (2010), 117–128.
+[17] Hervé Jégou, Romain Tavenard, Matthijs Douze, and Laurent Amsaleg. 2011.
+     Searching in one billion vectors: Re-rank with source coding. ICASSP 2011 (2011),
+     861–864.
+[18] Huijun Jin, Sangmin Seo, Jieun Lee, Sein Kwon, Shengmin Piao, and Sanghyun
+     Park. 2025. E#cient Approximate Nearest Neighbor Search via Data-Adaptive
+     Parameter Adjustment in Hierarchical Navigable Small Graphs. In 2025 Design,
+     Automation & Test in Europe Conference (DATE). IEEE, 1–7.
+[19] Je! Johnson, Matthijs Douze, and Hervé Jégou. 2019. Billion-scale similarity
+     search with GPUs. IEEE Transactions on Big Data 7, 3 (2019), 535–547.
+[20] Hervé Jégou, Romain Tavenard, Matthijs Douze, and Laurent Amsaleg. 2011.
+     Searching in one billion vectors: Re-rank with source coding. In ICASSP. 861–864.
+
