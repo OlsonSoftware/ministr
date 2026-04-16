@@ -150,13 +150,67 @@ pub trait Reranker: Send + Sync {
     fn rerank(&self, query: &str, documents: &[&str]) -> Result<Vec<RerankScore>, IndexError>;
 }
 
+/// Information about the selected embedding backend.
+///
+/// Returned alongside the embedder by [`create_embedder`] so callers can
+/// incorporate the backend into cache keys and diagnostics.
+#[derive(Debug, Clone)]
+pub struct BackendInfo {
+    /// Which backend was selected.
+    pub format: ModelFormat,
+    /// The model name (same as requested).
+    pub model_name: String,
+    /// Device description (e.g. "metal", "cpu", "coreml+gpu").
+    pub device: String,
+}
+
+impl BackendInfo {
+    /// A cache-key suffix incorporating the backend, e.g. `:candle` or `:onnx`.
+    ///
+    /// Append this to the model name when constructing `CachedEmbedder` to
+    /// ensure vectors produced by different backends don't collide.
+    #[must_use]
+    pub fn cache_key_suffix(&self) -> &str {
+        match self.format {
+            ModelFormat::Candle => ":candle",
+            ModelFormat::Onnx => ":onnx",
+            ModelFormat::Gguf => ":gguf",
+        }
+    }
+}
+
+/// Suggest a quantized model variant for faster CPU inference.
+///
+/// Returns `Some("model-q")` if a quantized variant exists for the given model.
+/// On platforms without GPU acceleration (Linux/Windows without CUDA), quantized
+/// models give 2-3x faster inference with minimal quality loss.
+#[must_use]
+pub fn suggest_quantized_model(model_name: &str) -> Option<&'static str> {
+    match model_name {
+        "all-MiniLM-L6-v2" => Some("all-MiniLM-L6-v2-q"),
+        "bge-small-en-v1.5" => Some("bge-small-en-v1.5-q"),
+        "bge-base-en-v1.5" => Some("bge-base-en-v1.5-q"),
+        _ => None,
+    }
+}
+
 /// Create an embedding model using the best available backend.
 ///
-/// Checks the `IRIS_BACKEND` environment variable:
-/// - `"candle"` — force Candle Metal backend (requires `candle` feature)
-/// - `"onnx"` or `"fastembed"` — force ONNX/FastEmbed backend
-/// - empty/unset — auto-detect: on macOS with the `candle` feature,
-///   use Candle if the model is supported; otherwise fall back to FastEmbed
+/// Returns both the embedder and metadata about the selected backend.
+///
+/// ## Backend selection
+///
+/// Checks environment variables in order:
+/// - `IRIS_BACKEND`: `"candle"` | `"onnx"` | `"fastembed"` | empty (auto-detect)
+/// - `IRIS_DEVICE`: `"cpu"` — force CPU even on Metal-capable machines
+/// - `IRIS_PREFER_QUANTIZED`: `"1"` — auto-select quantized `-q` variant if available
+///
+/// Auto-detect on macOS: prefers Candle Metal when the model is supported.
+/// In debug builds, Candle is preferred more aggressively to avoid the
+/// ONNX Runtime + macOS XProtect scanning delay (5-15s on first inference).
+///
+/// On Linux/Windows without GPU: logs a suggestion to use quantized models
+/// for better CPU performance.
 ///
 /// # Errors
 ///
@@ -165,16 +219,43 @@ pub trait Reranker: Send + Sync {
 pub fn create_embedder(
     model_name: &str,
     data_dir: &std::path::Path,
-) -> Result<std::sync::Arc<dyn Embedder>, IndexError> {
-    let backend = std::env::var("IRIS_BACKEND").unwrap_or_default();
+) -> Result<(std::sync::Arc<dyn Embedder>, BackendInfo), IndexError> {
+    let backend_env = std::env::var("IRIS_BACKEND").unwrap_or_default();
+    let force_cpu = std::env::var("IRIS_DEVICE")
+        .map(|v| v.eq_ignore_ascii_case("cpu"))
+        .unwrap_or(false);
+    let prefer_quantized = std::env::var("IRIS_PREFER_QUANTIZED")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
 
-    match backend.as_str() {
+    // Auto-select quantized variant if requested and available.
+    let model_name = if prefer_quantized {
+        if let Some(q) = suggest_quantized_model(model_name) {
+            tracing::info!(
+                original = model_name,
+                quantized = q,
+                "IRIS_PREFER_QUANTIZED=1 — using quantized model"
+            );
+            q
+        } else {
+            model_name
+        }
+    } else {
+        model_name
+    };
+
+    match backend_env.as_str() {
         "candle" => {
             #[cfg(feature = "candle")]
             {
-                tracing::info!(model = %model_name, "using Candle Metal backend (IRIS_BACKEND=candle)");
+                tracing::info!(model = %model_name, "using Candle backend (IRIS_BACKEND=candle)");
                 let embedder = CandleEmbedder::with_data_dir(model_name, data_dir)?;
-                return Ok(std::sync::Arc::new(embedder));
+                let info = BackendInfo {
+                    format: ModelFormat::Candle,
+                    model_name: model_name.to_owned(),
+                    device: if force_cpu { "cpu".into() } else { "metal".into() },
+                };
+                return Ok((std::sync::Arc::new(embedder), info));
             }
             #[cfg(not(feature = "candle"))]
             {
@@ -184,18 +265,62 @@ pub fn create_embedder(
             }
         }
         "onnx" | "fastembed" => {
-            tracing::info!(model = %model_name, "using ONNX/FastEmbed backend (IRIS_BACKEND={backend})");
+            tracing::info!(model = %model_name, "using ONNX/FastEmbed backend (IRIS_BACKEND={backend_env})");
         }
-        "" =>
-        {
+        "" => {
+            // Auto-detect: prefer Candle on macOS when the model is supported.
+            //
+            // In debug builds on macOS, ONNX Runtime loads a dynamic library that
+            // triggers XProtect scanning, adding 5-15 seconds to first inference.
+            // Candle avoids this entirely since it's pure Rust + Metal shaders.
             #[cfg(all(feature = "candle", target_os = "macos"))]
-            if is_candle_model(model_name) {
+            if !force_cpu && is_candle_model(model_name) {
+                let reason = if cfg!(debug_assertions) {
+                    "debug build: preferring Candle to avoid ONNX/XProtect delay"
+                } else {
+                    "auto-selected Candle Metal backend (macOS, model supported)"
+                };
+                tracing::info!(model = %model_name, "{reason}");
+                let embedder = CandleEmbedder::with_data_dir(model_name, data_dir)?;
+                let info = BackendInfo {
+                    format: ModelFormat::Candle,
+                    model_name: model_name.to_owned(),
+                    device: "metal".into(),
+                };
+                return Ok((std::sync::Arc::new(embedder), info));
+            }
+
+            // If the model is Candle-supported but we're forcing CPU, log it.
+            #[cfg(all(feature = "candle", target_os = "macos"))]
+            if force_cpu && is_candle_model(model_name) {
                 tracing::info!(
                     model = %model_name,
-                    "auto-selected Candle Metal backend (Apple Silicon detected, model supported)"
+                    "IRIS_DEVICE=cpu — using ONNX backend instead of Candle Metal"
                 );
-                let embedder = CandleEmbedder::with_data_dir(model_name, data_dir)?;
-                return Ok(std::sync::Arc::new(embedder));
+            }
+
+            // On non-macOS, suggest quantized models for CPU performance.
+            #[cfg(not(target_os = "macos"))]
+            if let Some(q) = suggest_quantized_model(model_name) {
+                tracing::info!(
+                    model = %model_name,
+                    quantized = q,
+                    "tip: use '{q}' or set IRIS_PREFER_QUANTIZED=1 for 2-3x faster CPU inference"
+                );
+            }
+
+            // On macOS, log when falling back from Candle to ONNX for unsupported models.
+            #[cfg(all(feature = "candle", target_os = "macos"))]
+            if !is_candle_model(model_name) {
+                let supported: Vec<&str> = candle_supported_models()
+                    .iter()
+                    .map(|m| m.name)
+                    .collect();
+                tracing::info!(
+                    model = %model_name,
+                    candle_models = ?supported,
+                    "model not in Candle list, using ONNX/CoreML"
+                );
             }
         }
         other => {
@@ -208,7 +333,12 @@ pub fn create_embedder(
 
     // Default: FastEmbed/ONNX Runtime.
     let embedder = FastEmbedder::with_data_dir(model_name, data_dir)?;
-    Ok(std::sync::Arc::new(embedder))
+    let info = BackendInfo {
+        format: ModelFormat::Onnx,
+        model_name: model_name.to_owned(),
+        device: "onnx-cpu".into(),
+    };
+    Ok((std::sync::Arc::new(embedder), info))
 }
 
 /// Interface for embedders that can produce both truncated and full-dimension

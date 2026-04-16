@@ -76,8 +76,12 @@ pub(crate) async fn init_infrastructure(
     // - unset on macOS with candle feature → auto-detect: use Candle if the model
     //   is supported, otherwise fall back to ONNX.
     iris_core::mem_profile::checkpoint("before embedding model init");
-    let raw_embedder: Arc<dyn iris_core::embedding::Embedder> =
-        create_embedder(&model_name, &config.data_dir)?;
+    let (raw_embedder, backend_info) = create_embedder(&model_name, &config.data_dir)?;
+    tracing::info!(
+        backend = ?backend_info.format,
+        device = %backend_info.device,
+        "embedding backend selected"
+    );
     iris_core::mem_profile::checkpoint("after embedding model init");
 
     // Wrap in MatryoshkaEmbedder when dimension is configured for two-stage retrieval.
@@ -102,9 +106,12 @@ pub(crate) async fn init_infrastructure(
         (raw_embedder, None)
     };
 
+    // Backend-aware cache key: "model-name:candle" or "model-name:onnx" so
+    // vectors from different backends don't collide in the embedding cache.
+    let cache_model_key = format!("{model_name}{}", backend_info.cache_key_suffix());
     let embedding_cache = iris_core::embedding::cache::EmbeddingCache::new(storage.conn());
     let embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
-        iris_core::embedding::CachedEmbedder::new(embedder, embedding_cache, &model_name),
+        iris_core::embedding::CachedEmbedder::new(embedder, embedding_cache, &cache_model_key),
     );
 
     // Initialize vector index.
@@ -144,11 +151,11 @@ pub(crate) async fn init_infrastructure(
 /// Create the raw embedding model based on backend preference.
 ///
 /// Delegates to [`iris_core::embedding::create_embedder`] which handles
-/// `IRIS_BACKEND` env var and auto-detection.
+/// `IRIS_BACKEND`, `IRIS_DEVICE`, and `IRIS_PREFER_QUANTIZED` env vars.
 fn create_embedder(
     model_name: &str,
     data_dir: &Path,
-) -> Result<Arc<dyn iris_core::embedding::Embedder>> {
+) -> Result<(Arc<dyn iris_core::embedding::Embedder>, iris_core::embedding::BackendInfo)> {
     iris_core::embedding::create_embedder(model_name, data_dir)
         .into_diagnostic()
         .wrap_err("failed to initialize embedding model")

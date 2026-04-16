@@ -60,11 +60,14 @@ fn main() {
 
             // Load embedding model (once for all corpora).
             // Uses Candle Metal on macOS when supported, falls back to ONNX.
-            let raw_embedder = embedding::create_embedder(&config.default_model, &config.data_dir)
-                .expect("failed to initialize embedding model");
+            let (raw_embedder, backend_info) =
+                embedding::create_embedder(&config.default_model, &config.data_dir)
+                    .expect("failed to initialize embedding model");
 
             info!(
                 model = %config.default_model,
+                backend = ?backend_info.format,
+                device = %backend_info.device,
                 dim = raw_embedder.dimension(),
                 "embedding model loaded"
             );
