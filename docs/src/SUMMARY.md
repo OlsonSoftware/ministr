@@ -13,6 +13,7 @@
 # Architecture
 
 - [Overview](architecture.md)
+- [Daemon & Proxy](architecture-daemon.md)
 - [Core Concepts](concepts/README.md)
     - [Session Shadow](concepts/session-shadow.md)
     - [Prefetch Engine](concepts/prefetch-engine.md)
@@ -29,8 +30,7 @@
     - [iris_budget](tools/budget.md)
     - [iris_compress](tools/compress.md)
     - [iris_evicted](tools/evicted.md)
-- [CLI Commands](tools/README.md)
-    - [iris init](tools/init.md)
+- [CLI Commands](tools/init.md)
 
 # Reference
 

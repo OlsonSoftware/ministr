@@ -42,66 +42,62 @@ topic_window = 5
 | `prefetch.cache_size` | integer | `50` | Max prefetch cache entries |
 | `prefetch.topic_window` | integer | `5` | Recent sections for topic vector |
 
-## Corpus Configuration
+## Project Configuration (`.iris.toml`)
 
-Each corpus has its own config at `~/.iris/corpora/<name>/meta.toml`.
+Create `.iris.toml` in your project root (or run `iris init` to generate one):
 
 ```toml
-# Human-readable corpus name
-name = "my-project-docs"
+[corpus]
+# Directories and files to index
+paths = [
+    "src",
+    "docs",
+    "README.md",
+]
 
-# Source directories to index
-source_dirs = ["./docs", "./api-reference"]
-
-# Embedding model override (falls back to global default)
-model = "bge-small-en-v1.5"
-
-# Watch source directories for changes
-watch = true
-
-# Claim extraction mode: "heuristic" or "model_assisted"
-claim_extraction = "heuristic"
-
-# Override parser for all files (omit for auto-detection)
-# parser = "markdown"
+# Glob patterns to exclude
+ignore = [
+    "*.snap",
+    "node_modules",
+]
 ```
+
+iris auto-discovers `.iris.toml` by walking up from the working directory.
 
 ### Fields
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `name` | string | `""` | Human-readable corpus name |
-| `source_dirs` | list of paths | `[]` | Directories to index |
-| `model` | string or null | `null` | Embedding model override |
-| `watch` | boolean | `false` | Enable file watching for coherence |
-| `claim_extraction` | string | `"heuristic"` | `"heuristic"` or `"model_assisted"` |
-| `parser` | string or null | `null` | Force parser: `"markdown"`, `"html"`, or `"pdf"` |
+| `corpus.paths` | list of paths | `[]` | Files and directories to index |
+| `corpus.ignore` | list of globs | `[]` | Patterns to exclude from indexing |
 
 ### Parser Auto-Detection
 
-When `parser` is not set, iris detects the parser from file extensions:
+iris detects the parser from file extensions:
 
 | Extension | Parser |
 |---|---|
 | `.md`, `.markdown` | Markdown (comrak) |
 | `.html`, `.htm` | HTML (scraper) |
 | `.pdf` | PDF (pdf-extract) |
+| `.rs`, `.py`, `.ts`, etc. | Tree-sitter (code + symbols) |
 
-## CLI Arguments
-
-The `iris` binary accepts these arguments:
+## CLI
 
 ```
-iris [OPTIONS]
+iris [OPTIONS] [COMMAND]
+
+Commands:
+  serve   Start the MCP server over stdio (default)
+  index   Run ingestion synchronously and exit
+  init    Initialize .iris.toml and MCP client configs
 
 Options:
-  -c, --corpus <PATH>    Path to the corpus directory to serve
-  -C, --config <PATH>    Path to config file (default: ~/.iris/config.toml)
-  -h, --help             Print help
-  -V, --version          Print version
+  -c, --corpus <PATH>   Corpus sources (repeatable)
+  -C, --config <PATH>   Path to config file (default: .iris.toml)
+  -h, --help            Print help
+  -V, --version         Print version
 ```
-
-CLI arguments override config file values. If `--corpus` is provided, iris indexes that directory directly without requiring a pre-configured corpus.
 
 ## Supported Embedding Models
 
