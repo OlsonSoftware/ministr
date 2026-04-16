@@ -26,4 +26,4 @@ performance and cross-platform deployment. Indexed by iris.
 ## Provenance
 
 Downloaded via SerpApi Google Scholar search (`as_ylo=2026`, `scisbd=1`),
-converted with `pdftotext -layout`. Original PDFs gitignored via `.iris.toml`.
+converted with `pdftotext -layout`. Original PDFs are gitignored (see `.gitignore`).

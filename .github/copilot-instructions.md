@@ -1,6 +1,6 @@
 # iris MCP — Codebase Navigation (MANDATORY)
 
-This project uses [iris](https://github.com/iris-rs/iris) as an MCP server for semantic code search.
+This project uses [iris](https://github.com/alrik/iris-rs) as an MCP server for semantic code search.
 
 ## CRITICAL: Tool Restrictions
 
