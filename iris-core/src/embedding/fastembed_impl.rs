@@ -551,6 +551,130 @@ impl Embedder for TruncatingEmbedder {
     }
 }
 
+/// Both truncated and full-dimension embeddings from a single inference pass.
+///
+/// Produced by [`MatryoshkaEmbedder::embed_dual`]. The `truncated` vectors
+/// are L2-normalized and suitable for HNSW indexing. The `full` vectors
+/// are at the model's native dimensionality for high-fidelity reranking.
+#[derive(Debug, Clone)]
+pub struct DualEmbeddings {
+    /// Truncated + L2-normalized vectors (for HNSW coarse search).
+    pub truncated: Vec<Vec<f32>>,
+    /// Full-dimension vectors (for two-stage reranking).
+    pub full: Vec<Vec<f32>>,
+}
+
+/// Wrapper for Matryoshka-capable models that produces both truncated and
+/// full-dimension embeddings from a single inference pass.
+///
+/// Implements [`Embedder`] returning truncated vectors (for HNSW indexing),
+/// and additionally implements [`DualEmbedder`] for two-stage retrieval
+/// where full-dimension vectors are stored separately for reranking.
+///
+/// # Examples
+///
+/// ```no_run
+/// use iris_core::embedding::{Embedder, FastEmbedder, MatryoshkaEmbedder};
+/// use std::sync::Arc;
+///
+/// let inner = Arc::new(FastEmbedder::new("nomic-embed-text-v1.5", None)?);
+/// let matryoshka = MatryoshkaEmbedder::new(inner, 256)?;
+/// assert_eq!(matryoshka.dimension(), 256);
+/// assert_eq!(matryoshka.full_dimension(), 768);
+///
+/// let dual = matryoshka.embed_dual(&["hello world"])?;
+/// assert_eq!(dual.truncated[0].len(), 256);
+/// assert_eq!(dual.full[0].len(), 768);
+/// # Ok::<(), iris_core::error::IndexError>(())
+/// ```
+pub struct MatryoshkaEmbedder {
+    inner: Arc<dyn Embedder>,
+    target_dim: usize,
+}
+
+impl std::fmt::Debug for MatryoshkaEmbedder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MatryoshkaEmbedder")
+            .field("target_dim", &self.target_dim)
+            .field("full_dim", &self.inner.dimension())
+            .finish()
+    }
+}
+
+impl MatryoshkaEmbedder {
+    /// Create a Matryoshka wrapper around an existing embedder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::EmbeddingFailed`] if `target_dim` exceeds the
+    /// inner embedder's dimension.
+    #[must_use = "constructors return a new value"]
+    pub fn new(inner: Arc<dyn Embedder>, target_dim: usize) -> Result<Self, IndexError> {
+        if target_dim > inner.dimension() {
+            return Err(IndexError::EmbeddingFailed {
+                reason: format!(
+                    "target dimension {target_dim} exceeds model dimension {}",
+                    inner.dimension()
+                ),
+            });
+        }
+        Ok(Self { inner, target_dim })
+    }
+}
+
+impl Embedder for MatryoshkaEmbedder {
+    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+        let mut vectors = self.inner.embed(texts)?;
+        if self.target_dim == self.inner.dimension() {
+            return Ok(vectors);
+        }
+        for vec in &mut vectors {
+            Vec::truncate(vec, self.target_dim);
+            let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                for x in vec.iter_mut() {
+                    *x /= norm;
+                }
+            }
+        }
+        Ok(vectors)
+    }
+
+    fn dimension(&self) -> usize {
+        self.target_dim
+    }
+}
+
+impl super::DualEmbedder for MatryoshkaEmbedder {
+    fn embed_dual(&self, texts: &[&str]) -> Result<DualEmbeddings, IndexError> {
+        let full = self.inner.embed(texts)?;
+        if self.target_dim == self.inner.dimension() {
+            return Ok(DualEmbeddings {
+                truncated: full.clone(),
+                full,
+            });
+        }
+        let truncated = full
+            .iter()
+            .map(|v| {
+                let mut t = v[..self.target_dim].to_vec();
+                let norm: f32 = t.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if norm > 0.0 {
+                    for x in t.iter_mut() {
+                        *x /= norm;
+                    }
+                }
+                t
+            })
+            .collect();
+        Ok(DualEmbeddings { truncated, full })
+    }
+
+    fn full_dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+}
+
 /// Map a model name string to the corresponding `EmbeddingModel` enum variant.
 fn parse_model_name(name: &str) -> Result<EmbeddingModel, IndexError> {
     match name {
