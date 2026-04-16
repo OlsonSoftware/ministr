@@ -57,50 +57,77 @@ and manages the agent's finite context window like a CPU manages its L1/L2 cache
 
 ```
 iris-rs/
-├── iris-cli/     ← Binary entry point, startup, CLI commands
+├── iris-cli/              ← Binary entry point, CLI commands
 │   └── src/
-│       ├── main.rs      ← CLI parsing, server bootstrap, ingestion orchestration
-│       ├── instance.rs  ← Single-instance lock, stdio↔HTTP proxy
-│       └── proxy.rs     ← Secondary instance proxy over HTTP
+│       ├── main.rs        ← CLI parsing, subcommand dispatch
+│       ├── commands/      ← serve, index, init, search, export/import, hooks
+│       ├── infra.rs       ← Storage, embedder, index bootstrap
+│       ├── ingestion.rs   ← Corpus ingestion orchestration
+│       ├── instance.rs    ← Single-instance lock, stdio↔HTTP proxy
+│       └── proxy.rs       ← Secondary instance proxy over HTTP
 │
-├── iris-mcp/     ← MCP server adapter (depends on iris-core + rmcp)
+├── iris-mcp/              ← MCP server adapter (depends on iris-core + rmcp)
 │   └── src/
-│       ├── server.rs    ← IrisServer: tool handlers, session management
-│       ├── auth.rs      ← OAuth for cloud deployments
-│       └── error.rs     ← MCP-specific error types
+│       ├── server/        ← IrisServer: tool handlers, session management
+│       ├── auth.rs        ← OAuth for cloud deployments
+│       ├── proxy.rs       ← Thin proxy that delegates to iris-daemon
+│       └── error.rs       ← MCP-specific error types
 │
-├── iris-core/    ← Pure domain logic, NO transport dependencies
+├── iris-daemon/           ← HTTP API over Unix domain socket
 │   └── src/
-│       ├── service.rs       ← QueryService: the main API facade
-│       ├── search.rs        ← Multi-resolution vector search
-│       ├── ingestion.rs     ← File discovery → parse → embed pipeline
-│       ├── coherence.rs     ← File watcher → incremental re-index
-│       ├── session/         ← The "cache controller" brain
-│       │   ├── types.rs     ← Session shadow (delivered content tracker)
-│       │   ├── budget.rs    ← Token budget & pressure levels
-│       │   ├── prefetch.rs  ← Predictive pre-warming engine
-│       │   ├── window.rs    ← Context window estimator
-│       │   ├── delta.rs     ← Content change deltas
-│       │   └── registry.rs  ← Multi-session management
-│       ├── embedding/       ← ONNX-powered text embeddings
-│       ├── index/           ← HNSW + inverted index
-│       ├── storage/         ← SQLite persistence layer
-│       ├── parser/          ← Markdown, HTML, PDF, code parsers
-│       ├── code/            ← AST analysis, symbols, cross-lang bridges
-│       ├── extraction/      ← Claims, relationships, summaries
+│       ├── daemon.rs      ← Axum server, lifecycle management
+│       ├── registry.rs    ← CorpusRegistry: manage multiple corpora
+│       ├── ask.rs         ← Query handlers
+│       ├── inference.rs   ← Embedding service
+│       └── state.rs       ← Shared daemon state
+│
+├── iris-api/              ← Shared wire types (no iris-core dependency)
+│   └── src/
+│       ├── query.rs       ← Request/response types
+│       └── client.rs      ← DaemonClient for UDS communication
+│
+├── iris-core/             ← Pure domain logic, NO transport dependencies
+│   └── src/
+│       ├── service/       ← QueryService: the main API facade
+│       ├── ingestion/     ← File discovery → parse → embed pipeline
+│       ├── coherence.rs   ← File watcher → incremental re-index
+│       ├── session/       ← The "cache controller" brain
+│       │   ├── types.rs   ← Session shadow (delivered content tracker)
+│       │   ├── budget.rs  ← Token budget & pressure levels
+│       │   ├── prefetch/  ← Predictive pre-warming engine
+│       │   ├── window.rs  ← Context window estimator
+│       │   ├── delta.rs   ← Content change deltas
+│       │   └── registry.rs ← Multi-session management
+│       ├── embedding/     ← ONNX + optional Candle Metal GPU
+│       ├── index/         ← HNSW + inverted index (SPLADE)
+│       ├── storage/       ← SQLite persistence layer
+│       ├── parser/        ← Markdown, HTML, PDF parsers
+│       ├── code/          ← tree-sitter, symbols, cross-lang bridges
+│       ├── extraction/    ← Claims, relationships, summaries
 │       └── ...
+│
+└── iris-app/src-tauri/    ← Tauri v2 desktop app with system tray
+    └── src/
+        ├── main.rs        ← Tauri setup, tray menu
+        ├── commands.rs    ← Frontend-facing commands
+        └── state.rs       ← App state shared with daemon
 ```
 
 ### Dependency Rule
 
 ```
 iris-cli  →  iris-mcp  →  iris-core
-                ↑              ↑
-            uses rmcp     NO transport deps
-            (MCP SDK)     (pure domain logic)
+              ↓              ↑
+          iris-api     NO transport deps
+              ↑        (pure domain logic)
+          iris-daemon
+              ↓
+          iris-core
+
+iris-app  →  iris-daemon  →  iris-core
 ```
 
-`iris-core` **never** imports MCP types. The boundary is enforced structurally.
+`iris-core` **never** imports MCP types. `iris-api` never depends on `iris-core`. The boundaries are enforced structurally.
 
 ---
 

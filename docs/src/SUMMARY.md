@@ -38,7 +38,8 @@
     - [iris_fetch](tools/fetch.md)
     - [iris_clone](tools/clone.md)
     - [iris_refresh](tools/refresh.md)
-- [CLI: iris init](tools/init.md)
+- [CLI](cli.md)
+    - [iris init](tools/init.md)
 
 # Reference
 
