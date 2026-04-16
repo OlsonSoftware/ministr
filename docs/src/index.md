@@ -80,38 +80,47 @@ pre-warms it with sequential, structural, and topical prefetch strategies.
 
 <div class="iris-diagram" markdown>
 
-``` mermaid
-flowchart LR
-    subgraph Clients["MCP clients"]
-        A[Claude Code]
-        B[Cursor]
-        C[Custom agent]
-    end
+```d2
+direction: right
 
-    subgraph Iris["iris"]
-        D[MCP proxy<br/>stdio] --> E[Daemon<br/>UDS · HTTP]
-        E --> F[Session shadow<br/>+ budget]
-        E --> G[Prefetch engine]
-        E --> H[Query service]
-    end
+clients: MCP clients {
+  claude: Claude Code
+  cursor: Cursor
+  agent: Custom agent
+}
 
-    subgraph Storage["Local storage"]
-        I[(SQLite<br/>content + symbols)]
-        J[(HNSW<br/>vector index)]
-        K[(FastEmbed<br/>ONNX · Metal)]
-    end
+iris: iris {
+  proxy: MCP proxy\nstdio
+  daemon: Daemon\nUDS · HTTP
+  session: Session shadow\n+ budget
+  prefetch: Prefetch engine
+  query: Query service
 
-    A --> D
-    B --> D
-    C --> D
+  proxy -> daemon
+  daemon -> session
+  daemon -> prefetch
+  daemon -> query
+}
 
-    H --> I
-    H --> J
-    H --> K
+storage: Local storage {
+  sql: SQLite\ncontent + symbols {
+    shape: cylinder
+  }
+  hnsw: HNSW\nvector index {
+    shape: cylinder
+  }
+  embed: FastEmbed\nONNX · Metal {
+    shape: cylinder
+  }
+}
 
-    F -.-> A
-    F -.-> B
-    F -.-> C
+clients.claude -> iris.proxy
+clients.cursor -> iris.proxy
+clients.agent -> iris.proxy
+
+iris.query -> storage.sql
+iris.query -> storage.hnsw
+iris.query -> storage.embed
 ```
 
 </div>
@@ -196,19 +205,47 @@ on Apple Silicon. No network required.
   <p>Trace function calls across language boundaries automatically.</p>
 </div>
 
-<pre class="iris-bridge-diagram">
- Rust                              JavaScript / Python
-┌──────────────────────────┐      ┌──────────────────────────┐
-│ #[napi]                  │══════│ import { greet }          │
-│ fn greet(s: String)      │ napi │ from './native'           │
-│                          │      │                           │
-│ #[pyfunction]            │══════│ from mylib import         │
-│ fn compute(x: f64)       │ pyo3 │     compute               │
-│                          │      │                           │
-│ #[tauri::command]        │══════│ invoke('open_file',       │
-│ fn open_file(path: &str) │tauri │    { path })              │
-└──────────────────────────┘      └──────────────────────────┘
-</pre>
+<div class="iris-diagram" markdown>
+
+```d2
+direction: right
+
+rust: Rust {
+  napi: "#[napi]\nfn greet(s: String)" {
+    shape: rectangle
+  }
+  pyo: "#[pyfunction]\nfn compute(x: f64)" {
+    shape: rectangle
+  }
+  tauri: "#[tauri::command]\nfn open_file(path: &str)" {
+    shape: rectangle
+  }
+}
+
+js: JavaScript / Python {
+  import_native: "import { greet }\nfrom './native'" {
+    shape: rectangle
+  }
+  py_import: "from mylib import\n    compute" {
+    shape: rectangle
+  }
+  invoke: "invoke('open_file',\n   { path })" {
+    shape: rectangle
+  }
+}
+
+rust.napi -> js.import_native: napi {
+  style.stroke-width: 3
+}
+rust.pyo -> js.py_import: pyo3 {
+  style.stroke-width: 3
+}
+rust.tauri -> js.invoke: tauri {
+  style.stroke-width: 3
+}
+```
+
+</div>
 
 Query these links with [`iris_bridge`](tools/bridge.md) or trace a symbol across
 language boundaries with [`iris_references`](tools/references.md).

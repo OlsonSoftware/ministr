@@ -87,6 +87,14 @@ body[data-md-color-scheme] .md-content[data-md-component="content"] article {
   display: none;
 }
 
+/* Hide the permalink ¶ on custom landing headings */
+.iris-hero .headerlink,
+.iris-section-header .headerlink,
+.iris-why__card .headerlink,
+.iris-features__card .headerlink {
+  display: none !important;
+}
+
 /* Radial glow behind hero */
 
 .iris-hero {

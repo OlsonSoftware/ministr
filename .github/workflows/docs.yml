@@ -29,7 +29,10 @@ jobs:
           cache: pip
           cache-dependency-path: docs/requirements.txt
 
-      - name: Install dependencies
+      - name: Install D2
+        run: curl -fsSL https://d2lang.com/install.sh | sh -s --
+
+      - name: Install Python dependencies
         run: pip install -r docs/requirements.txt
 
       - name: Build documentation
