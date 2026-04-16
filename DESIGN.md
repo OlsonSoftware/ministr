@@ -3,7 +3,7 @@
 **A context cache controller for LLM agents.**
 *Manage your agent's scarcest resource.*
 
-Version 0.1-draft | March 21, 2026
+Version 0.1 | March 2026
 
 ---
 
