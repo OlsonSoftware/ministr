@@ -40,16 +40,19 @@ iris serve             # Start MCP server (stdio)
 ## Architecture overview
 
 ```
-iris-core/     — domain logic, no transport dependencies
-iris-mcp/      — MCP server adapter (rmcp)
-iris-cli/      — binary entry point
+iris-core/          — domain logic, no transport dependencies
+iris-api/           — shared request/response types for daemon ↔ MCP/CLI
+iris-daemon/        — HTTP API over Unix domain socket
+iris-mcp/           — MCP server adapter (rmcp)
+iris-cli/           — binary entry point
+iris-app/src-tauri/ — Tauri v2 desktop app with system tray
 ```
 
 ### Layered architecture
 
 Each crate follows **transport → service → storage** layering:
 
-- **Transport** (iris-mcp only): MCP tool handlers, JSON-RPC routing
+- **Transport** (iris-mcp, iris-daemon): MCP tool handlers, JSON-RPC routing, HTTP API
 - **Service**: Business logic — session shadow, prefetch engine, budget manager
 - **Storage**: SQLite, HNSW index, file system access
 
@@ -60,8 +63,8 @@ No layer may skip a level. Transport calls service; service calls storage.
 | Subsystem | Location | Purpose |
 |-----------|----------|---------|
 | Session Shadow | `iris-core/src/session/` | Tracks delivered content, deduplicates, detects evictions |
-| Prefetch Engine | `iris-core/src/prefetch/` | Predicts next reads using sequential, structural, topical, and cross-session strategies |
-| Budget Manager | `iris-core/src/budget/` | Estimates token usage, recommends evictions |
+| Prefetch Engine | `iris-core/src/session/prefetch/` | Predicts next reads using sequential, structural, topical, and cross-session strategies |
+| Budget Manager | `iris-core/src/session/budget.rs` | Estimates token usage, recommends evictions |
 | Coherence | `iris-core/src/coherence/` | Watches filesystem, invalidates stale content |
 | Bridge Linker | `iris-core/src/bridge/` | Detects cross-language bindings (napi, pyo3, tauri, wasm-bindgen) |
 
@@ -69,12 +72,13 @@ No layer may skip a level. Transport calls service; service calls storage.
 
 ```
 iris-cli  →  iris-mcp  →  iris-core
-                ↑              ↑
-            uses rmcp     NO transport deps
-            (MCP SDK)     (pure domain logic)
+                ↑    ↘        ↑
+            uses rmcp  iris-api (shared types)
+            (MCP SDK)     ↑
+                      iris-daemon (UDS API)
 ```
 
-`iris-core` never imports MCP types.
+`iris-core` never imports MCP or transport types. `iris-api` never depends on `iris-core`.
 
 ## Making changes
 

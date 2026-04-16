@@ -233,9 +233,12 @@ Options:
 ## Architecture
 
 ```
-iris-core/     — domain logic, no transport dependencies
-iris-mcp/      — MCP server adapter (rmcp)
-iris-cli/      — binary entry point
+iris-core/          — domain logic, no transport dependencies
+iris-api/           — shared request/response types for daemon ↔ MCP/CLI
+iris-daemon/        — HTTP API over Unix domain socket
+iris-mcp/           — MCP server adapter (rmcp)
+iris-cli/           — binary entry point
+iris-app/src-tauri/ — Tauri v2 desktop app with system tray
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the deep dive.

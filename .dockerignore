@@ -1,12 +1,16 @@
 target/
 .git/
-docs/book/
+docs/
 .fastembed_cache/
 .DS_Store
 
 # Documentation (not needed in container)
 *.md
 !deploy/README.md
+
+# Frontend build artifacts
+node_modules/
+iris-app/dist/
 
 # IDE and editor configs
 .claude/
@@ -15,11 +19,12 @@ docs/book/
 .vscode/
 .windsurf/
 
-# Workflow state
+# Workflow and planning state
 .magistr/
 .magistr-roadmap.yml
 .magistr-roadmap.yml.lock
 .mcp.json
+launch/
 
 # Signing credentials
 .env.signing
@@ -27,5 +32,8 @@ docs/book/
 # GitHub metadata
 .github/
 
-# Tauri app (not needed in container)
-iris-app/src-tauri/target/
+# Evaluation and benchmarks (not needed in container)
+eval/
+
+# Tauri app (not needed in container — Docker only builds iris-cli)
+iris-app/

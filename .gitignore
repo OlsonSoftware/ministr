@@ -13,9 +13,16 @@ Thumbs.db
 # mdBook output
 docs/book/
 
+# Research PDFs (keep .txt extracts, ignore large binaries)
+docs/research/*.pdf
+
 # Rust / Cargo
 /target
 **/*.rs.bk
+
+# Node / frontend
+node_modules/
+iris-app/dist/
 
 # IDE and editor configs
 .claude/
@@ -30,6 +37,12 @@ docs/book/
 .magistr/
 .magistr-roadmap.yml
 .magistr-roadmap.yml.lock
+
+# Internal planning (not shipped)
+launch/
+AGENTS.md
+PRESENTATION.md
+ROADMAP.md
 
 # Evaluation artifacts
 eval/model-comparison.json

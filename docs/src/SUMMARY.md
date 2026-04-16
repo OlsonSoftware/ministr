@@ -32,7 +32,6 @@
 - [CLI Commands](tools/README.md)
     - [iris init](tools/init.md)
 
-# Launch
+# Reference
 
-- [Landing Page](landing.md)
 - [Benchmarks](benchmarks.md)
