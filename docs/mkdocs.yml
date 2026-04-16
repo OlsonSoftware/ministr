@@ -59,6 +59,9 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+extra_javascript:
+  - javascripts/session-trace.js
+
 markdown_extensions:
   - abbr
   - admonition

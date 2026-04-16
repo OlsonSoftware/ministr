@@ -27,6 +27,13 @@ hide:
   <a class="iris-hero__cta iris-hero__cta--secondary" href="https://github.com/AlrikOlson/iris-rs">GitHub</a>
 </div>
 
+<figure class="iris-hero__demo">
+  <video autoplay loop muted playsinline preload="metadata" aria-label="iris CLI demo — iris init, claude mcp add iris, and an agent trace with a cache hit">
+    <source src="assets/launch.webm" type="video/webm">
+    <img src="assets/launch.gif" alt="iris CLI demo — iris init, claude mcp add iris, and an agent trace with a cache hit" loading="lazy">
+  </video>
+</figure>
+
 <div class="iris-stats" markdown>
 <div class="iris-stats__item">
   <div class="iris-stats__value">~5 ms</div>
@@ -194,6 +201,9 @@ on Apple Silicon. No network required.
   <p>Every response carries budget tracking, and the prefetch engine pre-warms what's next.</p>
 </div>
 
+<div data-iris-trace class="iris-trace-live"></div>
+
+<noscript>
 <div class="iris-trace" markdown>
 ```text
 ➜ iris_survey("authentication middleware")
@@ -218,6 +228,7 @@ on Apple Silicon. No network required.
   budget: 76% used · session shadow updated
 ```
 </div>
+</noscript>
 
 <div class="iris-section-header">
   <span class="iris-section-header__eyebrow">

@@ -24,6 +24,10 @@ iris is an [MCP server](https://modelcontextprotocol.io) that serves your agent'
 claude mcp add iris -- iris
 ```
 
+<p align="center">
+  <img src="docs/src/assets/launch.gif" alt="iris CLI demo — iris init, claude mcp add iris, and an agent trace with a cache hit" width="860" loading="lazy">
+</p>
+
 ## Why iris
 
 LLM agents waste most of their context window. iris fixes the three root causes:

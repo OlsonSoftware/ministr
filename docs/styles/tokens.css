@@ -725,6 +725,28 @@
     transform: translateY(-1px);
   }
 
+  /* ---------- Hero demo (VHS recording) ---------- */
+
+  .iris-hero__demo {
+    margin: calc(var(--spacing) * 10) auto 0;
+    max-width: 900px;
+    padding: 0;
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    box-shadow:
+      0 1px 0 color-mix(in srgb, white 6%, transparent) inset,
+      0 20px 40px -20px color-mix(in srgb, var(--color-accent) 30%, transparent),
+      0 10px 30px -10px rgb(0 0 0 / 0.4);
+  }
+  .iris-hero__demo video,
+  .iris-hero__demo img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
   /* ---------- Stats strip ---------- */
 
   .iris-stats {
@@ -1108,6 +1130,240 @@
     color: inherit !important;
     padding: 0 !important;
     font-size: inherit;
+  }
+
+  /* ---------- Live session trace (JS-animated) ---------- */
+
+  .iris-trace-live {
+    position: relative;
+    margin: calc(var(--spacing) * 4) auto calc(var(--spacing) * 12);
+    max-width: 860px;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-code-bg) 100%, transparent) 0%,
+      color-mix(in srgb, var(--color-code-bg) 90%, var(--color-accent) 4%) 100%
+    );
+    border: 1px solid var(--color-code-border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+    font-family: var(--font-mono);
+    color: var(--color-code-text);
+    outline-offset: 2px;
+  }
+  .iris-trace-live:focus-visible {
+    outline: 2px solid var(--color-accent-ring);
+  }
+  .iris-trace-live__chrome {
+    position: relative;
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 4);
+    border-bottom: 1px solid color-mix(in srgb, var(--color-code-border) 60%, transparent);
+    background: color-mix(in srgb, var(--color-code-bg) 92%, var(--color-accent) 2%);
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: calc(var(--spacing) * 3);
+  }
+  .iris-trace-live__dots {
+    display: inline-flex;
+    gap: 6px;
+  }
+  .iris-trace-live__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .iris-trace-live__dot--r { color: #ff5f57; }
+  .iris-trace-live__dot--y { color: #febc2e; }
+  .iris-trace-live__dot--g { color: #28c840; }
+  .iris-trace-live__title {
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: var(--color-text-subtle);
+    text-transform: uppercase;
+  }
+  .iris-trace-live__status {
+    display: inline-flex;
+    gap: calc(var(--spacing) * 3);
+    align-items: center;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-text-subtle);
+    font-variant-numeric: tabular-nums;
+  }
+  .iris-trace-live__turn {
+    white-space: nowrap;
+  }
+  .iris-trace-live__prefetch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0.55;
+    transition: opacity 180ms var(--ease-standard);
+  }
+  .iris-trace-live__prefetch.is-on {
+    opacity: 1;
+    color: var(--color-iris-300);
+  }
+  .iris-trace-live__led {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 60%, transparent);
+    transition: box-shadow 600ms var(--ease-standard);
+  }
+  .iris-trace-live__prefetch.is-on .iris-trace-live__led {
+    animation: iris-trace-pulse 1400ms ease-in-out infinite;
+  }
+  @keyframes iris-trace-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 50%, transparent); }
+    50%      { box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 0%, transparent); }
+  }
+  .iris-trace-live__gauge {
+    position: relative;
+    width: 120px;
+    height: 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-code-border) 60%, transparent);
+    overflow: hidden;
+  }
+  .iris-trace-live__gauge-fill {
+    position: absolute;
+    inset: 0;
+    width: 0%;
+    background: linear-gradient(90deg, var(--color-iris-400), var(--color-iris-600));
+    transition: width 500ms var(--ease-standard);
+  }
+  .iris-trace-live__gauge-pct {
+    position: absolute;
+    right: -42px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 34px;
+    text-align: right;
+  }
+
+  .iris-trace-live__body {
+    padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5);
+  }
+  .iris-trace-live__lines {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--spacing) * 2);
+    min-height: 260px;
+    font-size: var(--text-sm);
+    line-height: 1.7;
+  }
+  .iris-trace-live__row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: calc(var(--spacing) * 2);
+    align-items: baseline;
+    animation: iris-trace-row-in 220ms var(--ease-standard) both;
+  }
+  @keyframes iris-trace-row-in {
+    from { opacity: 0; transform: translateY(2px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .iris-trace-live__marker {
+    color: var(--color-iris-400);
+    font-weight: 600;
+  }
+  .iris-trace-live__cmd {
+    color: var(--color-code-text);
+    word-break: break-word;
+  }
+  .iris-trace-live__cmd::after {
+    content: "▍";
+    margin-left: 2px;
+    color: var(--color-iris-300);
+    animation: iris-trace-caret 1s steps(1) infinite;
+  }
+  .iris-trace-live__row:not(:last-child) .iris-trace-live__cmd::after {
+    content: "";
+    animation: none;
+  }
+  @keyframes iris-trace-caret {
+    50% { opacity: 0; }
+  }
+  .iris-trace-live__meta {
+    grid-column: 2 / 3;
+    display: block;
+    color: var(--color-text-muted);
+    font-size: calc(var(--text-sm) - 1px);
+    margin-top: 2px;
+    word-break: break-word;
+  }
+  .iris-trace-live__badge {
+    justify-self: end;
+    align-self: center;
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    font-weight: 600;
+  }
+  .iris-trace-live__badge--hit   { color: #34d399; }
+  .iris-trace-live__badge--evict { color: #fbbf24; }
+  .iris-trace-live__badge--warn  { color: #f87171; }
+  .iris-trace-live__row[data-tag="ellipsis"] .iris-trace-live__marker {
+    color: var(--color-text-subtle);
+  }
+  .iris-trace-live__row[data-tag="ellipsis"] .iris-trace-live__cmd {
+    color: var(--color-text-muted);
+    font-style: italic;
+  }
+
+  .iris-trace-live.is-paused::after {
+    content: "paused";
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    color: var(--color-text-subtle);
+    text-transform: uppercase;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .iris-trace-live__cmd::after,
+    .iris-trace-live__prefetch.is-on .iris-trace-live__led,
+    .iris-trace-live__row {
+      animation: none !important;
+    }
+    .iris-trace-live__gauge-fill {
+      transition: none !important;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .iris-trace-live__chrome {
+      grid-template-columns: auto auto;
+      grid-template-rows: auto auto;
+      row-gap: calc(var(--spacing) * 2);
+    }
+    .iris-trace-live__title {
+      justify-self: end;
+    }
+    .iris-trace-live__status {
+      grid-column: 1 / -1;
+      flex-wrap: wrap;
+    }
+    .iris-trace-live__gauge {
+      width: 80px;
+    }
+    .iris-trace-live__gauge-pct {
+      right: -36px;
+    }
   }
 
   /* ---------- Language chips ---------- */
