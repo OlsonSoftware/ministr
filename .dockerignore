@@ -3,12 +3,29 @@ target/
 docs/book/
 .fastembed_cache/
 .DS_Store
+
+# Documentation (not needed in container)
 *.md
 !deploy/README.md
+
+# IDE and editor configs
 .claude/
+.continue/
+.cursor/
+.vscode/
+.windsurf/
+
+# Workflow state
 .magistr/
 .magistr-roadmap.yml
+.magistr-roadmap.yml.lock
 .mcp.json
-# iris-app requires Tauri system deps, but its Cargo.toml must be present
-# for workspace resolution. Only exclude its heavy build artifacts.
+
+# Signing credentials
+.env.signing
+
+# GitHub metadata
+.github/
+
+# Tauri app (not needed in container)
 iris-app/src-tauri/target/

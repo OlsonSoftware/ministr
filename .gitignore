@@ -16,9 +16,22 @@ docs/book/
 # Rust / Cargo
 /target
 **/*.rs.bk
-Cargo.lock
+
+# IDE and editor configs
+.claude/
+.continue/
+.cursor/
+.vscode/
+.windsurf/
+
+# MCP and workflow state
 .mcp.json
 .fastembed_cache
+.magistr/
+.magistr-roadmap.yml
+.magistr-roadmap.yml.lock
+
+# Evaluation artifacts
 eval/model-comparison.json
 
 # Signing credentials
