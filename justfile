@@ -146,7 +146,7 @@ release version:
     printf '\n## [{{version}}] - %s\n\n### Added\n\n### Changed\n\n### Fixed\n\n' "$date" | \
         sed -i'' -e "/^## \[/r /dev/stdin" CHANGELOG.md
     # Add link reference at bottom
-    echo "[{{version}}]: https://github.com/alrik/iris-rs/releases/tag/v{{version}}" >> CHANGELOG.md
+    echo "[{{version}}]: https://github.com/AlrikOlson/iris-rs/releases/tag/v{{version}}" >> CHANGELOG.md
     # Validate the workspace compiles
     cargo check --workspace
     # Commit and tag

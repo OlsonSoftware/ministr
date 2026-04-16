@@ -88,4 +88,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Quality gates** — clippy pedantic, cargo-audit, cargo-deny, and full test suite in CI
 - **mdBook documentation** — architecture guide, MCP client setup, and API reference
 
-[0.1.0]: https://github.com/alrik/iris-rs/releases/tag/v0.1.0
+[0.1.0]: https://github.com/AlrikOlson/iris-rs/releases/tag/v0.1.0

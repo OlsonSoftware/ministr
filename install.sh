@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # iris installer — downloads the latest release binary from GitHub.
-# Usage: curl -fsSL https://raw.githubusercontent.com/alrik/iris-rs/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
 set -euo pipefail
 
-REPO="alrik/iris-rs"
+REPO="AlrikOlson/iris-rs"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.iris/bin}"
 
 info() { printf '\033[1;34m%s\033[0m\n' "$*"; }

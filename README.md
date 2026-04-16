@@ -7,13 +7,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/alrik/iris-rs/actions/workflows/ci.yml"><img src="https://github.com/alrik/iris-rs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/AlrikOlson/iris-rs/actions/workflows/ci.yml"><img src="https://github.com/AlrikOlson/iris-rs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.85%2B-orange.svg" alt="Rust"></a>
 </p>
 
 <p align="center">
-  <a href="https://alrik.github.io/iris-rs">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
+  <a href="https://AlrikOlson.github.io/iris-rs">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 ---
@@ -87,13 +87,13 @@ iris detects and links cross-language bindings automatically:
 **Homebrew** (macOS)
 
 ```sh
-brew install alrik/tap/iris
+brew install AlrikOlson/tap/iris
 ```
 
 **Install script** (macOS & Linux)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/alrik/iris-rs/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
 ```
 
 **Cargo**
@@ -102,16 +102,16 @@ curl -fsSL https://raw.githubusercontent.com/alrik/iris-rs/main/install.sh | bas
 cargo install iris-cli
 ```
 
-**Pre-built binaries** — download from [GitHub Releases](https://github.com/alrik/iris-rs/releases) for macOS, Linux, and Windows.
+**Pre-built binaries** — download from [GitHub Releases](https://github.com/AlrikOlson/iris-rs/releases) for macOS, Linux, and Windows.
 
 ## Documentation
 
 | | |
 |---|---|
-| [Tool reference](https://alrik.github.io/iris-rs/tools/README.html) | All MCP tools with parameters and examples |
+| [Tool reference](https://AlrikOlson.github.io/iris-rs/tools/README.html) | All MCP tools with parameters and examples |
 | [Architecture](docs/ARCHITECTURE.md) | Crate structure, layering, and subsystem deep dive |
 | [Design specification](DESIGN.md) | Research references and design rationale |
-| [Configuration](https://alrik.github.io/iris-rs/configuration.html) | `.iris.toml` options and CLI flags |
+| [Configuration](https://AlrikOlson.github.io/iris-rs/configuration.html) | `.iris.toml` options and CLI flags |
 | [Deployment](deploy/README.md) | Docker, Fly.io, Railway, nginx/Caddy reverse proxy |
 | [Example configs](examples/) | `.iris.toml` templates for Rust, Tauri, PyO3, React |
 

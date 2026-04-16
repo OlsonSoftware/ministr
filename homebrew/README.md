@@ -2,14 +2,14 @@
 
 ## One-time setup
 
-1. Create a new GitHub repository: `alrik/homebrew-iris`
+1. Create a new GitHub repository: `AlrikOlson/homebrew-iris`
 2. Copy `iris.rb` to `Formula/iris.rb` in that repository
 3. Push to GitHub
 
 Users can then install with:
 
 ```sh
-brew install alrik/tap/iris
+brew install AlrikOlson/tap/iris
 ```
 
 ## Updating after a release
@@ -29,7 +29,7 @@ Add a step to the release workflow that auto-updates the tap:
   uses: mislav/bump-homebrew-formula-action@v3
   with:
     formula-name: iris
-    homebrew-tap: alrik/homebrew-iris
+    homebrew-tap: AlrikOlson/homebrew-iris
   env:
     COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 ```

@@ -2,7 +2,7 @@
 
 Contributions are welcome — whether it's a bug fix, new language grammar, documentation improvement, or a new feature. This guide covers everything you need to get started.
 
-If you're looking for a place to begin, check the [issues labeled `good first issue`](https://github.com/alrik/iris-rs/labels/good%20first%20issue).
+If you're looking for a place to begin, check the [issues labeled `good first issue`](https://github.com/AlrikOlson/iris-rs/labels/good%20first%20issue).
 
 ## Development setup
 
@@ -15,7 +15,7 @@ If you're looking for a place to begin, check the [issues labeled `good first is
 ### Clone and build
 
 ```sh
-git clone https://github.com/alrik/iris-rs.git
+git clone https://github.com/AlrikOlson/iris-rs.git
 cd iris-rs
 cargo build --workspace
 ```
@@ -144,7 +144,7 @@ CI runs these automatically on every PR.
 
 ## Reporting issues
 
-- Use [GitHub Issues](https://github.com/alrik/iris-rs/issues)
+- Use [GitHub Issues](https://github.com/AlrikOlson/iris-rs/issues)
 - Include: iris version, OS, Rust version, and steps to reproduce
 - For performance issues, include `RUST_LOG=debug` output
 

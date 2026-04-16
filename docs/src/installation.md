@@ -5,13 +5,13 @@
 ### Homebrew (macOS)
 
 ```sh
-brew install alrik/tap/iris
+brew install AlrikOlson/tap/iris
 ```
 
 ### Install script (macOS & Linux)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/alrik/iris-rs/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
 ```
 
 ### Cargo (from source, requires Rust 1.85+)
@@ -22,7 +22,7 @@ cargo install iris-cli
 
 ### Pre-built binaries
 
-Download from [GitHub Releases](https://github.com/alrik/iris-rs/releases) — builds available for:
+Download from [GitHub Releases](https://github.com/AlrikOlson/iris-rs/releases) — builds available for:
 
 | Platform | Archive |
 |----------|---------|
