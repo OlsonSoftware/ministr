@@ -10,7 +10,7 @@ build-dir = "book"
 create-missing = false
 
 [output.html]
-git-repository-url = "https://github.com/alrik/iris-rs"
+git-repository-url = "https://github.com/AlrikOlson/iris-rs"
 default-theme = "rust"
 preferred-dark-theme = "ayu"
 
