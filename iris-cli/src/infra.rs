@@ -23,6 +23,10 @@ pub(crate) struct InfrastructureContext {
     pub(crate) storage: Arc<iris_core::storage::SqliteStorage>,
     pub(crate) embedder: Arc<dyn iris_core::embedding::Embedder>,
     pub(crate) index: Arc<dyn iris_core::index::VectorIndex>,
+    /// Dual embedder for two-stage Matryoshka retrieval (set when dimension is configured).
+    pub(crate) dual_embedder: Option<Arc<dyn iris_core::embedding::DualEmbedder>>,
+    /// Number of coarse candidates to rescore with full-dim vectors.
+    pub(crate) rerank_depth: usize,
 }
 
 /// Initialize shared infrastructure: storage, embedder, and vector index.
@@ -32,6 +36,8 @@ pub(crate) async fn init_infrastructure(
     corpus_paths: &[String],
     config: &iris_core::config::IrisConfig,
     resolved_model: Option<&str>,
+    resolved_dimension: Option<usize>,
+    rerank_depth: Option<usize>,
 ) -> Result<InfrastructureContext> {
     // Determine corpus data directory from a hash of all paths.
     let corpus_name = if corpus_paths.is_empty() {
@@ -73,9 +79,32 @@ pub(crate) async fn init_infrastructure(
     let raw_embedder: Arc<dyn iris_core::embedding::Embedder> =
         create_embedder(&model_name, &config.data_dir)?;
     iris_core::mem_profile::checkpoint("after embedding model init");
+
+    // Wrap in MatryoshkaEmbedder when dimension is configured for two-stage retrieval.
+    let (embedder, dual_embedder): (
+        Arc<dyn iris_core::embedding::Embedder>,
+        Option<Arc<dyn iris_core::embedding::DualEmbedder>>,
+    ) = if let Some(target_dim) = resolved_dimension {
+        tracing::info!(
+            target_dim,
+            full_dim = raw_embedder.dimension(),
+            "Matryoshka two-stage retrieval enabled"
+        );
+        let matryoshka = Arc::new(
+            iris_core::embedding::MatryoshkaEmbedder::new(Arc::clone(&raw_embedder), target_dim)
+                .into_diagnostic()
+                .wrap_err("failed to create MatryoshkaEmbedder")?,
+        );
+        let emb: Arc<dyn iris_core::embedding::Embedder> = Arc::clone(&matryoshka) as _;
+        let dual: Arc<dyn iris_core::embedding::DualEmbedder> = matryoshka;
+        (emb, Some(dual))
+    } else {
+        (raw_embedder, None)
+    };
+
     let embedding_cache = iris_core::embedding::cache::EmbeddingCache::new(storage.conn());
     let embedder: Arc<dyn iris_core::embedding::Embedder> = Arc::new(
-        iris_core::embedding::CachedEmbedder::new(raw_embedder, embedding_cache, &model_name),
+        iris_core::embedding::CachedEmbedder::new(embedder, embedding_cache, &model_name),
     );
 
     // Initialize vector index.
@@ -107,6 +136,8 @@ pub(crate) async fn init_infrastructure(
         storage: Arc::new(storage),
         embedder,
         index,
+        dual_embedder,
+        rerank_depth: rerank_depth.unwrap_or(100),
     })
 }
 
@@ -194,6 +225,8 @@ pub(crate) async fn build_server(
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
     resolved_model: Option<&str>,
+    resolved_dimension: Option<usize>,
+    rerank_depth: Option<usize>,
 ) -> Result<(
     iris_mcp::server::IrisServer,
     InfrastructureContext,
@@ -209,13 +242,19 @@ pub(crate) async fn build_server(
         tracing::info!(path = %path, "  corpus root");
     }
 
-    let ctx = init_infrastructure(corpus_paths, config, resolved_model).await?;
+    let ctx =
+        init_infrastructure(corpus_paths, config, resolved_model, resolved_dimension, rerank_depth)
+            .await?;
 
-    let service = Arc::new(iris_core::service::QueryService::new(
+    let mut service = iris_core::service::QueryService::new(
         (*ctx.storage).clone(),
         Arc::clone(&ctx.embedder),
         Arc::clone(&ctx.index),
-    ));
+    );
+    if let Some(ref dual_emb) = ctx.dual_embedder {
+        service = service.with_matryoshka_rerank(Arc::clone(dual_emb), ctx.rerank_depth);
+    }
+    let service = Arc::new(service);
 
     let session_id = corpus_session_id(corpus_paths);
     let budget_config = BudgetConfig {

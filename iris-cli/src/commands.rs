@@ -32,6 +32,8 @@ pub(crate) async fn cmd_serve_stdio(
     config: &iris_core::config::IrisConfig,
     resolved_model: &str,
     repo_config_dir: Option<&Path>,
+    resolved_dimension: Option<usize>,
+    rerank_depth: Option<usize>,
 ) -> Result<()> {
     // Compute the corpus data dir early for lock detection.
     let corpus_name = infra::corpus_data_dir_name(corpus_paths);
@@ -48,9 +50,15 @@ pub(crate) async fn cmd_serve_stdio(
             crate::proxy::run_stdio_proxy(&mcp_url).await
         }
         crate::instance::InstanceRole::Primary(lock) => {
-            let (server, ctx, _coherence_handle) =
-                infra::build_server(corpus_paths, config_path, config, Some(resolved_model))
-                    .await?;
+            let (server, ctx, _coherence_handle) = infra::build_server(
+                corpus_paths,
+                config_path,
+                config,
+                Some(resolved_model),
+                resolved_dimension,
+                rerank_depth,
+            )
+            .await?;
 
             let ingestion_progress = server.ingestion_progress_arc();
 
@@ -112,13 +120,22 @@ pub(crate) async fn cmd_serve_http(
     oauth_config: Option<iris_mcp::auth::OAuthConfig>,
     resolved_model: &str,
     repo_config_dir: Option<&Path>,
+    resolved_dimension: Option<usize>,
+    rerank_depth: Option<usize>,
 ) -> Result<()> {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
 
-    let (server, ctx, _coherence_handle) =
-        infra::build_server(corpus_paths, config_path, config, Some(resolved_model)).await?;
+    let (server, ctx, _coherence_handle) = infra::build_server(
+        corpus_paths,
+        config_path,
+        config,
+        Some(resolved_model),
+        resolved_dimension,
+        rerank_depth,
+    )
+    .await?;
 
     let ingestion_progress = server.ingestion_progress_arc();
 
@@ -259,6 +276,8 @@ pub(crate) async fn cmd_index(
     config_path: &Path,
     config: &iris_core::config::IrisConfig,
     resolved_model: &str,
+    resolved_dimension: Option<usize>,
+    rerank_depth: Option<usize>,
 ) -> Result<()> {
     tracing::info!(
         corpus_count = corpus_paths.len(),
@@ -275,7 +294,14 @@ pub(crate) async fn cmd_index(
         return Ok(());
     }
 
-    let ctx = infra::init_infrastructure(corpus_paths, config, Some(resolved_model)).await?;
+    let ctx = infra::init_infrastructure(
+        corpus_paths,
+        config,
+        Some(resolved_model),
+        resolved_dimension,
+        rerank_depth,
+    )
+    .await?;
 
     let progress = Arc::new(iris_core::ingestion::IngestionProgress::new());
     ingestion::run_corpus_ingestion(corpus_paths, git_includes, &ctx, &progress).await?;

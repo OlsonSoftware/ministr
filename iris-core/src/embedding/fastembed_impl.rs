@@ -574,7 +574,7 @@ pub struct DualEmbeddings {
 /// # Examples
 ///
 /// ```no_run
-/// use iris_core::embedding::{Embedder, FastEmbedder, MatryoshkaEmbedder};
+/// use iris_core::embedding::{DualEmbedder, Embedder, FastEmbedder, MatryoshkaEmbedder};
 /// use std::sync::Arc;
 ///
 /// let inner = Arc::new(FastEmbedder::new("nomic-embed-text-v1.5", None)?);

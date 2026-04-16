@@ -190,6 +190,10 @@ struct ResolvedConfig {
     git_includes: Vec<iris_core::config::GitInclude>,
     resolved_model: String,
     repo_config_dir: Option<PathBuf>,
+    /// Matryoshka truncation dimension from `.iris.toml` `[corpus] dimension`.
+    resolved_dimension: Option<usize>,
+    /// Two-stage rerank depth from `.iris.toml` `[corpus] rerank_depth`.
+    rerank_depth: Option<usize>,
 }
 
 /// Load global config, discover per-repo .iris.toml, and resolve corpus paths.
@@ -244,6 +248,13 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
         &config,
     );
 
+    let resolved_dimension = corpus_config
+        .as_ref()
+        .and_then(|(_, cc)| cc.corpus.dimension);
+    let rerank_depth = corpus_config
+        .as_ref()
+        .and_then(|(_, cc)| cc.corpus.rerank_depth);
+
     Ok(ResolvedConfig {
         config_path,
         config,
@@ -252,6 +263,8 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
         git_includes,
         resolved_model,
         repo_config_dir,
+        resolved_dimension,
+        rerank_depth,
     })
 }
 
@@ -301,6 +314,8 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                         &rc.config,
                         &rc.resolved_model,
                         rc.repo_config_dir.as_deref(),
+                        rc.resolved_dimension,
+                        rc.rerank_depth,
                     )
                     .await
                 }
@@ -323,6 +338,8 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                         oauth_config,
                         &rc.resolved_model,
                         rc.repo_config_dir.as_deref(),
+                        rc.resolved_dimension,
+                        rc.rerank_depth,
                     )
                     .await
                 }
@@ -335,6 +352,8 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 &rc.config_path,
                 &rc.config,
                 &rc.resolved_model,
+                rc.resolved_dimension,
+                rc.rerank_depth,
             )
             .await
         }
