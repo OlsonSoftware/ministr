@@ -386,6 +386,17 @@ impl Session {
         self.current_turn
     }
 
+    /// Advance the turn counter by one and return the new value.
+    ///
+    /// Called once per tool call the agent makes against this session.
+    /// Independent of [`Session::record_delivery`] so non-delivery tool
+    /// calls (e.g. `iris_survey`, `iris_symbols`) still register as
+    /// progress on the session's live-turn stream.
+    pub fn tick(&mut self) -> u32 {
+        self.current_turn = self.current_turn.saturating_add(1);
+        self.current_turn
+    }
+
     /// How long this session has been active.
     #[must_use]
     pub fn elapsed(&self) -> std::time::Duration {

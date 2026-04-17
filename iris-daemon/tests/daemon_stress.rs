@@ -185,20 +185,21 @@ async fn test_concurrent_mixed_symbol_queries() {
                     module: None,
                     visibility: None,
                     limit: None,
+                    session_id: None,
                 };
                 let resp = client.symbols(&corpus_id, &req).await.unwrap();
                 assert!(!resp.symbols.is_empty());
 
                 // Definition.
                 let def = client
-                    .definition(&corpus_id, "sym-config::IrisConfig")
+                    .definition(&corpus_id, "sym-config::IrisConfig", None)
                     .await
                     .unwrap();
                 assert_eq!(def.name, "IrisConfig");
 
                 // References.
                 let refs = client
-                    .references(&corpus_id, "sym-config::IrisConfig")
+                    .references(&corpus_id, "sym-config::IrisConfig", None)
                     .await
                     .unwrap();
                 assert!(!refs.references.is_empty());

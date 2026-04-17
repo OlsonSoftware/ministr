@@ -169,7 +169,21 @@ impl DaemonClient {
             top_k,
             session_id: None,
         };
-        self.post(&format!("/api/v1/corpora/{corpus_id}/survey"), &req)
+        self.survey_req(corpus_id, &req).await
+    }
+
+    /// Semantic search with a full pre-built request (e.g. to include
+    /// `session_id`). Prefer [`survey`](Self::survey) for simple calls.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn survey_req(
+        &self,
+        corpus_id: &str,
+        req: &SurveyRequest,
+    ) -> Result<SurveyResponse, ClientError> {
+        self.post(&format!("/api/v1/corpora/{corpus_id}/survey"), req)
             .await
     }
 
@@ -196,10 +210,17 @@ impl DaemonClient {
         &self,
         corpus_id: &str,
         symbol_id: &str,
+        session_id: Option<&str>,
     ) -> Result<SymbolDefinition, ClientError> {
         let encoded = encode_path_component(symbol_id);
-        self.get(&format!("/api/v1/corpora/{corpus_id}/definition/{encoded}"))
-            .await
+        let path = match session_id {
+            Some(sid) => {
+                let sid_enc = encode_path_component(sid);
+                format!("/api/v1/corpora/{corpus_id}/definition/{encoded}?session_id={sid_enc}")
+            }
+            None => format!("/api/v1/corpora/{corpus_id}/definition/{encoded}"),
+        };
+        self.get(&path).await
     }
 
     /// Get references to a symbol.
@@ -211,10 +232,17 @@ impl DaemonClient {
         &self,
         corpus_id: &str,
         symbol_id: &str,
+        session_id: Option<&str>,
     ) -> Result<ReferencesResponse, ClientError> {
         let encoded = encode_path_component(symbol_id);
-        self.get(&format!("/api/v1/corpora/{corpus_id}/references/{encoded}"))
-            .await
+        let path = match session_id {
+            Some(sid) => {
+                let sid_enc = encode_path_component(sid);
+                format!("/api/v1/corpora/{corpus_id}/references/{encoded}?session_id={sid_enc}")
+            }
+            None => format!("/api/v1/corpora/{corpus_id}/references/{encoded}"),
+        };
+        self.get(&path).await
     }
 
     /// Read a section by ID.
@@ -381,9 +409,11 @@ impl DaemonClient {
         &self,
         corpus_id: &str,
         query: &str,
+        session_id: Option<&str>,
     ) -> Result<crate::query::AskResponse, ClientError> {
         let req = crate::query::AskRequest {
             query: query.to_string(),
+            session_id: session_id.map(String::from),
         };
         self.post(&format!("/api/v1/corpora/{corpus_id}/ask"), &req)
             .await

@@ -72,6 +72,10 @@ pub struct SymbolsRequest {
     /// Maximum results (default: 20).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    /// Session the call belongs to, if any. Included so the daemon can
+    /// advance the session's turn counter on every tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// A code symbol definition with source context.
@@ -349,6 +353,9 @@ pub struct BridgeResponse {
 pub struct AskRequest {
     /// Natural-language question to answer from the corpus.
     pub query: String,
+    /// Session the call belongs to, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// Response from `iris_ask`.

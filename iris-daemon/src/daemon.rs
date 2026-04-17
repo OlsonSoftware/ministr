@@ -253,6 +253,35 @@ macro_rules! get_corpus {
     };
 }
 
+/// Advance the session's turn counter by one and persist the updated
+/// session. Fire-and-forget: unknown sessions and storage errors are
+/// swallowed — the turn counter is informational for the UI and must
+/// never fail a tool call.
+///
+/// Called by each tool handler when a `session_id` is present so the
+/// Overview's live-turn stream ticks on every agent interaction (not
+/// just on session-aware reads).
+async fn tick_session_turn(state: &AppState, corpus_id: &str, session_id: &str) {
+    let Ok(corpora) = state.registry.get(corpus_id).await else {
+        return;
+    };
+    let Some(handle) = corpora.get(corpus_id) else {
+        return;
+    };
+    {
+        let mut sessions = handle.sessions.lock().await;
+        let Some(entry) = sessions.get_session_mut(session_id) else {
+            return;
+        };
+        entry.session.tick();
+    }
+    // Persist in a separate pass so the mutating lock is released first.
+    let sessions = handle.sessions.lock().await;
+    if let Some(entry) = sessions.get_session(session_id) {
+        let _ = handle.storage.save_session(&entry.session).await;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Corpus management
 // ---------------------------------------------------------------------------
@@ -306,7 +335,13 @@ async fn survey(
     let _permit = state.query_semaphore.acquire().await;
     let guard = get_corpus!(&state, &id);
     let top_k = req.top_k.unwrap_or(10);
-    match guard[&id].service.survey(&req.query, top_k).await {
+    let session_id = req.session_id.clone();
+    let result = guard[&id].service.survey(&req.query, top_k).await;
+    drop(guard);
+    if let Some(sid) = session_id {
+        tick_session_turn(&state, &id, &sid).await;
+    }
+    match result {
         Ok(results) => Json(query::SurveyResponse {
             results: results.into_iter().map(convert::survey_result).collect(),
             deduplicated_count: None,
@@ -325,6 +360,7 @@ async fn symbols(
     let _permit = state.query_semaphore.acquire().await;
     let guard = get_corpus!(&state, &id);
     let limit = req.limit.unwrap_or(20);
+    let session_id = req.session_id.clone();
     let filter = SymbolFilter {
         name: Some(req.query),
         name_exact: None,
@@ -333,7 +369,12 @@ async fn symbols(
         module: req.module,
         file_path: None,
     };
-    match guard[&id].service.search_symbols(&filter).await {
+    let result = guard[&id].service.search_symbols(&filter).await;
+    drop(guard);
+    if let Some(sid) = session_id {
+        tick_session_turn(&state, &id, &sid).await;
+    }
+    match result {
         Ok(records) => Json(query::SymbolsResponse {
             symbols: records
                 .into_iter()
@@ -346,12 +387,26 @@ async fn symbols(
     }
 }
 
+/// Optional `?session_id=X` query for the session-less GET routes
+/// (`definition`, `references`). Lets the proxy tick the session's turn
+/// counter without converting these routes to session-scoped variants.
+#[derive(Debug, Default, serde::Deserialize)]
+struct SessionQuery {
+    session_id: Option<String>,
+}
+
 async fn definition(
     State(state): State<AppState>,
     Path((id, sym)): Path<(String, String)>,
+    Query(q): Query<SessionQuery>,
 ) -> impl IntoResponse {
     let guard = get_corpus!(&state, &id);
-    match guard[&id].service.get_symbol_definition(&sym).await {
+    let result = guard[&id].service.get_symbol_definition(&sym).await;
+    drop(guard);
+    if let Some(sid) = q.session_id {
+        tick_session_turn(&state, &id, &sid).await;
+    }
+    match result {
         Ok(def) => Json(convert::symbol_definition(def)).into_response(),
         Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
     }
@@ -360,9 +415,15 @@ async fn definition(
 async fn references(
     State(state): State<AppState>,
     Path((id, sym)): Path<(String, String)>,
+    Query(q): Query<SessionQuery>,
 ) -> impl IntoResponse {
     let guard = get_corpus!(&state, &id);
-    match guard[&id].service.get_symbol_references(&sym, None).await {
+    let result = guard[&id].service.get_symbol_references(&sym, None).await;
+    drop(guard);
+    if let Some(sid) = q.session_id {
+        tick_session_turn(&state, &id, &sid).await;
+    }
+    match result {
         Ok(refs) => Json(query::ReferencesResponse {
             references: refs.into_iter().map(convert::symbol_reference).collect(),
         })
@@ -505,11 +566,16 @@ async fn extract(
     Json(req): Json<query::ExtractRequest>,
 ) -> impl IntoResponse {
     let guard = get_corpus!(&state, &id);
-    match guard[&id]
+    let session_id = req.session_id.clone();
+    let result = guard[&id]
         .service
         .extract_claims(&req.section_id, req.query.as_deref())
-        .await
-    {
+        .await;
+    drop(guard);
+    if let Some(sid) = session_id {
+        tick_session_turn(&state, &id, &sid).await;
+    }
+    match result {
         Ok(claims) => Json(query::ExtractResponse {
             claims: claims.into_iter().map(convert::claim_result).collect(),
         })
@@ -526,7 +592,13 @@ async fn toc(
     let guard = get_corpus!(&state, &id);
     let offset = req.offset.unwrap_or(0);
     let limit = req.limit.unwrap_or(100);
-    match guard[&id].service.toc(req.document_id.as_deref()).await {
+    let session_id = req.session_id.clone();
+    let result = guard[&id].service.toc(req.document_id.as_deref()).await;
+    drop(guard);
+    if let Some(sid) = session_id {
+        tick_session_turn(&state, &id, &sid).await;
+    }
+    match result {
         Ok(entries) => {
             let total = entries.len();
             Json(query::TocResponse {
@@ -560,11 +632,16 @@ async fn related(
                 .collect(),
         )
     };
-    match guard[&id]
+    let session_id = req.session_id.clone();
+    let result = guard[&id]
         .service
         .related_claims(&req.claim_id, relation_types.as_deref())
-        .await
-    {
+        .await;
+    drop(guard);
+    if let Some(sid) = session_id {
+        tick_session_turn(&state, &id, &sid).await;
+    }
+    match result {
         Ok(claims) => Json(query::RelatedResponse {
             claims: claims.into_iter().map(convert::related_claim).collect(),
         })
@@ -580,7 +657,8 @@ async fn bridge(
 ) -> impl IntoResponse {
     let guard = get_corpus!(&state, &id);
     let limit = req.limit.unwrap_or(50);
-    match guard[&id]
+    let session_id = req.session_id.clone();
+    let result = guard[&id]
         .service
         .query_bridges(
             req.query.as_deref(),
@@ -588,8 +666,12 @@ async fn bridge(
             req.source_language.as_deref(),
             None,
         )
-        .await
-    {
+        .await;
+    drop(guard);
+    if let Some(sid) = session_id {
+        tick_session_turn(&state, &id, &sid).await;
+    }
+    match result {
         Ok(links) => Json(query::BridgeResponse {
             links: links
                 .into_iter()
@@ -613,7 +695,13 @@ async fn compress_content(
 ) -> impl IntoResponse {
     let _permit = state.query_semaphore.acquire().await;
     let guard = get_corpus!(&state, &id);
-    match guard[&id].service.compress_content(&req.content_ids).await {
+    let session_id = req.session_id.clone();
+    let result = guard[&id].service.compress_content(&req.content_ids).await;
+    drop(guard);
+    if let Some(sid) = session_id {
+        tick_session_turn(&state, &id, &sid).await;
+    }
+    match result {
         Ok(items) => Json(iris_api::session::CompressResponse {
             summaries: items.into_iter().map(convert::compressed_item).collect(),
         })
@@ -634,15 +722,20 @@ async fn ask_handler(
     let _permit = state.query_semaphore.acquire().await;
     let guard = get_corpus!(&state, &id);
     let handle = &guard[&id];
+    let session_id = req.session_id.clone();
 
-    match crate::ask::ask(
+    let result = crate::ask::ask(
         &req.query,
         &handle.service,
         &handle.storage,
         state.inference.as_ref(),
     )
-    .await
-    {
+    .await;
+    drop(guard);
+    if let Some(sid) = session_id {
+        tick_session_turn(&state, &id, &sid).await;
+    }
+    match result {
         Ok(result) => Json(query::AskResponse {
             answer: result.answer,
             source_ids: result.source_ids,

@@ -351,9 +351,15 @@ impl ProxyServer {
         Parameters(params): Parameters<SurveyParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
+        let req = iris_api::query::SurveyRequest {
+            query: params.query,
+            top_k: params.top_k,
+            session_id: Some(sid),
+        };
         let resp = self
             .client
-            .survey(&cid, &params.query, params.top_k)
+            .survey_req(&cid, &req)
             .await
             .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
@@ -399,10 +405,11 @@ impl ProxyServer {
         Parameters(params): Parameters<ExtractParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
         let req = iris_api::query::ExtractRequest {
             section_id: params.section_id,
             query: params.query,
-            session_id: None,
+            session_id: Some(sid),
         };
         let resp = self
             .client
@@ -421,12 +428,14 @@ impl ProxyServer {
         Parameters(params): Parameters<SymbolsParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
         let req = iris_api::query::SymbolsRequest {
             query: params.query,
             kind: params.kind,
             module: params.module,
             visibility: params.visibility,
             limit: params.limit,
+            session_id: Some(sid),
         };
         let mut resp = self
             .client
@@ -455,9 +464,10 @@ impl ProxyServer {
         Parameters(params): Parameters<DefinitionParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
         let mut resp = self
             .client
-            .definition(&cid, &params.symbol_id)
+            .definition(&cid, &params.symbol_id, Some(&sid))
             .await
             .map_err(|e| Self::err(&e))?;
 
@@ -482,9 +492,10 @@ impl ProxyServer {
         Parameters(params): Parameters<ReferencesParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
         let mut resp = self
             .client
-            .references(&cid, &params.symbol_id)
+            .references(&cid, &params.symbol_id, Some(&sid))
             .await
             .map_err(|e| Self::err(&e))?;
 
@@ -509,11 +520,12 @@ impl ProxyServer {
         Parameters(params): Parameters<TocParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
         let req = iris_api::query::TocRequest {
             document_id: params.document_id,
             offset: params.offset,
             limit: params.limit,
-            session_id: None,
+            session_id: Some(sid),
         };
         let resp = self
             .client
@@ -532,10 +544,11 @@ impl ProxyServer {
         Parameters(params): Parameters<RelatedParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
         let req = iris_api::query::RelatedRequest {
             claim_id: params.claim_id,
             relation_types: params.relation_types.unwrap_or_default(),
-            session_id: None,
+            session_id: Some(sid),
         };
         let resp = self
             .client
@@ -554,12 +567,13 @@ impl ProxyServer {
         Parameters(params): Parameters<BridgeParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
         let req = iris_api::query::BridgeRequest {
             query: params.query,
             kind: params.kind,
             source_language: params.source_language,
             limit: params.limit,
-            session_id: None,
+            session_id: Some(sid),
         };
         let resp = self
             .client
@@ -600,8 +614,10 @@ impl ProxyServer {
         Parameters(params): Parameters<CompressParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
         let req = iris_api::session::CompressRequest {
             content_ids: params.content_ids,
+            session_id: Some(sid),
         };
         let resp = self
             .client
@@ -650,9 +666,10 @@ impl ProxyServer {
         Parameters(params): Parameters<AskParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
+        let sid = self.ensure_session().await?;
         let resp = self
             .client
-            .ask(&cid, &params.query)
+            .ask(&cid, &params.query, Some(&sid))
             .await
             .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)

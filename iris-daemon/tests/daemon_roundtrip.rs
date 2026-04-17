@@ -81,6 +81,7 @@ async fn test_symbols() {
         module: None,
         visibility: None,
         limit: None,
+        session_id: None,
     };
     let resp = client.symbols(&daemon.corpus_id, &req).await.unwrap();
     assert!(!resp.symbols.is_empty(), "should find IrisConfig symbol");
@@ -94,7 +95,7 @@ async fn test_definition() {
     let client = daemon.client();
 
     let def = client
-        .definition(&daemon.corpus_id, "sym-config::IrisConfig")
+        .definition(&daemon.corpus_id, "sym-config::IrisConfig", None)
         .await
         .unwrap();
     assert_eq!(def.name, "IrisConfig");
@@ -110,7 +111,7 @@ async fn test_references() {
     let client = daemon.client();
 
     let resp = client
-        .references(&daemon.corpus_id, "sym-config::IrisConfig")
+        .references(&daemon.corpus_id, "sym-config::IrisConfig", None)
         .await
         .unwrap();
     assert!(
@@ -233,6 +234,7 @@ async fn test_compress() {
 
     let req = iris_api::session::CompressRequest {
         content_ids: vec!["docs/auth.md#tokens".into()],
+        session_id: None,
     };
     let resp = client.compress(&daemon.corpus_id, &req).await.unwrap();
     // Extractive compression may skip very short sections, so allow 0 or 1.
@@ -251,6 +253,7 @@ async fn test_compress_unknown_ids() {
 
     let req = iris_api::session::CompressRequest {
         content_ids: vec!["nonexistent#section".into()],
+        session_id: None,
     };
     let resp = client.compress(&daemon.corpus_id, &req).await.unwrap();
     assert!(resp.summaries.is_empty());

@@ -64,6 +64,9 @@ pub struct PrefetchMetricsResponse {
 pub struct CompressRequest {
     /// Content IDs (section or symbol) to generate compressed summaries for.
     pub content_ids: Vec<String>,
+    /// Session the call belongs to, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// A single compressed content item.
