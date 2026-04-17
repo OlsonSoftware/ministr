@@ -62,6 +62,7 @@ use super::symbols::{
 ///     total_sections: 20,
 ///     total_claims: 45,
 ///     total_embeddings: 65,
+///     failed_files: vec![],
 /// };
 ///
 /// assert_eq!(stats.files_indexed + stats.files_skipped + stats.files_failed, 10);
@@ -76,6 +77,10 @@ pub struct IngestionStats {
     pub total_sections: usize,
     pub total_claims: usize,
     pub total_embeddings: usize,
+    /// Per-file failure records: `(relative_path, error_message)`. Populated
+    /// whenever the producer logs a per-file ingest failure so callers can
+    /// surface which files broke without scraping logs.
+    pub failed_files: Vec<(String, String)>,
 }
 
 impl IngestionStats {
@@ -91,6 +96,7 @@ impl IngestionStats {
             total_sections: 0,
             total_claims: 0,
             total_embeddings: 0,
+            failed_files: Vec::new(),
         }
     }
 }
@@ -1001,8 +1007,31 @@ impl IngestionPipeline {
         let mut root_file_counts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
 
-        // Manifest-level mtime fast skip
-        if !files.is_empty()
+        // Detect bridge frameworks upfront — needed both for the normal path
+        // *and* to decide whether the mtime fast-skip below is safe (bug #3:
+        // the fast-skip used to bypass bridge linking entirely, so a corpus
+        // with detected bridges could never rebuild its cross-language links
+        // on an unchanged rebuild).
+        let mut all_bridge_kinds = std::collections::BTreeSet::new();
+        for path in paths {
+            if path.is_dir() {
+                let kinds = detector::FrameworkDetector::detect(path);
+                all_bridge_kinds.extend(kinds);
+            }
+        }
+        let bridge_kinds: Vec<BridgeKind> = all_bridge_kinds.into_iter().collect();
+        let bridge_linker = create_linker_for_kinds(&bridge_kinds);
+        if !bridge_kinds.is_empty() {
+            info!(
+                kinds = ?bridge_kinds,
+                "detected bridge frameworks for cross-language linking"
+            );
+        }
+
+        // Manifest-level mtime fast skip — only taken when no bridge kinds
+        // were detected, since bridge linking runs only inside the full pass.
+        if bridge_kinds.is_empty()
+            && !files.is_empty()
             && let Ok(true) = all_files_unchanged_by_mtime(&files, paths, storage).await
         {
             info!(
@@ -1026,23 +1055,6 @@ impl IngestionPipeline {
 
         if let Some(ref progress) = self.progress {
             progress.start(files.len());
-        }
-
-        // Detect bridge frameworks
-        let mut all_bridge_kinds = std::collections::BTreeSet::new();
-        for path in paths {
-            if path.is_dir() {
-                let kinds = detector::FrameworkDetector::detect(path);
-                all_bridge_kinds.extend(kinds);
-            }
-        }
-        let bridge_kinds: Vec<BridgeKind> = all_bridge_kinds.into_iter().collect();
-        let bridge_linker = create_linker_for_kinds(&bridge_kinds);
-        if !bridge_kinds.is_empty() {
-            info!(
-                kinds = ?bridge_kinds,
-                "detected bridge frameworks for cross-language linking"
-            );
         }
 
         mem_profile::checkpoint("ingestion loop start (paths)");
@@ -1133,6 +1145,15 @@ impl IngestionPipeline {
 
     /// Run the concurrent producer/consumer pipeline shared by both ingestion
     /// entry points. Returns `(was_cancelled, embedding_count, pending_refs, bridge_endpoints)`.
+    ///
+    /// ## Failure semantics
+    ///
+    /// If the embedding consumer errors mid-stream, the shared
+    /// [`CancellationToken`] is tripped so the producer stops queueing new
+    /// parses. Every document the producer persisted but whose embeddings
+    /// didn't complete is then **rolled back** (storage records + any
+    /// already-written vectors) before the error is returned, so SQLite and
+    /// the vector index never disagree about whether a file was indexed.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn run_producer_consumer<S, E, I>(
         &self,
@@ -1162,34 +1183,66 @@ impl IngestionPipeline {
         let mut all_pending_refs = Vec::new();
         let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
 
+        // Shared cancel signal: when the consumer errors it trips this token
+        // so the producer stops scheduling new parses and exits promptly.
+        // Combined with any caller-supplied token via a parent/child check.
+        let internal_ct = CancellationToken::new();
+        let external_ct = ct;
+
+        // Track every document we actually persisted so we can roll back on
+        // embedding failure (bug #1: partial-write corpus corruption).
+        let indexed_doc_ids: std::sync::Mutex<Vec<crate::types::ContentId>> =
+            std::sync::Mutex::new(Vec::new());
+
         let producer = async {
             let mut cancelled = false;
             let mut parse_stream = std::pin::pin!(
                 stream::iter(file_items)
                     .take_while(|_| {
-                        let stop = ct.is_some_and(CancellationToken::is_cancelled);
+                        let external_stop =
+                            external_ct.is_some_and(CancellationToken::is_cancelled);
+                        let internal_stop = internal_ct.is_cancelled();
+                        let stop = external_stop || internal_stop;
                         async move { !stop }
                     })
-                    .map(|item| async {
-                        let result = self
-                            .parse_and_store_file(
-                                &item.path,
-                                &item.relative,
-                                storage,
-                                index,
-                                active_graph,
-                                bridge_linker,
-                            )
-                            .await;
-                        (item, result)
+                    .map(|item| {
+                        // Bug #6: announce the file as *started* — before the
+                        // parse kicks off — so the UI shows work in progress,
+                        // not the previous finished file.
+                        if let Some(ref progress) = self.progress {
+                            progress.set_current_file(&item.relative);
+                        }
+                        let internal_ct = internal_ct.clone();
+                        async move {
+                            // Bug #2 (partial): check cancellation at parse
+                            // entry so futures that `buffer_unordered` queued
+                            // before a cancel fires don't spend CPU parsing a
+                            // file the caller has already abandoned. Inner
+                            // parse steps remain non-cancelable — threading
+                            // the token through tree-sitter + extractors is
+                            // a follow-up.
+                            if internal_ct.is_cancelled()
+                                || external_ct.is_some_and(CancellationToken::is_cancelled)
+                            {
+                                return (item, Ok(FileResult::Skipped));
+                            }
+                            let result = self
+                                .parse_and_store_file(
+                                    &item.path,
+                                    &item.relative,
+                                    storage,
+                                    index,
+                                    active_graph,
+                                    bridge_linker,
+                                )
+                                .await;
+                            (item, result)
+                        }
                     })
                     .buffer_unordered(concurrency)
             );
 
             while let Some((item, result)) = parse_stream.next().await {
-                if let Some(ref progress) = self.progress {
-                    progress.set_current_file(&item.relative);
-                }
                 match result {
                     Ok(FileResult::Skipped) => {
                         debug!(path = %item.relative, "unchanged, skipping");
@@ -1209,15 +1262,20 @@ impl IngestionPipeline {
                         all_pending_refs.extend(pending_refs);
                         all_bridge_endpoints.extend(bridge_endpoints);
 
+                        // Track this doc for rollback on consumer failure.
+                        let doc_id = crate::types::ContentId(item.relative.clone());
+                        if let Ok(mut guard) = indexed_doc_ids.lock() {
+                            guard.push(doc_id.clone());
+                        }
+
                         if let Some(ref progress) = self.progress {
                             progress.add_sections_done(sections);
                         }
 
-                        if let Some(ref rid) = item.root_id {
-                            let doc_id = crate::types::ContentId(item.relative.clone());
-                            if let Err(e) = storage.set_document_root(&doc_id, rid).await {
-                                debug!(path = %item.relative, error = %e, "failed to set document root");
-                            }
+                        if let Some(ref rid) = item.root_id
+                            && let Err(e) = storage.set_document_root(&doc_id, rid).await
+                        {
+                            debug!(path = %item.relative, error = %e, "failed to set document root");
                         }
 
                         if !embedding_pairs.is_empty() {
@@ -1225,13 +1283,18 @@ impl IngestionPipeline {
                                 progress.add_embeddings_total(embedding_pairs.len());
                             }
                             if embed_tx.send(embedding_pairs).await.is_err() {
+                                // Consumer dropped rx — it errored. Stop.
                                 break;
                             }
                         }
                     }
                     Err(e) => {
-                        warn!(path = %item.relative, error = %e, "failed to ingest file");
+                        // Bug #5: record the failing path + reason so callers
+                        // can surface the failure without scraping logs.
+                        let reason = e.to_string();
+                        tracing::error!(path = %item.relative, error = %reason, "failed to ingest file");
                         stats.files_failed += 1;
+                        stats.failed_files.push((item.relative.clone(), reason));
                     }
                 }
 
@@ -1241,7 +1304,9 @@ impl IngestionPipeline {
             }
             drop(embed_tx);
 
-            if ct.is_some_and(CancellationToken::is_cancelled) {
+            if external_ct.is_some_and(CancellationToken::is_cancelled)
+                || internal_ct.is_cancelled()
+            {
                 cancelled = true;
             }
             cancelled
@@ -1252,8 +1317,9 @@ impl IngestionPipeline {
             .as_ref()
             .zip(self.full_dim_storage.as_ref());
         let progress_ref = self.progress.as_ref();
-        let consumer = async {
-            if let Some((dual_emb, full_storage)) = dual {
+        let internal_ct_for_consumer = internal_ct.clone();
+        let consumer = async move {
+            let result = if let Some((dual_emb, full_storage)) = dual {
                 Self::run_embedding_consumer_dual(
                     embed_rx,
                     dual_emb.as_ref(),
@@ -1264,10 +1330,44 @@ impl IngestionPipeline {
                 .await
             } else {
                 Self::run_embedding_consumer(embed_rx, embedder, index, progress_ref).await
+            };
+            // Bug #4: trip the shared cancel so the producer exits instead of
+            // continuing to persist files that will immediately be rolled back.
+            if result.is_err() {
+                internal_ct_for_consumer.cancel();
             }
+            result
         };
 
         let (was_cancelled, embed_result) = futures::join!(producer, consumer);
+
+        // If the embedding side failed, roll back every document we persisted
+        // so SQLite never has sections/claims/symbols without matching vectors.
+        if let Err(ref err) = embed_result {
+            let docs_to_rollback = indexed_doc_ids
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            tracing::error!(
+                docs = docs_to_rollback.len(),
+                error = %err,
+                "embedding failed — rolling back partially-indexed documents",
+            );
+            for doc_id in &docs_to_rollback {
+                if let Err(e) =
+                    super::embedding::delete_document_vectors(doc_id, storage, index).await
+                {
+                    warn!(doc_id = %doc_id, error = %e, "rollback: delete vectors failed");
+                }
+                if let Err(e) = storage.delete_document(doc_id).await {
+                    warn!(doc_id = %doc_id, error = %e, "rollback: delete document failed");
+                }
+                if let Err(e) = storage.delete_file_hash(&doc_id.0).await {
+                    warn!(doc_id = %doc_id, error = %e, "rollback: delete file hash failed");
+                }
+            }
+        }
+
         let embed_count = embed_result?;
 
         if let Some(ref progress) = self.progress {
