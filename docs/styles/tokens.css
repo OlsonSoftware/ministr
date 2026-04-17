@@ -1100,101 +1100,118 @@
   }
 
   /* ---------- D2 theme override ----------
-     The D2 mkdocs plugin ships with a handful of fixed color themes
-     (3 = light, 201 = dark). Their palette doesn't match the iris
-     design system, so we override every meaningful fill/stroke class
-     D2 emits and remap it onto our tokens. The result: containers and
-     shapes feel like iris cards, connections pick up the accent, and
-     the big white canvas rect disappears. */
+     The D2 mkdocs plugin ships with fixed color themes (3 = light,
+     201 = dark). Their palette clashes with the iris design system,
+     so we override every meaningful fill/stroke class D2 emits and
+     remap it onto our tokens.
 
-  .iris-diagram svg {
-    /* Strip the painted canvas rect that sits behind the entire
-       diagram — D2 emits this as .fill-N7. We want to see the card
-       gradient instead. */
-  }
+     NOTE: lightningcss (used by Tailwind v4) strips color-mix() and
+     keeps only the first arg, so every diagram rule uses direct rgb
+     or rgba values rather than color-mix. */
+
   .iris-diagram svg .fill-N7 {
     fill: transparent !important;
   }
 
-  /* Primary shape fill (rectangles used for nodes). */
+  /* Primary shape fill (the main rectangle of each node). */
   .iris-diagram svg .fill-B4 {
-    fill: var(--color-surface-raised) !important;
+    fill: rgb(22 23 50) !important; /* dark surface-raised */
   }
-  /* Secondary / container shapes. */
+  /* Secondary / nested container fill. */
   .iris-diagram svg .fill-B5 {
-    fill: color-mix(
-      in srgb,
-      var(--color-surface-raised) 70%,
-      transparent
-    ) !important;
+    fill: rgba(22, 23, 50, 0.55) !important;
   }
   /* Cylinder accents (storage shapes). */
   .iris-diagram svg .fill-AA5 {
-    fill: color-mix(
-      in srgb,
-      var(--color-accent) 20%,
-      var(--color-surface-raised)
-    ) !important;
+    fill: rgba(129, 140, 248, 0.22) !important;
   }
   /* Arrowheads. */
   .iris-diagram svg .fill-B1 {
-    fill: color-mix(
-      in srgb,
-      var(--color-accent) 80%,
-      var(--color-text-muted)
-    ) !important;
+    fill: rgb(165 180 252) !important;
   }
 
-  /* Shape + connection strokes. D2 reuses stroke-B1 for both the shape
-     border and the connection line, so one rule handles both. */
+  /* Shape + connection strokes. D2 reuses stroke-B1 for both shape
+     borders and connection lines. Give everything a visible, iris-
+     accented border by default. */
   .iris-diagram svg .stroke-B1 {
-    stroke: color-mix(
-      in srgb,
-      var(--color-border-hover) 70%,
-      var(--color-accent) 30%
-    ) !important;
+    stroke: rgb(99 102 241) !important;
     stroke-width: 1.25px !important;
+    stroke-opacity: 0.55 !important;
   }
 
-  /* Give connection lines a softer, iris-accented treatment. */
+  /* Connections: iris-tinted line with a slightly thicker weight and
+     subtle glow for readability. */
   .iris-diagram svg .connection {
-    stroke: color-mix(
-      in srgb,
-      var(--color-accent) 55%,
-      var(--color-text-muted)
-    ) !important;
+    stroke: rgb(129 140 248) !important;
     stroke-width: 1.5px !important;
-    opacity: 0.85;
+    stroke-opacity: 0.85 !important;
   }
 
-  /* Text inside shapes is emitted with .fill-N1 (dark ink). Remap to
-     the current text token so labels are readable on our iris surfaces. */
+  /* Text inside shapes (fill-N1 = D2's dark ink). Remap to the iris
+     text token and the iris font stack so labels match the docs. */
+  .iris-diagram svg text {
+    font-family:
+      "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+      Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  }
   .iris-diagram svg text.fill-N1,
   .iris-diagram svg .fill-N1 {
-    fill: var(--color-text) !important;
-    font-family: var(--font-sans) !important;
-    font-weight: 500;
+    fill: rgb(229 231 235) !important;
+    font-weight: 500 !important;
   }
-  /* Container labels (the small headers like "MCP clients", "iris",
-     "Local storage") sit at the top-left of each container; give them
-     a calmer, uppercase treatment so they read as section labels. */
   .iris-diagram svg text.text-bold {
     font-weight: 650 !important;
     letter-spacing: 0.01em;
+  }
+  /* Connection edge labels (the tiny words like "napi", "pyo3",
+     "tauri" on the bridges diagram). They're emitted inside a
+     connection <g>, so target them explicitly. */
+  .iris-diagram svg .connection text,
+  .iris-diagram svg g.connection + text,
+  .iris-diagram svg text.connection {
+    fill: rgb(156 163 175) !important;
+    font-weight: 500 !important;
+    font-size: 12px !important;
+  }
+
+  /* Light-mode overrides. Reading the scheme off body means these
+     apply when Material toggles data-md-color-scheme="default". */
+  [data-md-color-scheme="default"] .iris-diagram svg .fill-B4 {
+    fill: rgb(255 255 255) !important;
+  }
+  [data-md-color-scheme="default"] .iris-diagram svg .fill-B5 {
+    fill: rgba(244, 244, 245, 0.85) !important;
+  }
+  [data-md-color-scheme="default"] .iris-diagram svg .fill-AA5 {
+    fill: rgba(99, 102, 241, 0.12) !important;
+  }
+  [data-md-color-scheme="default"] .iris-diagram svg .fill-B1 {
+    fill: rgb(79 70 229) !important;
+  }
+  [data-md-color-scheme="default"] .iris-diagram svg .stroke-B1 {
+    stroke: rgb(99 102 241) !important;
+    stroke-opacity: 0.55 !important;
+  }
+  [data-md-color-scheme="default"] .iris-diagram svg .connection {
+    stroke: rgb(79 70 229) !important;
+    stroke-opacity: 0.8 !important;
+  }
+  [data-md-color-scheme="default"] .iris-diagram svg text.fill-N1,
+  [data-md-color-scheme="default"] .iris-diagram svg .fill-N1 {
+    fill: rgb(28 25 23) !important;
   }
 
   /* Accented hover for interactive nodes (set by diagrams.js). */
   .iris-diagram--interactive .iris-diagram__node:hover rect,
   .iris-diagram--interactive .iris-diagram__node:hover path,
   .iris-diagram--interactive .iris-diagram__node:hover ellipse {
-    stroke: var(--color-accent) !important;
+    stroke: rgb(165 180 252) !important;
     stroke-width: 1.75px !important;
-    filter: drop-shadow(
-      0 0 6px color-mix(in srgb, var(--color-accent) 60%, transparent)
-    );
+    stroke-opacity: 1 !important;
+    filter: drop-shadow(0 0 6px rgba(165, 180, 252, 0.6));
     transition:
-      stroke 120ms var(--ease-standard),
-      filter 120ms var(--ease-standard);
+      stroke 120ms ease-out,
+      filter 120ms ease-out;
   }
 
   /* ---------- Session trace (terminal-style) ---------- */
