@@ -24,12 +24,30 @@ use crate::status::DaemonStatus;
 pub enum ClientError {
     /// Failed to connect to the daemon socket.
     Connect(String),
-    /// HTTP request failed.
+    /// HTTP request failed (write error, read error, malformed response).
     Request(String),
-    /// Failed to deserialize the response.
+    /// Failed to deserialize a 2xx response body.
     Deserialize(String),
-    /// Daemon returned an error response.
+    /// Daemon returned a structured `ApiError` (any 4xx/5xx whose body
+    /// parses as `ApiError`).
     Api(ApiError),
+    /// Daemon returned a non-2xx status with a body that wasn't
+    /// `ApiError`-shaped (e.g. a hyper internal error page). Callers
+    /// that need to distinguish transient server faults from app-level
+    /// errors can branch on `code`.
+    HttpStatus {
+        /// HTTP status code from the response status line.
+        code: u16,
+        /// Raw response body (lossily decoded to UTF-8).
+        body: String,
+    },
+    /// The whole request–response cycle exceeded [`REQUEST_TIMEOUT`].
+    Timeout {
+        /// Human description of the method + path that timed out.
+        operation: String,
+        /// How long we waited before giving up (ms).
+        elapsed_ms: u128,
+    },
 }
 
 impl std::fmt::Display for ClientError {
@@ -39,11 +57,34 @@ impl std::fmt::Display for ClientError {
             Self::Request(msg) => write!(f, "request failed: {msg}"),
             Self::Deserialize(msg) => write!(f, "response decode failed: {msg}"),
             Self::Api(err) => write!(f, "daemon error: {err}"),
+            Self::HttpStatus { code, body } => {
+                write!(f, "daemon returned HTTP {code}: {body}")
+            }
+            Self::Timeout {
+                operation,
+                elapsed_ms,
+            } => write!(f, "daemon {operation} timed out after {elapsed_ms}ms"),
         }
     }
 }
 
 impl std::error::Error for ClientError {}
+
+/// Request timeout for every call that goes through [`DaemonClient::raw_request`].
+///
+/// Chosen to be longer than the daemon's `iris_ask` inference timeout
+/// (120s today) so legitimate sub-inference calls can complete, while
+/// still surfacing genuine daemon hangs in bounded time.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// Connect-time retry backoffs — applied only *before* any bytes go
+/// over the wire, so non-idempotent requests aren't replayed. Tuned to
+/// cover a daemon-restart-and-socket-rebind window (typically <1s).
+const CONNECT_RETRY_BACKOFFS: [std::time::Duration; 3] = [
+    std::time::Duration::from_millis(200),
+    std::time::Duration::from_millis(500),
+    std::time::Duration::from_millis(1000),
+];
 
 /// HTTP client for the iris daemon API over Unix domain socket.
 ///
@@ -577,97 +618,178 @@ impl DaemonClient {
     // -- HTTP primitives over UDS --
 
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
-        let resp = self.raw_request("GET", path, None).await?;
-        Self::parse_response(&resp)
+        let (code, body) = self.raw_request("GET", path, None).await?;
+        Self::parse_response(code, &body)
     }
 
     async fn post<T: DeserializeOwned>(
         &self,
         path: &str,
-        body: &impl serde::Serialize,
+        req: &impl serde::Serialize,
     ) -> Result<T, ClientError> {
-        let json = serde_json::to_vec(body).map_err(|e| ClientError::Request(e.to_string()))?;
-        let resp = self.raw_request("POST", path, Some(json)).await?;
-        Self::parse_response(&resp)
+        let json = serde_json::to_vec(req).map_err(|e| ClientError::Request(e.to_string()))?;
+        let (code, body) = self.raw_request("POST", path, Some(json)).await?;
+        Self::parse_response(code, &body)
     }
 
     async fn delete(&self, path: &str) -> Result<Vec<u8>, ClientError> {
-        self.raw_request("DELETE", path, None).await
+        let (code, body) = self.raw_request("DELETE", path, None).await?;
+        if !(200..300).contains(&code) {
+            return Err(err_for_status(code, &body));
+        }
+        Ok(body)
     }
 
     /// Send a raw HTTP request over the platform IPC channel.
     ///
     /// Uses Unix domain sockets on macOS/Linux and named pipes on Windows.
     /// Implements a minimal HTTP/1.1 client to avoid heavy dependencies.
+    ///
+    /// Returns `(status_code, body)` — the caller is responsible for
+    /// interpreting the status. Each invocation:
+    ///
+    /// 1. Runs under a single [`REQUEST_TIMEOUT`] so a hung daemon can't
+    ///    stall the caller indefinitely.
+    /// 2. Retries `UnixStream::connect` with [`CONNECT_RETRY_BACKOFFS`]
+    ///    so a daemon-restart window (brief socket unavailability)
+    ///    doesn't fail every concurrent tool call. Retries only before
+    ///    any bytes are written — non-idempotent requests are never
+    ///    replayed.
     async fn raw_request(
         &self,
         method: &str,
         path: &str,
         body: Option<Vec<u8>>,
-    ) -> Result<Vec<u8>, ClientError> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    ) -> Result<(u16, Vec<u8>), ClientError> {
+        let op = format!("{method} {path}");
+        let started = std::time::Instant::now();
 
-        let mut stream = self.connect().await?;
+        let result = tokio::time::timeout(REQUEST_TIMEOUT, async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        // Build HTTP/1.1 request.
-        let content_length = body.as_ref().map_or(0, Vec::len);
-        let request = format!(
-            "{method} {path} HTTP/1.1\r\n\
-             Host: localhost\r\n\
-             Content-Type: application/json\r\n\
-             Content-Length: {content_length}\r\n\
-             Connection: close\r\n\
-             \r\n"
-        );
+            let mut stream = self.connect_with_retry().await?;
 
-        stream
-            .write_all(request.as_bytes())
-            .await
-            .map_err(|e| ClientError::Request(e.to_string()))?;
-        if let Some(body) = body {
+            // Build HTTP/1.1 request.
+            let content_length = body.as_ref().map_or(0, Vec::len);
+            let request = format!(
+                "{method} {path} HTTP/1.1\r\n\
+                 Host: localhost\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {content_length}\r\n\
+                 Connection: close\r\n\
+                 \r\n"
+            );
+
             stream
-                .write_all(&body)
+                .write_all(request.as_bytes())
                 .await
                 .map_err(|e| ClientError::Request(e.to_string()))?;
+            if let Some(body) = body {
+                stream
+                    .write_all(&body)
+                    .await
+                    .map_err(|e| ClientError::Request(e.to_string()))?;
+            }
+
+            // Read entire response. Server sends `Connection: close`
+            // framing so EOF terminates the body.
+            let mut response = Vec::new();
+            stream
+                .read_to_end(&mut response)
+                .await
+                .map_err(|e| ClientError::Request(e.to_string()))?;
+
+            // Parse the status line: "HTTP/1.1 200 OK\r\n..."
+            let status_line_end = response
+                .windows(2)
+                .position(|w| w == b"\r\n")
+                .ok_or_else(|| ClientError::Request("response missing status line".into()))?;
+            let status_line = std::str::from_utf8(&response[..status_line_end])
+                .map_err(|_| ClientError::Request("status line is not UTF-8".into()))?;
+            let code: u16 = status_line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| ClientError::Request(format!("bad status line: {status_line}")))?;
+
+            // Extract body (after the \r\n\r\n header terminator).
+            let header_end = response
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .ok_or_else(|| ClientError::Request("malformed HTTP response".into()))?;
+
+            Ok::<_, ClientError>((code, response[header_end + 4..].to_vec()))
+        })
+        .await;
+
+        match result {
+            Ok(inner) => inner,
+            Err(_) => Err(ClientError::Timeout {
+                operation: op,
+                elapsed_ms: started.elapsed().as_millis(),
+            }),
         }
-
-        // Read entire response.
-        let mut response = Vec::new();
-        stream
-            .read_to_end(&mut response)
-            .await
-            .map_err(|e| ClientError::Request(e.to_string()))?;
-
-        // Extract body (after the \r\n\r\n header terminator).
-        let header_end = response
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .ok_or_else(|| ClientError::Request("malformed HTTP response".to_string()))?;
-
-        Ok(response[header_end + 4..].to_vec())
     }
 
-    /// Connect to the daemon's IPC channel (UDS on Unix, named pipe on Windows).
+    /// Connect with small retry/backoff to ride out a daemon-restart window.
     #[cfg(unix)]
-    async fn connect(&self) -> Result<tokio::net::UnixStream, ClientError> {
-        tokio::net::UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| ClientError::Connect(format!("{}: {e}", self.socket_path.display())))
+    async fn connect_with_retry(&self) -> Result<tokio::net::UnixStream, ClientError> {
+        let mut last_err: Option<std::io::Error> = None;
+        for (attempt, delay) in std::iter::once(None)
+            .chain(CONNECT_RETRY_BACKOFFS.iter().copied().map(Some))
+            .enumerate()
+        {
+            if let Some(d) = delay {
+                tokio::time::sleep(d).await;
+            }
+            match tokio::net::UnixStream::connect(&self.socket_path).await {
+                Ok(s) => return Ok(s),
+                Err(e) => {
+                    // iris-api has no tracing dependency by design — the
+                    // retry loop is silent. The final `Connect` error
+                    // carries the last OS error for diagnostics.
+                    let _ = attempt;
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(ClientError::Connect(format!(
+            "{}: {}",
+            self.socket_path.display(),
+            last_err.map_or_else(|| "unknown".to_string(), |e| e.to_string()),
+        )))
     }
 
-    fn parse_response<T: DeserializeOwned>(body: &[u8]) -> Result<T, ClientError> {
-        // Try to parse as the expected type first.
-        if let Ok(value) = serde_json::from_slice::<T>(body) {
-            return Ok(value);
+    fn parse_response<T: DeserializeOwned>(code: u16, body: &[u8]) -> Result<T, ClientError> {
+        if (200..300).contains(&code) {
+            // 2xx: parse body as the expected type. An empty 2xx body
+            // is unusual (204 routes return via `delete` which takes a
+            // different path) — surface it as a clear deserialize error
+            // instead of a cryptic serde message.
+            if body.is_empty() {
+                return Err(ClientError::Deserialize(format!(
+                    "empty body from daemon (HTTP {code})"
+                )));
+            }
+            return serde_json::from_slice::<T>(body).map_err(|e| {
+                ClientError::Deserialize(format!("{e}: {}", String::from_utf8_lossy(body)))
+            });
         }
-        // If that fails, try to parse as an API error.
-        if let Ok(err) = serde_json::from_slice::<ApiError>(body) {
-            return Err(ClientError::Api(err));
-        }
-        // Last resort: raw deserialization error.
-        Err(ClientError::Deserialize(
-            String::from_utf8_lossy(body).into_owned(),
-        ))
+        // Non-2xx: prefer structured ApiError, fall back to HttpStatus.
+        Err(err_for_status(code, body))
+    }
+}
+
+/// Build a [`ClientError`] for a non-2xx response — prefer `Api` when
+/// the body parses as the structured error shape, otherwise surface
+/// the raw status + body via `HttpStatus`.
+fn err_for_status(code: u16, body: &[u8]) -> ClientError {
+    if let Ok(err) = serde_json::from_slice::<ApiError>(body) {
+        return ClientError::Api(err);
+    }
+    ClientError::HttpStatus {
+        code,
+        body: String::from_utf8_lossy(body).into_owned(),
     }
 }
 
