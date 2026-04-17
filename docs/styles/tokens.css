@@ -1061,34 +1061,11 @@
     margin: calc(var(--spacing) * 4) auto calc(var(--spacing) * 12);
     max-width: 900px;
     padding: calc(var(--spacing) * 6);
-    background:
-      radial-gradient(
-        600px 300px at 20% 0%,
-        color-mix(in srgb, var(--color-accent) 10%, transparent),
-        transparent 70%
-      ),
-      linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--color-surface-raised) 60%, transparent),
-        var(--color-surface-sunken) 85%
-      );
+    background: var(--color-surface);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-2xl);
-    box-shadow:
-      inset 0 1px 0 color-mix(in srgb, white 4%, transparent),
-      var(--shadow-sm);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-sm);
     overflow: hidden;
-  }
-  .iris-diagram::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: radial-gradient(
-      400px 200px at 50% 0%,
-      color-mix(in srgb, var(--color-accent) 12%, transparent),
-      transparent 70%
-    );
   }
   .iris-diagram .d2,
   .iris-diagram svg {
@@ -1113,38 +1090,45 @@
     fill: transparent !important;
   }
 
-  /* Primary shape fill (the main rectangle of each node). */
+  /* Primary shape fill (the main rectangle of each node). Matches the
+     iris-features / iris-why card surface exactly so the shapes read
+     as the same component family as the cards elsewhere on the page. */
   .iris-diagram svg .fill-B4 {
-    fill: rgb(22 23 50) !important; /* dark surface-raised */
+    fill: rgb(17 18 36) !important;
   }
-  /* Secondary / nested container fill. */
+  /* Secondary / container shells — sit slightly darker so nested
+     shapes pop against them. */
   .iris-diagram svg .fill-B5 {
-    fill: rgba(22, 23, 50, 0.55) !important;
+    fill: rgba(10, 10, 18, 0.5) !important;
   }
-  /* Cylinder accents (storage shapes). */
+  /* Cylinder accents (storage shapes). Very subtle iris tint. */
   .iris-diagram svg .fill-AA5 {
-    fill: rgba(129, 140, 248, 0.22) !important;
+    fill: rgb(17 18 36) !important;
   }
   /* Arrowheads. */
   .iris-diagram svg .fill-B1 {
-    fill: rgb(165 180 252) !important;
+    fill: rgb(129 140 248) !important;
   }
 
-  /* Shape + connection strokes. D2 reuses stroke-B1 for both shape
-     borders and connection lines. Give everything a visible, iris-
-     accented border by default. */
+  /* Shape borders — match the exact .iris-card token so diagrams read
+     as a grid of small cards rather than a separate visual system. */
   .iris-diagram svg .stroke-B1 {
-    stroke: rgb(99 102 241) !important;
-    stroke-width: 1.25px !important;
-    stroke-opacity: 0.55 !important;
+    stroke: rgb(38 40 74) !important;
+    stroke-width: 1px !important;
+    stroke-opacity: 1 !important;
   }
 
-  /* Connections: iris-tinted line with a slightly thicker weight and
-     subtle glow for readability. */
+  /* Rounded corners on every rect to match the iris card radius. */
+  .iris-diagram svg rect {
+    rx: 8 !important;
+    ry: 8 !important;
+  }
+
+  /* Connections: subtle muted stroke with a slight iris hue. */
   .iris-diagram svg .connection {
     stroke: rgb(129 140 248) !important;
-    stroke-width: 1.5px !important;
-    stroke-opacity: 0.85 !important;
+    stroke-width: 1.25px !important;
+    stroke-opacity: 0.7 !important;
   }
 
   /* Text inside shapes (fill-N1 = D2's dark ink). Remap to the iris
