@@ -362,13 +362,23 @@ When new content is delivered:
 
 The budget tracker maps window utilization to three pressure levels:
 
-```
- 0%                    80%              95%            100%
-  ├─────── Normal ──────┼── Elevated ────┼── Critical ──┤
-  │                     │                │              │
-  │ Full section text   │ Compressed to  │ Summaries    │
-  │ at requested        │ claim-level,   │ only, strong │
-  │ resolution          │ eviction recs  │ eviction recs│
+```d2
+direction: right
+
+normal: "Normal\n(0 – 80%)\nFull section text\nat requested resolution" {
+  shape: rectangle
+}
+
+elevated: "Elevated\n(80 – 95%)\nClaim-level compression\n+ eviction recs" {
+  shape: rectangle
+}
+
+critical: "Critical\n(95 – 100%)\nSummaries only\nstrong eviction recs" {
+  shape: rectangle
+}
+
+normal -> elevated
+elevated -> critical
 ```
 
 When pressure is `Elevated`, iris automatically compresses responses to claim-level
@@ -520,20 +530,17 @@ not the full text again.
 iris indexes content at multiple granularity levels and delivers at the
 appropriate resolution based on context budget pressure:
 
-```
-Resolution Levels:
+```d2
+direction: down
 
-  Document ──── "Here's the entire file"
-       │
-  Section ───── "Here's the #login function section"
-       │
-  Claim ──────── "login() validates JWT tokens and returns a User struct"
-       │
-  Summary ────── "Auth module: handles JWT validation, session management"
+doc: "Document\n\"Here's the entire file\"" { shape: rectangle }
+section: "Section\n\"Here's the #login function section\"" { shape: rectangle }
+claim: "Claim\n\"login() validates JWT tokens\nand returns a User struct\"" { shape: rectangle }
+summary: "Summary\n\"Auth module: handles JWT validation,\nsession management\"" { shape: rectangle }
 
-                 ▲                    ▲                    ▲
-              Normal               Elevated             Critical
-           budget pressure      budget pressure      budget pressure
+doc -> section: section-level resolution
+section -> claim: claim-level (elevated pressure)
+claim -> summary: summary-only (critical pressure)
 ```
 
 ### Delta Delivery
@@ -563,17 +570,28 @@ iris doesn't just search text. It builds a rich code model:
 
 ### Symbol Table
 
-```
-tree-sitter AST parse
-       │
-       ├─ Extract symbols: structs, functions, traits, enums, impls
-       │    Name, kind, visibility, module path, signature, doc comments
-       │
-       ├─ Extract references: who calls what, who imports what
-       │    Callers, callees, implementors, importers
-       │
-       └─ Language refinements: per-language post-processing
-            Rust, TypeScript, Python, Go, Java, C, C++, Swift, Kotlin
+```d2
+direction: down
+
+parse: "tree-sitter AST parse" {
+  shape: rectangle
+}
+
+extract: Extraction {
+  symbols: "Symbols\nstructs, fns, traits, enums, impls\n+ name / kind / vis / module / sig / docs" {
+    shape: rectangle
+  }
+  refs: "References\ncallers, callees, implementors, importers" {
+    shape: rectangle
+  }
+  lang: "Language refinements\nper-language post-processing\nRust · TS · Py · Go · Java · C · C++ · Swift · Kotlin" {
+    shape: rectangle
+  }
+}
+
+parse -> extract.symbols
+parse -> extract.refs
+parse -> extract.lang
 ```
 
 ### Cross-Language Bridges
@@ -634,26 +652,24 @@ keeping the storage implementation swappable.
 
 Each iris MCP tool maps to a method chain:
 
-```
-MCP Tool              IrisServer method        QueryService method
-─────────────────────────────────────────────────────────────────
-iris_survey      →    handle_survey()      →    survey_excluding()
-iris_read        →    handle_read()        →    read_section()
-iris_extract     →    handle_extract()     →    extract_claims()
-iris_symbols     →    handle_symbols()     →    search_symbols()
-iris_definition  →    handle_definition()  →    symbol_definition()
-iris_references  →    handle_references()  →    symbol_references()
-iris_toc         →    handle_toc()         →    table_of_contents()
-iris_budget      →    handle_budget()      →    (session state only)
-iris_compress    →    handle_compress()    →    compress_for_eviction()
-iris_evicted     →    handle_evicted()     →    (session state only)
-iris_fetch       →    handle_fetch()       →    WebFetcher + ingest
-iris_clone       →    handle_clone()       →    GitFetcher + ingest
-iris_refresh     →    handle_refresh()     →    WebFetcher staleness check
-iris_bridge      →    handle_bridge()      →    search_bridge_links()
-iris_related     →    handle_related()     →    related_claims()
-iris_task        →    handle_task()        →    (task manager state)
-```
+| MCP Tool | `IrisServer` method | `QueryService` method |
+|---|---|---|
+| `iris_survey` | `handle_survey()` | `survey_excluding()` |
+| `iris_read` | `handle_read()` | `read_section()` |
+| `iris_extract` | `handle_extract()` | `extract_claims()` |
+| `iris_symbols` | `handle_symbols()` | `search_symbols()` |
+| `iris_definition` | `handle_definition()` | `symbol_definition()` |
+| `iris_references` | `handle_references()` | `symbol_references()` |
+| `iris_toc` | `handle_toc()` | `table_of_contents()` |
+| `iris_budget` | `handle_budget()` | *(session state only)* |
+| `iris_compress` | `handle_compress()` | `compress_for_eviction()` |
+| `iris_evicted` | `handle_evicted()` | *(session state only)* |
+| `iris_fetch` | `handle_fetch()` | `WebFetcher` + ingest |
+| `iris_clone` | `handle_clone()` | `GitFetcher` + ingest |
+| `iris_refresh` | `handle_refresh()` | `WebFetcher` staleness check |
+| `iris_bridge` | `handle_bridge()` | `search_bridge_links()` |
+| `iris_related` | `handle_related()` | `related_claims()` |
+| `iris_task` | `handle_task()` | *(task manager state)* |
 
 Every response wraps the result data with `budget_status`, so the agent always
 knows how much context budget it has remaining.
