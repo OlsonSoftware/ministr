@@ -99,7 +99,7 @@ A Homebrew tap (`AlrikOlson/homebrew-tap`) and a crates.io publish land with 1.0
 | | |
 |---|---|
 | [Tool reference](https://AlrikOlson.github.io/iris-rs/tools/README.html) | All MCP tools with parameters and examples |
-| [Architecture](https://alrikolson.github.io/iris-rs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
+| [Architecture](https://AlrikOlson.github.io/iris-rs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
 | [Design specification](DESIGN.md) | Research references and design rationale |
 | [Configuration](https://AlrikOlson.github.io/iris-rs/configuration.html) | `.iris.toml` options and CLI flags |
 | [Deployment](deploy/README.md) | Docker, Fly.io, Railway, nginx/Caddy reverse proxy |
