@@ -1,7 +1,16 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { GitBranch, Search, Code2 } from "lucide-react";
+import {
+  GitBranch,
+  Search,
+  Code2,
+  ArrowRight,
+  Loader2,
+} from "lucide-react";
 import { Card } from "./ui/card";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import { cn } from "../lib/utils";
 import type { DaemonStatus, SymbolInfo, SymbolRef } from "../lib/types";
 
 interface Props {
@@ -62,7 +71,6 @@ export function SymbolGraph({ status }: Props) {
     }
   }
 
-  // Build a mini graph from the selected symbol + its refs
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   if (selected) {
@@ -97,11 +105,10 @@ export function SymbolGraph({ status }: Props) {
       edges.push({ from: r.from_name, to: r.to_name, kind: r.ref_kind });
     }
 
-    // Simple circular layout
     const allNodes = Array.from(nodeSet.values());
-    const cx = 200;
-    const cy = 150;
-    const radius = Math.min(120, allNodes.length * 20);
+    const cx = 250;
+    const cy = 175;
+    const radius = Math.min(140, allNodes.length * 22);
     allNodes.forEach((n, i) => {
       if (n.name === selected.name) {
         n.x = cx;
@@ -116,16 +123,21 @@ export function SymbolGraph({ status }: Props) {
   }
 
   return (
-    <div className="space-y-3">
-      <h2 className="text-sm font-medium text-text-muted uppercase tracking-wider flex items-center gap-2">
-        <GitBranch className="h-4 w-4" /> Symbol Graph
-      </h2>
-
-      <div className="flex items-center gap-2">
+    <div className="space-y-4 iris-fade-in">
+      <header className="flex items-end justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-base font-semibold text-text flex items-center gap-2">
+            <GitBranch className="h-4 w-4 text-accent" />
+            Symbol graph
+          </h2>
+          <p className="text-xs text-text-dim mt-0.5">
+            Search symbols, then pick one to see its call/implementation graph.
+          </p>
+        </div>
         <select
           value={corpusId}
           onChange={(e) => setCorpusId(e.target.value)}
-          className="text-xs bg-surface-raised border border-border rounded px-2 py-1.5"
+          className="h-8 rounded-md border border-border/70 bg-surface-raised px-2.5 text-xs font-mono text-text cursor-pointer focus:outline-none focus:border-[var(--color-accent-ring)] focus:shadow-[0_0_0_3px_var(--color-accent-soft)]"
         >
           {status.corpora.map((c) => (
             <option key={c.id} value={c.id}>
@@ -133,57 +145,113 @@ export function SymbolGraph({ status }: Props) {
             </option>
           ))}
         </select>
-      </div>
+      </header>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          searchSymbols();
-        }}
-        className="flex gap-2"
-      >
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search symbols..."
-          className="flex-1 text-sm bg-surface-raised border border-border rounded px-3 py-1.5 placeholder:text-text-dim/50 focus:outline-none focus:ring-1 focus:ring-accent"
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="px-3 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent/90 disabled:opacity-50 cursor-pointer"
+      <Card className="p-3">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            searchSymbols();
+          }}
+          className="flex gap-2"
         >
-          <Search className="h-4 w-4" />
-        </button>
-      </form>
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-dim" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search symbols by name…"
+              className="h-9 w-full rounded-md border border-border/70 bg-surface-raised pl-9 pr-3 text-sm text-text placeholder:text-text-dim font-mono focus:outline-none focus:border-[var(--color-accent-ring)] focus:shadow-[0_0_0_3px_var(--color-accent-soft)]"
+            />
+          </div>
+          <Button type="submit" disabled={loading || !query.trim()}>
+            {loading ? <Loader2 className="h-3.5 w-3.5 iris-spin" /> : <Search className="h-3.5 w-3.5" />}
+            Search
+          </Button>
+        </form>
+      </Card>
 
-      <div className="flex gap-3 min-h-[300px]">
-        {/* Symbol list */}
-        <div className="w-64 shrink-0 space-y-1 overflow-y-auto max-h-[400px]">
-          {symbols.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => selectSymbol(s)}
-              className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors cursor-pointer ${
-                selected?.id === s.id
-                  ? "bg-accent/10 text-accent"
-                  : "hover:bg-surface-overlay text-text"
-              }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <Code2 className="h-3 w-3 shrink-0" />
-                <span className="font-medium truncate">{s.name}</span>
+      <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-3 min-h-[340px]">
+        <Card hover="lift" className="p-0 overflow-hidden flex flex-col">
+          <div className="px-3 py-2 border-b border-border/60">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
+              Symbols
+              {symbols.length > 0 && (
+                <span className="ml-2 text-text-muted font-mono normal-case tabular-nums">
+                  {symbols.length}
+                </span>
+              )}
+            </h3>
+          </div>
+          <div className="flex-1 overflow-y-auto p-1 max-h-[420px]">
+            {symbols.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-1 py-10 text-center">
+                <p className="text-xs text-text-dim">
+                  {query ? "No symbols found" : "Search to begin"}
+                </p>
               </div>
-              <span className="text-text-dim ml-4.5">{s.kind}</span>
-            </button>
-          ))}
-        </div>
+            ) : (
+              symbols.map((s) => {
+                const isSelected = selected?.id === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => selectSymbol(s)}
+                    className={cn(
+                      "w-full text-left flex flex-col rounded-md px-2.5 py-2 text-xs transition-all duration-120 cursor-pointer",
+                      isSelected
+                        ? "bg-[var(--color-accent-soft)] shadow-[inset_0_0_0_1px_var(--color-accent-ring)]"
+                        : "hover:bg-surface-overlay/50",
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Code2
+                        className={cn(
+                          "h-3 w-3 shrink-0",
+                          isSelected ? "text-accent" : "text-text-dim",
+                        )}
+                      />
+                      <span
+                        className={cn(
+                          "font-mono font-semibold truncate",
+                          isSelected ? "text-accent" : "text-text",
+                        )}
+                      >
+                        {s.name}
+                      </span>
+                    </div>
+                    <span className="mt-0.5 text-[10px] font-mono uppercase tracking-wider text-text-dim">
+                      {s.kind}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </Card>
 
-        {/* Graph SVG */}
-        <div className="flex-1 bg-surface-raised rounded border border-border overflow-hidden">
+        <Card hover="lift" className="p-0 overflow-hidden">
           {selected ? (
-            <svg viewBox="0 0 400 300" className="w-full h-full">
-              {/* Edges */}
+            <svg viewBox="0 0 500 350" className="w-full h-full min-h-[340px]">
+              {/* soft grid */}
+              <defs>
+                <pattern
+                  id="sg-grid"
+                  width="24"
+                  height="24"
+                  patternUnits="userSpaceOnUse"
+                >
+                  <path
+                    d="M 24 0 L 0 0 0 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeOpacity="0.05"
+                    strokeWidth="0.5"
+                  />
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#sg-grid)" />
+
               {edges.map((e, i) => {
                 const from = nodes.find((n) => n.name === e.from);
                 const to = nodes.find((n) => n.name === e.to);
@@ -195,67 +263,92 @@ export function SymbolGraph({ status }: Props) {
                     y1={from.y}
                     x2={to.x}
                     y2={to.y}
-                    stroke="currentColor"
-                    strokeOpacity={0.2}
+                    stroke="rgb(129 140 248)"
+                    strokeOpacity={0.5}
                     strokeWidth={1}
                   />
                 );
               })}
 
-              {/* Nodes */}
               {nodes.map((n) => {
                 const isCenter = n.name === selected.name;
                 return (
                   <g key={n.name}>
+                    {isCenter && (
+                      <circle
+                        cx={n.x}
+                        cy={n.y}
+                        r={14}
+                        fill="rgb(129 140 248)"
+                        opacity={0.15}
+                      />
+                    )}
                     <circle
                       cx={n.x}
                       cy={n.y}
                       r={isCenter ? 8 : 5}
-                      className={isCenter ? "fill-accent" : "fill-text-dim"}
-                      opacity={isCenter ? 1 : 0.6}
+                      fill={isCenter ? "rgb(129 140 248)" : "rgb(100 116 139)"}
+                      opacity={isCenter ? 1 : 0.7}
                     />
                     <text
                       x={n.x}
-                      y={n.y + (isCenter ? 18 : 14)}
+                      y={n.y + (isCenter ? 22 : 17)}
                       textAnchor="middle"
-                      className="fill-text text-[8px]"
+                      fill={isCenter ? "rgb(229 231 235)" : "rgb(156 163 175)"}
+                      fontSize={isCenter ? 10 : 9}
+                      fontFamily="var(--font-mono)"
+                      fontWeight={isCenter ? 600 : 500}
                     >
-                      {n.name.length > 20 ? n.name.slice(0, 20) + "…" : n.name}
+                      {n.name.length > 22 ? n.name.slice(0, 22) + "…" : n.name}
                     </text>
                   </g>
                 );
               })}
             </svg>
           ) : (
-            <div className="flex items-center justify-center h-full text-text-dim text-xs">
-              Select a symbol to view its reference graph
+            <div className="flex flex-col items-center justify-center gap-2 h-full py-10 text-center">
+              <div className="grid h-12 w-12 place-items-center rounded-xl bg-surface-overlay text-text-dim">
+                <GitBranch className="h-5 w-5" />
+              </div>
+              <p className="text-sm font-medium text-text">Pick a symbol</p>
+              <p className="max-w-xs text-xs text-text-dim">
+                Select a symbol from the list to render its reference graph.
+              </p>
             </div>
           )}
-        </div>
+        </Card>
       </div>
 
-      {/* Reference details */}
       {refs.length > 0 && (
-        <div className="space-y-1">
-          <h3 className="text-xs font-medium text-text-muted">
-            References ({refs.length})
-          </h3>
-          <div className="max-h-40 overflow-y-auto space-y-1">
+        <Card hover="lift" className="p-0 overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border/60">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
+              References
+              <span className="ml-2 font-mono text-text-muted tabular-nums normal-case">
+                {refs.length}
+              </span>
+            </h3>
+          </div>
+          <div className="max-h-64 overflow-y-auto divide-y divide-border/40">
             {refs.map((r, i) => (
               <div
                 key={i}
-                className="flex items-center gap-2 text-xs text-text-dim bg-surface-raised rounded px-2 py-1"
+                className="flex items-center gap-2 px-4 py-2 text-xs hover:bg-surface-overlay/50"
               >
-                <span className="font-mono">{r.from_name}</span>
-                <span className="text-accent">→</span>
-                <span className="font-mono">{r.to_name}</span>
-                <span className="ml-auto px-1.5 py-0.5 rounded bg-surface-overlay text-text-dim">
-                  {r.ref_kind}
+                <span className="font-mono text-text truncate">
+                  {r.from_name}
                 </span>
+                <ArrowRight className="h-3 w-3 text-accent shrink-0" />
+                <span className="font-mono text-text truncate">
+                  {r.to_name}
+                </span>
+                <Badge variant="muted" className="ml-auto shrink-0">
+                  {r.ref_kind}
+                </Badge>
               </div>
             ))}
           </div>
-        </div>
+        </Card>
       )}
     </div>
   );
