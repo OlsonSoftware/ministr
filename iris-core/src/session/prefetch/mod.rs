@@ -18,11 +18,10 @@
 //!
 //! # Architecture
 //!
-//! - [`PrefetchCache`] — LRU cache (legacy, backward-compatible).
 //! - [`PriorityCache`] — Priority-scored cache with confidence-weighted eviction
 //!   based on SolidAttention (FAST '26) scheduling patterns.
 //! - [`PrefetchEngine`] — orchestrates prefetch strategies and serves warm hits.
-//! - [`TopicTracker`] — EMA-weighted running topic vector with adaptive alpha.
+//! - [`TopicTracker`] — EMA-weighted running topic vector.
 
 pub mod priority;
 
@@ -158,175 +157,6 @@ impl PrefetchMetrics {
     }
 }
 
-/// LRU cache for pre-computed prefetch entries.
-///
-/// Uses a `HashMap` for O(1) lookups and a `VecDeque` for LRU ordering.
-/// When capacity is reached, the least recently used entry is evicted.
-///
-/// # Examples
-///
-/// ```
-/// use iris_core::session::prefetch::{PrefetchCache, CacheEntry, PrefetchStrategy};
-/// use iris_core::types::Resolution;
-///
-/// let mut cache = PrefetchCache::new(2);
-///
-/// cache.insert("s1".to_string(), CacheEntry {
-///     content_id: "s1".to_string(),
-///     text: "Section one".to_string(),
-///     token_count: 2,
-///     heading_path: None,
-///     summary: None,
-///     resolution: Resolution::Section,
-///     claims_available: 0,
-///     strategy: PrefetchStrategy::Sequential,
-/// });
-///
-/// assert!(cache.get("s1").is_some());
-/// assert!(cache.get("s2").is_none());
-/// ```
-pub struct PrefetchCache {
-    /// Map from content ID to cache entry.
-    entries: HashMap<String, CacheEntry>,
-    /// LRU ordering: front = least recently used, back = most recently used.
-    order: VecDeque<String>,
-    /// Maximum number of entries.
-    capacity: usize,
-    /// Hit/miss metrics.
-    metrics: PrefetchMetrics,
-}
-
-impl PrefetchCache {
-    /// Create a new prefetch cache with the given capacity.
-    #[must_use]
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            entries: HashMap::with_capacity(capacity),
-            order: VecDeque::with_capacity(capacity),
-            capacity,
-            metrics: PrefetchMetrics::default(),
-        }
-    }
-
-    /// Create a new prefetch cache with the default capacity (50 items).
-    #[must_use]
-    pub fn with_default_capacity() -> Self {
-        Self::new(DEFAULT_CACHE_CAPACITY)
-    }
-
-    /// Look up an entry, moving it to the most-recently-used position.
-    ///
-    /// Records a hit or miss in the metrics. Hits are also attributed to
-    /// the strategy that warmed the entry.
-    pub fn get(&mut self, key: &str) -> Option<&CacheEntry> {
-        if self.entries.contains_key(key) {
-            self.metrics.hits += 1;
-            // Attribute hit to the strategy that warmed this entry
-            if let Some(entry) = self.entries.get(key) {
-                match entry.strategy {
-                    PrefetchStrategy::Sequential => self.metrics.sequential_hits += 1,
-                    PrefetchStrategy::Topical => self.metrics.topical_hits += 1,
-                    PrefetchStrategy::Structural => self.metrics.structural_hits += 1,
-                    PrefetchStrategy::CrossSession => self.metrics.cross_session_hits += 1,
-                    PrefetchStrategy::SurveyExpand => self.metrics.survey_expand_hits += 1,
-                    PrefetchStrategy::AgentPlan => self.metrics.agent_plan_hits += 1,
-                }
-            }
-            self.touch(key);
-            self.entries.get(key)
-        } else {
-            self.metrics.misses += 1;
-            None
-        }
-    }
-
-    /// Look up an entry without updating LRU order or metrics.
-    #[must_use]
-    pub fn peek(&self, key: &str) -> Option<&CacheEntry> {
-        self.entries.get(key)
-    }
-
-    /// Insert an entry into the cache.
-    ///
-    /// If the cache is at capacity, the least recently used entry is evicted.
-    /// If the key already exists, the entry is updated and moved to MRU.
-    pub fn insert(&mut self, key: String, entry: CacheEntry) {
-        // Zero-capacity cache accepts nothing
-        if self.capacity == 0 {
-            return;
-        }
-
-        if self.entries.contains_key(&key) {
-            // Update existing entry
-            self.entries.insert(key.clone(), entry);
-            self.touch(&key);
-            return;
-        }
-
-        // Evict LRU if at capacity
-        if self.entries.len() >= self.capacity
-            && let Some(evicted_key) = self.order.pop_front()
-        {
-            self.entries.remove(&evicted_key);
-        }
-
-        self.entries.insert(key.clone(), entry);
-        self.order.push_back(key);
-    }
-
-    /// Remove an entry from the cache.
-    ///
-    /// Returns the removed entry if it existed.
-    pub fn remove(&mut self, key: &str) -> Option<CacheEntry> {
-        if let Some(entry) = self.entries.remove(key) {
-            self.order.retain(|k| k != key);
-            Some(entry)
-        } else {
-            None
-        }
-    }
-
-    /// Number of entries currently in the cache.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Whether the cache is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    /// The cache capacity.
-    #[must_use]
-    pub fn capacity(&self) -> usize {
-        self.capacity
-    }
-
-    /// Current hit/miss metrics.
-    #[must_use]
-    pub fn metrics(&self) -> PrefetchMetrics {
-        self.metrics
-    }
-
-    /// Reset hit/miss counters.
-    pub fn reset_metrics(&mut self) {
-        self.metrics = PrefetchMetrics::default();
-    }
-
-    /// Iterate over cached content IDs.
-    pub fn keys(&self) -> impl Iterator<Item = &str> {
-        self.entries.keys().map(String::as_str)
-    }
-
-    /// Move a key to the most-recently-used position.
-    fn touch(&mut self, key: &str) {
-        self.order.retain(|k| k != key);
-        self.order.push_back(key.to_string());
-    }
-}
-
 /// Tracks a running topic vector using exponential moving average (EMA)
 /// of recent section embeddings.
 ///
@@ -353,12 +183,6 @@ pub struct TopicTracker {
     max_history: usize,
     /// EMA decay factor (0.0–1.0). Higher means more weight on recent vectors.
     alpha: f32,
-    /// Whether alpha should auto-tune based on topical hit rate.
-    adaptive: bool,
-    /// Rolling count of topical hits for adaptive alpha.
-    topical_hits: u32,
-    /// Rolling count of total lookups for adaptive alpha.
-    total_lookups: u32,
 }
 
 impl TopicTracker {
@@ -369,9 +193,6 @@ impl TopicTracker {
             recent_vectors: VecDeque::with_capacity(max_history),
             max_history,
             alpha,
-            adaptive: false,
-            topical_hits: 0,
-            total_lookups: 0,
         }
     }
 
@@ -381,61 +202,22 @@ impl TopicTracker {
         Self::new(DEFAULT_TOPIC_HISTORY, DEFAULT_TOPIC_ALPHA)
     }
 
-    /// Enable adaptive alpha tuning based on topical hit rate.
-    ///
-    /// When enabled, alpha is automatically adjusted every 10 lookups:
-    /// - High topical hit rate (>30%): decrease alpha toward 0.15 (stable topic)
-    /// - Low topical hit rate (<10%): increase alpha toward 0.6 (jumping topics)
-    #[must_use]
-    pub fn with_adaptive_alpha(mut self) -> Self {
-        self.adaptive = true;
-        self
-    }
-
-    /// Record a topical hit for adaptive alpha computation.
-    pub fn record_topical_hit(&mut self) {
-        self.topical_hits += 1;
-        self.total_lookups += 1;
-        self.maybe_adapt();
-    }
-
-    /// Record a lookup (hit or miss) for adaptive alpha computation.
-    pub fn record_lookup(&mut self) {
-        self.total_lookups += 1;
-        self.maybe_adapt();
-    }
-
-    /// Current alpha value (may have been adapted).
-    #[must_use]
-    pub fn alpha(&self) -> f32 {
-        self.alpha
-    }
-
-    /// Auto-tune alpha based on rolling hit rate, evaluated every 10 lookups.
-    fn maybe_adapt(&mut self) {
-        if !self.adaptive || self.total_lookups < 10 {
-            return;
-        }
-        #[allow(clippy::cast_precision_loss)]
-        let ratio = self.topical_hits as f32 / self.total_lookups as f32;
-        self.alpha = if ratio > 0.3 {
-            // Stable topic — slow drift
-            (self.alpha * 0.9).max(0.1)
-        } else if ratio < 0.1 {
-            // Jumping topics — fast adaptation
-            (self.alpha * 1.2).min(0.7)
-        } else {
-            self.alpha
-        };
-        // Reset rolling window
-        self.topical_hits = 0;
-        self.total_lookups = 0;
-    }
-
     /// Record a section embedding after an access.
     ///
-    /// Maintains the sliding window at `max_history` size.
+    /// Maintains the sliding window at `max_history` size. Rejects embeddings
+    /// whose dimension differs from the first retained vector — a mid-session
+    /// embedder swap would otherwise silently corrupt the running topic vector.
     pub fn record_access(&mut self, embedding: Vec<f32>) {
+        if let Some(front) = self.recent_vectors.front()
+            && front.len() != embedding.len()
+        {
+            tracing::warn!(
+                expected_dim = front.len(),
+                got_dim = embedding.len(),
+                "TopicTracker: ignoring embedding with mismatched dimension"
+            );
+            return;
+        }
         if self.recent_vectors.len() >= self.max_history {
             self.recent_vectors.pop_front();
         }
@@ -877,19 +659,6 @@ impl IntentTracker {
 mod tests {
     use super::*;
 
-    fn make_entry(id: &str, text: &str) -> CacheEntry {
-        CacheEntry {
-            content_id: id.to_string(),
-            text: text.to_string(),
-            token_count: count_tokens(text),
-            heading_path: None,
-            summary: None,
-            resolution: Resolution::Section,
-            claims_available: 0,
-            strategy: PrefetchStrategy::Sequential,
-        }
-    }
-
     fn make_entry_with_strategy(id: &str, text: &str, strategy: PrefetchStrategy) -> CacheEntry {
         CacheEntry {
             content_id: id.to_string(),
@@ -920,105 +689,6 @@ mod tests {
         }
     }
 
-    // --- PrefetchCache tests ---
-
-    #[test]
-    fn new_cache_is_empty() {
-        let cache = PrefetchCache::new(10);
-        assert!(cache.is_empty());
-        assert_eq!(cache.len(), 0);
-        assert_eq!(cache.capacity(), 10);
-    }
-
-    #[test]
-    fn insert_and_get() {
-        let mut cache = PrefetchCache::new(10);
-        cache.insert("s1".to_string(), make_entry("s1", "hello world"));
-        assert_eq!(cache.len(), 1);
-
-        let entry = cache.get("s1").unwrap();
-        assert_eq!(entry.content_id, "s1");
-        assert_eq!(entry.text, "hello world");
-    }
-
-    #[test]
-    fn get_nonexistent_returns_none() {
-        let mut cache = PrefetchCache::new(10);
-        assert!(cache.get("missing").is_none());
-    }
-
-    #[test]
-    fn lru_eviction_at_capacity() {
-        let mut cache = PrefetchCache::new(2);
-        cache.insert("s1".to_string(), make_entry("s1", "one"));
-        cache.insert("s2".to_string(), make_entry("s2", "two"));
-        assert_eq!(cache.len(), 2);
-
-        // Insert a third — should evict s1 (LRU)
-        cache.insert("s3".to_string(), make_entry("s3", "three"));
-        assert_eq!(cache.len(), 2);
-        assert!(cache.peek("s1").is_none());
-        assert!(cache.peek("s2").is_some());
-        assert!(cache.peek("s3").is_some());
-    }
-
-    #[test]
-    fn get_moves_to_mru() {
-        let mut cache = PrefetchCache::new(2);
-        cache.insert("s1".to_string(), make_entry("s1", "one"));
-        cache.insert("s2".to_string(), make_entry("s2", "two"));
-
-        // Access s1 to make it MRU
-        let _ = cache.get("s1");
-
-        // Insert s3 — should evict s2 (now LRU), not s1
-        cache.insert("s3".to_string(), make_entry("s3", "three"));
-        assert!(cache.peek("s1").is_some());
-        assert!(cache.peek("s2").is_none());
-        assert!(cache.peek("s3").is_some());
-    }
-
-    #[test]
-    fn insert_updates_existing_entry() {
-        let mut cache = PrefetchCache::new(10);
-        cache.insert("s1".to_string(), make_entry("s1", "old text"));
-        cache.insert("s1".to_string(), make_entry("s1", "new text"));
-
-        assert_eq!(cache.len(), 1);
-        assert_eq!(cache.peek("s1").unwrap().text, "new text");
-    }
-
-    #[test]
-    fn remove_entry() {
-        let mut cache = PrefetchCache::new(10);
-        cache.insert("s1".to_string(), make_entry("s1", "hello"));
-
-        let removed = cache.remove("s1");
-        assert!(removed.is_some());
-        assert_eq!(removed.unwrap().content_id, "s1");
-        assert!(cache.is_empty());
-    }
-
-    #[test]
-    fn remove_nonexistent_returns_none() {
-        let mut cache = PrefetchCache::new(10);
-        assert!(cache.remove("missing").is_none());
-    }
-
-    #[test]
-    fn metrics_track_hits_and_misses() {
-        let mut cache = PrefetchCache::new(10);
-        cache.insert("s1".to_string(), make_entry("s1", "hello"));
-
-        let _ = cache.get("s1"); // hit
-        let _ = cache.get("s2"); // miss
-        let _ = cache.get("s1"); // hit
-
-        let m = cache.metrics();
-        assert_eq!(m.hits, 2);
-        assert_eq!(m.misses, 1);
-    }
-
     #[test]
     fn hit_rate_calculation() {
         let mut metrics = PrefetchMetrics::default();
@@ -1027,55 +697,6 @@ mod tests {
         metrics.hits = 3;
         metrics.misses = 1;
         assert!((metrics.hit_rate() - 0.75).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn reset_metrics() {
-        let mut cache = PrefetchCache::new(10);
-        cache.insert("s1".to_string(), make_entry("s1", "hello"));
-        let _ = cache.get("s1");
-        assert_eq!(cache.metrics().hits, 1);
-
-        cache.reset_metrics();
-        assert_eq!(cache.metrics().hits, 0);
-        assert_eq!(cache.metrics().misses, 0);
-    }
-
-    #[test]
-    fn peek_does_not_update_metrics_or_order() {
-        let mut cache = PrefetchCache::new(2);
-        cache.insert("s1".to_string(), make_entry("s1", "one"));
-        cache.insert("s2".to_string(), make_entry("s2", "two"));
-
-        // Peek at s1 — should NOT make it MRU
-        let _ = cache.peek("s1");
-        assert_eq!(cache.metrics().hits, 0);
-
-        // Insert s3 — should evict s1 (still LRU since peek doesn't touch)
-        cache.insert("s3".to_string(), make_entry("s3", "three"));
-        assert!(cache.peek("s1").is_none());
-    }
-
-    #[test]
-    fn zero_capacity_cache() {
-        let mut cache = PrefetchCache::new(0);
-        cache.insert("s1".to_string(), make_entry("s1", "hello"));
-        // Zero capacity means nothing is stored
-        assert!(cache.is_empty());
-    }
-
-    #[test]
-    fn many_inserts_maintain_capacity() {
-        let mut cache = PrefetchCache::new(3);
-        for i in 0..100 {
-            let key = format!("s{i}");
-            cache.insert(key.clone(), make_entry(&key, &format!("text {i}")));
-        }
-        assert_eq!(cache.len(), 3);
-        // Only the last 3 should remain
-        assert!(cache.peek("s97").is_some());
-        assert!(cache.peek("s98").is_some());
-        assert!(cache.peek("s99").is_some());
     }
 
     // --- PrefetchEngine tests ---
@@ -1238,16 +859,16 @@ mod tests {
 
     #[test]
     fn metrics_track_strategy_hits() {
-        let mut cache = PrefetchCache::new(10);
-        cache.insert(
+        let mut cache = PriorityCache::new(10);
+        cache.insert_default(
             "seq".to_string(),
             make_entry_with_strategy("seq", "sequential", PrefetchStrategy::Sequential),
         );
-        cache.insert(
+        cache.insert_default(
             "top".to_string(),
             make_entry_with_strategy("top", "topical", PrefetchStrategy::Topical),
         );
-        cache.insert(
+        cache.insert_default(
             "str".to_string(),
             make_entry_with_strategy("str", "structural", PrefetchStrategy::Structural),
         );

@@ -1042,6 +1042,7 @@ async fn trigger_prefetch(
     let doc_record = storage.get_document_for_section(&sid).await.ok().flatten();
     {
         let mut pf = prefetch.lock().await;
+        pf.advance_turn();
         pf.prefetch_sequential(next_section, claims_count);
     }
 

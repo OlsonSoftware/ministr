@@ -4,7 +4,7 @@
 //! Run with: `cargo bench --bench prefetch -p iris-core`
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use iris_core::session::prefetch::{CacheEntry, PrefetchCache, PrefetchStrategy};
+use iris_core::session::prefetch::{CacheEntry, PrefetchStrategy, PriorityCache};
 use iris_core::types::Resolution;
 
 /// Create a cache entry with the given ID and strategy.
@@ -30,12 +30,12 @@ fn bench_cache_insert(c: &mut Criterion) {
             &capacity,
             |b, &cap| {
                 b.iter_with_setup(
-                    || PrefetchCache::new(cap),
+                    || PriorityCache::new(cap),
                     |mut cache| {
                         // Insert 2x capacity to exercise eviction
                         for i in 0..cap * 2 {
                             let id = format!("section::{i}");
-                            cache.insert(
+                            cache.insert_default(
                                 id,
                                 make_entry(&format!("s{i}"), PrefetchStrategy::Sequential),
                             );
@@ -54,10 +54,10 @@ fn bench_cache_lookup(c: &mut Criterion) {
 
     for &capacity in &[10, 50, 200] {
         // Pre-fill the cache
-        let mut cache = PrefetchCache::new(capacity);
+        let mut cache = PriorityCache::new(capacity);
         for i in 0..capacity {
             let id = format!("section::{i}");
-            cache.insert(
+            cache.insert_default(
                 id,
                 make_entry(&format!("s{i}"), PrefetchStrategy::Sequential),
             );
@@ -89,7 +89,7 @@ fn bench_hit_rate_sequential(c: &mut Criterion) {
 
     group.bench_function("sequential_access", |b| {
         b.iter_with_setup(
-            || PrefetchCache::new(capacity),
+            || PriorityCache::new(capacity),
             |mut cache| {
                 // Simulate: for each access, the "prefetch engine" inserts the next section
                 for i in 0..num_sections {
@@ -98,7 +98,7 @@ fn bench_hit_rate_sequential(c: &mut Criterion) {
 
                     // Simulate prefetch: warm the next section
                     let next = format!("section::{}", i + 1);
-                    cache.insert(
+                    cache.insert_default(
                         next,
                         make_entry(&format!("s{}", i + 1), PrefetchStrategy::Sequential),
                     );
@@ -110,11 +110,14 @@ fn bench_hit_rate_sequential(c: &mut Criterion) {
     group.bench_function("random_access", |b| {
         b.iter_with_setup(
             || {
-                let mut cache = PrefetchCache::new(capacity);
+                let mut cache = PriorityCache::new(capacity);
                 // Pre-fill with sequential sections
                 for i in 0..capacity {
                     let id = format!("section::{i}");
-                    cache.insert(id, make_entry(&format!("s{i}"), PrefetchStrategy::Topical));
+                    cache.insert_default(
+                        id,
+                        make_entry(&format!("s{i}"), PrefetchStrategy::Topical),
+                    );
                 }
                 cache
             },
@@ -130,7 +133,7 @@ fn bench_hit_rate_sequential(c: &mut Criterion) {
 
     group.bench_function("clustered_access", |b| {
         b.iter_with_setup(
-            || PrefetchCache::new(capacity),
+            || PriorityCache::new(capacity),
             |mut cache| {
                 // Access pattern: clusters of 5 sequential reads, then jump
                 for cluster in 0..(num_sections / 5) {
@@ -138,7 +141,7 @@ fn bench_hit_rate_sequential(c: &mut Criterion) {
                     // Simulate prefetch for the cluster
                     for j in 0..5 {
                         let id = format!("section::{}", base + j);
-                        cache.insert(
+                        cache.insert_default(
                             id,
                             make_entry(&format!("s{}", base + j), PrefetchStrategy::Structural),
                         );

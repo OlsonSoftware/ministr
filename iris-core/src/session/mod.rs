@@ -27,8 +27,8 @@ pub use compression::{CompressionPipeline, TierPromotion};
 pub use eviction::{EvictionCandidate, EvictionRanker};
 pub use memory::{AccessRating, MemoryState, MemoryTracker};
 pub use prefetch::{
-    CacheEntry, PrefetchCache, PrefetchEngine, PrefetchMetrics, PrefetchStrategy, PriorityCache,
-    StrategyWeights, TopicTracker,
+    CacheEntry, PrefetchEngine, PrefetchMetrics, PrefetchStrategy, PriorityCache, StrategyWeights,
+    TopicTracker,
 };
 pub use registry::{SessionEntry, SessionRegistry};
 pub use types::{
