@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/AlrikOlson/iris-rs/actions/workflows/ci.yml"><img src="https://github.com/AlrikOlson/iris-rs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
-  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.85%2B-orange.svg" alt="Rust"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.88%2B-orange.svg" alt="Rust"></a>
 </p>
 
 <p align="center">
@@ -67,6 +67,7 @@ claude mcp add iris -- iris                                    # Claude Code
 - **Session tracking** with predictive prefetch, deduplication, and delta delivery
 - **Budget management** — token usage monitoring, eviction recommendations, compressed summaries under pressure
 - **Local embeddings** — FastEmbed + ONNX (~5ms/embed), optional Metal GPU acceleration on Apple Silicon
+- **Desktop app** — cache observatory dashboard, live tool-call activity stream, `⌘K` command palette, `?` shortcut sheet, and system-tray submenus (Tauri v2, macOS/Linux/Windows)
 
 ## Cross-language bridges
 

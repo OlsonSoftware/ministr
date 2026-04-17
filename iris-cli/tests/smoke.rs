@@ -20,9 +20,7 @@ fn help_flag_exits_successfully() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("context cache")
-            || stdout.contains("iris")
-            || stdout.contains("corpus"),
+        stdout.contains("context cache") || stdout.contains("iris") || stdout.contains("corpus"),
         "help output should mention iris functionality, got: {stdout}"
     );
 }

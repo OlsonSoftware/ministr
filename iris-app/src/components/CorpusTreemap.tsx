@@ -10,27 +10,39 @@ interface Props {
   status: DaemonStatus;
 }
 
+/**
+ * Per-language swatch colour. Shares a unified OKLCH lightness/chroma
+ * signature (L ≈ 0.68, C ≈ 0.17) so languages stay visually distinct
+ * without jumping out of the iris palette; docs and data files are
+ * intentionally muted.
+ */
 const LANG_COLORS: Record<string, string> = {
-  rs: "bg-orange-500",
-  ts: "bg-blue-500",
-  tsx: "bg-sky-400",
-  js: "bg-yellow-400",
-  jsx: "bg-amber-400",
-  py: "bg-emerald-500",
-  go: "bg-cyan-500",
-  java: "bg-red-500",
-  kt: "bg-violet-500",
-  swift: "bg-orange-400",
-  c: "bg-slate-500",
-  cpp: "bg-indigo-500",
-  cs: "bg-purple-500",
-  rb: "bg-rose-500",
-  md: "bg-accent",
-  toml: "bg-red-400",
-  json: "bg-zinc-500",
-  yaml: "bg-pink-400",
-  yml: "bg-pink-400",
+  rs: "oklch(0.70 0.17 40)", // rust orange
+  ts: "oklch(0.66 0.16 240)", // typescript blue
+  tsx: "oklch(0.72 0.14 220)", // tsx sky
+  js: "oklch(0.80 0.16 95)", // js yellow
+  jsx: "oklch(0.78 0.16 75)", // jsx amber
+  py: "oklch(0.72 0.16 155)", // python green
+  go: "oklch(0.74 0.14 200)", // go cyan
+  java: "oklch(0.66 0.18 25)", // java red
+  kt: "oklch(0.66 0.17 295)", // kotlin violet
+  swift: "oklch(0.72 0.17 55)", // swift orange
+  c: "oklch(0.68 0.05 260)", // c slate
+  cpp: "oklch(0.62 0.17 265)", // cpp indigo
+  cs: "oklch(0.64 0.17 310)", // c# purple
+  rb: "oklch(0.68 0.17 15)", // ruby rose
+  md: "var(--color-accent)", // docs → iris accent
+  toml: "oklch(0.74 0.14 30)", // toml coral
+  json: "oklch(0.70 0.03 260)", // json neutral
+  yaml: "oklch(0.76 0.14 355)", // yaml pink
+  yml: "oklch(0.76 0.14 355)",
 };
+
+const FALLBACK_COLOR = "oklch(0.65 0.03 260)";
+
+function langColor(ext: string): string {
+  return LANG_COLORS[ext] ?? FALLBACK_COLOR;
+}
 
 export function CorpusTreemap({ status }: Props) {
   const [corpusId, setCorpusId] = useState(status.corpora[0]?.id ?? "");
@@ -93,10 +105,8 @@ export function CorpusTreemap({ status }: Props) {
             {langBreakdown.map(({ ext, count, pct }) => (
               <div key={ext} className="flex items-center gap-1.5 text-xs">
                 <div
-                  className={cn(
-                    "h-2.5 w-2.5 rounded-sm shrink-0",
-                    LANG_COLORS[ext] ?? "bg-zinc-500",
-                  )}
+                  className="h-2.5 w-2.5 rounded-sm shrink-0"
+                  style={{ backgroundColor: langColor(ext) }}
                 />
                 <span className="font-mono text-text">.{ext}</span>
                 <span className="text-text-dim tabular-nums">
@@ -148,11 +158,12 @@ export function CorpusTreemap({ status }: Props) {
               return (
                 <div
                   key={`${f.path}-${i}`}
-                  className={cn(
-                    "rounded-sm opacity-75 hover:opacity-100 hover:scale-105 transition-all duration-100 cursor-pointer",
-                    LANG_COLORS[ext] ?? "bg-zinc-500",
-                  )}
-                  style={{ width: `${area}px`, height: `${area}px` }}
+                  className="rounded-sm opacity-75 hover:opacity-100 hover:scale-105 transition-all duration-100 cursor-pointer"
+                  style={{
+                    width: `${area}px`,
+                    height: `${area}px`,
+                    backgroundColor: langColor(ext),
+                  }}
                   title={`${f.path} (${f.section_count} sections)`}
                   onMouseEnter={() => setHoveredFile(f)}
                   onMouseLeave={() => setHoveredFile(null)}
@@ -187,10 +198,8 @@ export function CorpusTreemap({ status }: Props) {
                     <td className="py-1.5 px-4 font-mono w-full">
                       <div className="flex items-center gap-2">
                         <div
-                          className={cn(
-                            "h-2 w-2 rounded-sm shrink-0",
-                            LANG_COLORS[ext] ?? "bg-zinc-500",
-                          )}
+                          className="h-2 w-2 rounded-sm shrink-0"
+                          style={{ backgroundColor: langColor(ext) }}
                         />
                         {LANG_COLORS[ext] ? (
                           <FileCode className="h-3 w-3 text-text-dim shrink-0" />
@@ -204,11 +213,11 @@ export function CorpusTreemap({ status }: Props) {
                       <div className="flex items-center justify-end gap-2">
                         <div className="w-16 h-1 rounded-full bg-surface-overlay overflow-hidden">
                           <div
-                            className={cn(
-                              "h-full",
-                              LANG_COLORS[ext] ?? "bg-zinc-500",
-                            )}
-                            style={{ width: `${pct}%` }}
+                            className="h-full"
+                            style={{
+                              width: `${pct}%`,
+                              backgroundColor: langColor(ext),
+                            }}
                           />
                         </div>
                         <span className="text-text-muted tabular-nums font-mono w-10">

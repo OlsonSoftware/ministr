@@ -17,6 +17,7 @@ import type {
   DaemonStatus,
   SessionDetail,
   IngestionProgressInfo,
+  ActivityEvent,
 } from "../lib/types";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -25,6 +26,7 @@ import { BudgetRing } from "./ui/budget-ring";
 import { CorpusChip } from "./ui/corpus-chip";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
+import { ActivityFeed, computeHitRateBuckets } from "./ui/activity-feed";
 import { cn } from "../lib/utils";
 
 interface OverviewProps {
@@ -48,16 +50,20 @@ export function Overview({
 }: OverviewProps) {
   const [sessions, setSessions] = useState<SessionDetail[]>([]);
   const [ingestion, setIngestion] = useState<IngestionProgressInfo[]>([]);
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [freshSessions, setFreshSessions] = useState<Set<string>>(new Set());
+  const [activityFlashSince, setActivityFlashSince] = useState<number>(0);
   const prevTurns = useRef<Map<string, number>>(new Map());
+  const prevActivityMax = useRef<number>(0);
 
   useEffect(() => {
     let cancelled = false;
     async function poll() {
       try {
-        const [s, ing] = await Promise.all([
+        const [s, ing, acts] = await Promise.all([
           invoke<SessionDetail[]>("list_sessions"),
           invoke<IngestionProgressInfo[]>("ingestion_progress"),
+          invoke<ActivityEvent[]>("recent_activity", { limit: 100 }),
         ]);
         if (cancelled) return;
         setIngestion(ing);
@@ -78,6 +84,23 @@ export function Overview({
             if (!cancelled) setFreshSessions(new Set());
           }, 1500);
         }
+
+        // Trigger a 1.5s flash on activity rows newer than the previous max.
+        if (acts.length > 0) {
+          const flash = prevActivityMax.current;
+          const newMax = acts.reduce(
+            (m, e) => (e.timestamp_ms > m ? e.timestamp_ms : m),
+            0,
+          );
+          if (newMax > flash) {
+            setActivityFlashSince(flash);
+            prevActivityMax.current = newMax;
+            setTimeout(() => {
+              if (!cancelled) setActivityFlashSince(newMax);
+            }, 1500);
+          }
+        }
+        setActivity(acts);
       } catch {
         /* ignore */
       }
@@ -228,7 +251,10 @@ export function Overview({
                 {vitals.totalDedup} hits · {vitals.totalDelivered} total
               </span>
             </div>
-            <HitRateBars rate={vitals.hitRate} />
+            <HitRateBars
+              buckets={computeHitRateBuckets(activity, 12, 6 * 60 * 1000)}
+              fallbackRate={vitals.hitRate}
+            />
           </div>
         </VitalCard>
 
@@ -356,30 +382,36 @@ export function Overview({
           )}
         </section>
 
-        {/* Side panels: prefetch lookahead + coherence */}
+        {/* Side panels: activity feed + coherence */}
         <section className="space-y-3">
           <SidePanel
-            icon={Sparkles}
-            title="Prefetch lookahead"
-            note="requires iris 0.2"
+            icon={Activity}
+            title="Tool activity"
+            right={
+              activity.length > 0 ? (
+                <span className="inline-flex items-center gap-1 text-[10px] text-accent font-medium">
+                  <StatusDot tone="accent" pulse />
+                  live
+                </span>
+              ) : undefined
+            }
           >
-            <p className="text-xs text-text-dim leading-relaxed">
-              The prefetch engine runs inside the daemon and pre-warms the cache
-              using sequential, topical, structural, and cross-session
-              locality. A live view of its predictions lands in a coming
-              release.
-            </p>
+            <ActivityFeed
+              events={activity}
+              limit={12}
+              flashSince={activityFlashSince}
+            />
           </SidePanel>
 
           <SidePanel
-            icon={Activity}
+            icon={Sparkles}
             title="Coherence feed"
-            note="requires iris 0.2"
+            note="coming soon"
           >
             <p className="text-xs text-text-dim leading-relaxed">
               When files change on disk, the coherence engine re-parses,
               re-embeds, and marks affected sections stale. File-change events
-              will stream here.
+              will stream here in a coming release.
             </p>
           </SidePanel>
 
@@ -444,11 +476,13 @@ function SidePanel({
   icon: Icon,
   title,
   note,
+  right,
   children,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   note?: string;
+  right?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -458,6 +492,7 @@ function SidePanel({
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim flex-1">
           {title}
         </h3>
+        {right}
         {note && (
           <Badge variant="muted" className="text-[9px]">
             {note}
@@ -469,22 +504,30 @@ function SidePanel({
   );
 }
 
-function HitRateBars({ rate }: { rate: number }) {
-  // 12 bars representing buckets — not real history yet; the shape conveys
-  // the general idea. Each bar height scales with the rate so the shape
-  // changes as hit rate evolves.
-  const bars = Array.from({ length: 12 }, (_, i) => {
-    const noise = (Math.sin(i * 2.3) + 1) * 0.15;
-    const h = Math.max(0.1, Math.min(1, rate + noise - 0.2));
-    return h;
-  });
+function HitRateBars({
+  buckets,
+  fallbackRate,
+}: {
+  buckets: number[];
+  fallbackRate: number;
+}) {
+  // 12 buckets × 30s each → 6 minutes of real history. When the buffer is
+  // empty (no activity recorded yet) fall back to a flat bar driven by the
+  // session-level hit rate so the gauge is never dead-empty.
+  const hasHistory = buckets.some((b) => b > 0);
+  const bars = hasHistory
+    ? buckets
+    : buckets.map(() => Math.max(0.05, fallbackRate));
   return (
-    <div className="flex items-end gap-0.5 h-12">
+    <div className="flex items-end gap-0.5 h-12" aria-label="cache hit rate history">
       {bars.map((h, i) => (
         <div
           key={i}
-          className="w-1 rounded-full bg-gradient-to-t from-accent/40 to-accent"
-          style={{ height: `${h * 100}%` }}
+          className={cn(
+            "w-1 rounded-full bg-gradient-to-t from-accent/40 to-accent",
+            !hasHistory && "opacity-40",
+          )}
+          style={{ height: `${Math.max(6, h * 100)}%` }}
         />
       ))}
     </div>

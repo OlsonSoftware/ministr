@@ -14,6 +14,8 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { BudgetRing } from "./ui/budget-ring";
+import { StatusDot } from "./ui/status-dot";
 import { cn } from "../lib/utils";
 import type { DetectedProject } from "../lib/types";
 
@@ -127,6 +129,78 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
   );
 }
 
+/**
+ * Decorative preview of the cache observatory — shown at the bottom of the
+ * Welcome step so users aren't surprised by the density of the real dashboard
+ * after onboarding completes. Not driven by live data.
+ */
+function ObservatoryPreview() {
+  return (
+    <div className="mt-5 rounded-xl border border-dashed border-border/60 bg-surface-overlay/30 p-3">
+      <div className="flex items-center gap-1.5 mb-2">
+        <Sparkles className="h-3 w-3 text-accent" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-text-dim">
+          What you'll see after adding a project
+        </span>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="shrink-0">
+          <BudgetRing
+            utilization={0.62}
+            warm={0.38}
+            pressure="medium"
+            size={64}
+            stroke={5}
+          >
+            <span className="font-mono text-[11px] font-bold tabular-nums text-text leading-none">
+              62
+              <span className="text-[9px] text-text-dim">%</span>
+            </span>
+          </BudgetRing>
+        </div>
+
+        <div className="flex-1 min-w-0 flex flex-col gap-1">
+          <PreviewChip label="iris-rs" tone="accent" sub="1.2k sections" />
+          <PreviewChip label="docs-site" tone="success" sub="420 sections" />
+          <PreviewChip label="playground" tone="muted" sub="idle" />
+        </div>
+      </div>
+
+      <div className="mt-2 flex items-center gap-2 rounded-md bg-surface-raised/40 border-l-2 border-l-accent/60 pl-2 pr-2 py-1 text-[10px]">
+        <span className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-accent/15 text-accent font-mono">
+          ⏺
+        </span>
+        <span className="font-mono text-text">survey</span>
+        <span className="text-text-dim truncate flex-1">
+          "authentication middleware"
+        </span>
+        <StatusDot tone="success" size="sm" />
+        <span className="font-mono text-text-dim tabular-nums">+1.4K</span>
+      </div>
+    </div>
+  );
+}
+
+function PreviewChip({
+  label,
+  sub,
+  tone,
+}: {
+  label: string;
+  sub: string;
+  tone: "accent" | "success" | "muted";
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border/40 bg-surface-raised/40 px-2 py-1">
+      <StatusDot tone={tone} size="sm" />
+      <span className="font-mono text-[11px] text-text truncate">{label}</span>
+      <span className="ml-auto font-mono text-[10px] text-text-dim truncate">
+        {sub}
+      </span>
+    </div>
+  );
+}
+
 function Logo({ large = false }: { large?: boolean }) {
   return (
     <div
@@ -209,6 +283,8 @@ function Welcome({
           </div>
         ))}
       </div>
+
+      <ObservatoryPreview />
 
       <div className="mt-7 space-y-2">
         <Button className="w-full" size="lg" onClick={onContinue}>

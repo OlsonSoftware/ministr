@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use serde::de::DeserializeOwned;
 
 use crate::ApiError;
+use crate::activity::ActivityResponse;
 use crate::corpus::{
     CorpusInfo, ListCorporaResponse, RegisterCorpusRequest, RegisterCorpusResponse,
 };
@@ -467,6 +468,36 @@ impl DaemonClient {
             req,
         )
         .await
+    }
+
+    // -- Activity --
+
+    /// Snapshot recent tool-call activity events from the daemon.
+    ///
+    /// Returns up to `limit` events, newest first. If `since_ms` is
+    /// provided, only events with `timestamp_ms > since_ms` are returned
+    /// — useful for incremental polling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn recent_activity(
+        &self,
+        limit: Option<usize>,
+        since_ms: Option<u64>,
+    ) -> Result<ActivityResponse, ClientError> {
+        let mut path = String::from("/activity");
+        let mut sep = '?';
+        if let Some(limit) = limit {
+            path.push(sep);
+            path.push_str(&format!("limit={limit}"));
+            sep = '&';
+        }
+        if let Some(since) = since_ms {
+            path.push(sep);
+            path.push_str(&format!("since={since}"));
+        }
+        self.get(&path).await
     }
 
     // -- Admin --

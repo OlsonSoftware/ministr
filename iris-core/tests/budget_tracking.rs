@@ -4,8 +4,8 @@
 //! Tests each hypothesis for why `iris_budget` shows 0 tokens after `iris_read`.
 
 use iris_core::session::{
-    AccessMode, BudgetConfig, BudgetTracker, EvictionPolicy, SessionId,
-    SessionRegistry, WindowEstimator,
+    AccessMode, BudgetConfig, BudgetTracker, EvictionPolicy, SessionId, SessionRegistry,
+    WindowEstimator,
 };
 use iris_core::storage::{SqliteStorage, Storage};
 use iris_core::types::{ContentId, Resolution};
@@ -69,7 +69,6 @@ fn budget_tracker_record_tokens_updates_status() {
 #[tokio::test]
 async fn restored_session_budget_reflects_previous_deliveries() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-
 
     let budget_config = BudgetConfig {
         max_context_tokens: 100_000,
@@ -157,7 +156,6 @@ async fn restored_session_budget_reflects_previous_deliveries() {
 async fn budget_replayed_after_restore() {
     let storage = SqliteStorage::open_in_memory().unwrap();
 
-
     let budget_config = BudgetConfig {
         max_context_tokens: 100_000,
         ..BudgetConfig::default()
@@ -214,7 +212,6 @@ async fn budget_replayed_after_restore() {
 #[tokio::test]
 async fn is_delivered_true_after_restore() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-
 
     let session_id = SessionId::from("test-dedup".to_string());
     let budget_config = BudgetConfig::default();

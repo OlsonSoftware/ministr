@@ -6,8 +6,9 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use axum::middleware;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
@@ -17,6 +18,7 @@ use tokio::net::UnixListener;
 use tracing::info;
 
 use iris_api::ApiError;
+use iris_api::activity::ActivityResponse;
 use iris_api::corpus::{ListCorporaResponse, RegisterCorpusRequest, RegisterCorpusResponse};
 use iris_api::query;
 use iris_api::session::{CreateSessionRequest, CreateSessionResponse};
@@ -26,8 +28,9 @@ use iris_core::storage::{Storage as _, SymbolFilter};
 use iris_core::types::RelationType;
 use sha2::{Digest, Sha256};
 
+use crate::activity::record as record_activity;
 use crate::convert;
-use crate::state::AppState;
+use crate::state::{ACTIVITY_BUFFER_CAPACITY, AppState};
 
 /// Build the daemon API router.
 pub fn router(state: AppState) -> Router {
@@ -74,7 +77,37 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(destroy_session),
         )
         .route("/api/v1/status", get(daemon_status))
+        .route("/activity", get(recent_activity))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            record_activity,
+        ))
         .with_state(state)
+}
+
+/// `GET /activity?limit=50&since=<unix_ms>` — returns a snapshot of
+/// recent tool-call activity events. Newest first. Caps at the ring
+/// buffer's capacity (default 500).
+#[derive(Debug, Default, serde::Deserialize)]
+struct ActivityQuery {
+    limit: Option<usize>,
+    since: Option<u64>,
+}
+
+async fn recent_activity(
+    State(state): State<AppState>,
+    Query(q): Query<ActivityQuery>,
+) -> impl IntoResponse {
+    let limit = q.limit.unwrap_or(50).min(ACTIVITY_BUFFER_CAPACITY);
+    let events = if let Some(since) = q.since {
+        state.activity_since(since, limit).await
+    } else {
+        state.recent_activity(limit).await
+    };
+    Json(ActivityResponse {
+        events,
+        buffer_capacity: ACTIVITY_BUFFER_CAPACITY,
+    })
 }
 
 /// Start the daemon listener on the Unix domain socket.

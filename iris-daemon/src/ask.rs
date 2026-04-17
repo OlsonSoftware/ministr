@@ -49,7 +49,6 @@ const MAX_SURVEY_RESULTS: usize = 8;
 /// Maximum total tokens of retrieved context to send to the sub-agent.
 const MAX_CONTEXT_TOKENS: usize = 8000;
 
-
 /// Compute the cache key for a query string.
 ///
 /// Normalizes by trimming and lowercasing before hashing so that
@@ -198,10 +197,7 @@ pub async fn ask(
 /// Looks for `CamelCase` identifiers (struct/trait names) and `snake_case`
 /// identifiers that look like function/method names. Returns (symbol_id, source_context)
 /// pairs for any matches found.
-async fn search_symbols_from_query(
-    service: &QueryService,
-    query: &str,
-) -> Vec<(String, String)> {
+async fn search_symbols_from_query(service: &QueryService, query: &str) -> Vec<(String, String)> {
     use iris_core::storage::SymbolFilter;
 
     // Extract candidate symbol names from the query:
@@ -209,20 +205,15 @@ async fn search_symbols_from_query(
     // - snake_case words (function names)
     // - Any word 3+ chars that isn't a common English word (potential method names)
     const STOP: &[&str] = &[
-        "the", "and", "for", "from", "with", "what", "how", "does", "are",
-        "that", "this", "which", "where", "when", "before", "after", "into",
-        "not", "its", "has", "have", "had", "been", "will", "was", "were",
-        "being", "about", "between", "each", "all", "any", "both", "but",
-        "can", "did", "get", "got", "may", "use", "used", "using",
-        "method", "function", "struct", "fields", "response", "handler",
-        "called", "returns", "returned", "why", "dropped",
+        "the", "and", "for", "from", "with", "what", "how", "does", "are", "that", "this", "which",
+        "where", "when", "before", "after", "into", "not", "its", "has", "have", "had", "been",
+        "will", "was", "were", "being", "about", "between", "each", "all", "any", "both", "but",
+        "can", "did", "get", "got", "may", "use", "used", "using", "method", "function", "struct",
+        "fields", "response", "handler", "called", "returns", "returned", "why", "dropped",
     ];
     let candidates: Vec<&str> = query
         .split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|w| {
-            w.len() >= 3
-                && !STOP.contains(&w.to_lowercase().as_str())
-        })
+        .filter(|w| w.len() >= 3 && !STOP.contains(&w.to_lowercase().as_str()))
         .collect();
 
     // Extract file path hint (e.g. "proxy.rs" → filter symbols by file path).
@@ -272,9 +263,13 @@ async fn search_symbols_from_query(
             let mut file_syms: Vec<_> = symbols
                 .into_iter()
                 .map(|s| {
-                    let relevance = if query_lower.contains(&s.name.to_lowercase()) { 2 }
-                        else if query_lower.contains(&s.kind.to_lowercase()) { 1 }
-                        else { 0 };
+                    let relevance = if query_lower.contains(&s.name.to_lowercase()) {
+                        2
+                    } else if query_lower.contains(&s.kind.to_lowercase()) {
+                        1
+                    } else {
+                        0
+                    };
                     (s, relevance)
                 })
                 .collect();

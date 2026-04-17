@@ -122,6 +122,7 @@ fn main() {
             commands::search_symbols,
             commands::symbol_references,
             commands::ingestion_progress,
+            commands::recent_activity,
             commands::detect_projects,
             commands::register_projects_batch,
         ])

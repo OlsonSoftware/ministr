@@ -119,10 +119,13 @@ impl Inference for ClaudeCliInference {
                     let mut child = std::process::Command::new("claude")
                         .args([
                             "-p",
-                            "--output-format", "json",
-                            "--model", &model,
+                            "--output-format",
+                            "json",
+                            "--model",
+                            &model,
                             // No tools — pure text synthesis from the prompt.
-                            "--allowed-tools", "",
+                            "--allowed-tools",
+                            "",
                         ])
                         .stdin(std::process::Stdio::piped())
                         .stdout(std::process::Stdio::piped())

@@ -110,3 +110,19 @@ export interface IngestionProgressInfo {
   embeddings_done: number;
   current_file: string;
 }
+
+// ── Activity feed ──
+
+/** One iris_* tool call as recorded by the daemon. */
+export interface ActivityEvent {
+  timestamp_ms: number;
+  tool: string;
+  corpus_id: string;
+  session_id?: string;
+  summary: string;
+  tokens_delta?: number;
+  pressure?: string;
+  cache_hit: boolean;
+  resolution?: string;
+  duration_ms: number;
+}

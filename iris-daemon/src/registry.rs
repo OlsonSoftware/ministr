@@ -444,7 +444,10 @@ mod tests {
     #[test]
     fn project_root_single_path() {
         let paths = vec!["/Users/x/Code/pretext/src".to_string()];
-        assert_eq!(project_root_from_paths(&paths), Path::new("/Users/x/Code/pretext"));
+        assert_eq!(
+            project_root_from_paths(&paths),
+            Path::new("/Users/x/Code/pretext")
+        );
     }
 
     #[test]
@@ -453,7 +456,10 @@ mod tests {
             "/Users/x/Code/pretext/src".to_string(),
             "/Users/x/Code/pretext/docs".to_string(),
         ];
-        assert_eq!(project_root_from_paths(&paths), Path::new("/Users/x/Code/pretext"));
+        assert_eq!(
+            project_root_from_paths(&paths),
+            Path::new("/Users/x/Code/pretext")
+        );
     }
 
     #[test]
@@ -491,7 +497,10 @@ mod tests {
             "/Users/x/Code/iris-rs/README.md".to_string(),
             "/Users/x/Code/iris-rs/docs".to_string(),
         ];
-        assert_eq!(project_root_from_paths(&paths), Path::new("/Users/x/Code/iris-rs"));
+        assert_eq!(
+            project_root_from_paths(&paths),
+            Path::new("/Users/x/Code/iris-rs")
+        );
     }
 
     #[test]

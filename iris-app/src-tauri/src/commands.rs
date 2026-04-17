@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use iris_api::activity::ActivityEvent;
 use iris_api::corpus::{CorpusInfo, RegisterCorpusResponse};
 use iris_api::status::DaemonStatus;
 use iris_core::session::PressureLevel;
@@ -617,6 +618,26 @@ pub struct IngestionProgressInfo {
     pub embeddings_total: usize,
     pub embeddings_done: usize,
     pub current_file: String,
+}
+
+/// Snapshot recent tool-call activity events from the in-process ring buffer.
+///
+/// Mirrors the daemon's `/activity` HTTP endpoint for the Tauri frontend —
+/// when the Tauri app runs in-process it consults [`AppState::activity`]
+/// directly rather than hopping over UDS.
+#[tauri::command]
+pub async fn recent_activity(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+    since_ms: Option<u64>,
+) -> Result<Vec<ActivityEvent>, String> {
+    let limit = limit.unwrap_or(50);
+    let events = if let Some(since) = since_ms {
+        state.activity_since(since, limit).await
+    } else {
+        state.recent_activity(limit).await
+    };
+    Ok(events)
 }
 
 /// Get ingestion progress for all corpora.

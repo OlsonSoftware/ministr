@@ -1,4 +1,8 @@
-#![allow(clippy::doc_markdown, clippy::items_after_statements, clippy::needless_pass_by_value)]
+#![allow(
+    clippy::doc_markdown,
+    clippy::items_after_statements,
+    clippy::needless_pass_by_value
+)]
 //! End-to-end test: session-aware read records delivery in the budget tracker.
 //!
 //! Spins up the daemon router in-process (no UDS), registers a corpus,

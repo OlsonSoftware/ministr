@@ -7,6 +7,7 @@
 //!
 //! No heavy dependencies here: only serde, schemars, and std.
 
+pub mod activity;
 pub mod client;
 pub mod corpus;
 pub mod query;

@@ -31,8 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Architecture
 - `iris-daemon` — HTTP API over Unix domain socket
-- `iris-api` — shared request/response types
+- `iris-api` — shared request/response types and `DaemonClient`
 - `iris-app` — Tauri v2 desktop app with system tray and dashboard
+- `/activity` endpoint with `?limit` and `?since` for incremental polling
 - Automatic stdio-to-HTTP proxy when a second client connects
 - Streamable HTTP transport for remote deployments
 - Concurrent producer-consumer ingestion pipeline
@@ -50,11 +51,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hot-reload on `.iris.toml` changes
 - Retrieval evaluation suite with MRR/nDCG and CI regression gate
 
+#### Desktop app
+- **Cache observatory overhaul** — Overview home with aggregate budget ring, cache-hit history, and live turn stream
+- `BudgetRing`, `TurnBlock`, `CorpusChip`, `StatusDot`, and `ActivityFeed` UI primitives
+- Command palette (`⌘K`) with corpus navigation and theme/tab actions
+- Keyboard shortcut sheet (`?`) and theme toggle (System / Dark / Light) in the TopBar
+- Tray submenus for active sessions, recent corpora, and quick actions
+- Live tool-call **activity stream** — every `iris_*` MCP call is recorded in a 500-event in-memory ring buffer on the daemon, exposed via `GET /activity` and surfaced in the app Overview
+- Onboarding "observatory preview" tile so users see the dashboard aesthetic before reaching the dense dashboard
+- `CorpusTreemap` re-themed with OKLCH language colors that share the iris design tokens
+
 #### Documentation
 - New documentation site built with Material for MkDocs, hosted on GitHub Pages
 - Tailwind v4 design tokens (`docs/styles/tokens.css`) compiled into Material's theme
 - Inline Phosphor icon sprite via a build-time MkDocs hook (`docs/hooks/inline_icons.py`)
 - D2 diagrams throughout the architecture docs (replacing ASCII art)
+- Animated Chart.js benchmarks, Cmd+K search, reading-progress indicator, and keyboard shortcuts on the docs site
+- VHS terminal demo on the landing page
 
 ### Changed
 
