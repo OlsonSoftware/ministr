@@ -199,32 +199,32 @@ fn parse_claude_output(output: &str, model: &str) -> Result<InferenceResponse, I
         // Try array format: last assistant message content
         if let Some(arr) = parsed.as_array() {
             for msg in arr.iter().rev() {
-                if msg.get("type").and_then(|t| t.as_str()) == Some("assistant") {
-                    if let Some(content) = msg.get("content") {
-                        if let Some(text) = content.as_str() {
+                if msg.get("type").and_then(|t| t.as_str()) == Some("assistant")
+                    && let Some(content) = msg.get("content")
+                {
+                    if let Some(text) = content.as_str() {
+                        return Ok(InferenceResponse {
+                            answer: text.to_string(),
+                            model: model.to_string(),
+                        });
+                    }
+                    if let Some(blocks) = content.as_array() {
+                        let text: String = blocks
+                            .iter()
+                            .filter_map(|b| {
+                                if b.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                    b.get("text").and_then(|t| t.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if !text.is_empty() {
                             return Ok(InferenceResponse {
-                                answer: text.to_string(),
+                                answer: text,
                                 model: model.to_string(),
                             });
-                        }
-                        if let Some(blocks) = content.as_array() {
-                            let text: String = blocks
-                                .iter()
-                                .filter_map(|b| {
-                                    if b.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                        b.get("text").and_then(|t| t.as_str())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            if !text.is_empty() {
-                                return Ok(InferenceResponse {
-                                    answer: text,
-                                    model: model.to_string(),
-                                });
-                            }
                         }
                     }
                 }

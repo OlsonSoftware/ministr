@@ -238,12 +238,12 @@ fn extract_header(lines: &[&str], labels: &[AsmLabel]) -> (String, Option<String
 
     for line in header_lines {
         let trimmed = line.trim();
-        if let Some(first) = trimmed.chars().next() {
-            if COMMENT_CHARS.contains(&first) {
-                let rest = trimmed[first.len_utf8()..].trim_start();
-                doc_lines.push(rest.to_string());
-                continue;
-            }
+        if let Some(first) = trimmed.chars().next()
+            && COMMENT_CHARS.contains(&first)
+        {
+            let rest = trimmed[first.len_utf8()..].trim_start();
+            doc_lines.push(rest.to_string());
+            continue;
         }
         if !trimmed.is_empty() {
             other_lines.push(trimmed.to_string());

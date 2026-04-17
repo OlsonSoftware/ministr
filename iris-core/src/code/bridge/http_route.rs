@@ -123,24 +123,23 @@ fn walk_rust_routes(
         let node = cursor.node();
         let kind = node.kind();
 
-        if kind == "function_item" || kind == "function_definition" {
-            if let Some((method, path)) = extract_route_attribute(&node, source) {
-                let symbol_name =
-                    rust_item_name(&node, source).unwrap_or_else(|| "<anonymous>".into());
-                let binding_key = make_binding_key(&method, &path);
-                #[allow(clippy::cast_possible_truncation)]
-                let line = node.start_position().row as u32 + 1;
-                endpoints.push(BridgeEndpoint {
-                    binding_key,
-                    kind: BridgeKind::HttpRoute,
-                    role: EndpointRole::Export,
-                    language: "rust".into(),
-                    file_path: file_path.into(),
-                    line,
-                    symbol_name,
-                    confidence: ConfidenceLevel::Exact.score(),
-                });
-            }
+        if (kind == "function_item" || kind == "function_definition")
+            && let Some((method, path)) = extract_route_attribute(&node, source)
+        {
+            let symbol_name = rust_item_name(&node, source).unwrap_or_else(|| "<anonymous>".into());
+            let binding_key = make_binding_key(&method, &path);
+            #[allow(clippy::cast_possible_truncation)]
+            let line = node.start_position().row as u32 + 1;
+            endpoints.push(BridgeEndpoint {
+                binding_key,
+                kind: BridgeKind::HttpRoute,
+                role: EndpointRole::Export,
+                language: "rust".into(),
+                file_path: file_path.into(),
+                line,
+                symbol_name,
+                confidence: ConfidenceLevel::Exact.score(),
+            });
         }
 
         if cursor.goto_first_child() {

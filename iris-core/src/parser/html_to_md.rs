@@ -65,10 +65,10 @@ impl ContentExtractor {
 
         // Try semantic containers first: <main>, then <article>
         for selector_str in &["main", "article"] {
-            if let Ok(sel) = Selector::parse(selector_str) {
-                if let Some(element) = document.select(&sel).next() {
-                    return element.html();
-                }
+            if let Ok(sel) = Selector::parse(selector_str)
+                && let Some(element) = document.select(&sel).next()
+            {
+                return element.html();
             }
         }
 

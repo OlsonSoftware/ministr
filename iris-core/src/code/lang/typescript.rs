@@ -42,21 +42,20 @@ impl LanguageRefinement for TypeScriptRefinement {
         if kind == "lexical_declaration" {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                if child.kind() == "variable_declarator" {
-                    if let Some(name_node) = child.child_by_field_name("name") {
-                        if let Ok(text) = name_node.utf8_text(source) {
-                            return Some(text.to_string());
-                        }
-                    }
+                if child.kind() == "variable_declarator"
+                    && let Some(name_node) = child.child_by_field_name("name")
+                    && let Ok(text) = name_node.utf8_text(source)
+                {
+                    return Some(text.to_string());
                 }
             }
         }
 
         // Standard `name` field
-        if let Some(name_node) = node.child_by_field_name("name") {
-            if let Ok(text) = name_node.utf8_text(source) {
-                return Some(text.to_string());
-            }
+        if let Some(name_node) = node.child_by_field_name("name")
+            && let Ok(text) = name_node.utf8_text(source)
+        {
+            return Some(text.to_string());
         }
 
         None

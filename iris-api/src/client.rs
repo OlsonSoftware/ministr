@@ -486,16 +486,17 @@ impl DaemonClient {
         limit: Option<usize>,
         since_ms: Option<u64>,
     ) -> Result<ActivityResponse, ClientError> {
+        use std::fmt::Write as _;
         let mut path = String::from("/activity");
         let mut sep = '?';
         if let Some(limit) = limit {
             path.push(sep);
-            path.push_str(&format!("limit={limit}"));
+            let _ = write!(path, "limit={limit}");
             sep = '&';
         }
         if let Some(since) = since_ms {
             path.push(sep);
-            path.push_str(&format!("since={since}"));
+            let _ = write!(path, "since={since}");
         }
         self.get(&path).await
     }

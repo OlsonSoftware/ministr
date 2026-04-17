@@ -43,66 +43,66 @@ impl IrisServer {
             prefetch.prefetch_sequential(next_section, doc_summary, claims_count);
 
             // --- Structural prefetch (sibling sections) ---
-            if let Some(ref doc) = doc_record {
-                if let Ok(all_sections) = storage.list_sections(&doc.id).await {
-                    let current_pos = all_sections.iter().position(|s| s.id.0 == section_id);
-                    if let Some(pos) = current_pos {
-                        let start = pos.saturating_sub(2);
-                        let end = (pos + 3).min(all_sections.len());
-                        let siblings: Vec<_> = all_sections[start..end]
-                            .iter()
-                            .filter(|s| s.id.0 != section_id)
-                            .cloned()
-                            .collect();
+            if let Some(ref doc) = doc_record
+                && let Ok(all_sections) = storage.list_sections(&doc.id).await
+            {
+                let current_pos = all_sections.iter().position(|s| s.id.0 == section_id);
+                if let Some(pos) = current_pos {
+                    let start = pos.saturating_sub(2);
+                    let end = (pos + 3).min(all_sections.len());
+                    let siblings: Vec<_> = all_sections[start..end]
+                        .iter()
+                        .filter(|s| s.id.0 != section_id)
+                        .cloned()
+                        .collect();
 
-                        let mut claims_counts = std::collections::HashMap::new();
-                        for s in &siblings {
-                            if let Ok(claims) = storage.list_claims(&s.id).await {
-                                claims_counts.insert(s.id.0.clone(), claims.len());
-                            }
+                    let mut claims_counts = std::collections::HashMap::new();
+                    for s in &siblings {
+                        if let Ok(claims) = storage.list_claims(&s.id).await {
+                            claims_counts.insert(s.id.0.clone(), claims.len());
                         }
-
-                        prefetch.prefetch_structural(siblings, &claims_counts);
                     }
+
+                    prefetch.prefetch_structural(siblings, &claims_counts);
                 }
             }
 
             // --- Topical prefetch (similarity to running topic) ---
             if let Ok(Some(section)) = storage.get_section(&sid).await {
-                if let Ok(embeddings) = self.service.embedder().embed(&[&section.text]) {
-                    if let Some(embedding) = embeddings.into_iter().next() {
-                        prefetch.record_topic_access(embedding);
-                    }
+                if let Ok(embeddings) = self.service.embedder().embed(&[&section.text])
+                    && let Some(embedding) = embeddings.into_iter().next()
+                {
+                    prefetch.record_topic_access(embedding);
                 }
 
-                if let Some(topic_vec) = prefetch.topic_vector() {
-                    if let Ok(results) = self.service.index().search_knn(&topic_vec, 5) {
-                        let mut candidates = Vec::new();
-                        for result in results {
-                            let vid = VectorId::parse(&result.id);
-                            if let Some(vid) = vid {
-                                if vid.resolution() == iris_core::types::Resolution::Section {
-                                    let cid = vid.content_id();
-                                    if cid == section_id {
-                                        continue;
-                                    }
-                                    let candidate_sid = SectionId(cid.to_string());
-                                    if let Ok(Some(s)) = storage.get_section(&candidate_sid).await {
-                                        candidates.push(s);
-                                    }
-                                }
+                if let Some(topic_vec) = prefetch.topic_vector()
+                    && let Ok(results) = self.service.index().search_knn(&topic_vec, 5)
+                {
+                    let mut candidates = Vec::new();
+                    for result in results {
+                        let vid = VectorId::parse(&result.id);
+                        if let Some(vid) = vid
+                            && vid.resolution() == iris_core::types::Resolution::Section
+                        {
+                            let cid = vid.content_id();
+                            if cid == section_id {
+                                continue;
+                            }
+                            let candidate_sid = SectionId(cid.to_string());
+                            if let Ok(Some(s)) = storage.get_section(&candidate_sid).await {
+                                candidates.push(s);
                             }
                         }
-
-                        let mut claims_counts = std::collections::HashMap::new();
-                        for s in &candidates {
-                            if let Ok(claims) = storage.list_claims(&s.id).await {
-                                claims_counts.insert(s.id.0.clone(), claims.len());
-                            }
-                        }
-
-                        prefetch.prefetch_topical(candidates, &claims_counts);
                     }
+
+                    let mut claims_counts = std::collections::HashMap::new();
+                    for s in &candidates {
+                        if let Ok(claims) = storage.list_claims(&s.id).await {
+                            claims_counts.insert(s.id.0.clone(), claims.len());
+                        }
+                    }
+
+                    prefetch.prefetch_topical(candidates, &claims_counts);
                 }
             }
 

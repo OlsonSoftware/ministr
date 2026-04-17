@@ -33,10 +33,10 @@ impl LanguageRefinement for JavaRefinement {
     fn extract_name(&self, node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
         // Standard `name` field — works for class, interface, enum, annotation,
         // record, method, and constructor declarations.
-        if let Some(name_node) = node.child_by_field_name("name") {
-            if let Ok(text) = name_node.utf8_text(source) {
-                return Some(text.to_string());
-            }
+        if let Some(name_node) = node.child_by_field_name("name")
+            && let Ok(text) = name_node.utf8_text(source)
+        {
+            return Some(text.to_string());
         }
 
         None

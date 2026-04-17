@@ -860,26 +860,26 @@ async fn trigger_prefetch(
     }
 
     // Structural: sibling sections from the same document.
-    if let Some(ref doc) = doc_record {
-        if let Ok(all_sections) = storage.list_sections(&doc.id).await {
-            let current_pos = all_sections.iter().position(|s| s.id.0 == section_id);
-            if let Some(pos) = current_pos {
-                let start = pos.saturating_sub(2);
-                let end = (pos + 3).min(all_sections.len());
-                let siblings: Vec<_> = all_sections[start..end]
-                    .iter()
-                    .filter(|s| s.id.0 != section_id)
-                    .cloned()
-                    .collect();
-                let mut claims_counts = std::collections::HashMap::new();
-                for s in &siblings {
-                    if let Ok(claims) = storage.list_claims(&s.id).await {
-                        claims_counts.insert(s.id.0.clone(), claims.len());
-                    }
+    if let Some(ref doc) = doc_record
+        && let Ok(all_sections) = storage.list_sections(&doc.id).await
+    {
+        let current_pos = all_sections.iter().position(|s| s.id.0 == section_id);
+        if let Some(pos) = current_pos {
+            let start = pos.saturating_sub(2);
+            let end = (pos + 3).min(all_sections.len());
+            let siblings: Vec<_> = all_sections[start..end]
+                .iter()
+                .filter(|s| s.id.0 != section_id)
+                .cloned()
+                .collect();
+            let mut claims_counts = std::collections::HashMap::new();
+            for s in &siblings {
+                if let Ok(claims) = storage.list_claims(&s.id).await {
+                    claims_counts.insert(s.id.0.clone(), claims.len());
                 }
-                let mut pf = prefetch.lock().await;
-                pf.prefetch_structural(siblings, &claims_counts);
             }
+            let mut pf = prefetch.lock().await;
+            pf.prefetch_structural(siblings, &claims_counts);
         }
     }
 }

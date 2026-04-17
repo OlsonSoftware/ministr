@@ -303,10 +303,10 @@ fn extract_headers(response: &reqwest::Response) -> HashMap<String, String> {
     let keys = ["content-type", "etag", "last-modified", "content-length"];
     let mut headers = HashMap::new();
     for key in keys {
-        if let Some(value) = response.headers().get(key) {
-            if let Ok(v) = value.to_str() {
-                headers.insert(key.to_owned(), v.to_owned());
-            }
+        if let Some(value) = response.headers().get(key)
+            && let Ok(v) = value.to_str()
+        {
+            headers.insert(key.to_owned(), v.to_owned());
         }
     }
     headers

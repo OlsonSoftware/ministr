@@ -493,16 +493,16 @@ pub fn resolve_model_name(
     global_config: &IrisConfig,
 ) -> String {
     // 1. Per-repo .iris.toml model
-    if let Some(repo) = repo_config {
-        if let Some(ref model) = repo.corpus.model {
-            return model.clone();
-        }
+    if let Some(repo) = repo_config
+        && let Some(ref model) = repo.corpus.model
+    {
+        return model.clone();
     }
     // 2. Per-corpus meta.toml model
-    if let Some(corpus) = corpus_config {
-        if let Some(ref model) = corpus.model {
-            return model.clone();
-        }
+    if let Some(corpus) = corpus_config
+        && let Some(ref model) = corpus.model
+    {
+        return model.clone();
     }
     // 3. Global default
     global_config.default_model.clone()
@@ -660,10 +660,10 @@ impl RepoConfig {
 
 /// Expand `~` at the start of a path to the user's home directory.
 fn expand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest).to_string_lossy().to_string();
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest).to_string_lossy().to_string();
     }
     path.to_string()
 }

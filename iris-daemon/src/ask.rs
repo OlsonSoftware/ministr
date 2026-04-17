@@ -195,7 +195,7 @@ pub async fn ask(
 /// Extract likely symbol names from the query and search for matching code symbols.
 ///
 /// Looks for `CamelCase` identifiers (struct/trait names) and `snake_case`
-/// identifiers that look like function/method names. Returns (symbol_id, source_context)
+/// identifiers that look like function/method names. Returns (`symbol_id`, `source_context`)
 /// pairs for any matches found.
 async fn search_symbols_from_query(service: &QueryService, query: &str) -> Vec<(String, String)> {
     use iris_core::storage::SymbolFilter;
@@ -219,8 +219,12 @@ async fn search_symbols_from_query(service: &QueryService, query: &str) -> Vec<(
     // Extract file path hint (e.g. "proxy.rs" → filter symbols by file path).
     let file_hint: Option<String> = query
         .split_whitespace()
-        .find(|w| w.ends_with(".rs") || w.ends_with(".ts") || w.ends_with(".py"))
-        .map(|w| w.to_string());
+        .find(|w| {
+            std::path::Path::new(w)
+                .extension()
+                .is_some_and(|ext| matches!(ext.to_str(), Some("rs" | "ts" | "py")))
+        })
+        .map(std::string::ToString::to_string);
 
     let mut results = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -235,17 +239,17 @@ async fn search_symbols_from_query(service: &QueryService, query: &str) -> Vec<(
             // If we have a file hint, prioritize symbols in that file.
             let mut sorted = symbols;
             if let Some(ref hint) = file_hint {
-                sorted.sort_by_key(|s| if s.file_path.ends_with(hint) { 0 } else { 1 });
+                sorted.sort_by_key(|s| i32::from(!s.file_path.ends_with(hint)));
             }
             for sym in sorted.into_iter().take(2) {
                 let sym_id = sym.id.0.clone();
                 if !seen.insert(sym_id.clone()) {
                     continue;
                 }
-                if let Ok(def) = service.get_symbol_definition(&sym_id).await {
-                    if !def.source_context.is_empty() {
-                        results.push((sym_id, def.source_context));
-                    }
+                if let Ok(def) = service.get_symbol_definition(&sym_id).await
+                    && !def.source_context.is_empty()
+                {
+                    results.push((sym_id, def.source_context));
                 }
             }
         }
@@ -265,10 +269,8 @@ async fn search_symbols_from_query(service: &QueryService, query: &str) -> Vec<(
                 .map(|s| {
                     let relevance = if query_lower.contains(&s.name.to_lowercase()) {
                         2
-                    } else if query_lower.contains(&s.kind.to_lowercase()) {
-                        1
                     } else {
-                        0
+                        i32::from(query_lower.contains(&s.kind.to_lowercase()))
                     };
                     (s, relevance)
                 })
@@ -280,10 +282,10 @@ async fn search_symbols_from_query(service: &QueryService, query: &str) -> Vec<(
                 if !seen.insert(sym_id.clone()) {
                     continue;
                 }
-                if let Ok(def) = service.get_symbol_definition(&sym_id).await {
-                    if !def.source_context.is_empty() {
-                        results.push((sym_id, def.source_context));
-                    }
+                if let Ok(def) = service.get_symbol_definition(&sym_id).await
+                    && !def.source_context.is_empty()
+                {
+                    results.push((sym_id, def.source_context));
                 }
             }
         }
@@ -304,13 +306,8 @@ async fn expand_result(
 ) -> String {
     match resolution {
         "symbol_stub" | "symbol_full" => {
-            // Strip "sym-" prefix if present to get the symbol ID.
-            let sym_id = if content_id.starts_with("sym-") {
-                content_id
-            } else {
-                content_id
-            };
-            match service.get_symbol_definition(sym_id).await {
+            // content_id is already a full symbol ID (may or may not have "sym-" prefix).
+            match service.get_symbol_definition(content_id).await {
                 Ok(def) => def.source_context,
                 Err(_) => fallback_text.to_string(),
             }
@@ -332,16 +329,13 @@ async fn expand_result(
 /// Only an actual hash mismatch (content changed) invalidates.
 async fn verify_sources(service: &QueryService, sources: &[CachedAnswerSource]) -> bool {
     for source in sources {
-        match service.read_section(&source.section_id).await {
-            Ok(detail) => {
-                if section_content_hash(&detail.text) != source.section_hash {
-                    return false;
-                }
+        if let Ok(detail) = service.read_section(&source.section_id).await {
+            if section_content_hash(&detail.text) != source.section_hash {
+                return false;
             }
-            Err(_) => {
-                // Section not found — likely a claim/symbol stub ID from survey.
-                // Skip rather than invalidate.
-            }
+        } else {
+            // Section not found — likely a claim/symbol stub ID from survey.
+            // Skip rather than invalidate.
         }
     }
     true

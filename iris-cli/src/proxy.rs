@@ -62,13 +62,12 @@ pub async fn run_stdio_proxy(mcp_url: &str) -> miette::Result<()> {
         };
 
         // Learn the session ID from the primary's response.
-        if session_id.is_none() {
-            if let Some(sid) = response.headers().get("mcp-session-id") {
-                if let Ok(s) = sid.to_str() {
-                    session_id = Some(s.to_string());
-                    debug!(session_id = %s, "learned session ID from primary");
-                }
-            }
+        if session_id.is_none()
+            && let Some(sid) = response.headers().get("mcp-session-id")
+            && let Ok(s) = sid.to_str()
+        {
+            session_id = Some(s.to_string());
+            debug!(session_id = %s, "learned session ID from primary");
         }
 
         let content_type = response
@@ -87,12 +86,12 @@ pub async fn run_stdio_proxy(mcp_url: &str) -> miette::Result<()> {
                 .wrap_err("failed to read SSE response body")?;
 
             for sse_line in body.lines() {
-                if let Some(data) = sse_line.strip_prefix("data: ") {
-                    if !data.is_empty() {
-                        stdout.write_all(data.as_bytes()).await.into_diagnostic()?;
-                        stdout.write_all(b"\n").await.into_diagnostic()?;
-                        stdout.flush().await.into_diagnostic()?;
-                    }
+                if let Some(data) = sse_line.strip_prefix("data: ")
+                    && !data.is_empty()
+                {
+                    stdout.write_all(data.as_bytes()).await.into_diagnostic()?;
+                    stdout.write_all(b"\n").await.into_diagnostic()?;
+                    stdout.flush().await.into_diagnostic()?;
                 }
             }
         } else {

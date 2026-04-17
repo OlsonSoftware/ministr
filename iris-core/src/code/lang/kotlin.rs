@@ -37,10 +37,10 @@ impl LanguageRefinement for KotlinRefinement {
         if kind == "companion_object" {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                if child.kind() == "type_identifier" {
-                    if let Ok(text) = child.utf8_text(source) {
-                        return Some(text.to_string());
-                    }
+                if child.kind() == "type_identifier"
+                    && let Ok(text) = child.utf8_text(source)
+                {
+                    return Some(text.to_string());
                 }
             }
             // Unnamed companion object — use "Companion" as the canonical name.
@@ -49,19 +49,19 @@ impl LanguageRefinement for KotlinRefinement {
 
         // Standard `name` field — works for function_declaration, class_declaration,
         // object_declaration, and type_alias.
-        if let Some(name_node) = node.child_by_field_name("name") {
-            if let Ok(text) = name_node.utf8_text(source) {
-                return Some(text.to_string());
-            }
+        if let Some(name_node) = node.child_by_field_name("name")
+            && let Ok(text) = name_node.utf8_text(source)
+        {
+            return Some(text.to_string());
         }
 
         // Fallback: look for simple_identifier child (common in Kotlin grammars).
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.kind() == "simple_identifier" {
-                if let Ok(text) = child.utf8_text(source) {
-                    return Some(text.to_string());
-                }
+            if child.kind() == "simple_identifier"
+                && let Ok(text) = child.utf8_text(source)
+            {
+                return Some(text.to_string());
             }
         }
 

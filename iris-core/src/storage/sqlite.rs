@@ -847,10 +847,10 @@ impl Storage for SqliteStorage {
                 };
 
                 // Filter by relation types if specified
-                if let Some(ref types) = relation_types {
-                    if !types.contains(&rel_type) {
-                        continue;
-                    }
+                if let Some(ref types) = relation_types
+                    && !types.contains(&rel_type)
+                {
+                    continue;
                 }
 
                 results.push(RelatedClaimRecord {
@@ -1631,12 +1631,12 @@ impl Storage for SqliteStorage {
             let results = query_symbols(conn, &filter, TokenMode::And)?;
 
             // Fallback: if AND yielded nothing and we have multiple tokens, try OR.
-            if results.is_empty() {
-                if let Some(ref name) = filter.name {
-                    let tokens = tokenize_symbol_query(name);
-                    if tokens.len() > 1 {
-                        return query_symbols(conn, &filter, TokenMode::Or);
-                    }
+            if results.is_empty()
+                && let Some(ref name) = filter.name
+            {
+                let tokens = tokenize_symbol_query(name);
+                if tokens.len() > 1 {
+                    return query_symbols(conn, &filter, TokenMode::Or);
                 }
             }
 

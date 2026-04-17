@@ -136,21 +136,20 @@ fn walk_rust_commands(
 
         if (node.kind() == "function_item" || node.kind() == "function_definition")
             && has_tauri_command_attribute_before(&node, source)
+            && let Some(name) = rust_function_name(&node, source)
         {
-            if let Some(name) = rust_function_name(&node, source) {
-                #[allow(clippy::cast_possible_truncation)]
-                let line = node.start_position().row as u32 + 1;
-                endpoints.push(BridgeEndpoint {
-                    binding_key: name.clone(),
-                    kind: BridgeKind::TauriCommand,
-                    role: EndpointRole::Export,
-                    language: "rust".into(),
-                    file_path: file_path.into(),
-                    line,
-                    symbol_name: name,
-                    confidence: ConfidenceLevel::CaseTransformed.score(),
-                });
-            }
+            #[allow(clippy::cast_possible_truncation)]
+            let line = node.start_position().row as u32 + 1;
+            endpoints.push(BridgeEndpoint {
+                binding_key: name.clone(),
+                kind: BridgeKind::TauriCommand,
+                role: EndpointRole::Export,
+                language: "rust".into(),
+                file_path: file_path.into(),
+                line,
+                symbol_name: name,
+                confidence: ConfidenceLevel::CaseTransformed.score(),
+            });
         }
 
         // Recurse into children
@@ -233,10 +232,10 @@ fn walk_js_invoke_calls(
     loop {
         let node = cursor.node();
 
-        if node.kind() == "call_expression" {
-            if let Some(endpoint) = try_extract_invoke_call(&node, source, file_path, language) {
-                endpoints.push(endpoint);
-            }
+        if node.kind() == "call_expression"
+            && let Some(endpoint) = try_extract_invoke_call(&node, source, file_path, language)
+        {
+            endpoints.push(endpoint);
         }
 
         if cursor.goto_first_child() {
@@ -317,10 +316,10 @@ fn walk_rust_events(
     loop {
         let node = cursor.node();
 
-        if node.kind() == "call_expression" {
-            if let Some(ep) = try_extract_rust_event_call(&node, source, file_path) {
-                endpoints.push(ep);
-            }
+        if node.kind() == "call_expression"
+            && let Some(ep) = try_extract_rust_event_call(&node, source, file_path)
+        {
+            endpoints.push(ep);
         }
 
         if cursor.goto_first_child() {
@@ -408,10 +407,10 @@ fn walk_js_events(
     loop {
         let node = cursor.node();
 
-        if node.kind() == "call_expression" {
-            if let Some(ep) = try_extract_js_event_call(&node, source, file_path, language) {
-                endpoints.push(ep);
-            }
+        if node.kind() == "call_expression"
+            && let Some(ep) = try_extract_js_event_call(&node, source, file_path, language)
+        {
+            endpoints.push(ep);
         }
 
         if cursor.goto_first_child() {
@@ -492,13 +491,13 @@ fn walk_generate_handler(
     loop {
         let node = cursor.node();
 
-        if node.kind() == "macro_invocation" {
-            if let Some(macro_node) = node.child_by_field_name("macro") {
-                let macro_text = node_text(&macro_node, source);
-                if macro_text == "generate_handler" || macro_text.ends_with("::generate_handler") {
-                    // Collect identifiers from the token tree
-                    collect_token_tree_identifiers(&node, source, commands);
-                }
+        if node.kind() == "macro_invocation"
+            && let Some(macro_node) = node.child_by_field_name("macro")
+        {
+            let macro_text = node_text(&macro_node, source);
+            if macro_text == "generate_handler" || macro_text.ends_with("::generate_handler") {
+                // Collect identifiers from the token tree
+                collect_token_tree_identifiers(&node, source, commands);
             }
         }
 

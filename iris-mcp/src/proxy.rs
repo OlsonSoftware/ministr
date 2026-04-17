@@ -30,6 +30,7 @@ pub struct ProxyServer {
     corpus_id: Arc<Mutex<Option<String>>>,
     session_id: Arc<Mutex<Option<String>>>,
     corpus_paths: Vec<String>,
+    #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     /// Local budget tracker — tracks tokens delivered through this proxy
     /// independently of the daemon's session system.

@@ -41,17 +41,17 @@ impl LanguageRefinement for PythonRefinement {
         let kind = node.kind();
 
         // For decorated_definition, look inside the wrapped definition
-        if kind == "decorated_definition" {
-            if let Some(definition) = node.child_by_field_name("definition") {
-                return self.extract_name(&definition, source);
-            }
+        if kind == "decorated_definition"
+            && let Some(definition) = node.child_by_field_name("definition")
+        {
+            return self.extract_name(&definition, source);
         }
 
         // Standard `name` field
-        if let Some(name_node) = node.child_by_field_name("name") {
-            if let Ok(text) = name_node.utf8_text(source) {
-                return Some(text.to_string());
-            }
+        if let Some(name_node) = node.child_by_field_name("name")
+            && let Ok(text) = name_node.utf8_text(source)
+        {
+            return Some(text.to_string());
         }
 
         None

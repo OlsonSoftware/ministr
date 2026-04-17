@@ -116,11 +116,11 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
     })?;
 
     // Clean up index data.
-    if let Some(dir) = data_dir {
-        if dir.exists() {
-            let _ = std::fs::remove_dir_all(&dir);
-            tracing::info!(path = %dir.display(), "cleaned up corpus data");
-        }
+    if let Some(dir) = data_dir
+        && dir.exists()
+    {
+        let _ = std::fs::remove_dir_all(&dir);
+        tracing::info!(path = %dir.display(), "cleaned up corpus data");
     }
 
     Ok(())
@@ -350,11 +350,11 @@ pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result
         .await
         .map_err(|e| e.to_string())?;
 
-    if let Some(dir) = data_dir {
-        if dir.exists() {
-            let _ = std::fs::remove_dir_all(&dir);
-            tracing::info!(path = %dir.display(), "cleaned up corpus data from tray remove");
-        }
+    if let Some(dir) = data_dir
+        && dir.exists()
+    {
+        let _ = std::fs::remove_dir_all(&dir);
+        tracing::info!(path = %dir.display(), "cleaned up corpus data from tray remove");
     }
 
     Ok(())

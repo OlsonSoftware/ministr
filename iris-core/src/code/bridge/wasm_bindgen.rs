@@ -90,21 +90,21 @@ fn walk_rust_wasm_items(
 
         match kind {
             "function_item" | "function_definition" | "struct_item" => {
-                if has_wasm_bindgen_attribute_before(&node, source) {
-                    if let Some(name) = rust_item_name(&node, source) {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let line = node.start_position().row as u32 + 1;
-                        endpoints.push(BridgeEndpoint {
-                            binding_key: name.clone(),
-                            kind: BridgeKind::WasmBindgen,
-                            role: EndpointRole::Export,
-                            language: "rust".into(),
-                            file_path: file_path.into(),
-                            line,
-                            symbol_name: name,
-                            confidence: ConfidenceLevel::CaseTransformed.score(),
-                        });
-                    }
+                if has_wasm_bindgen_attribute_before(&node, source)
+                    && let Some(name) = rust_item_name(&node, source)
+                {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let line = node.start_position().row as u32 + 1;
+                    endpoints.push(BridgeEndpoint {
+                        binding_key: name.clone(),
+                        kind: BridgeKind::WasmBindgen,
+                        role: EndpointRole::Export,
+                        language: "rust".into(),
+                        file_path: file_path.into(),
+                        line,
+                        symbol_name: name,
+                        confidence: ConfidenceLevel::CaseTransformed.score(),
+                    });
                 }
             }
             "impl_item" => {
@@ -141,21 +141,20 @@ fn walk_wasm_impl_methods(
         let node = cursor.node();
         if (node.kind() == "function_item" || node.kind() == "function_definition")
             && has_wasm_bindgen_attribute_before(&node, source)
+            && let Some(name) = rust_item_name(&node, source)
         {
-            if let Some(name) = rust_item_name(&node, source) {
-                #[allow(clippy::cast_possible_truncation)]
-                let line = node.start_position().row as u32 + 1;
-                endpoints.push(BridgeEndpoint {
-                    binding_key: name.clone(),
-                    kind: BridgeKind::WasmBindgen,
-                    role: EndpointRole::Export,
-                    language: "rust".into(),
-                    file_path: file_path.into(),
-                    line,
-                    symbol_name: name,
-                    confidence: ConfidenceLevel::CaseTransformed.score(),
-                });
-            }
+            #[allow(clippy::cast_possible_truncation)]
+            let line = node.start_position().row as u32 + 1;
+            endpoints.push(BridgeEndpoint {
+                binding_key: name.clone(),
+                kind: BridgeKind::WasmBindgen,
+                role: EndpointRole::Export,
+                language: "rust".into(),
+                file_path: file_path.into(),
+                line,
+                symbol_name: name,
+                confidence: ConfidenceLevel::CaseTransformed.score(),
+            });
         }
 
         if node.kind() == "declaration_list" {
@@ -220,12 +219,11 @@ fn walk_js_wasm_imports(
     loop {
         let node = cursor.node();
 
-        if node.kind() == "import_statement" {
-            if let Some(module_path) = import_module_path(&node, source) {
-                if is_wasm_module_path(&module_path) {
-                    collect_import_names(&node, source, file_path, language, endpoints);
-                }
-            }
+        if node.kind() == "import_statement"
+            && let Some(module_path) = import_module_path(&node, source)
+            && is_wasm_module_path(&module_path)
+        {
+            collect_import_names(&node, source, file_path, language, endpoints);
         }
 
         if cursor.goto_first_child() {
@@ -286,21 +284,21 @@ fn collect_import_names_recursive(
 ) {
     loop {
         let node = cursor.node();
-        if node.kind() == "import_specifier" {
-            if let Some(name) = import_specifier_name(&node, source) {
-                #[allow(clippy::cast_possible_truncation)]
-                let line = node.start_position().row as u32 + 1;
-                endpoints.push(BridgeEndpoint {
-                    binding_key: name.clone(),
-                    kind: BridgeKind::WasmBindgen,
-                    role: EndpointRole::Import,
-                    language: language.into(),
-                    file_path: file_path.into(),
-                    line,
-                    symbol_name: name,
-                    confidence: ConfidenceLevel::CaseTransformed.score(),
-                });
-            }
+        if node.kind() == "import_specifier"
+            && let Some(name) = import_specifier_name(&node, source)
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let line = node.start_position().row as u32 + 1;
+            endpoints.push(BridgeEndpoint {
+                binding_key: name.clone(),
+                kind: BridgeKind::WasmBindgen,
+                role: EndpointRole::Import,
+                language: language.into(),
+                file_path: file_path.into(),
+                line,
+                symbol_name: name,
+                confidence: ConfidenceLevel::CaseTransformed.score(),
+            });
         }
 
         if cursor.goto_first_child() {

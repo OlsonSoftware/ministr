@@ -93,21 +93,21 @@ fn walk_rust_napi_items(
 
         match kind {
             "function_item" | "function_definition" | "struct_item" | "enum_item" => {
-                if has_napi_attribute_before(&node, source) {
-                    if let Some(name) = rust_item_name(&node, source) {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let line = node.start_position().row as u32 + 1;
-                        endpoints.push(BridgeEndpoint {
-                            binding_key: name.clone(),
-                            kind: BridgeKind::Napi,
-                            role: EndpointRole::Export,
-                            language: "rust".into(),
-                            file_path: file_path.into(),
-                            line,
-                            symbol_name: name,
-                            confidence: ConfidenceLevel::CaseTransformed.score(),
-                        });
-                    }
+                if has_napi_attribute_before(&node, source)
+                    && let Some(name) = rust_item_name(&node, source)
+                {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let line = node.start_position().row as u32 + 1;
+                    endpoints.push(BridgeEndpoint {
+                        binding_key: name.clone(),
+                        kind: BridgeKind::Napi,
+                        role: EndpointRole::Export,
+                        language: "rust".into(),
+                        file_path: file_path.into(),
+                        line,
+                        symbol_name: name,
+                        confidence: ConfidenceLevel::CaseTransformed.score(),
+                    });
                 }
             }
             "impl_item" => {
@@ -146,21 +146,20 @@ fn walk_napi_impl_methods(
         let node = cursor.node();
         if (node.kind() == "function_item" || node.kind() == "function_definition")
             && has_napi_attribute_before(&node, source)
+            && let Some(name) = rust_item_name(&node, source)
         {
-            if let Some(name) = rust_item_name(&node, source) {
-                #[allow(clippy::cast_possible_truncation)]
-                let line = node.start_position().row as u32 + 1;
-                endpoints.push(BridgeEndpoint {
-                    binding_key: name.clone(),
-                    kind: BridgeKind::Napi,
-                    role: EndpointRole::Export,
-                    language: "rust".into(),
-                    file_path: file_path.into(),
-                    line,
-                    symbol_name: name,
-                    confidence: ConfidenceLevel::CaseTransformed.score(),
-                });
-            }
+            #[allow(clippy::cast_possible_truncation)]
+            let line = node.start_position().row as u32 + 1;
+            endpoints.push(BridgeEndpoint {
+                binding_key: name.clone(),
+                kind: BridgeKind::Napi,
+                role: EndpointRole::Export,
+                language: "rust".into(),
+                file_path: file_path.into(),
+                line,
+                symbol_name: name,
+                confidence: ConfidenceLevel::CaseTransformed.score(),
+            });
         }
 
         // Recurse into declaration_list (the body of impl)
@@ -229,30 +228,30 @@ fn walk_js_napi_imports(
         match node.kind() {
             // ES module imports: import { foo } from './native'
             "import_statement" => {
-                if let Some(module_path) = import_module_path(&node, source) {
-                    if is_napi_module_path(&module_path) {
-                        collect_import_names(&node, source, file_path, language, endpoints);
-                    }
+                if let Some(module_path) = import_module_path(&node, source)
+                    && is_napi_module_path(&module_path)
+                {
+                    collect_import_names(&node, source, file_path, language, endpoints);
                 }
             }
             // CommonJS: const { foo } = require('./native')
             "lexical_declaration" | "variable_declaration" => {
-                if let Some((names, module_path)) = try_extract_require_destructure(&node, source) {
-                    if is_napi_module_path(&module_path) {
-                        for name in names {
-                            #[allow(clippy::cast_possible_truncation)]
-                            let line = node.start_position().row as u32 + 1;
-                            endpoints.push(BridgeEndpoint {
-                                binding_key: name.clone(),
-                                kind: BridgeKind::Napi,
-                                role: EndpointRole::Import,
-                                language: language.into(),
-                                file_path: file_path.into(),
-                                line,
-                                symbol_name: name,
-                                confidence: ConfidenceLevel::CaseTransformed.score(),
-                            });
-                        }
+                if let Some((names, module_path)) = try_extract_require_destructure(&node, source)
+                    && is_napi_module_path(&module_path)
+                {
+                    for name in names {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let line = node.start_position().row as u32 + 1;
+                        endpoints.push(BridgeEndpoint {
+                            binding_key: name.clone(),
+                            kind: BridgeKind::Napi,
+                            role: EndpointRole::Import,
+                            language: language.into(),
+                            file_path: file_path.into(),
+                            line,
+                            symbol_name: name,
+                            confidence: ConfidenceLevel::CaseTransformed.score(),
+                        });
                     }
                 }
             }

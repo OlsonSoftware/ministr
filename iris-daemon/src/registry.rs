@@ -409,6 +409,7 @@ pub fn corpus_id_from_paths(paths: &[String]) -> String {
 /// corpora like `["/Users/x/project/src"]`, returns the parent
 /// (`/Users/x/project`). For multi-path corpora, returns the deepest
 /// shared directory.
+#[must_use]
 pub fn project_root_from_paths(paths: &[String]) -> std::path::PathBuf {
     if paths.is_empty() {
         return std::path::PathBuf::new();

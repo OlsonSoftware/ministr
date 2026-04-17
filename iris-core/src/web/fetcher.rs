@@ -420,13 +420,12 @@ impl WebFetcher {
 
                 let max = self.config.max_pages.min(links.len());
                 for link in links.iter().take(max) {
-                    if let Some(ref filter) = self.config.path_filter {
-                        if let Ok(parsed) = Url::parse(&link.url) {
-                            if !parsed.path().starts_with(filter.as_str()) {
-                                debug!(url = %link.url, filter = %filter, "skipping: path filter mismatch");
-                                continue;
-                            }
-                        }
+                    if let Some(ref filter) = self.config.path_filter
+                        && let Ok(parsed) = Url::parse(&link.url)
+                        && !parsed.path().starts_with(filter.as_str())
+                    {
+                        debug!(url = %link.url, filter = %filter, "skipping: path filter mismatch");
+                        continue;
                     }
 
                     match self.fetch_link_page(&link.url).await {

@@ -98,39 +98,39 @@ fn walk_rust_pyo3_items(
 
         match kind {
             "function_item" | "function_definition" => {
-                if has_attribute_before(&node, source, PYO3_FUNCTION_ATTRS) {
-                    if let Some(name) = rust_item_name(&node, source) {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let line = node.start_position().row as u32 + 1;
-                        endpoints.push(BridgeEndpoint {
-                            binding_key: name.clone(),
-                            kind: BridgeKind::PyO3,
-                            role: EndpointRole::Export,
-                            language: "rust".into(),
-                            file_path: file_path.into(),
-                            line,
-                            symbol_name: name,
-                            confidence: ConfidenceLevel::CaseTransformed.score(),
-                        });
-                    }
+                if has_attribute_before(&node, source, PYO3_FUNCTION_ATTRS)
+                    && let Some(name) = rust_item_name(&node, source)
+                {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let line = node.start_position().row as u32 + 1;
+                    endpoints.push(BridgeEndpoint {
+                        binding_key: name.clone(),
+                        kind: BridgeKind::PyO3,
+                        role: EndpointRole::Export,
+                        language: "rust".into(),
+                        file_path: file_path.into(),
+                        line,
+                        symbol_name: name,
+                        confidence: ConfidenceLevel::CaseTransformed.score(),
+                    });
                 }
             }
             "struct_item" | "enum_item" => {
-                if has_attribute_before(&node, source, PYO3_CLASS_ATTRS) {
-                    if let Some(name) = rust_item_name(&node, source) {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let line = node.start_position().row as u32 + 1;
-                        endpoints.push(BridgeEndpoint {
-                            binding_key: name.clone(),
-                            kind: BridgeKind::PyO3,
-                            role: EndpointRole::Export,
-                            language: "rust".into(),
-                            file_path: file_path.into(),
-                            line,
-                            symbol_name: name,
-                            confidence: ConfidenceLevel::CaseTransformed.score(),
-                        });
-                    }
+                if has_attribute_before(&node, source, PYO3_CLASS_ATTRS)
+                    && let Some(name) = rust_item_name(&node, source)
+                {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let line = node.start_position().row as u32 + 1;
+                    endpoints.push(BridgeEndpoint {
+                        binding_key: name.clone(),
+                        kind: BridgeKind::PyO3,
+                        role: EndpointRole::Export,
+                        language: "rust".into(),
+                        file_path: file_path.into(),
+                        line,
+                        symbol_name: name,
+                        confidence: ConfidenceLevel::CaseTransformed.score(),
+                    });
                 }
             }
             "impl_item" => {
@@ -168,21 +168,21 @@ fn walk_pymethods_impl(
     }
     loop {
         let node = cursor.node();
-        if node.kind() == "function_item" || node.kind() == "function_definition" {
-            if let Some(name) = rust_item_name(&node, source) {
-                #[allow(clippy::cast_possible_truncation)]
-                let line = node.start_position().row as u32 + 1;
-                endpoints.push(BridgeEndpoint {
-                    binding_key: name.clone(),
-                    kind: BridgeKind::PyO3,
-                    role: EndpointRole::Export,
-                    language: "rust".into(),
-                    file_path: file_path.into(),
-                    line,
-                    symbol_name: name,
-                    confidence: ConfidenceLevel::CaseTransformed.score(),
-                });
-            }
+        if (node.kind() == "function_item" || node.kind() == "function_definition")
+            && let Some(name) = rust_item_name(&node, source)
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let line = node.start_position().row as u32 + 1;
+            endpoints.push(BridgeEndpoint {
+                binding_key: name.clone(),
+                kind: BridgeKind::PyO3,
+                role: EndpointRole::Export,
+                language: "rust".into(),
+                file_path: file_path.into(),
+                line,
+                symbol_name: name,
+                confidence: ConfidenceLevel::CaseTransformed.score(),
+            });
         }
 
         if node.kind() == "declaration_list" {

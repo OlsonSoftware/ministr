@@ -178,38 +178,38 @@ pub fn extract_symbols(
         });
 
         // Recurse into impl/trait bodies to extract methods
-        if kind == ItemKind::Impl || kind == ItemKind::Trait {
-            if let Some(body) = child.child_by_field_name("body") {
-                let mut method_path: Vec<String> =
-                    module_path.iter().map(|s| (*s).to_string()).collect();
-                method_path.push(sym_name);
+        if (kind == ItemKind::Impl || kind == ItemKind::Trait)
+            && let Some(body) = child.child_by_field_name("body")
+        {
+            let mut method_path: Vec<String> =
+                module_path.iter().map(|s| (*s).to_string()).collect();
+            method_path.push(sym_name);
 
-                let method_module: Vec<&str> = method_path.iter().map(String::as_str).collect();
-                let mut body_cursor = body.walk();
-                for body_child in body.children(&mut body_cursor) {
-                    let Some(child_kind) = ItemKind::from_node_kind(body_child.kind()) else {
-                        continue;
-                    };
-                    let method_name =
-                        super::ast_parser::extract_item_name(&body_child, source, child_kind);
-                    let method_vis = extract_visibility(&body_child, source);
-                    let method_doc = extract_doc_comment(&body_child, source);
-                    let method_sig = extract_signature(&body_child, source);
-                    let method_start = doc_comment_start_byte(&body_child, source)
-                        .unwrap_or(body_child.start_byte());
+            let method_module: Vec<&str> = method_path.iter().map(String::as_str).collect();
+            let mut body_cursor = body.walk();
+            for body_child in body.children(&mut body_cursor) {
+                let Some(child_kind) = ItemKind::from_node_kind(body_child.kind()) else {
+                    continue;
+                };
+                let method_name =
+                    super::ast_parser::extract_item_name(&body_child, source, child_kind);
+                let method_vis = extract_visibility(&body_child, source);
+                let method_doc = extract_doc_comment(&body_child, source);
+                let method_sig = extract_signature(&body_child, source);
+                let method_start =
+                    doc_comment_start_byte(&body_child, source).unwrap_or(body_child.start_byte());
 
-                    symbols.push(Symbol {
-                        name: method_name,
-                        kind: child_kind,
-                        visibility: method_vis,
-                        signature: method_sig,
-                        doc_comment: method_doc,
-                        annotations: Vec::new(),
-                        file_path: file_path.to_string(),
-                        byte_range: method_start..body_child.end_byte(),
-                        module_path: method_module.iter().map(|s| (*s).to_string()).collect(),
-                    });
-                }
+                symbols.push(Symbol {
+                    name: method_name,
+                    kind: child_kind,
+                    visibility: method_vis,
+                    signature: method_sig,
+                    doc_comment: method_doc,
+                    annotations: Vec::new(),
+                    file_path: file_path.to_string(),
+                    byte_range: method_start..body_child.end_byte(),
+                    module_path: method_module.iter().map(|s| (*s).to_string()).collect(),
+                });
             }
         }
     }

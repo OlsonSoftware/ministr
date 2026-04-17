@@ -147,11 +147,11 @@ impl McpTaskManager {
     /// Update the progress message of a working task.
     pub async fn update_progress(&self, task_id: &str, message: &str) {
         let mut tasks = self.tasks.lock().await;
-        if let Some(entry) = tasks.get_mut(task_id) {
-            if entry.task.status == McpTaskStatus::Working {
-                entry.task.status_message = Some(message.to_string());
-                entry.task.last_updated_at = iso8601_now();
-            }
+        if let Some(entry) = tasks.get_mut(task_id)
+            && entry.task.status == McpTaskStatus::Working
+        {
+            entry.task.status_message = Some(message.to_string());
+            entry.task.last_updated_at = iso8601_now();
         }
     }
 

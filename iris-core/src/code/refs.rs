@@ -373,10 +373,10 @@ fn extract_from_struct(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut V
     if let Some(body) = node.child_by_field_name("body") {
         let mut cursor = body.walk();
         for child in body.children(&mut cursor) {
-            if child.kind() == "field_declaration" {
-                if let Some(type_node) = child.child_by_field_name("type") {
-                    collect_type_identifiers(&type_node, source, struct_name, refs);
-                }
+            if child.kind() == "field_declaration"
+                && let Some(type_node) = child.child_by_field_name("type")
+            {
+                collect_type_identifiers(&type_node, source, struct_name, refs);
             }
         }
     }
@@ -520,16 +520,16 @@ fn collect_type_identifiers(
 ) {
     match node.kind() {
         "type_identifier" => {
-            if let Ok(name) = node.utf8_text(source) {
-                if !PRIMITIVE_TYPES.contains(&name) {
-                    refs.push(RawRef {
-                        target_name: name.to_string(),
-                        kind: RefKind::Uses,
-                        line: node_line(node),
-                        from_context: fn_context.map(String::from),
-                        target_crate: None,
-                    });
-                }
+            if let Ok(name) = node.utf8_text(source)
+                && !PRIMITIVE_TYPES.contains(&name)
+            {
+                refs.push(RawRef {
+                    target_name: name.to_string(),
+                    kind: RefKind::Uses,
+                    line: node_line(node),
+                    from_context: fn_context.map(String::from),
+                    target_crate: None,
+                });
             }
         }
         "scoped_type_identifier" => {
@@ -594,10 +594,10 @@ fn extract_python_import(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut
                 }
             }
             "aliased_import" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    if let Some(name) = last_identifier_text(&name_node, source) {
-                        refs.push(import_ref(name, line));
-                    }
+                if let Some(name_node) = child.child_by_field_name("name")
+                    && let Some(name) = last_identifier_text(&name_node, source)
+                {
+                    refs.push(import_ref(name, line));
                 }
             }
             _ => {}
@@ -632,18 +632,18 @@ fn collect_python_from_names(
         }
         match child.kind() {
             "dotted_name" | "identifier" => {
-                if let Some(name) = last_identifier_text(&child, source) {
-                    if name != "*" {
-                        refs.push(import_ref(name, line));
-                    }
+                if let Some(name) = last_identifier_text(&child, source)
+                    && name != "*"
+                {
+                    refs.push(import_ref(name, line));
                 }
             }
             "aliased_import" => {
                 // `from x import foo as bar` — track original "foo"
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    if let Some(name) = last_identifier_text(&name_node, source) {
-                        refs.push(import_ref(name, line));
-                    }
+                if let Some(name_node) = child.child_by_field_name("name")
+                    && let Some(name) = last_identifier_text(&name_node, source)
+                {
+                    refs.push(import_ref(name, line));
                 }
             }
             _ => {}
@@ -720,17 +720,20 @@ fn extract_js_import(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec
                 collect_js_import_names(&child, source, line, refs);
             }
             "namespace_import" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    if let Ok(name) = name_node.utf8_text(source) {
-                        refs.push(import_ref(name.to_string(), line));
-                    }
+                if let Some(name_node) = child.child_by_field_name("name")
+                    && let Ok(name) = name_node.utf8_text(source)
+                {
+                    refs.push(import_ref(name.to_string(), line));
                 }
             }
             "identifier" => {
-                if let Ok(name) = child.utf8_text(source) {
-                    if name != "from" && name != "import" && name != "export" && name != "type" {
-                        refs.push(import_ref(name.to_string(), line));
-                    }
+                if let Ok(name) = child.utf8_text(source)
+                    && name != "from"
+                    && name != "import"
+                    && name != "export"
+                    && name != "type"
+                {
+                    refs.push(import_ref(name.to_string(), line));
                 }
             }
             _ => {}
@@ -749,10 +752,11 @@ fn collect_js_import_names(
     for child in node.children(&mut cursor) {
         match child.kind() {
             "identifier" => {
-                if let Ok(name) = child.utf8_text(source) {
-                    if name != "from" && name != "type" {
-                        refs.push(import_ref(name.to_string(), line));
-                    }
+                if let Ok(name) = child.utf8_text(source)
+                    && name != "from"
+                    && name != "type"
+                {
+                    refs.push(import_ref(name.to_string(), line));
                 }
             }
             "import_specifier" | "export_specifier" => {
@@ -784,12 +788,11 @@ fn extract_js_specifier_name(
             .find(|c| c.kind() == "identifier")
     });
 
-    if let Some(name_node) = name_node {
-        if let Ok(name) = name_node.utf8_text(source) {
-            if name != "type" {
-                refs.push(import_ref(name.to_string(), line));
-            }
-        }
+    if let Some(name_node) = name_node
+        && let Ok(name) = name_node.utf8_text(source)
+        && name != "type"
+    {
+        refs.push(import_ref(name.to_string(), line));
     }
 }
 
@@ -804,12 +807,11 @@ fn extract_js_require(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Ve
                 .child_by_field_name("value")
                 .is_some_and(|val| is_require_call(&val, source));
 
-            if has_require {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    if let Ok(name) = name_node.utf8_text(source) {
-                        refs.push(import_ref(name.to_string(), line));
-                    }
-                }
+            if has_require
+                && let Some(name_node) = child.child_by_field_name("name")
+                && let Ok(name) = name_node.utf8_text(source)
+            {
+                refs.push(import_ref(name.to_string(), line));
             }
         }
     }
@@ -896,18 +898,18 @@ fn extract_go_import_spec(
         .and_then(|n| n.utf8_text(source).ok());
 
     // Skip blank imports (`_`) and dot imports (`.`)
-    if let Some(alias) = alias {
-        if alias == "_" || alias == "." {
-            return;
-        }
+    if let Some(alias) = alias
+        && (alias == "_" || alias == ".")
+    {
+        return;
     }
 
     // Find the import path string
     let path_node = node.child_by_field_name("path");
-    if let Some(path_node) = path_node {
-        if let Some(name) = extract_go_package_name(&path_node, source) {
-            refs.push(import_ref(name, line));
-        }
+    if let Some(path_node) = path_node
+        && let Some(name) = extract_go_package_name(&path_node, source)
+    {
+        refs.push(import_ref(name, line));
     }
 }
 

@@ -32,10 +32,10 @@ impl LanguageRefinement for SwiftRefinement {
     fn extract_name(&self, node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
         // Standard `name` field — works for class, struct, protocol, enum,
         // function, typealias, and associatedtype declarations.
-        if let Some(name_node) = node.child_by_field_name("name") {
-            if let Ok(text) = name_node.utf8_text(source) {
-                return Some(text.to_string());
-            }
+        if let Some(name_node) = node.child_by_field_name("name")
+            && let Ok(text) = name_node.utf8_text(source)
+        {
+            return Some(text.to_string());
         }
 
         // For extension_declaration, the extended type is in a `type_identifier`
@@ -43,10 +43,10 @@ impl LanguageRefinement for SwiftRefinement {
         if node.kind() == "extension_declaration" {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                if child.kind() == "type_identifier" || child.kind() == "user_type" {
-                    if let Ok(text) = child.utf8_text(source) {
-                        return Some(text.to_string());
-                    }
+                if (child.kind() == "type_identifier" || child.kind() == "user_type")
+                    && let Ok(text) = child.utf8_text(source)
+                {
+                    return Some(text.to_string());
                 }
             }
         }

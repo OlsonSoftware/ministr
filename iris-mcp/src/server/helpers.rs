@@ -169,10 +169,10 @@ pub(crate) fn has_code_files_in_dir(root: &std::path::Path) -> bool {
                     queue.push_back((path, depth + 1));
                 }
             } else if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if ALL_CODE_EXTENSIONS.contains(&ext) {
-                        return true;
-                    }
+                if let Some(ext) = path.extension().and_then(|e| e.to_str())
+                    && ALL_CODE_EXTENSIONS.contains(&ext)
+                {
+                    return true;
                 }
                 checked += 1;
                 if checked >= 500 {

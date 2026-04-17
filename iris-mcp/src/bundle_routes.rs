@@ -149,15 +149,14 @@ async fn get_bundle(
     let manifest = build_manifest(&state).await?;
 
     // Conditional GET: if client's ETag matches, return 304.
-    if let Some(if_none_match) = request_headers.get(header::IF_NONE_MATCH) {
-        if let (Some(version), Ok(client_etag)) = (&manifest.bundle_version, if_none_match.to_str())
-        {
-            let expected = format!("\"{version}\"");
-            if client_etag == expected {
-                let mut headers = HeaderMap::new();
-                version_headers(&mut headers, &manifest);
-                return Ok((StatusCode::NOT_MODIFIED, headers, Vec::new()));
-            }
+    if let Some(if_none_match) = request_headers.get(header::IF_NONE_MATCH)
+        && let (Some(version), Ok(client_etag)) = (&manifest.bundle_version, if_none_match.to_str())
+    {
+        let expected = format!("\"{version}\"");
+        if client_etag == expected {
+            let mut headers = HeaderMap::new();
+            version_headers(&mut headers, &manifest);
+            return Ok((StatusCode::NOT_MODIFIED, headers, Vec::new()));
         }
     }
 

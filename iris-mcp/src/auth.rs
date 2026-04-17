@@ -513,17 +513,17 @@ async fn token(
     }
 
     // Verify client_id matches.
-    if let Some(ref client_id) = req.client_id {
-        if *client_id != auth_code.client_id {
-            return Err(StatusCode::BAD_REQUEST);
-        }
+    if let Some(ref client_id) = req.client_id
+        && *client_id != auth_code.client_id
+    {
+        return Err(StatusCode::BAD_REQUEST);
     }
 
     // Verify redirect_uri matches.
-    if let Some(ref redirect_uri) = req.redirect_uri {
-        if *redirect_uri != auth_code.redirect_uri {
-            return Err(StatusCode::BAD_REQUEST);
-        }
+    if let Some(ref redirect_uri) = req.redirect_uri
+        && *redirect_uri != auth_code.redirect_uri
+    {
+        return Err(StatusCode::BAD_REQUEST);
     }
 
     // Issue access token.

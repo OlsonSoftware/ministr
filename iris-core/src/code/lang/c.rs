@@ -31,26 +31,25 @@ impl LanguageRefinement for CRefinement {
 
         // For function_definition, walk the declarator chain:
         // function_definition → declarator (function_declarator) → declarator (identifier)
-        if kind == "function_definition" {
-            if let Some(declarator) = node.child_by_field_name("declarator") {
-                return extract_name_from_declarator(&declarator, source);
-            }
+        if kind == "function_definition"
+            && let Some(declarator) = node.child_by_field_name("declarator")
+        {
+            return extract_name_from_declarator(&declarator, source);
         }
 
         // Preprocessor macros use `name` field
-        if kind == "preproc_def" || kind == "preproc_function_def" {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                if let Ok(text) = name_node.utf8_text(source) {
-                    return Some(text.to_string());
-                }
-            }
+        if (kind == "preproc_def" || kind == "preproc_function_def")
+            && let Some(name_node) = node.child_by_field_name("name")
+            && let Ok(text) = name_node.utf8_text(source)
+        {
+            return Some(text.to_string());
         }
 
         // Standard `name` field for struct_specifier, enum_specifier, etc.
-        if let Some(name_node) = node.child_by_field_name("name") {
-            if let Ok(text) = name_node.utf8_text(source) {
-                return Some(text.to_string());
-            }
+        if let Some(name_node) = node.child_by_field_name("name")
+            && let Ok(text) = name_node.utf8_text(source)
+        {
+            return Some(text.to_string());
         }
 
         None

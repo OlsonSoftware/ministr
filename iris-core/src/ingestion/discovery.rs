@@ -64,12 +64,11 @@ const ALWAYS_IGNORE_PATTERNS: &[&str] = &[
 /// Hard guard: reject files inside always-ignored directories.
 pub(super) fn is_in_ignored_dir(path: &Path) -> bool {
     for component in path.components() {
-        if let std::path::Component::Normal(name) = component {
-            if let Some(name_str) = name.to_str() {
-                if ALWAYS_IGNORE_DIRS.contains(&name_str) {
-                    return true;
-                }
-            }
+        if let std::path::Component::Normal(name) = component
+            && let Some(name_str) = name.to_str()
+            && ALWAYS_IGNORE_DIRS.contains(&name_str)
+        {
+            return true;
         }
     }
     false
@@ -101,12 +100,11 @@ pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
         .git_exclude(true)
         .overrides(overrides)
         .filter_entry(|entry| {
-            if entry.file_type().is_some_and(|ft| ft.is_dir()) {
-                if let Some(name) = entry.file_name().to_str() {
-                    if ALWAYS_IGNORE_DIRS.contains(&name) {
-                        return false;
-                    }
-                }
+            if entry.file_type().is_some_and(|ft| ft.is_dir())
+                && let Some(name) = entry.file_name().to_str()
+                && ALWAYS_IGNORE_DIRS.contains(&name)
+            {
+                return false;
             }
             true
         });

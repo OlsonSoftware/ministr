@@ -43,10 +43,10 @@ async fn fetch_one(
     // Check local cache.
     if let Ok(Some(cached)) = bundle::load_cache_entry(data_dir, &include.url) {
         // If pinned and matching, skip.
-        if let Some(ref pin) = include.pin_version {
-            if cached.manifest.bundle_version.as_deref() == Some(pin.as_str()) {
-                return Ok(None);
-            }
+        if let Some(ref pin) = include.pin_version
+            && cached.manifest.bundle_version.as_deref() == Some(pin.as_str())
+        {
+            return Ok(None);
         }
     }
 

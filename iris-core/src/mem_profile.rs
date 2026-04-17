@@ -76,7 +76,7 @@ pub fn checkpoint(label: &str) {
 /// Log a memory checkpoint every N calls (to avoid log spam during per-file loops).
 /// Returns the current RSS in bytes for callers that want to act on it.
 pub fn checkpoint_every(n: usize, counter: usize, label: &str) -> Option<u64> {
-    if counter % n != 0 {
+    if !counter.is_multiple_of(n) {
         return rss_bytes();
     }
     let rss = rss_bytes()?;

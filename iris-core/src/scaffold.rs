@@ -229,15 +229,13 @@ fn write_claude_hooks(project_root: &Path) -> ScaffoldResult {
     let hooks_value = build_claude_hooks();
 
     // If the file exists and already has our exact hooks, nothing to do.
-    if settings_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&settings_path) {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                if val.get("hooks") == Some(&hooks_value["hooks"]) {
-                    debug!(file = %settings_path.display(), "hooks up to date");
-                    return ScaffoldResult::default();
-                }
-            }
-        }
+    if settings_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&settings_path)
+        && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
+        && val.get("hooks") == Some(&hooks_value["hooks"])
+    {
+        debug!(file = %settings_path.display(), "hooks up to date");
+        return ScaffoldResult::default();
     }
 
     let is_heal = settings_path.exists();

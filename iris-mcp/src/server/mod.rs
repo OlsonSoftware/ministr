@@ -201,6 +201,7 @@ pub struct IrisServer {
     /// Macro-generated tool router for dispatching tool calls.
     tool_router: ToolRouter<Self>,
     /// Macro-generated prompt router for dispatching prompt requests.
+    #[allow(dead_code)]
     prompt_router: PromptRouter<Self>,
     /// Dynamic instructions string, updated by `prune_tools()` to only
     /// mention tools that are actually registered.

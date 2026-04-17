@@ -206,14 +206,14 @@ fn f(items: Vec<i32>) {
         // Find the trait, then the function inside
         let mut cursor = root.walk();
         for child in root.children(&mut cursor) {
-            if child.kind() == "trait_item" {
-                if let Some(body) = child.child_by_field_name("body") {
-                    let mut body_cursor = body.walk();
-                    for body_child in body.children(&mut body_cursor) {
-                        if body_child.kind() == "function_signature_item" {
-                            assert_eq!(cyclomatic_complexity(&body_child, source), 1);
-                            return;
-                        }
+            if child.kind() == "trait_item"
+                && let Some(body) = child.child_by_field_name("body")
+            {
+                let mut body_cursor = body.walk();
+                for body_child in body.children(&mut body_cursor) {
+                    if body_child.kind() == "function_signature_item" {
+                        assert_eq!(cyclomatic_complexity(&body_child, source), 1);
+                        return;
                     }
                 }
             }

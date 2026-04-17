@@ -112,10 +112,10 @@ impl WindowEstimator {
         scores: Option<&std::collections::HashMap<String, f64>>,
     ) -> Vec<String> {
         // If this content was already delivered, remove the old entry first
-        if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id) {
-            if let Some(old) = self.entries.remove(pos) {
-                self.current_tokens = self.current_tokens.saturating_sub(old.token_count);
-            }
+        if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id)
+            && let Some(old) = self.entries.remove(pos)
+        {
+            self.current_tokens = self.current_tokens.saturating_sub(old.token_count);
         }
 
         let entry = WindowEntry {
@@ -141,12 +141,12 @@ impl WindowEstimator {
             return;
         }
 
-        if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id) {
-            if let Some(mut entry) = self.entries.remove(pos) {
-                entry.sequence = self.next_sequence;
-                self.next_sequence += 1;
-                self.entries.push_back(entry);
-            }
+        if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id)
+            && let Some(mut entry) = self.entries.remove(pos)
+        {
+            entry.sequence = self.next_sequence;
+            self.next_sequence += 1;
+            self.entries.push_back(entry);
         }
     }
 
@@ -204,12 +204,12 @@ impl WindowEstimator {
     /// (either explicitly via `iris_evicted` or implicitly via re-request).
     /// Returns `true` if the content was found and removed.
     pub fn force_evict(&mut self, content_id: &str) -> bool {
-        if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id) {
-            if let Some(entry) = self.entries.remove(pos) {
-                self.current_tokens = self.current_tokens.saturating_sub(entry.token_count);
-                self.evicted_count += 1;
-                return true;
-            }
+        if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id)
+            && let Some(entry) = self.entries.remove(pos)
+        {
+            self.current_tokens = self.current_tokens.saturating_sub(entry.token_count);
+            self.evicted_count += 1;
+            return true;
         }
         false
     }

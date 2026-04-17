@@ -705,36 +705,36 @@ pub(crate) async fn cmd_daemon_status() -> Result<()> {
 
     // Try daemon first for live status.
     let client = iris_api::client::DaemonClient::new();
-    if client.is_available() {
-        if let Ok(status) = client.status().await {
-            eprintln!("iris daemon v{}", status.version);
-            eprintln!("  Uptime:    {}s", status.uptime_secs);
-            eprintln!("  Memory:    {:.0} MB", status.memory_mb);
+    if client.is_available()
+        && let Ok(status) = client.status().await
+    {
+        eprintln!("iris daemon v{}", status.version);
+        eprintln!("  Uptime:    {}s", status.uptime_secs);
+        eprintln!("  Memory:    {:.0} MB", status.memory_mb);
+        eprintln!(
+            "  Model:     {} ({}d)",
+            status.model, status.model_dimension
+        );
+        eprintln!("  Corpora:   {}", status.corpora.len());
+        for c in &status.corpora {
             eprintln!(
-                "  Model:     {} ({}d)",
-                status.model, status.model_dimension
+                "    {} — {} files, {} sections, {} embeddings [{}]",
+                c.id,
+                c.files_indexed,
+                c.sections_count,
+                c.embeddings_count,
+                match &c.status {
+                    iris_api::corpus::IndexingStatus::Idle => "idle".to_string(),
+                    iris_api::corpus::IndexingStatus::Indexing {
+                        files_done,
+                        files_total,
+                    } => format!("indexing {files_done}/{files_total}"),
+                    iris_api::corpus::IndexingStatus::Error { message } =>
+                        format!("error: {message}"),
+                }
             );
-            eprintln!("  Corpora:   {}", status.corpora.len());
-            for c in &status.corpora {
-                eprintln!(
-                    "    {} — {} files, {} sections, {} embeddings [{}]",
-                    c.id,
-                    c.files_indexed,
-                    c.sections_count,
-                    c.embeddings_count,
-                    match &c.status {
-                        iris_api::corpus::IndexingStatus::Idle => "idle".to_string(),
-                        iris_api::corpus::IndexingStatus::Indexing {
-                            files_done,
-                            files_total,
-                        } => format!("indexing {files_done}/{files_total}"),
-                        iris_api::corpus::IndexingStatus::Error { message } =>
-                            format!("error: {message}"),
-                    }
-                );
-            }
-            return Ok(());
         }
+        return Ok(());
     }
 
     // Daemon not available — show local storage stats.
@@ -807,16 +807,16 @@ pub(crate) async fn cmd_daemon_status() -> Result<()> {
     }
 
     // Show index file sizes.
-    if index_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&index_dir) {
-            let total_bytes: u64 = entries
-                .filter_map(Result::ok)
-                .filter_map(|e| e.metadata().ok().map(|m| m.len()))
-                .sum();
-            #[allow(clippy::cast_precision_loss)]
-            let mb = total_bytes as f64 / 1_048_576.0;
-            eprintln!("  Index size: {mb:.1} MB");
-        }
+    if index_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&index_dir)
+    {
+        let total_bytes: u64 = entries
+            .filter_map(Result::ok)
+            .filter_map(|e| e.metadata().ok().map(|m| m.len()))
+            .sum();
+        #[allow(clippy::cast_precision_loss)]
+        let mb = total_bytes as f64 / 1_048_576.0;
+        eprintln!("  Index size: {mb:.1} MB");
     }
 
     Ok(())

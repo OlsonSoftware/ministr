@@ -436,21 +436,20 @@ fn detect_source_paths(
         match ws.kind {
             WorkspaceKind::Cargo => {
                 for member in &ws.members {
-                    if let Some(rel) = relative_path(root, &member.join("src")) {
-                        if member.join("src").is_dir() {
-                            paths.push(rel);
-                        }
+                    if let Some(rel) = relative_path(root, &member.join("src"))
+                        && member.join("src").is_dir()
+                    {
+                        paths.push(rel);
                     }
                     // Tauri / Electron pattern: Cargo member at `app/src-tauri`
                     // may have a co-located JS/TS frontend at `app/src`.
                     // Also check the member dir itself for a package.json.
                     for check_dir in [member.as_path(), member.parent().unwrap_or(member)] {
-                        if check_dir.join("package.json").exists() {
-                            if let Some(rel) = find_js_source_dir(root, check_dir) {
-                                if !paths.contains(&rel) {
-                                    paths.push(rel);
-                                }
-                            }
+                        if check_dir.join("package.json").exists()
+                            && let Some(rel) = find_js_source_dir(root, check_dir)
+                            && !paths.contains(&rel)
+                        {
+                            paths.push(rel);
                         }
                     }
                 }
@@ -474,19 +473,17 @@ fn detect_source_paths(
         if has_rust && root.join("src").is_dir() {
             paths.push("src".to_string());
         }
-        if has_node {
-            if let Some(rel) = find_js_source_dir(root, root) {
-                if !paths.contains(&rel) {
-                    paths.push(rel);
-                }
-            }
+        if has_node
+            && let Some(rel) = find_js_source_dir(root, root)
+            && !paths.contains(&rel)
+        {
+            paths.push(rel);
         }
-        if has_python {
-            if let Some(rel) = find_python_source_dir(root) {
-                if !paths.contains(&rel) {
-                    paths.push(rel);
-                }
-            }
+        if has_python
+            && let Some(rel) = find_python_source_dir(root)
+            && !paths.contains(&rel)
+        {
+            paths.push(rel);
         }
     }
 

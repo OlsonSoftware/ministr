@@ -67,7 +67,7 @@ pub async fn record(State(state): State<AppState>, req: Request<Body>, next: Nex
         pressure: enrich.pressure,
         cache_hit: enrich.cache_hit,
         resolution: enrich.resolution,
-        duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     };
 
     // Push without blocking the response — spawn a detached task so the

@@ -553,12 +553,11 @@ impl IngestionPipeline {
             .await
             .map_err(IngestionError::from)?;
 
-        if let Some(ref existing) = existing_hash {
-            if let (Some(stored_mtime), Some(current_mtime)) = (existing.mtime_ns, file_mtime_ns) {
-                if stored_mtime == current_mtime {
-                    return Ok(FileResult::Skipped);
-                }
-            }
+        if let Some(ref existing) = existing_hash
+            && let (Some(stored_mtime), Some(current_mtime)) = (existing.mtime_ns, file_mtime_ns)
+            && stored_mtime == current_mtime
+        {
+            return Ok(FileResult::Skipped);
         }
 
         let content = tokio::fs::read(file_path)
@@ -574,18 +573,18 @@ impl IngestionPipeline {
 
         let hash = compute_sha256(&content_str);
 
-        if let Some(ref existing) = existing_hash {
-            if existing.content_hash == hash {
-                storage
-                    .upsert_file_hash(&FileHashRecord {
-                        path: relative_path.to_string(),
-                        content_hash: hash,
-                        mtime_ns: file_mtime_ns,
-                    })
-                    .await
-                    .map_err(IngestionError::from)?;
-                return Ok(FileResult::Skipped);
-            }
+        if let Some(ref existing) = existing_hash
+            && existing.content_hash == hash
+        {
+            storage
+                .upsert_file_hash(&FileHashRecord {
+                    path: relative_path.to_string(),
+                    content_hash: hash,
+                    mtime_ns: file_mtime_ns,
+                })
+                .await
+                .map_err(IngestionError::from)?;
+            return Ok(FileResult::Skipped);
         }
 
         let parser = self.parser_for(Path::new(relative_path));
@@ -635,14 +634,14 @@ impl IngestionPipeline {
             .await
             .map_err(IngestionError::from)?;
 
-        if let Some(ref existing) = existing_hash {
-            if existing.content_hash == hash {
-                return Ok(ContentIngestionStats {
-                    sections: 0,
-                    claims: 0,
-                    skipped: true,
-                });
-            }
+        if let Some(ref existing) = existing_hash
+            && existing.content_hash == hash
+        {
+            return Ok(ContentIngestionStats {
+                sections: 0,
+                claims: 0,
+                skipped: true,
+            });
         }
 
         let parser = create_parser(parser_kind);
@@ -699,14 +698,14 @@ impl IngestionPipeline {
             .await
             .map_err(IngestionError::from)?;
 
-        if let Some(ref existing) = existing_hash {
-            if existing.content_hash == hash {
-                return Ok(ContentIngestionStats {
-                    sections: 0,
-                    claims: 0,
-                    skipped: true,
-                });
-            }
+        if let Some(ref existing) = existing_hash
+            && existing.content_hash == hash
+        {
+            return Ok(ContentIngestionStats {
+                sections: 0,
+                claims: 0,
+                skipped: true,
+            });
         }
 
         let parser = create_parser(parser_kind);
@@ -1003,31 +1002,26 @@ impl IngestionPipeline {
             std::collections::HashMap::new();
 
         // Manifest-level mtime fast skip
-        if !files.is_empty() {
-            if let Ok(true) = all_files_unchanged_by_mtime(&files, paths, storage).await {
-                info!(
-                    files = files.len(),
-                    "all files unchanged (mtime fast skip) — skipping ingestion"
-                );
-                stats.files_skipped = files.len();
-                if let Some(ref progress) = self.progress {
-                    progress.start(files.len());
-                    for _ in 0..files.len() {
-                        progress.increment_done();
-                    }
-                    progress.complete();
+        if !files.is_empty()
+            && let Ok(true) = all_files_unchanged_by_mtime(&files, paths, storage).await
+        {
+            info!(
+                files = files.len(),
+                "all files unchanged (mtime fast skip) — skipping ingestion"
+            );
+            stats.files_skipped = files.len();
+            if let Some(ref progress) = self.progress {
+                progress.start(files.len());
+                for _ in 0..files.len() {
+                    progress.increment_done();
                 }
-                repair_missing_refs(storage, None).await;
-
-                accumulate_language_stats(
-                    &files,
-                    &roots,
-                    &mut root_lang_stats,
-                    &mut root_file_counts,
-                );
-                update_root_stats(storage, &roots, &root_lang_stats, &root_file_counts).await;
-                return Ok(stats);
+                progress.complete();
             }
+            repair_missing_refs(storage, None).await;
+
+            accumulate_language_stats(&files, &roots, &mut root_lang_stats, &mut root_file_counts);
+            update_root_stats(storage, &roots, &root_lang_stats, &root_file_counts).await;
+            return Ok(stats);
         }
 
         if let Some(ref progress) = self.progress {
@@ -1417,12 +1411,11 @@ impl IngestionPipeline {
             .await
             .map_err(IngestionError::from)?;
 
-        if let Some(ref existing) = existing_hash {
-            if let (Some(stored_mtime), Some(current_mtime)) = (existing.mtime_ns, file_mtime_ns) {
-                if stored_mtime == current_mtime {
-                    return Ok(FileResult::Skipped);
-                }
-            }
+        if let Some(ref existing) = existing_hash
+            && let (Some(stored_mtime), Some(current_mtime)) = (existing.mtime_ns, file_mtime_ns)
+            && stored_mtime == current_mtime
+        {
+            return Ok(FileResult::Skipped);
         }
 
         let content = tokio::fs::read(file_path)
@@ -1438,18 +1431,18 @@ impl IngestionPipeline {
 
         let hash = compute_sha256(&content_str);
 
-        if let Some(ref existing) = existing_hash {
-            if existing.content_hash == hash {
-                storage
-                    .upsert_file_hash(&FileHashRecord {
-                        path: relative_path.to_string(),
-                        content_hash: hash,
-                        mtime_ns: file_mtime_ns,
-                    })
-                    .await
-                    .map_err(IngestionError::from)?;
-                return Ok(FileResult::Skipped);
-            }
+        if let Some(ref existing) = existing_hash
+            && existing.content_hash == hash
+        {
+            storage
+                .upsert_file_hash(&FileHashRecord {
+                    path: relative_path.to_string(),
+                    content_hash: hash,
+                    mtime_ns: file_mtime_ns,
+                })
+                .await
+                .map_err(IngestionError::from)?;
+            return Ok(FileResult::Skipped);
         }
 
         let parser = self.parser_for(Path::new(relative_path));
@@ -1581,10 +1574,10 @@ impl IngestionPipeline {
                         break;
                     }
                 }
-                if found.is_none() {
-                    if let Ok(bytes) = tokio::fs::read(source_path).await {
-                        found = Some(bytes);
-                    }
+                if found.is_none()
+                    && let Ok(bytes) = tokio::fs::read(source_path).await
+                {
+                    found = Some(bytes);
                 }
                 let Some(content) = found else {
                     continue;

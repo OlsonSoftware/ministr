@@ -21,14 +21,14 @@ pub fn run_first_launch_setup(app: &tauri::App) -> Result<(), Box<dyn std::error
 
     // Skip if this exact version was already set up.
     let version_path = data_dir.join(SETUP_VERSION_FILE);
-    if let Ok(installed) = fs::read_to_string(&version_path) {
-        if installed.trim() == current_version {
-            info!(
-                version = current_version,
-                "setup already completed for this version"
-            );
-            return Ok(());
-        }
+    if let Ok(installed) = fs::read_to_string(&version_path)
+        && installed.trim() == current_version
+    {
+        info!(
+            version = current_version,
+            "setup already completed for this version"
+        );
+        return Ok(());
     }
 
     info!(version = current_version, "running first-launch setup");
@@ -123,10 +123,10 @@ fn ensure_path(bin_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let bin_str = bin_dir.to_string_lossy();
 
     // Check if already on PATH.
-    if let Ok(path) = std::env::var("PATH") {
-        if path.split(':').any(|p| p == bin_str.as_ref()) {
-            return Ok(());
-        }
+    if let Ok(path) = std::env::var("PATH")
+        && path.split(':').any(|p| p == bin_str.as_ref())
+    {
+        return Ok(());
     }
 
     let home = home_dir()?;

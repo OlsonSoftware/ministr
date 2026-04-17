@@ -24,11 +24,11 @@ pub(super) fn embed_document<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
     let mut texts: Vec<String> = Vec::new();
     let mut ids: Vec<VectorId> = Vec::new();
 
-    if let Some(ref summary) = doc.summary {
-        if !summary.trim().is_empty() {
-            ids.push(VectorId::doc_summary(doc.id.as_ref()));
-            texts.push(summary.clone());
-        }
+    if let Some(ref summary) = doc.summary
+        && !summary.trim().is_empty()
+    {
+        ids.push(VectorId::doc_summary(doc.id.as_ref()));
+        texts.push(summary.clone());
     }
 
     collect_embeddable_items(&doc.sections, &mut ids, &mut texts);
@@ -59,10 +59,10 @@ pub(super) fn embed_document<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
 
 /// Collect embeddable `(id, text)` pairs from a document tree without embedding.
 pub(super) fn collect_document_embeddings(doc: &DocumentTree, pairs: &mut Vec<(VectorId, String)>) {
-    if let Some(ref summary) = doc.summary {
-        if !summary.trim().is_empty() {
-            pairs.push((VectorId::doc_summary(doc.id.as_ref()), summary.clone()));
-        }
+    if let Some(ref summary) = doc.summary
+        && !summary.trim().is_empty()
+    {
+        pairs.push((VectorId::doc_summary(doc.id.as_ref()), summary.clone()));
     }
 
     let mut ids = Vec::new();
@@ -191,11 +191,11 @@ fn collect_embeddable_items(
     texts: &mut Vec<String>,
 ) {
     for section in sections {
-        if let Some(ref summary) = section.summary {
-            if !summary.trim().is_empty() {
-                ids.push(VectorId::sec_summary(section.id.as_ref()));
-                texts.push(summary.clone());
-            }
+        if let Some(ref summary) = section.summary
+            && !summary.trim().is_empty()
+        {
+            ids.push(VectorId::sec_summary(section.id.as_ref()));
+            texts.push(summary.clone());
         }
 
         if !section.text.trim().is_empty() {

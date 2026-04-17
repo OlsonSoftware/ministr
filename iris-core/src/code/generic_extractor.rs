@@ -212,15 +212,14 @@ fn extract_name_generic(node: &tree_sitter::Node, source: &[u8]) -> String {
     for field in &["name", "declarator", "type", "identifier"] {
         if let Some(name_node) = node.child_by_field_name(field) {
             // For declarators (C/C++), recurse to find the identifier
-            if name_node.kind() == "function_declarator" || name_node.kind() == "pointer_declarator"
+            if (name_node.kind() == "function_declarator"
+                || name_node.kind() == "pointer_declarator")
+                && let Some(inner) = name_node.child_by_field_name("declarator")
+                && let Ok(text) = inner.utf8_text(source)
             {
-                if let Some(inner) = name_node.child_by_field_name("declarator") {
-                    if let Ok(text) = inner.utf8_text(source) {
-                        let text = text.trim();
-                        if !text.is_empty() {
-                            return text.to_string();
-                        }
-                    }
+                let text = text.trim();
+                if !text.is_empty() {
+                    return text.to_string();
                 }
             }
             if let Ok(text) = name_node.utf8_text(source) {
@@ -233,22 +232,21 @@ fn extract_name_generic(node: &tree_sitter::Node, source: &[u8]) -> String {
     }
 
     // For Python decorated_definition: look inside
-    if node.kind() == "decorated_definition" {
-        if let Some(definition) = node.child_by_field_name("definition") {
-            return extract_name_generic(&definition, source);
-        }
+    if node.kind() == "decorated_definition"
+        && let Some(definition) = node.child_by_field_name("definition")
+    {
+        return extract_name_generic(&definition, source);
     }
 
     // For Go type_declaration: look inside the type_spec child
     if node.kind() == "type_declaration" {
         let mut inner = node.walk();
         for child in node.children(&mut inner) {
-            if child.kind() == "type_spec" {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    if let Ok(text) = name_node.utf8_text(source) {
-                        return text.trim().to_string();
-                    }
-                }
+            if child.kind() == "type_spec"
+                && let Some(name_node) = child.child_by_field_name("name")
+                && let Ok(text) = name_node.utf8_text(source)
+            {
+                return text.trim().to_string();
             }
         }
     }
@@ -257,12 +255,11 @@ fn extract_name_generic(node: &tree_sitter::Node, source: &[u8]) -> String {
     if node.kind() == "const_declaration" {
         let mut inner = node.walk();
         for child in node.children(&mut inner) {
-            if child.kind() == "const_spec" {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    if let Ok(text) = name_node.utf8_text(source) {
-                        return text.trim().to_string();
-                    }
-                }
+            if child.kind() == "const_spec"
+                && let Some(name_node) = child.child_by_field_name("name")
+                && let Ok(text) = name_node.utf8_text(source)
+            {
+                return text.trim().to_string();
             }
         }
     }
@@ -270,10 +267,10 @@ fn extract_name_generic(node: &tree_sitter::Node, source: &[u8]) -> String {
     // Fallback: look for first named child that is an identifier
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "identifier" || child.kind() == "type_identifier" {
-            if let Ok(text) = child.utf8_text(source) {
-                return text.trim().to_string();
-            }
+        if (child.kind() == "identifier" || child.kind() == "type_identifier")
+            && let Ok(text) = child.utf8_text(source)
+        {
+            return text.trim().to_string();
         }
     }
 
@@ -294,10 +291,10 @@ fn extract_annotations_generic(node: &tree_sitter::Node, source: &[u8]) -> Vec<S
     if node.kind() == "decorated_definition" {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.kind() == "decorator" {
-                if let Ok(text) = child.utf8_text(source) {
-                    annotations.push(text.trim().to_string());
-                }
+            if child.kind() == "decorator"
+                && let Ok(text) = child.utf8_text(source)
+            {
+                annotations.push(text.trim().to_string());
             }
         }
         return annotations;
@@ -307,14 +304,13 @@ fn extract_annotations_generic(node: &tree_sitter::Node, source: &[u8]) -> Vec<S
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         let kind = child.kind();
-        if kind == "annotation"
+        if (kind == "annotation"
             || kind == "marker_annotation"
             || kind == "attribute"
-            || kind == "decorator"
+            || kind == "decorator")
+            && let Ok(text) = child.utf8_text(source)
         {
-            if let Ok(text) = child.utf8_text(source) {
-                annotations.push(text.trim().to_string());
-            }
+            annotations.push(text.trim().to_string());
         }
     }
 
@@ -438,10 +434,10 @@ fn detect_visibility_generic(node: &tree_sitter::Node, source: &[u8]) -> Visibil
     }
 
     // Python: check for decorated_definition wrapping
-    if node.kind() == "decorated_definition" {
-        if let Some(def) = node.child_by_field_name("definition") {
-            return detect_visibility_generic(&def, source);
-        }
+    if node.kind() == "decorated_definition"
+        && let Some(def) = node.child_by_field_name("definition")
+    {
+        return detect_visibility_generic(&def, source);
     }
 
     // Python naming convention: _name is private, __name is private (mangled)
@@ -455,10 +451,10 @@ fn detect_visibility_generic(node: &tree_sitter::Node, source: &[u8]) -> Visibil
     }
 
     // Go convention: capitalized first letter means exported (public)
-    if let Some(first_char) = name.chars().next() {
-        if first_char.is_uppercase() {
-            return Visibility::Public;
-        }
+    if let Some(first_char) = name.chars().next()
+        && first_char.is_uppercase()
+    {
+        return Visibility::Public;
     }
 
     Visibility::Private
@@ -469,10 +465,10 @@ fn extract_signature_generic(node: &tree_sitter::Node, source: &[u8]) -> String 
     let text = node.utf8_text(source).unwrap_or("");
 
     // For decorated definitions, use the inner definition
-    if node.kind() == "decorated_definition" {
-        if let Some(def) = node.child_by_field_name("definition") {
-            return extract_signature_generic(&def, source);
-        }
+    if node.kind() == "decorated_definition"
+        && let Some(def) = node.child_by_field_name("definition")
+    {
+        return extract_signature_generic(&def, source);
     }
 
     // Try to find the body and take everything before it
@@ -530,10 +526,10 @@ fn extract_doc_comment_generic(node: &tree_sitter::Node, source: &[u8]) -> Optio
                 break;
             }
         } else if kind == "block_comment" {
-            if let Some(content) = strip_block_doc_comment(text) {
-                if !content.is_empty() {
-                    doc_lines.push(content);
-                }
+            if let Some(content) = strip_block_doc_comment(text)
+                && !content.is_empty()
+            {
+                doc_lines.push(content);
             }
             break;
         } else if kind == "decorator" || kind == "attribute_item" || kind == "annotation" {

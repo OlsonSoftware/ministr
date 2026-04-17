@@ -183,12 +183,12 @@ impl PackageGraph {
             let from_pkg = self.package_for_file(from_file);
             let to_pkg = self.package_for_file(to_file);
 
-            if let (Some(from), Some(to)) = (from_pkg, to_pkg) {
-                if from != to {
-                    *edge_counts
-                        .entry((from.to_string(), to.to_string()))
-                        .or_insert(0) += 1;
-                }
+            if let (Some(from), Some(to)) = (from_pkg, to_pkg)
+                && from != to
+            {
+                *edge_counts
+                    .entry((from.to_string(), to.to_string()))
+                    .or_insert(0) += 1;
             }
         }
 

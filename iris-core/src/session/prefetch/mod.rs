@@ -264,10 +264,10 @@ impl PrefetchCache {
         }
 
         // Evict LRU if at capacity
-        if self.entries.len() >= self.capacity {
-            if let Some(evicted_key) = self.order.pop_front() {
-                self.entries.remove(&evicted_key);
-            }
+        if self.entries.len() >= self.capacity
+            && let Some(evicted_key) = self.order.pop_front()
+        {
+            self.entries.remove(&evicted_key);
         }
 
         self.entries.insert(key.clone(), entry);
