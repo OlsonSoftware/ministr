@@ -135,16 +135,23 @@ iris-rs/
 
 ### Dependency Rule
 
-```
-iris-cli  →  iris-mcp  →  iris-core
-              ↓              ↑
-          iris-api     NO transport deps
-              ↑        (pure domain logic)
-          iris-daemon
-              ↓
-          iris-core
+```d2
+direction: right
 
-iris-app  →  iris-daemon  →  iris-core
+cli: iris-cli { shape: rectangle }
+mcp: iris-mcp { shape: rectangle }
+api: iris-api { shape: rectangle }
+daemon: iris-daemon { shape: rectangle }
+app: iris-app { shape: rectangle }
+core: "iris-core\n(pure domain)" { shape: rectangle }
+
+cli -> mcp
+mcp -> core
+mcp -> api
+daemon -> api
+daemon -> core
+app -> daemon
+app -> core
 ```
 
 `iris-core` **never** imports MCP types. `iris-api` never depends on `iris-core`. The boundaries are enforced structurally.
@@ -206,26 +213,37 @@ This means multiple Claude Code sessions on the same repo share one index.
 
 Before iris can answer queries, it needs to index the codebase. Here's the flow:
 
-```
-                         IngestionPipeline
-                               │
-         ┌─────────────────────┼─────────────────────┐
-         │                     │                      │
-    File Discovery        Parse & Split          Embed & Store
-         │                     │                      │
-    Walk directory        For each file:         For each section:
-    Filter by extension   │                      │
-    Hash for incremental  ├─ Detect parser       ├─ Embed text → Vec<f32>
-    Skip unchanged files  │  (md/html/pdf/code)  ├─ Insert into HNSW index
-                          │                      ├─ Extract claims
-                          ├─ Parse into sections ├─ Detect relationships
-                          │  with headings       └─ Store in SQLite
-                          │
-                          └─ For code files:
-                             ├─ tree-sitter AST parse
-                             ├─ Extract symbols (structs, fns, traits...)
-                             ├─ Extract references (calls, imports)
-                             └─ Detect cross-language bridges
+```d2
+direction: down
+
+pipeline: IngestionPipeline {
+  shape: rectangle
+}
+
+discovery: "File Discovery" {
+  walk: "Walk directory" { shape: rectangle }
+  filter: "Filter by extension" { shape: rectangle }
+  hash: "Hash for incremental" { shape: rectangle }
+  skip: "Skip unchanged files" { shape: rectangle }
+}
+
+parse: "Parse & Split" {
+  detect: "Detect parser\n(md / html / pdf / code)" { shape: rectangle }
+  sections: "Parse into sections\nwith headings" { shape: rectangle }
+  tree_sitter: "For code: tree-sitter AST\n+ extract symbols, references,\nbridges" { shape: rectangle }
+}
+
+embed: "Embed & Store" {
+  vec: "Embed text → Vec<f32>" { shape: rectangle }
+  hnsw: "Insert into HNSW index" { shape: rectangle }
+  claims: "Extract claims" { shape: rectangle }
+  rels: "Detect relationships" { shape: rectangle }
+  sqlite: "Store in SQLite" { shape: rectangle }
+}
+
+pipeline -> discovery
+pipeline -> parse
+pipeline -> embed
 ```
 
 ### What Gets Stored

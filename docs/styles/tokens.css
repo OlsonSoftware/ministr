@@ -1056,7 +1056,12 @@
 
   /* ---------- Diagram wrappers (D2) ---------- */
 
-  .iris-diagram {
+  /* Both the hand-wrapped .iris-diagram container (used on index.md)
+     and the bare .d2 container emitted by the mkdocs-d2 plugin inside
+     any fenced ```d2 block get the same iris card treatment so every
+     D2 diagram on the site looks identical. */
+  .iris-diagram,
+  .md-typeset > .d2 {
     position: relative;
     margin: calc(var(--spacing) * 4) auto calc(var(--spacing) * 12);
     max-width: 900px;
@@ -1068,7 +1073,7 @@
     overflow: hidden;
   }
   .iris-diagram .d2,
-  .iris-diagram svg {
+  .d2 svg {
     position: relative;
     max-width: 100%;
     height: auto !important;
@@ -1086,46 +1091,59 @@
      keeps only the first arg, so every diagram rule uses direct rgb
      or rgba values rather than color-mix. */
 
-  .iris-diagram svg .fill-N7 {
+  .d2 svg .fill-N7 {
     fill: transparent !important;
   }
 
   /* Primary shape fill (the main rectangle of each node). Matches the
      iris-features / iris-why card surface exactly so the shapes read
      as the same component family as the cards elsewhere on the page. */
-  .iris-diagram svg .fill-B4 {
+  .d2 svg .fill-B4,
+  .d2 svg .fill-B6,
+  .d2 svg .fill-B3 {
     fill: rgb(17 18 36) !important;
   }
   /* Secondary / container shells — sit slightly darker so nested
      shapes pop against them. */
-  .iris-diagram svg .fill-B5 {
+  .d2 svg .fill-B5,
+  .d2 svg .fill-B2 {
     fill: rgba(10, 10, 18, 0.5) !important;
   }
   /* Cylinder accents (storage shapes). Very subtle iris tint. */
-  .iris-diagram svg .fill-AA5 {
+  .d2 svg .fill-AA5,
+  .d2 svg .fill-AA4,
+  .d2 svg .fill-AA2 {
     fill: rgb(17 18 36) !important;
   }
   /* Arrowheads. */
-  .iris-diagram svg .fill-B1 {
+  .d2 svg .fill-B1 {
     fill: rgb(129 140 248) !important;
+  }
+  /* Neutral fills — used for alternate shape tones. */
+  .d2 svg .fill-N2,
+  .d2 svg .fill-N3,
+  .d2 svg .fill-N4,
+  .d2 svg .fill-N5,
+  .d2 svg .fill-N6 {
+    fill: rgb(17 18 36) !important;
   }
 
   /* Shape borders — match the exact .iris-card token so diagrams read
      as a grid of small cards rather than a separate visual system. */
-  .iris-diagram svg .stroke-B1 {
+  .d2 svg .stroke-B1 {
     stroke: rgb(38 40 74) !important;
     stroke-width: 1px !important;
     stroke-opacity: 1 !important;
   }
 
   /* Rounded corners on every rect to match the iris card radius. */
-  .iris-diagram svg rect {
+  .d2 svg rect {
     rx: 8 !important;
     ry: 8 !important;
   }
 
   /* Connections: subtle muted stroke with a slight iris hue. */
-  .iris-diagram svg .connection {
+  .d2 svg .connection {
     stroke: rgb(129 140 248) !important;
     stroke-width: 1.25px !important;
     stroke-opacity: 0.7 !important;
@@ -1133,26 +1151,26 @@
 
   /* Text inside shapes (fill-N1 = D2's dark ink). Remap to the iris
      text token and the iris font stack so labels match the docs. */
-  .iris-diagram svg text {
+  .d2 svg text {
     font-family:
       "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
       Roboto, "Helvetica Neue", Arial, sans-serif !important;
   }
-  .iris-diagram svg text.fill-N1,
-  .iris-diagram svg .fill-N1 {
+  .d2 svg text.fill-N1,
+  .d2 svg .fill-N1 {
     fill: rgb(229 231 235) !important;
     font-weight: 500 !important;
   }
-  .iris-diagram svg text.text-bold {
+  .d2 svg text.text-bold {
     font-weight: 650 !important;
     letter-spacing: 0.01em;
   }
   /* Connection edge labels (the tiny words like "napi", "pyo3",
      "tauri" on the bridges diagram). They're emitted inside a
      connection <g>, so target them explicitly. */
-  .iris-diagram svg .connection text,
-  .iris-diagram svg g.connection + text,
-  .iris-diagram svg text.connection {
+  .d2 svg .connection text,
+  .d2 svg g.connection + text,
+  .d2 svg text.connection {
     fill: rgb(156 163 175) !important;
     font-weight: 500 !important;
     font-size: 12px !important;
@@ -1160,28 +1178,28 @@
 
   /* Light-mode overrides. Reading the scheme off body means these
      apply when Material toggles data-md-color-scheme="default". */
-  [data-md-color-scheme="default"] .iris-diagram svg .fill-B4 {
+  [data-md-color-scheme="default"] .d2 svg .fill-B4 {
     fill: rgb(255 255 255) !important;
   }
-  [data-md-color-scheme="default"] .iris-diagram svg .fill-B5 {
+  [data-md-color-scheme="default"] .d2 svg .fill-B5 {
     fill: rgba(244, 244, 245, 0.85) !important;
   }
-  [data-md-color-scheme="default"] .iris-diagram svg .fill-AA5 {
+  [data-md-color-scheme="default"] .d2 svg .fill-AA5 {
     fill: rgba(99, 102, 241, 0.12) !important;
   }
-  [data-md-color-scheme="default"] .iris-diagram svg .fill-B1 {
+  [data-md-color-scheme="default"] .d2 svg .fill-B1 {
     fill: rgb(79 70 229) !important;
   }
-  [data-md-color-scheme="default"] .iris-diagram svg .stroke-B1 {
+  [data-md-color-scheme="default"] .d2 svg .stroke-B1 {
     stroke: rgb(99 102 241) !important;
     stroke-opacity: 0.55 !important;
   }
-  [data-md-color-scheme="default"] .iris-diagram svg .connection {
+  [data-md-color-scheme="default"] .d2 svg .connection {
     stroke: rgb(79 70 229) !important;
     stroke-opacity: 0.8 !important;
   }
-  [data-md-color-scheme="default"] .iris-diagram svg text.fill-N1,
-  [data-md-color-scheme="default"] .iris-diagram svg .fill-N1 {
+  [data-md-color-scheme="default"] .d2 svg text.fill-N1,
+  [data-md-color-scheme="default"] .d2 svg .fill-N1 {
     fill: rgb(28 25 23) !important;
   }
 
