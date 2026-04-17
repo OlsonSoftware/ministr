@@ -22,6 +22,16 @@ const DEFAULT_TOP_LIMIT: usize = 10;
 /// Default number of co-accessed sections to return.
 const DEFAULT_CO_ACCESS_LIMIT: usize = 5;
 
+fn dedup_ids(ids: &[SectionId]) -> Vec<SectionId> {
+    let mut unique: Vec<SectionId> = Vec::with_capacity(ids.len());
+    for id in ids {
+        if !unique.iter().any(|u| u.0 == id.0) {
+            unique.push(id.clone());
+        }
+    }
+    unique
+}
+
 /// Cross-session analytics service.
 ///
 /// Wraps the storage layer to provide access frequency tracking and
@@ -70,8 +80,10 @@ impl Analytics {
     /// Record co-access patterns from a session's trajectory.
     ///
     /// For each unique pair of sections in the trajectory, increments the
-    /// co-access count. Call this at session end or periodically during
-    /// long sessions.
+    /// co-access count. Intended for **single-call** full-trajectory
+    /// recording (e.g. a one-shot import). Production code that flushes
+    /// periodically must use [`Analytics::record_co_access_incremental`]
+    /// to avoid double-counting pairs on subsequent flushes.
     ///
     /// # Errors
     ///
@@ -91,6 +103,57 @@ impl Analytics {
             return Ok(());
         }
         self.storage.record_co_accesses(&unique).await
+    }
+
+    /// Record co-access patterns incrementally.
+    ///
+    /// Generates pairs only between (a) each item in `new` and every
+    /// other item in `new`, and (b) each item in `new` and every item
+    /// in `previously_flushed`. Pairs strictly within
+    /// `previously_flushed` are NOT recorded — they were handled on a
+    /// prior flush.
+    ///
+    /// This is the correct API for call sites that flush repeatedly
+    /// on a growing trajectory (e.g. `persist_session` after every
+    /// tool call): each pair is counted exactly once per session
+    /// regardless of how many flushes happen.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the database operation fails.
+    pub async fn record_co_access_incremental(
+        &self,
+        new: &[SectionId],
+        previously_flushed: &[SectionId],
+    ) -> Result<(), StorageError> {
+        if new.is_empty() {
+            return Ok(());
+        }
+        // Deduplicate within each list defensively.
+        let new_unique: Vec<SectionId> = dedup_ids(new);
+        let prev_unique: Vec<SectionId> = dedup_ids(previously_flushed);
+
+        // Pairs within `new`.
+        let mut pairs: Vec<(SectionId, SectionId)> =
+            Vec::with_capacity(new_unique.len() * (new_unique.len() + prev_unique.len()));
+        for i in 0..new_unique.len() {
+            for j in (i + 1)..new_unique.len() {
+                pairs.push((new_unique[i].clone(), new_unique[j].clone()));
+            }
+        }
+        // Cross pairs: new × previously_flushed.
+        for n in &new_unique {
+            for p in &prev_unique {
+                if n.0 == p.0 {
+                    continue; // defense-in-depth against overlapping inputs
+                }
+                pairs.push((n.clone(), p.clone()));
+            }
+        }
+        if pairs.is_empty() {
+            return Ok(());
+        }
+        self.storage.record_co_access_pairs(&pairs).await
     }
 
     /// Get the most frequently accessed sections across all sessions.

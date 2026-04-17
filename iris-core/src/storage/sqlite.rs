@@ -1324,9 +1324,15 @@ impl Storage for SqliteStorage {
                 .map_err(|e| StorageError::Database {
                     reason: e.to_string(),
                 })?;
-            // Generate all unique pairs (a, b) where a < b to avoid duplicates
+            // Generate all unique pairs (a, b) where a < b to avoid duplicates.
+            // Skip self-pairs defensively — callers normally dedupe via the
+            // Analytics wrapper, but the trait is public so a duplicate ID
+            // in the input must never produce a `(x, x)` row.
             for i in 0..ids.len() {
                 for j in (i + 1)..ids.len() {
+                    if ids[i] == ids[j] {
+                        continue;
+                    }
                     let (a, b) = if ids[i] < ids[j] {
                         (&ids[i], &ids[j])
                     } else {
@@ -1343,6 +1349,56 @@ impl Storage for SqliteStorage {
                         reason: e.to_string(),
                     })?;
                 }
+            }
+            tx.commit().map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn record_co_access_pairs(
+        &self,
+        pairs: &[(SectionId, SectionId)],
+    ) -> Result<(), StorageError> {
+        if pairs.is_empty() {
+            return Ok(());
+        }
+        // Normalize ordering (section_a < section_b) and skip self-pairs.
+        let normalized: Vec<(String, String)> = pairs
+            .iter()
+            .filter_map(|(a, b)| {
+                if a.0 == b.0 {
+                    return None;
+                }
+                if a.0 < b.0 {
+                    Some((a.0.clone(), b.0.clone()))
+                } else {
+                    Some((b.0.clone(), a.0.clone()))
+                }
+            })
+            .collect();
+        if normalized.is_empty() {
+            return Ok(());
+        }
+        self.with_conn(move |conn| {
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            for (a, b) in &normalized {
+                tx.execute(
+                    "INSERT INTO co_access_patterns (section_a, section_b, co_count)
+                     VALUES (?1, ?2, 1)
+                     ON CONFLICT(section_a, section_b) DO UPDATE SET
+                       co_count = co_count + 1",
+                    rusqlite::params![a, b],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
             }
             tx.commit().map_err(|e| StorageError::Database {
                 reason: e.to_string(),

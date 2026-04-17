@@ -267,6 +267,12 @@ pub struct Session {
     recent_queries: VecDeque<String>,
     /// Cumulative token economics metrics.
     metrics: SessionMetrics,
+    /// Section IDs that have already been paired into the cross-session
+    /// co-access table. Tracked incrementally so `persist_session` can
+    /// flush new pairs on every call without double-counting pairs that
+    /// were already recorded on earlier flushes. See
+    /// [`Session::unflushed_co_access_items`].
+    co_access_flushed_ids: HashSet<String>,
 }
 
 impl Session {
@@ -289,6 +295,7 @@ impl Session {
             pending_alerts: VecDeque::new(),
             recent_queries: VecDeque::new(),
             metrics: SessionMetrics::default(),
+            co_access_flushed_ids: HashSet::new(),
         }
     }
 
@@ -328,6 +335,13 @@ impl Session {
         // Convert to VecDeque, keeping only the most recent entries.
         let skip = trajectory.len().saturating_sub(MAX_TRAJECTORY_LEN);
         let trajectory: VecDeque<ContentId> = trajectory.into_iter().skip(skip).collect();
+        // Treat every restored trajectory entry as already flushed — we
+        // don't persist the flushed set today, so the safest assumption
+        // is that any pair from restored state has already been recorded
+        // (or would have been had the daemon not crashed). This may miss
+        // a small number of pairs but never double-counts.
+        let co_access_flushed_ids: HashSet<String> =
+            trajectory.iter().map(|c| c.0.clone()).collect();
         Self {
             id,
             created_at: Instant::now(),
@@ -340,6 +354,7 @@ impl Session {
             pending_alerts: VecDeque::new(),
             recent_queries: VecDeque::new(),
             metrics: SessionMetrics::default(),
+            co_access_flushed_ids,
         }
     }
 
@@ -655,6 +670,50 @@ impl Session {
     #[must_use]
     pub fn has_pending_alerts(&self) -> bool {
         !self.pending_alerts.is_empty()
+    }
+
+    // --- Co-access flush tracking ---
+
+    /// Partition the trajectory into new-vs-previously-flushed items
+    /// for incremental co-access recording.
+    ///
+    /// Returns `(new, previously_flushed)` where:
+    /// * `new` is the deduplicated set of content IDs present in the
+    ///   current trajectory that haven't yet been flushed to the
+    ///   cross-session co-access table.
+    /// * `previously_flushed` is the full set of content IDs already
+    ///   recorded in earlier flushes.
+    ///
+    /// Callers should pair every `new` item with every other `new`
+    /// item AND with every `previously_flushed` item, then call
+    /// [`Session::mark_co_access_flushed`] with the `new` set.
+    #[must_use]
+    pub fn unflushed_co_access_items(&self) -> (Vec<ContentId>, Vec<ContentId>) {
+        let mut seen_new: HashSet<String> = HashSet::new();
+        let mut new = Vec::new();
+        for cid in &self.trajectory {
+            if !self.co_access_flushed_ids.contains(&cid.0) && seen_new.insert(cid.0.clone()) {
+                new.push(cid.clone());
+            }
+        }
+        let prev: Vec<ContentId> = self
+            .co_access_flushed_ids
+            .iter()
+            .map(|s| ContentId(s.clone()))
+            .collect();
+        (new, prev)
+    }
+
+    /// Mark a set of content IDs as already flushed to the co-access
+    /// table. Subsequent calls to [`Session::unflushed_co_access_items`]
+    /// will exclude them from the `new` list.
+    pub fn mark_co_access_flushed<I>(&mut self, ids: I)
+    where
+        I: IntoIterator<Item = ContentId>,
+    {
+        for cid in ids {
+            self.co_access_flushed_ids.insert(cid.0);
+        }
     }
 
     // --- Metrics ---

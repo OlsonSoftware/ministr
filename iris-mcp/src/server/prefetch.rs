@@ -146,25 +146,40 @@ impl IrisServer {
     }
 
     /// Persist the current session state to storage, if persistence is enabled.
-    /// Also flushes co-access patterns from the session trajectory.
+    ///
+    /// Also incrementally flushes co-access patterns: only pairs that
+    /// involve sections newly added to the trajectory since the last
+    /// flush are recorded. This prevents the O(N³) inflation that
+    /// would happen if the entire trajectory were re-recorded on every
+    /// tool call.
     pub(super) async fn persist_session(&self) {
         if let Some(ref storage) = self.storage {
-            let reg = self.registry.lock().await;
-            let Some(entry) = reg.get_session(&self.active_session_id) else {
+            let mut reg = self.registry.lock().await;
+            let Some(entry) = reg.get_session_mut(&self.active_session_id) else {
                 return;
             };
             if let Err(e) = storage.save_session(&entry.session).await {
                 warn!(error = %e, "failed to persist session");
             }
-            // Flush co-access patterns from trajectory
+
+            // Incremental co-access flush.
             if let Some(ref analytics) = self.analytics {
-                let trajectory = entry.session.trajectory();
-                let section_ids: Vec<SectionId> = trajectory
+                let (new_items, already_flushed) = entry.session.unflushed_co_access_items();
+                let fresh_ids: Vec<SectionId> =
+                    new_items.iter().map(|c| SectionId(c.0.clone())).collect();
+                let known_ids: Vec<SectionId> = already_flushed
                     .iter()
-                    .map(|cid| SectionId(cid.0.clone()))
+                    .map(|c| SectionId(c.0.clone()))
                     .collect();
+                // Mark BEFORE drop so the session state is updated
+                // atomically with the flush decision.
+                entry.session.mark_co_access_flushed(new_items);
                 drop(reg);
-                if let Err(e) = analytics.record_co_accesses(&section_ids).await {
+                if !fresh_ids.is_empty()
+                    && let Err(e) = analytics
+                        .record_co_access_incremental(&fresh_ids, &known_ids)
+                        .await
+                {
                     warn!(error = %e, "failed to record co-access patterns");
                 }
             }

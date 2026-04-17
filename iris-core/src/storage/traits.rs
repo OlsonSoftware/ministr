@@ -545,6 +545,20 @@ pub trait Storage: Send + Sync {
         section_ids: &[SectionId],
     ) -> impl Future<Output = Result<(), StorageError>> + Send;
 
+    /// Record a pre-computed set of co-access pairs.
+    ///
+    /// Unlike [`Storage::record_co_accesses`], which derives all pairs
+    /// from a single trajectory, this method accepts pairs directly. It
+    /// is the primitive used by `Analytics::record_co_access_incremental`
+    /// to record only the NEW pairs that arose since the last flush,
+    /// without double-counting pairs already recorded.
+    ///
+    /// Self-pairs (where both sides are equal) are skipped defensively.
+    fn record_co_access_pairs(
+        &self,
+        pairs: &[(SectionId, SectionId)],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
     /// Get the most frequently accessed sections.
     fn get_top_sections(
         &self,
