@@ -269,6 +269,11 @@ impl Session {
     /// Used for crash recovery — reconstructs a `Session` from data loaded
     /// from `SQLite`. The `created_at` timestamp is reset to `Instant::now()`
     /// since `Instant` is not serializable.
+    ///
+    /// If the supplied `current_turn` is below the max `turn_delivered` in
+    /// the delivered map (e.g. a stale or inconsistent persistence record),
+    /// it is clamped upward so downstream ranking code can safely compute
+    /// `current_turn - turn_delivered` without underflow.
     #[must_use]
     pub fn restore(
         id: SessionId,
@@ -277,6 +282,12 @@ impl Session {
         trajectory: Vec<ContentId>,
         current_turn: u32,
     ) -> Self {
+        let max_delivered_turn = delivered
+            .values()
+            .map(|item| item.turn_delivered)
+            .max()
+            .unwrap_or(0);
+        let current_turn = current_turn.max(max_delivered_turn);
         // Convert to VecDeque, keeping only the most recent entries.
         let skip = trajectory.len().saturating_sub(MAX_TRAJECTORY_LEN);
         let trajectory: VecDeque<ContentId> = trajectory.into_iter().skip(skip).collect();
@@ -326,6 +337,7 @@ impl Session {
         };
 
         self.delivered.insert(content_id.0.clone(), item);
+        self.stale.remove(&content_id.0);
     }
 
     /// Check whether content has already been delivered in this session.
@@ -1177,10 +1189,26 @@ mod tests {
         let _ = session.mark_stale(&cid("s1"));
         assert!(session.is_stale(&cid("s1")));
 
-        // Re-deliver with updated content
+        // Re-delivery must clear staleness automatically so the stale set
+        // stays in sync with the delivered map.
         session.record_delivery(&cid("s1"), Resolution::Section, 210, 2, "h2".into());
-        // Stale should be cleared after re-delivery
-        session.clear_stale(&cid("s1"));
+        assert!(!session.is_stale(&cid("s1")));
+        assert!(!session.stale_content_ids().contains(&"s1".to_string()));
+    }
+
+    #[test]
+    fn invalidate_then_redeliver_clears_stale_without_manual_call() {
+        let mut session = make_session();
+        session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
+
+        // File change triggers invalidation via coherence.
+        let count = session.invalidate_sections(&["s1".into()]);
+        assert_eq!(count, 1);
+        assert!(session.is_stale(&cid("s1")));
+
+        // Agent re-reads the section; record_delivery updates the hash and
+        // must drop the ghost stale flag.
+        session.record_delivery(&cid("s1"), Resolution::Section, 220, 2, "h2".into());
         assert!(!session.is_stale(&cid("s1")));
     }
 

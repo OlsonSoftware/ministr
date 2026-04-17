@@ -257,7 +257,12 @@ impl EvictionRanker {
                 if current_turn == 0 {
                     0.0
                 } else {
-                    f64::from(current_turn - item.turn_delivered) / f64::from(current_turn)
+                    // saturating_sub guards against inconsistent sessions where
+                    // turn_delivered > current_turn (e.g. a persistence restore
+                    // that reconstructs delivered items but reads a stale turn
+                    // counter). A "future" item is treated as just-delivered.
+                    f64::from(current_turn.saturating_sub(item.turn_delivered))
+                        / f64::from(current_turn)
                 }
             }
         };
