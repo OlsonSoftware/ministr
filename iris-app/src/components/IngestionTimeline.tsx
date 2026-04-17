@@ -1,7 +1,19 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Timer, HardDrive, Layers, Cpu, FileText } from "lucide-react";
+import {
+  Timer,
+  HardDrive,
+  Layers,
+  Cpu,
+  FileText,
+  CheckCircle2,
+  Loader2,
+  Database,
+} from "lucide-react";
 import { Card } from "./ui/card";
+import { Badge } from "./ui/badge";
+import { Progress } from "./ui/progress";
+import { cn } from "../lib/utils";
 import type { DaemonStatus, IngestionProgressInfo } from "../lib/types";
 
 interface Props {
@@ -10,26 +22,14 @@ interface Props {
 
 const PHASE_LABELS: Record<string, string> = {
   idle: "Idle",
-  discovering: "Discovering files…",
-  parsing: "Parsing & extracting…",
-  embedding: "Generating embeddings…",
-  finalizing: "Finalizing…",
+  discovering: "Discovering files",
+  parsing: "Parsing & extracting",
+  embedding: "Generating embeddings",
+  finalizing: "Finalizing",
 };
 
 function phaseLabel(phase: string): string {
   return PHASE_LABELS[phase] ?? phase;
-}
-
-function ProgressBar({ value, max, className = "" }: { value: number; max: number; className?: string }) {
-  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
-  return (
-    <div className={`h-1.5 rounded-full bg-surface-overlay overflow-hidden ${className}`}>
-      <div
-        className="h-full rounded-full transition-all duration-300"
-        style={{ width: `${pct}%` }}
-      />
-    </div>
-  );
 }
 
 export function IngestionTimeline({ status }: Props) {
@@ -53,100 +53,183 @@ export function IngestionTimeline({ status }: Props) {
     };
   }, [status.corpora]);
 
+  const activeCount = progress.filter((p) => p.status === 1).length;
+
   return (
-    <div className="space-y-3">
-      <h2 className="text-sm font-medium text-text-muted uppercase tracking-wider flex items-center gap-2">
-        <Timer className="h-4 w-4" /> Ingestion Progress
-      </h2>
+    <div className="space-y-4 iris-fade-in">
+      <header className="flex items-end justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold text-text">Ingestion</h2>
+          <p className="text-xs text-text-dim mt-0.5">
+            Live parse / embed / index progress per corpus.
+          </p>
+        </div>
+        {activeCount > 0 && (
+          <Badge variant="warning" dot>
+            {activeCount} indexing
+          </Badge>
+        )}
+      </header>
 
       {progress.length === 0 ? (
-        <p className="text-sm text-text-dim">No corpora registered.</p>
+        <Card className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+          <div className="grid h-12 w-12 place-items-center rounded-xl bg-surface-overlay text-text-dim">
+            <Timer className="h-5 w-5" />
+          </div>
+          <p className="text-sm font-medium text-text">No corpora registered</p>
+          <p className="text-xs text-text-dim">
+            Add a project to see ingestion progress stream in.
+          </p>
+        </Card>
       ) : (
         <div className="grid gap-3">
           {progress.map((p) => {
             const corpusInfo = status.corpora.find((c) => c.id === p.corpus_id);
-            const isActive = p.status === 1;
-            const isComplete = p.status === 2;
-
             return (
-              <Card key={p.corpus_id}>
-                {/* Header: corpus ID + status badge */}
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-mono text-xs truncate max-w-[250px]">
-                    {p.corpus_id}
-                  </span>
-                  {isActive ? (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-warning/10 text-warning animate-pulse">
-                      {phaseLabel(p.phase)}
-                    </span>
-                  ) : isComplete ? (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-500">
-                      complete
-                    </span>
-                  ) : (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-surface-overlay text-text-dim">
-                      pending
-                    </span>
-                  )}
-                </div>
-
-                {/* Files progress bar */}
-                <div className="space-y-1 mb-2">
-                  <div className="flex items-center justify-between text-xs text-text-dim">
-                    <span className="flex items-center gap-1">
-                      <HardDrive className="h-3 w-3" />
-                      Files
-                    </span>
-                    <span>{p.files_done}/{p.files_total}</span>
-                  </div>
-                  <ProgressBar value={p.files_done} max={p.files_total} className="[&>div]:bg-accent" />
-                </div>
-
-                {/* Embeddings progress bar (only shown when there's embedding work) */}
-                {(p.embeddings_total > 0 || (isActive && p.phase === "embedding")) && (
-                  <div className="space-y-1 mb-2">
-                    <div className="flex items-center justify-between text-xs text-text-dim">
-                      <span className="flex items-center gap-1">
-                        <Cpu className="h-3 w-3" />
-                        Embeddings
-                      </span>
-                      <span>{p.embeddings_done.toLocaleString()}/{p.embeddings_total.toLocaleString()}</span>
-                    </div>
-                    <ProgressBar value={p.embeddings_done} max={p.embeddings_total} className="[&>div]:bg-purple-500" />
-                  </div>
-                )}
-
-                {/* Stats row */}
-                <div className="grid grid-cols-3 gap-2 text-xs text-text-dim">
-                  <div className="flex items-center gap-1">
-                    <Layers className="h-3 w-3" />
-                    {p.sections_done.toLocaleString()} sections
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-accent">⚡</span>
-                    {p.embeddings_done.toLocaleString()} vectors
-                  </div>
-                  <div className="flex items-center gap-1 justify-end">
-                    {corpusInfo?.sections_count !== undefined && (
-                      <span>
-                        {corpusInfo.sections_count.toLocaleString()} total
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Current file indicator */}
-                {isActive && p.current_file && (
-                  <div className="mt-2 flex items-center gap-1.5 text-xs text-text-dim truncate">
-                    <FileText className="h-3 w-3 flex-shrink-0 text-accent" />
-                    <span className="truncate font-mono opacity-70">{p.current_file}</span>
-                  </div>
-                )}
-              </Card>
+              <IngestionCard
+                key={p.corpus_id}
+                progress={p}
+                totalSections={corpusInfo?.sections_count}
+              />
             );
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function IngestionCard({
+  progress: p,
+  totalSections,
+}: {
+  progress: IngestionProgressInfo;
+  totalSections?: number;
+}) {
+  const isActive = p.status === 1;
+  const isComplete = p.status === 2;
+
+  return (
+    <Card hover="lift" className="space-y-3">
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-[11px] text-text-muted truncate max-w-[280px]">
+              {p.corpus_id}
+            </span>
+            {isActive ? (
+              <Badge variant="warning" dot>
+                <Loader2 className="h-2.5 w-2.5 iris-spin" />
+                {phaseLabel(p.phase)}
+              </Badge>
+            ) : isComplete ? (
+              <Badge variant="success">
+                <CheckCircle2 className="h-2.5 w-2.5" />
+                Complete
+              </Badge>
+            ) : (
+              <Badge variant="muted">Pending</Badge>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <ProgressRow
+        icon={HardDrive}
+        label="Files"
+        done={p.files_done}
+        total={p.files_total}
+      />
+
+      {(p.embeddings_total > 0 || (isActive && p.phase === "embedding")) && (
+        <ProgressRow
+          icon={Cpu}
+          label="Embeddings"
+          done={p.embeddings_done}
+          total={p.embeddings_total}
+          glow
+        />
+      )}
+
+      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/60">
+        <StatCell icon={Layers} value={p.sections_done} label="sections" />
+        <StatCell icon={Database} value={p.embeddings_done} label="vectors" />
+        <StatCell
+          icon={Layers}
+          value={totalSections}
+          label="total indexed"
+          muted
+        />
+      </div>
+
+      {isActive && p.current_file && (
+        <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-sunken border border-border/60 rounded-md px-2.5 py-1.5 truncate">
+          <FileText className="h-3 w-3 shrink-0 text-accent" />
+          <span className="truncate font-mono">{p.current_file}</span>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ProgressRow({
+  icon: Icon,
+  label,
+  done,
+  total,
+  glow = false,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  done: number;
+  total: number;
+  glow?: boolean;
+}) {
+  const pct = total > 0 ? (done / total) * 100 : 0;
+  return (
+    <div>
+      <div className="flex items-center justify-between text-[11px] mb-1.5">
+        <span className="flex items-center gap-1.5 text-text-muted">
+          <Icon className="h-3 w-3" />
+          {label}
+        </span>
+        <span className="font-mono tabular-nums text-text">
+          {done.toLocaleString()} / {total.toLocaleString()}
+          <span className="text-text-dim ml-1.5">({pct.toFixed(0)}%)</span>
+        </span>
+      </div>
+      <Progress value={pct} glow={glow} />
+    </div>
+  );
+}
+
+function StatCell({
+  icon: Icon,
+  value,
+  label,
+  muted = false,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  value: number | undefined;
+  label: string;
+  muted?: boolean;
+}) {
+  return (
+    <div className="text-center">
+      <div
+        className={cn(
+          "flex items-center justify-center gap-1 mb-0.5",
+          muted ? "text-text-dim" : "text-text",
+        )}
+      >
+        <Icon className="h-3 w-3" />
+        <span className="text-sm font-semibold tabular-nums">
+          {value !== undefined ? value.toLocaleString() : "—"}
+        </span>
+      </div>
+      <span className="text-[10px] uppercase tracking-wider text-text-dim">
+        {label}
+      </span>
     </div>
   );
 }
