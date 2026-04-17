@@ -35,6 +35,10 @@ pub struct ProxyServer {
     /// Local budget tracker — tracks tokens delivered through this proxy
     /// independently of the daemon's session system.
     local_budget: Arc<Mutex<BudgetTracker>>,
+    /// Serializes daemon-launch attempts within this proxy process so two
+    /// concurrent cold-start tool calls don't both remove the socket and
+    /// spawn competing daemons.
+    launch_mu: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -141,15 +145,25 @@ impl ProxyServer {
                 budget_config,
                 EvictionPolicy::Fifo,
             ))),
+            launch_mu: Arc::new(Mutex::new(())),
         }
     }
 
     /// Ensure the daemon is running, auto-starting it if necessary.
     ///
     /// If a stale socket is detected (file exists but daemon unresponsive),
-    /// cleans up and retries the launch once.
+    /// cleans up and retries the launch once. Launch attempts are
+    /// serialized through `launch_mu` so concurrent first-callers can't
+    /// race to both delete the socket and spawn competing daemons.
     async fn ensure_daemon(&self) -> Result<(), McpError> {
-        // Fast path: socket exists and daemon responds.
+        // Fast path: socket exists and daemon responds, lock-free.
+        if self.client.is_healthy().await {
+            return Ok(());
+        }
+
+        // Serialize the launch path. Double-check once we hold the lock in
+        // case another concurrent caller already brought the daemon up.
+        let _launch_guard = self.launch_mu.lock().await;
         if self.client.is_healthy().await {
             return Ok(());
         }
@@ -244,13 +258,19 @@ impl ProxyServer {
     }
 
     async fn ensure_corpus(&self) -> Result<String, McpError> {
-        {
-            let guard = self.corpus_id.lock().await;
-            if let Some(ref id) = *guard {
-                return Ok(id.clone());
-            }
+        // Serialize through the write lock so concurrent first-callers
+        // don't both fire `register_corpus`. Daemon-side register is
+        // idempotent, but holding the lock across the RPC avoids the
+        // wasted round-trip and keeps the memoized ID deterministic.
+        let mut guard = self.corpus_id.lock().await;
+        if let Some(ref id) = *guard {
+            return Ok(id.clone());
         }
 
+        // `ensure_daemon` may take a while to spawn + health-check; it has
+        // its own `launch_mu` that prevents a thundering herd, so holding
+        // the corpus_id lock here just serializes corpus setup — exactly
+        // the behaviour we want.
         self.ensure_daemon().await?;
 
         let resp = self
@@ -259,7 +279,6 @@ impl ProxyServer {
             .await
             .map_err(|e| McpError::internal_error(format!("daemon: {e}"), None))?;
 
-        let mut guard = self.corpus_id.lock().await;
         *guard = Some(resp.corpus_id.clone());
         info!(corpus_id = %resp.corpus_id, "registered corpus with daemon");
         Ok(resp.corpus_id)
@@ -270,19 +289,17 @@ impl ProxyServer {
     /// Call this at startup so the daemon (and GUI) can see the session
     /// immediately, rather than waiting for the first tool call.
     ///
+    /// We intentionally do *not* `clear_sessions` for the corpus here —
+    /// other proxies may be connected to the same corpus (GUI, second MCP
+    /// client), and nuking every session on startup destroyed their
+    /// turn/budget state. Crash-orphan cleanup belongs in a separate
+    /// per-proxy tracking layer.
+    ///
     /// # Errors
     ///
     /// Returns [`McpError`] if the daemon is unreachable or registration fails.
     pub async fn initialize(&self) -> Result<(), McpError> {
-        // Register corpus first (needed to get corpus_id for clear_sessions).
-        let corpus_id = self.ensure_corpus().await?;
-
-        // Clear stale sessions from previous proxy connections that didn't
-        // shut down cleanly (e.g. crashes, old binary without shutdown()).
-        if let Err(e) = self.client.clear_sessions(&corpus_id).await {
-            warn!(error = %e, "failed to clear stale sessions");
-        }
-
+        let _corpus_id = self.ensure_corpus().await?;
         let _session_id = self.ensure_session().await?;
         Ok(())
     }
@@ -303,22 +320,28 @@ impl ProxyServer {
     }
 
     /// Ensure a daemon session exists for this proxy, creating one lazily.
+    ///
+    /// Holds the write lock through the `create_session` RPC so two
+    /// concurrent first-callers don't both ask the daemon to mint a
+    /// session — that used to leak one orphan per race. Lock order:
+    /// `corpus_id` acquired first (inside `ensure_corpus`), then
+    /// `session_id` — matches everywhere else that touches both.
     async fn ensure_session(&self) -> Result<String, McpError> {
-        {
-            let guard = self.session_id.lock().await;
-            if let Some(ref id) = *guard {
-                return Ok(id.clone());
-            }
+        // Grab the corpus ID before we take the session lock so we don't
+        // invert lock order.
+        let corpus_id = self.ensure_corpus().await?;
+
+        let mut guard = self.session_id.lock().await;
+        if let Some(ref id) = *guard {
+            return Ok(id.clone());
         }
 
-        let corpus_id = self.ensure_corpus().await?;
         let resp = self
             .client
             .create_session(&corpus_id, None)
             .await
             .map_err(|e| McpError::internal_error(format!("daemon session: {e}"), None))?;
 
-        let mut guard = self.session_id.lock().await;
         *guard = Some(resp.session_id.clone());
         info!(session_id = %resp.session_id, "created daemon session");
         Ok(resp.session_id)

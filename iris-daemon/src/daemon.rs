@@ -285,9 +285,10 @@ async fn tick_session_turn(
     );
     {
         let mut sessions = handle.sessions.lock().await;
-        let Some(entry) = sessions.get_session_mut(session_id) else {
-            return;
-        };
+        // `get_or_create` so the counter keeps ticking even after a daemon
+        // restart where the `SessionRegistry` is empty — proxies memoize
+        // session IDs across restarts and we'd otherwise silently no-op.
+        let entry = sessions.get_or_create(session_id, None, AccessMode::ReadWrite);
         entry.session.tick();
         let _ = entry.budget.record_tokens(&content_id, response_tokens);
     }
