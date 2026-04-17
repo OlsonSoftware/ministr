@@ -314,22 +314,23 @@ language boundaries with [`iris_references`](tools/references.md).
     Comparison
   </span>
   <h2>How it compares</h2>
-  <p>iris isn't a vector DB or a RAG framework. It's a cache-aware MCP source that tracks, dedupes, and predicts.</p>
+  <p>iris isn't a vector DB, a RAG framework, or a search tool. It's a stateful, cache-aware context source exposed as MCP tools.</p>
 </div>
 
 <div class="iris-compare" markdown>
 
-|  | **iris** | `grep` + `cat` | Naive RAG |
+|  | `grep` + `cat` | Vector DB / RAG | **iris** |
 |---|:---:|:---:|:---:|
-| Semantic search | **yes** | no | yes |
-| Code symbol index | **yes** | no | no |
-| Cross-language links | **yes** | no | no |
-| Tracks delivered content | **yes** | no | no |
-| Deduplicates across turns | **yes** | no | no |
-| Delta delivery on change | **yes** | no | no |
-| Predictive prefetch | **yes** | no | no |
-| Budget-aware compression | **yes** | no | no |
-| Runs locally, no API keys | **yes** | yes | varies |
+| **Retrieval** | Full-text match | Embeddings | Embeddings + symbols |
+| **Code symbol index** | – | – | **tree-sitter, 12 langs** |
+| **Cross-language bridges** | – | – | **yes** |
+| **Session memory** | – | – | **per-corpus shadow** |
+| **Dedup across turns** | – | – | **yes** |
+| **Delta on change** | – | – | **yes** |
+| **Predictive prefetch** | – | – | **yes** |
+| **Budget awareness** | – | – | **pressure + eviction** |
+| **Agent protocol** | Shell | Custom API | **MCP (tool-native)** |
+| **Runs locally** | yes | varies | **yes** |
 
 </div>
 
