@@ -4,7 +4,7 @@
 //! [`ClaudeCliInference`] (production, spawns `claude -p`) and
 //! [`MockInference`] (tests).
 
-use std::io::Write as _;
+use tokio::io::AsyncWriteExt as _;
 
 /// Error from inference operations.
 #[derive(Debug, thiserror::Error)]
@@ -21,6 +21,15 @@ pub enum InferenceError {
     /// The `claude` CLI binary was not found on `PATH`.
     #[error("claude CLI not found: {reason}")]
     CliNotFound {
+        /// Underlying IO error description.
+        reason: String,
+    },
+
+    /// Failed to write the prompt to the child's stdin (broken pipe, child
+    /// died mid-startup, etc.). Keeps this distinct from a non-zero exit
+    /// so the underlying cause isn't obscured when triage'ing logs.
+    #[error("failed to send prompt to claude: {reason}")]
+    StdinWriteFailed {
         /// Underlying IO error description.
         reason: String,
     },
@@ -112,64 +121,74 @@ impl Inference for ClaudeCliInference {
         let prompt_owned = prompt.to_string();
 
         Box::pin(async move {
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(timeout_secs),
-                tokio::task::spawn_blocking(move || {
-                    let model_for_parse = model.clone();
-                    let mut child = std::process::Command::new("claude")
-                        .args([
-                            "-p",
-                            "--output-format",
-                            "json",
-                            "--model",
-                            &model,
-                            // No tools — pure text synthesis from the prompt.
-                            "--allowed-tools",
-                            "",
-                        ])
-                        .stdin(std::process::Stdio::piped())
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .spawn()
-                        .map_err(|e| InferenceError::CliNotFound {
+            // Spawn the child via tokio's Command with `kill_on_drop(true)`
+            // so that if the outer timeout fires and this future is dropped,
+            // the child receives SIGKILL and its pipes/thread are reclaimed.
+            // The previous impl wrapped a blocking wait in `spawn_blocking`
+            // under `tokio::time::timeout`, which leaked the process + pipe
+            // + blocking-pool thread on every timeout.
+            let mut child = tokio::process::Command::new("claude")
+                .args([
+                    "-p",
+                    "--output-format",
+                    "json",
+                    "--model",
+                    &model,
+                    // No tools — pure text synthesis from the prompt.
+                    "--allowed-tools",
+                    "",
+                ])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .map_err(|e| InferenceError::CliNotFound {
+                    reason: e.to_string(),
+                })?;
+
+            let output =
+                tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async move {
+                    // Send the prompt. A broken pipe here means claude died
+                    // mid-startup — surface that distinctly instead of
+                    // letting it surface later as an unclear non-zero exit.
+                    let mut stdin =
+                        child
+                            .stdin
+                            .take()
+                            .ok_or_else(|| InferenceError::StdinWriteFailed {
+                                reason: "stdin handle was not captured".into(),
+                            })?;
+                    stdin
+                        .write_all(prompt_owned.as_bytes())
+                        .await
+                        .map_err(|e| InferenceError::StdinWriteFailed {
                             reason: e.to_string(),
                         })?;
+                    // Close stdin so claude sees EOF and starts processing.
+                    drop(stdin);
 
-                    // Write prompt to stdin
-                    if let Some(ref mut stdin) = child.stdin {
-                        let _ = stdin.write_all(prompt_owned.as_bytes());
-                    }
-                    // Close stdin to signal end of input
-                    drop(child.stdin.take());
+                    child
+                        .wait_with_output()
+                        .await
+                        .map_err(|e| InferenceError::CliFailed {
+                            exit_code: -1,
+                            stderr: format!("wait_with_output: {e}"),
+                        })
+                })
+                .await
+                .map_err(|_| InferenceError::Timeout { timeout_secs })??;
 
-                    let output =
-                        child
-                            .wait_with_output()
-                            .map_err(|e| InferenceError::CliFailed {
-                                exit_code: -1,
-                                stderr: e.to_string(),
-                            })?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                return Err(InferenceError::CliFailed {
+                    exit_code: output.status.code().unwrap_or(-1),
+                    stderr,
+                });
+            }
 
-                    if !output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                        return Err(InferenceError::CliFailed {
-                            exit_code: output.status.code().unwrap_or(-1),
-                            stderr,
-                        });
-                    }
-
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    parse_claude_output(&stdout, &model_for_parse)
-                }),
-            )
-            .await
-            .map_err(|_| InferenceError::Timeout { timeout_secs })?
-            .map_err(|e| InferenceError::CliFailed {
-                exit_code: -1,
-                stderr: format!("spawn_blocking join error: {e}"),
-            })??;
-
-            Ok(result)
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            parse_claude_output(&stdout, &model)
         })
     }
 }

@@ -323,19 +323,36 @@ async fn expand_result(
 
 /// Verify that source sections still have the same content hash.
 ///
-/// Sections that no longer resolve (e.g. symbol stubs, deleted content)
-/// are skipped — the hash was computed from whatever text was available
-/// at synthesis time, and a "not found" doesn't mean the answer is stale.
-/// Only an actual hash mismatch (content changed) invalidates.
+/// Each stored source ID can be a section, a symbol, or a claim — all
+/// three flow through the survey+symbols merge in [`ask`]. The hash was
+/// computed from whichever *text representation* went into the prompt
+/// (see [`expand_result`]), so verification must re-derive the same
+/// representation:
+///
+/// - **Sections**: `read_section(id).text`
+/// - **Symbols**: `get_symbol_definition(id).source_context`
+/// - **Claims / unknown**: skipped — the prompt snippet came from the
+///   survey result and isn't uniquely addressable after the fact.
+///
+/// A fresh fetch that doesn't resolve is treated as "skip, not
+/// invalidate" — deleted content shouldn't force an expensive
+/// re-inference when the rest of the answer is still grounded. Only an
+/// actual hash mismatch on something we *can* resolve invalidates.
 async fn verify_sources(service: &QueryService, sources: &[CachedAnswerSource]) -> bool {
     for source in sources {
-        if let Ok(detail) = service.read_section(&source.section_id).await {
-            if section_content_hash(&detail.text) != source.section_hash {
-                return false;
-            }
+        // Try section first (fastest, most common). Fall back to symbol
+        // definition for symbol-resolution sources. Anything else falls
+        // through to a skip.
+        let current_text = if let Ok(detail) = service.read_section(&source.section_id).await {
+            detail.text
+        } else if let Ok(def) = service.get_symbol_definition(&source.section_id).await {
+            def.source_context
         } else {
-            // Section not found — likely a claim/symbol stub ID from survey.
-            // Skip rather than invalidate.
+            continue;
+        };
+
+        if section_content_hash(&current_text) != source.section_hash {
+            return false;
         }
     }
     true
