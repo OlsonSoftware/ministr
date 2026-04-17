@@ -9,21 +9,15 @@
 
 mod commands;
 mod setup;
+mod tray;
 
 use iris_core::config::IrisConfig;
 use iris_core::embedding;
 use iris_daemon::daemon;
 use iris_daemon::registry::CorpusRegistry;
 use iris_daemon::state::AppState;
-use tauri::{
-    AppHandle, Emitter, Manager,
-    menu::{MenuBuilder, MenuItemBuilder},
-    tray::TrayIconBuilder,
-};
+use tauri::{AppHandle, Manager};
 use tracing::info;
-
-/// Tray icon ID used for lookups.
-const TRAY_ID: &str = "iris-tray";
 
 fn main() {
     // Initialize tracing to stderr + log file for the LogViewer tab.
@@ -92,8 +86,8 @@ fn main() {
                 }
             });
 
-            // --- System tray (initial static menu) ---
-            build_initial_tray(app)?;
+            // --- System tray (initial placeholder menu; rebuilt live) ---
+            tray::build_tray(app)?;
 
             // --- Auto-detect .iris.toml on first launch ---
             let detect_state = state.clone();
@@ -102,26 +96,8 @@ fn main() {
                 auto_detect_projects(&detect_state, &detect_handle).await;
             });
 
-            // --- Periodically update tray tooltip with live stats ---
-            let tooltip_state = state.clone();
-            let tooltip_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                    let corpora = tooltip_state.registry.list().await;
-                    let total_sessions: usize = corpora.iter().map(|c| c.active_sessions).sum();
-                    let rss = iris_core::mem_profile::rss_mb().unwrap_or(0.0);
-                    let tooltip = format!(
-                        "iris — {} corpora · {} sessions · {:.0} MB",
-                        corpora.len(),
-                        total_sessions,
-                        rss,
-                    );
-                    if let Some(tray) = tooltip_handle.tray_by_id(TRAY_ID) {
-                        let _ = tray.set_tooltip(Some(&tooltip));
-                    }
-                }
-            });
+            // --- Periodic tray refresh (tooltip + Recent/Indexing submenus) ---
+            tray::spawn_refresh_loop(app.handle().clone(), state.clone());
 
             info!("iris app started");
             Ok(())
@@ -151,59 +127,6 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running iris app");
-}
-
-/// Build the initial tray icon with a static menu.
-fn build_initial_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItemBuilder::with_id("show", "Show Dashboard").build(app)?;
-    let add = MenuItemBuilder::with_id("add_project", "Add Project...").build(app)?;
-    let logs = MenuItemBuilder::with_id("show_logs", "View Logs").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "Quit iris").build(app)?;
-    let menu = MenuBuilder::new(app)
-        .items(&[&show, &add, &logs, &quit])
-        .build()?;
-
-    TrayIconBuilder::with_id(TRAY_ID)
-        .icon(app.default_window_icon().cloned().unwrap())
-        .menu(&menu)
-        .tooltip("iris — index daemon")
-        .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
-        .build(app)?;
-
-    Ok(())
-}
-
-/// Handle tray menu events.
-fn handle_menu_event(app: &AppHandle, event_id: &str) {
-    match event_id {
-        "show" => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-        }
-        "show_logs" => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-            // Emit a navigation event the frontend listens for.
-            let _ = app.emit("navigate", "logs");
-        }
-        "add_project" => {
-            // Trigger the file picker via Tauri command from Rust side.
-            let handle = app.clone();
-            tauri::async_runtime::spawn(async move {
-                commands::add_project_from_tray(&handle).await;
-            });
-        }
-        "quit" => {
-            let _ = std::fs::remove_file(iris_api::daemon_socket_path());
-            let _ = std::fs::remove_file(iris_api::daemon_pid_path());
-            app.exit(0);
-        }
-        _ => {}
-    }
 }
 
 /// Scan common project directories for `.iris.toml` files on first launch.

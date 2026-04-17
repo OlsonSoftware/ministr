@@ -130,10 +130,7 @@ fn ensure_path(bin_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let home = home_dir()?;
-    let export_line = format!(
-        "\n# Added by iris installer\nexport PATH=\"{}:$PATH\"\n",
-        bin_str
-    );
+    let export_line = format!("\n# Added by iris installer\nexport PATH=\"{bin_str}:$PATH\"\n");
 
     // Patch whichever shell profiles exist.
     for profile in &[".zshrc", ".bashrc", ".bash_profile", ".profile"] {
@@ -198,5 +195,5 @@ fn iris_data_dir() -> PathBuf {
 fn home_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     std::env::var("HOME")
         .map(PathBuf::from)
-        .map_err(|e| e.into())
+        .map_err(std::convert::Into::into)
 }
