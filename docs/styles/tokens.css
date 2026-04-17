@@ -1057,20 +1057,144 @@
   /* ---------- Diagram wrappers (D2) ---------- */
 
   .iris-diagram {
+    position: relative;
     margin: calc(var(--spacing) * 4) auto calc(var(--spacing) * 12);
     max-width: 900px;
     padding: calc(var(--spacing) * 6);
-    background: var(--color-surface-sunken);
+    background:
+      radial-gradient(
+        600px 300px at 20% 0%,
+        color-mix(in srgb, var(--color-accent) 10%, transparent),
+        transparent 70%
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--color-surface-raised) 60%, transparent),
+        var(--color-surface-sunken) 85%
+      );
     border: 1px solid var(--color-border);
     border-radius: var(--radius-2xl);
-    box-shadow: var(--shadow-xs);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 4%, transparent),
+      var(--shadow-sm);
+    overflow: hidden;
+  }
+  .iris-diagram::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(
+      400px 200px at 50% 0%,
+      color-mix(in srgb, var(--color-accent) 12%, transparent),
+      transparent 70%
+    );
   }
   .iris-diagram .d2,
   .iris-diagram svg {
+    position: relative;
     max-width: 100%;
     height: auto !important;
     display: block;
     margin: 0 auto;
+  }
+
+  /* ---------- D2 theme override ----------
+     The D2 mkdocs plugin ships with a handful of fixed color themes
+     (3 = light, 201 = dark). Their palette doesn't match the iris
+     design system, so we override every meaningful fill/stroke class
+     D2 emits and remap it onto our tokens. The result: containers and
+     shapes feel like iris cards, connections pick up the accent, and
+     the big white canvas rect disappears. */
+
+  .iris-diagram svg {
+    /* Strip the painted canvas rect that sits behind the entire
+       diagram — D2 emits this as .fill-N7. We want to see the card
+       gradient instead. */
+  }
+  .iris-diagram svg .fill-N7 {
+    fill: transparent !important;
+  }
+
+  /* Primary shape fill (rectangles used for nodes). */
+  .iris-diagram svg .fill-B4 {
+    fill: var(--color-surface-raised) !important;
+  }
+  /* Secondary / container shapes. */
+  .iris-diagram svg .fill-B5 {
+    fill: color-mix(
+      in srgb,
+      var(--color-surface-raised) 70%,
+      transparent
+    ) !important;
+  }
+  /* Cylinder accents (storage shapes). */
+  .iris-diagram svg .fill-AA5 {
+    fill: color-mix(
+      in srgb,
+      var(--color-accent) 20%,
+      var(--color-surface-raised)
+    ) !important;
+  }
+  /* Arrowheads. */
+  .iris-diagram svg .fill-B1 {
+    fill: color-mix(
+      in srgb,
+      var(--color-accent) 80%,
+      var(--color-text-muted)
+    ) !important;
+  }
+
+  /* Shape + connection strokes. D2 reuses stroke-B1 for both the shape
+     border and the connection line, so one rule handles both. */
+  .iris-diagram svg .stroke-B1 {
+    stroke: color-mix(
+      in srgb,
+      var(--color-border-hover) 70%,
+      var(--color-accent) 30%
+    ) !important;
+    stroke-width: 1.25px !important;
+  }
+
+  /* Give connection lines a softer, iris-accented treatment. */
+  .iris-diagram svg .connection {
+    stroke: color-mix(
+      in srgb,
+      var(--color-accent) 55%,
+      var(--color-text-muted)
+    ) !important;
+    stroke-width: 1.5px !important;
+    opacity: 0.85;
+  }
+
+  /* Text inside shapes is emitted with .fill-N1 (dark ink). Remap to
+     the current text token so labels are readable on our iris surfaces. */
+  .iris-diagram svg text.fill-N1,
+  .iris-diagram svg .fill-N1 {
+    fill: var(--color-text) !important;
+    font-family: var(--font-sans) !important;
+    font-weight: 500;
+  }
+  /* Container labels (the small headers like "MCP clients", "iris",
+     "Local storage") sit at the top-left of each container; give them
+     a calmer, uppercase treatment so they read as section labels. */
+  .iris-diagram svg text.text-bold {
+    font-weight: 650 !important;
+    letter-spacing: 0.01em;
+  }
+
+  /* Accented hover for interactive nodes (set by diagrams.js). */
+  .iris-diagram--interactive .iris-diagram__node:hover rect,
+  .iris-diagram--interactive .iris-diagram__node:hover path,
+  .iris-diagram--interactive .iris-diagram__node:hover ellipse {
+    stroke: var(--color-accent) !important;
+    stroke-width: 1.75px !important;
+    filter: drop-shadow(
+      0 0 6px color-mix(in srgb, var(--color-accent) 60%, transparent)
+    );
+    transition:
+      stroke 120ms var(--ease-standard),
+      filter 120ms var(--ease-standard);
   }
 
   /* ---------- Session trace (terminal-style) ---------- */
