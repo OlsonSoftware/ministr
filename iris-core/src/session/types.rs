@@ -246,6 +246,11 @@ pub struct Session {
     created_at: Instant,
     /// Maximum context budget in tokens for this session.
     pub agent_context_budget: usize,
+    /// Eviction policy configured for this session. Session itself doesn't
+    /// evict — the [`BudgetTracker`]'s [`WindowEstimator`] does — but the
+    /// policy is stored here so callers can introspect it (telemetry,
+    /// persistence) and so it isn't silently discarded by the constructor.
+    eviction_policy: EvictionPolicy,
     /// Map of delivered content, keyed by `ContentId`.
     delivered: BTreeMap<String, DeliveredItem>,
     /// Ordered trajectory of content accesses (content IDs in access order).
@@ -270,12 +275,13 @@ impl Session {
     pub fn new(
         id: SessionId,
         agent_context_budget: usize,
-        _eviction_policy: EvictionPolicy,
+        eviction_policy: EvictionPolicy,
     ) -> Self {
         Self {
             id,
             created_at: Instant::now(),
             agent_context_budget,
+            eviction_policy,
             delivered: BTreeMap::new(),
             trajectory: VecDeque::new(),
             current_turn: 0,
@@ -286,11 +292,19 @@ impl Session {
         }
     }
 
+    /// The eviction policy configured for this session.
+    #[must_use]
+    pub fn eviction_policy(&self) -> EvictionPolicy {
+        self.eviction_policy
+    }
+
     /// Restore a session from persisted state.
     ///
     /// Used for crash recovery — reconstructs a `Session` from data loaded
     /// from `SQLite`. The `created_at` timestamp is reset to `Instant::now()`
-    /// since `Instant` is not serializable.
+    /// since `Instant` is not serializable. The eviction policy is not part
+    /// of the persistence format today, so callers supply it — typically
+    /// from the `BudgetConfig` in use for the restored session.
     ///
     /// If the supplied `current_turn` is below the max `turn_delivered` in
     /// the delivered map (e.g. a stale or inconsistent persistence record),
@@ -300,6 +314,7 @@ impl Session {
     pub fn restore(
         id: SessionId,
         agent_context_budget: usize,
+        eviction_policy: EvictionPolicy,
         delivered: BTreeMap<String, DeliveredItem>,
         trajectory: Vec<ContentId>,
         current_turn: u32,
@@ -317,6 +332,7 @@ impl Session {
             id,
             created_at: Instant::now(),
             agent_context_budget,
+            eviction_policy,
             delivered,
             trajectory,
             current_turn,

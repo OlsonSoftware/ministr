@@ -1264,9 +1264,16 @@ impl Storage for SqliteStorage {
                 trajectory.push(content_id);
             }
 
+            // The eviction policy isn't yet part of the persistence schema,
+            // so we default to Fifo on restore. Callers that need a
+            // different policy should either (a) add an eviction_policy
+            // column to the sessions table and thread it through, or
+            // (b) load the session and rebuild the BudgetTracker with the
+            // desired policy.
             Ok(Some(Session::restore(
                 SessionId(session_id),
                 budget,
+                crate::session::EvictionPolicy::Fifo,
                 delivered,
                 trajectory,
                 turn,

@@ -33,7 +33,7 @@
 use std::collections::HashMap;
 
 use super::budget::{BudgetConfig, BudgetTracker};
-use super::types::{AccessMode, EvictionPolicy, Session, SessionId};
+use super::types::{AccessMode, Session, SessionId};
 
 /// A single session entry in the registry, bundling session state with its
 /// budget tracker and access mode.
@@ -85,12 +85,13 @@ impl SessionRegistry {
         access_mode: AccessMode,
     ) -> &mut SessionEntry {
         let config = budget_config.unwrap_or_else(|| self.default_budget_config.clone());
+        let policy = config.eviction_policy;
         let session = Session::new(
             SessionId::from(id.to_string()),
             config.max_context_tokens,
-            EvictionPolicy::Fifo,
+            policy,
         );
-        let budget = BudgetTracker::new(config, EvictionPolicy::Fifo);
+        let budget = BudgetTracker::new(config, policy);
         self.sessions.insert(
             id.to_string(),
             SessionEntry {
@@ -196,6 +197,7 @@ mod tests {
             max_context_tokens: 1000,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
+            ..BudgetConfig::default()
         })
     }
 
@@ -225,6 +227,7 @@ mod tests {
             max_context_tokens: 5000,
             pressure_threshold: 0.7,
             critical_threshold: 0.9,
+            ..BudgetConfig::default()
         };
         registry.create_session("agent-1", Some(custom), AccessMode::ReadWrite);
 
@@ -512,11 +515,13 @@ mod tests {
             max_context_tokens: 500,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
+            ..BudgetConfig::default()
         };
         let large_budget = BudgetConfig {
             max_context_tokens: 100_000,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
+            ..BudgetConfig::default()
         };
 
         registry.create_session("small", Some(small_budget), AccessMode::ReadWrite);
@@ -555,6 +560,7 @@ mod tests {
             max_context_tokens: 42_000,
             pressure_threshold: 0.75,
             critical_threshold: 0.9,
+            ..BudgetConfig::default()
         };
         let registry = SessionRegistry::new(config.clone());
         assert_eq!(registry.default_budget_config().max_context_tokens, 42_000);

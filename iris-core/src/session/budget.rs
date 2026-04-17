@@ -66,6 +66,16 @@ pub struct BudgetConfig {
     pub pressure_threshold: f64,
     /// Utilization ratio at which pressure becomes Critical (default: 0.95).
     pub critical_threshold: f64,
+    /// Eviction policy applied when the window fills. Defaults to `Fifo`
+    /// for backward compatibility; callers who want FSRS-aware eviction
+    /// (using the memory tracker's retrievability scores) must explicitly
+    /// set this to `Fsrs` and call [`BudgetTracker::record_tokens_with_memory`].
+    #[serde(default = "default_eviction_policy")]
+    pub eviction_policy: super::types::EvictionPolicy,
+}
+
+fn default_eviction_policy() -> super::types::EvictionPolicy {
+    super::types::EvictionPolicy::Fifo
 }
 
 impl Default for BudgetConfig {
@@ -74,6 +84,7 @@ impl Default for BudgetConfig {
             max_context_tokens: 100_000,
             pressure_threshold: 0.80,
             critical_threshold: 0.95,
+            eviction_policy: super::types::EvictionPolicy::Fifo,
         }
     }
 }
@@ -93,6 +104,7 @@ impl Default for BudgetConfig {
 ///     max_context_tokens: 1000,
 ///     pressure_threshold: 0.8,
 ///     critical_threshold: 0.95,
+///     eviction_policy: EvictionPolicy::Fifo,
 /// };
 /// let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
 ///
@@ -369,6 +381,7 @@ mod tests {
             max_context_tokens: 1000,
             pressure_threshold: 0.5,
             critical_threshold: 0.75,
+            eviction_policy: EvictionPolicy::Fifo,
         };
         let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
 
@@ -418,6 +431,7 @@ mod tests {
             max_context_tokens: 100,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
+            eviction_policy: EvictionPolicy::Fifo,
         };
         let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
 
@@ -437,6 +451,7 @@ mod tests {
             max_context_tokens: 500,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
+            eviction_policy: EvictionPolicy::Lru,
         };
         let mut tracker = BudgetTracker::new(config, EvictionPolicy::Lru);
 
@@ -547,6 +562,7 @@ mod tests {
             max_context_tokens: 5000,
             pressure_threshold: 0.7,
             critical_threshold: 0.9,
+            eviction_policy: EvictionPolicy::Fifo,
         };
         let tracker = BudgetTracker::new(config.clone(), EvictionPolicy::Fifo);
         assert_eq!(tracker.config().max_context_tokens, 5000);

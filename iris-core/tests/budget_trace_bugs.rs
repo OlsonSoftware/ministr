@@ -2,7 +2,7 @@
 //! eviction ranker trace.
 
 use iris_core::session::eviction::EvictionRanker;
-use iris_core::session::{Session, SessionId};
+use iris_core::session::{EvictionPolicy, Session, SessionId};
 use iris_core::types::{ContentId, Resolution};
 
 /// BG1 — Before the fix, `EvictionRanker::compute_base_score` did raw
@@ -39,6 +39,7 @@ fn bg1_ranker_handles_current_turn_below_turn_delivered() {
     let session = Session::restore(
         SessionId::from("restored".to_string()),
         100_000,
+        EvictionPolicy::Fifo,
         delivered,
         vec![ContentId(cid.to_string())],
         5, // current_turn < turn_delivered
@@ -90,6 +91,7 @@ fn bg1_zero_current_turn_short_circuit_is_safe() {
     let session = Session::restore(
         SessionId::from("restored-zero".to_string()),
         100_000,
+        EvictionPolicy::Fifo,
         delivered,
         vec![ContentId(cid.to_string())],
         0,

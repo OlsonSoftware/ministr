@@ -3120,6 +3120,7 @@ mod tests {
             max_context_tokens: 20, // Very small — any delivery triggers pressure
             pressure_threshold: 0.5,
             critical_threshold: 0.9,
+            ..BudgetConfig::default()
         };
         let server = IrisServer::with_budget_config(service, budget_config);
 
@@ -3530,6 +3531,7 @@ mod tests {
             max_context_tokens: 20, // Very small — any delivery triggers pressure
             pressure_threshold: 0.5,
             critical_threshold: 0.9,
+            ..BudgetConfig::default()
         };
         IrisServer::with_budget_config(service, budget_config)
     }
