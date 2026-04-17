@@ -56,6 +56,7 @@ eval/model-comparison.json
 
 # Screenshot/Playwright artifacts
 .playwright-mcp/
+.cache/
 iris-landing-*.png
 iris-docs-*.png
 iris-mobile-*.png
@@ -66,3 +67,7 @@ iris-404*.png
 /og-preview.png
 /og-rendered.png
 /og.png
+/cheatsheet-*.png
+/palette-*.png
+/reading-*.png
+/landing-hero.png

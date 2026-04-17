@@ -26,4 +26,8 @@
     <meta name="twitter:title" content="{{ page.title | default(config.site_name) }}">
     <meta name="twitter:description" content="{{ page.meta.description if page.meta and page.meta.description else config.site_description }}">
   {% endif %}
+  {# Expose Material's rendered search-index URL so our vanilla-JS command
+     palette can fetch it without guessing the base URL. #}
+  <meta name="iris:search-index" content="{{ 'search/search_index.json' | url }}">
+  <meta name="iris:site-base" content="{{ '' | url }}">
 {% endblock %}

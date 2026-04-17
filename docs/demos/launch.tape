@@ -28,6 +28,7 @@ Set TypingSpeed 40ms
 
 Hide
 Type "export PS1='$ '" Enter
+Type "mkdir -p ~/my-app" Enter
 Type "clear" Enter
 
 # Quiet writer: echoes a single line with a small per-line pause so
