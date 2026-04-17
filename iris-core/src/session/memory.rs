@@ -42,9 +42,34 @@ impl MemoryState {
     /// Create a new memory state for a freshly-accessed section.
     #[must_use]
     pub fn new(turn: u32) -> Self {
+        Self::new_with_rating(turn, AccessRating::Good)
+    }
+
+    /// Create a new memory state using the access rating to seed the initial
+    /// stability and difficulty.
+    ///
+    /// * `Good` → default initial state.
+    /// * `Easy` → lower initial difficulty (proactive access implies relevance).
+    /// * `Again` → semantically incoherent on a first access (the item was
+    ///   never delivered before). Logs a `tracing::warn!` and falls back to
+    ///   the `Good` defaults so the caller isn't punished for a bad signal.
+    #[must_use]
+    pub fn new_with_rating(turn: u32, rating: AccessRating) -> Self {
+        let (stability, difficulty) = match rating {
+            AccessRating::Good => (DEFAULT_STABILITY, DEFAULT_DIFFICULTY),
+            AccessRating::Easy => (DEFAULT_STABILITY, (DEFAULT_DIFFICULTY - 0.1).max(0.0)),
+            AccessRating::Again => {
+                tracing::warn!(
+                    turn,
+                    "MemoryState::new_with_rating received Again on first access — \
+                     treating as Good (no prior state exists to 'forget')"
+                );
+                (DEFAULT_STABILITY, DEFAULT_DIFFICULTY)
+            }
+        };
         Self {
-            stability: DEFAULT_STABILITY,
-            difficulty: DEFAULT_DIFFICULTY,
+            stability,
+            difficulty,
             last_access_turn: turn,
             access_count: 1,
         }
@@ -143,8 +168,10 @@ impl MemoryTracker {
         if let Some(state) = self.states.get_mut(content_id) {
             state.update_on_access(turn, rating);
         } else {
-            self.states
-                .insert(content_id.to_string(), MemoryState::new(turn));
+            self.states.insert(
+                content_id.to_string(),
+                MemoryState::new_with_rating(turn, rating),
+            );
         }
     }
 
@@ -210,13 +237,19 @@ impl MemoryTracker {
     /// Stability degrades when the user hasn't interacted for a while:
     /// 1 day = no decay, 7 days = halved. This prevents stale importance
     /// scores from dominating a fresh session.
+    ///
+    /// Negative `hours_since_last_session` values (clock skew, NTP setbacks,
+    /// VM clock freeze) are clamped to zero — time-travel is treated as
+    /// "no time elapsed" rather than letting `1 / (1 + hours/168)` blow up
+    /// to `+inf` or go negative.
     #[must_use]
     #[allow(clippy::cast_precision_loss)]
     pub fn load_from_persisted(
         states: Vec<(String, MemoryState)>,
         hours_since_last_session: f64,
     ) -> Self {
-        let decay_factor = 1.0 / (1.0 + hours_since_last_session / 168.0);
+        let hours = hours_since_last_session.max(0.0);
+        let decay_factor = 1.0 / (1.0 + hours / 168.0);
         let mut tracker = Self::new();
         for (id, mut state) in states {
             state.stability *= decay_factor;
