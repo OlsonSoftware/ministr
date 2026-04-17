@@ -253,33 +253,55 @@ macro_rules! get_corpus {
     };
 }
 
-/// Advance the session's turn counter by one and persist the updated
-/// session. Fire-and-forget: unknown sessions and storage errors are
-/// swallowed — the turn counter is informational for the UI and must
-/// never fail a tool call.
+/// Advance the session's turn counter by one and record the response's
+/// token cost against the session's budget, then persist. Fire-and-forget:
+/// unknown sessions and storage errors are swallowed — budget and turn
+/// bookkeeping are informational for the UI and must never fail a tool
+/// call.
 ///
 /// Called by each tool handler when a `session_id` is present so the
-/// Overview's live-turn stream ticks on every agent interaction (not
-/// just on session-aware reads).
-async fn tick_session_turn(state: &AppState, corpus_id: &str, session_id: &str) {
+/// observatory's turn stream and budget gauges move on every agent
+/// interaction (not just session-aware reads). Pass `response_tokens`
+/// measured from the serialized response body so the budget models what
+/// actually landed in the agent's context.
+async fn tick_session_turn(
+    state: &AppState,
+    corpus_id: &str,
+    session_id: &str,
+    tool: &str,
+    response_tokens: usize,
+) {
     let Ok(corpora) = state.registry.get(corpus_id).await else {
         return;
     };
     let Some(handle) = corpora.get(corpus_id) else {
         return;
     };
+    let content_id = format!(
+        "tool:{tool}:{ns}",
+        ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    );
     {
         let mut sessions = handle.sessions.lock().await;
         let Some(entry) = sessions.get_session_mut(session_id) else {
             return;
         };
         entry.session.tick();
+        let _ = entry.budget.record_tokens(&content_id, response_tokens);
     }
     // Persist in a separate pass so the mutating lock is released first.
     let sessions = handle.sessions.lock().await;
     if let Some(entry) = sessions.get_session(session_id) {
         let _ = handle.storage.save_session(&entry.session).await;
     }
+}
+
+/// Count tokens in the serialized JSON form of a tool response. Used to
+/// feed the session's budget — approximate but consistent across tools.
+fn response_tokens<T: serde::Serialize>(value: &T) -> usize {
+    serde_json::to_string(value).map_or(0, |s| iris_core::token::count_tokens(&s))
 }
 
 // ---------------------------------------------------------------------------
@@ -338,16 +360,18 @@ async fn survey(
     let session_id = req.session_id.clone();
     let result = guard[&id].service.survey(&req.query, top_k).await;
     drop(guard);
-    if let Some(sid) = session_id {
-        tick_session_turn(&state, &id, &sid).await;
-    }
     match result {
-        Ok(results) => Json(query::SurveyResponse {
-            results: results.into_iter().map(convert::survey_result).collect(),
-            deduplicated_count: None,
-            budget_status: None,
-        })
-        .into_response(),
+        Ok(results) => {
+            let body = query::SurveyResponse {
+                results: results.into_iter().map(convert::survey_result).collect(),
+                deduplicated_count: None,
+                budget_status: None,
+            };
+            if let Some(sid) = session_id {
+                tick_session_turn(&state, &id, &sid, "survey", response_tokens(&body)).await;
+            }
+            Json(body).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
 }
@@ -371,18 +395,20 @@ async fn symbols(
     };
     let result = guard[&id].service.search_symbols(&filter).await;
     drop(guard);
-    if let Some(sid) = session_id {
-        tick_session_turn(&state, &id, &sid).await;
-    }
     match result {
-        Ok(records) => Json(query::SymbolsResponse {
-            symbols: records
-                .into_iter()
-                .take(limit)
-                .map(convert::symbol_from_record)
-                .collect(),
-        })
-        .into_response(),
+        Ok(records) => {
+            let body = query::SymbolsResponse {
+                symbols: records
+                    .into_iter()
+                    .take(limit)
+                    .map(convert::symbol_from_record)
+                    .collect(),
+            };
+            if let Some(sid) = session_id {
+                tick_session_turn(&state, &id, &sid, "symbols", response_tokens(&body)).await;
+            }
+            Json(body).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
 }
@@ -403,11 +429,14 @@ async fn definition(
     let guard = get_corpus!(&state, &id);
     let result = guard[&id].service.get_symbol_definition(&sym).await;
     drop(guard);
-    if let Some(sid) = q.session_id {
-        tick_session_turn(&state, &id, &sid).await;
-    }
     match result {
-        Ok(def) => Json(convert::symbol_definition(def)).into_response(),
+        Ok(def) => {
+            let body = convert::symbol_definition(def);
+            if let Some(sid) = q.session_id {
+                tick_session_turn(&state, &id, &sid, "definition", response_tokens(&body)).await;
+            }
+            Json(body).into_response()
+        }
         Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
     }
 }
@@ -420,14 +449,16 @@ async fn references(
     let guard = get_corpus!(&state, &id);
     let result = guard[&id].service.get_symbol_references(&sym, None).await;
     drop(guard);
-    if let Some(sid) = q.session_id {
-        tick_session_turn(&state, &id, &sid).await;
-    }
     match result {
-        Ok(refs) => Json(query::ReferencesResponse {
-            references: refs.into_iter().map(convert::symbol_reference).collect(),
-        })
-        .into_response(),
+        Ok(refs) => {
+            let body = query::ReferencesResponse {
+                references: refs.into_iter().map(convert::symbol_reference).collect(),
+            };
+            if let Some(sid) = q.session_id {
+                tick_session_turn(&state, &id, &sid, "references", response_tokens(&body)).await;
+            }
+            Json(body).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
 }
@@ -572,14 +603,16 @@ async fn extract(
         .extract_claims(&req.section_id, req.query.as_deref())
         .await;
     drop(guard);
-    if let Some(sid) = session_id {
-        tick_session_turn(&state, &id, &sid).await;
-    }
     match result {
-        Ok(claims) => Json(query::ExtractResponse {
-            claims: claims.into_iter().map(convert::claim_result).collect(),
-        })
-        .into_response(),
+        Ok(claims) => {
+            let body = query::ExtractResponse {
+                claims: claims.into_iter().map(convert::claim_result).collect(),
+            };
+            if let Some(sid) = session_id {
+                tick_session_turn(&state, &id, &sid, "extract", response_tokens(&body)).await;
+            }
+            Json(body).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
 }
@@ -595,13 +628,10 @@ async fn toc(
     let session_id = req.session_id.clone();
     let result = guard[&id].service.toc(req.document_id.as_deref()).await;
     drop(guard);
-    if let Some(sid) = session_id {
-        tick_session_turn(&state, &id, &sid).await;
-    }
     match result {
         Ok(entries) => {
             let total = entries.len();
-            Json(query::TocResponse {
+            let body = query::TocResponse {
                 entries: entries
                     .into_iter()
                     .skip(offset)
@@ -609,8 +639,11 @@ async fn toc(
                     .map(convert::toc_entry)
                     .collect(),
                 total,
-            })
-            .into_response()
+            };
+            if let Some(sid) = session_id {
+                tick_session_turn(&state, &id, &sid, "toc", response_tokens(&body)).await;
+            }
+            Json(body).into_response()
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
@@ -638,14 +671,16 @@ async fn related(
         .related_claims(&req.claim_id, relation_types.as_deref())
         .await;
     drop(guard);
-    if let Some(sid) = session_id {
-        tick_session_turn(&state, &id, &sid).await;
-    }
     match result {
-        Ok(claims) => Json(query::RelatedResponse {
-            claims: claims.into_iter().map(convert::related_claim).collect(),
-        })
-        .into_response(),
+        Ok(claims) => {
+            let body = query::RelatedResponse {
+                claims: claims.into_iter().map(convert::related_claim).collect(),
+            };
+            if let Some(sid) = session_id {
+                tick_session_turn(&state, &id, &sid, "related", response_tokens(&body)).await;
+            }
+            Json(body).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
 }
@@ -668,18 +703,20 @@ async fn bridge(
         )
         .await;
     drop(guard);
-    if let Some(sid) = session_id {
-        tick_session_turn(&state, &id, &sid).await;
-    }
     match result {
-        Ok(links) => Json(query::BridgeResponse {
-            links: links
-                .into_iter()
-                .take(limit)
-                .map(convert::bridge_link)
-                .collect(),
-        })
-        .into_response(),
+        Ok(links) => {
+            let body = query::BridgeResponse {
+                links: links
+                    .into_iter()
+                    .take(limit)
+                    .map(convert::bridge_link)
+                    .collect(),
+            };
+            if let Some(sid) = session_id {
+                tick_session_turn(&state, &id, &sid, "bridge", response_tokens(&body)).await;
+            }
+            Json(body).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
 }
@@ -698,14 +735,16 @@ async fn compress_content(
     let session_id = req.session_id.clone();
     let result = guard[&id].service.compress_content(&req.content_ids).await;
     drop(guard);
-    if let Some(sid) = session_id {
-        tick_session_turn(&state, &id, &sid).await;
-    }
     match result {
-        Ok(items) => Json(iris_api::session::CompressResponse {
-            summaries: items.into_iter().map(convert::compressed_item).collect(),
-        })
-        .into_response(),
+        Ok(items) => {
+            let body = iris_api::session::CompressResponse {
+                summaries: items.into_iter().map(convert::compressed_item).collect(),
+            };
+            if let Some(sid) = session_id {
+                tick_session_turn(&state, &id, &sid, "compress", response_tokens(&body)).await;
+            }
+            Json(body).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "compress_failed", e).into_response(),
     }
 }
@@ -732,17 +771,19 @@ async fn ask_handler(
     )
     .await;
     drop(guard);
-    if let Some(sid) = session_id {
-        tick_session_turn(&state, &id, &sid).await;
-    }
     match result {
-        Ok(result) => Json(query::AskResponse {
-            answer: result.answer,
-            source_ids: result.source_ids,
-            cached: result.cached,
-            model: result.model,
-        })
-        .into_response(),
+        Ok(result) => {
+            let body = query::AskResponse {
+                answer: result.answer,
+                source_ids: result.source_ids,
+                cached: result.cached,
+                model: result.model,
+            };
+            if let Some(sid) = session_id {
+                tick_session_turn(&state, &id, &sid, "ask", response_tokens(&body)).await;
+            }
+            Json(body).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "ask_failed", e).into_response(),
     }
 }
