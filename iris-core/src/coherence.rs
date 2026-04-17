@@ -220,7 +220,13 @@ impl CoherenceEngine {
 
     /// Process a batch of coherence events.
     ///
-    /// For each event:
+    /// Events for the same path are coalesced with **last-event-wins**
+    /// semantics so that `[Modified(X), Removed(X)]` correctly processes
+    /// the Remove (rather than silently re-indexing a file that no longer
+    /// exists), and `[Removed(X), Created(X)]` correctly processes the
+    /// Create (save-replace editor pattern).
+    ///
+    /// For each coalesced event:
     /// - **Created/Modified**: re-indexes the file and collects affected section IDs.
     /// - **Removed**: deletes the document from storage and collects removed section IDs.
     ///
@@ -237,15 +243,16 @@ impl CoherenceEngine {
     ) -> Result<Vec<String>, CoherenceError> {
         let mut affected_sections = Vec::new();
 
-        // Deduplicate events by path (multiple events for the same file)
-        let mut seen_paths = std::collections::HashSet::new();
-
+        // Coalesce per path, last event wins. `HashMap::insert` overwrites
+        // any previous entry for the same path, giving us the most recent
+        // event by the time the loop finishes.
+        let mut latest: std::collections::HashMap<PathBuf, CoherenceEvent> =
+            std::collections::HashMap::new();
         for event in events {
-            let path = event.path();
-            if !seen_paths.insert(path.to_path_buf()) {
-                continue;
-            }
+            latest.insert(event.path().to_path_buf(), event.clone());
+        }
 
+        for event in latest.values() {
             match event {
                 CoherenceEvent::Created(p) | CoherenceEvent::Modified(p) => {
                     match self.reindex_file(p, storage).await {
@@ -293,6 +300,13 @@ impl CoherenceEngine {
     }
 
     /// Re-index a single changed file and return affected section IDs.
+    ///
+    /// Operates on just the one file — reads its content, detects the
+    /// parser, and calls [`IngestionPipeline::ingest_content`] or
+    /// [`IngestionPipeline::ingest_content_with_embeddings`]. This replaces
+    /// an earlier implementation that re-scanned the entire corpus
+    /// directory on every file change (O(corpus) per event, and worse,
+    /// silently picked up unrelated on-disk changes).
     async fn reindex_file<S: Storage>(
         &self,
         path: &Path,
@@ -304,44 +318,62 @@ impl CoherenceEngine {
             .to_string_lossy()
             .to_string();
 
-        // Get existing sections for this document before re-indexing
+        // Unsupported file types (images, binaries) silently drop out —
+        // the file watcher's `normalize_event` should have filtered these
+        // already, but be defensive here.
+        let Some(parser_kind) = crate::parser::detect_parser_kind(path) else {
+            debug!(path = %path.display(), "skipping reindex: unsupported file type");
+            return Ok(Vec::new());
+        };
+
+        // Snapshot the document's section set BEFORE the reindex so we can
+        // report sections that were removed as well as sections that exist
+        // afterward.
         let doc_id = ContentId(relative.clone());
         let old_sections = storage.list_sections(&doc_id).await.unwrap_or_default();
-
         let old_section_ids: Vec<String> = old_sections.iter().map(|s| s.id.0.clone()).collect();
 
-        // Re-ingest the file (the pipeline handles hash checking and upsert).
-        // When embedder+index are available, also update the vector index.
-        if let (Some(embedder), Some(index)) = (&self.embedder, &self.index) {
+        // Read the one file we were asked to re-index.
+        let content =
+            tokio::fs::read_to_string(path)
+                .await
+                .map_err(|e| CoherenceError::ReindexFailed {
+                    path: path.to_path_buf(),
+                    source: Box::new(crate::error::IngestionError::Io {
+                        path: path.to_path_buf(),
+                        source: e,
+                    }),
+                })?;
+
+        let ingest_result = if let (Some(embedder), Some(index)) = (&self.embedder, &self.index) {
             self.pipeline
-                .ingest_directory_with_embeddings(
-                    &self.corpus_dir,
+                .ingest_content_with_embeddings(
+                    &relative,
+                    &content,
+                    parser_kind,
                     storage,
                     embedder.as_ref(),
                     index.as_ref(),
                 )
                 .await
-                .map_err(|e| CoherenceError::ReindexFailed {
-                    path: path.to_path_buf(),
-                    source: Box::new(e),
-                })?;
+                .map(|_| ())
         } else {
             self.pipeline
-                .ingest_directory(&self.corpus_dir, storage)
+                .ingest_content(&relative, &content, parser_kind, storage)
                 .await
-                .map_err(|e| CoherenceError::ReindexFailed {
-                    path: path.to_path_buf(),
-                    source: Box::new(e),
-                })?;
-        }
+                .map(|_| ())
+        };
 
-        // Get new sections after re-indexing
+        ingest_result.map_err(|e| CoherenceError::ReindexFailed {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
+
+        // Union old and new section IDs so callers can invalidate both the
+        // sections that disappeared and the ones that were added/modified.
         let new_sections = storage.list_sections(&doc_id).await.unwrap_or_default();
-
         let new_section_ids: Vec<String> = new_sections.iter().map(|s| s.id.0.clone()).collect();
 
-        // Affected = union of old and new section IDs (sections may have been
-        // added, removed, or modified)
         let mut affected = old_section_ids;
         for id in new_section_ids {
             if !affected.contains(&id) {
