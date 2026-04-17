@@ -1,3 +1,4 @@
+import { forwardRef } from "react";
 import { cn } from "../../lib/utils";
 
 interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -7,14 +8,13 @@ interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   sunken?: boolean;
 }
 
-export function Card({
-  className,
-  hover = "none",
-  sunken = false,
-  ...props
-}: CardProps) {
+export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
+  { className, hover = "none", sunken = false, ...props },
+  ref,
+) {
   return (
     <div
+      ref={ref}
       className={cn(
         "rounded-xl border border-border p-4 transition-all duration-150",
         sunken ? "bg-surface-sunken" : "bg-surface-raised",
@@ -27,4 +27,4 @@ export function Card({
       {...props}
     />
   );
-}
+});

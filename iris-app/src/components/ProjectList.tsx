@@ -15,9 +15,10 @@ import type { CorpusInfo, IndexingStatus } from "../lib/types";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
+import { CorpusChip } from "./ui/corpus-chip";
 import { Progress } from "./ui/progress";
 import { cn } from "../lib/utils";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface ProjectListProps {
   corpora: CorpusInfo[];
@@ -66,6 +67,15 @@ function projectRoot(paths: string[]): string {
 
 export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: ProjectListProps) {
   const [adding, setAdding] = useState(false);
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  // Scroll the selected corpus card into view when it changes (e.g. from
+  // the chip strip or the tray menu).
+  useEffect(() => {
+    if (!selectedId) return;
+    const el = cardRefs.current.get(selectedId);
+    if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedId]);
 
   async function addProject() {
     setAdding(true);
@@ -120,6 +130,21 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
         </Button>
       </div>
 
+      {/* Quick-jump chip strip — only shows when there are enough
+          corpora to benefit from it. */}
+      {corpora.length > 1 && (
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+          {corpora.map((c) => (
+            <CorpusChip
+              key={c.id}
+              corpus={c}
+              selected={selectedId === c.id}
+              onClick={() => onSelect(c.id)}
+            />
+          ))}
+        </div>
+      )}
+
       {corpora.length === 0 ? (
         <Card className="flex flex-col items-center justify-center text-center py-12 px-6">
           <div className="grid h-14 w-14 place-items-center rounded-xl bg-[var(--color-accent-soft)] text-accent mb-4">
@@ -145,6 +170,10 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
               <Card
                 key={corpus.id}
                 hover="lift"
+                ref={(el) => {
+                  if (el) cardRefs.current.set(corpus.id, el);
+                  else cardRefs.current.delete(corpus.id);
+                }}
                 className={cn(
                   "cursor-pointer p-4 iris-fade-in",
                   isSelected &&
