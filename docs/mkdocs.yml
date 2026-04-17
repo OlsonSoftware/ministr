@@ -65,6 +65,8 @@ extra_javascript:
   - javascripts/shortcuts.js
   - javascripts/reading-progress.js
   - javascripts/diagrams.js
+  - assets/js/chartjs.min.js
+  - javascripts/charts.js
 
 markdown_extensions:
   - abbr
