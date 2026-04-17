@@ -43,21 +43,28 @@ export function App() {
     });
   }, []);
 
-  // Listen for navigation events from tray menu (e.g. "View Logs").
+  const [selectedCorpusId, setSelectedCorpusId] = useState<string | null>(null);
+
+  // Listen for navigation events from tray menu (e.g. "View Logs" or the
+  // "Recent corpora" submenu).
   useEffect(() => {
-    const unlisten = listen<string>("navigate", (event) => {
+    const unlistenNav = listen<string>("navigate", (event) => {
       const target = event.payload as Tab;
       const validTabs: Tab[] = ["projects", "health", "sessions", "ingestion", "search", "treemap", "symbols", "simulator", "logs", "settings"];
       if (validTabs.includes(target)) {
         setTab(target);
       }
     });
+    const unlistenSelect = listen<string>("select-corpus", (event) => {
+      if (typeof event.payload === "string") {
+        setSelectedCorpusId(event.payload);
+      }
+    });
     return () => {
-      unlisten.then((fn) => fn());
+      unlistenNav.then((fn) => fn());
+      unlistenSelect.then((fn) => fn());
     };
   }, []);
-
-  const [selectedCorpusId, setSelectedCorpusId] = useState<string | null>(null);
 
   const selectedCorpus = status?.corpora.find((c) => c.id === selectedCorpusId);
 
