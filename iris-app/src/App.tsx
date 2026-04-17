@@ -1,85 +1,81 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
-  FolderKanban,
-  Activity,
-  Settings as SettingsIcon,
-  ScrollText,
+  Radio,
   Users,
-  Timer,
   Search,
-  TreePine,
-  GitBranch,
+  ScrollText,
+  Settings as SettingsIcon,
+  CircleDot,
   Cpu,
   Sparkles,
+  TreePine,
+  GitBranch,
+  FolderKanban,
+  Compass,
+  ChevronDown,
+  Command,
+  Keyboard,
   AlertTriangle,
-  CircleDot,
 } from "lucide-react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useTheme } from "./hooks/useTheme";
+import { Overview } from "./components/Overview";
 import { ProjectList } from "./components/ProjectList";
 import { ProjectDetail } from "./components/ProjectDetail";
 import { Settings } from "./components/Settings";
 import { LogViewer } from "./components/LogViewer";
 import { Onboarding } from "./components/Onboarding";
 import { SessionDashboard } from "./components/SessionDashboard";
-import { IngestionTimeline } from "./components/IngestionTimeline";
 import { QueryPlayground } from "./components/QueryPlayground";
 import { CorpusTreemap } from "./components/CorpusTreemap";
 import { SymbolGraph } from "./components/SymbolGraph";
 import { ContextSimulator } from "./components/ContextSimulator";
+import { CommandPalette } from "./components/CommandPalette";
+import { ShortcutSheet } from "./components/ShortcutSheet";
 import { Badge } from "./components/ui/badge";
+import { StatusDot } from "./components/ui/status-dot";
 import { cn } from "./lib/utils";
 
 type Tab =
-  | "projects"
-  | "health"
+  | "overview"
   | "sessions"
-  | "ingestion"
   | "search"
   | "treemap"
   | "symbols"
   | "simulator"
   | "logs"
-  | "settings";
+  | "settings"
+  | "projects";
 
 const VALID_TABS: Tab[] = [
-  "projects",
-  "health",
+  "overview",
   "sessions",
-  "ingestion",
   "search",
   "treemap",
   "symbols",
   "simulator",
   "logs",
   "settings",
-];
-
-const PRIMARY_NAV: { tab: Tab; icon: typeof FolderKanban; label: string }[] = [
-  { tab: "projects", icon: FolderKanban, label: "Projects" },
-  { tab: "health", icon: Activity, label: "Health" },
-  { tab: "sessions", icon: Users, label: "Sessions" },
-  { tab: "ingestion", icon: Timer, label: "Ingestion" },
-  { tab: "search", icon: Search, label: "Search" },
-  { tab: "treemap", icon: TreePine, label: "Treemap" },
-  { tab: "symbols", icon: GitBranch, label: "Symbols" },
-  { tab: "simulator", icon: Cpu, label: "Simulator" },
-  { tab: "logs", icon: ScrollText, label: "Logs" },
+  "projects",
 ];
 
 export function App() {
   const { status, error, refresh } = useDaemonStatus();
   const { theme, setTheme } = useTheme();
-  const [tab, setTab] = useState<Tab>("projects");
+  const [tab, setTab] = useState<Tab>("overview");
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [selectedCorpusId, setSelectedCorpusId] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [exploreOpen, setExploreOpen] = useState(false);
+  const gPending = useRef(false);
+  const gTimer = useRef<number | null>(null);
 
   useEffect(() => {
-    invoke<boolean>("should_show_onboarding").then((should) => {
-      setShowOnboarding(should);
-    });
+    invoke<boolean>("should_show_onboarding").then(setShowOnboarding);
   }, []);
 
   useEffect(() => {
@@ -98,7 +94,83 @@ export function App() {
     };
   }, []);
 
+  // Global keyboard shortcuts
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const typing =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable;
+
+      // ⌘K / Ctrl+K — always available
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+        return;
+      }
+
+      if (typing) return;
+
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        e.preventDefault();
+        setShortcutsOpen((o) => !o);
+        return;
+      }
+
+      if (e.key === "\\") {
+        e.preventDefault();
+        setRailCollapsed((c) => !c);
+        return;
+      }
+
+      if (e.key === "Escape") {
+        if (paletteOpen) setPaletteOpen(false);
+        else if (shortcutsOpen) setShortcutsOpen(false);
+        return;
+      }
+
+      // g <letter> shortcuts
+      if (gPending.current) {
+        gPending.current = false;
+        if (gTimer.current !== null) clearTimeout(gTimer.current);
+        const map: Record<string, Tab> = {
+          o: "overview",
+          s: "sessions",
+          q: "search",
+          p: "projects",
+          l: "logs",
+          ",": "settings",
+        };
+        const target = map[e.key.toLowerCase()];
+        if (target) {
+          e.preventDefault();
+          setTab(target);
+        }
+        return;
+      }
+      if (e.key === "g") {
+        gPending.current = true;
+        gTimer.current = window.setTimeout(() => {
+          gPending.current = false;
+        }, 900);
+      }
+    }
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [paletteOpen, shortcutsOpen]);
+
   const selectedCorpus = status?.corpora.find((c) => c.id === selectedCorpusId);
+
+  const openAddProject = useCallback(async () => {
+    try {
+      await invoke("add_project_dialog");
+      refresh();
+    } catch {
+      /* ignore */
+    }
+  }, [refresh]);
 
   if (showOnboarding) {
     return <Onboarding onDismiss={() => setShowOnboarding(false)} />;
@@ -106,38 +178,12 @@ export function App() {
 
   return (
     <div className="flex h-screen flex-col bg-bg text-text">
-      {/* Header */}
-      <header className="flex items-center justify-between border-b border-border/70 bg-surface/50 backdrop-blur-sm px-5 py-3 shrink-0 shadow-[0_1px_0_rgb(0_0_0/0.02)]">
-        <div className="flex items-center gap-3">
-          <Logo />
-          <span className="iris-wordmark">iris</span>
-          {status && (
-            <Badge variant="muted" className="font-mono">
-              v{status.version}
-            </Badge>
-          )}
-        </div>
-        {status && (
-          <div className="flex items-center gap-2">
-            <StatChip
-              icon={<Sparkles className="h-3 w-3" />}
-              label={status.model.replace("all-MiniLM-", "MiniLM-")}
-              sub={`${status.model_dimension}d`}
-            />
-            <StatChip
-              icon={<Cpu className="h-3 w-3" />}
-              label={`${status.memory_mb.toFixed(0)} MB`}
-            />
-            {status.total_sessions > 0 && (
-              <Badge variant="success" dot>
-                {status.total_sessions} active
-              </Badge>
-            )}
-          </div>
-        )}
-      </header>
+      <TopBar
+        status={status}
+        onPaletteOpen={() => setPaletteOpen(true)}
+        onShortcutsOpen={() => setShortcutsOpen(true)}
+      />
 
-      {/* Error banner */}
       {error && (
         <div className="flex items-center gap-2 border-b border-danger/30 bg-danger/5 px-5 py-2 text-xs text-danger shrink-0">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
@@ -145,32 +191,28 @@ export function App() {
         </div>
       )}
 
-      {/* Main content */}
       <div className="flex flex-1 min-h-0">
-        {/* Sidebar */}
-        <nav className="hidden sm:flex flex-col w-14 border-r border-border/70 bg-surface/30 py-3 items-center gap-0.5 shrink-0">
-          {PRIMARY_NAV.map(({ tab: t, icon, label }) => (
-            <NavButton
-              key={t}
-              icon={icon}
-              active={tab === t}
-              onClick={() => setTab(t)}
-              label={label}
-            />
-          ))}
-          <div className="flex-1" />
-          <NavButton
-            icon={SettingsIcon}
-            active={tab === "settings"}
-            onClick={() => setTab("settings")}
-            label="Settings"
-          />
-        </nav>
+        <Rail
+          tab={tab}
+          onSelect={setTab}
+          collapsed={railCollapsed}
+          exploreOpen={exploreOpen}
+          onExploreToggle={() => setExploreOpen((v) => !v)}
+        />
 
-        {/* Content area */}
         <main className="flex-1 overflow-y-auto p-5">
           {!status ? (
             <ConnectingState error={error ?? null} />
+          ) : tab === "overview" ? (
+            <Overview
+              status={status}
+              selectedCorpusId={selectedCorpusId}
+              onSelectCorpus={setSelectedCorpusId}
+              onOpenProjects={() => setTab("projects")}
+              onOpenSessions={() => setTab("sessions")}
+              onAddProject={openAddProject}
+              onRefresh={refresh}
+            />
           ) : tab === "projects" ? (
             <div className="flex gap-4 h-full iris-fade-in">
               <div
@@ -192,12 +234,8 @@ export function App() {
                 </div>
               )}
             </div>
-          ) : tab === "health" ? (
-            <HealthView status={status} />
           ) : tab === "sessions" ? (
             <SessionDashboard status={status} />
-          ) : tab === "ingestion" ? (
-            <IngestionTimeline status={status} />
           ) : tab === "search" ? (
             <QueryPlayground status={status} />
           ) : tab === "treemap" ? (
@@ -219,40 +257,94 @@ export function App() {
         </main>
       </div>
 
-      {/* Bottom tabs (narrow screens) — show key tabs only */}
-      <nav className="flex sm:hidden border-t border-border bg-surface/60 backdrop-blur-sm shrink-0">
-        <TabButton
-          icon={FolderKanban}
-          label="Projects"
-          active={tab === "projects"}
-          onClick={() => setTab("projects")}
-        />
-        <TabButton
-          icon={Search}
-          label="Search"
-          active={tab === "search"}
-          onClick={() => setTab("search")}
-        />
-        <TabButton
-          icon={Activity}
-          label="Health"
-          active={tab === "health"}
-          onClick={() => setTab("health")}
-        />
-        <TabButton
-          icon={ScrollText}
-          label="Logs"
-          active={tab === "logs"}
-          onClick={() => setTab("logs")}
-        />
-        <TabButton
-          icon={SettingsIcon}
-          label="Settings"
-          active={tab === "settings"}
-          onClick={() => setTab("settings")}
-        />
-      </nav>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        status={status}
+        onNavigate={(t) => setTab(t as Tab)}
+        onAddProject={openAddProject}
+        onSelectCorpus={setSelectedCorpusId}
+        onShowShortcuts={() => setShortcutsOpen(true)}
+        onThemeChange={setTheme}
+        onRefresh={refresh}
+      />
+      <ShortcutSheet
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+      />
     </div>
+  );
+}
+
+function TopBar({
+  status,
+  onPaletteOpen,
+  onShortcutsOpen,
+}: {
+  status: import("./lib/types").DaemonStatus | null;
+  onPaletteOpen: () => void;
+  onShortcutsOpen: () => void;
+}) {
+  return (
+    <header className="flex items-center justify-between gap-4 border-b border-border/70 bg-surface/50 backdrop-blur-sm px-5 py-2.5 shrink-0">
+      <div className="flex items-center gap-3">
+        <Logo />
+        <div className="flex items-center gap-2">
+          <span className="iris-wordmark">iris</span>
+          <StatusDot tone={status ? "success" : "muted"} pulse={!!status} />
+          {status && (
+            <span className="text-[10px] font-mono text-text-dim uppercase tracking-wider">
+              live
+            </span>
+          )}
+        </div>
+        {status && (
+          <Badge variant="muted" className="font-mono ml-1">
+            v{status.version}
+          </Badge>
+        )}
+      </div>
+
+      {status && (
+        <div className="flex items-center gap-2">
+          <StatChip
+            icon={<Sparkles className="h-3 w-3" />}
+            label={status.model.replace("all-MiniLM-", "MiniLM-")}
+            sub={`${status.model_dimension}d`}
+          />
+          <StatChip
+            icon={<Cpu className="h-3 w-3" />}
+            label={`${status.memory_mb.toFixed(0)} MB`}
+          />
+          {status.total_sessions > 0 && (
+            <Badge variant="success" dot>
+              {status.total_sessions} active
+            </Badge>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-1">
+        <button
+          onClick={onPaletteOpen}
+          title="Command palette (⌘K)"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-surface-raised/50 pl-2.5 pr-1.5 py-1 text-xs text-text-muted hover:text-text hover:border-border-hover cursor-pointer transition-all"
+        >
+          <Command className="h-3 w-3" />
+          <span>Search</span>
+          <kbd className="ml-1 rounded border border-border/60 bg-surface-overlay px-1 py-0 text-[10px] font-mono text-text-dim">
+            ⌘K
+          </kbd>
+        </button>
+        <button
+          onClick={onShortcutsOpen}
+          title="Shortcuts (?)"
+          className="grid h-7 w-7 place-items-center rounded-md border border-transparent text-text-dim hover:text-text hover:bg-surface-overlay/60 cursor-pointer"
+        >
+          <Keyboard className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </header>
   );
 }
 
@@ -282,60 +374,145 @@ function StatChip({
   );
 }
 
-function NavButton({
+function Rail({
+  tab,
+  onSelect,
+  collapsed,
+  exploreOpen,
+  onExploreToggle,
+}: {
+  tab: Tab;
+  onSelect: (t: Tab) => void;
+  collapsed: boolean;
+  exploreOpen: boolean;
+  onExploreToggle: () => void;
+}) {
+  if (collapsed) return null;
+
+  return (
+    <nav className="hidden sm:flex flex-col w-14 border-r border-border/70 bg-surface/30 py-3 items-center gap-0.5 shrink-0">
+      <RailItem
+        icon={Radio}
+        active={tab === "overview"}
+        label="Overview"
+        onClick={() => onSelect("overview")}
+      />
+      <RailItem
+        icon={Users}
+        active={tab === "sessions"}
+        label="Sessions"
+        onClick={() => onSelect("sessions")}
+      />
+      <RailItem
+        icon={Search}
+        active={tab === "search"}
+        label="Search"
+        onClick={() => onSelect("search")}
+      />
+      <RailItem
+        icon={FolderKanban}
+        active={tab === "projects"}
+        label="Projects"
+        onClick={() => onSelect("projects")}
+      />
+
+      <div className="relative w-full flex flex-col items-center">
+        <RailItem
+          icon={Compass}
+          active={
+            tab === "treemap" || tab === "symbols" || tab === "simulator"
+          }
+          label="Explore"
+          onClick={onExploreToggle}
+          trailing={
+            <ChevronDown
+              className={cn(
+                "absolute right-1.5 top-2.5 h-2.5 w-2.5 text-text-dim transition-transform",
+                exploreOpen && "rotate-180",
+              )}
+            />
+          }
+        />
+        {exploreOpen && (
+          <div className="flex flex-col items-center gap-0.5">
+            <RailItem
+              icon={TreePine}
+              active={tab === "treemap"}
+              label="Treemap"
+              onClick={() => onSelect("treemap")}
+              size="sm"
+            />
+            <RailItem
+              icon={GitBranch}
+              active={tab === "symbols"}
+              label="Symbols"
+              onClick={() => onSelect("symbols")}
+              size="sm"
+            />
+            <RailItem
+              icon={Cpu}
+              active={tab === "simulator"}
+              label="Simulator"
+              onClick={() => onSelect("simulator")}
+              size="sm"
+            />
+          </div>
+        )}
+      </div>
+
+      <RailItem
+        icon={ScrollText}
+        active={tab === "logs"}
+        label="Logs"
+        onClick={() => onSelect("logs")}
+      />
+      <div className="flex-1" />
+      <RailItem
+        icon={SettingsIcon}
+        active={tab === "settings"}
+        label="Settings"
+        onClick={() => onSelect("settings")}
+      />
+    </nav>
+  );
+}
+
+function RailItem({
   icon: Icon,
   active,
   onClick,
   label,
+  size = "md",
+  trailing,
 }: {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   active: boolean;
   onClick: () => void;
   label: string;
+  size?: "sm" | "md";
+  trailing?: React.ReactNode;
 }) {
+  const dim = size === "sm" ? "h-7 w-7" : "h-9 w-9";
+  const iconSize = size === "sm" ? "h-4 w-4" : "h-[18px] w-[18px]";
   return (
     <button
       onClick={onClick}
       title={label}
       aria-label={label}
       className={cn(
-        "relative grid place-items-center h-9 w-9 rounded-lg transition-all duration-150 cursor-pointer",
+        "relative grid place-items-center rounded-lg transition-all duration-150 cursor-pointer",
+        dim,
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-ring)]",
         active
           ? "bg-[var(--color-accent-soft)] text-accent"
           : "text-text-dim hover:text-text hover:bg-surface-overlay/70",
       )}
     >
-      {/* Active-state vertical bar on the left edge */}
       {active && (
         <span className="absolute left-[-9px] top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
       )}
-      <Icon className="h-[18px] w-[18px]" strokeWidth={active ? 2.25 : 2} />
-    </button>
-  );
-}
-
-function TabButton({
-  icon: Icon,
-  label,
-  active,
-  onClick,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] transition-colors cursor-pointer",
-        active ? "text-accent" : "text-text-dim",
-      )}
-    >
-      <Icon className="h-4 w-4" />
-      {label}
+      <Icon className={iconSize} strokeWidth={active ? 2.25 : 2} />
+      {trailing}
     </button>
   );
 }
@@ -350,7 +527,8 @@ function ConnectingState({ error }: { error: string | null }) {
       <div className="text-center space-y-1">
         <p className="text-sm font-medium text-text">Connecting to daemon…</p>
         <p className="text-xs text-text-dim">
-          Checking the Unix socket at <span className="font-mono">~/.iris/irisd.sock</span>
+          Checking the Unix socket at{" "}
+          <span className="font-mono">~/.iris/irisd.sock</span>
         </p>
       </div>
       {error && (
@@ -360,151 +538,4 @@ function ConnectingState({ error }: { error: string | null }) {
       )}
     </div>
   );
-}
-
-function HealthView({
-  status,
-}: {
-  status: import("./lib/types").DaemonStatus;
-}) {
-  const totalFiles = status.corpora.reduce((s, c) => s + c.files_indexed, 0);
-  const totalSections = status.corpora.reduce(
-    (s, c) => s + c.sections_count,
-    0,
-  );
-  const totalVectors = status.corpora.reduce(
-    (s, c) => s + c.embeddings_count,
-    0,
-  );
-  const indexing = status.corpora.filter(
-    (c) => c.status.state === "indexing",
-  ).length;
-  const errors = status.corpora.filter(
-    (c) => c.status.state === "error",
-  ).length;
-
-  return (
-    <div className="space-y-6 iris-fade-in">
-      <HealthSection title="Index" description="Content currently indexed across all corpora.">
-        <MetricCard label="Files" value={totalFiles.toLocaleString()} />
-        <MetricCard label="Sections" value={totalSections.toLocaleString()} />
-        <MetricCard label="Vectors" value={totalVectors.toLocaleString()} />
-        <MetricCard
-          label="Memory"
-          value={`${status.memory_mb.toFixed(0)} MB`}
-        />
-      </HealthSection>
-
-      <HealthSection title="Runtime" description="Live activity across the daemon.">
-        <MetricCard
-          label="Corpora"
-          value={status.corpora.length.toString()}
-        />
-        <MetricCard
-          label="Sessions"
-          value={status.total_sessions.toString()}
-          highlight={status.total_sessions > 0 ? "active" : undefined}
-          live={status.total_sessions > 0}
-        />
-        <MetricCard
-          label="Indexing"
-          value={indexing.toString()}
-          highlight={indexing > 0 ? "warning" : undefined}
-          live={indexing > 0}
-        />
-        <MetricCard
-          label="Errors"
-          value={errors.toString()}
-          highlight={errors > 0 ? "danger" : undefined}
-        />
-      </HealthSection>
-
-      <HealthSection title="Environment" description="Build and model metadata.">
-        <MetricCard
-          label="Model"
-          value={status.model.replace("all-MiniLM-", "MiniLM-")}
-          mono
-        />
-        <MetricCard label="Dimension" value={`${status.model_dimension}d`} mono />
-        <MetricCard label="Uptime" value={formatUptime(status.uptime_secs)} mono />
-        <MetricCard label="Version" value={`v${status.version}`} mono />
-      </HealthSection>
-    </div>
-  );
-}
-
-function HealthSection({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="space-y-3">
-      <div className="flex items-baseline justify-between gap-4">
-        <h2 className="text-sm font-semibold text-text">{title}</h2>
-        <p className="text-xs text-text-dim">{description}</p>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{children}</div>
-    </section>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  highlight,
-  mono,
-  live,
-}: {
-  label: string;
-  value: string;
-  highlight?: "warning" | "danger" | "active";
-  mono?: boolean;
-  live?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "relative rounded-xl border border-border/70 bg-surface-raised p-4 transition-all duration-150",
-        "hover:border-border-hover hover:shadow-[var(--shadow-sm)]",
-        highlight === "active" &&
-          "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)]",
-        highlight === "warning" && "border-warning/40",
-        highlight === "danger" && "border-danger/40",
-      )}
-    >
-      <div className="flex items-center gap-1.5">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-text-dim">
-          {label}
-        </p>
-        {live && (
-          <span className="iris-pulse h-1.5 w-1.5 rounded-full bg-accent" />
-        )}
-      </div>
-      <p
-        className={cn(
-          "mt-1 text-xl font-semibold tabular-nums leading-tight",
-          mono && "font-mono text-lg",
-          highlight === "warning" && "text-warning",
-          highlight === "danger" && "text-danger",
-          highlight === "active" && "text-accent",
-        )}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function formatUptime(secs: number): string {
-  const h = Math.floor(secs / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  const s = secs % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
 }

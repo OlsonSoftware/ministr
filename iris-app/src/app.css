@@ -260,8 +260,30 @@ body {
   }
 }
 
+@keyframes iris-flash {
+  0% {
+    background-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes iris-ring-sweep {
+  from {
+    stroke-dashoffset: var(--iris-ring-sweep-from, 1000);
+  }
+  to {
+    stroke-dashoffset: var(--iris-ring-sweep-to, 0);
+  }
+}
+
 .iris-fade-in {
   animation: iris-fade-in 200ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.iris-flash {
+  animation: iris-flash 1.2s ease-out both;
 }
 
 .iris-spin {
