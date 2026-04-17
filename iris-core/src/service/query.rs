@@ -20,6 +20,46 @@ use super::{
     cosine_similarity, is_unresolved_placeholder,
 };
 
+/// How strongly Matryoshka full-dim rescoring overrides the prior (RRF-fused
+/// dense + sparse + resolution-weighted) score. `0.7` = the new signal
+/// dominates but the prior stays in the mix so sparse/lexical contributions
+/// aren't erased.
+const MATRYOSHKA_BLEND: f32 = 0.7;
+
+/// How strongly cross-encoder reranking overrides the prior composed score.
+/// `0.8` — the reranker is our best signal, but we keep some memory of the
+/// upstream retrieval stack.
+const RERANK_BLEND: f32 = 0.8;
+
+/// Min-max normalize a slice of scores in-place into `[0, 1]`. If every
+/// score is identical the range collapses and every entry is set to `0.5`
+/// so downstream blends still compose meaningfully.
+fn min_max_normalize(scores: &mut [f32]) {
+    if scores.is_empty() {
+        return;
+    }
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    for &s in scores.iter() {
+        if s < min {
+            min = s;
+        }
+        if s > max {
+            max = s;
+        }
+    }
+    let range = max - min;
+    if range < f32::EPSILON {
+        for s in scores.iter_mut() {
+            *s = 0.5;
+        }
+    } else {
+        for s in scores.iter_mut() {
+            *s = (*s - min) / range;
+        }
+    }
+}
+
 impl QueryService {
     /// Search the corpus for content relevant to a natural language query.
     ///
@@ -367,10 +407,18 @@ impl QueryService {
             .collect())
     }
 
-    /// Rerank survey results using a cross-encoder model.
+    /// Rerank survey results using a cross-encoder model, composed with the
+    /// prior composed score from upstream retrieval.
     ///
-    /// Takes the already-resolved survey results, passes their text to the
-    /// reranker, re-sorts by cross-encoder score, and truncates to `top_k`.
+    /// 1. Ask the reranker for cross-encoder scores over `(query, text)` pairs.
+    /// 2. **Blend** each result's new rerank score with its normalized prior
+    ///    score using [`RERANK_BLEND`]. Both signals are min-max normalized
+    ///    across the candidate set first so the blend is scale-aware.
+    /// 3. Re-sort by the composed score and truncate to `top_k`.
+    ///
+    /// Preserving the prior keeps upstream RRF + Matryoshka contributions in
+    /// the final ranking instead of letting the cross-encoder fully overwrite
+    /// them.
     pub(super) fn rerank_results(
         query: &str,
         results: Vec<SurveyResult>,
@@ -381,25 +429,54 @@ impl QueryService {
             return Ok(results);
         }
 
+        // Snapshot and normalize priors across the result set.
+        let mut priors: Vec<f32> = results.iter().map(|r| r.score).collect();
+        min_max_normalize(&mut priors);
+
+        // Compute reranker scores (index-aligned to `results` input order).
         let texts: Vec<&str> = results.iter().map(|r| r.text.as_str()).collect();
         let scores = model.rerank(query, &texts)?;
 
-        // Build output in score-descending order (scores are already sorted
-        // descending by the Reranker contract).
-        let mut output = Vec::with_capacity(top_k.min(scores.len()));
-        // Convert results into an indexable container where items can be taken
-        let mut slots: Vec<Option<SurveyResult>> = results.into_iter().map(Some).collect();
-        for rs in scores {
-            if let Some(mut result) = slots.get_mut(rs.index).and_then(Option::take) {
-                result.score = rs.score;
-                output.push(result);
-            }
-            if output.len() >= top_k {
-                break;
+        // Build an index-aligned rerank score vector (None for any result the
+        // reranker didn't return a score for, which shouldn't happen but we
+        // handle it defensively).
+        let mut rerank_by_index: Vec<Option<f32>> = vec![None; results.len()];
+        for rs in &scores {
+            if let Some(slot) = rerank_by_index.get_mut(rs.index) {
+                *slot = Some(rs.score);
             }
         }
 
-        Ok(output)
+        // Normalize the rerank scores across the subset that has them.
+        let mut rerank_values: Vec<f32> = rerank_by_index.iter().filter_map(|&s| s).collect();
+        min_max_normalize(&mut rerank_values);
+        let mut rerank_iter = rerank_values.into_iter();
+        let rerank_norm: Vec<Option<f32>> = rerank_by_index
+            .iter()
+            .map(|s| s.map(|_| rerank_iter.next().unwrap_or(0.5)))
+            .collect();
+
+        // Compose: blend rerank + prior into a single composed score per result.
+        let mut composed: Vec<SurveyResult> = results
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut r)| {
+                r.score = match rerank_norm[i] {
+                    Some(rs) => RERANK_BLEND * rs + (1.0 - RERANK_BLEND) * priors[i],
+                    None => priors[i],
+                };
+                r
+            })
+            .collect();
+
+        // Sort descending and truncate.
+        composed.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        composed.truncate(top_k);
+        Ok(composed)
     }
 
     /// Resolve a vector ID to its content text and optional heading path.
@@ -482,14 +559,20 @@ impl QueryService {
         }
     }
 
-    /// Rescore coarse HNSW candidates using full-dimension cosine similarity.
+    /// Rescore coarse HNSW candidates using full-dimension cosine similarity,
+    /// composed with the prior RRF-fused score.
     ///
-    /// 1. Embed the query at full dimension using the dual embedder
-    /// 2. Retrieve stored full-dim vectors from SQLite for the top candidates
-    /// 3. Compute cosine similarity between full-dim query and candidates
-    /// 4. Re-sort by full-dim score
+    /// 1. Embed the query at full dimension using the dual embedder.
+    /// 2. Retrieve stored full-dim vectors from SQLite for the top candidates.
+    /// 3. Compute cosine similarity between full-dim query and each candidate.
+    /// 4. **Blend** the new cosine with the prior score — both normalized to
+    ///    `[0, 1]` across the candidate set — using [`MATRYOSHKA_BLEND`].
+    ///    This preserves the sparse/lexical contribution from RRF instead of
+    ///    overwriting it with a pure dense signal.
+    /// 5. Re-sort by the composed score.
     ///
-    /// Candidates without stored full-dim vectors keep their coarse score.
+    /// Candidates without stored full-dim vectors keep their normalized prior
+    /// so the whole set stays on one scale after this stage.
     async fn rescore_with_full_dim(
         &self,
         query: &str,
@@ -502,6 +585,11 @@ impl QueryService {
 
         // Limit to the rerank depth.
         candidates.truncate(self.matryoshka_rerank_depth);
+
+        // Snapshot prior scores and normalize across the candidate set so
+        // the blend below combines comparable scales.
+        let mut priors: Vec<f32> = candidates.iter().map(|c| c.score).collect();
+        min_max_normalize(&mut priors);
 
         // Get full-dim query vector (single inference).
         let dual = dual_embedder
@@ -523,15 +611,37 @@ impl QueryService {
             .map(|(id, vec)| (id.as_str(), vec.as_slice()))
             .collect();
 
-        // Rescore candidates that have stored full-dim vectors.
-        for candidate in &mut candidates {
-            if let Some(full_vec) = stored_map.get(candidate.vector_id.as_str()) {
-                candidate.score = cosine_similarity(full_query, full_vec);
-            }
-            // Candidates without full-dim vectors keep their coarse score.
+        // Compute Matryoshka cosine for each candidate (None when no full-dim
+        // vector is available).
+        let matryoshka_scores: Vec<Option<f32>> = candidates
+            .iter()
+            .map(|c| {
+                stored_map
+                    .get(c.vector_id.as_str())
+                    .map(|full_vec| cosine_similarity(full_query, full_vec))
+            })
+            .collect();
+
+        // Normalize Matryoshka scores across the subset that has them so the
+        // blend combines comparable ranges.
+        let mut matryoshka_values: Vec<f32> = matryoshka_scores.iter().filter_map(|&s| s).collect();
+        min_max_normalize(&mut matryoshka_values);
+        let mut matryoshka_iter = matryoshka_values.into_iter();
+        let matryoshka_norm: Vec<Option<f32>> = matryoshka_scores
+            .iter()
+            .map(|s| s.map(|_| matryoshka_iter.next().unwrap_or(0.5)))
+            .collect();
+
+        // Compose: if Matryoshka produced a score, blend; otherwise keep the
+        // normalized prior so every entry ends up on the [0, 1] scale.
+        for (i, candidate) in candidates.iter_mut().enumerate() {
+            candidate.score = match matryoshka_norm[i] {
+                Some(m) => MATRYOSHKA_BLEND * m + (1.0 - MATRYOSHKA_BLEND) * priors[i],
+                None => priors[i],
+            };
         }
 
-        // Re-sort by rescored values (descending).
+        // Re-sort by composed values (descending).
         candidates.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
