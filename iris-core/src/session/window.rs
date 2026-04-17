@@ -128,8 +128,12 @@ impl WindowEstimator {
         self.current_tokens += token_count;
         self.entries.push_back(entry);
 
-        // Evict until we're within capacity
-        self.evict_to_capacity(scores)
+        // Evict until we're within capacity. The just-inserted entry is
+        // protected from FSRS eviction on this same call — it was accessed
+        // at "turn 0 ago" and therefore has R = 1.0 by definition, so it
+        // can never be the lowest-retrievability victim unless the caller
+        // has supplied scores that explicitly contradict that.
+        self.evict_to_capacity(scores, Some(content_id))
     }
 
     /// Mark a content ID as recently accessed (LRU only).
@@ -219,24 +223,38 @@ impl WindowEstimator {
     /// Under FIFO/LRU, evicts from the front of the queue.
     /// Under FSRS, evicts the entry with the lowest retrievability score.
     ///
+    /// When `protect_fresh` is `Some(id)`, that entry is treated as having
+    /// R = 1.0 regardless of the scores map — used during `record_with_scores`
+    /// to prevent a just-inserted entry from self-evicting because the
+    /// caller hadn't recorded memory for it yet.
+    ///
     /// Returns the content IDs of evicted entries so callers can apply
     /// compression (e.g. bookmarks) instead of losing the content entirely.
     fn evict_to_capacity(
         &mut self,
         scores: Option<&std::collections::HashMap<String, f64>>,
+        protect_fresh: Option<&str>,
     ) -> Vec<String> {
         let mut evicted_ids = Vec::new();
         while self.current_tokens > self.capacity {
             let victim = match (&self.policy, scores) {
                 (EvictionPolicy::Fsrs, Some(s)) if !self.entries.is_empty() => {
-                    // Find the entry with the lowest retrievability
+                    // Find the entry with the lowest retrievability, giving
+                    // the freshly-inserted entry (if any) an implicit R=1.0.
+                    let score_for = |id: &str| -> f64 {
+                        if Some(id) == protect_fresh {
+                            1.0
+                        } else {
+                            s.get(id).copied().unwrap_or(0.0)
+                        }
+                    };
                     let min_idx = self
                         .entries
                         .iter()
                         .enumerate()
                         .min_by(|(_, a), (_, b)| {
-                            let ra = s.get(&a.content_id).copied().unwrap_or(0.0);
-                            let rb = s.get(&b.content_id).copied().unwrap_or(0.0);
+                            let ra = score_for(&a.content_id);
+                            let rb = score_for(&b.content_id);
                             ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal)
                         })
                         .map(|(i, _)| i);
