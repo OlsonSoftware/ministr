@@ -19,6 +19,7 @@ use tracing::info;
 
 use iris_api::ApiError;
 use iris_api::activity::ActivityResponse;
+use iris_api::coherence::CoherenceEventsResponse;
 use iris_api::corpus::{ListCorporaResponse, RegisterCorpusRequest, RegisterCorpusResponse};
 use iris_api::query;
 use iris_api::session::{CreateSessionRequest, CreateSessionResponse};
@@ -30,7 +31,7 @@ use sha2::{Digest, Sha256};
 
 use crate::activity::record as record_activity;
 use crate::convert;
-use crate::state::{ACTIVITY_BUFFER_CAPACITY, AppState};
+use crate::state::{ACTIVITY_BUFFER_CAPACITY, AppState, COHERENCE_BUFFER_CAPACITY};
 
 /// Build the daemon API router.
 pub fn router(state: AppState) -> Router {
@@ -78,6 +79,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/status", get(daemon_status))
         .route("/activity", get(recent_activity))
+        .route("/coherence-events", get(recent_coherence_events))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             record_activity,
@@ -107,6 +109,25 @@ async fn recent_activity(
     Json(ActivityResponse {
         events,
         buffer_capacity: ACTIVITY_BUFFER_CAPACITY,
+    })
+}
+
+/// `GET /coherence-events?limit=50&since=<unix_ms>` — snapshot of recent
+/// file-change events across all registered corpora. Same polling
+/// contract as `/activity`.
+async fn recent_coherence_events(
+    State(state): State<AppState>,
+    Query(q): Query<ActivityQuery>,
+) -> impl IntoResponse {
+    let limit = q.limit.unwrap_or(50).min(COHERENCE_BUFFER_CAPACITY);
+    let events = if let Some(since) = q.since {
+        state.coherence_since(since, limit).await
+    } else {
+        state.recent_coherence(limit).await
+    };
+    Json(CoherenceEventsResponse {
+        events,
+        buffer_capacity: COHERENCE_BUFFER_CAPACITY,
     })
 }
 
@@ -715,8 +736,8 @@ async fn coherence_stream(
     let stream = async_stream::stream! {
         loop {
             match rx.recv().await {
-                Ok(section_ids) => {
-                    if let Ok(json) = serde_json::to_string(&section_ids) {
+                Ok(event) => {
+                    if let Ok(json) = serde_json::to_string(&event) {
                         yield Ok::<_, Infallible>(Event::default().event("coherence").data(json));
                     }
                 }

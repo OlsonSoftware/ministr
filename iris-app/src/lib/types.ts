@@ -126,3 +126,15 @@ export interface ActivityEvent {
   resolution?: string;
   duration_ms: number;
 }
+
+/** File-system change the daemon's watcher observed. */
+export type CoherenceKind = "created" | "modified" | "removed";
+
+export interface CoherenceEvent {
+  timestamp_ms: number;
+  corpus_id: string;
+  kind: CoherenceKind;
+  path: string;
+  affected_sections: string[];
+  duration_ms: number;
+}

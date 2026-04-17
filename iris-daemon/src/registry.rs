@@ -8,10 +8,11 @@
 //!
 //! Ingestion is delegated to the [`indexer`](crate::indexer) module (SRP).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use iris_api::coherence::CoherenceEvent;
 use iris_api::corpus::{CorpusInfo, IndexingStatus};
 use iris_core::config::IrisConfig;
 use iris_core::embedding::Embedder;
@@ -54,6 +55,11 @@ pub struct CorpusRegistry {
     embedder: Arc<dyn Embedder>,
     corpora: RwLock<HashMap<String, CorpusHandle>>,
     config: IrisConfig,
+    /// Optional sink for coherence events — wired in by [`AppState::new`]
+    /// after construction so `register` can spawn a pusher task that
+    /// feeds the app-level ring buffer without the registry needing a
+    /// direct handle to [`AppState`].
+    coherence_sink: std::sync::OnceLock<Arc<RwLock<VecDeque<CoherenceEvent>>>>,
 }
 
 /// A single managed corpus with its resources.
@@ -67,8 +73,10 @@ pub struct CorpusHandle {
     pub progress: Arc<IngestionProgress>,
     pub cancel: CancellationToken,
     pub data_dir: PathBuf,
-    /// Broadcast channel for coherence notifications (stale section IDs).
-    pub coherence_tx: tokio::sync::broadcast::Sender<Vec<String>>,
+    /// Broadcast channel for coherence notifications — one event per
+    /// file-system change the watcher observed, carrying path, kind, and
+    /// the list of affected section IDs.
+    pub coherence_tx: tokio::sync::broadcast::Sender<CoherenceEvent>,
 }
 
 impl CorpusRegistry {
@@ -77,7 +85,17 @@ impl CorpusRegistry {
             embedder,
             corpora: RwLock::new(HashMap::new()),
             config,
+            coherence_sink: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Wire a coherence sink so `register` will spawn a per-corpus
+    /// pusher task that copies events into the supplied buffer.
+    ///
+    /// Intended to be called exactly once, immediately after construction.
+    /// A second call is a no-op (the first wins).
+    pub fn set_coherence_sink(&self, sink: Arc<RwLock<VecDeque<CoherenceEvent>>>) {
+        let _ = self.coherence_sink.set(sink);
     }
 
     pub fn embedder(&self) -> &Arc<dyn Embedder> {
@@ -171,6 +189,11 @@ impl CorpusRegistry {
         let cache_storage = Arc::clone(&handle.storage);
         let cache_cid = corpus_id.clone();
 
+        // If an observatory sink is wired, subscribe a second receiver
+        // and push each event into the shared ring buffer.
+        let sink_rx = handle.coherence_tx.subscribe();
+        let sink_opt = self.coherence_sink.get().cloned();
+
         self.corpora.write().await.insert(corpus_id.clone(), handle);
         info!(corpus_id = %corpus_id, "corpus registered");
 
@@ -180,6 +203,10 @@ impl CorpusRegistry {
         tokio::spawn(async move {
             crate::ask::spawn_cache_invalidator(cache_storage, coherence_rx, cache_cid).await;
         });
+
+        if let Some(sink) = sink_opt {
+            tokio::spawn(spawn_coherence_sink_pusher(sink, sink_rx));
+        }
 
         // Spawn background indexing (delegated to indexer module).
         let registry = Arc::clone(self);
@@ -368,6 +395,31 @@ impl CorpusRegistry {
             data_dir: corpus_dir,
             coherence_tx: tokio::sync::broadcast::channel(16).0,
         })
+    }
+}
+
+/// Bridge a per-corpus coherence broadcast into the app-level ring buffer.
+///
+/// Runs until the broadcast sender is dropped (corpus unregistered).
+/// Lag warnings are silent — the feed is informational, so a dropped
+/// event just shortens the displayed history.
+async fn spawn_coherence_sink_pusher(
+    sink: Arc<RwLock<VecDeque<CoherenceEvent>>>,
+    mut rx: tokio::sync::broadcast::Receiver<CoherenceEvent>,
+) {
+    const BUFFER_CAPACITY: usize = 500;
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                let mut buf = sink.write().await;
+                while buf.len() >= BUFFER_CAPACITY {
+                    buf.pop_front();
+                }
+                buf.push_back(event);
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+        }
     }
 }
 

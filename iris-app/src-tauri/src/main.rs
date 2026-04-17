@@ -123,6 +123,7 @@ fn main() {
             commands::symbol_references,
             commands::ingestion_progress,
             commands::recent_activity,
+            commands::recent_coherence_events,
             commands::detect_projects,
             commands::register_projects_batch,
         ])

@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use iris_api::activity::ActivityEvent;
+use iris_api::coherence::CoherenceEvent;
 use iris_api::corpus::{CorpusInfo, RegisterCorpusResponse};
 use iris_api::status::DaemonStatus;
 use iris_core::session::PressureLevel;
@@ -618,6 +619,23 @@ pub struct IngestionProgressInfo {
     pub embeddings_total: usize,
     pub embeddings_done: usize,
     pub current_file: String,
+}
+
+/// Snapshot recent coherence (file-change) events from the in-process
+/// ring buffer. Mirrors the daemon's `/coherence-events` route.
+#[tauri::command]
+pub async fn recent_coherence_events(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+    since_ms: Option<u64>,
+) -> Result<Vec<CoherenceEvent>, String> {
+    let limit = limit.unwrap_or(50);
+    let events = if let Some(since) = since_ms {
+        state.coherence_since(since, limit).await
+    } else {
+        state.recent_coherence(limit).await
+    };
+    Ok(events)
 }
 
 /// Snapshot recent tool-call activity events from the in-process ring buffer.

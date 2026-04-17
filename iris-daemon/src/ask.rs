@@ -378,18 +378,22 @@ Rules:
 /// source sections changed.
 pub async fn spawn_cache_invalidator(
     storage: std::sync::Arc<SqliteStorage>,
-    mut coherence_rx: tokio::sync::broadcast::Receiver<Vec<String>>,
+    mut coherence_rx: tokio::sync::broadcast::Receiver<iris_api::coherence::CoherenceEvent>,
     corpus_id: String,
 ) {
     loop {
         match coherence_rx.recv().await {
-            Ok(section_ids) if !section_ids.is_empty() => {
-                match storage.invalidate_answers_for_sections(&section_ids).await {
+            Ok(event) if !event.affected_sections.is_empty() => {
+                match storage
+                    .invalidate_answers_for_sections(&event.affected_sections)
+                    .await
+                {
                     Ok(count) if count > 0 => {
                         info!(
                             corpus_id,
                             invalidated = count,
-                            sections = section_ids.len(),
+                            sections = event.affected_sections.len(),
+                            path = %event.path,
                             "invalidated cached answers for changed sections"
                         );
                     }

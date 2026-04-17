@@ -18,6 +18,7 @@ import type {
   SessionDetail,
   IngestionProgressInfo,
   ActivityEvent,
+  CoherenceEvent,
 } from "../lib/types";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -27,6 +28,7 @@ import { CorpusChip } from "./ui/corpus-chip";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
 import { ActivityFeed, computeHitRateBuckets } from "./ui/activity-feed";
+import { CoherenceFeed } from "./ui/coherence-feed";
 import { cn } from "../lib/utils";
 
 interface OverviewProps {
@@ -51,19 +53,23 @@ export function Overview({
   const [sessions, setSessions] = useState<SessionDetail[]>([]);
   const [ingestion, setIngestion] = useState<IngestionProgressInfo[]>([]);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
+  const [coherence, setCoherence] = useState<CoherenceEvent[]>([]);
   const [freshSessions, setFreshSessions] = useState<Set<string>>(new Set());
   const [activityFlashSince, setActivityFlashSince] = useState<number>(0);
+  const [coherenceFlashSince, setCoherenceFlashSince] = useState<number>(0);
   const prevTurns = useRef<Map<string, number>>(new Map());
   const prevActivityMax = useRef<number>(0);
+  const prevCoherenceMax = useRef<number>(0);
 
   useEffect(() => {
     let cancelled = false;
     async function poll() {
       try {
-        const [s, ing, acts] = await Promise.all([
+        const [s, ing, acts, coh] = await Promise.all([
           invoke<SessionDetail[]>("list_sessions"),
           invoke<IngestionProgressInfo[]>("ingestion_progress"),
           invoke<ActivityEvent[]>("recent_activity", { limit: 100 }),
+          invoke<CoherenceEvent[]>("recent_coherence_events", { limit: 50 }),
         ]);
         if (cancelled) return;
         setIngestion(ing);
@@ -101,6 +107,23 @@ export function Overview({
           }
         }
         setActivity(acts);
+
+        // Same flash treatment for coherence events.
+        if (coh.length > 0) {
+          const flash = prevCoherenceMax.current;
+          const newMax = coh.reduce(
+            (m, e) => (e.timestamp_ms > m ? e.timestamp_ms : m),
+            0,
+          );
+          if (newMax > flash) {
+            setCoherenceFlashSince(flash);
+            prevCoherenceMax.current = newMax;
+            setTimeout(() => {
+              if (!cancelled) setCoherenceFlashSince(newMax);
+            }, 1500);
+          }
+        }
+        setCoherence(coh);
       } catch {
         /* ignore */
       }
@@ -406,13 +429,20 @@ export function Overview({
           <SidePanel
             icon={Sparkles}
             title="Coherence feed"
-            note="coming soon"
+            right={
+              coherence.length > 0 ? (
+                <span className="inline-flex items-center gap-1 text-[10px] text-success font-medium">
+                  <StatusDot tone="success" pulse />
+                  watching
+                </span>
+              ) : undefined
+            }
           >
-            <p className="text-xs text-text-dim leading-relaxed">
-              When files change on disk, the coherence engine re-parses,
-              re-embeds, and marks affected sections stale. File-change events
-              will stream here in a coming release.
-            </p>
+            <CoherenceFeed
+              events={coherence}
+              limit={10}
+              flashSince={coherenceFlashSince}
+            />
           </SidePanel>
 
           <SidePanel icon={Database} title="Daemon">

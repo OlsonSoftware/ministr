@@ -9,6 +9,7 @@
 
 pub mod activity;
 pub mod client;
+pub mod coherence;
 pub mod corpus;
 pub mod query;
 pub mod session;

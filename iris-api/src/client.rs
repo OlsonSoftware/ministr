@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 
 use crate::ApiError;
 use crate::activity::ActivityResponse;
+use crate::coherence::CoherenceEventsResponse;
 use crate::corpus::{
     CorpusInfo, ListCorporaResponse, RegisterCorpusRequest, RegisterCorpusResponse,
 };
@@ -488,6 +489,37 @@ impl DaemonClient {
     ) -> Result<ActivityResponse, ClientError> {
         use std::fmt::Write as _;
         let mut path = String::from("/activity");
+        let mut sep = '?';
+        if let Some(limit) = limit {
+            path.push(sep);
+            let _ = write!(path, "limit={limit}");
+            sep = '&';
+        }
+        if let Some(since) = since_ms {
+            path.push(sep);
+            let _ = write!(path, "since={since}");
+        }
+        self.get(&path).await
+    }
+
+    // -- Coherence --
+
+    /// Snapshot recent coherence (file-change) events from the daemon.
+    ///
+    /// Returns up to `limit` events, newest first. If `since_ms` is
+    /// provided, only events with `timestamp_ms > since_ms` are returned
+    /// — useful for incremental polling alongside `recent_activity`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn recent_coherence_events(
+        &self,
+        limit: Option<usize>,
+        since_ms: Option<u64>,
+    ) -> Result<CoherenceEventsResponse, ClientError> {
+        use std::fmt::Write as _;
+        let mut path = String::from("/coherence-events");
         let mut sep = '?';
         if let Some(limit) = limit {
             path.push(sep);

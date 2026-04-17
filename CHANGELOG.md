@@ -58,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keyboard shortcut sheet (`?`) and theme toggle (System / Dark / Light) in the TopBar
 - Tray submenus for active sessions, recent corpora, and quick actions
 - Live tool-call **activity stream** — every `iris_*` MCP call is recorded in a 500-event in-memory ring buffer on the daemon, exposed via `GET /activity` and surfaced in the app Overview
+- **Coherence feed** — rich per-file `CoherenceEvent` (kind + path + affected sections) broadcast from the per-corpus watcher, mirrored in a 500-event daemon-wide ring buffer, exposed via `GET /coherence-events` + `CoherenceFeed` UI primitive replacing the Overview placeholder
 - Onboarding "observatory preview" tile so users see the dashboard aesthetic before reaching the dense dashboard
 - `CorpusTreemap` re-themed with OKLCH language colors that share the iris design tokens
 
