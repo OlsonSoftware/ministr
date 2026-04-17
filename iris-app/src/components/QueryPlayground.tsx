@@ -1,7 +1,18 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Search, Code2, FileText, ChevronRight } from "lucide-react";
+import {
+  Search,
+  Code2,
+  FileText,
+  ChevronRight,
+  Sparkles,
+  Hash,
+  Loader2,
+} from "lucide-react";
 import { Card } from "./ui/card";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import { cn } from "../lib/utils";
 import type { DaemonStatus, SearchResult, SymbolInfo } from "../lib/types";
 
 interface Props {
@@ -47,86 +58,119 @@ export function QueryPlayground({ status }: Props) {
     }
   }
 
+  const hasResults = results.length > 0 || symbols.length > 0;
+
   return (
-    <div className="space-y-3">
-      <h2 className="text-sm font-medium text-text-muted uppercase tracking-wider flex items-center gap-2">
-        <Search className="h-4 w-4" /> Query Playground
-      </h2>
+    <div className="space-y-4 iris-fade-in max-w-3xl">
+      <header>
+        <h2 className="text-base font-semibold text-text">Search</h2>
+        <p className="text-xs text-text-dim mt-0.5">
+          Query the daemon directly — same code path that powers{" "}
+          <span className="font-mono">iris_survey</span> and{" "}
+          <span className="font-mono">iris_symbols</span>.
+        </p>
+      </header>
 
-      {/* Controls */}
-      <div className="flex gap-2 items-center">
-        <select
-          value={corpusId}
-          onChange={(e) => setCorpusId(e.target.value)}
-          className="text-xs bg-surface-raised border border-border rounded px-2 py-1.5"
-        >
-          {status.corpora.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.id}
-            </option>
-          ))}
-        </select>
+      <Card className="p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={corpusId}
+            onChange={(e) => setCorpusId(e.target.value)}
+            className="h-8 rounded-md border border-border/70 bg-surface-raised px-2.5 text-xs font-mono text-text cursor-pointer focus:outline-none focus:border-[var(--color-accent-ring)] focus:shadow-[0_0_0_3px_var(--color-accent-soft)]"
+          >
+            {status.corpora.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.id}
+              </option>
+            ))}
+          </select>
 
-        <div className="flex text-xs border border-border rounded overflow-hidden">
-          <button
-            onClick={() => setMode("semantic")}
-            className={`px-2.5 py-1.5 transition-colors cursor-pointer ${mode === "semantic" ? "bg-accent/10 text-accent" : "text-text-dim hover:bg-surface-overlay"}`}
-          >
-            Semantic
-          </button>
-          <button
-            onClick={() => setMode("symbols")}
-            className={`px-2.5 py-1.5 transition-colors cursor-pointer ${mode === "symbols" ? "bg-accent/10 text-accent" : "text-text-dim hover:bg-surface-overlay"}`}
-          >
-            Symbols
-          </button>
+          <div className="flex items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised p-0.5">
+            {(
+              [
+                { key: "semantic" as const, label: "Semantic", icon: Sparkles },
+                { key: "symbols" as const, label: "Symbols", icon: Hash },
+              ]
+            ).map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setMode(key)}
+                className={cn(
+                  "inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all duration-120 cursor-pointer",
+                  mode === key
+                    ? "bg-[var(--color-accent-soft)] text-accent shadow-[inset_0_0_0_1px_var(--color-accent-ring)]"
+                    : "text-text-muted hover:text-text hover:bg-surface-overlay/60",
+                )}
+              >
+                <Icon className="h-3 w-3" />
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          search();
-        }}
-        className="flex gap-2"
-      >
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={mode === "semantic" ? "Search sections..." : "Search symbols..."}
-          className="flex-1 text-sm bg-surface-raised border border-border rounded px-3 py-1.5 placeholder:text-text-dim/50 focus:outline-none focus:ring-1 focus:ring-accent"
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="px-3 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent/90 disabled:opacity-50 cursor-pointer"
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            search();
+          }}
+          className="flex gap-2"
         >
-          {loading ? "..." : "Search"}
-        </button>
-      </form>
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-dim" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={
+                mode === "semantic"
+                  ? "Search sections by meaning…"
+                  : "Search symbols by name…"
+              }
+              className={cn(
+                "h-9 w-full rounded-md border border-border/70 bg-surface-raised pl-9 pr-3 text-sm",
+                "text-text placeholder:text-text-dim font-mono",
+                "focus:outline-none focus:border-[var(--color-accent-ring)]",
+                "focus:shadow-[0_0_0_3px_var(--color-accent-soft)]",
+              )}
+            />
+          </div>
+          <Button type="submit" size="lg" disabled={loading || !query.trim()}>
+            {loading && <Loader2 className="h-3.5 w-3.5 iris-spin" />}
+            {loading ? "Searching…" : "Search"}
+          </Button>
+        </form>
+      </Card>
 
-      {/* Semantic results */}
       {results.length > 0 && (
         <div className="space-y-2">
+          <p className="text-xs text-text-dim">
+            <span className="font-mono tabular-nums">{results.length}</span>{" "}
+            semantic matches
+          </p>
           {results.map((r, i) => (
             <Card
               key={`${r.content_id}-${i}`}
-              className="cursor-pointer hover:border-accent/30 transition-colors"
-              onClick={() => setExpanded(expanded === r.content_id ? null : r.content_id)}
+              hover="lift"
+              className="cursor-pointer space-y-1.5"
+              onClick={() =>
+                setExpanded(expanded === r.content_id ? null : r.content_id)
+              }
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   <FileText className="h-3.5 w-3.5 text-text-dim shrink-0" />
-                  <span className="text-xs font-mono truncate">{r.content_id}</span>
+                  <span className="text-xs font-mono truncate text-text">
+                    {r.content_id}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs text-text-dim">{r.resolution}</span>
+                  <Badge variant="muted">{r.resolution}</Badge>
                   <ScoreBadge score={r.score} />
                 </div>
               </div>
 
               {r.heading_path.length > 0 && (
-                <div className="flex items-center gap-1 mt-1 text-xs text-text-dim">
+                <div className="flex items-center flex-wrap gap-1 text-[11px] text-text-dim">
                   {r.heading_path.map((h, j) => (
                     <span key={j} className="flex items-center gap-1">
                       {j > 0 && <ChevronRight className="h-3 w-3" />}
@@ -137,7 +181,7 @@ export function QueryPlayground({ status }: Props) {
               )}
 
               {expanded === r.content_id && (
-                <pre className="mt-2 text-xs bg-surface-overlay rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
+                <pre className="mt-2 text-[11px] leading-relaxed bg-surface-sunken border border-border/60 rounded-md p-3 overflow-x-auto whitespace-pre-wrap max-h-72 overflow-y-auto font-mono text-text-muted">
                   {r.text}
                 </pre>
               )}
@@ -146,37 +190,52 @@ export function QueryPlayground({ status }: Props) {
         </div>
       )}
 
-      {/* Symbol results */}
       {symbols.length > 0 && (
         <div className="space-y-2">
+          <p className="text-xs text-text-dim">
+            <span className="font-mono tabular-nums">{symbols.length}</span>{" "}
+            matching symbols
+          </p>
           {symbols.map((s) => (
-            <Card key={s.id}>
-              <div className="flex items-center gap-2">
+            <Card key={s.id} hover="lift" className="space-y-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Code2 className="h-3.5 w-3.5 text-accent shrink-0" />
-                <span className="text-sm font-medium">{s.name}</span>
-                <span className="text-xs text-text-dim px-1.5 py-0.5 rounded bg-surface-overlay">
-                  {s.kind}
+                <span className="text-sm font-semibold font-mono text-text">
+                  {s.name}
                 </span>
-                <span className="text-xs text-text-dim">{s.visibility}</span>
+                <Badge variant="default">{s.kind}</Badge>
+                <Badge variant="muted">{s.visibility}</Badge>
               </div>
-              <div className="text-xs font-mono text-text-dim mt-1 truncate">
-                {s.module_path} — {s.file_path}
+              <div className="text-[11px] font-mono text-text-dim truncate">
+                {s.module_path}{" "}
+                <span className="text-text-dim/70">·</span> {s.file_path}
               </div>
               {s.signature && (
-                <pre className="text-xs bg-surface-overlay rounded p-1.5 mt-1 overflow-x-auto">
+                <pre className="text-[11px] font-mono bg-surface-sunken border border-border/60 rounded-md px-3 py-2 overflow-x-auto text-text-muted">
                   {s.signature}
                 </pre>
               )}
               {s.doc_comment && (
-                <p className="text-xs text-text-dim mt-1 line-clamp-2">{s.doc_comment}</p>
+                <p className="text-xs text-text-muted leading-relaxed line-clamp-3">
+                  {s.doc_comment}
+                </p>
               )}
             </Card>
           ))}
         </div>
       )}
 
-      {results.length === 0 && symbols.length === 0 && !loading && query && (
-        <p className="text-sm text-text-dim text-center py-4">No results.</p>
+      {!hasResults && !loading && query && (
+        <Card className="flex flex-col items-center gap-2 py-8 text-center">
+          <div className="grid h-10 w-10 place-items-center rounded-lg bg-surface-overlay text-text-dim">
+            <Search className="h-4 w-4" />
+          </div>
+          <p className="text-sm font-medium text-text">No results</p>
+          <p className="text-xs text-text-dim max-w-xs">
+            Try different wording for a semantic query, or switch to Symbols
+            for an exact name match.
+          </p>
+        </Card>
       )}
     </div>
   );
@@ -184,7 +243,22 @@ export function QueryPlayground({ status }: Props) {
 
 function ScoreBadge({ score }: { score: number }) {
   const pct = Math.round(score * 100);
-  const color =
-    pct >= 80 ? "text-green-500" : pct >= 60 ? "text-accent" : pct >= 40 ? "text-warning" : "text-text-dim";
-  return <span className={`text-xs font-mono ${color}`}>{pct}%</span>;
+  const tone =
+    pct >= 80
+      ? "bg-success/15 text-success border-success/30"
+      : pct >= 60
+        ? "bg-[var(--color-accent-soft)] text-accent border-[var(--color-accent-ring)]"
+        : pct >= 40
+          ? "bg-warning/15 text-warning border-warning/30"
+          : "bg-surface-overlay text-text-dim border-border";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-mono font-semibold tabular-nums",
+        tone,
+      )}
+    >
+      {pct}%
+    </span>
+  );
 }
