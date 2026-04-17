@@ -16,6 +16,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Progress } from "./ui/progress";
+import { cn } from "../lib/utils";
 import { useState } from "react";
 
 interface ProjectListProps {
@@ -103,116 +104,161 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium text-text-muted uppercase tracking-wider">
-          Projects ({corpora.length})
-        </h2>
+    <div className="space-y-4 iris-fade-in">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold text-text">Projects</h2>
+          <p className="text-xs text-text-dim mt-0.5">
+            {corpora.length === 0
+              ? "None registered yet"
+              : `${corpora.length} ${corpora.length === 1 ? "corpus" : "corpora"} indexed`}
+          </p>
+        </div>
         <Button size="sm" onClick={addProject} disabled={adding}>
-          <Plus className="mr-1 h-3.5 w-3.5" />
-          Add
+          <Plus className="h-3.5 w-3.5" />
+          Add project
         </Button>
       </div>
 
       {corpora.length === 0 ? (
-        <Card className="text-center py-8">
-          <FolderOpen className="mx-auto h-8 w-8 text-text-dim mb-2" />
-          <p className="text-text-muted text-sm">No projects registered</p>
-          <p className="text-text-dim text-xs mt-1">
-            Click "Add" or use the tray menu
+        <Card className="flex flex-col items-center justify-center text-center py-12 px-6">
+          <div className="grid h-14 w-14 place-items-center rounded-xl bg-[var(--color-accent-soft)] text-accent mb-4">
+            <FolderOpen className="h-6 w-6" />
+          </div>
+          <p className="text-sm font-medium text-text">No projects yet</p>
+          <p className="text-xs text-text-dim mt-1 max-w-xs">
+            Add a directory containing an <span className="font-mono">.iris.toml</span>,
+            or point iris at any folder and it will scan for you.
           </p>
+          <Button className="mt-5" onClick={addProject} disabled={adding}>
+            <Plus className="h-3.5 w-3.5" />
+            Add your first project
+          </Button>
         </Card>
       ) : (
-        corpora.map((corpus) => (
-          <Card
-            key={corpus.id}
-            className={`cursor-pointer transition-colors hover:border-border-hover ${
-              selectedId === corpus.id ? "border-accent/40" : ""
-            }`}
-            onClick={() => onSelect(corpus.id)}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-medium text-sm truncate">
-                    {projectName(corpus.paths)}
-                  </span>
-                  {statusBadge(corpus.status)}
+        <div className="space-y-2.5">
+          {corpora.map((corpus) => {
+            const isSelected = selectedId === corpus.id;
+            const indexing =
+              corpus.status.state === "indexing" ? corpus.status : null;
+            return (
+              <Card
+                key={corpus.id}
+                hover="lift"
+                className={cn(
+                  "cursor-pointer p-4 iris-fade-in",
+                  isSelected &&
+                    "border-[var(--color-accent-ring)] shadow-[0_0_0_3px_var(--color-accent-soft)]",
+                )}
+                onClick={() => onSelect(corpus.id)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-sm text-text truncate">
+                        {projectName(corpus.paths)}
+                      </span>
+                      {statusBadge(corpus.status)}
+                      {corpus.active_sessions > 0 && (
+                        <Badge variant="default" dot>
+                          {corpus.active_sessions}{" "}
+                          {corpus.active_sessions === 1 ? "session" : "sessions"}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-text-dim font-mono truncate mt-0.5">
+                      {projectRoot(corpus.paths)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={(e) => reindex(e, corpus.id)}
+                      title="Re-index"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={(e) => removeProject(e, corpus.id)}
+                      title="Remove"
+                      className="hover:text-danger"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
-                <p className="text-xs text-text-dim font-mono truncate">
-                  {projectRoot(corpus.paths)}
-                </p>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => reindex(e, corpus.id)}
-                  title="Re-index"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={(e) => removeProject(e, corpus.id)}
-                  title="Remove"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
 
-            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-text-dim">
-              <span className="flex items-center gap-1">
-                <FileText className="h-3 w-3" /> {corpus.files_indexed} files
-              </span>
-              <span className="flex items-center gap-1">
-                <Layers className="h-3 w-3" /> {corpus.sections_count} sections
-              </span>
-              <span className="flex items-center gap-1">
-                <Code2 className="h-3 w-3" /> {corpus.symbols_count ?? 0} symbols
-              </span>
-              <span className="flex items-center gap-1">
-                <Box className="h-3 w-3" /> {corpus.embeddings_count} vectors
-              </span>
-              {corpus.active_sessions > 0 && (
-                <span className="flex items-center gap-1 text-accent">
-                  <Users className="h-3 w-3" /> {corpus.active_sessions} {corpus.active_sessions === 1 ? "session" : "sessions"}
-                </span>
-              )}
-              {corpus.last_indexed && (
-                <span className="flex items-center gap-1" title={new Date(corpus.last_indexed * 1000).toLocaleString()}>
-                  <Clock className="h-3 w-3" /> {formatRelativeTime(corpus.last_indexed)}
-                </span>
-              )}
-            </div>
-
-            {corpus.status.state === "indexing" && (
-              <div className="mt-2">
-                <div className="flex justify-between text-xs text-warning mb-1">
-                  <span>Indexing...</span>
-                  <span>
-                    {corpus.status.files_done}/{corpus.status.files_total}
-                  </span>
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-xs text-text-muted">
+                  <Stat icon={FileText} value={corpus.files_indexed} label="files" />
+                  <Stat icon={Layers} value={corpus.sections_count} label="sections" />
+                  <Stat icon={Code2} value={corpus.symbols_count ?? 0} label="symbols" />
+                  <Stat icon={Box} value={corpus.embeddings_count} label="vectors" />
+                  {corpus.last_indexed && (
+                    <span
+                      className="flex items-center gap-1 text-text-dim"
+                      title={new Date(corpus.last_indexed * 1000).toLocaleString()}
+                    >
+                      <Clock className="h-3 w-3" />
+                      {formatRelativeTime(corpus.last_indexed)}
+                    </span>
+                  )}
                 </div>
-                <Progress
-                  value={
-                    corpus.status.files_total > 0
-                      ? (corpus.status.files_done / corpus.status.files_total) * 100
-                      : 0
-                  }
-                />
-              </div>
-            )}
 
-            {corpus.status.state === "error" && (
-              <p className="mt-2 text-xs text-danger">{corpus.status.message}</p>
-            )}
-          </Card>
-        ))
+                {indexing && (
+                  <div className="mt-3">
+                    <div className="flex justify-between text-[11px] text-warning mb-1.5">
+                      <span className="flex items-center gap-1.5">
+                        <span className="iris-pulse h-1.5 w-1.5 rounded-full bg-warning" />
+                        Indexing
+                      </span>
+                      <span className="font-mono tabular-nums">
+                        {indexing.files_done} / {indexing.files_total}
+                      </span>
+                    </div>
+                    <Progress
+                      glow
+                      value={
+                        indexing.files_total > 0
+                          ? (indexing.files_done / indexing.files_total) * 100
+                          : 0
+                      }
+                    />
+                  </div>
+                )}
+
+                {corpus.status.state === "error" && (
+                  <p className="mt-3 text-xs text-danger flex items-start gap-1.5">
+                    <span className="mt-0.5 inline-block h-1.5 w-1.5 rounded-full bg-danger shrink-0" />
+                    {corpus.status.message}
+                  </p>
+                )}
+              </Card>
+            );
+          })}
+        </div>
       )}
     </div>
+  );
+}
+
+function Stat({
+  icon: Icon,
+  value,
+  label,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  value: number;
+  label: string;
+}) {
+  return (
+    <span className="flex items-center gap-1 text-text-muted">
+      <Icon className="h-3 w-3 text-text-dim" />
+      <span className="tabular-nums font-medium">{value.toLocaleString()}</span>
+      <span className="text-text-dim">{label}</span>
+    </span>
   );
 }
 
