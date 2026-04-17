@@ -496,12 +496,21 @@ async fn read_section(
             // Clone Arcs before dropping the registry guard.
             let storage = Arc::clone(&handle.storage);
             let prefetch = Arc::clone(&handle.prefetch);
+            let index = Arc::clone(&handle.index);
+            let embedder = Arc::clone(state.registry.embedder());
             let section_clone = section.clone();
             drop(guard);
 
             // Spawn background prefetch (don't block the response).
             tokio::spawn(async move {
-                trigger_prefetch(&section_clone, &storage, &prefetch).await;
+                trigger_prefetch(
+                    &section_clone,
+                    &storage,
+                    &prefetch,
+                    embedder.as_ref(),
+                    index.as_ref(),
+                )
+                .await;
             });
             Json(convert::section_detail(detail)).into_response()
         }
@@ -578,12 +587,21 @@ async fn session_read_section(
             // Clone Arcs before dropping the registry guard.
             let storage = Arc::clone(&handle.storage);
             let prefetch = Arc::clone(&handle.prefetch);
+            let index = Arc::clone(&handle.index);
+            let embedder = Arc::clone(state.registry.embedder());
             let section_clone = section.clone();
             drop(guard);
 
             // Spawn background prefetch (don't block the response).
             tokio::spawn(async move {
-                trigger_prefetch(&section_clone, &storage, &prefetch).await;
+                trigger_prefetch(
+                    &section_clone,
+                    &storage,
+                    &prefetch,
+                    embedder.as_ref(),
+                    index.as_ref(),
+                )
+                .await;
             });
             Json(convert::section_detail(detail)).into_response()
         }
@@ -984,20 +1002,36 @@ async fn import_bundle(
 // Prefetch
 // ---------------------------------------------------------------------------
 
-/// Run sequential + structural prefetch strategies after a read operation.
+/// Number of nearest neighbours the topical prefetch strategy asks the
+/// vector index for after each read. 8 is a balance between covering the
+/// local neighbourhood and not thrashing the cache.
+const TOPICAL_PREFETCH_K: usize = 8;
+
+/// Run sequential + structural + topical prefetch strategies after a read.
 ///
-/// Runs in a spawned task so the read response isn't delayed.
+/// Runs in a spawned task so the read response isn't delayed. Four phases:
+/// 1. **Sequential** — the next section in document order.
+/// 2. **Structural** — ±2 sibling sections around the current read position.
+/// 3. **Topic tracker feed** — re-embed the read section and update the
+///    engine's rolling topic vector.
+/// 4. **Topical** — query HNSW with the updated topic vector and pre-warm
+///    the top section-resolution neighbours.
+///
+/// Cross-session prefetch requires per-section co-access analytics that
+/// the storage layer doesn't yet track; left as a future strategy.
 async fn trigger_prefetch(
     section_id: &str,
     storage: &iris_core::storage::SqliteStorage,
     prefetch: &tokio::sync::Mutex<iris_core::session::prefetch::PrefetchEngine>,
+    embedder: &dyn iris_core::embedding::Embedder,
+    index: &dyn iris_core::index::VectorIndex,
 ) {
     use iris_core::storage::Storage;
     use iris_core::types::SectionId;
 
     let sid = SectionId(section_id.to_string());
 
-    // Sequential: next section + parent document summary.
+    // ── Sequential ────────────────────────────────────────────────────
     let next_section = storage.get_next_section(&sid).await.unwrap_or(None);
     let claims_count = if let Some(ref next) = next_section {
         storage.list_claims(&next.id).await.map(|c| c.len()).ok()
@@ -1005,16 +1039,12 @@ async fn trigger_prefetch(
         None
     };
     let doc_record = storage.get_document_for_section(&sid).await.ok().flatten();
-    let doc_summary = doc_record
-        .as_ref()
-        .and_then(|doc| doc.summary.as_ref().map(|s| (doc.id.0.clone(), s.clone())));
-
     {
         let mut pf = prefetch.lock().await;
-        pf.prefetch_sequential(next_section, doc_summary, claims_count);
+        pf.prefetch_sequential(next_section, claims_count);
     }
 
-    // Structural: sibling sections from the same document.
+    // ── Structural ────────────────────────────────────────────────────
     if let Some(ref doc) = doc_record
         && let Ok(all_sections) = storage.list_sections(&doc.id).await
     {
@@ -1036,6 +1066,72 @@ async fn trigger_prefetch(
             let mut pf = prefetch.lock().await;
             pf.prefetch_structural(siblings, &claims_counts);
         }
+    }
+
+    // ── Topic feed + topical ──────────────────────────────────────────
+    // Re-embed the read section to feed the running topic vector and to
+    // query for topically-similar candidates. If anything on this path
+    // fails (no section, embed failure, empty topic vector, search failure)
+    // we silently skip — topical prefetch is an optimization, not a
+    // correctness requirement.
+    let Ok(Some(current)) = storage.get_section(&sid).await else {
+        return;
+    };
+    if current.text.is_empty() {
+        return;
+    }
+    let section_vec = match embedder.embed(&[current.text.as_str()]) {
+        Ok(mut vecs) if !vecs.is_empty() => vecs.remove(0),
+        _ => return,
+    };
+
+    // Feed the topic tracker + read back the current topic vector.
+    let topic_vec = {
+        let mut pf = prefetch.lock().await;
+        pf.record_topic_access(section_vec);
+        pf.topic_vector()
+    };
+    let Some(topic_vec) = topic_vec else { return };
+
+    let Ok(results) = index.search_knn(&topic_vec, TOPICAL_PREFETCH_K) else {
+        return;
+    };
+
+    // Keep only section-resolution hits, strip the current section, and
+    // skip anything the engine already has cached.
+    let mut candidate_ids: Vec<String> = Vec::new();
+    for r in results {
+        let Some(vid) = iris_core::types::VectorId::parse(&r.id) else {
+            continue;
+        };
+        if vid.resolution() != iris_core::types::Resolution::Section {
+            continue;
+        }
+        let cid = vid.content_id().to_string();
+        if cid == section_id {
+            continue;
+        }
+        candidate_ids.push(cid);
+    }
+    if candidate_ids.is_empty() {
+        return;
+    }
+
+    let mut candidates: Vec<iris_core::storage::SectionRecord> = Vec::new();
+    let mut claims_counts = std::collections::HashMap::new();
+    for cid in &candidate_ids {
+        let section_id_typed = SectionId(cid.clone());
+        if let Ok(Some(section)) = storage.get_section(&section_id_typed).await {
+            if let Ok(claims) = storage.list_claims(&section.id).await {
+                claims_counts.insert(section.id.0.clone(), claims.len());
+            }
+            candidates.push(section);
+        }
+    }
+
+    if !candidates.is_empty() {
+        let mut pf = prefetch.lock().await;
+        pf.prefetch_topical(candidates, &claims_counts);
     }
 }
 

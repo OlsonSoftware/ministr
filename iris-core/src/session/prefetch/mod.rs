@@ -515,8 +515,9 @@ impl TopicTracker {
 /// assert!(engine.cache().is_empty());
 /// ```
 pub struct PrefetchEngine {
-    /// The LRU prefetch cache.
-    cache: PrefetchCache,
+    /// Priority-scored prefetch cache (recency decay + strategy weights
+    /// + confidence-weighted eviction, as documented in the design).
+    cache: PriorityCache,
     /// Running topic vector tracker for topical prefetch.
     topic_tracker: TopicTracker,
     /// Agent intent tracker for tool-call-pattern-based prediction.
@@ -528,7 +529,7 @@ impl PrefetchEngine {
     #[must_use]
     pub fn new(cache_capacity: usize) -> Self {
         Self {
-            cache: PrefetchCache::new(cache_capacity),
+            cache: PriorityCache::new(cache_capacity),
             topic_tracker: TopicTracker::with_defaults(),
             intent_tracker: IntentTracker::default(),
         }
@@ -538,10 +539,16 @@ impl PrefetchEngine {
     #[must_use]
     pub fn with_default_capacity() -> Self {
         Self {
-            cache: PrefetchCache::with_default_capacity(),
+            cache: PriorityCache::new(DEFAULT_CACHE_CAPACITY),
             topic_tracker: TopicTracker::with_defaults(),
             intent_tracker: IntentTracker::default(),
         }
+    }
+
+    /// Advance the cache's internal turn counter so recency decay actually
+    /// moves. Call once per agent interaction.
+    pub fn advance_turn(&mut self) {
+        self.cache.advance_turn();
     }
 
     /// Try to serve a section from the warm cache.
@@ -554,55 +561,38 @@ impl PrefetchEngine {
 
     /// Record a miss (cold retrieval) in the metrics.
     pub fn record_miss(&mut self) {
-        self.cache.metrics.misses += 1;
+        self.cache.record_miss();
     }
 
     /// Pre-warm the cache after a read operation using sequential prefetch.
     ///
-    /// Inserts the next section and parent document summary into the cache
-    /// so subsequent reads can be served warm.
+    /// Inserts the next section into the cache so the typical "read through
+    /// a doc top-to-bottom" pattern serves warm. Document summaries used to
+    /// be pre-warmed here too, but the daemon's read path only looks up
+    /// plain section IDs via [`try_serve`], so those entries were dead
+    /// writes occupying cache slots without ever being retrieved — they've
+    /// been removed. Document-summary prefetch can come back once a
+    /// retrieval path actually uses it.
     pub fn prefetch_sequential(
         &mut self,
         next_section: Option<crate::storage::SectionRecord>,
-        doc_summary: Option<(String, String)>,
         claims_count: Option<usize>,
     ) {
-        // Pre-warm next section (sequential locality)
-        if let Some(section) = next_section {
-            let token_count = count_tokens(&section.text);
-            self.cache.insert(
-                section.id.0.clone(),
-                CacheEntry {
-                    content_id: section.id.0,
-                    text: section.text,
-                    token_count,
-                    heading_path: Some(section.heading_path),
-                    summary: section.summary,
-                    resolution: Resolution::Section,
-                    claims_available: claims_count.unwrap_or(0),
-                    strategy: PrefetchStrategy::Sequential,
-                },
-            );
-        }
-
-        // Pre-warm parent document summary
-        if let Some((doc_id, summary)) = doc_summary {
-            let token_count = count_tokens(&summary);
-            let cache_key = format!("doc-summary::{doc_id}");
-            self.cache.insert(
-                cache_key,
-                CacheEntry {
-                    content_id: doc_id,
-                    text: summary.clone(),
-                    token_count,
-                    heading_path: None,
-                    summary: Some(summary),
-                    resolution: Resolution::Summary,
-                    claims_available: 0,
-                    strategy: PrefetchStrategy::Sequential,
-                },
-            );
-        }
+        let Some(section) = next_section else { return };
+        let token_count = count_tokens(&section.text);
+        self.cache.insert_default(
+            section.id.0.clone(),
+            CacheEntry {
+                content_id: section.id.0,
+                text: section.text,
+                token_count,
+                heading_path: Some(section.heading_path),
+                summary: section.summary,
+                resolution: Resolution::Section,
+                claims_available: claims_count.unwrap_or(0),
+                strategy: PrefetchStrategy::Sequential,
+            },
+        );
     }
 
     /// Pre-warm the cache with sibling sections from the same document.
@@ -626,7 +616,7 @@ impl PrefetchEngine {
             }
             let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
             let token_count = count_tokens(&section.text);
-            self.cache.insert(
+            self.cache.insert_default(
                 section.id.0.clone(),
                 CacheEntry {
                     content_id: section.id.0,
@@ -659,7 +649,7 @@ impl PrefetchEngine {
             }
             let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
             let token_count = count_tokens(&section.text);
-            self.cache.insert(
+            self.cache.insert_default(
                 section.id.0.clone(),
                 CacheEntry {
                     content_id: section.id.0,
@@ -691,7 +681,7 @@ impl PrefetchEngine {
             }
             let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
             let token_count = count_tokens(&section.text);
-            self.cache.insert(
+            self.cache.insert_default(
                 section.id.0.clone(),
                 CacheEntry {
                     content_id: section.id.0,
@@ -724,7 +714,7 @@ impl PrefetchEngine {
             }
             let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
             let token_count = count_tokens(&section.text);
-            self.cache.insert(
+            self.cache.insert_default(
                 section.id.0.clone(),
                 CacheEntry {
                     content_id: section.id.0,
@@ -755,12 +745,12 @@ impl PrefetchEngine {
 
     /// Read-only access to the underlying cache.
     #[must_use]
-    pub fn cache(&self) -> &PrefetchCache {
+    pub fn cache(&self) -> &PriorityCache {
         &self.cache
     }
 
     /// Mutable access to the underlying cache.
-    pub fn cache_mut(&mut self) -> &mut PrefetchCache {
+    pub fn cache_mut(&mut self) -> &mut PriorityCache {
         &mut self.cache
     }
 
@@ -804,7 +794,7 @@ impl PrefetchEngine {
             }
             let token_count = crate::token::count_tokens(&section.text);
             let key = section.id.0.clone();
-            self.cache.insert(
+            self.cache.insert_default(
                 key,
                 CacheEntry {
                     content_id: section.id.0,
@@ -841,13 +831,7 @@ impl PrefetchEngine {
 
     /// Clear all cached entries (useful after a full re-index).
     pub fn clear_cache(&mut self) {
-        while !self.cache.is_empty() {
-            if self.cache.order.pop_front().is_some() {
-                // order drained one by one — corresponding entries remain
-            }
-        }
-        self.cache.entries.clear();
-        self.cache.order.clear();
+        self.cache.clear();
     }
 }
 
@@ -1113,7 +1097,7 @@ mod tests {
         let mut engine = PrefetchEngine::new(10);
         let next = make_section_record("doc#s2", "doc", "Section two text", 1);
 
-        engine.prefetch_sequential(Some(next), None, None);
+        engine.prefetch_sequential(Some(next), None);
 
         let entry = engine.try_serve("doc#s2");
         assert!(entry.is_some());
@@ -1123,46 +1107,16 @@ mod tests {
         assert_eq!(entry.resolution, Resolution::Section);
     }
 
-    #[test]
-    fn prefetch_sequential_warms_doc_summary() {
-        let mut engine = PrefetchEngine::new(10);
-
-        engine.prefetch_sequential(
-            None,
-            Some((
-                "doc-api".to_string(),
-                "API documentation overview".to_string(),
-            )),
-            None,
-        );
-
-        let entry = engine.try_serve("doc-summary::doc-api");
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-        assert_eq!(entry.resolution, Resolution::Summary);
-        assert_eq!(entry.text, "API documentation overview");
-    }
-
-    #[test]
-    fn prefetch_sequential_warms_both() {
-        let mut engine = PrefetchEngine::new(10);
-        let next = make_section_record("doc#s2", "doc", "Next section", 1);
-
-        engine.prefetch_sequential(
-            Some(next),
-            Some(("doc".to_string(), "Doc summary".to_string())),
-            None,
-        );
-
-        assert!(engine.cache().peek("doc#s2").is_some());
-        assert!(engine.cache().peek("doc-summary::doc").is_some());
-    }
+    // The doc-summary pre-warming branch was removed because the daemon's
+    // read path only looks up plain section IDs via `try_serve` — the
+    // `doc-summary::{id}` entries were dead writes. If a retrieval path
+    // for doc summaries lands later, re-add a test here.
 
     #[test]
     fn try_serve_after_prefetch_is_warm_hit() {
         let mut engine = PrefetchEngine::new(10);
         let next = make_section_record("doc#s2", "doc", "Warm content", 1);
-        engine.prefetch_sequential(Some(next), None, None);
+        engine.prefetch_sequential(Some(next), None);
 
         // First serve is a hit
         let result = engine.try_serve("doc#s2");
@@ -1191,23 +1145,25 @@ mod tests {
     fn prefetch_respects_cache_capacity() {
         let mut engine = PrefetchEngine::new(2);
 
-        // Fill cache with 3 sequential prefetches — only last 2 should remain
+        // Fill cache with 3 sequential prefetches — exactly 2 must remain.
+        // When all three entries share the same strategy and insert turn,
+        // priority eviction breaks ties via HashMap iteration order, so we
+        // can't assert *which* specific key survived — only that capacity
+        // is enforced and the most-recent insert is always present.
         for i in 0..3 {
             let section =
                 make_section_record(&format!("s{i}"), "doc", &format!("text {i}"), i64::from(i));
-            engine.prefetch_sequential(Some(section), None, None);
+            engine.prefetch_sequential(Some(section), None);
         }
 
         assert_eq!(engine.cache().len(), 2);
-        assert!(engine.cache().peek("s0").is_none());
-        assert!(engine.cache().peek("s1").is_some());
-        assert!(engine.cache().peek("s2").is_some());
+        assert!(engine.cache().peek("s2").is_some(), "newest must survive");
     }
 
     #[test]
     fn prefetch_with_no_next_and_no_summary_is_noop() {
         let mut engine = PrefetchEngine::new(10);
-        engine.prefetch_sequential(None, None, None);
+        engine.prefetch_sequential(None, None);
         assert!(engine.cache().is_empty());
     }
 
@@ -1373,7 +1329,7 @@ mod tests {
 
         // Pre-warm s1 via sequential
         let s1 = make_section_record("doc#s1", "doc", "Section one", 0);
-        engine.prefetch_sequential(Some(s1), None, None);
+        engine.prefetch_sequential(Some(s1), None);
 
         // Now structural prefetch with s1 and s2
         let siblings = vec![
@@ -1432,7 +1388,7 @@ mod tests {
 
         // Pre-warm via sequential
         let s1 = make_section_record("s1", "doc", "Text", 0);
-        engine.prefetch_sequential(Some(s1), None, None);
+        engine.prefetch_sequential(Some(s1), None);
 
         // Topical should skip s1
         let candidates = vec![make_section_record("s1", "doc", "Text", 0)];
@@ -1521,7 +1477,7 @@ mod tests {
             } else {
                 None
             };
-            engine.prefetch_sequential(next, None, None);
+            engine.prefetch_sequential(next, None);
         }
 
         let m = engine.metrics();
@@ -1561,7 +1517,7 @@ mod tests {
             } else {
                 None
             };
-            engine.prefetch_sequential(next, None, None);
+            engine.prefetch_sequential(next, None);
         }
 
         let m = engine.metrics();
@@ -1719,14 +1675,12 @@ mod tests {
         engine.prefetch_sequential(
             Some(make_section_record("doc#s1", "doc", "Section 1", 1)),
             None,
-            None,
         );
 
         // Read s1 (warm, sequential)
         let _ = engine.try_serve("doc#s1");
         engine.prefetch_sequential(
             Some(make_section_record("doc#s2", "doc", "Section 2", 2)),
-            None,
             None,
         );
 
@@ -1788,13 +1742,13 @@ mod tests {
     // --- Integration: cache pressure under mixed workload ---
 
     #[test]
-    fn cache_pressure_preserves_recent_strategy_entries() {
-        // With a small cache (capacity=5), simulate filling with sequential
-        // prefetches then doing structural prefetches. Verify that LRU eviction
-        // removes oldest entries but active entries remain accessible.
+    fn cache_pressure_prefers_higher_strategy_weight() {
+        // With priority-based eviction, higher-weight strategies outlive
+        // lower-weight ones when the cache is under pressure. `Sequential`
+        // (weight 1.0) should win over `Structural` (weight 0.8).
         let mut engine = PrefetchEngine::new(5);
 
-        // Fill cache with sequential entries s0..s4
+        // Fill with 5 sequential entries.
         for i in 0..5 {
             let section = make_section_record(
                 &format!("doc#s{i}"),
@@ -1802,11 +1756,14 @@ mod tests {
                 &format!("Seq content {i}"),
                 i64::from(i),
             );
-            engine.prefetch_sequential(Some(section), None, None);
+            engine.prefetch_sequential(Some(section), None);
         }
         assert_eq!(engine.cache().len(), 5);
 
-        // Now add structural entries — should evict oldest sequential entries
+        // Add 3 structural entries under capacity pressure. Priority
+        // eviction: once a structural lands, it's the lowest-priority entry
+        // in the cache and gets evicted on the next insert. Net effect: at
+        // most one structural survives, and sequential entries dominate.
         let siblings = vec![
             make_section_record("doc#str0", "doc", "Structural 0", 10),
             make_section_record("doc#str1", "doc", "Structural 1", 11),
@@ -1814,43 +1771,27 @@ mod tests {
         ];
         engine.prefetch_structural(siblings, &HashMap::new());
 
-        // Cache still at capacity
         assert_eq!(engine.cache().len(), 5);
 
-        // Oldest sequential entries (s0, s1, s2) should be evicted
+        // At least 4 sequential entries survive (higher weight = preferred).
+        let surviving_seq = (0..5)
+            .filter(|i| engine.cache().peek(&format!("doc#s{i}")).is_some())
+            .count();
         assert!(
-            engine.cache().peek("doc#s0").is_none(),
-            "s0 should be evicted"
-        );
-        assert!(
-            engine.cache().peek("doc#s1").is_none(),
-            "s1 should be evicted"
-        );
-        assert!(
-            engine.cache().peek("doc#s2").is_none(),
-            "s2 should be evicted"
+            surviving_seq >= 4,
+            "expected ≥4 sequentials to survive, got {surviving_seq}",
         );
 
-        // Newest sequential entries and structural entries remain
-        assert!(engine.cache().peek("doc#s3").is_some(), "s3 should survive");
-        assert!(engine.cache().peek("doc#s4").is_some(), "s4 should survive");
+        // At most 1 structural survives (the most recent insert — everything
+        // older got churned out by the evict-lowest selecting it back).
+        let surviving_struct = ["doc#str0", "doc#str1", "doc#str2"]
+            .iter()
+            .filter(|id| engine.cache().peek(id).is_some())
+            .count();
         assert!(
-            engine.cache().peek("doc#str0").is_some(),
-            "str0 should be present"
+            surviving_struct <= 1,
+            "expected ≤1 structural to survive, got {surviving_struct}",
         );
-        assert!(
-            engine.cache().peek("doc#str1").is_some(),
-            "str1 should be present"
-        );
-        assert!(
-            engine.cache().peek("doc#str2").is_some(),
-            "str2 should be present"
-        );
-
-        // Serving structural entries records correct strategy
-        let entry = engine.try_serve("doc#str0");
-        assert!(entry.is_some());
-        assert_eq!(entry.unwrap().strategy, PrefetchStrategy::Structural);
     }
 
     #[test]
@@ -1867,7 +1808,7 @@ mod tests {
                 &format!("Content {i}"),
                 i64::from(i),
             );
-            engine.prefetch_sequential(Some(section), None, None);
+            engine.prefetch_sequential(Some(section), None);
         }
 
         // Try to serve all 100 — only last 10 should be warm
@@ -1928,11 +1869,7 @@ mod tests {
 
         // Phase 1: Sequential reading
         let _ = engine.try_serve("s0"); // miss
-        engine.prefetch_sequential(
-            Some(make_section_record("s1", "doc", "Next", 1)),
-            None,
-            None,
-        );
+        engine.prefetch_sequential(Some(make_section_record("s1", "doc", "Next", 1)), None);
         let _ = engine.try_serve("s1"); // hit
 
         let phase1 = engine.metrics();
@@ -1989,7 +1926,7 @@ mod tests {
 
         // Pre-warm s1 via sequential
         let s1 = make_section_record("s1", "doc1", "Already cached", 0);
-        engine.prefetch_sequential(Some(s1), None, None);
+        engine.prefetch_sequential(Some(s1), None);
 
         // Try cross-session with s1 and s2
         let sections = vec![
@@ -2202,7 +2139,7 @@ mod tests {
         let mut engine = PrefetchEngine::with_default_capacity();
 
         // Pre-warm s0
-        engine.cache.insert(
+        engine.cache.insert_default(
             "s0".into(),
             CacheEntry {
                 content_id: "s0".into(),

@@ -251,6 +251,17 @@ impl PriorityCache {
         self.metrics = PrefetchMetrics::default();
     }
 
+    /// Drop every cached entry. Used after a full re-index.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Record a miss that didn't go through `get` (e.g. the caller decided
+    /// not to consult the cache at all). Keeps hit-rate math honest.
+    pub fn record_miss(&mut self) {
+        self.metrics.misses += 1;
+    }
+
     /// Iterate over cached content IDs.
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.entries.keys().map(String::as_str)

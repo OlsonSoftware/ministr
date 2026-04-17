@@ -35,12 +35,9 @@ impl IrisServer {
             };
 
             let doc_record = storage.get_document_for_section(&sid).await.ok().flatten();
-            let doc_summary = doc_record
-                .as_ref()
-                .and_then(|doc| doc.summary.as_ref().map(|s| (doc.id.0.clone(), s.clone())));
 
             let mut prefetch = self.prefetch.lock().await;
-            prefetch.prefetch_sequential(next_section, doc_summary, claims_count);
+            prefetch.prefetch_sequential(next_section, claims_count);
 
             // --- Structural prefetch (sibling sections) ---
             if let Some(ref doc) = doc_record
