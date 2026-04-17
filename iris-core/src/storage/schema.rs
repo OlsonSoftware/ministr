@@ -331,11 +331,36 @@ fn migrations() -> Migrations<'static> {
 /// - NORMAL synchronous for durability with good performance
 /// - 5-second busy timeout for concurrent access
 /// - Foreign keys enabled for referential integrity
-pub fn configure_connection(conn: &Connection) -> Result<(), StorageError> {
+///
+/// Verifies the journal mode actually took effect — SQLite silently
+/// falls back to `DELETE` on filesystems that don't support WAL
+/// (tmpfs, some network mounts, `:memory:`). When `require_wal` is
+/// true, a fallback is a hard error; when false (in-memory test
+/// databases), the fallback is logged at debug level.
+pub fn configure_connection(conn: &Connection, require_wal: bool) -> Result<(), StorageError> {
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| StorageError::Database {
             reason: format!("failed to set WAL mode: {e}"),
         })?;
+    let actual_mode: String = conn
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .map_err(|e| StorageError::Database {
+            reason: format!("failed to read journal_mode: {e}"),
+        })?;
+    if !actual_mode.eq_ignore_ascii_case("wal") {
+        if require_wal {
+            return Err(StorageError::Database {
+                reason: format!(
+                    "journal_mode did not stick — got {actual_mode:?}, wanted WAL \
+                     (filesystem may not support WAL — e.g. tmpfs / network mount)"
+                ),
+            });
+        }
+        tracing::debug!(
+            mode = %actual_mode,
+            "journal_mode fell back from WAL (expected for in-memory databases)"
+        );
+    }
     conn.pragma_update(None, "synchronous", "NORMAL")
         .map_err(|e| StorageError::Database {
             reason: format!("failed to set synchronous mode: {e}"),
@@ -391,7 +416,7 @@ mod tests {
     #[test]
     fn run_migrations_on_fresh_db() {
         let mut conn = Connection::open_in_memory().unwrap();
-        configure_connection(&conn).unwrap();
+        configure_connection(&conn, false).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let version = current_version(&conn).unwrap();
@@ -401,7 +426,7 @@ mod tests {
     #[test]
     fn schema_has_expected_tables() {
         let mut conn = Connection::open_in_memory().unwrap();
-        configure_connection(&conn).unwrap();
+        configure_connection(&conn, false).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let tables: Vec<String> = conn
@@ -437,7 +462,7 @@ mod tests {
     fn wal_mode_is_active() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(tmp.path()).unwrap();
-        configure_connection(&conn).unwrap();
+        configure_connection(&conn, false).unwrap();
 
         let mode: String = conn
             .pragma_query_value(None, "journal_mode", |row| row.get(0))
@@ -448,7 +473,7 @@ mod tests {
     #[test]
     fn foreign_keys_are_enforced() {
         let mut conn = Connection::open_in_memory().unwrap();
-        configure_connection(&conn).unwrap();
+        configure_connection(&conn, false).unwrap();
         run_migrations(&mut conn).unwrap();
 
         // Inserting a section with a non-existent document_id should fail
@@ -462,7 +487,7 @@ mod tests {
     #[test]
     fn migrations_are_idempotent() {
         let mut conn = Connection::open_in_memory().unwrap();
-        configure_connection(&conn).unwrap();
+        configure_connection(&conn, false).unwrap();
         run_migrations(&mut conn).unwrap();
         // Running again should be a no-op
         run_migrations(&mut conn).unwrap();

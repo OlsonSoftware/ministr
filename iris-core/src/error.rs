@@ -56,6 +56,11 @@ pub enum StorageError {
     #[error("database error: {reason}")]
     Database { reason: String },
 
+    /// Database is busy — the `busy_timeout` elapsed without the lock
+    /// being acquired. Callers can safely retry transient busy errors.
+    #[error("database busy: {reason}")]
+    Busy { reason: String },
+
     /// File I/O operation failed.
     #[error("I/O error: {source}")]
     Io {
@@ -74,6 +79,27 @@ pub enum StorageError {
     /// Schema migration failed.
     #[error("migration failed: {reason}")]
     MigrationFailed { reason: String },
+}
+
+impl From<rusqlite::Error> for StorageError {
+    fn from(e: rusqlite::Error) -> Self {
+        // Classify SQLITE_BUSY / SQLITE_LOCKED into the transient variant
+        // so callers that want to retry can match on it; everything else
+        // flows into the generic Database error.
+        if let rusqlite::Error::SqliteFailure(err, _) = &e
+            && matches!(
+                err.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            )
+        {
+            return StorageError::Busy {
+                reason: e.to_string(),
+            };
+        }
+        StorageError::Database {
+            reason: e.to_string(),
+        }
+    }
 }
 
 /// Errors from document parsing and content extraction.

@@ -1,12 +1,19 @@
 //! SQLite-backed [`Storage`] implementation.
 //!
 //! All rusqlite calls are wrapped in `tokio::spawn_blocking` to avoid
-//! blocking the async runtime. The [`Connection`] is held behind a
-//! `Mutex` to satisfy `Send + Sync` requirements.
+//! blocking the async runtime. Connections are checked out of a small
+//! pool for each call so WAL mode actually buys us concurrent reads —
+//! a single shared connection would serialize every query behind one
+//! mutex even though WAL permits parallel readers.
+//!
+//! The pool uses `parking_lot` primitives (no poisoning), so a panic
+//! inside one `with_conn` closure doesn't permanently disable the
+//! storage layer.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use parking_lot::{Condvar, Mutex};
 use rusqlite::Connection;
 use tracing::instrument;
 
@@ -24,21 +31,83 @@ use crate::types::{
     Resolution, RootKind, Section, SectionId, SymbolId,
 };
 
+/// Default file-backed pool size. 8 connections is generous for a single
+/// corpus and keeps the blocking-pool contention discussion bounded —
+/// anything beyond this and the SQLite write lock becomes the bottleneck.
+const DEFAULT_POOL_CAPACITY: usize = 8;
+
+/// A bounded pool of SQLite connections sharing the same underlying
+/// database file. Connections are handed out via [`Pool::acquire`]; the
+/// returned guard releases the connection on drop.
+struct Pool {
+    slots: Mutex<Vec<Connection>>,
+    available: Condvar,
+}
+
+impl Pool {
+    /// Check out a connection. Blocks (synchronously, inside a
+    /// `spawn_blocking` thread) when the pool is exhausted. The pool
+    /// is pre-populated so this path never opens a new connection.
+    fn acquire(self: &Arc<Self>) -> PoolGuard {
+        let mut slots = self.slots.lock();
+        while slots.is_empty() {
+            self.available.wait(&mut slots);
+        }
+        let conn = slots.pop().expect("pool invariant: non-empty after wait");
+        PoolGuard {
+            conn: Some(conn),
+            pool: Arc::clone(self),
+        }
+    }
+
+    fn release(&self, conn: Connection) {
+        self.slots.lock().push(conn);
+        self.available.notify_one();
+    }
+}
+
+/// RAII wrapper that returns a pooled connection when dropped.
+struct PoolGuard {
+    conn: Option<Connection>,
+    pool: Arc<Pool>,
+}
+
+impl std::ops::Deref for PoolGuard {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.conn.as_ref().expect("pool guard dropped twice")
+    }
+}
+
+impl Drop for PoolGuard {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            self.pool.release(conn);
+        }
+    }
+}
+
 /// SQLite-backed storage for a single corpus.
 ///
-/// The connection is wrapped in `Arc<Mutex<Connection>>` so it can be
-/// shared across `spawn_blocking` tasks. The mutex is held only for the
-/// duration of each blocking call, never across `.await` points.
+/// Internally holds a small pool of connections (default 8) so WAL's
+/// concurrent-read guarantee actually translates to parallel reads
+/// from the `tokio` blocking pool. A single extra connection is
+/// reserved for the embedding cache, which has its own sync API.
 #[derive(Clone)]
 pub struct SqliteStorage {
-    conn: Arc<Mutex<Connection>>,
+    pool: Arc<Pool>,
+    /// Dedicated connection for the embedding cache. Kept outside the
+    /// pool because the cache exposes a sync API (`Arc<Mutex<Connection>>`)
+    /// that callers hold across multiple short operations.
+    embedding_conn: Arc<Mutex<Connection>>,
 }
 
 impl SqliteStorage {
     /// Open (or create) a content database at the given path.
     ///
-    /// Configures WAL mode, runs pending migrations, and returns a ready
-    /// storage handle.
+    /// Opens `DEFAULT_POOL_CAPACITY` connections against the same file,
+    /// configures WAL + busy_timeout + foreign_keys on each, and runs
+    /// pending migrations once on the first connection (shared via WAL).
     ///
     /// # Errors
     ///
@@ -47,17 +116,47 @@ impl SqliteStorage {
     #[instrument(skip_all, fields(path = %path.as_ref().display()))]
     #[must_use = "constructors return a new value"]
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
-        let mut conn = Connection::open(path.as_ref()).map_err(|e| StorageError::Database {
+        let p = path.as_ref().to_path_buf();
+
+        // Migration pass on the first connection — schema changes are
+        // visible to all subsequent pool members via the WAL.
+        let mut first = Connection::open(&p).map_err(|e| StorageError::Database {
             reason: format!("failed to open database: {e}"),
         })?;
-        configure_connection(&conn)?;
-        run_migrations(&mut conn)?;
+        configure_connection(&first, true)?;
+        run_migrations(&mut first)?;
+
+        let mut pool_conns = Vec::with_capacity(DEFAULT_POOL_CAPACITY);
+        pool_conns.push(first);
+        for _ in 1..DEFAULT_POOL_CAPACITY {
+            let conn = Connection::open(&p).map_err(|e| StorageError::Database {
+                reason: format!("failed to open pool connection: {e}"),
+            })?;
+            configure_connection(&conn, true)?;
+            pool_conns.push(conn);
+        }
+
+        // Dedicated connection for the embedding cache.
+        let embedding_conn = Connection::open(&p).map_err(|e| StorageError::Database {
+            reason: format!("failed to open embedding cache connection: {e}"),
+        })?;
+        configure_connection(&embedding_conn, true)?;
+
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            pool: Arc::new(Pool {
+                slots: Mutex::new(pool_conns),
+                available: Condvar::new(),
+            }),
+            embedding_conn: Arc::new(Mutex::new(embedding_conn)),
         })
     }
 
     /// Open an in-memory database (useful for testing).
+    ///
+    /// In-memory databases are not shared across `sqlite3_open` calls,
+    /// so the pool collapses to a single connection. The embedding-cache
+    /// connection is an alias of the same connection, since tests don't
+    /// stress concurrency.
     ///
     /// # Errors
     ///
@@ -67,33 +166,51 @@ impl SqliteStorage {
         let mut conn = Connection::open_in_memory().map_err(|e| StorageError::Database {
             reason: format!("failed to open in-memory database: {e}"),
         })?;
-        configure_connection(&conn)?;
+        configure_connection(&conn, false)?;
         run_migrations(&mut conn)?;
+
+        // For in-memory the pool has a single connection and the
+        // embedding cache shares the same handle through a second
+        // in-memory connection would be a *different* database.
+        let mut embedding_conn =
+            Connection::open_in_memory().map_err(|e| StorageError::Database {
+                reason: format!("failed to open in-memory embedding cache connection: {e}"),
+            })?;
+        configure_connection(&embedding_conn, false)?;
+        // Embedding cache schema is part of the main migrations — run
+        // them on this second in-memory connection too so its tables
+        // exist.
+        run_migrations(&mut embedding_conn)?;
+
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            pool: Arc::new(Pool {
+                slots: Mutex::new(vec![conn]),
+                available: Condvar::new(),
+            }),
+            embedding_conn: Arc::new(Mutex::new(embedding_conn)),
         })
     }
 
-    /// Get a clone of the underlying connection handle.
+    /// Get a clone of the embedding cache's dedicated connection handle.
     ///
-    /// Used by subsystems (e.g. embedding cache) that need synchronous
-    /// access to the same database.
+    /// Used by [`crate::embedding::cache::EmbeddingCache`] for synchronous
+    /// access outside the pool. Never used by `with_conn`.
     #[must_use]
     pub fn conn(&self) -> Arc<Mutex<Connection>> {
-        Arc::clone(&self.conn)
+        Arc::clone(&self.embedding_conn)
     }
 
-    /// Run a blocking closure against the connection inside `spawn_blocking`.
+    /// Run a blocking closure against a pooled connection inside
+    /// `spawn_blocking`. Under contention, the closure waits on the
+    /// pool's condvar until a connection is returned.
     async fn with_conn<F, T>(&self, f: F) -> Result<T, StorageError>
     where
         F: FnOnce(&Connection) -> Result<T, StorageError> + Send + 'static,
         T: Send + 'static,
     {
-        let conn = Arc::clone(&self.conn);
+        let pool = Arc::clone(&self.pool);
         tokio::task::spawn_blocking(move || {
-            let guard = conn.lock().map_err(|e| StorageError::Database {
-                reason: format!("mutex poisoned: {e}"),
-            })?;
+            let guard = pool.acquire();
             f(&guard)
         })
         .await
@@ -2544,12 +2661,8 @@ impl SqliteStorage {
         if entries.is_empty() {
             return Ok(());
         }
-        let conn = self.conn.clone();
         let entries: Vec<(String, Vec<f32>)> = entries.to_vec();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| StorageError::Database {
-                reason: format!("lock poisoned: {e}"),
-            })?;
+        self.with_conn(move |conn| {
             let mut stmt = conn
                 .prepare_cached(
                     "INSERT OR REPLACE INTO full_dim_vectors (vector_id, vector, dimension) \
@@ -2569,9 +2682,6 @@ impl SqliteStorage {
             Ok(())
         })
         .await
-        .map_err(|e| StorageError::Database {
-            reason: format!("spawn_blocking join error: {e}"),
-        })?
     }
 
     /// Retrieve full-dimension vectors for a batch of IDs.
@@ -2589,12 +2699,8 @@ impl SqliteStorage {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn.clone();
         let ids: Vec<String> = ids.iter().map(|s| (*s).to_owned()).collect();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| StorageError::Database {
-                reason: format!("lock poisoned: {e}"),
-            })?;
+        self.with_conn(move |conn| {
             let mut stmt = conn
                 .prepare_cached(
                     "SELECT vector_id, vector FROM full_dim_vectors WHERE vector_id = ?1",
@@ -2605,8 +2711,9 @@ impl SqliteStorage {
             let mut results = Vec::with_capacity(ids.len());
             for id in &ids {
                 if let Ok(row) = stmt.query_row(rusqlite::params![id], |row| {
+                    let vec_id: String = row.get(0)?;
                     let blob: Vec<u8> = row.get(1)?;
-                    Ok((row.get::<_, String>(0)?, blob))
+                    Ok((vec_id, blob))
                 }) {
                     results.push((row.0, decode_f32_blob(&row.1)));
                 }
@@ -2614,9 +2721,6 @@ impl SqliteStorage {
             Ok(results)
         })
         .await
-        .map_err(|e| StorageError::Database {
-            reason: format!("spawn_blocking join error: {e}"),
-        })?
     }
 
     /// Delete full-dimension vectors by ID.
@@ -2628,12 +2732,8 @@ impl SqliteStorage {
         if ids.is_empty() {
             return Ok(());
         }
-        let conn = self.conn.clone();
         let ids: Vec<String> = ids.iter().map(|s| (*s).to_owned()).collect();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| StorageError::Database {
-                reason: format!("lock poisoned: {e}"),
-            })?;
+        self.with_conn(move |conn| {
             let mut stmt = conn
                 .prepare_cached("DELETE FROM full_dim_vectors WHERE vector_id = ?1")
                 .map_err(|e| StorageError::Database {
@@ -2648,9 +2748,6 @@ impl SqliteStorage {
             Ok(())
         })
         .await
-        .map_err(|e| StorageError::Database {
-            reason: format!("spawn_blocking join error: {e}"),
-        })?
     }
 }
 

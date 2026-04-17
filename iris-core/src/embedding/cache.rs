@@ -9,9 +9,10 @@
 //! replacement that transparently serves cache hits and only delegates
 //! cache misses to the inner embedder.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 
+use parking_lot::Mutex;
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use tracing::{debug, instrument};
@@ -27,7 +28,8 @@ use crate::error::IndexError;
 /// # Examples
 ///
 /// ```no_run
-/// use std::sync::{Arc, Mutex};
+/// use std::sync::Arc;
+/// use parking_lot::Mutex;
 /// use iris_core::embedding::cache::EmbeddingCache;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -68,9 +70,7 @@ impl EmbeddingCache {
             return Ok(Vec::new());
         }
 
-        let conn = self.conn.lock().map_err(|e| IndexError::EmbeddingFailed {
-            reason: format!("cache lock poisoned: {e}"),
-        })?;
+        let conn = self.conn.lock();
 
         let mut stmt = conn
             .prepare_cached(
@@ -83,7 +83,9 @@ impl EmbeddingCache {
         let mut results = Vec::with_capacity(hashes.len());
         for &hash in hashes {
             let row: Option<Vec<u8>> = stmt
-                .query_row(rusqlite::params![hash, model], |row| row.get(0))
+                .query_row(rusqlite::params![hash, model], |row| {
+                    row.get::<_, Vec<u8>>(0)
+                })
                 .ok();
 
             results.push(row.map(|bytes| decode_vector(&bytes)));
@@ -105,9 +107,7 @@ impl EmbeddingCache {
             return Ok(());
         }
 
-        let conn = self.conn.lock().map_err(|e| IndexError::EmbeddingFailed {
-            reason: format!("cache lock poisoned: {e}"),
-        })?;
+        let conn = self.conn.lock();
 
         let mut stmt = conn
             .prepare_cached(
@@ -163,7 +163,8 @@ fn content_hash(text: &str) -> String {
 /// # Examples
 ///
 /// ```no_run
-/// use std::sync::{Arc, Mutex};
+/// use std::sync::Arc;
+/// use parking_lot::Mutex;
 /// use iris_core::embedding::cache::{CachedEmbedder, EmbeddingCache};
 /// use iris_core::embedding::Embedder;
 ///
