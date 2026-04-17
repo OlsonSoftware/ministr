@@ -194,6 +194,10 @@ impl CorpusRegistry {
         let sink_rx = handle.coherence_tx.subscribe();
         let sink_opt = self.coherence_sink.get().cloned();
 
+        // Clone the corpus cancellation token before the handle is moved
+        // into the map so `spawn_watcher` can stop cleanly on unregister.
+        let watcher_cancel = handle.cancel.clone();
+
         self.corpora.write().await.insert(corpus_id.clone(), handle);
         info!(corpus_id = %corpus_id, "corpus registered");
 
@@ -215,7 +219,7 @@ impl CorpusRegistry {
         tokio::spawn(async move {
             indexer::run(&registry, &cid, &owned_paths).await;
             // After initial indexing, start watching for file changes.
-            indexer::spawn_watcher(registry, cid, owned_paths);
+            indexer::spawn_watcher(registry, cid, owned_paths, watcher_cancel);
         });
 
         Ok((corpus_id, true))

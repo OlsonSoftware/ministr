@@ -81,8 +81,17 @@ impl FileWatcher {
             match res {
                 Ok(event) => {
                     if let Some(coherence_event) = normalize_event(&event) {
-                        // Best-effort send — if the channel is full, skip
-                        let _ = event_tx.try_send(coherence_event);
+                        // Try non-blocking send. If the channel is full (consumer
+                        // is slow or stalled during a long reindex), warn so the
+                        // drop doesn't go unnoticed. The `notify` callback runs
+                        // on the watcher thread which can't block, so we accept
+                        // the drop rather than `send().await`.
+                        if let Err(err) = event_tx.try_send(coherence_event) {
+                            warn!(
+                                error = %err,
+                                "coherence watcher channel full — dropping event"
+                            );
+                        }
                     }
                 }
                 Err(e) => {
