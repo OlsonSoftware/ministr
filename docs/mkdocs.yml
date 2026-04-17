@@ -61,6 +61,10 @@ extra_css:
 
 extra_javascript:
   - javascripts/session-trace.js
+  - javascripts/palette.js
+  - javascripts/shortcuts.js
+  - javascripts/reading-progress.js
+  - javascripts/diagrams.js
 
 markdown_extensions:
   - abbr

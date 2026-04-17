@@ -1488,6 +1488,327 @@
     max-width: 860px;
   }
 
+  /* =====================================================
+     Command palette (Cmd+K)
+     ===================================================== */
+
+  .iris-palette {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 10vh calc(var(--spacing) * 4) calc(var(--spacing) * 6);
+    background: color-mix(in srgb, var(--color-bg) 70%, rgba(0, 0, 0, 0.6));
+    backdrop-filter: blur(8px);
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+  }
+  .iris-palette.is-open {
+    opacity: 1;
+  }
+  .iris-palette__panel {
+    width: min(640px, 100%);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    box-shadow:
+      0 1px 0 color-mix(in srgb, white 8%, transparent) inset,
+      0 20px 60px -20px rgb(0 0 0 / 0.5),
+      0 10px 40px -10px color-mix(in srgb, var(--color-accent) 25%, transparent);
+    overflow: hidden;
+    transform: translateY(-8px);
+    transition: transform var(--duration-fast) var(--ease-standard);
+  }
+  .iris-palette.is-open .iris-palette__panel {
+    transform: translateY(0);
+  }
+  .iris-palette__input-wrap {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .iris-palette__icon {
+    color: var(--color-text-subtle);
+    display: inline-flex;
+  }
+  .iris-palette__input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    color: var(--color-text);
+    padding: calc(var(--spacing) * 1) 0;
+  }
+  .iris-palette__input::placeholder {
+    color: var(--color-text-subtle);
+  }
+  .iris-palette__hint {
+    color: var(--color-text-subtle);
+    font-size: var(--text-xs);
+  }
+  .iris-palette__hint kbd,
+  .iris-palette__item-kbd kbd,
+  .iris-cheatsheet kbd {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-sunken);
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    line-height: 1.4;
+  }
+  .iris-palette__results {
+    max-height: min(60vh, 480px);
+    overflow-y: auto;
+    padding: calc(var(--spacing) * 2) 0;
+  }
+  .iris-palette__group {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-subtle);
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 4) calc(var(--spacing) * 1);
+    font-weight: 600;
+  }
+  .md-typeset .iris-palette__item,
+  .iris-palette__item {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 3);
+    padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 4);
+    text-decoration: none !important;
+    color: var(--color-text) !important;
+    border-bottom: 1px solid transparent !important;
+    cursor: pointer;
+    transition: background-color 80ms var(--ease-standard);
+  }
+  .iris-palette__item.is-active {
+    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  }
+  .iris-palette__item-icon {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    background: var(--color-surface-sunken);
+    color: var(--color-text-subtle);
+    flex-shrink: 0;
+  }
+  .iris-palette__item.is-active .iris-palette__item-icon {
+    background: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface-sunken));
+    color: var(--color-accent);
+  }
+  .iris-palette__item-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+  .iris-palette__item-title {
+    font-size: var(--text-sm);
+    color: var(--color-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .iris-palette__item-path {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--color-text-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .iris-palette__item-kbd {
+    opacity: 0;
+    transition: opacity 80ms var(--ease-standard);
+  }
+  .iris-palette__item.is-active .iris-palette__item-kbd {
+    opacity: 1;
+  }
+  .iris-palette__empty {
+    padding: calc(var(--spacing) * 6) calc(var(--spacing) * 4);
+    color: var(--color-text-subtle);
+    text-align: center;
+    font-size: var(--text-sm);
+  }
+
+  /* =====================================================
+     Cheatsheet (?)
+     ===================================================== */
+
+  .iris-cheatsheet {
+    position: fixed;
+    inset: 0;
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(var(--spacing) * 4);
+    background: color-mix(in srgb, var(--color-bg) 70%, rgba(0, 0, 0, 0.6));
+    backdrop-filter: blur(8px);
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+  }
+  .iris-cheatsheet.is-open {
+    opacity: 1;
+  }
+  .iris-cheatsheet__panel {
+    width: min(560px, 100%);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    box-shadow:
+      0 1px 0 color-mix(in srgb, white 8%, transparent) inset,
+      0 20px 60px -20px rgb(0 0 0 / 0.5);
+    padding: calc(var(--spacing) * 5);
+    transform: translateY(8px);
+    transition: transform var(--duration-fast) var(--ease-standard);
+  }
+  .iris-cheatsheet.is-open .iris-cheatsheet__panel {
+    transform: translateY(0);
+  }
+  .iris-cheatsheet__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: calc(var(--spacing) * 4);
+  }
+  .md-typeset .iris-cheatsheet__title,
+  .iris-cheatsheet__title {
+    font-family: var(--font-sans);
+    font-size: var(--text-lg);
+    font-weight: 600;
+    margin: 0;
+    color: var(--color-text);
+  }
+  .iris-cheatsheet__dismiss {
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-text-subtle);
+    cursor: pointer;
+    transition: border-color 80ms var(--ease-standard), color 80ms var(--ease-standard);
+  }
+  .iris-cheatsheet__dismiss:hover {
+    border-color: var(--color-accent-ring);
+    color: var(--color-text);
+  }
+  .iris-cheatsheet__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: calc(var(--spacing) * 1);
+  }
+  .iris-cheatsheet__row {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    align-items: center;
+    gap: calc(var(--spacing) * 3);
+    padding: calc(var(--spacing) * 2) 0;
+    border-bottom: 1px dashed var(--color-border);
+  }
+  .iris-cheatsheet__group-keys {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .iris-cheatsheet__row:last-child {
+    border-bottom: none;
+  }
+  .iris-cheatsheet__keys {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .iris-cheatsheet__plus {
+    color: var(--color-text-subtle);
+    font-size: var(--text-xs);
+  }
+  .iris-cheatsheet__or {
+    color: var(--color-text-subtle);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    margin: 0 4px;
+  }
+  .iris-cheatsheet__label {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .iris-cheatsheet__footer {
+    margin-top: calc(var(--spacing) * 4);
+    padding-top: calc(var(--spacing) * 3);
+    border-top: 1px solid var(--color-border);
+    color: var(--color-text-subtle);
+    font-size: var(--text-xs);
+    text-align: center;
+  }
+
+  /* =====================================================
+     Reading-progress bar
+     ===================================================== */
+
+  .iris-reading-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    z-index: 9999;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--color-border) 60%, transparent);
+  }
+  .iris-reading-progress__fill {
+    display: block;
+    height: 100%;
+    width: 100%;
+    transform-origin: left center;
+    transform: scaleX(0);
+    background: linear-gradient(
+      90deg,
+      var(--color-accent),
+      color-mix(in srgb, var(--color-accent) 50%, var(--color-accent-hover))
+    );
+    box-shadow: 0 0 12px color-mix(in srgb, var(--color-accent) 60%, transparent);
+    transition: transform 60ms linear;
+  }
+
+  /* =====================================================
+     Interactive D2 diagrams
+     ===================================================== */
+
+  .iris-diagram--interactive .iris-diagram__node {
+    cursor: default;
+    transition: filter 120ms var(--ease-standard);
+  }
+  .iris-diagram--interactive .iris-diagram__node:hover {
+    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-accent) 60%, transparent));
+  }
+  .iris-diagram--interactive .iris-diagram__node--tool {
+    cursor: pointer;
+  }
+  .iris-diagram--interactive .iris-diagram__node--tool:focus-visible {
+    outline: 2px solid var(--color-accent-ring);
+    outline-offset: 4px;
+    border-radius: var(--radius-sm);
+  }
+
 /* =====================================================
    Utility helpers (unlayered for same reason)
    ===================================================== */
