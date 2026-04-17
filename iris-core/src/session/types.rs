@@ -164,6 +164,28 @@ pub enum CompressionTier {
     Evicted,
 }
 
+impl CompressionTier {
+    /// Approximate fraction of the original token count retained at this tier.
+    ///
+    /// The enum declaration order (Full, Abstractive, Extractive, Bookmark,
+    /// Evicted) does NOT match retention ordering — Abstractive retains
+    /// *less* than Extractive. Use this helper instead of the `PartialOrd`
+    /// derive when comparing "which tier is more compressed" or estimating
+    /// tokens freed by a transition.
+    #[must_use]
+    pub fn retention_ratio(self) -> f64 {
+        match self {
+            Self::Full => 1.0,
+            Self::Extractive => 0.30,  // TF-IDF sentences (~70% reduction)
+            Self::Abstractive => 0.10, // LLM summary (~90% reduction)
+            // Bookmark is a fixed 5-token heading stub; treat as zero-retention
+            // for comparison purposes and let `estimate_tokens_freed` handle
+            // the stub size explicitly.
+            Self::Bookmark | Self::Evicted => 0.0,
+        }
+    }
+}
+
 /// Record of a single content delivery to the agent.
 ///
 /// Tracks what was delivered, at what resolution, the token cost, and when

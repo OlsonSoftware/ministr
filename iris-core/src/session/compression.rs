@@ -33,13 +33,18 @@ pub struct TierPromotion {
 ///
 /// # Tier progression rules
 ///
+/// Promotions never move content to a less-compressed tier. Because
+/// Abstractive retains ~10% while Extractive retains ~30%, any promotion
+/// out of Abstractive skips straight to Bookmark.
+///
 /// | Pressure   | Current Tier  | Recommended Tier |
 /// |------------|---------------|------------------|
 /// | Normal     | any           | (no change)      |
 /// | Elevated   | Full          | Extractive       |
+/// | Elevated   | Abstractive   | Bookmark         |
 /// | Elevated   | Extractive    | Bookmark         |
 /// | Critical   | Full          | Abstractive      |
-/// | Critical   | Abstractive   | Extractive       |
+/// | Critical   | Abstractive   | Bookmark         |
 /// | Critical   | Extractive    | Bookmark         |
 /// | Critical   | Bookmark      | Evicted          |
 ///
@@ -71,16 +76,21 @@ impl CompressionPipeline {
         match pressure {
             PressureLevel::Normal => None,
             PressureLevel::Elevated => match current {
-                CompressionTier::Full | CompressionTier::Abstractive => {
-                    Some(CompressionTier::Extractive)
+                CompressionTier::Full => Some(CompressionTier::Extractive),
+                // Abstractive is already more compressed than Extractive
+                // (~10% vs ~30% retained). Skip straight to Bookmark rather
+                // than decompressing.
+                CompressionTier::Abstractive | CompressionTier::Extractive => {
+                    Some(CompressionTier::Bookmark)
                 }
-                CompressionTier::Extractive => Some(CompressionTier::Bookmark),
                 CompressionTier::Bookmark | CompressionTier::Evicted => None,
             },
             PressureLevel::Critical => match current {
                 CompressionTier::Full => Some(CompressionTier::Abstractive),
-                CompressionTier::Abstractive => Some(CompressionTier::Extractive),
-                CompressionTier::Extractive => Some(CompressionTier::Bookmark),
+                // Same reasoning: Abstractive → Bookmark, not Extractive.
+                CompressionTier::Abstractive | CompressionTier::Extractive => {
+                    Some(CompressionTier::Bookmark)
+                }
                 CompressionTier::Bookmark => Some(CompressionTier::Evicted),
                 CompressionTier::Evicted => None,
             },
@@ -139,11 +149,12 @@ impl CompressionPipeline {
 
     /// Estimate tokens freed by moving from current tier to target tier.
     ///
-    /// Uses approximate compression ratios:
-    /// - Abstractive: ~90% reduction
-    /// - Extractive: ~70% reduction
-    /// - Bookmark: ~95% reduction (heading stub only)
-    /// - Evicted: 100% reduction
+    /// Retention ratios come from [`CompressionTier::retention_ratio`],
+    /// the canonical source of truth. If the target retains MORE than the
+    /// current tier (i.e. a decompression), this returns 0 — there are no
+    /// "freed" tokens in that direction. Callers upstream of this function
+    /// (e.g. `next_tier`) are responsible for not recommending such
+    /// transitions in the first place.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -153,10 +164,22 @@ impl CompressionPipeline {
         let current_tokens = item.token_count;
         let estimated_remaining = match target {
             CompressionTier::Full => current_tokens,
-            CompressionTier::Abstractive => (current_tokens as f64 * 0.1) as usize,
-            CompressionTier::Extractive => (current_tokens as f64 * 0.3) as usize,
             CompressionTier::Bookmark => 5, // heading stub
             CompressionTier::Evicted => 0,
+            other => {
+                // Derive remaining tokens from the canonical retention ratio.
+                // Current token_count already reflects the current tier's
+                // compression; scale by the ratio of target/current to get
+                // the expected post-transition size.
+                let current_ratio = item.compression_tier.retention_ratio();
+                let target_ratio = other.retention_ratio();
+                if current_ratio <= 0.0 {
+                    current_tokens
+                } else {
+                    let scale = (target_ratio / current_ratio).min(1.0);
+                    (current_tokens as f64 * scale) as usize
+                }
+            }
         };
         current_tokens.saturating_sub(estimated_remaining)
     }
@@ -248,10 +271,21 @@ mod tests {
     }
 
     #[test]
-    fn elevated_promotes_abstractive_to_extractive() {
+    fn elevated_promotes_abstractive_to_bookmark() {
+        // Abstractive (~10% retained) must never move to Extractive (~30%).
+        // Under Elevated pressure it skips straight to Bookmark.
         assert_eq!(
             CompressionPipeline::next_tier(CompressionTier::Abstractive, PressureLevel::Elevated),
-            Some(CompressionTier::Extractive)
+            Some(CompressionTier::Bookmark)
+        );
+    }
+
+    #[test]
+    fn critical_promotes_abstractive_to_bookmark() {
+        // Same rule under Critical: never decompress Abstractive.
+        assert_eq!(
+            CompressionPipeline::next_tier(CompressionTier::Abstractive, PressureLevel::Critical),
+            Some(CompressionTier::Bookmark)
         );
     }
 
