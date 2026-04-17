@@ -1413,21 +1413,18 @@
   .iris-compare {
     margin: calc(var(--spacing) * 4) auto calc(var(--spacing) * 12);
     max-width: 900px;
-    overflow-x: auto;
+    /* Material wraps every table in <div class="md-typeset__table"> which
+       is display: inline-block + shrink-to-content. text-align: center on
+       the surrounding block centers that inline-block wrapper (and the
+       table inside it) without forcing the table to a fixed width, so
+       cells don't pick up unused whitespace around short values. */
+    text-align: center;
   }
-  /* Material wraps every table in <div class="md-typeset__table">, which
-     defaults to display: inline-block + shrink-to-content. Inside our
-     centered .iris-compare container that makes the table left-hug
-     instead of filling the 900 px width. Force the wrapper to behave
-     like a full-width block so the table centers inside the section. */
   .md-typeset .iris-compare .md-typeset__table {
-    display: block;
-    width: 100%;
     max-width: 100%;
     overflow-x: auto;
   }
   .md-typeset .iris-compare table {
-    width: 100%;
     border-collapse: separate;
     border-spacing: 0;
     font-size: var(--text-sm);
@@ -1436,6 +1433,9 @@
     border-radius: var(--radius-xl);
     overflow: hidden;
     box-shadow: var(--shadow-sm);
+    /* Reset the inherited text-align so cell content still follows the
+       first-child: left / others: center rules defined below. */
+    text-align: left;
   }
   .md-typeset .iris-compare th,
   .md-typeset .iris-compare td {
