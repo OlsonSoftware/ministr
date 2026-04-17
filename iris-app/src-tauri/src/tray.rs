@@ -68,7 +68,14 @@ pub fn handle_event(app: &AppHandle, event_id: &str) {
     }
 
     match event_id {
-        "show" => show_window(app),
+        "show" => {
+            show_window(app);
+            let _ = app.emit("navigate", "overview");
+        }
+        "show_sessions" => {
+            show_window(app);
+            let _ = app.emit("navigate", "sessions");
+        }
         "show_logs" => {
             show_window(app);
             let _ = app.emit("navigate", "logs");
@@ -99,7 +106,8 @@ fn build_menu(
     handle: &AppHandle,
     corpora: &[CorpusInfo],
 ) -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
-    let show = MenuItemBuilder::with_id("show", "Show Dashboard").build(handle)?;
+    let show = MenuItemBuilder::with_id("show", "Open Overview").build(handle)?;
+    let sessions = MenuItemBuilder::with_id("show_sessions", "Sessions").build(handle)?;
     let add = MenuItemBuilder::with_id("add_project", "Add Project…").build(handle)?;
     let logs = MenuItemBuilder::with_id("show_logs", "View Logs").build(handle)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit iris").build(handle)?;
@@ -148,7 +156,7 @@ fn build_menu(
     };
 
     let menu = MenuBuilder::new(handle)
-        .items(&[&show])
+        .items(&[&show, &sessions])
         .separator()
         .items(&[&recent_sub, &indexing_sub])
         .separator()
