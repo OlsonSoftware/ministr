@@ -2681,11 +2681,14 @@
     display: flex;
     flex-direction: column;
     gap: calc(var(--spacing) * 2);
-    /* Reserve enough space for the fully-played 7-row script (cmd +
-       optional meta subtext + gaps) so the page doesn't CLS every
-       time the replay appends a new row. Previous 260px covered ~3.5
-       rows; the full animation lands at ~360–380px with meta wraps. */
-    min-height: 420px;
+    /* Fixed HEIGHT (not min-height) so the container's size is
+       independent of content — adding, typing, or clearing rows can
+       never reflow the page beneath. Sized generously above the
+       fully-animated final state; overflow-hidden clamps any surprise
+       meta-wrap without spilling. Reduced-motion users see all rows
+       at once and still fit comfortably. */
+    height: 460px;
+    overflow: hidden;
     font-size: var(--text-sm);
     line-height: 1.7;
   }
@@ -2792,10 +2795,11 @@
     .iris-trace-live__gauge-pct {
       right: -36px;
     }
-    /* Narrower viewport means meta subtext wraps to 2-3 lines. Bump the
-       reserved height so CLS doesn't return as rows populate. */
+    /* Narrower viewport wraps meta subtext to 3–5 lines (the "rate
+       limiting" row especially). Bump fixed height so every wrapping
+       edge case fits inside the reserved space. */
     .iris-trace-live__lines {
-      min-height: 520px;
+      height: 720px;
     }
   }
 
