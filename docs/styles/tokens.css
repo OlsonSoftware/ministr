@@ -471,6 +471,24 @@
     color: var(--color-accent-hover);
     border-bottom-color: var(--color-accent-ring);
   }
+  /* WCAG 1.4.11: links inside body paragraphs/lists need a non-color
+     differentiator because the link-text vs surrounding-text contrast
+     is only 2.78:1 (below the 3:1 threshold). A persistent bottom
+     border passes "Use of Color" without screaming underlined-1998. */
+  .md-typeset p a,
+  .md-typeset li > a,
+  .md-typeset td a,
+  .md-typeset dd > a,
+  .md-typeset dt > a {
+    border-bottom-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  }
+  .md-typeset p a:hover,
+  .md-typeset li > a:hover,
+  .md-typeset td a:hover,
+  .md-typeset dd > a:hover,
+  .md-typeset dt > a:hover {
+    border-bottom-color: var(--color-accent-ring);
+  }
 
   /* Focus ring — consistent everywhere ------------------------------ */
   *:focus-visible {

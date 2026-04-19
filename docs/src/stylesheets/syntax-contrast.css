@@ -30,3 +30,40 @@ html body .md-typeset .highlight .nv,
 html body .md-typeset .highlight .vc {
   color: #c4b5fd !important;
 }
+
+/* Keywords + name-tags (JSON keys, HTML tag names) — default #3f6ec6 at
+   3.54:1; use a lighter blue (~7:1). */
+html body .md-typeset .highlight .k,
+html body .md-typeset .highlight .kc,
+html body .md-typeset .highlight .kd,
+html body .md-typeset .highlight .kn,
+html body .md-typeset .highlight .kp,
+html body .md-typeset .highlight .kr,
+html body .md-typeset .highlight .kt,
+html body .md-typeset .highlight .nt {
+  color: #93c5fd !important;
+}
+
+/* Strings — default #1c7d4d at 3.4:1; use a lighter green. */
+html body .md-typeset .highlight .s,
+html body .md-typeset .highlight .s1,
+html body .md-typeset .highlight .s2,
+html body .md-typeset .highlight .sa,
+html body .md-typeset .highlight .sb,
+html body .md-typeset .highlight .sc,
+html body .md-typeset .highlight .sd,
+html body .md-typeset .highlight .se,
+html body .md-typeset .highlight .sh,
+html body .md-typeset .highlight .si,
+html body .md-typeset .highlight .sr,
+html body .md-typeset .highlight .ss,
+html body .md-typeset .highlight .sx {
+  color: #86efac !important;  /* green-300, ~7.5:1 */
+}
+
+/* Function / class names — often rendered in accent color too. */
+html body .md-typeset .highlight .nf,
+html body .md-typeset .highlight .nc,
+html body .md-typeset .highlight .ne {
+  color: #fcd34d !important;  /* amber-300, ~10:1 */
+}
