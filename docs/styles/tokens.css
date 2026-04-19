@@ -2681,7 +2681,11 @@
     display: flex;
     flex-direction: column;
     gap: calc(var(--spacing) * 2);
-    min-height: 260px;
+    /* Reserve enough space for the fully-played 7-row script (cmd +
+       optional meta subtext + gaps) so the page doesn't CLS every
+       time the replay appends a new row. Previous 260px covered ~3.5
+       rows; the full animation lands at ~360–380px with meta wraps. */
+    min-height: 420px;
     font-size: var(--text-sm);
     line-height: 1.7;
   }
@@ -2787,6 +2791,11 @@
     }
     .iris-trace-live__gauge-pct {
       right: -36px;
+    }
+    /* Narrower viewport means meta subtext wraps to 2-3 lines. Bump the
+       reserved height so CLS doesn't return as rows populate. */
+    .iris-trace-live__lines {
+      min-height: 520px;
     }
   }
 
