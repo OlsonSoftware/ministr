@@ -294,7 +294,7 @@ on Apple Silicon. No network required.
           <span class="iris-app-preview__panel-title">Indexing · iris-rs</span>
           <span class="iris-app-preview__panel-meta">2812 / 4128 sections</span>
         </div>
-        <div class="iris-app-preview__progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="68">
+        <div class="iris-app-preview__progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="68" aria-label="Indexing progress">
           <span class="iris-app-preview__progress-fill" style="width: 68%"></span>
         </div>
       </div>

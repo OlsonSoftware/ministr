@@ -1,0 +1,32 @@
+/* Pygments WCAG AA contrast fixes.
+ *
+ * Material for MkDocs ships Pygments with default colors that fail AA
+ * on the dark code background (#1c1917 / stone-900):
+ *   .c1   #57534e comments           2.29:1  →  #a8a29e  stone-400  4.7:1
+ *   .nb   #6e59d9 builtins            3.4:1  →  #c4b5fd  violet-300 ~8:1
+ *   .m    #d52a2a integers           3.49:1  →  #fda4af  rose-300  ~7:1
+ *
+ * Lives in its own file because Tailwind v4 tree-shakes unlayered rules
+ * whose selectors reference classes it can't find in markdown source —
+ * the Pygments classes are generated at render time so they look "dead"
+ * to the scanner. extra_css loads this file directly, no JIT pass.
+ */
+html body .md-typeset .highlight .c,
+html body .md-typeset .highlight .c1,
+html body .md-typeset .highlight .cm,
+html body .md-typeset .highlight .cp,
+html body .md-typeset .highlight .cs {
+  color: #a8a29e !important;
+}
+html body .md-typeset .highlight .m,
+html body .md-typeset .highlight .mi,
+html body .md-typeset .highlight .mf,
+html body .md-typeset .highlight .mh,
+html body .md-typeset .highlight .mo {
+  color: #fda4af !important;
+}
+html body .md-typeset .highlight .nb,
+html body .md-typeset .highlight .nv,
+html body .md-typeset .highlight .vc {
+  color: #c4b5fd !important;
+}

@@ -744,6 +744,10 @@
     height: auto;
   }
 
+  /* Syntax-highlight AA contrast overrides live in the standalone
+     docs/src/stylesheets/syntax-contrast.css — Tailwind v4 was
+     tree-shaking Pygments class references out of this file. */
+
   /* ---------- Landing — Tauri app preview mock ---------- */
 
   /* Dark observatory preview has its own colour palette that holds in
@@ -751,9 +755,11 @@
      near-black color down onto nested spans, so each inner text class
      sets colour explicitly instead of inheriting. */
   .iris-app-preview {
-    --iris-app-fg:         #f1f5f9;  /* primary text — near-white */
-    --iris-app-fg-muted:   #9ca3af;  /* snippets, meta */
-    --iris-app-fg-subtle:  #6b7280;  /* labels, dates */
+    /* WCAG AA requires 4.5:1 for body, 3:1 for large text. All three
+       tones here hit ≥4.5:1 on the #1c1917 code-bg we use. */
+    --iris-app-fg:         #f1f5f9;  /* primary text — near-white, ~17:1 */
+    --iris-app-fg-muted:   #d1d5db;  /* snippets, meta, ~12:1 */
+    --iris-app-fg-subtle:  #9ca3af;  /* labels, dates, ~7:1 */
     max-width: 960px;
     margin: calc(var(--spacing) * 10) auto calc(var(--spacing) * 6);
     border: 1px solid var(--color-code-border);
@@ -960,8 +966,10 @@
     font-size: 10px;
     padding: 1px 6px;
     border-radius: 4px;
-    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-    color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+    /* Use the brighter iris-300 shade so contrast against the tinted
+       dark background hits AA (~6:1) instead of 2.5:1. */
+    color: var(--color-iris-300);
     letter-spacing: 0.02em;
     font-weight: 500;
   }
@@ -1841,11 +1849,15 @@
     font-weight: 500;
   }
   .iris-install-tree__leaf {
-    color: var(--color-accent);
+    /* Dark code-bg needs the brighter iris-300 (≈#a5a1f1) for AA
+       contrast. The plain --color-accent (#4f46e5) gives only 2.8:1. */
+    color: var(--color-iris-300);
     font-weight: 500;
   }
   .iris-install-tree__note {
-    color: var(--color-text-subtle);
+    /* stone-500 on stone-900 is only 3.6:1 — bump to stone-400 for
+       WCAG AA body-text compliance (~5.5:1). */
+    color: var(--color-stone-400);
     font-size: calc(var(--text-sm) - 1px);
     font-style: italic;
   }
@@ -2770,7 +2782,11 @@
   }
   /* Hero column — iris, placed last so it reads as the "after" column. */
   .md-typeset .iris-compare thead th:last-child {
-    background: color-mix(in srgb, var(--color-accent) 20%, var(--color-surface-sunken));
+    /* Solid accent background so the white 'iris' text hits WCAG AA.
+       The pale-lavender color-mix earlier produced 1.46:1 contrast.
+       !important needed because Tailwind emits an @supports color-mix
+       fallback that otherwise wins when the browser supports it. */
+    background: var(--color-accent) !important;
     color: var(--color-accent-fg-on);
     position: relative;
   }
