@@ -103,6 +103,29 @@ hide:
 
 </div>
 
+<div class="iris-install-flow" aria-label="Install flow">
+  <ol class="iris-install-flow__steps">
+    <li class="iris-install-flow__step">
+      <span class="iris-install-flow__num">1</span>
+      <span class="iris-install-flow__label">Download the .pkg</span>
+    </li>
+    <li class="iris-install-flow__step">
+      <span class="iris-install-flow__num">2</span>
+      <span class="iris-install-flow__label">Double-click to run</span>
+    </li>
+    <li class="iris-install-flow__step">
+      <span class="iris-install-flow__num">3</span>
+      <span class="iris-install-flow__label">Launch iris from /Applications</span>
+    </li>
+    <li class="iris-install-flow__step iris-install-flow__step--final">
+      <span class="iris-install-flow__num">✓</span>
+      <span class="iris-install-flow__label">
+        <code>iris</code> ready on your <code>PATH</code>
+      </span>
+    </li>
+  </ol>
+</div>
+
 <div class="iris-section-header">
   <span class="iris-section-header__eyebrow">
     <svg class="icon icon-sm"><use href="assets/icons.svg#check-circle-fill"/></svg>

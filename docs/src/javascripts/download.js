@@ -188,7 +188,33 @@
 
       root.setAttribute("data-detected-os", os);
       root.setAttribute("data-detected-arch", arch);
+
+      // macOS version gate: warn if detected platformVersion < 13.0.
+      if (os === "macos" && platformVersion) {
+        const major = parseInt(platformVersion.split(".")[0], 10);
+        if (!Number.isNaN(major) && major < 13) {
+          showMinOsWarning(
+            `Your Mac reports macOS ${platformVersion}, but iris requires macOS 13 Ventura or newer. The installer will refuse to run.`
+          );
+        }
+      }
+
       finishSkeleton(true);
+    }
+
+    function showMinOsWarning(msg) {
+      if (!primaryCard) return;
+      let w = primaryCard.querySelector(".iris-download__warning");
+      if (!w) {
+        w = document.createElement("div");
+        w.className = "iris-download__warning";
+        w.setAttribute("role", "alert");
+        const ctaAnchor = primaryCard.querySelector(".iris-download__caption");
+        if (ctaAnchor) ctaAnchor.after(w);
+        else primaryCard.appendChild(w);
+      }
+      w.innerHTML = `<span>${msg}</span>`;
+      w.removeAttribute("hidden");
     }
 
     function osDisplay(os) {
@@ -281,13 +307,20 @@
       link.addEventListener("pointerenter", () => {
         if (prefetched || !link.href) return;
         timer = window.setTimeout(() => {
+          // `preconnect` warms DNS + TLS to the CDN host without fetching
+          // the (potentially 50 MB) artifact body. Cheap, zero waste on
+          // visitors who hover but don't click.
           const pre = document.createElement("link");
-          pre.rel = "prefetch";
-          pre.href = link.href;
+          pre.rel = "preconnect";
+          try {
+            pre.href = new URL(link.href).origin;
+          } catch {
+            return;
+          }
           pre.crossOrigin = "anonymous";
           document.head.appendChild(pre);
           prefetched = true;
-        }, 400);
+        }, 600);
       });
       link.addEventListener("pointerleave", () => {
         if (timer !== null) window.clearTimeout(timer);
@@ -322,8 +355,7 @@
       btn.type = "button";
       btn.className = "iris-copy-btn";
       btn.setAttribute("aria-label", "Copy to clipboard");
-      btn.innerHTML =
-        '<svg class="icon icon-sm" aria-hidden="true"><use href="/iris-rs/assets/icons.svg#code"/></svg><span>Copy</span>';
+      btn.innerHTML = '<span aria-hidden="true">⎘</span><span>Copy</span>';
 
       btn.addEventListener("click", async (e) => {
         e.preventDefault();

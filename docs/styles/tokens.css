@@ -1023,6 +1023,141 @@
     height: 12px;
   }
 
+  /* ---- Install flow stepper ---- */
+  .iris-install-flow {
+    margin: calc(var(--spacing) * 12) auto 0;
+    max-width: 960px;
+    padding: calc(var(--spacing) * 5) calc(var(--spacing) * 4);
+    border-radius: var(--radius-xl);
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--color-accent) 3%, transparent) 0%,
+        transparent 100%
+      ),
+      var(--color-surface);
+    border: 1px solid var(--color-border);
+  }
+  .iris-install-flow__steps {
+    list-style: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    position: relative;
+  }
+  .iris-install-flow__steps::before {
+    content: "";
+    position: absolute;
+    top: 18px;
+    left: 12.5%;
+    right: 12.5%;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-accent) 60%, transparent) 0%,
+      color-mix(in srgb, var(--color-accent) 60%, transparent) 100%
+    );
+    opacity: 0.35;
+    z-index: 0;
+  }
+  .iris-install-flow__step {
+    margin: 0 !important;
+    padding: 0 calc(var(--spacing) * 2);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: calc(var(--spacing) * 2);
+    position: relative;
+    z-index: 1;
+  }
+  .iris-install-flow__num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--color-surface);
+    border: 2px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+    color: var(--color-accent);
+    font-weight: 600;
+    font-size: var(--text-sm);
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .iris-install-flow__step--final .iris-install-flow__num {
+    background: var(--color-accent);
+    color: var(--color-accent-fg-on);
+    border-color: var(--color-accent);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 25%, transparent),
+      0 0 0 4px color-mix(in srgb, var(--color-accent) 15%, transparent);
+  }
+  .iris-install-flow__label {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    line-height: 1.4;
+    max-width: 18ch;
+  }
+  .iris-install-flow__step--final .iris-install-flow__label {
+    color: var(--color-text);
+    font-weight: 500;
+  }
+  .iris-install-flow__label code {
+    font-size: calc(var(--text-sm) - 1px);
+    padding: 1px 5px;
+  }
+  @media (max-width: 720px) {
+    .iris-install-flow__steps {
+      grid-template-columns: 1fr;
+      gap: calc(var(--spacing) * 4);
+    }
+    .iris-install-flow__steps::before {
+      top: 0;
+      bottom: 0;
+      left: calc(18px + calc(var(--spacing) * 4));
+      right: auto;
+      width: 2px;
+      height: auto;
+    }
+    .iris-install-flow__step {
+      flex-direction: row;
+      text-align: left;
+      padding: 0 calc(var(--spacing) * 4);
+      gap: calc(var(--spacing) * 4);
+    }
+    .iris-install-flow__label {
+      max-width: none;
+    }
+  }
+
+  /* ---- Min-OS warning banner ---- */
+  .iris-download__warning {
+    margin: calc(var(--spacing) * 4) auto 0;
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+    border-radius: var(--radius-md);
+    border: 1px solid color-mix(in srgb, #f97316 40%, transparent);
+    background: color-mix(in srgb, #f97316 8%, transparent);
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    display: flex;
+    align-items: flex-start;
+    gap: calc(var(--spacing) * 2);
+    line-height: 1.5;
+  }
+  .iris-download__warning::before {
+    content: "⚠";
+    color: #f97316;
+    font-size: 1.1em;
+    line-height: 1;
+  }
+  .iris-download__warning[hidden] {
+    display: none !important;
+  }
+
   /* ---------- Stats strip ---------- */
 
   .iris-stats {
