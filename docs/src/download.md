@@ -77,6 +77,19 @@ hide:
     Detecting your platform… <a href="#other-platforms" class="iris-download__caption-link">See all downloads</a>
   </p>
 
+  <p class="iris-download__proof" data-iris-proof hidden>
+    <svg class="icon icon-sm"><use href="assets/icons.svg#check-circle-fill"/></svg>
+    <span data-iris-proof-text>—</span>
+  </p>
+
+  <div class="iris-download__post-click" data-iris-postclick hidden>
+    <svg class="icon icon-sm"><use href="assets/icons.svg#check-circle-fill"/></svg>
+    <div>
+      <strong>Downloading <span data-postclick-file>iris.pkg</span>…</strong>
+      <span>Next up: <a href="#wire-it-into-your-agent">wire iris into your agent →</a></span>
+    </div>
+  </div>
+
   <div class="iris-download__release" data-iris-release hidden>
     <div class="iris-download__release-line">
       <span class="iris-download__release-item">
@@ -184,7 +197,7 @@ Built with an Apple Developer ID, stapled via `notarytool`. Gatekeeper clears it
 
 </div>
 
-<div class="iris-section-header">
+<div class="iris-section-header" id="wire-it-into-your-agent">
   <span class="iris-section-header__eyebrow">
     <svg class="icon icon-sm"><use href="assets/icons.svg#sparkle-fill"/></svg>
     After install

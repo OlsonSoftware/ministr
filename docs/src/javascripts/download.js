@@ -71,6 +71,7 @@
     }
 
     prefetchOnHover(primaryLink);
+    installPostClick(primaryLink);
 
     // ----- Platform detection ---------------------------------------
 
@@ -284,7 +285,28 @@
         }
       }
 
+      // Social proof: sum download counts across all release assets so
+      // visitors see real adoption numbers instead of a static claim.
+      const proofEl = root.querySelector("[data-iris-proof]");
+      const proofText = root.querySelector("[data-iris-proof-text]");
+      if (proofEl && proofText && rel.assets && rel.assets.length) {
+        const total = rel.assets.reduce(
+          (n, a) => n + (a.download_count || 0),
+          0
+        );
+        if (total >= 50) {
+          proofText.textContent = `${humanCount(total)} downloads of this release`;
+          proofEl.removeAttribute("hidden");
+        }
+      }
+
       releaseEl.removeAttribute("hidden");
+    }
+
+    function humanCount(n) {
+      if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+      if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+      return `${n}`;
     }
 
     function extractReleasePreview(body) {
@@ -332,6 +354,47 @@
       const mb = bytes / (1024 * 1024);
       if (mb >= 10) return `${Math.round(mb)} MB`;
       return `${mb.toFixed(1)} MB`;
+    }
+
+    // ----- Post-click "downloading…" + scroll ------------------------
+
+    function installPostClick(link) {
+      const post = root.querySelector("[data-iris-postclick]");
+      if (!post) return;
+      const fileEl = post.querySelector("[data-postclick-file]");
+      const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      link.addEventListener("click", () => {
+        // Let the browser keep the href resolution — we're not preventing
+        // default. This is purely an advisory + nav helper.
+        if (fileEl) {
+          try {
+            fileEl.textContent =
+              new URL(link.href).pathname.split("/").pop() || "iris.pkg";
+          } catch {
+            fileEl.textContent = "iris.pkg";
+          }
+        }
+        post.removeAttribute("hidden");
+        requestAnimationFrame(() =>
+          post.setAttribute("data-visible", "1")
+        );
+
+        // Smooth-scroll the after-install section into view so the user
+        // sees their next move while the download is running.
+        const next = document.getElementById("wire-it-into-your-agent");
+        if (next) {
+          window.setTimeout(
+            () => {
+              next.scrollIntoView({
+                behavior: reduced ? "auto" : "smooth",
+                block: "start",
+              });
+            },
+            reduced ? 100 : 900
+          );
+        }
+      });
     }
 
     // ----- Hover prefetch -------------------------------------------
