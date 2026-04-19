@@ -1102,6 +1102,10 @@ impl Storage for SqliteStorage {
         let turn = session.current_turn();
         let items: Vec<DeliveredItem> = session.delivered_items().cloned().collect();
         let trajectory: Vec<ContentId> = session.trajectory().iter().cloned().collect();
+        let metrics_json = serde_json::to_string(session.metrics()).unwrap_or_else(|_| "{}".into());
+        let recent_queries: Vec<&String> = session.recent_queries().iter().collect();
+        let recent_queries_json =
+            serde_json::to_string(&recent_queries).unwrap_or_else(|_| "[]".into());
 
         self.with_conn(move |conn| {
             conn.execute("SAVEPOINT save_session", [])
@@ -1112,13 +1116,15 @@ impl Storage for SqliteStorage {
             let result = (|| {
                 // Upsert session row
                 conn.execute(
-                    "INSERT INTO sessions (id, context_budget, current_turn, updated_at)
-                     VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                    "INSERT INTO sessions (id, context_budget, current_turn, updated_at, metrics_json, recent_queries_json)
+                     VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?4, ?5)
                      ON CONFLICT(id) DO UPDATE SET
                         context_budget = excluded.context_budget,
                         current_turn = excluded.current_turn,
-                        updated_at = excluded.updated_at",
-                    rusqlite::params![id, budget, turn],
+                        updated_at = excluded.updated_at,
+                        metrics_json = excluded.metrics_json,
+                        recent_queries_json = excluded.recent_queries_json",
+                    rusqlite::params![id, budget, turn, metrics_json, recent_queries_json],
                 )
                 .map_err(|e| StorageError::Database {
                     reason: format!("failed to upsert session: {e}"),
@@ -1150,8 +1156,8 @@ impl Storage for SqliteStorage {
                         .unwrap_or(0);
                     conn.execute(
                         "INSERT INTO session_deliveries
-                         (session_id, content_id, resolution, token_count, turn_delivered, content_hash, position)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                         (session_id, content_id, resolution, token_count, turn_delivered, content_hash, position, compression_tier, compressed_summary)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                         rusqlite::params![
                             id,
                             item.content_id.0,
@@ -1160,6 +1166,8 @@ impl Storage for SqliteStorage {
                             item.turn_delivered,
                             item.content_hash,
                             position,
+                            item.compression_tier.as_str(),
+                            item.compressed_summary,
                         ],
                     )
                     .map_err(|e| StorageError::Database {
@@ -1187,12 +1195,16 @@ impl Storage for SqliteStorage {
         .await
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn load_session(&self, id: &SessionId) -> Result<Option<Session>, StorageError> {
         let id = id.0.clone();
         self.with_conn(move |conn| {
             // Load session metadata
             let mut stmt = conn
-                .prepare("SELECT id, context_budget, current_turn FROM sessions WHERE id = ?1")
+                .prepare(
+                    "SELECT id, context_budget, current_turn, metrics_json, recent_queries_json \
+                     FROM sessions WHERE id = ?1",
+                )
                 .map_err(|e| StorageError::Database {
                     reason: e.to_string(),
                 })?;
@@ -1203,6 +1215,8 @@ impl Storage for SqliteStorage {
                         row.get::<_, String>(0)?,
                         row.get::<_, usize>(1)?,
                         row.get::<_, u32>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 })
                 .optional()
@@ -1210,14 +1224,15 @@ impl Storage for SqliteStorage {
                     reason: e.to_string(),
                 })?;
 
-            let Some((session_id, budget, turn)) = session_row else {
+            let Some((session_id, budget, turn, metrics_json, recent_queries_json)) = session_row
+            else {
                 return Ok(None);
             };
 
             // Load delivered items ordered by position (for trajectory reconstruction)
             let mut stmt = conn
                 .prepare(
-                    "SELECT content_id, resolution, token_count, turn_delivered, content_hash, position
+                    "SELECT content_id, resolution, token_count, turn_delivered, content_hash, position, compression_tier, compressed_summary
                      FROM session_deliveries WHERE session_id = ?1 ORDER BY position",
                 )
                 .map_err(|e| StorageError::Database {
@@ -1232,6 +1247,8 @@ impl Storage for SqliteStorage {
                         row.get::<_, usize>(2)?,
                         row.get::<_, u32>(3)?,
                         row.get::<_, String>(4)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, Option<String>>(7)?,
                     ))
                 })
                 .map_err(|e| StorageError::Database {
@@ -1242,13 +1259,22 @@ impl Storage for SqliteStorage {
             let mut trajectory = Vec::new();
 
             for row in rows {
-                let (content_id_str, resolution_str, token_count, turn_delivered, content_hash) =
-                    row.map_err(|e| StorageError::Database {
-                        reason: e.to_string(),
-                    })?;
+                let (
+                    content_id_str,
+                    resolution_str,
+                    token_count,
+                    turn_delivered,
+                    content_hash,
+                    compression_tier_str,
+                    compressed_summary,
+                ) = row.map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
 
                 let content_id = ContentId(content_id_str.clone());
                 let resolution = parse_resolution(&resolution_str);
+                let compression_tier =
+                    crate::session::CompressionTier::from_str_or_full(&compression_tier_str);
 
                 let item = DeliveredItem {
                     content_id: content_id.clone(),
@@ -1256,8 +1282,8 @@ impl Storage for SqliteStorage {
                     token_count,
                     turn_delivered,
                     content_hash,
-                    compression_tier: crate::session::CompressionTier::Full,
-                    compressed_summary: None,
+                    compression_tier,
+                    compressed_summary,
                 };
 
                 delivered.insert(content_id_str.clone(), item);
@@ -1270,14 +1296,25 @@ impl Storage for SqliteStorage {
             // column to the sessions table and thread it through, or
             // (b) load the session and rebuild the BudgetTracker with the
             // desired policy.
-            Ok(Some(Session::restore(
+            let mut session = Session::restore(
                 SessionId(session_id),
                 budget,
                 crate::session::EvictionPolicy::Fifo,
                 delivered,
                 trajectory,
                 turn,
-            )))
+            );
+            if let Some(json) = metrics_json
+                && let Ok(metrics) = serde_json::from_str(&json)
+            {
+                session.set_metrics(metrics);
+            }
+            if let Some(json) = recent_queries_json
+                && let Ok(queries) = serde_json::from_str::<Vec<String>>(&json)
+            {
+                session.set_recent_queries(queries);
+            }
+            Ok(Some(session))
         })
         .await
     }
@@ -3005,6 +3042,127 @@ mod tests {
         let results = storage.list_symbols(&filter).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "create_session");
+    }
+
+    // ── Session persistence round-trip ───────────────────────────────
+
+    #[tokio::test]
+    async fn save_load_preserves_compression_tier() {
+        // Regression: SqliteStorage::save_session used to drop
+        // `compression_tier` and `compressed_summary` because the
+        // `session_deliveries` schema had no columns for them; load_session
+        // hardcoded `Full`. Every daemon restart wiped the compression
+        // pipeline's work. V18 added the missing columns.
+        use crate::session::{CompressionTier, EvictionPolicy, SessionId};
+        use crate::types::{ContentId, Resolution};
+
+        let storage = test_storage().await;
+        let mut session = crate::session::Session::new(
+            SessionId::from("persist-tier".to_string()),
+            100_000,
+            EvictionPolicy::Fifo,
+        );
+        session.record_delivery(
+            &ContentId::from("s1".to_string()),
+            Resolution::Section,
+            1000,
+            1,
+            "h1".to_string(),
+        );
+        // Simulate the compression pipeline promoting s1 to Extractive.
+        session.set_compressed_summary(
+            &ContentId::from("s1".to_string()),
+            "summary of s1".to_string(),
+            CompressionTier::Extractive,
+            300,
+        );
+
+        storage.save_session(&session).await.unwrap();
+        let loaded = storage
+            .load_session(&SessionId::from("persist-tier".to_string()))
+            .await
+            .unwrap()
+            .expect("session should load");
+
+        let item = loaded
+            .get_delivered(&ContentId::from("s1".to_string()))
+            .expect("item should persist");
+        assert_eq!(
+            item.compression_tier,
+            CompressionTier::Extractive,
+            "compression_tier must survive round-trip (got {:?})",
+            item.compression_tier
+        );
+        assert_eq!(
+            item.compressed_summary.as_deref(),
+            Some("summary of s1"),
+            "compressed_summary must survive round-trip",
+        );
+    }
+
+    #[tokio::test]
+    async fn save_load_preserves_session_metrics() {
+        // Regression: the `sessions` table had no columns for cumulative
+        // SessionMetrics (total_deliveries, cumulative_tokens_delivered, …),
+        // so every daemon restart zeroed them. V18 added a metrics_json
+        // column and restore now re-seeds metrics.
+        use crate::session::{EvictionPolicy, SessionId};
+        use crate::types::{ContentId, Resolution};
+
+        let storage = test_storage().await;
+        let mut session = crate::session::Session::new(
+            SessionId::from("persist-metrics".to_string()),
+            100_000,
+            EvictionPolicy::Fifo,
+        );
+        for i in 0..5_u32 {
+            session.record_delivery(
+                &ContentId::from(format!("s{i}")),
+                Resolution::Section,
+                100,
+                i + 1,
+                format!("h{i}"),
+            );
+        }
+        assert_eq!(session.metrics().total_deliveries, 5);
+        assert_eq!(session.metrics().cumulative_tokens_delivered, 500);
+
+        storage.save_session(&session).await.unwrap();
+        let loaded = storage
+            .load_session(&SessionId::from("persist-metrics".to_string()))
+            .await
+            .unwrap()
+            .expect("session should load");
+
+        assert_eq!(loaded.metrics().total_deliveries, 5);
+        assert_eq!(loaded.metrics().cumulative_tokens_delivered, 500);
+    }
+
+    #[tokio::test]
+    async fn save_load_preserves_recent_queries() {
+        // Regression: recent_queries drive the EvictionRanker's task-salience
+        // factor. V18 persists them as JSON so salience doesn't evaporate on
+        // daemon restart mid-task.
+        use crate::session::{EvictionPolicy, SessionId};
+
+        let storage = test_storage().await;
+        let mut session = crate::session::Session::new(
+            SessionId::from("persist-queries".to_string()),
+            100_000,
+            EvictionPolicy::Fifo,
+        );
+        session.record_query("authentication flow");
+        session.record_query("JWT tokens");
+
+        storage.save_session(&session).await.unwrap();
+        let loaded = storage
+            .load_session(&SessionId::from("persist-queries".to_string()))
+            .await
+            .unwrap()
+            .expect("session should load");
+
+        let queries: Vec<&str> = loaded.recent_queries().iter().map(String::as_str).collect();
+        assert_eq!(queries, vec!["authentication flow", "JWT tokens"]);
     }
 
     // ── Test helpers ─────────────────────────────────────────────────

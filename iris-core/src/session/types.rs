@@ -184,6 +184,31 @@ impl CompressionTier {
             Self::Bookmark | Self::Evicted => 0.0,
         }
     }
+
+    /// Stable snake-case name for SQLite persistence.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Abstractive => "abstractive",
+            Self::Extractive => "extractive",
+            Self::Bookmark => "bookmark",
+            Self::Evicted => "evicted",
+        }
+    }
+
+    /// Parse a persisted tier string, falling back to `Full` for unknown
+    /// values (forward-compatible with older rows or future variants).
+    #[must_use]
+    pub fn from_str_or_full(s: &str) -> Self {
+        match s {
+            "abstractive" => Self::Abstractive,
+            "extractive" => Self::Extractive,
+            "bookmark" => Self::Bookmark,
+            "evicted" => Self::Evicted,
+            _ => Self::Full,
+        }
+    }
 }
 
 /// Record of a single content delivery to the agent.
@@ -752,6 +777,33 @@ impl Session {
     #[must_use]
     pub fn recent_queries(&self) -> &VecDeque<String> {
         &self.recent_queries
+    }
+
+    /// Overwrite the cumulative metrics counters.
+    ///
+    /// Used by persistence restore to reseed monotonic counters that
+    /// cannot be reconstructed from the delivered-items map alone
+    /// (e.g. `dedup_hits`, `total_evictions`, `cumulative_tokens_evicted`).
+    pub fn set_metrics(&mut self, metrics: SessionMetrics) {
+        self.metrics = metrics;
+    }
+
+    /// Overwrite the recent-query sliding window.
+    ///
+    /// Used by persistence restore so task-salience scoring doesn't reset
+    /// on daemon restart. Callers should pass queries in oldest-to-newest
+    /// order; the window is trimmed to [`MAX_RECENT_QUERIES`].
+    pub fn set_recent_queries<I>(&mut self, queries: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.recent_queries.clear();
+        for q in queries {
+            if self.recent_queries.len() >= MAX_RECENT_QUERIES {
+                self.recent_queries.pop_front();
+            }
+            self.recent_queries.push_back(q);
+        }
     }
 }
 

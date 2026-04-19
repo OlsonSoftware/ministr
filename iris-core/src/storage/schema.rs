@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 17;
+pub const CURRENT_SCHEMA_VERSION: usize = 18;
 
 /// Returns the migration set for the content database.
 ///
@@ -320,6 +320,19 @@ fn migrations() -> Migrations<'static> {
             );
 
             CREATE INDEX idx_answer_cache_sources_section ON answer_cache_sources(section_id);
+            ",
+        ),
+        // V18: Persist fields that were silently reset on every daemon
+        // restart — compression tier + summary on delivered items, and the
+        // cumulative SessionMetrics / recent-query sliding window on the
+        // session row. Without these, the compression pipeline's work was
+        // discarded and monotonic counters zeroed across restarts.
+        M::up(
+            "
+            ALTER TABLE session_deliveries ADD COLUMN compression_tier TEXT NOT NULL DEFAULT 'full';
+            ALTER TABLE session_deliveries ADD COLUMN compressed_summary TEXT;
+            ALTER TABLE sessions ADD COLUMN metrics_json TEXT;
+            ALTER TABLE sessions ADD COLUMN recent_queries_json TEXT;
             ",
         ),
     ])
