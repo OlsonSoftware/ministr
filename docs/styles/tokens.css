@@ -746,7 +746,14 @@
 
   /* ---------- Landing — Tauri app preview mock ---------- */
 
+  /* Dark observatory preview has its own colour palette that holds in
+     both light + dark page themes. Material's .md-typeset pushes a
+     near-black color down onto nested spans, so each inner text class
+     sets colour explicitly instead of inheriting. */
   .iris-app-preview {
+    --iris-app-fg:         #f1f5f9;  /* primary text — near-white */
+    --iris-app-fg-muted:   #9ca3af;  /* snippets, meta */
+    --iris-app-fg-subtle:  #6b7280;  /* labels, dates */
     max-width: 960px;
     margin: calc(var(--spacing) * 10) auto calc(var(--spacing) * 6);
     border: 1px solid var(--color-code-border);
@@ -754,7 +761,7 @@
     background: var(--color-code-bg);
     box-shadow: var(--shadow-lg, var(--shadow-md));
     overflow: hidden;
-    color: var(--color-code-text);
+    color: var(--iris-app-fg);
     font-family: inherit;
   }
   .iris-app-preview--download {
@@ -798,7 +805,7 @@
   .iris-app-preview__title {
     text-align: center;
     letter-spacing: 0.12em;
-    color: var(--color-text-subtle);
+    color: var(--iris-app-fg-subtle);
     text-transform: uppercase;
     font-size: 11px;
   }
@@ -808,7 +815,7 @@
     gap: 6px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--color-text-subtle);
+    color: var(--iris-app-fg-subtle);
     font-size: 10px;
   }
   .iris-app-preview__led {
@@ -835,7 +842,7 @@
     font-size: var(--text-xs);
   }
   .iris-app-preview__sidebar-label {
-    color: var(--color-text-subtle);
+    color: var(--iris-app-fg-subtle);
     text-transform: uppercase;
     letter-spacing: 0.1em;
     font-size: 10px;
@@ -848,7 +855,8 @@
     list-style: none !important;
     margin: 0 !important;
     padding: 0 !important;
-    display: flex;
+    /* <ul> default is flow-root under Tailwind preflight; force flex. */
+    display: flex !important;
     flex-direction: column;
     gap: 2px;
   }
@@ -864,17 +872,16 @@
   }
   .iris-app-preview__row--active {
     background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-    color: var(--color-text);
   }
   .iris-app-preview__row-name {
-    color: inherit;
+    color: var(--iris-app-fg);
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .iris-app-preview__row-meta {
-    color: var(--color-text-muted);
+    color: var(--iris-app-fg-muted);
     font-variant-numeric: tabular-nums;
     font-size: 10px;
     white-space: nowrap;
@@ -900,12 +907,12 @@
     margin-bottom: calc(var(--spacing) * 3);
   }
   .iris-app-preview__panel-title {
-    color: var(--color-text);
+    color: var(--iris-app-fg);
     font-size: var(--text-sm);
     font-weight: 500;
   }
   .iris-app-preview__panel-meta {
-    color: var(--color-text-subtle);
+    color: var(--iris-app-fg-subtle);
     font-size: 10px;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.04em;
@@ -946,7 +953,7 @@
   .iris-app-preview__result-path {
     font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--color-text);
+    color: var(--iris-app-fg);
   }
   .iris-app-preview__score {
     font-family: var(--font-mono);
@@ -961,7 +968,7 @@
   .iris-app-preview__snippet {
     margin: 0 !important;
     font-size: var(--text-xs);
-    color: var(--color-text-muted);
+    color: var(--iris-app-fg-muted);
     line-height: 1.5;
   }
   .iris-app-preview__snippet code {
@@ -1011,7 +1018,9 @@
     list-style: none !important;
     margin: calc(var(--spacing) * 6) auto 0 !important;
     padding: 0 !important;
-    display: flex;
+    /* Tailwind preflight resets <ul> to display: flow-root; need
+       !important to keep the horizontal flex layout. */
+    display: flex !important;
     flex-wrap: wrap;
     justify-content: center;
     gap: calc(var(--spacing) * 4);
@@ -1261,8 +1270,10 @@
     margin-bottom: calc(var(--spacing) * 4);
   }
   .iris-download__primary-title {
-    display: inline-flex;
+    display: flex;
+    justify-content: center;
     align-items: center;
+    flex-wrap: wrap;
     gap: calc(var(--spacing) * 3);
     font-size: var(--text-2xl);
     font-weight: 600;
@@ -1326,7 +1337,8 @@
     margin: calc(var(--spacing) * 4) 0 0 !important;
     padding: 0 !important;
     text-align: left;
-    display: grid;
+    /* <ul> default is flow-root under Tailwind preflight; force grid. */
+    display: grid !important;
     gap: calc(var(--spacing) * 2);
   }
   .iris-download__alt-list li {
@@ -1465,7 +1477,10 @@
     list-style: none !important;
     margin: 0 !important;
     padding: 0 !important;
-    display: grid;
+    /* Tailwind Preflight + Material's .md-typeset ol reset win without
+       !important here — `display: flow-root` overrides grid otherwise,
+       collapsing the 4 horizontal steps to a single stacked column. */
+    display: grid !important;
     grid-template-columns: repeat(4, 1fr);
     gap: 0;
     position: relative;

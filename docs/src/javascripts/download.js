@@ -494,17 +494,21 @@
     if (archEl) mo.observe(archEl, { childList: true, characterData: true, subtree: true });
     if (sizeEl) mo.observe(sizeEl, { childList: true, characterData: true, subtree: true });
 
-    // Show the sticky when the primary CTA scrolls out of view.
+    // Show the sticky only AFTER the user has scrolled past the primary
+    // CTA (its bottom edge is above the viewport top). Without this
+    // directionality check, the IO also fires when the CTA is still
+    // below the viewport bottom on long pages with small initial
+    // scrollY — making the sticky show before the user has scrolled.
     const io = new IntersectionObserver(
       ([entry]) => {
         if (!entry) return;
-        const out = !entry.isIntersecting;
-        if (out) {
+        const rect = entry.boundingClientRect;
+        const scrolledPast = !entry.isIntersecting && rect.bottom <= 0;
+        if (scrolledPast) {
           sticky.removeAttribute("hidden");
           requestAnimationFrame(() => sticky.setAttribute("data-visible", "1"));
         } else {
           sticky.removeAttribute("data-visible");
-          // Defer the hidden attribute until the transition completes.
           window.setTimeout(() => {
             if (!sticky.hasAttribute("data-visible")) {
               sticky.setAttribute("hidden", "");
@@ -512,7 +516,7 @@
           }, 260);
         }
       },
-      { rootMargin: "0px 0px -40% 0px", threshold: 0 }
+      { rootMargin: "0px", threshold: 0 }
     );
     io.observe(primaryLink);
 
