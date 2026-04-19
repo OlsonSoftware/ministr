@@ -25,19 +25,20 @@ hide:
   class="iris-download"
   data-iris-download
   data-version="0.1.0"
+  data-repo="AlrikOlson/iris-rs"
   data-release-base="https://github.com/AlrikOlson/iris-rs/releases/latest/download"
 >
 
-<div class="iris-download__primary" data-target="macos-arm64">
+<div class="iris-download__primary" data-target="macos-arm64" data-state="detecting">
   <div class="iris-download__primary-meta">
-    <span class="iris-download__badge">Recommended for your Mac</span>
+    <span class="iris-download__badge" data-primary-badge>Recommended for your Mac</span>
     <h2 class="iris-download__primary-title">
       <svg class="icon icon-md"><use href="assets/icons.svg#cube-focus"/></svg>
       iris for macOS
-      <span class="iris-download__arch">Apple Silicon</span>
+      <span class="iris-download__arch" data-iris-arch>Apple Silicon</span>
     </h2>
     <p class="iris-download__primary-sub">
-      Signed + notarized <strong>.pkg</strong> · <span data-iris-size>~48 MB</span> · macOS 13 Ventura or newer
+      Signed + notarized <strong>.pkg</strong> · <span data-iris-size>~48 MB</span> · <span data-iris-minos>macOS 13 Ventura or newer</span>
     </p>
   </div>
 
@@ -49,6 +50,24 @@ hide:
     <svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
     <span data-primary-label>Download for macOS</span>
   </a>
+
+  <p class="iris-download__caption" data-iris-caption>
+    Detecting your platform… <a href="#other-platforms" class="iris-download__caption-link">See all downloads</a>
+  </p>
+
+  <div class="iris-download__release" data-iris-release hidden>
+    <span class="iris-download__release-item">
+      <svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
+      <span data-iris-version>v0.1.0</span>
+    </span>
+    <span class="iris-download__release-sep">·</span>
+    <span class="iris-download__release-item" data-iris-reldate>released recently</span>
+    <span class="iris-download__release-sep">·</span>
+    <a class="iris-download__release-item" data-iris-notes href="https://github.com/AlrikOlson/iris-rs/releases/latest">
+      <svg class="icon icon-sm"><use href="assets/icons.svg#sparkle-fill"/></svg>
+      What's new
+    </a>
+  </div>
 
   <details class="iris-download__alt">
     <summary>Other macOS options</summary>
@@ -72,6 +91,9 @@ hide:
         <a href="https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris-x86_64-apple-darwin.tar.gz">
           <strong>CLI only (Intel)</strong> — headless agent use
         </a>
+      </li>
+      <li class="iris-download__alt-item--muted">
+        <span><strong>Homebrew</strong> — <code>brew install AlrikOlson/tap/iris</code> · <em>lands with 1.0</em></span>
       </li>
     </ul>
   </details>
@@ -151,7 +173,7 @@ Built with an Apple Developer ID, stapled via `notarytool`. Gatekeeper clears it
     iris --mcp                         # stdio JSON-RPC for any MCP-speaking client
     ```
 
-<div class="iris-section-header">
+<div class="iris-section-header" id="other-platforms">
   <span class="iris-section-header__eyebrow">
     <svg class="icon icon-sm"><use href="assets/icons.svg#circle"/></svg>
     Other platforms

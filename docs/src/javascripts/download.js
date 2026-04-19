@@ -1,133 +1,349 @@
-// Platform-aware swap for the iris download page.
+// Platform-aware + release-aware download page enhancements.
 //
-// Reads `data-iris-download` from the landing card, sniffs the visitor's
-// OS + arch from `navigator.userAgentData` (when available) or the UA
-// string, and rewrites the primary CTA to the matching release artifact.
-// Non-macOS visitors still land on a prominent card — just pointed at the
-// right file — instead of being sent off to the "Other platforms" fold.
+// On the /download/ page this script:
+//   • sniffs os/arch from navigator.userAgentData (Chromium) or the UA
+//     string, and rewrites the primary CTA to the matching release
+//     artifact (href, label, arch tag, size, min-OS caption).
+//   • fetches the latest GitHub release via the public API to replace
+//     the hard-coded version + date with live values and link the
+//     "What's new" button to the matching release notes.
+//   • wires copy-to-clipboard affordances on shell `<code>` blocks so
+//     users can grab the curl/claude-mcp commands in one click.
+//   • speculatively prefetches the primary artifact on link hover so
+//     the actual download feels instantaneous.
+//
+// Everything fails silently — if the fetch is blocked, the detection
+// fails, or clipboard access is denied, the page still works from the
+// static HTML fallback.
 
 (function () {
   "use strict";
 
+  /* ------------------------------------------------------------------ *
+   * 1. Platform-aware primary CTA swap                                  *
+   * ------------------------------------------------------------------ */
+
   const root = document.querySelector("[data-iris-download]");
-  if (!root) return;
-
-  const version = root.dataset.version || "0.1.0";
-  const base = root.dataset.releaseBase || "";
-  const primaryLink = root.querySelector("[data-primary-link]");
-  const primaryLabel = root.querySelector("[data-primary-label]");
-  const sizeEl = root.querySelector("[data-iris-size]");
-  const archEl = root.querySelector(".iris-download__arch");
-  const subEl = root.querySelector(".iris-download__primary-sub");
-  if (!primaryLink || !primaryLabel) return;
-
-  // --- Platform sniff -------------------------------------------------------
-
-  function detect() {
-    const ua = navigator.userAgent || "";
-    const uaData = navigator.userAgentData;
-
-    let os = "macos";
-    let arch = "arm64";
-
-    if (uaData && uaData.platform) {
-      const p = uaData.platform.toLowerCase();
-      if (p.includes("win")) os = "windows";
-      else if (p.includes("mac")) os = "macos";
-      else if (p.includes("linux") || p.includes("android")) os = "linux";
-    } else {
-      if (/Windows/i.test(ua)) os = "windows";
-      else if (/Mac|Macintosh/i.test(ua)) os = "macos";
-      else if (/Linux|CrOS|Android/i.test(ua)) os = "linux";
-    }
-
-    // Arch best-effort. navigator.userAgentData exposes architecture on
-    // Chromium; elsewhere we fall back to "arm64" for macOS (overwhelming
-    // majority post-2020) and "x64" for Windows/Linux.
-    if (uaData && typeof uaData.getHighEntropyValues === "function") {
-      return uaData
-        .getHighEntropyValues(["architecture", "bitness"])
-        .then((hints) => {
-          if (hints && hints.architecture === "x86") arch = "x64";
-          else if (hints && hints.architecture === "arm") arch = "arm64";
-          else if (os === "macos") arch = "arm64";
-          else arch = "x64";
-          return { os, arch };
-        })
-        .catch(() => fallbackArch(os, ua));
-    }
-    return Promise.resolve(fallbackArch(os, ua));
+  if (root) {
+    enhanceDownload(root);
   }
 
-  function fallbackArch(os, ua) {
-    let arch = "x64";
-    if (os === "macos") {
-      arch = /Intel/i.test(ua) ? "x64" : "arm64";
-    } else if (/aarch64|arm64/i.test(ua)) {
-      arch = "arm64";
+  /* ------------------------------------------------------------------ *
+   * 2. Copy-to-clipboard for shell code blocks on every page            *
+   * ------------------------------------------------------------------ */
+
+  installCopyButtons();
+
+  // --------------------------------------------------------------------
+  // Primary download card
+  // --------------------------------------------------------------------
+
+  function enhanceDownload(root) {
+    const version = root.dataset.version || "0.1.0";
+    const base = root.dataset.releaseBase || "";
+    const repo = root.dataset.repo || "";
+    const primaryLink = root.querySelector("[data-primary-link]");
+    const primaryLabel = root.querySelector("[data-primary-label]");
+    const primaryBadge = root.querySelector("[data-primary-badge]");
+    const sizeEl = root.querySelector("[data-iris-size]");
+    const archEl = root.querySelector("[data-iris-arch]");
+    const minOsEl = root.querySelector("[data-iris-minos]");
+    const captionEl = root.querySelector("[data-iris-caption]");
+    const releaseEl = root.querySelector("[data-iris-release]");
+    const versionEl = root.querySelector("[data-iris-version]");
+    const reldateEl = root.querySelector("[data-iris-reldate]");
+    const notesEl = root.querySelector("[data-iris-notes]");
+    const primaryCard = root.querySelector(".iris-download__primary");
+
+    if (!primaryLink || !primaryLabel) return;
+
+    detect()
+      .then((platform) => applyPlatform(platform))
+      .catch(() => applyPlatform({ os: "macos", arch: "arm64" }));
+
+    if (repo) {
+      fetchLatestRelease(repo)
+        .then((rel) => applyRelease(rel))
+        .catch(() => {
+          // Keep the static defaults visible on fetch failure.
+        });
     }
-    return { os, arch };
+
+    prefetchOnHover(primaryLink);
+
+    // ----- Platform detection ---------------------------------------
+
+    function detect() {
+      const ua = navigator.userAgent || "";
+      const uaData = navigator.userAgentData;
+
+      let os = "macos";
+      if (uaData && uaData.platform) {
+        const p = uaData.platform.toLowerCase();
+        if (p.includes("win")) os = "windows";
+        else if (p.includes("mac")) os = "macos";
+        else if (p.includes("linux") || p.includes("android")) os = "linux";
+      } else {
+        if (/Windows/i.test(ua)) os = "windows";
+        else if (/Mac|Macintosh/i.test(ua)) os = "macos";
+        else if (/Linux|CrOS|Android/i.test(ua)) os = "linux";
+      }
+
+      if (uaData && typeof uaData.getHighEntropyValues === "function") {
+        return uaData
+          .getHighEntropyValues([
+            "architecture",
+            "bitness",
+            "platformVersion",
+          ])
+          .then((hints) => ({
+            os,
+            arch: archFromHints(os, hints),
+            platformVersion: hints && hints.platformVersion,
+          }))
+          .catch(() => ({ os, arch: archFallback(os, ua) }));
+      }
+      return Promise.resolve({ os, arch: archFallback(os, ua) });
+    }
+
+    function archFromHints(os, hints) {
+      if (!hints || !hints.architecture) {
+        return os === "macos" ? "arm64" : "x64";
+      }
+      if (hints.architecture === "x86") return "x64";
+      if (hints.architecture === "arm") return "arm64";
+      return os === "macos" ? "arm64" : "x64";
+    }
+
+    function archFallback(os, ua) {
+      if (os === "macos") return /Intel/i.test(ua) ? "x64" : "arm64";
+      if (/aarch64|arm64/i.test(ua)) return "arm64";
+      return "x64";
+    }
+
+    function artifactFor(os, arch) {
+      if (os === "macos") {
+        return {
+          file: `iris-${version}.pkg`,
+          label:
+            arch === "arm64"
+              ? "Download for macOS — Apple Silicon"
+              : "Download for macOS — Intel",
+          arch: arch === "arm64" ? "Apple Silicon" : "Intel Mac",
+          kind: "Signed + notarized .pkg (universal)",
+          size: "~48 MB",
+          minOs: "macOS 13 Ventura or newer",
+          badge: "Recommended for your Mac",
+        };
+      }
+      if (os === "windows") {
+        return {
+          file: `iris_${version}_x64-setup.exe`,
+          label: "Download for Windows",
+          arch: "x64",
+          kind: "NSIS installer · desktop app + CLI",
+          size: "~42 MB",
+          minOs: "Windows 10 1809 or newer",
+          badge: "Recommended for Windows",
+        };
+      }
+      if (os === "linux") {
+        return {
+          file: `iris_${version}_amd64.AppImage`,
+          label: "Download for Linux",
+          arch: arch === "arm64" ? "arm64" : "x64",
+          kind: "AppImage · portable, no install",
+          size: "~52 MB",
+          minOs: "glibc 2.31 or newer",
+          badge: "Recommended for Linux",
+        };
+      }
+      return null;
+    }
+
+    function applyPlatform({ os, arch, platformVersion }) {
+      const art = artifactFor(os, arch);
+      if (!art) {
+        finishSkeleton(false);
+        return;
+      }
+
+      primaryLink.href = `${base}/${art.file}`;
+      primaryLabel.textContent = art.label;
+      if (archEl) archEl.textContent = art.arch;
+      if (sizeEl) sizeEl.textContent = art.size;
+      if (minOsEl) minOsEl.textContent = art.minOs;
+      if (primaryBadge) primaryBadge.textContent = art.badge;
+
+      // Populate the platform caption.
+      if (captionEl) {
+        const osLabel = osDisplay(os);
+        const archLabel = art.arch;
+        const ver = platformVersion ? ` · ${osLabel} ${platformVersion}` : "";
+        captionEl.innerHTML =
+          `<span class="iris-download__caption-label">Detected:</span> ` +
+          `${osLabel} · ${archLabel}${ver}. ` +
+          `<a href="#other-platforms" class="iris-download__caption-link">Not right? See all downloads →</a>`;
+      }
+
+      root.setAttribute("data-detected-os", os);
+      root.setAttribute("data-detected-arch", arch);
+      finishSkeleton(true);
+    }
+
+    function osDisplay(os) {
+      if (os === "macos") return "macOS";
+      if (os === "windows") return "Windows";
+      if (os === "linux") return "Linux";
+      return os;
+    }
+
+    function finishSkeleton(ok) {
+      if (primaryCard) {
+        primaryCard.setAttribute("data-state", ok ? "ready" : "fallback");
+      }
+    }
+
+    // ----- GitHub release API ---------------------------------------
+
+    async function fetchLatestRelease(repo) {
+      const r = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+        headers: { Accept: "application/vnd.github+json" },
+        mode: "cors",
+      });
+      if (!r.ok) throw new Error(`GitHub API ${r.status}`);
+      const body = await r.json();
+      return {
+        tag: body.tag_name || "",
+        htmlUrl: body.html_url || "",
+        publishedAt: body.published_at || "",
+        assets: body.assets || [],
+      };
+    }
+
+    function applyRelease(rel) {
+      if (!rel || !releaseEl) return;
+
+      if (rel.tag && versionEl) {
+        versionEl.textContent = rel.tag.startsWith("v") ? rel.tag : `v${rel.tag}`;
+      }
+      if (rel.publishedAt && reldateEl) {
+        reldateEl.textContent = humanDate(rel.publishedAt);
+      }
+      if (rel.htmlUrl && notesEl) {
+        notesEl.href = rel.htmlUrl;
+      }
+
+      // Swap primary artifact size for the real thing if we can match it
+      // against a release asset.
+      if (rel.assets && rel.assets.length) {
+        const url = new URL(primaryLink.href);
+        const fname = url.pathname.split("/").pop();
+        const match = rel.assets.find((a) => a.name === fname);
+        if (match && sizeEl) {
+          sizeEl.textContent = humanSize(match.size);
+        }
+      }
+
+      releaseEl.removeAttribute("hidden");
+    }
+
+    function humanDate(iso) {
+      try {
+        const d = new Date(iso);
+        const now = new Date();
+        const diffDays = Math.round((now - d) / 86400000);
+        if (diffDays <= 0) return "released today";
+        if (diffDays === 1) return "released yesterday";
+        if (diffDays < 14) return `released ${diffDays} days ago`;
+        return `released ${d.toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        })}`;
+      } catch {
+        return "released recently";
+      }
+    }
+
+    function humanSize(bytes) {
+      if (!bytes) return "";
+      const mb = bytes / (1024 * 1024);
+      if (mb >= 10) return `${Math.round(mb)} MB`;
+      return `${mb.toFixed(1)} MB`;
+    }
+
+    // ----- Hover prefetch -------------------------------------------
+
+    function prefetchOnHover(link) {
+      let timer = null;
+      let prefetched = false;
+      link.addEventListener("pointerenter", () => {
+        if (prefetched || !link.href) return;
+        timer = window.setTimeout(() => {
+          const pre = document.createElement("link");
+          pre.rel = "prefetch";
+          pre.href = link.href;
+          pre.crossOrigin = "anonymous";
+          document.head.appendChild(pre);
+          prefetched = true;
+        }, 400);
+      });
+      link.addEventListener("pointerleave", () => {
+        if (timer !== null) window.clearTimeout(timer);
+        timer = null;
+      });
+    }
   }
 
-  // --- Artifact map ---------------------------------------------------------
+  // --------------------------------------------------------------------
+  // Copy-to-clipboard for shell code blocks
+  // --------------------------------------------------------------------
 
-  function artifactFor(os, arch) {
-    if (os === "macos" && arch === "arm64") {
-      return {
-        file: `iris-${version}.pkg`,
-        label: "Download for macOS — Apple Silicon",
-        arch: "Apple Silicon",
-        kind: "Signed + notarized .pkg",
-        size: "~48 MB",
-        minOs: "macOS 13 Ventura or newer",
-      };
-    }
-    if (os === "macos" && arch === "x64") {
-      return {
-        file: `iris-${version}.pkg`,
-        label: "Download for macOS — Intel",
-        arch: "Intel Mac",
-        kind: "Signed + notarized .pkg (universal)",
-        size: "~48 MB",
-        minOs: "macOS 13 Ventura or newer",
-      };
-    }
-    if (os === "windows") {
-      return {
-        file: `iris_${version}_x64-setup.exe`,
-        label: "Download for Windows",
-        arch: "x64",
-        kind: "NSIS installer · desktop app + CLI",
-        size: "~42 MB",
-        minOs: "Windows 10 1809 or newer",
-      };
-    }
-    if (os === "linux") {
-      return {
-        file: `iris_${version}_amd64.AppImage`,
-        label: "Download for Linux",
-        arch: arch === "arm64" ? "arm64" : "x64",
-        kind: "AppImage · portable, no install",
-        size: "~52 MB",
-        minOs: "glibc 2.31 or newer",
-      };
-    }
-    return null;
+  function installCopyButtons() {
+    if (!navigator.clipboard) return;
+
+    // Material for MkDocs already ships a Copy button on highlighted code
+    // blocks — we only add it where it's missing (e.g. inline <code>
+    // install commands rendered outside the Highlight extension's scope).
+    const sels = [
+      "pre > code.language-sh",
+      "pre > code.language-bash",
+      "pre > code.language-json",
+    ];
+    const already = ".highlight .md-clipboard";
+
+    document.querySelectorAll(sels.join(",")).forEach((code) => {
+      const pre = code.parentElement;
+      if (!pre || pre.querySelector(".iris-copy-btn")) return;
+      if (pre.closest(already)) return;
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "iris-copy-btn";
+      btn.setAttribute("aria-label", "Copy to clipboard");
+      btn.innerHTML =
+        '<svg class="icon icon-sm" aria-hidden="true"><use href="/iris-rs/assets/icons.svg#code"/></svg><span>Copy</span>';
+
+      btn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        try {
+          await navigator.clipboard.writeText(code.innerText);
+          const label = btn.querySelector("span");
+          const prior = label.textContent;
+          label.textContent = "Copied";
+          btn.classList.add("is-ok");
+          window.setTimeout(() => {
+            label.textContent = prior;
+            btn.classList.remove("is-ok");
+          }, 1400);
+        } catch {
+          // Permission denied or non-secure context — swallow.
+        }
+      });
+
+      pre.style.position = pre.style.position || "relative";
+      pre.appendChild(btn);
+    });
   }
-
-  // --- Apply ---------------------------------------------------------------
-
-  detect().then(({ os, arch }) => {
-    const art = artifactFor(os, arch);
-    if (!art) return;
-    primaryLink.href = `${base}/${art.file}`;
-    primaryLabel.textContent = art.label;
-    if (archEl) archEl.textContent = art.arch;
-    if (sizeEl) sizeEl.textContent = art.size;
-    if (subEl) {
-      subEl.innerHTML = `${art.kind} · <span data-iris-size>${art.size}</span> · ${art.minOs}`;
-    }
-    root.setAttribute("data-detected-os", os);
-    root.setAttribute("data-detected-arch", arch);
-  });
 })();
