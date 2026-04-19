@@ -107,6 +107,13 @@
   --radius-3xl: 24px;
   --radius-full: 9999px;
 
+  /* Layout container widths — used with `max-width`. Tiered from a
+     narrow prose column (FAQ / changelog rows) up to full hero width. */
+  --layout-narrow:  560px;   /* prose / FAQ / changelog */
+  --layout-prose:   720px;   /* install tree / download card */
+  --layout-content: 860px;   /* hero trace / observatory preview */
+  --layout-wide:    960px;   /* full landing preview mock */
+
   /* Shadows — soft on light, deeper on dark (dark override below) --- */
   --shadow-xs: 0 1px 2px rgb(17 24 39 / 0.03);
   --shadow-sm: 0 1px 2px rgb(17 24 39 / 0.04), 0 1px 1px rgb(17 24 39 / 0.03);
@@ -795,7 +802,7 @@
     --iris-app-fg:         #f1f5f9;  /* primary text — near-white, ~17:1 */
     --iris-app-fg-muted:   #d1d5db;  /* snippets, meta, ~12:1 */
     --iris-app-fg-subtle:  #9ca3af;  /* labels, dates, ~7:1 */
-    max-width: 960px;
+    max-width: var(--layout-wide);
     margin: calc(var(--spacing) * 10) auto calc(var(--spacing) * 6);
     border: 1px solid var(--color-code-border);
     border-radius: var(--radius-xl);
@@ -806,7 +813,7 @@
     font-family: inherit;
   }
   .iris-app-preview--download {
-    max-width: 720px;
+    max-width: var(--layout-prose);
     margin-top: calc(var(--spacing) * 10);
     margin-bottom: 0;
   }
@@ -1020,7 +1027,7 @@
   }
   .iris-app-preview__progress {
     background: color-mix(in srgb, var(--color-code-border) 60%, transparent);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     height: 6px;
     overflow: hidden;
     position: relative;
@@ -1033,7 +1040,7 @@
       var(--color-iris-400, var(--color-accent)),
       var(--color-iris-600, var(--color-accent-hover))
     );
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     animation: iris-app-preview-progress 3.2s ease-in-out infinite alternate;
   }
   @keyframes iris-app-preview-progress {
@@ -1087,7 +1094,7 @@
   /* ---------- Download page — changelog strip ---------- */
 
   .iris-changelog {
-    max-width: 720px;
+    max-width: var(--layout-prose);
     margin: calc(var(--spacing) * 4) auto 0;
     display: grid;
     gap: calc(var(--spacing) * 2);
@@ -1121,7 +1128,7 @@
     letter-spacing: 0.02em;
     color: var(--color-accent);
     padding: 2px 10px;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: color-mix(in srgb, var(--color-accent) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
     white-space: nowrap;
@@ -1171,7 +1178,7 @@
   /* ---------- Download page — FAQ accordion ---------- */
 
   .iris-faq {
-    max-width: 720px;
+    max-width: var(--layout-prose);
     margin: calc(var(--spacing) * 4) auto 0;
     display: grid;
     gap: calc(var(--spacing) * 2);
@@ -1282,7 +1289,7 @@
 
   .iris-download {
     margin: calc(var(--spacing) * 10) auto 0;
-    max-width: 720px;
+    max-width: var(--layout-prose);
   }
   .iris-download__primary {
     position: relative;
@@ -1319,7 +1326,7 @@
     display: inline-flex;
     align-items: center;
     padding: 4px 12px;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: color-mix(in srgb, var(--color-accent) 14%, transparent);
     color: var(--color-accent);
     border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
@@ -1529,7 +1536,7 @@
   /* ---- Install flow stepper ---- */
   .iris-install-flow {
     margin: calc(var(--spacing) * 12) auto 0;
-    max-width: 960px;
+    max-width: var(--layout-wide);
     padding: calc(var(--spacing) * 5) calc(var(--spacing) * 4);
     border-radius: var(--radius-xl);
     background:
@@ -1644,7 +1651,7 @@
   .iris-download__proof {
     margin: calc(var(--spacing) * 3) auto 0 !important;
     padding: 6px 14px;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: color-mix(in srgb, var(--color-success) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent);
     color: color-mix(in srgb, var(--color-success) 70%, var(--color-text) 30%);
@@ -1747,7 +1754,7 @@
     align-items: center;
     gap: calc(var(--spacing) * 2);
     padding: 4px 4px 4px calc(var(--spacing) * 4);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: color-mix(in srgb, var(--color-surface) 85%, transparent);
     backdrop-filter: saturate(180%) blur(14px);
     -webkit-backdrop-filter: saturate(180%) blur(14px);
@@ -1771,7 +1778,7 @@
     align-items: center;
     gap: calc(var(--spacing) * 2);
     padding: calc(var(--spacing) * 2) calc(var(--spacing) * 4);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: var(--color-accent);
     color: var(--color-accent-fg-on) !important;
     text-decoration: none !important;
@@ -1803,7 +1810,7 @@
        link it's attached to. */
     width: 36px;
     height: 36px;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     border: none;
     background: transparent;
     color: var(--color-text-muted);
@@ -1857,7 +1864,7 @@
 
   /* ---- Filesystem install tree ---- */
   .iris-install-tree {
-    max-width: 720px;
+    max-width: var(--layout-prose);
     margin: calc(var(--spacing) * 4) auto 0;
     padding: calc(var(--spacing) * 5) calc(var(--spacing) * 6);
     border-radius: var(--radius-lg);
@@ -1897,7 +1904,7 @@
     font-style: italic;
   }
   .iris-install-tree__footer {
-    max-width: 720px;
+    max-width: var(--layout-prose);
     margin: calc(var(--spacing) * 3) auto 0 !important;
     text-align: center;
     color: var(--color-text-muted);
@@ -1984,7 +1991,7 @@
   /* ---------- 404 page ---------- */
 
   .iris-404 {
-    max-width: 560px;
+    max-width: var(--layout-narrow);
     margin: calc(var(--spacing) * 20) auto calc(var(--spacing) * 24);
     text-align: center;
     padding: 0 calc(var(--spacing) * 4);
@@ -2106,7 +2113,7 @@
     margin: 0;
     color: var(--color-text-muted);
     font-size: var(--text-base);
-    max-width: 560px;
+    max-width: var(--layout-narrow);
     margin-left: auto;
     margin-right: auto;
     text-wrap: balance;
@@ -2422,7 +2429,7 @@
 
   .iris-trace {
     margin: calc(var(--spacing) * 4) auto calc(var(--spacing) * 12);
-    max-width: 860px;
+    max-width: var(--layout-content);
   }
   .iris-trace pre {
     position: relative;
@@ -2479,7 +2486,7 @@
   .iris-trace-live {
     position: relative;
     margin: calc(var(--spacing) * 4) auto calc(var(--spacing) * 12);
-    max-width: 860px;
+    max-width: var(--layout-content);
     background: linear-gradient(
       180deg,
       color-mix(in srgb, var(--color-code-bg) 100%, transparent) 0%,
@@ -2569,7 +2576,7 @@
     position: relative;
     width: 120px;
     height: 6px;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: color-mix(in srgb, var(--color-code-border) 60%, transparent);
     overflow: hidden;
   }
@@ -2650,7 +2657,7 @@
     letter-spacing: 0.14em;
     text-transform: uppercase;
     padding: 2px 8px;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     border: 1px solid currentColor;
     font-weight: 600;
   }
@@ -2864,7 +2871,7 @@
     padding: calc(var(--spacing) * 5);
     overflow-x: auto;
     margin: calc(var(--spacing) * 5) auto;
-    max-width: 860px;
+    max-width: var(--layout-content);
   }
 
   /* =====================================================
@@ -3231,7 +3238,7 @@
    Responsive
    ===================================================== */
 
-@media (max-width: 768px) {
+@media (max-width: 720px) {
   .iris-hero {
     padding: calc(var(--spacing) * 12) 0 calc(var(--spacing) * 8);
   }
