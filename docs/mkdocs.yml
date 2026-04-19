@@ -65,6 +65,7 @@ extra_javascript:
   - javascripts/shortcuts.js
   - javascripts/reading-progress.js
   - javascripts/diagrams.js
+  - javascripts/download.js
   - assets/js/chartjs.min.js
   - javascripts/charts.js
 
@@ -125,6 +126,7 @@ hooks:
 
 nav:
   - Home: index.md
+  - Download: download.md
   - Getting started:
       - Installation: installation.md
       - Quick start: getting-started.md

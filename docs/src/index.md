@@ -373,9 +373,18 @@ language boundaries with [`iris_references`](tools/references.md).
     Install
   </span>
   <h2>Get started in 30 seconds</h2>
+  <p>The signed PKG installer drops the desktop app in <code>/Applications</code> and the CLI on your <code>PATH</code> — one click, no terminal.</p>
 </div>
 
-=== ":material-apple: macOS"
+<div class="iris-hero__ctas" style="justify-content: center; margin: 0 auto calc(var(--spacing) * 8);">
+  <a class="iris-hero__cta iris-hero__cta--primary" href="download/">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
+    Download iris
+  </a>
+  <a class="iris-hero__cta iris-hero__cta--secondary" href="installation/">All install methods</a>
+</div>
+
+=== ":material-apple: macOS (CLI only)"
 
     ```sh
     curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
@@ -392,8 +401,6 @@ language boundaries with [`iris_references`](tools/references.md).
     ```sh
     cargo install --git https://github.com/AlrikOlson/iris-rs iris-cli
     ```
-
-A Homebrew tap and crates.io publish land with 1.0.
 
 Then initialize and connect:
 
