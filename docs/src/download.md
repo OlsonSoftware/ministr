@@ -114,7 +114,7 @@ hide:
   </div>
 
   <details class="iris-download__alt">
-    <summary>Other macOS options</summary>
+    <summary><span class="iris-download__alt-marker" aria-hidden="true">›</span>Other macOS options</summary>
     <ul class="iris-download__alt-list">
       <li>
         <a href="https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris___IRIS_VERSION___x64.dmg">

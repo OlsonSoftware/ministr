@@ -1336,18 +1336,26 @@
     align-items: center;
     gap: 6px;
   }
-  .iris-download__alt > summary::before {
-    content: "›";
+  /* Material's theme paints summary::before with a blue background +
+     masked pencil SVG. Tailwind v4's minifier strips our reset
+     properties, so instead of fighting ::before we hide it entirely
+     and use an explicit <span> marker inside the summary. */
+  .iris-download__alt > summary::before,
+  .iris-download__alt > summary::after {
+    content: none !important;
+    display: none !important;
+  }
+  .iris-download__alt > summary::-webkit-details-marker {
+    display: none;
+  }
+  .iris-download__alt-marker {
     display: inline-block;
     transform: rotate(0deg);
     transition: transform var(--duration-fast) var(--ease-standard);
     font-weight: 600;
   }
-  .iris-download__alt[open] > summary::before {
+  .iris-download__alt[open] > summary .iris-download__alt-marker {
     transform: rotate(90deg);
-  }
-  .iris-download__alt > summary::-webkit-details-marker {
-    display: none;
   }
   .iris-download__alt-list {
     list-style: none !important;
