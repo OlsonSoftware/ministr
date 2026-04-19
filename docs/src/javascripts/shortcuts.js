@@ -26,11 +26,13 @@
     b: { label: "Benchmarks", target: () => url("benchmarks/") },
     c: { label: "Configuration", target: () => url("configuration/") },
     s: { label: "Getting started", target: () => url("getting-started/") },
+    d: { label: "Download", target: () => url("download/") },
   };
 
   const SHORTCUTS = [
     { keys: ["⌘", "K"], label: "Open command palette" },
     { keys: ["g", "h"], label: "Go to Home" },
+    { keys: ["g", "d"], label: "Go to Download" },
     { keys: ["g", "t"], label: "Go to Tool reference" },
     { keys: ["g", "a"], label: "Go to Architecture" },
     { keys: ["g", "b"], label: "Go to Benchmarks" },
