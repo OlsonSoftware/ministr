@@ -21,6 +21,13 @@ hide:
   background agent so the daemon is always ready when your MCP client connects.
 </p>
 
+<ul class="iris-trust-strip" aria-label="Trust signals">
+  <li><svg class="icon icon-sm"><use href="assets/icons.svg#shield-check-fill"/></svg> Apple-signed + notarized</li>
+  <li><svg class="icon icon-sm"><use href="assets/icons.svg#cpu"/></svg> 100% local — no telemetry</li>
+  <li><svg class="icon icon-sm"><use href="assets/icons.svg#code"/></svg> Open source · MIT / Apache-2.0</li>
+  <li><svg class="icon icon-sm"><use href="assets/icons.svg#lightning"/></svg> Universal binary · arm64 + x64</li>
+</ul>
+
 <aside
   class="iris-download-sticky"
   data-iris-download-sticky
@@ -292,6 +299,75 @@ shasum -a 256 -c iris-0.1.0.pkg.sha256
 
 All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](https://github.com/AlrikOlson/iris-rs/releases).
 
+<div class="iris-section-header" id="faq">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#compass-tool"/></svg>
+    FAQ
+  </span>
+  <h2>Common questions</h2>
+  <p>What new users ask before hitting download. Click a question to expand.</p>
+</div>
+
+<div class="iris-faq">
+
+<details class="iris-faq__item">
+  <summary>Does iris phone home or send data anywhere?</summary>
+  <div markdown>
+No. The daemon listens on a local Unix domain socket, embeddings run locally via ONNX (optionally Metal-accelerated), and the vector index lives on disk under `~/.iris/`. The only network activity iris initiates is `iris_fetch` / `iris_clone` when you explicitly ask it to add web or Git sources to your corpus. No telemetry, no analytics, no update pings.
+  </div>
+</details>
+
+<details class="iris-faq__item">
+  <summary>Do I need the desktop app, or can I just use the CLI?</summary>
+  <div markdown>
+Either works. The MCP proxy ships as `iris` on your `PATH` and is the only piece your agent talks to. The desktop app is an optional observatory that attaches to the same daemon — it's useful for inspecting corpora, replaying sessions, and tuning configuration visually. If you're headless on a server, grab the CLI-only tarball instead.
+  </div>
+</details>
+
+<details class="iris-faq__item">
+  <summary>PKG or DMG — which should I pick?</summary>
+  <div markdown>
+The PKG is recommended because it wires the CLI into `/usr/local/bin/iris` and registers `/etc/paths.d/iris` during install, so `iris` works in any terminal immediately. The DMG drags `iris.app` into Applications, and the app installs the CLI to `~/.iris/bin/iris` on first launch — functionally equivalent, but the shell profile edit happens async instead of during install.
+  </div>
+</details>
+
+<details class="iris-faq__item">
+  <summary>Does iris work with Cursor / Zed / Windsurf / Continue / Cline?</summary>
+  <div markdown>
+Yes. iris speaks the [Model Context Protocol](https://modelcontextprotocol.io) over stdio JSON-RPC. Any MCP-compatible client can connect by registering the `iris` command. See the [client setup guide](client-setup.md) for tested configurations, or just run `iris --mcp` and point any MCP client at it.
+  </div>
+</details>
+
+<details class="iris-faq__item">
+  <summary>How much disk space does iris use?</summary>
+  <div markdown>
+The binary itself is ~14 MB. The desktop app bundle is ~35 MB. Per-corpus storage depends on the size of what you index — a 10k-file codebase typically lands around 150–300 MB (content DB + HNSW index + symbol index). Embeddings are quantized int8, which keeps the vector store small. See the [benchmarks page](benchmarks.md) for reference sizes.
+  </div>
+</details>
+
+<details class="iris-faq__item">
+  <summary>Does the installer need admin / sudo?</summary>
+  <div markdown>
+The PKG does — writing to `/Applications` and `/usr/local/bin` requires root. macOS will prompt once with Touch ID or password. The DMG and the CLI tarball don't need admin: DMG lets you drag to a user-level Applications folder, and the tarball can extract anywhere on your `PATH`. If you're on a locked-down work laptop, `curl | bash` the install script — it falls back to `~/.local/bin` automatically when `/usr/local/bin` isn't writable.
+  </div>
+</details>
+
+<details class="iris-faq__item">
+  <summary>Does iris cost anything?</summary>
+  <div markdown>
+No. iris is free and open source under MIT OR Apache-2.0. No paid tier, no license server, no vendor lock-in. You can fork it, embed it, ship it as part of your own product — both licenses permit that.
+  </div>
+</details>
+
+<details class="iris-faq__item">
+  <summary>How do updates work?</summary>
+  <div markdown>
+Pull the next PKG / DMG from the releases page and run it — the installer overwrites the app bundle and CLI in place. The session shadow, corpora, and indexed content in `~/.iris/` are preserved across upgrades. If you installed via Homebrew (post-1.0) or the shell install script, `brew upgrade iris` / re-running the install script does the same job.
+  </div>
+</details>
+
+</div>
+
 <div class="iris-section-header">
   <span class="iris-section-header__eyebrow">
     <svg class="icon icon-sm"><use href="assets/icons.svg#x"/></svg>
@@ -325,3 +401,104 @@ All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](htt
 === "Windows"
 
     Control Panel → Programs → Uninstall **iris**. Remove `%APPDATA%\iris` for a full wipe.
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://AlrikOlson.github.io/iris-rs/#iris",
+      "name": "iris",
+      "operatingSystem": "macOS 13, Windows 10, Linux (glibc 2.31+)",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "MCP server · Context cache for LLM agents",
+      "description": "Context cache for LLM agents — MCP server with semantic search, code navigation, session tracking, and budget awareness. Includes a desktop observatory app and a CLI in a single installer.",
+      "softwareVersion": "0.1.0",
+      "downloadUrl": "https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris-0.1.0.pkg",
+      "installUrl": "https://AlrikOlson.github.io/iris-rs/download/",
+      "releaseNotes": "https://github.com/AlrikOlson/iris-rs/releases/latest",
+      "license": "https://github.com/AlrikOlson/iris-rs/blob/main/LICENSE-MIT",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "author": {
+        "@type": "Person",
+        "name": "Alrik Olson",
+        "url": "https://github.com/AlrikOlson"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does iris phone home or send data anywhere?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. The daemon listens on a local Unix domain socket, embeddings run locally via ONNX (optionally Metal-accelerated), and the vector index lives on disk under ~/.iris/. The only network activity iris initiates is iris_fetch / iris_clone when you explicitly ask it to add web or Git sources to your corpus. No telemetry, no analytics, no update pings."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need the desktop app, or can I just use the CLI?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Either works. The MCP proxy ships as iris on your PATH and is the only piece your agent talks to. The desktop app is an optional observatory that attaches to the same daemon — it's useful for inspecting corpora, replaying sessions, and tuning configuration visually."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "PKG or DMG — which should I pick?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The PKG is recommended because it wires the CLI into /usr/local/bin/iris and registers /etc/paths.d/iris during install, so iris works in any terminal immediately. The DMG drags iris.app into Applications, and the app installs the CLI on first launch."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does iris work with Cursor, Zed, Windsurf, Continue, or Cline?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. iris speaks the Model Context Protocol over stdio JSON-RPC. Any MCP-compatible client can connect by registering the iris command."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How much disk space does iris use?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The binary is ~14 MB, the desktop app bundle is ~35 MB, and per-corpus storage depends on what you index — a 10k-file codebase typically lands around 150–300 MB. Embeddings are quantized int8 to keep the vector store small."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the installer need admin or sudo?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The PKG does — writing to /Applications and /usr/local/bin requires root. macOS prompts once with Touch ID or password. The DMG and CLI tarball don't need admin: drag to Applications, or extract anywhere on PATH. The shell install script falls back to ~/.local/bin when /usr/local/bin isn't writable."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does iris cost anything?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. iris is free and open source under MIT OR Apache-2.0. No paid tier, no license server, no vendor lock-in."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do updates work?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Pull the next PKG or DMG from the releases page and run it — the installer overwrites the app bundle and CLI in place. Session shadow, corpora, and indexed content in ~/.iris/ are preserved across upgrades."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>

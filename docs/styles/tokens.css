@@ -744,6 +744,126 @@
     height: auto;
   }
 
+  /* ---------- Download page — trust strip ---------- */
+
+  .iris-trust-strip {
+    list-style: none !important;
+    margin: calc(var(--spacing) * 6) auto 0 !important;
+    padding: 0 !important;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: calc(var(--spacing) * 4);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    letter-spacing: 0.02em;
+  }
+  .iris-trust-strip li {
+    margin: 0 !important;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .iris-trust-strip .icon {
+    color: var(--color-accent);
+    opacity: 0.7;
+    width: 13px;
+    height: 13px;
+  }
+
+  /* ---------- Download page — FAQ accordion ---------- */
+
+  .iris-faq {
+    max-width: 720px;
+    margin: calc(var(--spacing) * 4) auto 0;
+    display: grid;
+    gap: calc(var(--spacing) * 2);
+  }
+  .iris-faq__item {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    overflow: hidden;
+    transition: border-color var(--duration-fast) var(--ease-standard);
+  }
+  .iris-faq__item:hover {
+    border-color: color-mix(in srgb, var(--color-accent-ring) 60%, var(--color-border) 40%);
+  }
+  .iris-faq__item[open] {
+    border-color: var(--color-accent-ring);
+    background: color-mix(in srgb, var(--color-accent) 2%, var(--color-surface));
+  }
+  .iris-faq__item > summary {
+    list-style: none !important;
+    cursor: pointer;
+    padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5);
+    font-weight: 500;
+    font-size: var(--text-base);
+    color: var(--color-text);
+    display: flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 3);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+  }
+  .iris-faq__item > summary::-webkit-details-marker {
+    display: none;
+  }
+  .iris-faq__item > summary::before {
+    content: "+";
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+    color: var(--color-accent);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 0;
+    transition: transform var(--duration-fast) var(--ease-standard);
+  }
+  .iris-faq__item[open] > summary::before {
+    content: "−";
+  }
+  .iris-faq__item > summary:hover {
+    background: color-mix(in srgb, var(--color-accent) 3%, transparent);
+  }
+  .iris-faq__item > div {
+    padding: 0 calc(var(--spacing) * 5) calc(var(--spacing) * 4) calc(var(--spacing) * 5);
+    margin-left: calc(var(--spacing) * 6 + 24px);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    line-height: 1.6;
+  }
+  .iris-faq__item > div p {
+    margin: 0 0 calc(var(--spacing) * 2) 0 !important;
+  }
+  .iris-faq__item > div p:last-child {
+    margin-bottom: 0 !important;
+  }
+  .iris-faq__item > div a {
+    color: var(--color-accent) !important;
+  }
+  .iris-faq__item > div code {
+    font-size: calc(var(--text-sm) - 1px);
+    padding: 1px 5px;
+  }
+  @media (max-width: 720px) {
+    .iris-faq__item > div {
+      padding: 0 calc(var(--spacing) * 4) calc(var(--spacing) * 4);
+      margin-left: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .iris-faq__item,
+    .iris-faq__item > summary,
+    .iris-faq__item > summary::before {
+      transition: none;
+    }
+  }
+
   /* ---------- Download page — hero download card ---------- */
 
   .iris-download {
