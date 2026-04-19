@@ -35,7 +35,7 @@ hide:
   aria-label="Sticky download link"
   hidden
 >
-  <a class="iris-download-sticky__link" data-primary-mirror href="#"
+  <a class="iris-download-sticky__link" data-primary-mirror href="https://github.com/AlrikOlson/iris-rs/releases/latest"
     ><svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
     <span>
       <span class="iris-download-sticky__label" data-mirror-label>Download iris</span>
@@ -53,7 +53,7 @@ hide:
 <div
   class="iris-download"
   data-iris-download
-  data-version="0.1.0"
+  data-version="__IRIS_VERSION__"
   data-repo="AlrikOlson/iris-rs"
   data-release-base="https://github.com/AlrikOlson/iris-rs/releases/latest/download"
 >
@@ -74,7 +74,7 @@ hide:
   <a
     class="iris-hero__cta iris-hero__cta--primary iris-download__cta"
     data-primary-link
-    href="https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris-0.1.0.pkg"
+    href="https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris-__IRIS_VERSION__.pkg"
   >
     <svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
     <span data-primary-label>Download for macOS</span>
@@ -101,7 +101,7 @@ hide:
     <div class="iris-download__release-line">
       <span class="iris-download__release-item">
         <svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
-        <span data-iris-version>v0.1.0</span>
+        <span data-iris-version>v__IRIS_VERSION__</span>
       </span>
       <span class="iris-download__release-sep">·</span>
       <span class="iris-download__release-item" data-iris-reldate>released recently</span>
@@ -118,12 +118,12 @@ hide:
     <summary>Other macOS options</summary>
     <ul class="iris-download__alt-list">
       <li>
-        <a href="https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris_0.1.0_x64.dmg">
+        <a href="https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris___IRIS_VERSION___x64.dmg">
           <strong>Intel Mac DMG</strong> — drag-to-install, CLI set up on first launch
         </a>
       </li>
       <li>
-        <a href="https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris_0.1.0_aarch64.dmg">
+        <a href="https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris___IRIS_VERSION___aarch64.dmg">
           <strong>Apple Silicon DMG</strong> — drag-to-install alternative to the PKG
         </a>
       </li>
@@ -352,15 +352,15 @@ hide:
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#package"/></svg> Linux
-- [`iris_0.1.0_amd64.deb`](https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris_0.1.0_amd64.deb) — Debian / Ubuntu
-- [`iris_0.1.0_amd64.AppImage`](https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris_0.1.0_amd64.AppImage) — portable, no install
+- [`iris___IRIS_VERSION___amd64.deb`](https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris___IRIS_VERSION___amd64.deb) — Debian / Ubuntu
+- [`iris___IRIS_VERSION___amd64.AppImage`](https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris___IRIS_VERSION___amd64.AppImage) — portable, no install
 - [`iris-x86_64-unknown-linux-gnu.tar.gz`](https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris-x86_64-unknown-linux-gnu.tar.gz) — CLI only
 - [`iris-aarch64-unknown-linux-gnu.tar.gz`](https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris-aarch64-unknown-linux-gnu.tar.gz) — CLI, ARM64
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#package"/></svg> Windows
-- [`iris_0.1.0_x64-setup.exe`](https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris_0.1.0_x64-setup.exe) — NSIS installer, desktop app + CLI
+- [`iris___IRIS_VERSION___x64-setup.exe`](https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris___IRIS_VERSION___x64-setup.exe) — NSIS installer, desktop app + CLI
 - [`iris-x86_64-pc-windows-msvc.zip`](https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris-x86_64-pc-windows-msvc.zip) — CLI only
 </div>
 
@@ -392,7 +392,7 @@ Requires Rust 1.85+. Homebrew tap and `crates.io` publish land with 1.0.
 </div>
 
 ```sh
-shasum -a 256 -c iris-0.1.0.pkg.sha256
+shasum -a 256 -c iris-__IRIS_VERSION__.pkg.sha256
 ```
 
 All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](https://github.com/AlrikOlson/iris-rs/releases).
@@ -413,7 +413,7 @@ All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](htt
   data-fallback
 >
   <div class="iris-changelog__item iris-changelog__item--skeleton" aria-hidden="true">
-    <span class="iris-changelog__tag">v0.1.0</span>
+    <span class="iris-changelog__tag">v__IRIS_VERSION__</span>
     <span class="iris-changelog__date">—</span>
     <span class="iris-changelog__body">Loading recent releases…</span>
   </div>
@@ -537,8 +537,8 @@ Pull the next PKG / DMG from the releases page and run it — the installer over
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "MCP server · Context cache for LLM agents",
       "description": "Context cache for LLM agents — MCP server with semantic search, code navigation, session tracking, and budget awareness. Includes a desktop observatory app and a CLI in a single installer.",
-      "softwareVersion": "0.1.0",
-      "downloadUrl": "https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris-0.1.0.pkg",
+      "softwareVersion": "__IRIS_VERSION__",
+      "downloadUrl": "https://github.com/AlrikOlson/iris-rs/releases/latest/download/iris-__IRIS_VERSION__.pkg",
       "installUrl": "https://AlrikOlson.github.io/iris-rs/download/",
       "releaseNotes": "https://github.com/AlrikOlson/iris-rs/releases/latest",
       "license": "https://github.com/AlrikOlson/iris-rs/blob/main/LICENSE-MIT",

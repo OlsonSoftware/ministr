@@ -123,6 +123,7 @@ plugins:
 # URL normalizer crashing on SVGUseElement.href setter.
 hooks:
   - hooks/inline_icons.py
+  - hooks/iris_version.py
 
 nav:
   - Home: index.md

@@ -1446,48 +1446,6 @@
     }
   }
 
-  /* ---- Copy-to-clipboard button ---- */
-  .iris-copy-btn {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    border-radius: var(--radius-md);
-    border: 1px solid color-mix(in srgb, var(--color-code-border) 60%, transparent);
-    background: color-mix(in srgb, var(--color-code-bg) 96%, transparent);
-    color: var(--color-text-muted);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    cursor: pointer;
-    opacity: 0;
-    transition:
-      opacity var(--duration-fast) var(--ease-standard),
-      color var(--duration-fast) var(--ease-standard),
-      border-color var(--duration-fast) var(--ease-standard);
-  }
-  pre:hover > .iris-copy-btn,
-  pre:focus-within > .iris-copy-btn,
-  .iris-copy-btn:focus-visible {
-    opacity: 1;
-  }
-  .iris-copy-btn:hover {
-    color: var(--color-text);
-    border-color: var(--color-accent-ring);
-  }
-  .iris-copy-btn.is-ok {
-    color: #34d399;
-    border-color: color-mix(in srgb, #34d399 40%, transparent);
-    opacity: 1;
-  }
-  .iris-copy-btn .icon {
-    width: 12px;
-    height: 12px;
-  }
-
   /* ---- Install flow stepper ---- */
   .iris-install-flow {
     margin: calc(var(--spacing) * 12) auto 0;

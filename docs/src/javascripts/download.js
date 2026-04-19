@@ -7,14 +7,13 @@
 //   • fetches the latest GitHub release via the public API to replace
 //     the hard-coded version + date with live values and link the
 //     "What's new" button to the matching release notes.
-//   • wires copy-to-clipboard affordances on shell `<code>` blocks so
-//     users can grab the curl/claude-mcp commands in one click.
-//   • speculatively prefetches the primary artifact on link hover so
+//   • opens a DNS + TLS preconnect to the release host on hover, so
 //     the actual download feels instantaneous.
 //
-// Everything fails silently — if the fetch is blocked, the detection
-// fails, or clipboard access is denied, the page still works from the
-// static HTML fallback.
+// Everything fails silently — if the fetch is blocked or detection
+// fails, the page still works from the static HTML fallback. Copy-to-
+// clipboard is handled by Material's built-in content.code.copy feature;
+// no custom copy button here.
 
 (function () {
   "use strict";
@@ -37,12 +36,6 @@
   if (changelog) {
     installChangelogStrip(changelog);
   }
-
-  /* ------------------------------------------------------------------ *
-   * 2. Copy-to-clipboard for shell code blocks on every page            *
-   * ------------------------------------------------------------------ */
-
-  installCopyButtons();
 
   // --------------------------------------------------------------------
   // Primary download card
@@ -632,53 +625,4 @@
     }
   }
 
-  // --------------------------------------------------------------------
-  // Copy-to-clipboard for shell code blocks
-  // --------------------------------------------------------------------
-
-  function installCopyButtons() {
-    if (!navigator.clipboard) return;
-
-    // Material for MkDocs already ships a Copy button on highlighted code
-    // blocks — we only add it where it's missing (e.g. inline <code>
-    // install commands rendered outside the Highlight extension's scope).
-    const sels = [
-      "pre > code.language-sh",
-      "pre > code.language-bash",
-      "pre > code.language-json",
-    ];
-    const already = ".highlight .md-clipboard";
-
-    document.querySelectorAll(sels.join(",")).forEach((code) => {
-      const pre = code.parentElement;
-      if (!pre || pre.querySelector(".iris-copy-btn")) return;
-      if (pre.closest(already)) return;
-
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "iris-copy-btn";
-      btn.setAttribute("aria-label", "Copy to clipboard");
-      btn.innerHTML = '<span aria-hidden="true">⎘</span><span>Copy</span>';
-
-      btn.addEventListener("click", async (e) => {
-        e.preventDefault();
-        try {
-          await navigator.clipboard.writeText(code.innerText);
-          const label = btn.querySelector("span");
-          const prior = label.textContent;
-          label.textContent = "Copied";
-          btn.classList.add("is-ok");
-          window.setTimeout(() => {
-            label.textContent = prior;
-            btn.classList.remove("is-ok");
-          }, 1400);
-        } catch {
-          // Permission denied or non-secure context — swallow.
-        }
-      });
-
-      pre.style.position = pre.style.position || "relative";
-      pre.appendChild(btn);
-    });
-  }
 })();
