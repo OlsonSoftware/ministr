@@ -30,6 +30,15 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * Recent-releases changelog strip                                    *
+   * ------------------------------------------------------------------ */
+
+  const changelog = document.querySelector("[data-iris-changelog]");
+  if (changelog) {
+    installChangelogStrip(changelog);
+  }
+
+  /* ------------------------------------------------------------------ *
    * 2. Copy-to-clipboard for shell code blocks on every page            *
    * ------------------------------------------------------------------ */
 
@@ -504,6 +513,104 @@
         io.disconnect();
         mo.disconnect();
       });
+    }
+  }
+
+  // --------------------------------------------------------------------
+  // Recent-releases changelog strip
+  // --------------------------------------------------------------------
+
+  function installChangelogStrip(root) {
+    const repo = root.dataset.repo;
+    if (!repo) return;
+
+    fetch(`https://api.github.com/repos/${repo}/releases?per_page=3`, {
+      headers: { Accept: "application/vnd.github+json" },
+      mode: "cors",
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((releases) => render(releases))
+      .catch(() => {
+        // Leave the static fallback visible — "See full changelog →" link.
+      });
+
+    function render(releases) {
+      if (!Array.isArray(releases) || releases.length === 0) return;
+
+      // Drop the skeleton + fallback-only state before inserting real rows.
+      root
+        .querySelectorAll(".iris-changelog__item--skeleton")
+        .forEach((el) => el.remove());
+
+      const frag = document.createDocumentFragment();
+      for (const rel of releases.slice(0, 3)) {
+        frag.appendChild(renderItem(rel));
+      }
+
+      // Insert real items before the static "full changelog" link so it
+      // stays at the bottom.
+      const fallback = root.querySelector(".iris-changelog__fallback");
+      if (fallback) {
+        root.insertBefore(frag, fallback);
+      } else {
+        root.appendChild(frag);
+      }
+      root.setAttribute("data-state", "ready");
+    }
+
+    function renderItem(rel) {
+      const a = document.createElement("a");
+      a.className = "iris-changelog__item";
+      a.href = rel.html_url || `https://github.com/${repo}/releases`;
+      a.setAttribute("rel", "noopener");
+
+      const tag = document.createElement("span");
+      tag.className = "iris-changelog__tag";
+      tag.textContent = (rel.tag_name || "v?").replace(/^v?/, "v");
+
+      const date = document.createElement("span");
+      date.className = "iris-changelog__date";
+      date.textContent = rel.published_at
+        ? shortDate(rel.published_at)
+        : "";
+
+      const body = document.createElement("span");
+      body.className = "iris-changelog__body";
+      body.textContent = extractFirstLine(rel.body) || rel.name || "Release notes";
+
+      a.append(tag, date, body);
+      return a;
+    }
+
+    function shortDate(iso) {
+      try {
+        return new Date(iso).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+      } catch {
+        return "";
+      }
+    }
+
+    function extractFirstLine(body) {
+      if (!body) return "";
+      const lines = body.split(/\r?\n/).map((l) => l.trim());
+      for (const line of lines) {
+        if (!line) continue;
+        if (/^#{1,6}\s/.test(line)) continue;
+        if (/^[-*_]{3,}\s*$/.test(line)) continue;
+        let text = line.replace(/^[-*+]\s+/, "").replace(/^\d+\.\s+/, "");
+        text = text
+          .replace(/`([^`]+)`/g, "$1")
+          .replace(/\*\*([^*]+)\*\*/g, "$1")
+          .replace(/\*([^*]+)\*/g, "$1")
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+        if (text.length > 140) text = text.slice(0, 137) + "…";
+        return text;
+      }
+      return "";
     }
   }
 

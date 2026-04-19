@@ -299,6 +299,31 @@ shasum -a 256 -c iris-0.1.0.pkg.sha256
 
 All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](https://github.com/AlrikOlson/iris-rs/releases).
 
+<div class="iris-section-header" id="changelog">
+  <span class="iris-section-header__eyebrow">
+    <svg class="icon icon-sm"><use href="assets/icons.svg#sparkle-fill"/></svg>
+    Recent releases
+  </span>
+  <h2>What's shipped lately</h2>
+  <p>Pulled live from GitHub. Older versions and full changelogs are on the releases page.</p>
+</div>
+
+<div
+  class="iris-changelog"
+  data-iris-changelog
+  data-repo="AlrikOlson/iris-rs"
+  data-fallback
+>
+  <div class="iris-changelog__item iris-changelog__item--skeleton" aria-hidden="true">
+    <span class="iris-changelog__tag">v0.1.0</span>
+    <span class="iris-changelog__date">—</span>
+    <span class="iris-changelog__body">Loading recent releases…</span>
+  </div>
+  <p class="iris-changelog__fallback">
+    <a href="https://github.com/AlrikOlson/iris-rs/releases">See the full changelog on GitHub →</a>
+  </p>
+</div>
+
 <div class="iris-section-header" id="faq">
   <span class="iris-section-header__eyebrow">
     <svg class="icon icon-sm"><use href="assets/icons.svg#compass-tool"/></svg>

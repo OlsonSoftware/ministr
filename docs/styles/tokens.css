@@ -771,6 +771,90 @@
     height: 13px;
   }
 
+  /* ---------- Download page — changelog strip ---------- */
+
+  .iris-changelog {
+    max-width: 720px;
+    margin: calc(var(--spacing) * 4) auto 0;
+    display: grid;
+    gap: calc(var(--spacing) * 2);
+  }
+  .iris-changelog__item {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    gap: calc(var(--spacing) * 4);
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text) !important;
+    text-decoration: none !important;
+    border-bottom: 1px solid var(--color-border) !important;
+    transition: border-color var(--duration-fast) var(--ease-standard);
+  }
+  .iris-changelog__item:hover {
+    border-color: var(--color-accent-ring);
+  }
+  .iris-changelog__item--skeleton {
+    opacity: 0.5;
+    pointer-events: none;
+    border-style: dashed;
+  }
+  .iris-changelog__tag {
+    font-family: var(--font-mono);
+    font-size: calc(var(--text-xs) + 1px);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--color-accent);
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+    white-space: nowrap;
+  }
+  .iris-changelog__date {
+    color: var(--color-text-subtle);
+    font-size: var(--text-xs);
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .iris-changelog__body {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .iris-changelog__fallback {
+    margin: calc(var(--spacing) * 2) auto 0 !important;
+    text-align: center;
+    font-size: var(--text-sm);
+  }
+  .iris-changelog__fallback a {
+    color: var(--color-text-muted) !important;
+  }
+  .iris-changelog__fallback a:hover {
+    color: var(--color-accent) !important;
+  }
+  .iris-changelog[data-state="ready"] .iris-changelog__fallback {
+    margin-top: calc(var(--spacing) * 3) !important;
+  }
+  @media (max-width: 640px) {
+    .iris-changelog__item {
+      grid-template-columns: auto 1fr;
+      grid-template-rows: auto auto;
+      gap: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+    }
+    .iris-changelog__body {
+      grid-column: 1 / -1;
+    }
+  }
+
   /* ---------- Download page — FAQ accordion ---------- */
 
   .iris-faq {
