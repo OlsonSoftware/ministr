@@ -4,7 +4,7 @@
 //! Supports dot-product search by accumulating weights across query terms.
 //! Persistence uses JSON serialization to a sidecar file alongside the HNSW index.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
@@ -40,6 +40,11 @@ struct InvertedIndexInner {
     /// Reverse lookup: doc string ID → index in `doc_ids`.
     #[serde(skip)]
     doc_id_map: HashMap<String, usize>,
+    /// Tombstoned doc indices — kept so `doc_ids` slots stay stable for
+    /// posting-list references, but excluded from `len_sparse` and
+    /// from search results. Re-inserting a deleted ID clears its tombstone.
+    #[serde(default)]
+    deleted: HashSet<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +110,9 @@ impl SparseIndex for InvertedIndex {
         }
 
         let doc_idx = inner.doc_index(id);
+        // Re-inserting an ID revives it from the tombstone set so
+        // len_sparse and search treat it as present again.
+        inner.deleted.remove(&doc_idx);
 
         for (&term_id, &weight) in indices.iter().zip(values.iter()) {
             inner
@@ -160,6 +168,12 @@ impl SparseIndex for InvertedIndex {
         let Some(&doc_idx) = inner.doc_id_map.get(id) else {
             return Ok(false);
         };
+        // Already tombstoned — treat as not-present so callers that
+        // check the return value (e.g. to decide whether to emit a
+        // coherence event) don't double-fire.
+        if inner.deleted.contains(&doc_idx) {
+            return Ok(false);
+        }
 
         // Remove from all posting lists
         for postings in inner.postings.values_mut() {
@@ -168,6 +182,10 @@ impl SparseIndex for InvertedIndex {
 
         // Remove empty posting lists
         inner.postings.retain(|_, v| !v.is_empty());
+
+        // Tombstone the doc_idx so doc_ids stays aligned with posting
+        // references but len_sparse/search exclude it.
+        inner.deleted.insert(doc_idx);
 
         Ok(true)
     }
@@ -229,7 +247,7 @@ impl SparseIndex for InvertedIndex {
     fn len_sparse(&self) -> usize {
         self.inner
             .read()
-            .map(|inner| inner.doc_ids.len())
+            .map(|inner| inner.doc_ids.len().saturating_sub(inner.deleted.len()))
             .unwrap_or(0)
     }
 }
@@ -345,5 +363,52 @@ mod tests {
         assert!(index.is_empty_sparse());
         index.insert_sparse("doc1", &[10], &[1.0]).unwrap();
         assert!(!index.is_empty_sparse());
+    }
+
+    #[test]
+    fn delete_decrements_len_sparse() {
+        // Regression: delete_sparse used to clear postings but leave the
+        // doc_ids / doc_id_map entries behind, so len_sparse kept
+        // reporting the deleted doc.
+        let index = InvertedIndex::new();
+        index.insert_sparse("doc1", &[10], &[1.0]).unwrap();
+        index.insert_sparse("doc2", &[10], &[1.0]).unwrap();
+        assert_eq!(index.len_sparse(), 2);
+        assert!(index.delete_sparse("doc1").unwrap());
+        assert_eq!(index.len_sparse(), 1);
+    }
+
+    #[test]
+    fn delete_then_persist_and_load_excludes_deleted_doc() {
+        // Regression: the persisted sidecar used to carry deleted doc IDs
+        // forward across load, so a reload would still "know about" docs
+        // whose postings were gone.
+        let dir = tempfile::tempdir().unwrap();
+        let index = InvertedIndex::new();
+        index.insert_sparse("doc1", &[10], &[1.0]).unwrap();
+        index.insert_sparse("doc2", &[10], &[1.0]).unwrap();
+        index.delete_sparse("doc1").unwrap();
+        index.persist_sparse(dir.path()).unwrap();
+
+        let loaded = InvertedIndex::load_sparse(dir.path()).unwrap();
+        assert_eq!(loaded.len_sparse(), 1);
+        let results = loaded.search_sparse(&[10], &[1.0], 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "doc2");
+        assert!(results.iter().all(|r| r.id != "doc1"));
+    }
+
+    #[test]
+    fn delete_then_reinsert_works() {
+        // A tombstoned entry must not block a fresh insert of the same ID.
+        let index = InvertedIndex::new();
+        index.insert_sparse("doc1", &[10], &[1.0]).unwrap();
+        index.delete_sparse("doc1").unwrap();
+        index.insert_sparse("doc1", &[10], &[2.0]).unwrap();
+        assert_eq!(index.len_sparse(), 1);
+        let results = index.search_sparse(&[10], &[1.0], 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "doc1");
+        assert!((results[0].score - 2.0).abs() < f32::EPSILON);
     }
 }

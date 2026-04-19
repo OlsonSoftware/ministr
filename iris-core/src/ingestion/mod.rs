@@ -36,3 +36,7 @@ pub use pipeline::{
 pub use discovery::discover_paths;
 pub use roots::{compute_root_id, namespace_path, strip_root_prefix};
 pub use sections::coalesce_small_sections;
+
+// Re-export for intra-crate use by the coherence engine so file-remove
+// events can tear down vectors alongside the SQL cascade delete.
+pub(crate) use embedding::delete_document_vectors;

@@ -215,7 +215,7 @@ fn collect_embeddable_items(
 }
 
 /// Delete all vectors associated with a document from the index.
-pub(super) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex + ?Sized>(
+pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex + ?Sized>(
     doc_id: &crate::types::ContentId,
     storage: &S,
     index: &I,

@@ -403,6 +403,22 @@ impl CoherenceEngine {
 
         let section_ids: Vec<String> = sections.iter().map(|s| s.id.0.clone()).collect();
 
+        // Tear down vector-index entries BEFORE the SQL cascade so
+        // `delete_document_vectors` can still enumerate sections, claims,
+        // and symbols via storage. Otherwise the index keeps stale
+        // vectors whose documents no longer exist, and later surveys
+        // return result rows that `iris_read` can't service.
+        if let Some(ref index) = self.index
+            && let Err(e) =
+                crate::ingestion::delete_document_vectors(&doc_id, storage, index.as_ref()).await
+        {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "failed to delete vectors for removed file; continuing with SQL cascade",
+            );
+        }
+
         // Delete the document (cascading to sections and claims)
         let _ = storage.delete_document(&doc_id).await;
         let _ = storage.delete_file_hash(&relative).await;
@@ -794,6 +810,94 @@ mod tests {
         assert!(
             !affected.is_empty(),
             "should report affected sections on removal"
+        );
+    }
+
+    /// Test embedder that returns a deterministic non-zero vector per text
+    /// so HNSW can distinguish insertions.
+    struct HashEmbedder {
+        dim: usize,
+    }
+
+    impl crate::embedding::Embedder for HashEmbedder {
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, crate::error::IndexError> {
+            use std::hash::{Hash, Hasher};
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    t.hash(&mut h);
+                    let seed = (h.finish() % 997) as f32 / 997.0;
+                    let mut v = vec![seed; self.dim];
+                    v[0] = 1.0 - seed;
+                    v
+                })
+                .collect())
+        }
+
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+    }
+
+    #[tokio::test]
+    async fn remove_file_also_deletes_vectors_from_index() {
+        // Regression: CoherenceEngine::remove_file used to leave vectors
+        // in the index after the SQL cascade deleted the document. Later
+        // surveys still returned the stale result rows but `iris_read`
+        // would 404 on them.
+        use crate::index::{HnswIndex, VectorIndex};
+        use crate::storage::SqliteStorage;
+        use std::sync::Arc;
+
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("to_delete.md");
+        std::fs::write(
+            &file_path,
+            "# Delete Me\n\n## Content\n\nThis will be removed.\n",
+        )
+        .unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(64, 1_000).unwrap());
+        let embedder: Arc<dyn crate::embedding::Embedder> = Arc::new(HashEmbedder { dim: 64 });
+
+        // Ingest with embeddings so the index actually contains vectors.
+        let pipeline = IngestionPipeline::new();
+        pipeline
+            .ingest_content_with_embeddings(
+                "to_delete.md",
+                "# Delete Me\n\n## Content\n\nThis will be removed.\n",
+                crate::parser::ParserKind::Markdown,
+                &storage,
+                embedder.as_ref(),
+                index.as_ref(),
+            )
+            .await
+            .unwrap();
+
+        let before = index.len();
+        assert!(
+            before > 0,
+            "index should have vectors after ingestion (got {before})",
+        );
+
+        std::fs::remove_file(&file_path).unwrap();
+
+        let engine = CoherenceEngine::with_embeddings(
+            dir.path().to_path_buf(),
+            Arc::clone(&embedder),
+            Arc::clone(&index),
+        );
+        let events = vec![CoherenceEvent::Removed(file_path)];
+        let _affected = engine.process_events(&events, &storage).await.unwrap();
+
+        assert_eq!(
+            index.len(),
+            0,
+            "every vector for the removed document should be gone from the index \
+             (before={before}, after={})",
+            index.len()
         );
     }
 
