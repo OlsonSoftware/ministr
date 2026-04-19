@@ -1134,6 +1134,119 @@
     }
   }
 
+  /* ---- Release body preview ---- */
+  .iris-download__release-preview {
+    margin: calc(var(--spacing) * 2) auto 0 !important;
+    max-width: 52ch;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: calc(var(--text-xs) + 1px);
+    line-height: 1.5;
+    font-style: italic;
+  }
+  .iris-download__release-preview[hidden] {
+    display: none !important;
+  }
+  .iris-download__release-line {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    justify-content: center;
+  }
+
+  /* ---- Sticky mini-download bar ---- */
+  .iris-download-sticky {
+    position: fixed;
+    bottom: calc(var(--spacing) * 4);
+    right: calc(var(--spacing) * 4);
+    z-index: 50;
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    padding: 4px 4px 4px calc(var(--spacing) * 4);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-surface) 85%, transparent);
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-lg, var(--shadow-md));
+    transform: translateY(120%);
+    opacity: 0;
+    transition:
+      transform var(--duration-base) var(--ease-standard),
+      opacity var(--duration-base) var(--ease-standard);
+  }
+  .iris-download-sticky[data-visible] {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  .iris-download-sticky[hidden] {
+    display: none;
+  }
+  .iris-download-sticky__link {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 4);
+    border-radius: 999px;
+    background: var(--color-accent);
+    color: var(--color-accent-fg-on) !important;
+    text-decoration: none !important;
+    border-bottom: none !important;
+    font-weight: 500;
+    font-size: var(--text-sm);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+  }
+  .iris-download-sticky__link:hover {
+    background: var(--color-accent-hover);
+  }
+  .iris-download-sticky__label {
+    display: block;
+    font-weight: 600;
+    line-height: 1.1;
+  }
+  .iris-download-sticky__sub {
+    display: block;
+    font-size: 11px;
+    opacity: 0.85;
+    line-height: 1.2;
+    margin-top: 1px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+  }
+  .iris-download-sticky__dismiss {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    transition:
+      background-color var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard);
+  }
+  .iris-download-sticky__dismiss:hover {
+    background: color-mix(in srgb, var(--color-text) 8%, transparent);
+    color: var(--color-text);
+  }
+  @media (max-width: 720px) {
+    .iris-download-sticky {
+      left: calc(var(--spacing) * 3);
+      right: calc(var(--spacing) * 3);
+      bottom: calc(var(--spacing) * 3);
+      justify-content: space-between;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .iris-download-sticky {
+      transition: opacity var(--duration-base) var(--ease-standard);
+      transform: none;
+    }
+  }
+
   /* ---- Min-OS warning banner ---- */
   .iris-download__warning {
     margin: calc(var(--spacing) * 4) auto 0;

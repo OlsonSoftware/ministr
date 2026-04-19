@@ -21,6 +21,28 @@ hide:
   background agent so the daemon is always ready when your MCP client connects.
 </p>
 
+<aside
+  class="iris-download-sticky"
+  data-iris-download-sticky
+  role="region"
+  aria-label="Sticky download link"
+  hidden
+>
+  <a class="iris-download-sticky__link" data-primary-mirror href="#"
+    ><svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
+    <span>
+      <span class="iris-download-sticky__label" data-mirror-label>Download iris</span>
+      <span class="iris-download-sticky__sub" data-mirror-sub>macOS · Apple Silicon</span>
+    </span>
+  </a>
+  <button
+    type="button"
+    class="iris-download-sticky__dismiss"
+    aria-label="Dismiss sticky download bar"
+    data-sticky-dismiss
+  >×</button>
+</aside>
+
 <div
   class="iris-download"
   data-iris-download
@@ -56,17 +78,20 @@ hide:
   </p>
 
   <div class="iris-download__release" data-iris-release hidden>
-    <span class="iris-download__release-item">
-      <svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
-      <span data-iris-version>v0.1.0</span>
-    </span>
-    <span class="iris-download__release-sep">·</span>
-    <span class="iris-download__release-item" data-iris-reldate>released recently</span>
-    <span class="iris-download__release-sep">·</span>
-    <a class="iris-download__release-item" data-iris-notes href="https://github.com/AlrikOlson/iris-rs/releases/latest">
-      <svg class="icon icon-sm"><use href="assets/icons.svg#sparkle-fill"/></svg>
-      What's new
-    </a>
+    <div class="iris-download__release-line">
+      <span class="iris-download__release-item">
+        <svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
+        <span data-iris-version>v0.1.0</span>
+      </span>
+      <span class="iris-download__release-sep">·</span>
+      <span class="iris-download__release-item" data-iris-reldate>released recently</span>
+      <span class="iris-download__release-sep">·</span>
+      <a class="iris-download__release-item" data-iris-notes href="https://github.com/AlrikOlson/iris-rs/releases/latest">
+        <svg class="icon icon-sm"><use href="assets/icons.svg#sparkle-fill"/></svg>
+        What's new
+      </a>
+    </div>
+    <p class="iris-download__release-preview" data-iris-preview hidden></p>
   </div>
 
   <details class="iris-download__alt">

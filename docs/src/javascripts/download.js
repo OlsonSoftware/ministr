@@ -26,6 +26,7 @@
   const root = document.querySelector("[data-iris-download]");
   if (root) {
     enhanceDownload(root);
+    installStickyBar(root);
   }
 
   /* ------------------------------------------------------------------ *
@@ -244,6 +245,7 @@
         htmlUrl: body.html_url || "",
         publishedAt: body.published_at || "",
         assets: body.assets || [],
+        body: body.body || "",
       };
     }
 
@@ -271,7 +273,40 @@
         }
       }
 
+      // Two-line preview of the release body — first non-empty line that
+      // isn't a markdown heading, stripped of common prefix chars.
+      const previewEl = root.querySelector("[data-iris-preview]");
+      if (previewEl && rel.body) {
+        const preview = extractReleasePreview(rel.body);
+        if (preview) {
+          previewEl.textContent = preview;
+          previewEl.removeAttribute("hidden");
+        }
+      }
+
       releaseEl.removeAttribute("hidden");
+    }
+
+    function extractReleasePreview(body) {
+      const lines = body.split(/\r?\n/).map((l) => l.trim());
+      // Find the first line that isn't a heading, HR, or blank.
+      let text = "";
+      for (const line of lines) {
+        if (!line) continue;
+        if (/^#{1,6}\s/.test(line)) continue;
+        if (/^[-*_]{3,}\s*$/.test(line)) continue;
+        text = line.replace(/^[-*+]\s+/, "").replace(/^\d+\.\s+/, "");
+        // Strip inline code ticks and bold/italic markers for readability.
+        text = text
+          .replace(/`([^`]+)`/g, "$1")
+          .replace(/\*\*([^*]+)\*\*/g, "$1")
+          .replace(/\*([^*]+)\*/g, "$1")
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+        break;
+      }
+      if (!text) return "";
+      if (text.length > 200) text = text.slice(0, 197) + "…";
+      return text;
     }
 
     function humanDate(iso) {
@@ -325,6 +360,86 @@
       link.addEventListener("pointerleave", () => {
         if (timer !== null) window.clearTimeout(timer);
         timer = null;
+      });
+    }
+  }
+
+  // --------------------------------------------------------------------
+  // Sticky mini-download bar
+  // --------------------------------------------------------------------
+
+  function installStickyBar(root) {
+    const sticky = document.querySelector("[data-iris-download-sticky]");
+    if (!sticky) return;
+
+    const primaryLink = root.querySelector("[data-primary-link]");
+    const primaryLabel = root.querySelector("[data-primary-label]");
+    const archEl = root.querySelector("[data-iris-arch]");
+    const sizeEl = root.querySelector("[data-iris-size]");
+    const mirrorLink = sticky.querySelector("[data-primary-mirror]");
+    const mirrorLabel = sticky.querySelector("[data-mirror-label]");
+    const mirrorSub = sticky.querySelector("[data-mirror-sub]");
+    const dismiss = sticky.querySelector("[data-sticky-dismiss]");
+
+    if (!primaryLink || !mirrorLink) return;
+
+    // Respect an earlier dismiss within the same session.
+    const dismissKey = "iris:download-sticky:dismissed";
+    if (sessionStorage.getItem(dismissKey) === "1") return;
+
+    // Keep the mirror link in sync with the primary, both on first
+    // platform-detect and on subsequent DOM mutations. A MutationObserver
+    // on the primary link's href is the least-coupled option.
+    const sync = () => {
+      mirrorLink.href = primaryLink.href;
+      if (mirrorLabel && primaryLabel) {
+        // The primary label reads "Download for macOS — Apple Silicon";
+        // the sticky version is tighter: just "Download iris".
+        mirrorLabel.textContent = "Download iris";
+      }
+      if (mirrorSub) {
+        const parts = [];
+        if (archEl && archEl.textContent) parts.push(archEl.textContent);
+        if (sizeEl && sizeEl.textContent) parts.push(sizeEl.textContent);
+        mirrorSub.textContent = parts.join(" · ") || "";
+      }
+    };
+
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(primaryLink, { attributes: true, attributeFilter: ["href"] });
+    if (archEl) mo.observe(archEl, { childList: true, characterData: true, subtree: true });
+    if (sizeEl) mo.observe(sizeEl, { childList: true, characterData: true, subtree: true });
+
+    // Show the sticky when the primary CTA scrolls out of view.
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry) return;
+        const out = !entry.isIntersecting;
+        if (out) {
+          sticky.removeAttribute("hidden");
+          requestAnimationFrame(() => sticky.setAttribute("data-visible", "1"));
+        } else {
+          sticky.removeAttribute("data-visible");
+          // Defer the hidden attribute until the transition completes.
+          window.setTimeout(() => {
+            if (!sticky.hasAttribute("data-visible")) {
+              sticky.setAttribute("hidden", "");
+            }
+          }, 260);
+        }
+      },
+      { rootMargin: "0px 0px -40% 0px", threshold: 0 }
+    );
+    io.observe(primaryLink);
+
+    if (dismiss) {
+      dismiss.addEventListener("click", () => {
+        sessionStorage.setItem(dismissKey, "1");
+        sticky.removeAttribute("data-visible");
+        window.setTimeout(() => sticky.setAttribute("hidden", ""), 260);
+        io.disconnect();
+        mo.disconnect();
       });
     }
   }
