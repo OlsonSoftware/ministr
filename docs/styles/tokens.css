@@ -781,21 +781,25 @@
       inset 0 1px 0 color-mix(in srgb, white 25%, transparent),
       var(--shadow-sm);
   }
-  .iris-hero__cta--primary:hover {
-    background: var(--color-accent-hover);
-    transform: translateY(-1px);
-    box-shadow:
-      inset 0 1px 0 color-mix(in srgb, white 25%, transparent),
-      var(--shadow-md);
+  @media (hover: hover) {
+    .iris-hero__cta--primary:hover {
+      background: var(--color-accent-hover);
+      transform: translateY(-1px);
+      box-shadow:
+        inset 0 1px 0 color-mix(in srgb, white 25%, transparent),
+        var(--shadow-md);
+    }
   }
   .iris-hero__cta--secondary {
     background: var(--color-surface);
     color: var(--color-text) !important;
     border-color: var(--color-border);
   }
-  .iris-hero__cta--secondary:hover {
-    border-color: var(--color-accent-ring);
-    transform: translateY(-1px);
+  @media (hover: hover) {
+    .iris-hero__cta--secondary:hover {
+      border-color: var(--color-accent-ring);
+      transform: translateY(-1px);
+    }
   }
   /* Shared interactive states — keyboard focus ring + click micro-response. */
   .iris-hero__cta:focus-visible {
@@ -1162,8 +1166,10 @@
     border-bottom: 1px solid var(--color-border) !important;
     transition: border-color var(--duration-fast) var(--ease-standard);
   }
-  .iris-changelog__item:hover {
-    border-color: var(--color-accent-ring);
+  @media (hover: hover) {
+    .iris-changelog__item:hover {
+      border-color: var(--color-accent-ring);
+    }
   }
   .iris-changelog__item--skeleton {
     opacity: 0.5;
@@ -1239,8 +1245,10 @@
     overflow: hidden;
     transition: border-color var(--duration-fast) var(--ease-standard);
   }
-  .iris-faq__item:hover {
-    border-color: color-mix(in srgb, var(--color-accent-ring) 60%, var(--color-border) 40%);
+  @media (hover: hover) {
+    .iris-faq__item:hover {
+      border-color: color-mix(in srgb, var(--color-accent-ring) 60%, var(--color-border) 40%);
+    }
   }
   .iris-faq__item[open] {
     border-color: var(--color-accent-ring);
@@ -1295,8 +1303,10 @@
     content: none !important;
     display: none !important;
   }
-  .iris-faq__item > summary:hover {
-    background: color-mix(in srgb, var(--color-accent) 3%, transparent);
+  @media (hover: hover) {
+    .iris-faq__item > summary:hover {
+      background: color-mix(in srgb, var(--color-accent) 3%, transparent);
+    }
   }
   .iris-faq__item > div {
     /* Answer text aligns with the start of the question. The indent is
@@ -1481,8 +1491,10 @@
     border-bottom: 1px solid var(--color-border) !important;
     transition: border-color var(--duration-fast) var(--ease-standard);
   }
-  .iris-download__alt-list a:hover {
-    border-color: var(--color-accent-ring);
+  @media (hover: hover) {
+    .iris-download__alt-list a:hover {
+      border-color: var(--color-accent-ring);
+    }
   }
   .iris-download__alt-list li.iris-download__alt-item--muted {
     padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
@@ -1838,8 +1850,10 @@
     font-size: var(--text-sm);
     transition: background-color var(--duration-fast) var(--ease-standard);
   }
-  .iris-download-sticky__link:hover {
-    background: var(--color-accent-hover);
+  @media (hover: hover) {
+    .iris-download-sticky__link:hover {
+      background: var(--color-accent-hover);
+    }
   }
   .iris-download-sticky__label {
     display: block;
@@ -1873,9 +1887,11 @@
       background-color var(--duration-fast) var(--ease-standard),
       color var(--duration-fast) var(--ease-standard);
   }
-  .iris-download-sticky__dismiss:hover {
-    background: color-mix(in srgb, var(--color-text) 8%, transparent);
-    color: var(--color-text);
+  @media (hover: hover) {
+    .iris-download-sticky__dismiss:hover {
+      background: color-mix(in srgb, var(--color-text) 8%, transparent);
+      color: var(--color-text);
+    }
   }
   @media (max-width: 720px) {
     .iris-download-sticky {
@@ -2193,10 +2209,12 @@
       transform var(--duration-fast) var(--ease-standard),
       box-shadow var(--duration-fast) var(--ease-standard);
   }
-  .iris-card:hover {
-    border-color: var(--color-accent-ring);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
+  @media (hover: hover) {
+    .iris-card:hover {
+      border-color: var(--color-accent-ring);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
   }
   .iris-card h3 {
     margin: 0 0 calc(var(--spacing) * 2);
@@ -2240,10 +2258,12 @@
       transform var(--duration-fast) var(--ease-standard),
       box-shadow var(--duration-fast) var(--ease-standard);
   }
-  .iris-why__card:hover {
-    border-color: var(--color-accent-ring);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
+  @media (hover: hover) {
+    .iris-why__card:hover {
+      border-color: var(--color-accent-ring);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
   }
   .iris-why__card h3 {
     margin: 0 0 calc(var(--spacing) * 2);
@@ -2282,10 +2302,12 @@
       transform var(--duration-fast) var(--ease-standard),
       box-shadow var(--duration-fast) var(--ease-standard);
   }
-  .iris-features__card:hover {
-    border-color: var(--color-accent-ring);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
+  @media (hover: hover) {
+    .iris-features__card:hover {
+      border-color: var(--color-accent-ring);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
   }
   .iris-features__card h3 {
     margin: 0 0 calc(var(--spacing) * 2);
@@ -2304,8 +2326,10 @@
     border: none;
     text-decoration: none;
   }
-  .iris-features__card h3 a:hover {
-    color: var(--color-accent);
+  @media (hover: hover) {
+    .iris-features__card h3 a:hover {
+      color: var(--color-accent);
+    }
   }
   .iris-features__card p {
     margin: 0;
@@ -3375,5 +3399,47 @@
   ):active {
     transition: none;
     transform: none;
+  }
+}
+
+/* =====================================================
+   Tablet range (721 – 1024px)
+   =====================================================
+
+   Between the mobile breakpoint and full desktop, narrow laptops and
+   8-9" tablets in portrait land in a layout tuned for 1280+. Tighten
+   the handful of components that feel stretched or squeezed. */
+@media (min-width: 721px) and (max-width: 1024px) {
+  /* Hero title at 4.5rem wraps to 2 ugly lines at this width. */
+  .md-typeset .iris-hero__title,
+  h1.iris-hero__title {
+    font-size: var(--text-4xl);
+  }
+
+  /* 4-column stepper crammed labels into 3+ lines; 2×2 breathes. */
+  .iris-install-flow__steps {
+    grid-template-columns: repeat(2, 1fr) !important;
+    grid-auto-rows: 1fr;
+    row-gap: calc(var(--spacing) * 6);
+  }
+  /* The horizontal connector rail between steps doesn't survive the
+     2-row layout; hide it cleanly. */
+  .iris-install-flow__steps::before {
+    display: none;
+  }
+
+  /* Stats feel airy at 4-col on 800-1000px; 2×2 groups tighter. */
+  .iris-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .iris-stats__item:nth-child(2) { border-right: none; }
+  .iris-stats__item:nth-child(-n+2) {
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  /* Observatory sidebar was 200px — trims to 160 so the content panel
+     keeps enough room for the query playground at this viewport. */
+  .iris-app-preview__body {
+    grid-template-columns: 160px 1fr;
   }
 }
