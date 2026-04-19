@@ -106,6 +106,7 @@
   --radius-2xl: 16px;
   --radius-3xl: 24px;
   --radius-full: 9999px;
+  --radius-pill: var(--radius-full);  /* semantic alias for chip/pill */
 
   /* Layout container widths — used with `max-width`. Tiered from a
      narrow prose column (FAQ / changelog rows) up to full hero width. */
@@ -120,6 +121,20 @@
   --shadow-md: 0 2px 4px rgb(17 24 39 / 0.05), 0 4px 12px rgb(17 24 39 / 0.04);
   --shadow-lg: 0 4px 6px rgb(17 24 39 / 0.04), 0 12px 24px rgb(17 24 39 / 0.06);
   --shadow-xl: 0 8px 16px rgb(17 24 39 / 0.06), 0 24px 48px rgb(17 24 39 / 0.10);
+
+  /* Focus ring — double-ring technique so it's visible on any surface
+     (outer ring uses the page/card background as a spacer, inner ring
+     is the accent). Use via:
+       box-shadow: var(--focus-ring); outline: none;
+     on :focus-visible. Works on solid-background buttons AND within
+     cards / shaded panels without needing context-aware overrides. */
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent-ring);
+  --focus-ring-inset: inset 0 0 0 2px var(--color-accent-ring);
+
+  /* Section rhythm — vertical spacing between major page blocks. */
+  --section-gap-major:    calc(var(--spacing) * 16);  /* hero → first H2 */
+  --section-gap-standard: calc(var(--spacing) * 12);  /* H2 → H2 */
+  --section-gap-inline:   calc(var(--spacing) * 6);   /* inside a section */
 
   /* Blurs ------------------------------------------------------------ */
   --blur-sm: 8px;
@@ -766,6 +781,20 @@
     border-color: var(--color-accent-ring);
     transform: translateY(-1px);
   }
+  /* Shared interactive states — keyboard focus ring + click micro-response. */
+  .iris-hero__cta:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+  .iris-hero__cta--primary:focus-visible {
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 25%, transparent),
+      var(--focus-ring);
+  }
+  .iris-hero__cta:active {
+    transform: translateY(0.5px);
+    transition-duration: var(--duration-snap);
+  }
 
   /* ---------- Hero demo (VHS recording) ---------- */
 
@@ -906,7 +935,7 @@
     /* <ul> default is flow-root under Tailwind preflight; force flex. */
     display: flex !important;
     flex-direction: column;
-    gap: 2px;
+    gap: calc(var(--spacing) * 0.5);  /* 2px — app-chrome density */
   }
   .iris-app-preview__row {
     display: flex;
@@ -941,6 +970,10 @@
     gap: calc(var(--spacing) * 4);
     background: var(--color-code-bg);
   }
+  /* Preview components use a tighter padding scale than page cards —
+     they're a mock of a ~desktop-app UI, so panel/result/row padding
+     follows app-chrome density (3×4 and 2×3) rather than the 5×5 used
+     by iris-features__card / iris-why__card / iris-card on the page. */
   .iris-app-preview__panel {
     border: 1px solid color-mix(in srgb, var(--color-code-border) 50%, transparent);
     border-radius: var(--radius-md);
@@ -1250,11 +1283,13 @@
     background: color-mix(in srgb, var(--color-accent) 3%, transparent);
   }
   .iris-faq__item > div {
-    /* Align answer text with the start of the question (summary has
-       the same horizontal padding + the +/− indicator is ~24px wide
-       with a spacing*3 gap). */
+    /* Answer text aligns with the start of the question. The indent is
+       semantically: summary-padding-x + marker-width + marker-gap. */
+    --faq-marker-width: 24px;
+    --faq-marker-gap: calc(var(--spacing) * 3);
+    --faq-indent: calc(var(--spacing) * 5 + var(--faq-marker-width) + var(--faq-marker-gap));
     padding: 0 calc(var(--spacing) * 5) calc(var(--spacing) * 4);
-    padding-left: calc(var(--spacing) * 5 + 24px + calc(var(--spacing) * 3));
+    padding-left: var(--faq-indent);
     color: var(--color-text-muted);
     font-size: var(--text-sm);
     line-height: 1.6;
@@ -1288,12 +1323,12 @@
   /* ---------- Download page — hero download card ---------- */
 
   .iris-download {
-    margin: calc(var(--spacing) * 10) auto 0;
+    margin: var(--section-gap-standard) auto 0;
     max-width: var(--layout-prose);
   }
   .iris-download__primary {
     position: relative;
-    padding: calc(var(--spacing) * 8) calc(var(--spacing) * 7);
+    padding: calc(var(--spacing) * 8);
     border-radius: var(--radius-xl);
     border: 1px solid var(--color-border);
     background:
@@ -1958,7 +1993,7 @@
   .iris-stats {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    margin: calc(var(--spacing) * 12) auto 0;
+    margin: var(--section-gap-standard) auto 0;
     max-width: 840px;
     border-top: 1px solid var(--color-border);
     border-bottom: 1px solid var(--color-border);
@@ -2099,7 +2134,7 @@
   /* ---------- Section headers ---------- */
 
   .iris-section-header {
-    margin: calc(var(--spacing) * 16) 0 calc(var(--spacing) * 6);
+    margin: var(--section-gap-major) 0 var(--section-gap-inline);
     text-align: center;
   }
   .iris-section-header h2 {
@@ -2722,7 +2757,7 @@
     flex-wrap: wrap;
     justify-content: center;
     gap: calc(var(--spacing) * 2);
-    margin: calc(var(--spacing) * 6) auto calc(var(--spacing) * 12);
+    margin: var(--section-gap-inline) auto var(--section-gap-standard);
     max-width: 780px;
   }
   .md-typeset .iris-lang {
@@ -3268,5 +3303,61 @@
   }
   .iris-section-header h2 {
     font-size: var(--text-2xl);
+  }
+}
+
+/* =====================================================
+   Shared interactive states (focus-visible + active)
+   =====================================================
+
+   Applied to every interactive iris-* component so keyboard users get
+   a visible focus indicator and click/tap users get a micro-press
+   response. :focus-visible beats the global *:focus-visible here by
+   specificity, and replaces the default 2px outline with our double-
+   ring pattern that stays visible on both page and card backgrounds. */
+
+:is(
+  .iris-download__cta,
+  .iris-download__alt-list a,
+  .iris-download__alt > summary,
+  .iris-download-sticky__link,
+  .iris-download-sticky__dismiss,
+  .iris-changelog__item,
+  .iris-faq__item > summary,
+  .iris-404__cta,
+  .iris-palette__item,
+  .iris-cheatsheet__dismiss
+):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-md);
+}
+
+/* Button-like elements press down slightly; card-like ones do not. */
+:is(
+  .iris-download__cta,
+  .iris-download-sticky__link,
+  .iris-404__cta
+):active {
+  transform: translateY(0.5px);
+  transition-duration: var(--duration-snap);
+}
+
+/* Expandables — smooth the [open] reveal so content doesn't pop in. */
+.iris-download__alt > *:not(summary),
+.iris-faq__item > div {
+  opacity: 1;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  .iris-download__alt > *:not(summary),
+  .iris-faq__item > div,
+  :is(
+    .iris-download__cta,
+    .iris-download-sticky__link,
+    .iris-404__cta
+  ):active {
+    transition: none;
+    transform: none;
   }
 }
