@@ -2681,16 +2681,36 @@
     display: flex;
     flex-direction: column;
     gap: calc(var(--spacing) * 2);
-    /* Fixed HEIGHT (not min-height) so the container's size is
-       independent of content — adding, typing, or clearing rows can
-       never reflow the page beneath. Sized generously above the
-       fully-animated final state; overflow-hidden clamps any surprise
-       meta-wrap without spilling. Reduced-motion users see all rows
-       at once and still fit comfortably. */
-    height: 460px;
-    overflow: hidden;
+    /* Fixed-height viewport that scrolls internally. Page layout
+       below the hero stays anchored no matter how many rows the
+       replay appends; the widget itself acts like a mini terminal
+       pane, auto-scrolling to keep the latest line in view
+       (session-trace.js sets scrollTop = scrollHeight on each row). */
+    height: 380px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     font-size: var(--text-sm);
     line-height: 1.7;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-code-border) transparent;
+  }
+  /* WebKit scrollbar styling — subtle, track blends with container. */
+  .iris-trace-live__lines::-webkit-scrollbar {
+    width: 6px;
+  }
+  .iris-trace-live__lines::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .iris-trace-live__lines::-webkit-scrollbar-thumb {
+    background: var(--color-code-border);
+    border-radius: var(--radius-full);
+  }
+  /* Smooth auto-scroll to the latest row so new content glides into
+     view rather than snapping. Respects reduced-motion below. */
+  @media (prefers-reduced-motion: no-preference) {
+    .iris-trace-live__lines {
+      scroll-behavior: smooth;
+    }
   }
   .iris-trace-live__row {
     display: grid;
@@ -2795,11 +2815,11 @@
     .iris-trace-live__gauge-pct {
       right: -36px;
     }
-    /* Narrower viewport wraps meta subtext to 3–5 lines (the "rate
-       limiting" row especially). Bump fixed height so every wrapping
-       edge case fits inside the reserved space. */
+    /* Mobile keeps the fixed-viewport scrolling behaviour; just
+       slightly shorter since hero real-estate is scarcer. The
+       scrollbar + auto-scroll from the base rule carry over. */
     .iris-trace-live__lines {
-      height: 720px;
+      height: 320px;
     }
   }
 
