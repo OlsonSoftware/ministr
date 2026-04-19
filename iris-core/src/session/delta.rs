@@ -49,8 +49,8 @@ pub struct ContentDelta {
 /// ```
 #[must_use]
 pub fn compute_delta(old: &str, new: &str) -> ContentDelta {
-    let old_lines: Vec<&str> = old.lines().collect();
-    let new_lines: Vec<&str> = new.lines().collect();
+    let old_lines = split_lines(old);
+    let new_lines = split_lines(new);
 
     let lcs = lcs_table(&old_lines, &new_lines);
     let lines = build_diff(&old_lines, &new_lines, &lcs);
@@ -69,6 +69,21 @@ pub fn compute_delta(old: &str, new: &str) -> ContentDelta {
         additions,
         removals,
     }
+}
+
+/// Split a string into lines for diffing.
+///
+/// Unlike `str::lines()`, which strips trailing newlines and normalizes
+/// `\r\n` to `\n`, this preserves both as distinguishable content. A
+/// trailing `\n` becomes a final empty line entry, and `\r\n` line
+/// endings are kept as the literal `\r` prefix on each line. This makes
+/// trailing-newline and CRLF↔LF changes visible to the diff algorithm so
+/// consumers never see "0 changes" for content whose hash actually differs.
+fn split_lines(s: &str) -> Vec<&str> {
+    if s.is_empty() {
+        return Vec::new();
+    }
+    s.split('\n').collect()
 }
 
 /// Build the LCS length table for two slices of lines.
@@ -220,6 +235,30 @@ mod tests {
         let json = serde_json::to_string(&delta).unwrap();
         assert!(json.contains("\"type\":\"added\""));
         assert!(json.contains("\"type\":\"removed\""));
+    }
+
+    #[test]
+    fn trailing_newline_addition_is_detected() {
+        // Regression: str::lines() strips a trailing newline, making these
+        // strings look identical. split('\n')-based splitting exposes the
+        // final empty line so the delta is non-empty.
+        let delta = compute_delta("foo\nbar", "foo\nbar\n");
+        assert!(delta.additions + delta.removals > 0);
+    }
+
+    #[test]
+    fn trailing_newline_removal_is_detected() {
+        let delta = compute_delta("foo\nbar\n", "foo\nbar");
+        assert!(delta.additions + delta.removals > 0);
+    }
+
+    #[test]
+    fn crlf_to_lf_line_ending_change_is_detected() {
+        // Regression: str::lines() silently strips `\r`, so CRLF↔LF
+        // conversions looked identical. With split('\n') the `\r` stays
+        // attached to each line, making the change visible.
+        let delta = compute_delta("line1\r\nline2\r\nline3", "line1\nline2\nline3");
+        assert!(delta.additions + delta.removals > 0);
     }
 
     #[test]

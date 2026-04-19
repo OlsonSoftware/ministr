@@ -566,6 +566,16 @@ async fn session_read_section(
                 // session ID from before a daemon restart.
                 let entry = sessions.get_or_create(&sid, None, AccessMode::ReadWrite);
                 let turn = entry.session.current_turn() + 1;
+                // A re-read of content that fell out of the window is a
+                // fault signal (the agent "forgot" it); a fresh read or a
+                // still-in-window re-read is `Good`.
+                let rating = if entry.session.is_delivered(&content_id)
+                    && !entry.budget.is_in_window(&section)
+                {
+                    iris_core::session::memory::AccessRating::Again
+                } else {
+                    iris_core::session::memory::AccessRating::Good
+                };
                 entry.session.record_delivery(
                     &content_id,
                     iris_core::types::Resolution::Section,
@@ -573,7 +583,18 @@ async fn session_read_section(
                     turn,
                     content_hash,
                 );
-                let _ = entry.budget.record_tokens(&section, token_count);
+                // Populate the FSRS memory tracker so retrievability scores
+                // exist for eviction decisions under `EvictionPolicy::Fsrs`.
+                entry.memory.record_access(&section, turn, rating);
+                // Use the memory-aware variant so FSRS actually consults
+                // retrievability. FIFO/LRU ignore the scores, so this call
+                // is safe for all policies.
+                let _ = entry.budget.record_tokens_with_memory(
+                    &section,
+                    token_count,
+                    &entry.memory,
+                    turn,
+                );
             }
 
             // Persist session to SQLite so budget survives daemon restarts

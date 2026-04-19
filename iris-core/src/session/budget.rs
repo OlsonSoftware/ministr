@@ -134,6 +134,12 @@ impl BudgetTracker {
     /// Returns the content IDs of any entries evicted from the window model
     /// to make room for this delivery. Callers should apply bookmark
     /// compression to evicted IDs so the agent retains structural awareness.
+    ///
+    /// **Note:** under [`EvictionPolicy::Fsrs`](super::types::EvictionPolicy::Fsrs)
+    /// this path falls back to FIFO eviction because no retrievability
+    /// scores are supplied. Call [`record_tokens_with_memory`](Self::record_tokens_with_memory)
+    /// instead whenever a [`MemoryTracker`](super::memory::MemoryTracker) is
+    /// available so FSRS policies actually consult memory.
     #[must_use]
     pub fn record_tokens(&mut self, content_id: &str, token_count: usize) -> Vec<String> {
         self.window.record(content_id, token_count)
@@ -494,6 +500,57 @@ mod tests {
         assert_eq!(status.tokens_used, 80);
         assert_eq!(status.tokens_remaining, 20);
         assert_eq!(status.pressure_level, PressureLevel::Elevated); // 80/100 = 0.8
+    }
+
+    #[test]
+    fn fsrs_eviction_prefers_low_retrievability_over_oldest() {
+        // End-to-end regression: under FSRS, the memory-aware record path
+        // must pick the lowest-retrievability entry as the victim. Before
+        // the fix, callers that used `record_tokens` (no scores) silently
+        // fell back to FIFO — the oldest entry was evicted regardless of
+        // how recently it was accessed.
+        use crate::session::memory::{AccessRating, MemoryTracker};
+
+        let config = BudgetConfig {
+            max_context_tokens: 100,
+            pressure_threshold: 0.8,
+            critical_threshold: 0.95,
+            eviction_policy: EvictionPolicy::Fsrs,
+        };
+        let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fsrs);
+        let mut memory = MemoryTracker::new();
+
+        // Turn 1: deliver A (will appear "oldest" to FIFO)
+        memory.record_access("a", 1, AccessRating::Good);
+        let _ = tracker.record_tokens_with_memory("a", 40, &memory, 1);
+
+        // Turn 2: deliver B (middle-aged) — but re-accessed repeatedly so
+        // its retrievability stays high.
+        memory.record_access("b", 2, AccessRating::Good);
+        let _ = tracker.record_tokens_with_memory("b", 40, &memory, 2);
+        memory.record_access("b", 5, AccessRating::Good);
+        memory.record_access("b", 8, AccessRating::Good);
+
+        // Turn 10: a has NOT been re-accessed since turn 1 → low R.
+        //          b was just re-accessed at turn 8 → high R.
+        // Delivering c (40 tokens) overflows 100-capacity window. Under
+        // FIFO the victim would be `a` (oldest); under FSRS it should be
+        // the lowest-retrievability entry — but since a has decayed more
+        // than b, FSRS also picks `a`. To discriminate, swap: re-access a
+        // just before the overflow so b's retrievability is now lower.
+        memory.record_access("a", 9, AccessRating::Good);
+        let evicted = tracker.record_tokens_with_memory("c", 40, &memory, 10);
+
+        // a was just touched (R high), b was last touched at turn 8 (R lower);
+        // FSRS should evict b, not the oldest-by-insertion a.
+        assert!(
+            evicted.iter().any(|id| id == "b"),
+            "FSRS should evict low-retrievability `b`, got {evicted:?}"
+        );
+        assert!(
+            tracker.is_in_window("a"),
+            "recently re-accessed `a` should survive FSRS eviction"
+        );
     }
 
     #[test]
