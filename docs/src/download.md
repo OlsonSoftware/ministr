@@ -434,57 +434,57 @@ All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](htt
 
 <details class="iris-faq__item">
   <summary>Does iris phone home or send data anywhere?</summary>
-  <div markdown>
-No. The daemon listens on a local Unix domain socket, embeddings run locally via ONNX (optionally Metal-accelerated), and the vector index lives on disk under `~/.iris/`. The only network activity iris initiates is `iris_fetch` / `iris_clone` when you explicitly ask it to add web or Git sources to your corpus. No telemetry, no analytics, no update pings.
+  <div>
+    <p>No. The daemon listens on a local Unix domain socket, embeddings run locally via ONNX (optionally Metal-accelerated), and the vector index lives on disk under <code>~/.iris/</code>. The only network activity iris initiates is <code>iris_fetch</code> / <code>iris_clone</code> when you explicitly ask it to add web or Git sources to your corpus. No telemetry, no analytics, no update pings.</p>
   </div>
 </details>
 
 <details class="iris-faq__item">
   <summary>Do I need the desktop app, or can I just use the CLI?</summary>
-  <div markdown>
-Either works. The MCP proxy ships as `iris` on your `PATH` and is the only piece your agent talks to. The desktop app is an optional observatory that attaches to the same daemon — it's useful for inspecting corpora, replaying sessions, and tuning configuration visually. If you're headless on a server, grab the CLI-only tarball instead.
+  <div>
+    <p>Either works. The MCP proxy ships as <code>iris</code> on your <code>PATH</code> and is the only piece your agent talks to. The desktop app is an optional observatory that attaches to the same daemon — it's useful for inspecting corpora, replaying sessions, and tuning configuration visually. If you're headless on a server, grab the CLI-only tarball instead.</p>
   </div>
 </details>
 
 <details class="iris-faq__item">
   <summary>PKG or DMG — which should I pick?</summary>
-  <div markdown>
-The PKG is recommended because it wires the CLI into `/usr/local/bin/iris` and registers `/etc/paths.d/iris` during install, so `iris` works in any terminal immediately. The DMG drags `iris.app` into Applications, and the app installs the CLI to `~/.iris/bin/iris` on first launch — functionally equivalent, but the shell profile edit happens async instead of during install.
+  <div>
+    <p>The PKG is recommended because it wires the CLI into <code>/usr/local/bin/iris</code> and registers <code>/etc/paths.d/iris</code> during install, so <code>iris</code> works in any terminal immediately. The DMG drags <code>iris.app</code> into Applications, and the app installs the CLI to <code>~/.iris/bin/iris</code> on first launch — functionally equivalent, but the shell profile edit happens async instead of during install.</p>
   </div>
 </details>
 
 <details class="iris-faq__item">
   <summary>Does iris work with Cursor / Zed / Windsurf / Continue / Cline?</summary>
-  <div markdown>
-Yes. iris speaks the [Model Context Protocol](https://modelcontextprotocol.io) over stdio JSON-RPC. Any MCP-compatible client can connect by registering the `iris` command. See the [client setup guide](client-setup.md) for tested configurations, or just run `iris --mcp` and point any MCP client at it.
+  <div>
+    <p>Yes. iris speaks the <a href="https://modelcontextprotocol.io">Model Context Protocol</a> over stdio JSON-RPC. Any MCP-compatible client can connect by registering the <code>iris</code> command. See the <a href="../client-setup/">client setup guide</a> for tested configurations.</p>
   </div>
 </details>
 
 <details class="iris-faq__item">
   <summary>How much disk space does iris use?</summary>
-  <div markdown>
-The binary itself is ~14 MB. The desktop app bundle is ~35 MB. Per-corpus storage depends on the size of what you index — a 10k-file codebase typically lands around 150–300 MB (content DB + HNSW index + symbol index). Embeddings are quantized int8, which keeps the vector store small. See the [benchmarks page](benchmarks.md) for reference sizes.
+  <div>
+    <p>The binary itself is ~14 MB. The desktop app bundle is ~35 MB. Per-corpus storage depends on the size of what you index — a 10k-file codebase typically lands around 150–300 MB (content DB + HNSW index + symbol index). Embeddings are quantized int8, which keeps the vector store small. See the <a href="../benchmarks/">benchmarks page</a> for reference sizes.</p>
   </div>
 </details>
 
 <details class="iris-faq__item">
   <summary>Does the installer need admin / sudo?</summary>
-  <div markdown>
-The PKG does — writing to `/Applications` and `/usr/local/bin` requires root. macOS will prompt once with Touch ID or password. The DMG and the CLI tarball don't need admin: DMG lets you drag to a user-level Applications folder, and the tarball can extract anywhere on your `PATH`. If you're on a locked-down work laptop, `curl | bash` the install script — it falls back to `~/.local/bin` automatically when `/usr/local/bin` isn't writable.
+  <div>
+    <p>The PKG does — writing to <code>/Applications</code> and <code>/usr/local/bin</code> requires root. macOS will prompt once with Touch ID or password. The DMG and the CLI tarball don't need admin: DMG lets you drag to a user-level Applications folder, and the tarball can extract anywhere on your <code>PATH</code>. If you're on a locked-down work laptop, <code>curl | bash</code> the install script — it falls back to <code>~/.local/bin</code> automatically when <code>/usr/local/bin</code> isn't writable.</p>
   </div>
 </details>
 
 <details class="iris-faq__item">
   <summary>Does iris cost anything?</summary>
-  <div markdown>
-No. iris is free and open source under MIT OR Apache-2.0. No paid tier, no license server, no vendor lock-in. You can fork it, embed it, ship it as part of your own product — both licenses permit that.
+  <div>
+    <p>No. iris is free and open source under MIT OR Apache-2.0. No paid tier, no license server, no vendor lock-in. You can fork it, embed it, ship it as part of your own product — both licenses permit that.</p>
   </div>
 </details>
 
 <details class="iris-faq__item">
   <summary>How do updates work?</summary>
-  <div markdown>
-Pull the next PKG / DMG from the releases page and run it — the installer overwrites the app bundle and CLI in place. The session shadow, corpora, and indexed content in `~/.iris/` are preserved across upgrades. If you installed via Homebrew (post-1.0) or the shell install script, `brew upgrade iris` / re-running the install script does the same job.
+  <div>
+    <p>Pull the next PKG / DMG from the releases page and run it — the installer overwrites the app bundle and CLI in place. The session shadow, corpora, and indexed content in <code>~/.iris/</code> are preserved across upgrades. If you installed via Homebrew (post-1.0) or the shell install script, <code>brew upgrade iris</code> / re-running the install script does the same job.</p>
   </div>
 </details>
 

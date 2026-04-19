@@ -1171,6 +1171,14 @@
     height: 24px;
     flex-shrink: 0;
     border-radius: 50%;
+    /* Material's pymdownx.details styles summary::before as a blue
+       disclosure chevron with a solid fill + a masked SVG; reset
+       everything that would paint or shape it so only the "+"/"−"
+       glyph renders. */
+    background: none !important;
+    background-color: transparent !important;
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
     border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
     color: var(--color-accent);
     font-size: 14px;
@@ -1181,12 +1189,22 @@
   .iris-faq__item[open] > summary::before {
     content: "−";
   }
+  /* Material's pymdownx.details adds ::after with the SVG chevron; kill
+     it so the right side of the FAQ row doesn't double up with our
+     ::before +/− toggle on the left. */
+  .iris-faq__item > summary::after {
+    content: none !important;
+    display: none !important;
+  }
   .iris-faq__item > summary:hover {
     background: color-mix(in srgb, var(--color-accent) 3%, transparent);
   }
   .iris-faq__item > div {
-    padding: 0 calc(var(--spacing) * 5) calc(var(--spacing) * 4) calc(var(--spacing) * 5);
-    margin-left: calc(var(--spacing) * 6 + 24px);
+    /* Align answer text with the start of the question (summary has
+       the same horizontal padding + the +/− indicator is ~24px wide
+       with a spacing*3 gap). */
+    padding: 0 calc(var(--spacing) * 5) calc(var(--spacing) * 4);
+    padding-left: calc(var(--spacing) * 5 + 24px + calc(var(--spacing) * 3));
     color: var(--color-text-muted);
     font-size: var(--text-sm);
     line-height: 1.6;
@@ -1207,7 +1225,6 @@
   @media (max-width: 720px) {
     .iris-faq__item > div {
       padding: 0 calc(var(--spacing) * 4) calc(var(--spacing) * 4);
-      margin-left: 0;
     }
   }
   @media (prefers-reduced-motion: reduce) {
