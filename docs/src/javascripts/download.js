@@ -535,6 +535,13 @@
     const repo = root.dataset.repo;
     if (!repo) return;
 
+    // The skeleton row is server-rendered `hidden` so no-JS visitors
+    // never see "Loading recent releases…" stuck forever. Reveal it
+    // now that the script is running.
+    root
+      .querySelectorAll(".iris-changelog__item--skeleton")
+      .forEach((el) => el.removeAttribute("hidden"));
+
     // If the fetch stalls or fails, the skeleton row would stick around
     // reading "Loading recent releases…" indefinitely. Give up after
     // 6 seconds, drop the skeleton, and leave only the static "See full

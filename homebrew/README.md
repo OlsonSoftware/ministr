@@ -2,7 +2,7 @@
 
 ## One-time setup
 
-1. Create a new GitHub repository: `AlrikOlson/homebrew-iris`
+1. Create a new GitHub repository: `AlrikOlson/homebrew-tap`
 2. Copy `iris.rb` to `Formula/iris.rb` in that repository
 3. Push to GitHub
 
@@ -18,7 +18,7 @@ After pushing a new `v*` tag and the release workflow completes:
 
 1. Download the `.sha256` files from the GitHub Release assets
 2. Update the `version` and `sha256` values in `Formula/iris.rb`
-3. Push to the `homebrew-iris` repository
+3. Push to the `homebrew-tap` repository
 
 ### Automation
 
@@ -29,7 +29,7 @@ Add a step to the release workflow that auto-updates the tap:
   uses: mislav/bump-homebrew-formula-action@v3
   with:
     formula-name: iris
-    homebrew-tap: AlrikOlson/homebrew-iris
+    homebrew-tap: AlrikOlson/homebrew-tap
   env:
     COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 ```

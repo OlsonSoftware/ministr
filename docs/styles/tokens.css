@@ -1751,6 +1751,27 @@
     }
   }
 
+  /* ---- Hide dynamic download overlays when printing ---- */
+  @media print {
+    .iris-download-sticky,
+    .iris-download__post-click,
+    .iris-download__proof,
+    .iris-download__warning,
+    .iris-download__caption {
+      display: none !important;
+    }
+    /* The observatory preview is informational but its dark background
+       wastes ink on print; collapse to a bordered outline. */
+    .iris-app-preview {
+      background: transparent !important;
+      box-shadow: none !important;
+      break-inside: avoid;
+    }
+    .iris-app-preview__progress-fill {
+      animation: none !important;
+    }
+  }
+
   /* ---- Filesystem install tree ---- */
   .iris-install-tree {
     max-width: 720px;

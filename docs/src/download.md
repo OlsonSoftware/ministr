@@ -335,7 +335,7 @@ hide:
 === "Custom agent"
 
     ```sh
-    iris --mcp                         # stdio JSON-RPC for any MCP-speaking client
+    iris                               # stdio JSON-RPC; `serve` is the default subcommand
     ```
 
 <div class="iris-section-header" id="other-platforms">
@@ -411,7 +411,7 @@ All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](htt
   data-repo="AlrikOlson/iris-rs"
   data-fallback
 >
-  <div class="iris-changelog__item iris-changelog__item--skeleton" aria-hidden="true">
+  <div class="iris-changelog__item iris-changelog__item--skeleton" aria-hidden="true" hidden>
     <span class="iris-changelog__tag">v__IRIS_VERSION__</span>
     <span class="iris-changelog__date">—</span>
     <span class="iris-changelog__body">Loading recent releases…</span>
