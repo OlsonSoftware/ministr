@@ -2685,8 +2685,13 @@
        below the hero stays anchored no matter how many rows the
        replay appends; the widget itself acts like a mini terminal
        pane, auto-scrolling to keep the latest line in view
-       (session-trace.js sets scrollTop = scrollHeight on each row). */
-    height: 380px;
+       (session-trace.js sets scrollTop = scrollHeight on each row).
+       !important + max-height + contain:size defeat any unexpected
+       override and guarantee the browser treats this element's box
+       as content-independent. */
+    height: 380px !important;
+    max-height: 380px !important;
+    contain: size layout;
     overflow-y: auto;
     overscroll-behavior: contain;
     font-size: var(--text-sm);
@@ -2698,7 +2703,8 @@
      gets slightly more vertical room so fewer rows require scrolling
      to see. Lower-context uses (if we add any) stay at the base 380px. */
   .iris-trace-live--hero .iris-trace-live__lines {
-    height: 440px;
+    height: 440px !important;
+    max-height: 440px !important;
   }
 
   /* WebKit scrollbar styling — subtle, track blends with container. */
@@ -2826,10 +2832,12 @@
        slightly shorter since hero real-estate is scarcer. The
        scrollbar + auto-scroll from the base rule carry over. */
     .iris-trace-live__lines {
-      height: 320px;
+      height: 320px !important;
+      max-height: 320px !important;
     }
     .iris-trace-live--hero .iris-trace-live__lines {
-      height: 360px;
+      height: 360px !important;
+      max-height: 360px !important;
     }
   }
 
