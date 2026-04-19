@@ -71,8 +71,33 @@
     "(prefers-reduced-motion: reduce)",
   ).matches;
 
-  const CHAR_DELAY = 12; // ms per typed char
-  const LOOP_DELAY = 3000; // pause before the replay starts over
+  // Realistic typing rhythm: humans vary per-char, slow on punctuation
+  // and parens, occasionally burst, and pause briefly between thoughts.
+  const CHAR_DELAY_MIN = 18;   // fastest keystroke (inside a quick word)
+  const CHAR_DELAY_MAX = 55;   // slowest keystroke (after a pause beat)
+  const PUNCT_PAUSE = 90;      // extra dwell after ( { " : . , / =
+  const WORD_PAUSE_CHANCE = 0.14;   // chance of a micro-pause at space
+  const WORD_PAUSE_MS = [110, 280]; // range for those micro-pauses
+  // Shell output is NOT typed by a human — it streams from the process.
+  // Emit it quickly so it feels like program output, not typing.
+  const META_CHAR_DELAY = 3;
+  const EXEC_PAUSE = [220, 520];   // "running..." latency before output
+  const BADGE_DELAY = [160, 280];  // result-sticker after meta types in
+  const LOOP_DELAY = 3000;         // pause before the replay restarts
+
+  function rand(min, max) {
+    return Math.floor(min + Math.random() * (max - min));
+  }
+
+  // Decide per-char delay based on the character about to appear.
+  function charDelay(nextChar) {
+    const base = rand(CHAR_DELAY_MIN, CHAR_DELAY_MAX);
+    if (/[({":,./=[\]]/.test(nextChar)) return base + PUNCT_PAUSE;
+    if (nextChar === " " && Math.random() < WORD_PAUSE_CHANCE) {
+      return base + rand(WORD_PAUSE_MS[0], WORD_PAUSE_MS[1]);
+    }
+    return base;
+  }
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -155,7 +180,8 @@
     return { lines, fill, pct, turn, prefetch };
   }
 
-  async function typeText(node, text, controller) {
+  // Human typing — per-char delay varies by character context.
+  async function typeHuman(node, text, controller) {
     if (REDUCED_MOTION) {
       node.textContent = text;
       return;
@@ -163,7 +189,21 @@
     for (let i = 0; i < text.length; i++) {
       if (controller.aborted) return;
       node.textContent = text.slice(0, i + 1);
-      await sleep(CHAR_DELAY, controller);
+      await sleep(charDelay(text[i]), controller);
+    }
+  }
+
+  // Shell output — streams fast, no punctuation pauses. Represents the
+  // process printing its response line, not a human typing.
+  async function typeOutput(node, text, controller) {
+    if (REDUCED_MOTION) {
+      node.textContent = text;
+      return;
+    }
+    for (let i = 0; i < text.length; i++) {
+      if (controller.aborted) return;
+      node.textContent = text.slice(0, i + 1);
+      await sleep(META_CHAR_DELAY, controller);
     }
   }
 
@@ -193,27 +233,52 @@
 
       turn.textContent = `turn ${i + 1}`;
 
-      await typeText(cmd, step.line, controller);
+      // User types the command with human rhythm.
+      await typeHuman(cmd, step.line, controller);
       if (controller.aborted) return;
 
       if (step.meta) {
+        // "Running…" latency between command and output. Real MCP calls
+        // take ~10–200ms over UDS; exaggerate slightly for drama.
+        if (!REDUCED_MOTION) {
+          await sleep(rand(EXEC_PAUSE[0], EXEC_PAUSE[1]), controller);
+          if (controller.aborted) return;
+        }
         const meta = el("span", "iris-trace-live__meta");
         row.appendChild(meta);
-        await typeText(meta, step.meta, controller);
+        // Animate the gauge at the moment the response starts streaming,
+        // so the viewer sees cause-and-effect instead of a pre-emptive
+        // fill.
+        fill.style.width = step.budget + "%";
+        animatePct(pct, step.budget, controller);
+        // Output streams much faster than human typing.
+        await typeOutput(meta, step.meta, controller);
         if (controller.aborted) return;
+      } else {
+        // No meta — update gauge once the cmd is committed.
+        fill.style.width = step.budget + "%";
+        animatePct(pct, step.budget, controller);
       }
 
-      if (step.tag === "cache-hit") {
-        row.appendChild(el("span", "iris-trace-live__badge iris-trace-live__badge--hit", "HIT"));
-      } else if (step.tag === "evict") {
-        row.appendChild(el("span", "iris-trace-live__badge iris-trace-live__badge--evict", "EVICT"));
-      } else if (step.tag === "pressure") {
-        row.appendChild(el("span", "iris-trace-live__badge iris-trace-live__badge--warn", "PRESSURE"));
+      // Badges feel like post-processing stickers — a beat after the
+      // response so viewers have a chance to read the meta first.
+      if (step.tag === "cache-hit" || step.tag === "evict" || step.tag === "pressure") {
+        if (!REDUCED_MOTION) {
+          await sleep(rand(BADGE_DELAY[0], BADGE_DELAY[1]), controller);
+          if (controller.aborted) return;
+        }
+        const label = step.tag === "cache-hit" ? "HIT"
+          : step.tag === "evict" ? "EVICT"
+          : "PRESSURE";
+        const variant = step.tag === "cache-hit" ? "--hit"
+          : step.tag === "evict" ? "--evict"
+          : "--warn";
+        row.appendChild(el(
+          "span",
+          `iris-trace-live__badge iris-trace-live__badge${variant}`,
+          label,
+        ));
       }
-
-      // Animate budget gauge toward the new target.
-      fill.style.width = step.budget + "%";
-      pct.textContent = step.budget + "%";
 
       // Auto-scroll latest row into view without hijacking page scroll.
       lines.scrollTop = lines.scrollHeight;
@@ -223,6 +288,26 @@
         if (controller.aborted) return;
       }
     }
+  }
+
+  // Tick the budget % text alongside the CSS gauge fill transition
+  // (--duration-slow = 320ms). Keeps label and bar visually locked.
+  function animatePct(node, target, controller) {
+    if (REDUCED_MOTION) {
+      node.textContent = target + "%";
+      return;
+    }
+    const start = parseInt(node.textContent, 10) || 0;
+    const durMs = 320;
+    const t0 = performance.now();
+    function step(now) {
+      if (controller.aborted) return;
+      const p = Math.min(1, (now - t0) / durMs);
+      const eased = 1 - Math.pow(1 - p, 3); // ease-out cubic
+      node.textContent = Math.round(start + (target - start) * eased) + "%";
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
   }
 
   async function loop(ctx, controller, getPaused) {

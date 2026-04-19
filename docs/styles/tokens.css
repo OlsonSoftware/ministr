@@ -2750,6 +2750,10 @@
     color: var(--color-iris-300);
     animation: iris-trace-caret 1s steps(1) infinite;
   }
+  /* Hide the cmd caret once the response has started streaming — the
+     row already has a meta sibling, so the "still typing" indicator on
+     the command line is misleading. */
+  .iris-trace-live__row:has(> .iris-trace-live__meta) .iris-trace-live__cmd::after,
   .iris-trace-live__row:not(:last-child) .iris-trace-live__cmd::after {
     content: "";
     animation: none;
