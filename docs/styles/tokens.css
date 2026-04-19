@@ -2356,6 +2356,19 @@
     box-shadow: var(--shadow-sm);
     overflow: hidden;
   }
+  /* "See the full architecture →" subcaption under the simplified
+     landing diagram — deep-link to the real /architecture/ page. */
+  .md-typeset .iris-diagram__caption {
+    margin: calc(var(--spacing) * -8) auto calc(var(--spacing) * 12) !important;
+    max-width: 900px;
+    text-align: right;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .md-typeset .iris-diagram__caption a {
+    color: var(--color-accent) !important;
+    border-bottom: none !important;
+  }
   .iris-diagram .d2,
   .d2 svg {
     position: relative;

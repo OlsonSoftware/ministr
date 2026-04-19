@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
-{# Announce on every page that this is a private pre-release site. Remove
-   when the repo goes public. #}
+{# Pre-1.0 notice, surfaced once per page. Phrased as forward-notice
+   rather than warning — an alarmed "APIs may change" strip on every
+   page undermines confidence on what is otherwise polished copy. #}
 {% block announce %}
   <span class="md-ellipsis">
-    iris is in active development — APIs may change before 1.0.
-    <a href="https://github.com/AlrikOlson/iris-rs/releases">See releases</a>.
+    iris is pre-1.0. <a href="https://github.com/AlrikOlson/iris-rs/releases">Release notes →</a>
   </span>
 {% endblock %}
 

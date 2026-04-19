@@ -463,7 +463,7 @@ All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](htt
 <details class="iris-faq__item">
   <summary>How much disk space does iris use?</summary>
   <div>
-    <p>The binary itself is ~14 MB. The desktop app bundle is ~35 MB. Per-corpus storage depends on the size of what you index — a 10k-file codebase typically lands around 150–300 MB (content DB + HNSW index + symbol index). Embeddings are quantized int8, which keeps the vector store small. See the <a href="../benchmarks/">benchmarks page</a> for reference sizes.</p>
+    <p>The app and CLI are small. Per-corpus storage scales with what you index — a typical project codebase fits comfortably alongside its own source tree. Exact numbers for sample corpora are on the <a href="../benchmarks/">benchmarks page</a>.</p>
   </div>
 </details>
 

@@ -10,14 +10,14 @@ hide:
 
 <span class="iris-hero__eyebrow">
   <svg class="icon icon-sm"><use href="assets/icons.svg#cube-focus"/></svg>
-  MCP server · written in Rust
+  MCP server · runs locally
 </span>
 
 # iris { .iris-hero__title }
 
 <p class="iris-hero__tagline">
   Serve context to your LLM agent like an L1 cache — with session tracking,
-  predictive prefetch, budget awareness, and code navigation across 12 languages.
+  predictive prefetch, and budget awareness.
 </p>
 
 <div class="iris-hero__install">claude mcp add iris -- iris</div>
@@ -58,20 +58,20 @@ hide:
 
 <div class="iris-stats" markdown>
 <div class="iris-stats__item">
-  <div class="iris-stats__value">~5 ms</div>
-  <div class="iris-stats__label">Local embedding</div>
+  <div class="iris-stats__value">Local</div>
+  <div class="iris-stats__label">No API keys</div>
 </div>
 <div class="iris-stats__item">
-  <div class="iris-stats__value">&lt; 1 ms</div>
-  <div class="iris-stats__label">Warm cache hit</div>
+  <div class="iris-stats__value">Session-aware</div>
+  <div class="iris-stats__label">Remembers what it sent</div>
 </div>
 <div class="iris-stats__item">
-  <div class="iris-stats__value">94 %</div>
-  <div class="iris-stats__label">Token savings vs grep + cat</div>
+  <div class="iris-stats__value">Predictive</div>
+  <div class="iris-stats__label">Warms what's next</div>
 </div>
 <div class="iris-stats__item">
   <div class="iris-stats__value">12</div>
-  <div class="iris-stats__label">Languages via tree-sitter</div>
+  <div class="iris-stats__label">Languages indexed</div>
 </div>
 </div>
 
@@ -96,15 +96,15 @@ session and deduplicates. When a section changes, it delivers only the delta.
 
 <div class="iris-why__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#magnifying-glass"/></svg> Blind retrieval
-`grep` + `cat` burns tokens on irrelevant code. iris indexes your codebase at
-multiple resolutions — documents, sections, claims, symbols — and returns
-precisely what matters.
+`grep` + `cat` burn tokens on code that isn't relevant. iris indexes
+your corpus semantically and returns just the piece that answers the
+question.
 </div>
 
 <div class="iris-why__card" markdown>
-### <svg class="icon icon-md"><use href="assets/icons.svg#lightning"/></svg> No lookahead
-Cold retrievals cost latency and tokens. iris predicts the next read and
-pre-warms it with sequential, structural, and topical prefetch strategies.
+### <svg class="icon icon-md"><use href="assets/icons.svg#lightning"/></svg> Cold reads
+Every new fetch is a round trip your agent waits on. iris predicts what
+it's going to ask for next and warms it in the background.
 </div>
 
 </div>
@@ -115,7 +115,7 @@ pre-warms it with sequential, structural, and topical prefetch strategies.
     Architecture
   </span>
   <h2>How it fits together</h2>
-  <p>One local binary sits between your MCP client and your corpus.</p>
+  <p>One local binary sits between your MCP client and your files.</p>
 </div>
 
 <div class="iris-diagram" markdown>
@@ -123,47 +123,35 @@ pre-warms it with sequential, structural, and topical prefetch strategies.
 ```d2
 direction: right
 
-clients: MCP clients {
+clients: Your MCP client {
   claude: Claude Code
   cursor: Cursor
-  agent: Custom agent
+  agent: …any MCP client
 }
 
 iris: iris {
-  proxy: MCP proxy\nstdio
-  daemon: Daemon\nUDS · HTTP
-  session: Session shadow\n+ budget
-  prefetch: Prefetch engine
-  query: Query service
-
-  proxy -> daemon
-  daemon -> session
-  daemon -> prefetch
-  daemon -> query
+  shape: rectangle
 }
 
-storage: Local storage {
-  sql: SQLite\ncontent + symbols {
+storage: Your corpus {
+  files: Source files {
     shape: cylinder
   }
-  hnsw: HNSW\nvector index {
-    shape: cylinder
-  }
-  embed: FastEmbed\nONNX · Metal {
+  index: Local index {
     shape: cylinder
   }
 }
 
-clients.claude -> iris.proxy
-clients.cursor -> iris.proxy
-clients.agent -> iris.proxy
+clients.claude -> iris
+clients.cursor -> iris
+clients.agent -> iris
 
-iris.query -> storage.sql
-iris.query -> storage.hnsw
-iris.query -> storage.embed
+iris -> storage.files
+iris -> storage.index
 ```
 
 </div>
+<p class="iris-diagram__caption"><a href="architecture/">See the full architecture →</a></p>
 
 <div class="iris-section-header">
   <span class="iris-section-header__eyebrow">
@@ -171,45 +159,45 @@ iris.query -> storage.embed
     Capabilities
   </span>
   <h2>What iris does</h2>
-  <p>Six capabilities, one local binary. No API keys.</p>
+  <p>One local binary, no API keys.</p>
 </div>
 
 <div class="iris-features" markdown>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#magnifying-glass"/></svg> Semantic search
-Embedding-based retrieval at document, section, and claim resolution.
-Hybrid dense + sparse search with optional cross-encoder rerank.
+Search across your codebase and docs by meaning, not just text. Returns
+the specific section that answers the question.
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#code"/></svg> Code symbol navigation
-Find and trace structs, functions, traits, and enums across 12 languages.
-Cross-crate references and method-level precision.
+Find and trace functions, types, and callers across your project — not
+just file-level matches.
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#graph"/></svg> Cross-language bridges
-Automatic linking of Tauri commands, napi bindings, PyO3 functions,
-wasm-bindgen exports, and HTTP routes.
+Follows function calls where one language hands off to another — Rust to
+JavaScript, Python to Rust, front-end to back-end.
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#stack"/></svg> Session tracking
-Mirror what iris has already sent. Deduplicate deliveries, detect
-fault-based re-reads, ship deltas instead of full sections.
+Remembers what it sent your agent this session. Skips repeats; ships only
+the changed part when a section is edited.
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#gauge"/></svg> Budget awareness
-Estimate cumulative token usage, flag pressure, rank eviction candidates,
-offer compressed summaries when the budget tightens.
+Tracks context-window usage. When it fills up, older material gets
+compressed instead of silently dropping.
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#cpu"/></svg> Local embeddings
-FastEmbed + ONNX (~5 ms/embed). Optional Metal GPU acceleration via Candle
-on Apple Silicon. No network required.
+Embeddings run on your machine, not a third-party API. No network calls,
+no API keys, no tokens leaving the box.
 </div>
 
 </div>
