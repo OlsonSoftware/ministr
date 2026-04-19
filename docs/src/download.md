@@ -229,21 +229,41 @@ hide:
 
 <p class="iris-app-preview__caption">Here's what lands in <code>/Applications</code> — the observatory attached to your local daemon.</p>
 
-<div class="iris-install-flow" aria-label="Install flow">
+<div class="iris-install-flow" aria-label="Install flow" data-iris-flow>
   <ol class="iris-install-flow__steps">
-    <li class="iris-install-flow__step">
+    <li
+      class="iris-install-flow__step"
+      data-mac="Download the .pkg"
+      data-win="Download the .exe installer"
+      data-lin="Download the .AppImage"
+    >
       <span class="iris-install-flow__num">1</span>
       <span class="iris-install-flow__label">Download the .pkg</span>
     </li>
-    <li class="iris-install-flow__step">
+    <li
+      class="iris-install-flow__step"
+      data-mac="Double-click to run"
+      data-win="Run the NSIS wizard"
+      data-lin="chmod +x iris.AppImage"
+    >
       <span class="iris-install-flow__num">2</span>
       <span class="iris-install-flow__label">Double-click to run</span>
     </li>
-    <li class="iris-install-flow__step">
+    <li
+      class="iris-install-flow__step"
+      data-mac="Launch iris from /Applications"
+      data-win="Launch iris from Start Menu"
+      data-lin="Launch the AppImage"
+    >
       <span class="iris-install-flow__num">3</span>
       <span class="iris-install-flow__label">Launch iris from /Applications</span>
     </li>
-    <li class="iris-install-flow__step iris-install-flow__step--final">
+    <li
+      class="iris-install-flow__step iris-install-flow__step--final"
+      data-mac='<code>iris</code> ready on your <code>PATH</code>'
+      data-win='<code>iris</code> ready on your <code>PATH</code>'
+      data-lin='<code>iris</code> ready — symlink to your PATH'
+    >
       <span class="iris-install-flow__num">✓</span>
       <span class="iris-install-flow__label">
         <code>iris</code> ready on your <code>PATH</code>

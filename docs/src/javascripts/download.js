@@ -200,6 +200,11 @@
       root.setAttribute("data-detected-os", os);
       root.setAttribute("data-detected-arch", arch);
 
+      // OS-aware install-flow stepper: rewrite each step's label to
+      // reflect the visitor's platform. Each <li> carries data-mac,
+      // data-win, data-lin; we pick the matching one if set.
+      swapInstallFlow(os);
+
       // macOS version gate: warn if detected platformVersion < 13.0.
       if (os === "macos" && platformVersion) {
         const major = parseInt(platformVersion.split(".")[0], 10);
@@ -211,6 +216,19 @@
       }
 
       finishSkeleton(true);
+    }
+
+    function swapInstallFlow(os) {
+      const flow = document.querySelector("[data-iris-flow]");
+      if (!flow) return;
+      const key = os === "windows" ? "win" : os === "linux" ? "lin" : "mac";
+      flow.querySelectorAll(".iris-install-flow__step").forEach((step) => {
+        const variant = step.dataset[key];
+        if (!variant) return;
+        const label = step.querySelector(".iris-install-flow__label");
+        if (label) label.innerHTML = variant;
+      });
+      flow.setAttribute("data-detected-os", os);
     }
 
     function showMinOsWarning(msg) {
