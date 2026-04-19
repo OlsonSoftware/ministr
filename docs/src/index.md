@@ -27,12 +27,34 @@ hide:
   <a class="iris-hero__cta iris-hero__cta--secondary" href="https://github.com/AlrikOlson/iris-rs">GitHub</a>
 </div>
 
-<figure class="iris-hero__demo">
-  <video autoplay loop muted playsinline preload="metadata" aria-label="iris CLI demo — iris init, claude mcp add iris, and an agent trace with a cache hit">
-    <source src="assets/launch.webm" type="video/webm">
-    <img src="assets/launch.gif" alt="iris CLI demo — iris init, claude mcp add iris, and an agent trace with a cache hit" loading="lazy">
-  </video>
-</figure>
+<div data-iris-trace class="iris-trace-live iris-trace-live--hero"></div>
+
+<noscript>
+<div class="iris-trace" markdown>
+```text
+➜ iris_survey("authentication middleware")
+  ranked 5 results · budget: 3% used · prefetch: warming src/auth.rs#logout
+
+➜ iris_read("src/auth.rs#login")
+  420 tokens · budget: 5% used · prefetch: warming validate_token (structural)
+
+➜ iris_read("src/auth.rs#logout")
+  CACHE HIT — delivered from prefetch · 0 ms · budget: 7% used
+
+➜ iris_symbols(kind="function", query="validate")
+  8 symbols found · budget: 8% used
+
+... (many reads later) ...
+
+➜ iris_survey("rate limiting")
+  results at CLAIM resolution · pressure: ELEVATED · budget: 82% used
+  eviction_recommendations: [src/setup.rs#prerequisites, docs/intro.md]
+
+➜ iris_evicted(["src/setup.rs#prerequisites"])
+  budget: 76% used · session shadow updated
+```
+</div>
+</noscript>
 
 <div class="iris-stats" markdown>
 <div class="iris-stats__item">
@@ -194,41 +216,52 @@ on Apple Silicon. No network required.
 
 <div class="iris-section-header">
   <span class="iris-section-header__eyebrow">
-    <svg class="icon icon-sm"><use href="assets/icons.svg#terminal-window"/></svg>
-    Trace
+    <svg class="icon icon-sm"><use href="assets/icons.svg#circuitry"/></svg>
+    Desktop app
   </span>
-  <h2>A typical session</h2>
-  <p>Every response carries budget tracking, and the prefetch engine pre-warms what's next.</p>
+  <h2>The observatory, for when you want to watch</h2>
+  <p>A Tauri-based companion that attaches to the same local daemon your agents use — inspect corpora, replay sessions, and tune configuration without leaving the GUI.</p>
 </div>
 
-<div data-iris-trace class="iris-trace-live"></div>
+<div class="iris-features" markdown>
 
-<noscript>
-<div class="iris-trace" markdown>
-```text
-➜ iris_survey("authentication middleware")
-  ranked 5 results · budget: 3% used · prefetch: warming src/auth.rs#logout
-
-➜ iris_read("src/auth.rs#login")
-  420 tokens · budget: 5% used · prefetch: warming validate_token (structural)
-
-➜ iris_read("src/auth.rs#logout")
-  CACHE HIT — delivered from prefetch · 0 ms · budget: 7% used
-
-➜ iris_symbols(kind="function", query="validate")
-  8 symbols found · budget: 8% used
-
-... (many reads later) ...
-
-➜ iris_survey("rate limiting")
-  results at CLAIM resolution · pressure: ELEVATED · budget: 82% used
-  eviction_recommendations: [src/setup.rs#prerequisites, docs/intro.md]
-
-➜ iris_evicted(["src/setup.rs#prerequisites"])
-  budget: 76% used · session shadow updated
-```
+<div class="iris-features__card" markdown>
+### <svg class="icon icon-md"><use href="assets/icons.svg#squares-four"/></svg> Overview
+Live counts of documents, sections, symbols, and active sessions across every registered corpus — plus an ingestion timeline so you can see what the watcher is doing.
 </div>
-</noscript>
+
+<div class="iris-features__card" markdown>
+### <svg class="icon icon-md"><use href="assets/icons.svg#magnifying-glass"/></svg> Query playground
+Run `iris_survey`, `iris_symbols`, `iris_definition`, and `iris_references` against any registered corpus. See the same ranked results your agent sees, rendered with heading paths and claim previews.
+</div>
+
+<div class="iris-features__card" markdown>
+### <svg class="icon icon-md"><use href="assets/icons.svg#gauge"/></svg> Session dashboard
+Replay a session trace turn by turn: which sections were delivered, which got evicted, how budget pressure tracked across the conversation, and which prefetch strategies fired.
+</div>
+
+<div class="iris-features__card" markdown>
+### <svg class="icon icon-md"><use href="assets/icons.svg#graph"/></svg> Symbol graph
+A tree-sitter-powered map of your codebase rendered as a collapsible graph. Navigate callers, implementors, and cross-language bridges visually.
+</div>
+
+<div class="iris-features__card" markdown>
+### <svg class="icon icon-md"><use href="assets/icons.svg#stack"/></svg> Corpus treemap
+Sunburst/treemap view of disk and token footprint per path. Spot a runaway directory before it bloats the index.
+</div>
+
+<div class="iris-features__card" markdown>
+### <svg class="icon icon-md"><use href="assets/icons.svg#terminal-window"/></svg> Log viewer + settings
+Tail daemon logs with filtering, tweak `BudgetConfig`, prefetch strategies, and embedding backends from the UI — changes hot-reload without restarting the daemon.
+</div>
+
+</div>
+
+<p class="iris-hero__tagline" style="max-width: 48rem; margin: 2rem auto 0;">
+Ships as a single bundle (React 19 + Tauri v2) that talks to the same <code>iris-daemon</code> over its UDS socket. Run the CLI for agents, the app for humans — both see the same corpora.
+<br><br>
+<a class="iris-hero__cta iris-hero__cta--secondary" href="https://github.com/AlrikOlson/iris-rs/tree/main/iris-app"><svg class="icon icon-sm"><use href="assets/icons.svg#code"/></svg> iris-app source</a>
+</p>
 
 <div class="iris-section-header">
   <span class="iris-section-header__eyebrow">
