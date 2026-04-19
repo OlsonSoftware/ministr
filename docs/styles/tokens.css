@@ -2694,6 +2694,13 @@
     scrollbar-width: thin;
     scrollbar-color: var(--color-code-border) transparent;
   }
+  /* Hero variant — the above-the-fold version on the landing page
+     gets slightly more vertical room so fewer rows require scrolling
+     to see. Lower-context uses (if we add any) stay at the base 380px. */
+  .iris-trace-live--hero .iris-trace-live__lines {
+    height: 440px;
+  }
+
   /* WebKit scrollbar styling — subtle, track blends with container. */
   .iris-trace-live__lines::-webkit-scrollbar {
     width: 6px;
@@ -2820,6 +2827,9 @@
        scrollbar + auto-scroll from the base rule carry over. */
     .iris-trace-live__lines {
       height: 320px;
+    }
+    .iris-trace-live--hero .iris-trace-live__lines {
+      height: 360px;
     }
   }
 
