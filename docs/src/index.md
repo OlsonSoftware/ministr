@@ -223,6 +223,85 @@ on Apple Silicon. No network required.
   <p>A Tauri-based companion that attaches to the same local daemon your agents use — inspect corpora, replay sessions, and tune configuration without leaving the GUI.</p>
 </div>
 
+<div class="iris-app-preview" aria-label="Preview of the iris desktop observatory">
+  <div class="iris-app-preview__chrome">
+    <div class="iris-app-preview__dots">
+      <span class="iris-app-preview__dot iris-app-preview__dot--r"></span>
+      <span class="iris-app-preview__dot iris-app-preview__dot--y"></span>
+      <span class="iris-app-preview__dot iris-app-preview__dot--g"></span>
+    </div>
+    <span class="iris-app-preview__title">iris — observatory</span>
+    <span class="iris-app-preview__status">
+      <span class="iris-app-preview__led"></span>
+      daemon connected
+    </span>
+  </div>
+  <div class="iris-app-preview__body">
+    <aside class="iris-app-preview__sidebar">
+      <div class="iris-app-preview__sidebar-label">Corpora · 3</div>
+      <ul class="iris-app-preview__list">
+        <li class="iris-app-preview__row iris-app-preview__row--active">
+          <span class="iris-app-preview__row-name">iris-rs</span>
+          <span class="iris-app-preview__row-meta">4128 docs</span>
+        </li>
+        <li class="iris-app-preview__row">
+          <span class="iris-app-preview__row-name">docs/</span>
+          <span class="iris-app-preview__row-meta">312 docs</span>
+        </li>
+        <li class="iris-app-preview__row">
+          <span class="iris-app-preview__row-name">research-notes</span>
+          <span class="iris-app-preview__row-meta">57 docs</span>
+        </li>
+      </ul>
+      <div class="iris-app-preview__sidebar-label">Sessions · 2 live</div>
+      <ul class="iris-app-preview__list">
+        <li class="iris-app-preview__row">
+          <span class="iris-app-preview__row-name">claude-code · main</span>
+          <span class="iris-app-preview__row-meta">42% budget</span>
+        </li>
+        <li class="iris-app-preview__row">
+          <span class="iris-app-preview__row-name">cursor · refactor</span>
+          <span class="iris-app-preview__row-meta">18% budget</span>
+        </li>
+      </ul>
+    </aside>
+    <div class="iris-app-preview__main">
+      <div class="iris-app-preview__panel">
+        <div class="iris-app-preview__panel-header">
+          <span class="iris-app-preview__panel-title">Query playground</span>
+          <span class="iris-app-preview__panel-meta">iris_survey · 5 hits · 42 ms</span>
+        </div>
+        <div class="iris-app-preview__query">authentication middleware</div>
+        <div class="iris-app-preview__results">
+          <div class="iris-app-preview__result">
+            <div class="iris-app-preview__result-head">
+              <span class="iris-app-preview__result-path">src/auth.rs › login</span>
+              <span class="iris-app-preview__score">0.91</span>
+            </div>
+            <p class="iris-app-preview__snippet">Validates JWT tokens using RS256 and calls <code>validate_token</code>…</p>
+          </div>
+          <div class="iris-app-preview__result">
+            <div class="iris-app-preview__result-head">
+              <span class="iris-app-preview__result-path">src/auth.rs › logout</span>
+              <span class="iris-app-preview__score">0.87</span>
+            </div>
+            <p class="iris-app-preview__snippet">Revokes the session cookie and blacklists the refresh token until…</p>
+          </div>
+        </div>
+      </div>
+      <div class="iris-app-preview__panel">
+        <div class="iris-app-preview__panel-header">
+          <span class="iris-app-preview__panel-title">Indexing · iris-rs</span>
+          <span class="iris-app-preview__panel-meta">2812 / 4128 sections</span>
+        </div>
+        <div class="iris-app-preview__progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="68">
+          <span class="iris-app-preview__progress-fill" style="width: 68%"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="iris-features" markdown>
 
 <div class="iris-features__card" markdown>

@@ -744,6 +744,251 @@
     height: auto;
   }
 
+  /* ---------- Landing — Tauri app preview mock ---------- */
+
+  .iris-app-preview {
+    max-width: 960px;
+    margin: calc(var(--spacing) * 10) auto calc(var(--spacing) * 6);
+    border: 1px solid var(--color-code-border);
+    border-radius: var(--radius-xl);
+    background: var(--color-code-bg);
+    box-shadow: var(--shadow-lg, var(--shadow-md));
+    overflow: hidden;
+    color: var(--color-code-text);
+    font-family: var(--font-text, inherit);
+  }
+  .iris-app-preview__chrome {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: calc(var(--spacing) * 3);
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 4);
+    border-bottom: 1px solid color-mix(in srgb, var(--color-code-border) 60%, transparent);
+    background: color-mix(in srgb, var(--color-code-bg) 92%, var(--color-accent) 2%);
+  }
+  .iris-app-preview__dots {
+    display: inline-flex;
+    gap: 6px;
+  }
+  .iris-app-preview__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .iris-app-preview__dot--r { color: #ff5f57; }
+  .iris-app-preview__dot--y { color: #febc2e; }
+  .iris-app-preview__dot--g { color: #28c840; }
+  .iris-app-preview__title {
+    text-align: center;
+    letter-spacing: 0.12em;
+    color: var(--color-text-subtle);
+    text-transform: uppercase;
+    font-size: 11px;
+  }
+  .iris-app-preview__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-text-subtle);
+    font-size: 10px;
+  }
+  .iris-app-preview__led {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #28c840;
+    box-shadow: 0 0 0 3px color-mix(in srgb, #28c840 20%, transparent);
+  }
+  .iris-app-preview__body {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 0;
+    min-height: 320px;
+  }
+  .iris-app-preview__sidebar {
+    padding: calc(var(--spacing) * 4);
+    border-right: 1px solid color-mix(in srgb, var(--color-code-border) 50%, transparent);
+    background: color-mix(in srgb, var(--color-code-bg) 97%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--spacing) * 2);
+    font-size: var(--text-xs);
+  }
+  .iris-app-preview__sidebar-label {
+    color: var(--color-text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 10px;
+    margin-top: calc(var(--spacing) * 2);
+  }
+  .iris-app-preview__sidebar-label:first-child {
+    margin-top: 0;
+  }
+  .iris-app-preview__list {
+    list-style: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .iris-app-preview__row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    margin: 0 !important;
+  }
+  .iris-app-preview__row--active {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--color-text);
+  }
+  .iris-app-preview__row-name {
+    color: inherit;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .iris-app-preview__row-meta {
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .iris-app-preview__main {
+    padding: calc(var(--spacing) * 4);
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--spacing) * 4);
+    background: var(--color-code-bg);
+  }
+  .iris-app-preview__panel {
+    border: 1px solid color-mix(in srgb, var(--color-code-border) 50%, transparent);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-code-bg) 92%, transparent);
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+  }
+  .iris-app-preview__panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    margin-bottom: calc(var(--spacing) * 3);
+  }
+  .iris-app-preview__panel-title {
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    font-weight: 500;
+  }
+  .iris-app-preview__panel-meta {
+    color: var(--color-text-subtle);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .iris-app-preview__query {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-code-bg) 70%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-iris-400, var(--color-accent)) 35%, transparent);
+    color: var(--color-iris-300, var(--color-accent));
+    margin-bottom: calc(var(--spacing) * 3);
+  }
+  .iris-app-preview__query::before {
+    content: "› ";
+    opacity: 0.6;
+  }
+  .iris-app-preview__results {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--spacing) * 2);
+  }
+  .iris-app-preview__result {
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+    border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in srgb, var(--color-code-border) 40%, transparent);
+    background: color-mix(in srgb, var(--color-code-bg) 70%, transparent);
+  }
+  .iris-app-preview__result-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    margin-bottom: 6px;
+  }
+  .iris-app-preview__result-path {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-text);
+  }
+  .iris-app-preview__score {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--color-accent);
+    letter-spacing: 0.02em;
+    font-weight: 500;
+  }
+  .iris-app-preview__snippet {
+    margin: 0 !important;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    line-height: 1.5;
+  }
+  .iris-app-preview__snippet code {
+    font-size: 11px;
+    padding: 1px 4px;
+  }
+  .iris-app-preview__progress {
+    background: color-mix(in srgb, var(--color-code-border) 60%, transparent);
+    border-radius: 999px;
+    height: 6px;
+    overflow: hidden;
+    position: relative;
+  }
+  .iris-app-preview__progress-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: linear-gradient(
+      90deg,
+      var(--color-iris-400, var(--color-accent)),
+      var(--color-iris-600, var(--color-accent-hover))
+    );
+    border-radius: 999px;
+    animation: iris-app-preview-progress 3.2s ease-in-out infinite alternate;
+  }
+  @keyframes iris-app-preview-progress {
+    0%   { opacity: 0.75; }
+    100% { opacity: 1; }
+  }
+  @media (max-width: 720px) {
+    .iris-app-preview__body {
+      grid-template-columns: 1fr;
+    }
+    .iris-app-preview__sidebar {
+      border-right: none;
+      border-bottom: 1px solid color-mix(in srgb, var(--color-code-border) 50%, transparent);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .iris-app-preview__progress-fill {
+      animation: none;
+    }
+  }
+
   /* ---------- Download page — trust strip ---------- */
 
   .iris-trust-strip {
