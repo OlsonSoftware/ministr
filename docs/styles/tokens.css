@@ -73,6 +73,8 @@
   --spacing: 4px;
 
   /* Type scale ------------------------------------------------------- */
+  --text-2xs:  0.625rem;      /* 10px — pill captions, tiny meta */
+  --text-2xs--line-height: 0.875rem;
   --text-xs:   0.6875rem;     /* 11px */
   --text-xs--line-height: 1rem;
   --text-sm:   0.8125rem;     /* 13px */
@@ -120,9 +122,11 @@
   /* Motion ----------------------------------------------------------- */
   --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-snap:   80ms;   /* hover/focus micro-response */
   --duration-fast:   140ms;
   --duration-base:   200ms;
   --duration-slow:   320ms;
+  --duration-glacial: 600ms; /* decorative pulses / breathing animations */
 
   /* Fonts — pull from Material's own font loader ---------------------- */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -158,6 +162,19 @@
   --color-code-text:      #f1f5f9;
   --color-kbd-bg:         var(--color-stone-100);
   --color-kbd-border:     var(--color-stone-300);
+
+  /* Semantic status colors ------------------------------------------- */
+  --color-success:        #34d399;   /* emerald-400 */
+  --color-success-soft:   color-mix(in srgb, #34d399 12%, transparent);
+  --color-success-ring:   color-mix(in srgb, #34d399 40%, transparent);
+  --color-warning:        #f97316;   /* orange-500 */
+  --color-warning-soft:   color-mix(in srgb, #f97316 10%, transparent);
+  --color-warning-ring:   color-mix(in srgb, #f97316 40%, transparent);
+
+  /* Traffic-light swatches — macOS window chrome reference colors. */
+  --color-traffic-close:   #ff5f57;
+  --color-traffic-min:     #febc2e;
+  --color-traffic-max:     #28c840;
 
   --grain-opacity: 0;
 }
@@ -823,9 +840,9 @@
     border-radius: 50%;
     background: currentColor;
   }
-  .iris-app-preview__dot--r { color: #ff5f57; }
-  .iris-app-preview__dot--y { color: #febc2e; }
-  .iris-app-preview__dot--g { color: #28c840; }
+  .iris-app-preview__dot--r { color: var(--color-traffic-close); }
+  .iris-app-preview__dot--y { color: var(--color-traffic-min); }
+  .iris-app-preview__dot--g { color: var(--color-traffic-max); }
   .iris-app-preview__title {
     text-align: center;
     letter-spacing: 0.12em;
@@ -840,15 +857,15 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--iris-app-fg-subtle);
-    font-size: 10px;
+    font-size: var(--text-2xs);
   }
   .iris-app-preview__led {
     display: inline-block;
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #28c840;
-    box-shadow: 0 0 0 3px color-mix(in srgb, #28c840 20%, transparent);
+    background: var(--color-traffic-max);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-traffic-max) 20%, transparent);
   }
   .iris-app-preview__body {
     display: grid;
@@ -869,7 +886,7 @@
     color: var(--iris-app-fg-subtle);
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     margin-top: calc(var(--spacing) * 2);
   }
   .iris-app-preview__sidebar-label:first-child {
@@ -907,7 +924,7 @@
   .iris-app-preview__row-meta {
     color: var(--iris-app-fg-muted);
     font-variant-numeric: tabular-nums;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     white-space: nowrap;
   }
   .iris-app-preview__main {
@@ -937,7 +954,7 @@
   }
   .iris-app-preview__panel-meta {
     color: var(--iris-app-fg-subtle);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -981,7 +998,7 @@
   }
   .iris-app-preview__score {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     padding: 1px 6px;
     border-radius: 4px;
     background: color-mix(in srgb, var(--color-accent) 22%, transparent);
@@ -1628,9 +1645,9 @@
     margin: calc(var(--spacing) * 3) auto 0 !important;
     padding: 6px 14px;
     border-radius: 999px;
-    background: color-mix(in srgb, #34d399 10%, transparent);
-    border: 1px solid color-mix(in srgb, #34d399 35%, transparent);
-    color: color-mix(in srgb, #34d399 70%, var(--color-text) 30%);
+    background: color-mix(in srgb, var(--color-success) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent);
+    color: color-mix(in srgb, var(--color-success) 70%, var(--color-text) 30%);
     font-size: var(--text-xs);
     font-weight: 500;
     letter-spacing: 0.02em;
@@ -1892,7 +1909,7 @@
     flex-wrap: wrap;
   }
   .iris-install-tree__footer .icon {
-    color: #34d399;
+    color: var(--color-success);
     width: 13px;
     height: 13px;
   }
@@ -1910,8 +1927,8 @@
     margin: calc(var(--spacing) * 4) auto 0;
     padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
     border-radius: var(--radius-md);
-    border: 1px solid color-mix(in srgb, #f97316 40%, transparent);
-    background: color-mix(in srgb, #f97316 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+    background: color-mix(in srgb, var(--color-warning) 8%, transparent);
     color: var(--color-text);
     font-size: var(--text-sm);
     display: flex;
@@ -1921,7 +1938,7 @@
   }
   .iris-download__warning::before {
     content: "⚠";
-    color: #f97316;
+    color: var(--color-warning);
     font-size: 1.1em;
     line-height: 1;
   }
@@ -1956,7 +1973,7 @@
     font-variant-numeric: tabular-nums;
   }
   .iris-stats__label {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-weight: 500;
     color: var(--color-text-subtle);
     text-transform: uppercase;
@@ -2099,7 +2116,7 @@
     align-items: center;
     gap: calc(var(--spacing) * 1.5);
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     letter-spacing: 0.15em;
     text-transform: uppercase;
     color: var(--color-text-subtle);
@@ -2432,10 +2449,10 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #ff5f57;
+    background: var(--color-traffic-close);
     box-shadow:
-      16px 0 0 #febc2e,
-      32px 0 0 #28c840;
+      16px 0 0 var(--color-traffic-min),
+      32px 0 0 var(--color-traffic-max);
   }
   .iris-trace pre::after {
     content: "iris session";
@@ -2499,9 +2516,9 @@
     border-radius: 50%;
     background: currentColor;
   }
-  .iris-trace-live__dot--r { color: #ff5f57; }
-  .iris-trace-live__dot--y { color: #febc2e; }
-  .iris-trace-live__dot--g { color: #28c840; }
+  .iris-trace-live__dot--r { color: var(--color-traffic-close); }
+  .iris-trace-live__dot--y { color: var(--color-traffic-min); }
+  .iris-trace-live__dot--g { color: var(--color-traffic-max); }
   .iris-trace-live__title {
     text-align: center;
     font-size: 11px;
@@ -2513,7 +2530,7 @@
     display: inline-flex;
     gap: calc(var(--spacing) * 3);
     align-items: center;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--color-text-subtle);
@@ -2527,7 +2544,7 @@
     align-items: center;
     gap: 6px;
     opacity: 0.55;
-    transition: opacity 180ms var(--ease-standard);
+    transition: opacity var(--duration-base) var(--ease-standard);
   }
   .iris-trace-live__prefetch.is-on {
     opacity: 1;
@@ -2539,7 +2556,7 @@
     border-radius: 50%;
     background: currentColor;
     box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 60%, transparent);
-    transition: box-shadow 600ms var(--ease-standard);
+    transition: box-shadow var(--duration-glacial) var(--ease-standard);
   }
   .iris-trace-live__prefetch.is-on .iris-trace-live__led {
     animation: iris-trace-pulse 1400ms ease-in-out infinite;
@@ -2561,14 +2578,14 @@
     inset: 0;
     width: 0%;
     background: linear-gradient(90deg, var(--color-iris-400), var(--color-iris-600));
-    transition: width 500ms var(--ease-standard);
+    transition: width var(--duration-slow) var(--ease-standard);
   }
   .iris-trace-live__gauge-pct {
     position: absolute;
     right: -42px;
     top: 50%;
     transform: translateY(-50%);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--color-text-muted);
     font-variant-numeric: tabular-nums;
     min-width: 34px;
@@ -2637,7 +2654,7 @@
     border: 1px solid currentColor;
     font-weight: 600;
   }
-  .iris-trace-live__badge--hit   { color: #34d399; }
+  .iris-trace-live__badge--hit   { color: var(--color-success); }
   .iris-trace-live__badge--evict { color: #fbbf24; }
   .iris-trace-live__badge--warn  { color: #f87171; }
   .iris-trace-live__row[data-tag="ellipsis"] .iris-trace-live__marker {
@@ -2949,7 +2966,7 @@
     color: var(--color-text) !important;
     border-bottom: 1px solid transparent !important;
     cursor: pointer;
-    transition: background-color 80ms var(--ease-standard);
+    transition: background-color var(--duration-snap) var(--ease-standard);
   }
   .iris-palette__item.is-active {
     background: color-mix(in srgb, var(--color-accent) 12%, transparent);
@@ -2993,7 +3010,7 @@
   }
   .iris-palette__item-kbd {
     opacity: 0;
-    transition: opacity 80ms var(--ease-standard);
+    transition: opacity var(--duration-snap) var(--ease-standard);
   }
   .iris-palette__item.is-active .iris-palette__item-kbd {
     opacity: 1;
@@ -3065,7 +3082,7 @@
     justify-content: center;
     color: var(--color-text-subtle);
     cursor: pointer;
-    transition: border-color 80ms var(--ease-standard), color 80ms var(--ease-standard);
+    transition: border-color var(--duration-snap) var(--ease-standard), color var(--duration-snap) var(--ease-standard);
   }
   .iris-cheatsheet__dismiss:hover {
     border-color: var(--color-accent-ring);
@@ -3148,7 +3165,7 @@
       color-mix(in srgb, var(--color-accent) 50%, var(--color-accent-hover))
     );
     box-shadow: 0 0 12px color-mix(in srgb, var(--color-accent) 60%, transparent);
-    transition: transform 60ms linear;
+    transition: transform var(--duration-snap) linear;
   }
 
   /* =====================================================
@@ -3187,7 +3204,7 @@
 
   .iris-diagram--interactive .iris-diagram__node {
     cursor: default;
-    transition: filter 120ms var(--ease-standard);
+    transition: filter var(--duration-fast) var(--ease-standard);
   }
   .iris-diagram--interactive .iris-diagram__node:hover {
     filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-accent) 60%, transparent));
@@ -3240,7 +3257,7 @@
   }
   .iris-trace pre {
     font-size: var(--text-xs);
-    padding: calc(var(--spacing) * 9) calc(var(--spacing) * 4) calc(var(--spacing) * 4) !important;
+    padding: calc(var(--spacing) * 8) calc(var(--spacing) * 4) calc(var(--spacing) * 4) !important;
   }
   .iris-section-header h2 {
     font-size: var(--text-2xl);
