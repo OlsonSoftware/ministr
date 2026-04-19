@@ -32,9 +32,11 @@ const DEBOUNCE_MAX_WINDOW: Duration = Duration::from_secs(10);
 /// Run the full ingestion pipeline for a corpus.
 ///
 /// Updates the corpus status through `Idle -> Indexing -> Idle/Error`,
-/// then persists the vector index to disk.
+/// then persists the vector index to disk. After a successful ingest the
+/// per-corpus prefetch cache is flushed so that subsequent reads don't
+/// serve stale warm entries for sections whose text was just rewritten.
 pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
-    let (storage, embedder, index, index_dir, progress) = {
+    let (storage, embedder, index, index_dir, progress, prefetch) = {
         let corpora = registry.corpora().read().await;
         let Some(handle) = corpora.get(corpus_id) else {
             return;
@@ -45,6 +47,7 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
             Arc::clone(&handle.index),
             handle.data_dir.join("index"),
             Arc::clone(&handle.progress),
+            Arc::clone(&handle.prefetch),
         )
     };
 
@@ -78,6 +81,18 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
             if let Err(e) = index.persist(&index_dir) {
                 error!(corpus_id, error = %e, "failed to persist vector index");
             }
+
+            // Flush the prefetch warm cache — any entries it holds were
+            // parsed before this ingest ran and may no longer match what
+            // storage/HNSW now contain (a file edit silently rewrites a
+            // section's text while keeping its ID). `PrefetchEngine::invalidate`
+            // and `clear_cache` were both documented as "called by the
+            // coherence engine when source files change" but neither had a
+            // production caller, so warm hits could serve pre-edit text
+            // indefinitely. Conservative full-clear avoids threading affected
+            // section IDs through `run()` — default capacity is 50 entries
+            // so the cost is bounded; re-warming happens on the next reads.
+            prefetch.lock().await.clear_cache();
 
             // Query storage for total counts (not just incremental stats)
             // so the UI shows correct numbers even when files were skipped.
