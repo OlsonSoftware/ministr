@@ -2,13 +2,14 @@
 
 ## Installation
 
-### Homebrew (macOS)
-
-```sh
-brew install AlrikOlson/tap/iris
-```
+The easiest path is the [**Download page**](download.md) — the signed `.pkg`
+installs both `iris.app` (the desktop observatory) and the `iris` CLI with
+`PATH` wiring done automatically. Alternatives below.
 
 ### Install script (macOS & Linux)
+
+CLI-only; detects your platform, verifies SHA-256, installs to
+`/usr/local/bin` (or `~/.local/bin` without sudo).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
@@ -17,7 +18,13 @@ curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh 
 ### Cargo (from source, requires Rust 1.85+)
 
 ```sh
-cargo install iris-cli
+cargo install --git https://github.com/AlrikOlson/iris-rs iris-cli
+```
+
+### Homebrew (macOS) — coming with 1.0
+
+```sh
+brew install AlrikOlson/tap/iris
 ```
 
 ### Pre-built binaries

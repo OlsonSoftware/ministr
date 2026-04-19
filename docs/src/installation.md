@@ -1,5 +1,11 @@
 # Installation
 
+!!! tip "Want the desktop app too?"
+
+    The [**Download page**](download.md) has the signed `.pkg` that installs
+    both `iris.app` **and** the `iris` CLI in one go (macOS only). This
+    page covers the CLI-only and dev-build paths.
+
 ## CLI
 
 ### Install script (macOS & Linux)
@@ -53,10 +59,14 @@ Each archive has a corresponding `.sha256` checksum file.
 
 ## Desktop App (macOS)
 
-A macOS `.pkg` installer is available that includes both the desktop app (system tray) and CLI:
+End users should grab the pre-built `.pkg` from the [Download page](download.md) —
+it's signed, notarized, and installs both `iris.app` and the `iris` CLI with
+`PATH` wiring done for you.
+
+Building locally from source (for maintainers):
 
 ```sh
-just pkg       # signed + notarized build
+just pkg       # signed + notarized build (requires Apple Developer ID)
 just pkg-dev   # local testing (no notarization)
 ```
 
