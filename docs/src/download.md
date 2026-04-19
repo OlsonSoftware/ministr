@@ -275,35 +275,32 @@ hide:
 <div class="iris-section-header">
   <span class="iris-section-header__eyebrow">
     <svg class="icon icon-sm"><use href="assets/icons.svg#check-circle-fill"/></svg>
-    What the installer does
+    Where it lands
   </span>
-  <h2>Four steps, zero prompts</h2>
-  <p>The PKG runs a post-install script that wires everything up. No terminal needed.</p>
+  <h2>Exactly what the installer writes</h2>
+  <p>No post-install script surprises. Every path the PKG touches is listed here and reversed by the uninstall commands at the bottom.</p>
 </div>
 
-<div class="iris-features" markdown>
+<pre class="iris-install-tree" aria-label="Filesystem paths touched by the installer"><code><span class="iris-install-tree__root">/</span>
+├── <span class="iris-install-tree__dir">Applications/</span>
+│   └── <span class="iris-install-tree__leaf">iris.app</span>                      <span class="iris-install-tree__note">← observatory (Tauri bundle)</span>
+├── <span class="iris-install-tree__dir">usr/local/bin/</span>
+│   └── <span class="iris-install-tree__leaf">iris</span>                          <span class="iris-install-tree__note">← CLI · agents + scripts</span>
+└── <span class="iris-install-tree__dir">etc/paths.d/</span>
+    └── <span class="iris-install-tree__leaf">iris</span>                          <span class="iris-install-tree__note">← adds /usr/local/bin to PATH</span>
 
-<div class="iris-features__card" markdown>
-### <svg class="icon icon-md"><use href="assets/icons.svg#squares-four"/></svg> 1. iris.app → Applications
-The Tauri observatory lands in <code>/Applications/iris.app</code>. Launch it to see live corpora, replay sessions, and tune budget configuration.
-</div>
+<span class="iris-install-tree__root">~/</span>
+├── <span class="iris-install-tree__dir">.iris/</span>                             <span class="iris-install-tree__note">← corpora + vector index + session shadow</span>
+└── <span class="iris-install-tree__dir">Library/</span>
+    ├── <span class="iris-install-tree__dir">LaunchAgents/</span>
+    │   └── <span class="iris-install-tree__leaf">com.iris.desktop.plist</span>    <span class="iris-install-tree__note">← auto-start on login</span>
+    └── <span class="iris-install-tree__dir">Application Support/</span>
+        └── <span class="iris-install-tree__leaf">com.iris.desktop/</span>         <span class="iris-install-tree__note">← app preferences + logs</span></code></pre>
 
-<div class="iris-features__card" markdown>
-### <svg class="icon icon-md"><use href="assets/icons.svg#terminal-window"/></svg> 2. `iris` CLI → /usr/local/bin
-The same binary your agents will call, ready at <code>/usr/local/bin/iris</code>. No shell restart required — a <code>/etc/paths.d/iris</code> entry keeps it on every new terminal.
-</div>
-
-<div class="iris-features__card" markdown>
-### <svg class="icon icon-md"><use href="assets/icons.svg#lightning"/></svg> 3. Background daemon
-A <code>launchd</code> agent (<code>com.iris.desktop</code>) keeps the UDS daemon running on login, so `claude mcp add iris -- iris` connects instantly — no cold start.
-</div>
-
-<div class="iris-features__card" markdown>
-### <svg class="icon icon-md"><use href="assets/icons.svg#shield-check-fill"/></svg> 4. Signed + notarized
-Built with an Apple Developer ID, stapled via `notarytool`. Gatekeeper clears it on first launch without the right-click-Open workaround.
-</div>
-
-</div>
+<p class="iris-install-tree__footer">
+  <svg class="icon icon-sm"><use href="assets/icons.svg#shield-check-fill"/></svg>
+  Everything is signed with an Apple Developer ID and stapled via <code>notarytool</code>, so Gatekeeper clears the install on first launch.
+</p>
 
 <div class="iris-section-header" id="wire-it-into-your-agent">
   <span class="iris-section-header__eyebrow">

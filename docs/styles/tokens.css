@@ -1788,6 +1788,69 @@
     }
   }
 
+  /* ---- Filesystem install tree ---- */
+  .iris-install-tree {
+    max-width: 720px;
+    margin: calc(var(--spacing) * 4) auto 0;
+    padding: calc(var(--spacing) * 5) calc(var(--spacing) * 6);
+    border-radius: var(--radius-lg);
+    background: var(--color-code-bg);
+    border: 1px solid var(--color-code-border);
+    overflow-x: auto;
+  }
+  .iris-install-tree code {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.75;
+    color: var(--color-text-muted);
+    background: transparent !important;
+    padding: 0 !important;
+    display: block;
+    white-space: pre;
+  }
+  .iris-install-tree__root {
+    color: var(--color-text-subtle);
+    font-weight: 500;
+  }
+  .iris-install-tree__dir {
+    color: var(--color-text);
+    font-weight: 500;
+  }
+  .iris-install-tree__leaf {
+    color: var(--color-accent);
+    font-weight: 500;
+  }
+  .iris-install-tree__note {
+    color: var(--color-text-subtle);
+    font-size: calc(var(--text-sm) - 1px);
+    font-style: italic;
+  }
+  .iris-install-tree__footer {
+    max-width: 720px;
+    margin: calc(var(--spacing) * 3) auto 0 !important;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .iris-install-tree__footer .icon {
+    color: #34d399;
+    width: 13px;
+    height: 13px;
+  }
+  @media (max-width: 720px) {
+    .iris-install-tree {
+      padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+    }
+    .iris-install-tree code {
+      font-size: calc(var(--text-sm) - 1px);
+    }
+  }
+
   /* ---- Min-OS warning banner ---- */
   .iris-download__warning {
     margin: calc(var(--spacing) * 4) auto 0;
