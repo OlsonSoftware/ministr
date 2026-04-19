@@ -88,8 +88,21 @@ docs-css-watch:
 docs: docs-css
     cd docs && mkdocs build --strict
 
-# Serve documentation locally with live reload
+# Serve documentation locally with live reload (MD only; CSS stays static)
 docs-serve: docs-css
+    cd docs && mkdocs serve --open
+
+# Live dev loop: Tailwind watcher + mkdocs serve in parallel (Ctrl-C cleans up both)
+docs-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'kill 0' EXIT INT TERM
+    echo "▸ Starting Tailwind watcher + mkdocs serve"
+    echo "  site     → http://127.0.0.1:8000"
+    echo "  css src  → docs/styles/tokens.css  (auto-recompile)"
+    echo "  md src   → docs/src/**/*.md        (auto-reload)"
+    echo "  js src   → docs/src/javascripts/*  (auto-reload)"
+    tailwindcss -i docs/styles/tokens.css -o docs/src/stylesheets/extra.css --watch &
     cd docs && mkdocs serve --open
 
 # Rebuild Phosphor icon sprite from phosphor-icons/core
