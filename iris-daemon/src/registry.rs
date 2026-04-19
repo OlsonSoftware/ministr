@@ -208,6 +208,13 @@ impl CorpusRegistry {
             crate::ask::spawn_cache_invalidator(cache_storage, coherence_rx, cache_cid).await;
         });
 
+        // Spawn session invalidation on coherence events. Without this,
+        // delivered items in every session appear fresh across file edits
+        // and no `CoherenceAlert` is enqueued for the MCP client — the
+        // documented `SessionRegistry::invalidate_all` path had no
+        // production caller.
+        spawn_session_invalidator(Arc::clone(self), corpus_id.clone());
+
         if let Some(sink) = sink_opt {
             tokio::spawn(spawn_coherence_sink_pusher(sink, sink_rx));
         }
@@ -425,6 +432,53 @@ async fn spawn_coherence_sink_pusher(
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
         }
     }
+}
+
+/// Spawn a task that propagates coherence invalidations into the
+/// corpus's session registry.
+///
+/// Subscribes to `handle.coherence_tx` for the given corpus and calls
+/// `SessionRegistry::invalidate_all` on every event carrying a non-empty
+/// `affected_sections`. Each affected session marks those content IDs
+/// stale and enqueues a `CoherenceAlert` for its consumer.
+///
+/// Runs until the broadcast sender is dropped (corpus unregistered) or
+/// the corpus is removed from the registry. Lag drops are ignored — a
+/// missed alert is a bounded cost and the feed stays live.
+pub fn spawn_session_invalidator(registry: Arc<CorpusRegistry>, corpus_id: String) {
+    tokio::spawn(async move {
+        let mut rx = {
+            let corpora = registry.corpora.read().await;
+            match corpora.get(&corpus_id) {
+                Some(handle) => handle.coherence_tx.subscribe(),
+                None => return,
+            }
+        };
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    if event.affected_sections.is_empty() {
+                        continue;
+                    }
+                    let corpora = registry.corpora.read().await;
+                    let Some(handle) = corpora.get(&corpus_id) else {
+                        break;
+                    };
+                    let mut sessions = handle.sessions.lock().await;
+                    let n = sessions.invalidate_all(&event.affected_sections);
+                    if n > 0 {
+                        tracing::debug!(
+                            corpus_id = %corpus_id,
+                            invalidated = n,
+                            "propagated coherence invalidation to sessions"
+                        );
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+            }
+        }
+    });
 }
 
 fn load_or_create_index(
