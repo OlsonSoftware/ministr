@@ -305,8 +305,32 @@
       }
       case "Escape":
         e.preventDefault();
+        // Keep nested modals (cheatsheet above palette) from also closing.
+        e.stopPropagation();
         close(ctx);
         break;
+    }
+  }
+
+  // Trap Tab focus inside the modal so keyboard users don't escape to
+  // the page underneath. Listens on the backdrop, not the input, so
+  // Tab from the input into the results list (which lives outside the
+  // input) still works.
+  function trapTab(e, ctx) {
+    if (e.key !== "Tab") return;
+    const focusables = [ctx.input, ...ctx.items].filter(
+      (n) => n && !n.hasAttribute("disabled"),
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const cur = document.activeElement;
+    if (e.shiftKey && (cur === first || !ctx.backdrop.contains(cur))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && cur === last) {
+      e.preventDefault();
+      first.focus();
     }
   }
 
@@ -320,7 +344,16 @@
   function open(ctx) {
     if (ctx.isOpen) return;
     ctx.isOpen = true;
+    // Remember whatever was focused so we can return to it on close.
+    ctx.returnFocusTo =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     document.body.appendChild(ctx.backdrop);
+    // Install focus-trap handler on the backdrop (captures Tab anywhere
+    // in the modal subtree).
+    ctx.trapHandler = (e) => trapTab(e, ctx);
+    ctx.backdrop.addEventListener("keydown", ctx.trapHandler);
     requestAnimationFrame(() => {
       ctx.backdrop.classList.add("is-open");
       ctx.input.focus();
@@ -338,9 +371,23 @@
     ctx.isOpen = false;
     ctx.backdrop.classList.remove("is-open");
     document.documentElement.style.overflow = "";
+    if (ctx.trapHandler) {
+      ctx.backdrop.removeEventListener("keydown", ctx.trapHandler);
+      ctx.trapHandler = null;
+    }
     setTimeout(() => {
       if (ctx.backdrop.parentNode) ctx.backdrop.parentNode.removeChild(ctx.backdrop);
     }, 150);
+    // Restore focus to the element that opened the palette so keyboard
+    // users resume where they were (only if it's still connected).
+    if (ctx.returnFocusTo && ctx.returnFocusTo.isConnected) {
+      try {
+        ctx.returnFocusTo.focus({ preventScroll: true });
+      } catch {
+        // Element might have been removed or become non-focusable.
+      }
+    }
+    ctx.returnFocusTo = null;
   }
 
   function toggle(ctx) {

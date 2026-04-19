@@ -224,6 +224,22 @@
   --color-kbd-bg:         var(--color-ink-700);
   --color-kbd-border:     var(--color-ink-500);
 
+  /* Focus ring — outer ring needs a non-black spacer in dark mode so
+     the 2px "halo" is visible against dark cards. Use surface (raised
+     dark) instead of --color-bg (near-black) so the ring separates
+     cleanly from both page and card backgrounds. */
+  --focus-ring: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-accent-ring);
+
+  /* Status colors — light-mode values are tuned for white page bg;
+     bump toward brighter/lighter shades for dark bg so soft + ring
+     tints stay visible. Keep traffic-light dots as-is (cultural marker). */
+  --color-success:        #4ade80;  /* emerald-400 — brighter for dark */
+  --color-success-soft:   color-mix(in srgb, #4ade80 18%, transparent);
+  --color-success-ring:   color-mix(in srgb, #4ade80 45%, transparent);
+  --color-warning:        #fb923c;  /* orange-400 — brighter for dark */
+  --color-warning-soft:   color-mix(in srgb, #fb923c 15%, transparent);
+  --color-warning-ring:   color-mix(in srgb, #fb923c 45%, transparent);
+
   --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.5);
   --shadow-md: 0 2px 8px rgb(0 0 0 / 0.35), 0 4px 16px rgb(0 0 0 / 0.3);

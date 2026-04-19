@@ -122,15 +122,49 @@
       if (e.target === backdrop) hideCheatsheet();
     });
     dismiss.addEventListener("click", hideCheatsheet);
+    // Trap Tab focus inside the cheatsheet. Only the dismiss button is
+    // natively focusable, so Tab without the trap would escape back to
+    // the page underneath.
+    backdrop.addEventListener("keydown", (e) => {
+      if (e.key !== "Tab") return;
+      const focusables = backdrop.querySelectorAll(
+        'button, [href], input, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const cur = document.activeElement;
+      if (e.shiftKey && (cur === first || !backdrop.contains(cur))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && cur === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    });
 
     return backdrop;
   }
 
+  // Track the element that was focused when the cheatsheet opened so we
+  // can return to it on close.
+  let cheatsheetReturnFocus = null;
+
   function showCheatsheet() {
     if (cheatsheetEl) return;
+    cheatsheetReturnFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     cheatsheetEl = buildCheatsheet();
     document.body.appendChild(cheatsheetEl);
-    requestAnimationFrame(() => cheatsheetEl.classList.add("is-open"));
+    requestAnimationFrame(() => {
+      cheatsheetEl.classList.add("is-open");
+      // Land focus on the dismiss button so Tab / Esc are reachable
+      // without hunting.
+      const firstBtn = cheatsheetEl.querySelector(".iris-cheatsheet__dismiss");
+      if (firstBtn) firstBtn.focus();
+    });
     document.documentElement.style.overflow = "hidden";
   }
 
@@ -143,6 +177,15 @@
     setTimeout(() => {
       if (node.parentNode) node.parentNode.removeChild(node);
     }, 150);
+    // Restore focus to the element that opened the cheatsheet.
+    if (cheatsheetReturnFocus && cheatsheetReturnFocus.isConnected) {
+      try {
+        cheatsheetReturnFocus.focus({ preventScroll: true });
+      } catch {
+        // Ignore focus failures.
+      }
+    }
+    cheatsheetReturnFocus = null;
   }
 
   function toggleCheatsheet() {
@@ -176,6 +219,11 @@
 
     if (e.key === "Escape") {
       if (cheatsheetEl) {
+        // Keep any other Esc listener from running after us (avoids
+        // closing a palette underneath, though we shouldn't reach this
+        // branch if one is already open — paletteOpen() short-circuits
+        // at the top of maybeHandle).
+        e.stopPropagation();
         hideCheatsheet();
         return true;
       }
