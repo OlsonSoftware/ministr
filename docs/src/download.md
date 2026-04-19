@@ -31,7 +31,6 @@ hide:
 <aside
   class="iris-download-sticky"
   data-iris-download-sticky
-  role="region"
   aria-label="Sticky download link"
   hidden
 >
@@ -148,7 +147,7 @@ hide:
 
 </div>
 
-<div class="iris-app-preview iris-app-preview--download" aria-label="Preview of the iris desktop observatory">
+<div class="iris-app-preview iris-app-preview--download" role="img" aria-label="Preview of the iris desktop observatory — macOS window showing a sidebar of three corpora (iris-rs active with 4128 docs, docs, research-notes), two live sessions with budget percentages, a query playground displaying two ranked results for authentication middleware, and an indexing progress bar at 68 percent">
   <div class="iris-app-preview__chrome">
     <div class="iris-app-preview__dots">
       <span class="iris-app-preview__dot iris-app-preview__dot--r"></span>
@@ -290,10 +289,10 @@ hide:
     └── <span class="iris-install-tree__leaf">iris</span>                          <span class="iris-install-tree__note">← adds /usr/local/bin to PATH</span>
 
 <span class="iris-install-tree__root">~/</span>
-├── <span class="iris-install-tree__dir">.iris/</span>                             <span class="iris-install-tree__note">← corpora + vector index + session shadow</span>
+├── <span class="iris-install-tree__dir">.iris/</span>                            <span class="iris-install-tree__note">← corpora + vector index + session shadow</span>
 └── <span class="iris-install-tree__dir">Library/</span>
     ├── <span class="iris-install-tree__dir">LaunchAgents/</span>
-    │   └── <span class="iris-install-tree__leaf">com.iris.desktop.plist</span>    <span class="iris-install-tree__note">← auto-start on login</span>
+    │   └── <span class="iris-install-tree__leaf">com.iris.desktop.plist</span>        <span class="iris-install-tree__note">← auto-start on login</span>
     └── <span class="iris-install-tree__dir">Application Support/</span>
         └── <span class="iris-install-tree__leaf">com.iris.desktop/</span>         <span class="iris-install-tree__note">← app preferences + logs</span></code></pre>
 

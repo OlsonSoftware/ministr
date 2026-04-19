@@ -1715,14 +1715,19 @@
     letter-spacing: 0.02em;
   }
   .iris-download-sticky__dismiss {
-    width: 28px;
-    height: 28px;
+    /* 36px hits WCAG 2.1 target size (min 24x24) with comfortable margin
+       and stays short enough that the pill doesn't grow taller than the
+       link it's attached to. */
+    width: 36px;
+    height: 36px;
     border-radius: 999px;
     border: none;
     background: transparent;
     color: var(--color-text-muted);
-    font-size: 16px;
+    font-size: 18px;
+    line-height: 1;
     cursor: pointer;
+    flex-shrink: 0;
     transition:
       background-color var(--duration-fast) var(--ease-standard),
       color var(--duration-fast) var(--ease-standard);

@@ -223,7 +223,7 @@ on Apple Silicon. No network required.
   <p>A Tauri-based companion that attaches to the same local daemon your agents use — inspect corpora, replay sessions, and tune configuration without leaving the GUI.</p>
 </div>
 
-<div class="iris-app-preview" aria-label="Preview of the iris desktop observatory">
+<div class="iris-app-preview" role="img" aria-label="Preview of the iris desktop observatory — macOS window showing a sidebar of three corpora (iris-rs active with 4128 docs, docs, research-notes), two live sessions with budget percentages, a query playground displaying two ranked results for authentication middleware, and an indexing progress bar at 68 percent">
   <div class="iris-app-preview__chrome">
     <div class="iris-app-preview__dots">
       <span class="iris-app-preview__dot iris-app-preview__dot--r"></span>

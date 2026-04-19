@@ -31,6 +31,10 @@
     <meta name="twitter:title" content="{{ og_title }}">
     <meta name="twitter:description" content="{{ og_desc }}">
   {% endif %}
+  {# Mobile browser chrome tint — iris accent. Light + dark variants. #}
+  <meta name="theme-color" content="#6366f1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#4338ca" media="(prefers-color-scheme: dark)">
+
   {# Expose Material's rendered search-index URL so our vanilla-JS command
      palette can fetch it without guessing the base URL. #}
   <meta name="iris:search-index" content="{{ 'search/search_index.json' | url }}">

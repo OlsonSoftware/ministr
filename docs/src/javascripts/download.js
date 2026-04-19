@@ -535,19 +535,38 @@
     const repo = root.dataset.repo;
     if (!repo) return;
 
+    // If the fetch stalls or fails, the skeleton row would stick around
+    // reading "Loading recent releases…" indefinitely. Give up after
+    // 6 seconds, drop the skeleton, and leave only the static "See full
+    // changelog →" link.
+    const giveUp = window.setTimeout(dropSkeleton, 6000);
+
     fetch(`https://api.github.com/repos/${repo}/releases?per_page=3`, {
       headers: { Accept: "application/vnd.github+json" },
       mode: "cors",
     })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((releases) => render(releases))
+      .then((releases) => {
+        window.clearTimeout(giveUp);
+        if (Array.isArray(releases) && releases.length > 0) {
+          render(releases);
+        } else {
+          dropSkeleton();
+        }
+      })
       .catch(() => {
-        // Leave the static fallback visible — "See full changelog →" link.
+        window.clearTimeout(giveUp);
+        dropSkeleton();
       });
 
-    function render(releases) {
-      if (!Array.isArray(releases) || releases.length === 0) return;
+    function dropSkeleton() {
+      root
+        .querySelectorAll(".iris-changelog__item--skeleton")
+        .forEach((el) => el.remove());
+      root.setAttribute("data-state", "fallback");
+    }
 
+    function render(releases) {
       // Drop the skeleton + fallback-only state before inserting real rows.
       root
         .querySelectorAll(".iris-changelog__item--skeleton")
