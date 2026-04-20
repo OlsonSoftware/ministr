@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 type Tag = 'prefetch' | 'cache-hit' | 'pressure' | 'evict' | 'ellipsis' | undefined;
 
@@ -59,54 +59,74 @@ export function SessionTrace() {
   const [step, setStep] = useState(0);
   const [typedLine, setTypedLine] = useState('');
   const [showMeta, setShowMeta] = useState(false);
-  const [reducedMotion, setReducedMotion] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Undefined until after the first client effect — avoids an SSR/client
+  // mismatch on the blinking cursor and prevents us from accidentally
+  // locking into reduced-motion on the SSR pass.
+  const [reducedMotion, setReducedMotion] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setReducedMotion(mq.matches);
+    setReducedMotion(
+      typeof window !== 'undefined' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    );
   }, []);
 
   useEffect(() => {
+    // Wait for reduced-motion probe to settle before starting.
+    if (reducedMotion === null) return;
+
     if (reducedMotion) {
-      // Skip animation: show final state
+      const last = SCRIPT[SCRIPT.length - 1];
       setStep(SCRIPT.length - 1);
-      setTypedLine(SCRIPT[SCRIPT.length - 1].line);
+      setTypedLine(last.line);
       setShowMeta(true);
       return;
     }
+
+    // Single cancellation token owned by this effect invocation. Any
+    // scheduled timer checks `cancelled` before mutating state, so
+    // StrictMode's double-invoke (or a step change mid-animation)
+    // can't leave stale timers racing the current chain.
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const after = (ms: number, fn: () => void) => {
+      const t = setTimeout(() => {
+        if (!cancelled) fn();
+      }, ms);
+      timers.push(t);
+    };
 
     const current = SCRIPT[step];
     setTypedLine('');
     setShowMeta(false);
 
+    // Typewriter: emit one char at a time.
     let i = 0;
-    const type = () => {
+    const typeChar = () => {
+      if (cancelled) return;
       if (i <= current.line.length) {
         setTypedLine(current.line.slice(0, i));
         i += 1;
-        timeoutRef.current = setTimeout(type, 22 + Math.random() * 30);
+        after(22 + Math.random() * 30, typeChar);
       } else {
-        // done typing → brief pause → show meta
-        timeoutRef.current = setTimeout(() => setShowMeta(true), 280);
+        after(280, () => setShowMeta(true));
       }
     };
-    type();
+    typeChar();
 
-    // After the meta + pause, advance (or loop)
+    // Schedule advance to next step.
     const advanceMs = current.line.length * 28 + 280 + current.pause;
-    const advance = setTimeout(() => {
-      setStep((prev) => (prev + 1) % SCRIPT.length);
-    }, advanceMs);
+    after(advanceMs, () => setStep((prev) => (prev + 1) % SCRIPT.length));
 
     return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      clearTimeout(advance);
+      cancelled = true;
+      for (const t of timers) clearTimeout(t);
     };
   }, [step, reducedMotion]);
 
   const current = SCRIPT[step];
   const budgetPct = Math.min(100, current.budget);
+  const animating = reducedMotion === false;
 
   return (
     <div className="mx-auto mt-8 w-full max-w-2xl">
@@ -126,9 +146,7 @@ export function SessionTrace() {
               <span
                 className={
                   'block h-full transition-all duration-500 ' +
-                  (budgetPct > 80
-                    ? 'bg-[var(--color-warning)]'
-                    : 'bg-[var(--color-iris-500)]')
+                  (budgetPct > 80 ? 'bg-[var(--color-warning)]' : 'bg-[var(--color-iris-500)]')
                 }
                 style={{ width: `${budgetPct}%` }}
               />
@@ -142,7 +160,7 @@ export function SessionTrace() {
           <div className="flex items-start gap-2">
             <span className="select-none text-[var(--color-iris-500)]">➜</span>
             <span className="break-all">{typedLine}</span>
-            {typedLine.length < current.line.length && !reducedMotion && (
+            {animating && typedLine.length < current.line.length && (
               <span className="ml-0.5 inline-block h-4 w-2 animate-pulse bg-fd-muted-foreground/70" />
             )}
           </div>
@@ -160,9 +178,12 @@ export function SessionTrace() {
 
 function TagBadge({ tag }: { tag: Tag }) {
   const styles: Record<NonNullable<Tag>, string> = {
-    prefetch: 'bg-[color-mix(in_srgb,var(--color-iris-500)_18%,transparent)] text-[var(--color-iris-500)]',
-    'cache-hit': 'bg-[color-mix(in_srgb,var(--color-success)_20%,transparent)] text-[var(--color-success)]',
-    pressure: 'bg-[color-mix(in_srgb,var(--color-warning)_20%,transparent)] text-[var(--color-warning)]',
+    prefetch:
+      'bg-[color-mix(in_srgb,var(--color-iris-500)_18%,transparent)] text-[var(--color-iris-500)]',
+    'cache-hit':
+      'bg-[color-mix(in_srgb,var(--color-success)_20%,transparent)] text-[var(--color-success)]',
+    pressure:
+      'bg-[color-mix(in_srgb,var(--color-warning)_20%,transparent)] text-[var(--color-warning)]',
     evict: 'bg-fd-muted text-fd-muted-foreground',
     ellipsis: '',
   };
