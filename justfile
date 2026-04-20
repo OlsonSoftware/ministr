@@ -72,6 +72,10 @@ bench-all:
 test-backend-equiv:
     cargo test --test backend_equivalence -p iris-core --features candle --release -- --ignored --nocapture
 
+# ─────────────────────────────────────────────────────────────────────────────
+# docs (mkdocs-material, Python) — LEGACY, being replaced by docs-next.
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Install documentation dependencies (Python: mkdocs-material)
 docs-deps:
     pip install -r docs/requirements.txt
@@ -108,6 +112,32 @@ docs-dev:
 # Rebuild Phosphor icon sprite from phosphor-icons/core
 docs-icons:
     bash scripts/build-icon-sprite.sh
+
+# ─────────────────────────────────────────────────────────────────────────────
+# docs-next (Fumadocs, Next.js) — the new site under migration.
+# Old mkdocs recipes above are still live; cutover happens when the new site
+# reaches content parity.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Install node deps for the Fumadocs site
+docs-next-deps:
+    cd docs-next && npm install
+
+# Build the Fumadocs site as a static export (output at docs-next/out/)
+docs-next-build:
+    cd docs-next && npm run build
+
+# Run the Next.js dev server with hot reload (http://localhost:3000)
+docs-next-dev:
+    cd docs-next && npm run dev
+
+# Serve the pre-built static export (http://localhost:3000)
+docs-next-serve:
+    cd docs-next && npm run start
+
+# TypeScript + MDX + Next.js type-check (no build)
+docs-next-typecheck:
+    cd docs-next && npm run types:check
 
 # Build Docker image
 docker-build:
