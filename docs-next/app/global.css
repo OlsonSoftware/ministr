@@ -159,3 +159,18 @@ h1.iris-gradient-text,
     animation: none;
   }
 }
+
+/* Session-trace keyframes (hero terminal replay). Defined at the top
+   level so they're available regardless of component scoping. */
+@keyframes trace-fade {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes trace-cursor {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes trace-flash {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
