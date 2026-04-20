@@ -1,0 +1,146 @@
+---
+title: MCP Client Setup
+description: Wire iris into Claude Code, Cursor, or any MCP-compatible client — stdio, Streamable HTTP, and environment-variable configuration.
+---
+
+iris communicates over **stdio** using the Model Context Protocol (MCP). Any MCP-compatible client can connect by spawning the `iris` binary as a subprocess.
+
+iris auto-discovers `.iris.toml` by walking up from the working directory, so no flags are needed in most configurations.
+
+## Claude Code
+
+### CLI shorthand (recommended)
+
+```sh
+claude mcp add iris -- iris
+```
+
+### Project-scoped
+
+Create `.mcp.json` at your project root (or run `iris init` to generate it):
+
+```json
+{
+  "mcpServers": {
+    "iris": {
+      "command": "iris",
+      "args": []
+    }
+  }
+}
+```
+
+### Verifying the connection
+
+After adding the server, start Claude Code and run:
+
+```text
+/mcp
+```
+
+You should see `iris` listed with its tools.
+
+## Cursor
+
+### Project-scoped
+
+Create `.cursor/mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "iris": {
+      "command": "iris",
+      "args": []
+    }
+  }
+}
+```
+
+### Settings UI
+
+Open **Cursor Settings > Tools & MCP > Add New MCP Server** and enter:
+
+- **Name**: `iris`
+- **Command**: `iris`
+
+Restart Cursor after adding the configuration.
+
+## Generic JSON-RPC Client
+
+iris speaks JSON-RPC 2.0 over stdin/stdout. Any client that can spawn a subprocess and exchange newline-delimited JSON can connect.
+
+### Spawning iris
+
+```sh
+iris serve
+```
+
+iris reads JSON-RPC requests from stdin and writes responses to stdout. Logs go to stderr.
+
+### Initialize handshake
+
+```json
+{"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "my-client", "version": "1.0"}}, "id": 1}
+```
+
+### Quick smoke test
+
+```sh
+echo '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}},"id":1}' \
+  | iris serve 2>/dev/null
+```
+
+## Remote (Streamable HTTP)
+
+iris also supports Streamable HTTP transport for remote deployments:
+
+```sh
+iris serve --transport http --host 0.0.0.0 --port 8080
+```
+
+Connect with:
+
+```json
+{
+  "mcpServers": {
+    "iris": {
+      "url": "https://your-server.example.com/mcp"
+    }
+  }
+}
+```
+
+See `deploy/README.md` for Docker, Fly.io, and Railway deployment guides.
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `RUST_LOG` | Controls log verbosity. Example: `RUST_LOG=iris_core=debug,iris_mcp=info` |
+
+You can pass environment variables in MCP configurations:
+
+```json
+{
+  "mcpServers": {
+    "iris": {
+      "command": "iris",
+      "args": [],
+      "env": {
+        "RUST_LOG": "iris_core=info"
+      }
+    }
+  }
+}
+```
+
+## Troubleshooting
+
+**iris not found**: Ensure `iris` is on your `PATH`. Common locations: `~/.iris/bin/iris` (install script), `~/.cargo/bin/iris` (cargo install), `/usr/local/bin/iris` (Homebrew).
+
+**No tools listed**: Check that `.iris.toml` exists in your project or a parent directory and that its `corpus.paths` point to existing directories.
+
+**Slow first start**: On first run, iris downloads the embedding model (~80 MB). Subsequent starts reuse the cached model at `~/.iris/models/`.
+
+**Connection drops**: iris communicates over stdio. Make sure no other process is reading stdin or writing to stdout in the same pipe. Logs always go to stderr.

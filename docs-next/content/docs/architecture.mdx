@@ -1,0 +1,79 @@
+---
+title: Architecture Overview
+description: Workspace layout, layered architecture, daemon topology, and on-disk format for the iris context cache.
+---
+
+## Workspace Structure
+
+iris is organized as a Cargo workspace with six crates:
+
+```text
+iris-core/          — domain logic, no transport dependencies
+iris-api/           — shared request/response types for daemon ↔ MCP/CLI communication
+iris-daemon/        — HTTP API over Unix domain socket, depends on iris-core + iris-api
+iris-mcp/           — MCP server adapter, depends on iris-core + iris-api + rmcp
+iris-cli/           — binary entry point, depends on iris-mcp
+iris-app/src-tauri/ — Tauri v2 desktop app, depends on iris-core + iris-api + iris-daemon
+```
+
+**iris-core** contains all business logic: parsing, indexing, embedding, search, session management, prefetching, and budget tracking. It has no knowledge of MCP or any transport protocol.
+
+**iris-api** defines the shared request/response types and the `DaemonClient` for communicating with the iris daemon over a Unix domain socket (`~/.iris/irisd.sock`). It has no dependency on iris-core — it is pure types.
+
+**iris-daemon** is the long-running background service that owns the heavy resources (ONNX model, HNSW indexes, SQLite). It exposes an HTTP API over UDS for corpus management and querying.
+
+**iris-mcp** adapts iris-core's service layer to the MCP protocol using the `rmcp` crate. It implements tool handlers, request routing, and response formatting. Transitioning to a thin proxy that delegates storage/embedding/indexing to the daemon.
+
+**iris-cli** is the binary entry point. It parses CLI arguments, loads configuration, and starts the MCP server over stdio transport.
+
+**iris-app** is the Tauri v2 desktop application that wraps the daemon with a GUI dashboard and system tray icon.
+
+## The Five Mechanisms
+
+iris combines five mechanisms that map directly to CPU cache controller concepts:
+
+### 1. Session Shadow
+Tracks exactly what context has been delivered to the agent, enabling deduplication, delta updates, and eviction estimation.
+
+### 2. Multi-Resolution Index
+Documents are indexed at three simultaneous levels — summaries, sections, and claims — preserving the author's original structure rather than destroying it with fixed-size chunking.
+
+### 3. Progressive Disclosure
+Four MCP tools (`survey` → `read` → `extract` → `related`) give the agent explicit control over retrieval depth, mirroring how a human researcher navigates a knowledge base.
+
+### 4. Speculative Prefetch
+Predicts what the agent will need next based on sequential, topical, and structural locality. Pre-computes results so warm responses are served from cache instead of re-embedded and re-searched.
+
+### 5. Context Budget Management
+Tracks cumulative token usage, detects pressure, and provides eviction recommendations with compressed replacement summaries.
+
+## On-Disk Layout
+
+```text
+~/.iris/
+├── config.toml                     # Global configuration
+├── corpora.json                    # Daemon's registered-corpus manifest
+├── irisd.sock                      # Daemon Unix domain socket
+├── irisd.pid                       # Daemon PID file
+└── corpora/
+    └── <corpus-id>/                # Stable hash derived from corpus paths
+        ├── content.db              # SQLite: sections, claims, summaries,
+        │                           # file hashes, and session shadows
+        └── index/
+            ├── iris_hnsw.hnsw.data # HNSW vector dump
+            ├── iris_hnsw.hnsw.graph
+            └── id_map.json         # Section ID ↔ vector slot mapping
+```
+
+## Key Dependencies
+
+| Purpose | Crate |
+|---|---|
+| Embeddings | `fastembed` (ONNX-based, local) |
+| Vector search | HNSW index (in-memory, memory-mapped) |
+| Storage | `rusqlite` (SQLite) |
+| MCP protocol | `rmcp` |
+| Document parsing | `comrak` (Markdown), `scraper` (HTML), `pdf-extract` (PDF) |
+| Async runtime | `tokio` |
+| Observability | `tracing` |
+| File watching | `notify` |

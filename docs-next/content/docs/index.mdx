@@ -1,0 +1,20 @@
+---
+title: iris
+description: Context cache for LLM agents — MCP server with semantic search, code navigation, session tracking, and budget awareness.
+---
+
+iris is an MCP server that serves context to LLM agents the way a CPU cache serves memory to the processor — tracking what's been delivered, predicting what's next, and managing a bounded budget.
+
+## What iris gives your agent
+
+- **Semantic search** across your codebase and docs via `iris_survey`
+- **Code symbol navigation** — find and trace functions, types, callers via `iris_symbols` / `iris_references`
+- **Session memory** — remembers what it sent; skips repeats; ships deltas on change
+- **Predictive prefetch** — warms what it thinks you'll ask for next
+- **Budget awareness** — tracks usage; compresses instead of silently dropping
+
+## Start here
+
+- [Getting started](/docs/getting-started) — install, initialize, wire into your agent
+- [Architecture](/docs/architecture) — how it fits together
+- [Tool reference: iris_survey](/docs/tools/survey) — semantic search

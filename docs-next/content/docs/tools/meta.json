@@ -1,0 +1,25 @@
+{
+  "title": "Tool reference",
+  "defaultOpen": true,
+  "pages": [
+    "---Search & retrieval---",
+    "survey",
+    "read",
+    "extract",
+    "related",
+    "toc",
+    "---Code navigation---",
+    "symbols",
+    "definition",
+    "references",
+    "bridge",
+    "---Budget management---",
+    "budget",
+    "compress",
+    "evicted",
+    "---Multi-source corpora---",
+    "fetch",
+    "clone",
+    "refresh"
+  ]
+}

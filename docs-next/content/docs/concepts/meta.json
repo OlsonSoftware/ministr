@@ -1,0 +1,10 @@
+{
+  "title": "Concepts",
+  "defaultOpen": true,
+  "pages": [
+    "session-shadow",
+    "prefetch-engine",
+    "budget-management",
+    "coherence"
+  ]
+}

@@ -1,0 +1,142 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* =====================================================
+   iris design tokens — ported from docs/styles/tokens.css
+   ===================================================== */
+
+@theme {
+  /* Iris brand scale (indigo/violet) */
+  --color-iris-50:  oklch(0.96 0.02 285);
+  --color-iris-100: oklch(0.93 0.04 285);
+  --color-iris-200: oklch(0.87 0.07 280);
+  --color-iris-300: oklch(0.79 0.11 280);
+  --color-iris-400: oklch(0.70 0.16 278);
+  --color-iris-500: #6366f1;
+  --color-iris-600: #4f46e5;
+  --color-iris-700: #4338ca;
+  --color-iris-800: #3730a3;
+  --color-iris-900: #312e81;
+  --color-iris-950: #1e1b4b;
+
+  /* Extra iridescent accents */
+  --color-violet-400: #a78bfa;
+  --color-violet-500: #8b5cf6;
+  --color-fuchsia-400: #e879f9;
+
+  /* Custom dark surface scale — cool-tinted so iris accent pops */
+  --color-ink-50:  #f5f5fa;
+  --color-ink-100: #e6e7f0;
+  --color-ink-200: #b9bacc;
+  --color-ink-300: #7c7e9a;
+  --color-ink-400: #4a4d6e;
+  --color-ink-500: #32344f;
+  --color-ink-600: #23253d;
+  --color-ink-700: #191b2f;
+  --color-ink-800: #111224;
+  --color-ink-900: #0a0b14;
+  --color-ink-950: #05060e;
+
+  /* Traffic-light swatches — macOS chrome reference colors */
+  --color-traffic-close: #ff5f57;
+  --color-traffic-min:   #febc2e;
+  --color-traffic-max:   #28c840;
+
+  /* Semantic status colors — light-mode defaults */
+  --color-success: #34d399;
+  --color-warning: #f97316;
+
+  /* Fonts */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* Dark-mode overrides — target Fumadocs's .dark class (via next-themes) */
+.dark {
+  --color-success: #4ade80;
+  --color-warning: #fb923c;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+/* Docs sidebar: Fumadocs wraps it in a Radix ScrollArea with type="scroll",
+   which only reveals its custom scrollbar during an active scroll gesture and
+   hides the native one via scrollbar-width: none. With 30+ nav items that
+   makes the sidebar feel unscrollable until you happen to wheel over it —
+   especially on macOS where system "auto-hide scrollbars" also hides the
+   native one. Force a thin always-visible webkit scrollbar instead.
+
+   Note: we DON'T set scrollbar-width (Firefox-style) because on macOS that
+   disables the ::-webkit-scrollbar-* rules, which are the only way to get a
+   reliably always-visible bar across OS settings. */
+aside [data-radix-scroll-area-viewport]::-webkit-scrollbar {
+  /* Radix Primitive.Root ships its own rule "display: none" to hide the
+     native scrollbar (so its own custom one can take over). We want the
+     native one — re-enable. */
+  display: block !important;
+  width: 10px;
+  height: 10px;
+}
+aside [data-radix-scroll-area-viewport]::-webkit-scrollbar-track {
+  background: transparent;
+}
+aside [data-radix-scroll-area-viewport]::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--fd-muted-foreground) 40%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+aside [data-radix-scroll-area-viewport]::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--fd-muted-foreground) 70%, transparent);
+}
+
+/* The Radix viewport inline-styles "overflow: hidden scroll" and Radix's own
+   scrollbar-width: none hides the native scrollbar. Force overflow-y: scroll
+   (always reserve space) and a non-default scrollbar-width so that Chromium
+   on macOS switches from overlay scrollbars to classic reserved-space ones
+   and the ::-webkit-scrollbar rules above actually render. */
+aside [data-radix-scroll-area-viewport] {
+  scrollbar-width: auto !important;
+  scrollbar-gutter: stable !important;
+  overflow-y: scroll !important;
+  /* Drop the top/bottom fade mask — it makes the scrollbar itself fade. */
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* Subtle iris-gradient text utility for hero titles */
+@utility iris-gradient-text {
+  background: linear-gradient(
+    90deg,
+    var(--color-iris-600) 0%,
+    var(--color-iris-500) 25%,
+    var(--color-violet-400) 50%,
+    var(--color-iris-500) 75%,
+    var(--color-iris-600) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: iris-shimmer 14s ease-in-out infinite;
+}
+
+@keyframes iris-shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iris-gradient-text {
+    animation: none;
+  }
+}

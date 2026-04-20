@@ -1,0 +1,51 @@
+---
+title: iris_compress
+description: Generate compressed summaries for sections the agent wants to evict from context. Returns short extractive summaries with token counts.
+---
+
+Generate compressed summaries for sections the agent wants to evict from context. Returns short extractive summaries preserving the gist, with original and compressed token counts.
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `content_ids` | list of strings | yes | Section IDs to generate compressed summaries for |
+
+## Response
+
+```json
+{
+  "summaries": [
+    {
+      "original_id": "docs/auth.md#jwt-validation",
+      "summary": "JWT validation uses RS256 signing with 1-hour expiry. Tokens are verified against the public key from the JWKS endpoint.",
+      "original_tokens": 847,
+      "compressed_tokens": 95
+    }
+  ],
+  "total_original_tokens": 847,
+  "total_compressed_tokens": 95,
+  "compression_ratio": 0.112,
+  "budget_status": { ... }
+}
+```
+
+### Response Fields
+
+| Field | Description |
+|---|---|
+| `summaries` | List of compressed summaries |
+| `summaries[].original_id` | The section ID that was compressed |
+| `summaries[].summary` | Short extractive summary preserving key information |
+| `summaries[].original_tokens` | Token count of the original full section |
+| `summaries[].compressed_tokens` | Token count of the compressed summary |
+| `total_original_tokens` | Sum of `original_tokens` across all compressed items |
+| `total_compressed_tokens` | Sum of `compressed_tokens` across all compressed items |
+| `compression_ratio` | Aggregate ratio (`total_compressed / total_original`); lower is better |
+
+## Behavior
+
+- Compression is extractive: selects the most information-dense sentences from the section
+- Typically achieves 60-80% token reduction
+- Unknown content IDs are silently skipped (not included in the response)
+- Use this before evicting content — replace the full section with the compressed summary in the agent's context to preserve the gist while freeing budget
