@@ -2,6 +2,14 @@
 
 import { useEffect, useState } from 'react';
 
+// Gate the typewriter behind a client-only mount.
+// Safari's hydrator is stricter than Chromium's, and an animated
+// typewriter whose DOM content mutates from the first tick can put it
+// into an "already-hydrated, refuse to re-enter" state where the
+// effects never fire — page looks stuck at the SSR snapshot. Rendering
+// the same shell on SSR + first client paint, then swapping in the
+// animated body inside an effect, side-steps the whole question.
+
 type Tag = 'prefetch' | 'cache-hit' | 'pressure' | 'evict' | 'ellipsis' | undefined;
 
 const SCRIPT: Array<{ line: string; meta: string | null; budget: number; tag?: Tag; pause: number }> = [
@@ -56,37 +64,37 @@ const SCRIPT: Array<{ line: string; meta: string | null; budget: number; tag?: T
 ];
 
 export function SessionTrace() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Placeholder matches SSR; after mount we swap to the animator.
+  if (!mounted) {
+    return (
+      <div className="mx-auto mt-8 w-full max-w-2xl">
+        <div className="rounded-xl border border-fd-border bg-fd-card font-mono text-[12.5px] leading-relaxed shadow-sm">
+          <div className="flex items-center gap-2 border-b border-fd-border px-3 py-2">
+            <span className="size-2.5 rounded-full bg-[var(--color-traffic-close)]" />
+            <span className="size-2.5 rounded-full bg-[var(--color-traffic-min)]" />
+            <span className="size-2.5 rounded-full bg-[var(--color-traffic-max)]" />
+            <span className="ml-2 text-[11px] text-fd-muted-foreground">iris session</span>
+          </div>
+          <div className="px-4 py-3 text-left min-h-[88px]" />
+        </div>
+      </div>
+    );
+  }
+
+  return <TraceAnimator />;
+}
+
+function TraceAnimator() {
   const [step, setStep] = useState(0);
   const [typedLine, setTypedLine] = useState('');
   const [showMeta, setShowMeta] = useState(false);
-  // Undefined until after the first client effect — avoids an SSR/client
-  // mismatch on the blinking cursor and prevents us from accidentally
-  // locking into reduced-motion on the SSR pass.
-  const [reducedMotion, setReducedMotion] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const rm =
-      typeof window !== 'undefined' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    // eslint-disable-next-line no-console
-    console.log('[SessionTrace] reducedMotion probe →', rm);
-    setReducedMotion(rm);
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log('[SessionTrace] animate effect; step=', step, 'reducedMotion=', reducedMotion);
-    // Wait for reduced-motion probe to settle before starting.
-    if (reducedMotion === null) return;
-
-    if (reducedMotion) {
-      const last = SCRIPT[SCRIPT.length - 1];
-      setStep(SCRIPT.length - 1);
-      setTypedLine(last.line);
-      setShowMeta(true);
-      return;
-    }
-
     // Single cancellation token owned by this effect invocation. Any
     // scheduled timer checks `cancelled` before mutating state, so
     // StrictMode's double-invoke (or a step change mid-animation)
@@ -126,11 +134,10 @@ export function SessionTrace() {
       cancelled = true;
       for (const t of timers) clearTimeout(t);
     };
-  }, [step, reducedMotion]);
+  }, [step]);
 
   const current = SCRIPT[step];
   const budgetPct = Math.min(100, current.budget);
-  const animating = reducedMotion === false;
 
   return (
     <div className="mx-auto mt-8 w-full max-w-2xl">
@@ -164,7 +171,7 @@ export function SessionTrace() {
           <div className="flex items-start gap-2">
             <span className="select-none text-[var(--color-iris-500)]">➜</span>
             <span className="break-all">{typedLine}</span>
-            {animating && typedLine.length < current.line.length && (
+            {typedLine.length < current.line.length && (
               <span className="ml-0.5 inline-block h-4 w-2 animate-pulse bg-fd-muted-foreground/70" />
             )}
           </div>
