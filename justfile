@@ -73,70 +73,27 @@ test-backend-equiv:
     cargo test --test backend_equivalence -p iris-core --features candle --release -- --ignored --nocapture
 
 # ─────────────────────────────────────────────────────────────────────────────
-# docs (mkdocs-material, Python) — LEGACY, being replaced by docs-next.
+# Documentation site (Fumadocs, Next.js) — docs-next/
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Install documentation dependencies (Python: mkdocs-material)
+# Install node deps for the docs site
 docs-deps:
-    pip install -r docs/requirements.txt
-
-# Compile Tailwind v4 CSS (tokens.css → extra.css)
-docs-css:
-    tailwindcss -i docs/styles/tokens.css -o docs/src/stylesheets/extra.css --minify
-
-# Watch Tailwind source, recompile on changes (run alongside docs-serve)
-docs-css-watch:
-    tailwindcss -i docs/styles/tokens.css -o docs/src/stylesheets/extra.css --watch
-
-# Build MkDocs documentation site (Tailwind must be compiled first)
-docs: docs-css
-    cd docs && mkdocs build --strict
-
-# Serve documentation locally with live reload (MD only; CSS stays static)
-docs-serve: docs-css
-    cd docs && mkdocs serve --open
-
-# Live dev loop: Tailwind watcher + mkdocs serve in parallel (Ctrl-C cleans up both)
-docs-dev:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    trap 'kill 0' EXIT INT TERM
-    echo "▸ Starting Tailwind watcher + mkdocs serve"
-    echo "  site     → http://127.0.0.1:8000"
-    echo "  css src  → docs/styles/tokens.css  (auto-recompile)"
-    echo "  md src   → docs/src/**/*.md        (auto-reload)"
-    echo "  js src   → docs/src/javascripts/*  (auto-reload)"
-    tailwindcss -i docs/styles/tokens.css -o docs/src/stylesheets/extra.css --watch &
-    cd docs && mkdocs serve --open
-
-# Rebuild Phosphor icon sprite from phosphor-icons/core
-docs-icons:
-    bash scripts/build-icon-sprite.sh
-
-# ─────────────────────────────────────────────────────────────────────────────
-# docs-next (Fumadocs, Next.js) — the new site under migration.
-# Old mkdocs recipes above are still live; cutover happens when the new site
-# reaches content parity.
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Install node deps for the Fumadocs site
-docs-next-deps:
     cd docs-next && npm install
 
-# Build the Fumadocs site as a static export (output at docs-next/out/)
-docs-next-build:
+# Build the docs site as a static export (output at docs-next/out/)
+docs-build:
     cd docs-next && npm run build
 
 # Run the Next.js dev server with hot reload (http://localhost:3000)
-docs-next-dev:
+docs-dev:
     cd docs-next && npm run dev
 
 # Serve the pre-built static export (http://localhost:3000)
-docs-next-serve:
+docs-serve:
     cd docs-next && npm run start
 
 # TypeScript + MDX + Next.js type-check (no build)
-docs-next-typecheck:
+docs-typecheck:
     cd docs-next && npm run types:check
 
 # Build Docker image

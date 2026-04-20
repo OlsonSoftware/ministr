@@ -25,7 +25,7 @@ claude mcp add iris -- iris
 ```
 
 <p align="center">
-  <img src="docs/src/assets/launch.gif" alt="iris CLI demo — iris init, claude mcp add iris, and an agent trace with a cache hit" width="860" loading="lazy">
+  <img src="assets/launch.gif" alt="iris CLI demo — iris init, claude mcp add iris, and an agent trace with a cache hit" width="860" loading="lazy">
 </p>
 
 ## Why iris
@@ -74,7 +74,7 @@ claude mcp add iris -- iris                                    # Claude Code
 iris detects and links cross-language bindings automatically:
 
 <p align="center">
-  <img src="docs/src/assets/bridges.svg" alt="Cross-language bridge diagram: Rust exports (napi, PyO3, Tauri) linked to JavaScript/Python consumers" width="720">
+  <img src="assets/bridges.svg" alt="Cross-language bridge diagram: Rust exports (napi, PyO3, Tauri) linked to JavaScript/Python consumers" width="720">
 </p>
 
 ## Installation
@@ -99,10 +99,11 @@ A Homebrew tap (`AlrikOlson/homebrew-tap`) and a crates.io publish land with 1.0
 
 | | |
 |---|---|
-| [Tool reference](https://AlrikOlson.github.io/iris-rs/tools/README.html) | All MCP tools with parameters and examples |
-| [Architecture](https://AlrikOlson.github.io/iris-rs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
+| [Docs home](https://AlrikOlson.github.io/iris-rs/) | Landing page with full overview |
+| [Tool reference](https://AlrikOlson.github.io/iris-rs/docs/tools/) | All MCP tools with parameters and examples |
+| [Architecture](https://AlrikOlson.github.io/iris-rs/docs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
+| [Configuration](https://AlrikOlson.github.io/iris-rs/docs/configuration/) | `.iris.toml` options and CLI flags |
 | [Design specification](DESIGN.md) | Research references and design rationale |
-| [Configuration](https://AlrikOlson.github.io/iris-rs/configuration.html) | `.iris.toml` options and CLI flags |
 | [Deployment](deploy/README.md) | Docker, Fly.io, Railway, nginx/Caddy reverse proxy |
 | [Example configs](examples/) | `.iris.toml` templates for Rust, Tauri, PyO3, React |
 

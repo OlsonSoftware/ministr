@@ -1,13 +1,7 @@
-name: Build docs-next
+name: Deploy Documentation
 
-# Builds the Fumadocs-based docs-next/ site on every push that touches it.
-# Deploy to GitHub Pages is intentionally commented out — the old mkdocs site
-# (docs/) is still the canonical live site at this point. When cutting over:
-#   1) Flip "Build docs-next" to deploy (uncomment the deploy job below).
-#   2) Rename this workflow: `name: Deploy Documentation` (replaces docs.yml).
-#   3) Delete .github/workflows/docs.yml.
-#   4) Delete docs/ tree.
-# Until then, this workflow just proves the new site compiles cleanly in CI.
+# Builds and publishes the Fumadocs-based docs-next/ site to GitHub Pages
+# on every push to main that touches it. PRs get build + type-check only.
 
 on:
   push:
@@ -22,6 +16,12 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -47,44 +47,22 @@ jobs:
 
       - name: Build static export
         run: npm run build
+        env:
+          DOCS_BASE_PATH: /iris-rs
 
-      - name: Upload static site
-        uses: actions/upload-artifact@v4
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: docs-next-site
           path: docs-next/out
-          retention-days: 7
 
-  # Uncomment when ready to cut over from mkdocs to docs-next as the live site.
-  # Also delete .github/workflows/docs.yml at that point.
-  #
-  # deploy:
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-  #   permissions:
-  #     contents: read
-  #     pages: write
-  #     id-token: write
-  #   concurrency:
-  #     group: pages
-  #     cancel-in-progress: true
-  #   environment:
-  #     name: github-pages
-  #     url: ${{ steps.deployment.outputs.page_url }}
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-node@v4
-  #       with:
-  #         node-version: '22'
-  #         cache: npm
-  #         cache-dependency-path: docs-next/package-lock.json
-  #     - run: npm ci
-  #       working-directory: docs-next
-  #     - run: npm run build
-  #       working-directory: docs-next
-  #     - uses: actions/upload-pages-artifact@v3
-  #       with:
-  #         path: docs-next/out
-  #     - id: deployment
-  #       uses: actions/deploy-pages@v4
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
