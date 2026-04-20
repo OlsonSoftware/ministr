@@ -65,13 +65,17 @@ export function SessionTrace() {
   const [reducedMotion, setReducedMotion] = useState<boolean | null>(null);
 
   useEffect(() => {
-    setReducedMotion(
+    const rm =
       typeof window !== 'undefined' &&
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-    );
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // eslint-disable-next-line no-console
+    console.log('[SessionTrace] reducedMotion probe →', rm);
+    setReducedMotion(rm);
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log('[SessionTrace] animate effect; step=', step, 'reducedMotion=', reducedMotion);
     // Wait for reduced-motion probe to settle before starting.
     if (reducedMotion === null) return;
 

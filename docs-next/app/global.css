@@ -112,9 +112,16 @@ html > body[data-scroll-locked] {
   --removed-body-scroll-bar-size: 0px !important;
 }
 
-/* Subtle iris-gradient text utility for hero titles */
-@utility iris-gradient-text {
-  background: linear-gradient(
+/* Subtle iris-gradient text utility for hero titles.
+   Safari notes: with background-clip: text + animated background-position,
+   Safari needs (a) color: transparent alongside -webkit-text-fill-color,
+   (b) an explicit -webkit-animation, (c) will-change to hint the GPU path.
+   Without those, the text renders correctly on first paint but the
+   animation never commits in Safari. */
+.iris-gradient-text,
+h1.iris-gradient-text,
+.md-typeset .iris-gradient-text {
+  background-image: linear-gradient(
     90deg,
     var(--color-iris-600) 0%,
     var(--color-iris-500) 25%,
@@ -123,10 +130,21 @@ html > body[data-scroll-locked] {
     var(--color-iris-600) 100%
   );
   background-size: 220% 100%;
+  background-position: 0% 50%;
+  background-repeat: no-repeat;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+  color: transparent;
+  will-change: background-position;
+  -webkit-animation: iris-shimmer 14s ease-in-out infinite;
   animation: iris-shimmer 14s ease-in-out infinite;
+}
+
+@-webkit-keyframes iris-shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 @keyframes iris-shimmer {
@@ -137,6 +155,7 @@ html > body[data-scroll-locked] {
 
 @media (prefers-reduced-motion: reduce) {
   .iris-gradient-text {
+    -webkit-animation: none;
     animation: none;
   }
 }
