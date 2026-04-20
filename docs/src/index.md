@@ -208,7 +208,7 @@ no API keys, no tokens leaving the box.
     Desktop app
   </span>
   <h2>The observatory, for when you want to watch</h2>
-  <p>A Tauri-based companion that attaches to the same local daemon your agents use — inspect corpora, replay sessions, and tune configuration without leaving the GUI.</p>
+  <p>A desktop companion that attaches to the same local daemon your agents use — inspect corpora, replay sessions, and tune configuration without leaving the GUI.</p>
 </div>
 
 <div class="iris-app-preview" role="img" aria-label="Preview of the iris desktop observatory — macOS window showing a sidebar of three corpora (iris-rs active with 4128 docs, docs, research-notes), two live sessions with budget percentages, a query playground displaying two ranked results for authentication middleware, and an indexing progress bar at 68 percent">
@@ -294,38 +294,38 @@ no API keys, no tokens leaving the box.
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#squares-four"/></svg> Overview
-Live counts of documents, sections, symbols, and active sessions across every registered corpus — plus an ingestion timeline so you can see what the watcher is doing.
+Live counts of files, code symbols, and active sessions across every registered corpus — plus a live feed of what's being indexed.
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#magnifying-glass"/></svg> Query playground
-Run `iris_survey`, `iris_symbols`, `iris_definition`, and `iris_references` against any registered corpus. See the same ranked results your agent sees, rendered with heading paths and claim previews.
+Run `iris_survey`, `iris_symbols`, `iris_definition`, and `iris_references` against any registered corpus. See the same ranked results your agent sees, with heading paths and previews.
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#gauge"/></svg> Session dashboard
-Replay a session trace turn by turn: which sections were delivered, which got evicted, how budget pressure tracked across the conversation, and which prefetch strategies fired.
+Replay a session turn by turn: which sections were delivered, which got evicted, how the budget tracked across the conversation, and what got warmed in the background.
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#graph"/></svg> Symbol graph
-A tree-sitter-powered map of your codebase rendered as a collapsible graph. Navigate callers, implementors, and cross-language bridges visually.
+An interactive map of your codebase as a collapsible graph. Navigate callers, implementors, and cross-language bridges visually.
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#stack"/></svg> Corpus treemap
-Sunburst/treemap view of disk and token footprint per path. Spot a runaway directory before it bloats the index.
+Treemap of disk and token footprint per path. Spot a runaway directory before it bloats your index.
 </div>
 
 <div class="iris-features__card" markdown>
 ### <svg class="icon icon-md"><use href="assets/icons.svg#terminal-window"/></svg> Log viewer + settings
-Tail daemon logs with filtering, tweak `BudgetConfig`, prefetch strategies, and embedding backends from the UI — changes hot-reload without restarting the daemon.
+Tail daemon logs with filtering, and tune budget, prefetch, and embedding settings from the UI — changes apply without a restart.
 </div>
 
 </div>
 
-<p class="iris-hero__tagline" style="max-width: 48rem; margin: 2rem auto 0;">
-Ships as a single bundle (React 19 + Tauri v2) that talks to the same <code>iris-daemon</code> over its UDS socket. Run the CLI for agents, the app for humans — both see the same corpora.
+<p class="iris-hero__tagline iris-hero__tagline--wide">
+One download, one daemon. Run the CLI for agents, the app for humans — both see the same corpora.
 <br><br>
 <a class="iris-hero__cta iris-hero__cta--secondary" href="https://github.com/AlrikOlson/iris-rs/tree/main/iris-app"><svg class="icon icon-sm"><use href="assets/icons.svg#code"/></svg> iris-app source</a>
 </p>
@@ -390,7 +390,7 @@ language boundaries with [`iris_references`](tools/references.md).
     Languages
   </span>
   <h2>Twelve languages, one symbol index</h2>
-  <p>tree-sitter grammars power symbol extraction, reference tracing, and bridge detection.</p>
+  <p>Real parsers, not regex — symbol extraction, reference tracing, and bridge detection across the stack.</p>
 </div>
 
 <div class="iris-languages" markdown>
@@ -422,13 +422,13 @@ language boundaries with [`iris_references`](tools/references.md).
 |  | `grep` + `cat` | Vector DB / RAG | **iris** |
 |---|:---:|:---:|:---:|
 | **Retrieval** | Full-text match | Embeddings | Embeddings + symbols |
-| **Code symbol index** | – | – | **tree-sitter, 12 langs** |
+| **Code symbol index** | – | – | **12 languages** |
 | **Cross-language bridges** | – | – | **yes** |
 | **Session memory** | – | – | **per-corpus shadow** |
 | **Dedup across turns** | – | – | **yes** |
 | **Delta on change** | – | – | **yes** |
 | **Predictive prefetch** | – | – | **yes** |
-| **Budget awareness** | – | – | **pressure + eviction** |
+| **Budget awareness** | – | – | **tracks + suggests evictions** |
 | **Agent protocol** | Shell | Custom API | **MCP (tool-native)** |
 | **Runs locally** | yes | varies | **yes** |
 
@@ -443,7 +443,7 @@ language boundaries with [`iris_references`](tools/references.md).
   <p>The signed PKG installer drops the desktop app in <code>/Applications</code> and the CLI on your <code>PATH</code> — one click, no terminal.</p>
 </div>
 
-<div class="iris-hero__ctas" style="justify-content: center; margin: 0 auto calc(var(--spacing) * 8);">
+<div class="iris-hero__ctas iris-hero__ctas--spaced">
   <a class="iris-hero__cta iris-hero__cta--primary" href="download/">
     <svg class="icon icon-sm"><use href="assets/icons.svg#package"/></svg>
     Download iris
@@ -501,12 +501,7 @@ Every MCP tool with parameters, response schemas, and behavior notes.
 
 <div class="iris-features__card" markdown>
 ### [<svg class="icon icon-md"><use href="assets/icons.svg#arrow-up-right"/></svg> Architecture](architecture.md)
-Crate structure, daemon topology, layered design, on-disk format.
-</div>
-
-<div class="iris-features__card" markdown>
-### [<svg class="icon icon-md"><use href="assets/icons.svg#arrow-up-right"/></svg> Benchmarks](benchmarks.md)
-Token savings, latency, recall quality, and indexing throughput.
+Project layout, daemon topology, layered design, on-disk format.
 </div>
 
 </div>

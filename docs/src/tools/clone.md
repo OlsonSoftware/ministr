@@ -10,28 +10,40 @@ Clone a git repository and index it into the corpus.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `url` | string | yes | — | Git URL (HTTPS or `github:owner/repo` shorthand) |
-| `ref` | string | no | default branch | Branch, tag, or commit SHA to check out |
-| `sparse_paths` | list of strings | no | — | Sparse-checkout paths (only index these directories) |
+| `repo` | string | yes | — | Git repository URL (HTTPS or SSH) |
+| `branch` | string | no | default branch | Branch to clone |
+| `paths` | list of strings | no | — | Sparse-checkout paths (only check out + index these directories) |
 
 ## Response
 
 ```json
 {
-  "clone_id": "github.com/serde-rs/serde",
-  "ref": "v1.0.200",
-  "commit_sha": "abc123...",
-  "file_count": 87,
-  "section_count": 1204,
-  "symbol_count": 892,
+  "files_discovered": 312,
+  "files_indexed": 298,
+  "sections_extracted": 1204,
+  "clone_time_ms": 2740,
+  "index_time_ms": 8190,
+  "from_cache": false,
+  "dependency_refs_linked": 46,
   "budget_status": { ... }
 }
 ```
 
+### Response Fields
+
+| Field | Description |
+|---|---|
+| `files_discovered` | Number of files discovered in the clone checkout |
+| `files_indexed` | Number of files parsed and stored |
+| `sections_extracted` | Total sections extracted across all indexed files |
+| `clone_time_ms` | Time spent cloning the repository, in milliseconds |
+| `index_time_ms` | Time spent running the ingestion pipeline, in milliseconds |
+| `from_cache` | `true` if the clone was served from a previous cached checkout |
+| `dependency_refs_linked` | Number of cross-references linked from local code to this cloned dependency |
+
 ## Behavior
 
 - Clones into the iris data directory (`~/.iris/clones/<hash>`)
-- Supports GitHub shorthand: `github:rust-lang/rust` → `https://github.com/rust-lang/rust.git`
 - Sparse checkout dramatically reduces disk and index time for large monorepos
 - Subsequent calls with the same URL are idempotent — the cache is reused if the ref hasn't changed
 - Use `iris_refresh` to pull updates after upstream changes

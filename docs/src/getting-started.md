@@ -1,3 +1,7 @@
+---
+description: Install iris, initialize .iris.toml in your project, and wire it into Claude Code or Cursor.
+---
+
 # Getting Started
 
 ## Installation

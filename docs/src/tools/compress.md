@@ -24,6 +24,9 @@ Generate compressed summaries for sections the agent wants to evict from context
       "compressed_tokens": 95
     }
   ],
+  "total_original_tokens": 847,
+  "total_compressed_tokens": 95,
+  "compression_ratio": 0.112,
   "budget_status": { ... }
 }
 ```
@@ -37,6 +40,9 @@ Generate compressed summaries for sections the agent wants to evict from context
 | `summaries[].summary` | Short extractive summary preserving key information |
 | `summaries[].original_tokens` | Token count of the original full section |
 | `summaries[].compressed_tokens` | Token count of the compressed summary |
+| `total_original_tokens` | Sum of `original_tokens` across all compressed items |
+| `total_compressed_tokens` | Sum of `compressed_tokens` across all compressed items |
+| `compression_ratio` | Aggregate ratio (`total_compressed / total_original`); lower is better |
 
 ## Behavior
 

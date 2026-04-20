@@ -1,3 +1,7 @@
+---
+description: Global ~/.iris/config.toml and per-project .iris.toml options — corpus paths, embedding model, budget, prefetch, and environment variables.
+---
+
 # Configuration
 
 iris uses a two-level configuration system: global settings and per-corpus settings.

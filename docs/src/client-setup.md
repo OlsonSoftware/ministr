@@ -1,3 +1,7 @@
+---
+description: Wire iris into Claude Code, Cursor, or any MCP-compatible client — stdio, Streamable HTTP, and environment-variable configuration.
+---
+
 # MCP Client Setup
 
 iris communicates over **stdio** using the Model Context Protocol (MCP). Any MCP-compatible client can connect by spawning the `iris` binary as a subprocess.

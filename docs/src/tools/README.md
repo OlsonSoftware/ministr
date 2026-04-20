@@ -4,30 +4,30 @@ iris exposes MCP tools that give the agent explicit control over context retriev
 
 ## Search & retrieval
 
-| Tool | Purpose | Typical Token Cost | Latency |
-|---|---|---|---|
-| [`iris_survey`](survey.md) | Semantic search across docs and code | 100-300 | <50ms cold, <5ms warm |
-| [`iris_read`](read.md) | Read a section in full | 200-2000 | <10ms |
-| [`iris_extract`](extract.md) | Pull specific claims | 50-500 | <50ms cold, <5ms warm |
-| [`iris_related`](related.md) | Follow claim relationships | 50-300 | <20ms |
-| [`iris_toc`](toc.md) | Structural overview of the corpus | 100-500 | <5ms |
+| Tool | Purpose | Typical Token Cost |
+|---|---|---|
+| [`iris_survey`](survey.md) | Semantic search across docs and code | 100-300 |
+| [`iris_read`](read.md) | Read a section in full | 200-2000 |
+| [`iris_extract`](extract.md) | Pull specific claims | 50-500 |
+| [`iris_related`](related.md) | Follow claim relationships | 50-300 |
+| [`iris_toc`](toc.md) | Structural overview of the corpus | 100-500 |
 
 ## Code navigation
 
-| Tool | Purpose | Typical Token Cost | Latency |
-|---|---|---|---|
-| [`iris_symbols`](symbols.md) | Find structs, functions, traits, enums | 50-300 | <10ms |
-| [`iris_definition`](definition.md) | Get full source of a symbol | 100-2000 | <5ms |
-| [`iris_references`](references.md) | Find callers, implementors, importers | 50-300 | <20ms |
-| [`iris_bridge`](bridge.md) | Query cross-language bindings | 50-200 | <10ms |
+| Tool | Purpose | Typical Token Cost |
+|---|---|---|
+| [`iris_symbols`](symbols.md) | Find structs, functions, traits, enums | 50-300 |
+| [`iris_definition`](definition.md) | Get full source of a symbol | 100-2000 |
+| [`iris_references`](references.md) | Find callers, implementors, importers | 50-300 |
+| [`iris_bridge`](bridge.md) | Query cross-language bindings | 50-200 |
 
 ## Budget management
 
-| Tool | Purpose | Typical Token Cost | Latency |
-|---|---|---|---|
-| [`iris_budget`](budget.md) | Check budget status | minimal | <1ms |
-| [`iris_compress`](compress.md) | Get compressed summaries | 50-200 | <10ms |
-| [`iris_evicted`](evicted.md) | Signal evicted content | minimal | <1ms |
+| Tool | Purpose | Typical Token Cost |
+|---|---|---|
+| [`iris_budget`](budget.md) | Check budget status | minimal |
+| [`iris_compress`](compress.md) | Get compressed summaries | 50-200 |
+| [`iris_evicted`](evicted.md) | Signal evicted content | minimal |
 
 ## Multi-source corpora
 
@@ -41,7 +41,7 @@ iris exposes MCP tools that give the agent explicit control over context retriev
 
 Every tool response includes:
 
-- **`budget_status`** — current token budget snapshot with `total_budget`, `estimated_used`, `estimated_remaining`, and `pressure_level`
+- **`budget_status`** — current token budget snapshot with `tokens_used`, `tokens_remaining`, `pressure_level`, and `utilization`
 - **`coherence_alerts`** — (when present) notifications about changed underlying documents
 
 ## Typical Workflow

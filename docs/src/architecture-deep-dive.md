@@ -1,3 +1,7 @@
+---
+description: In-depth walk through the iris workspace, ingestion pipeline, session shadow, prefetch engine, and embedding backends.
+---
+
 # iris-rs Architecture: The Deep Dive
 
 > **iris** is a Rust-native MCP server that serves context to LLM agents the way

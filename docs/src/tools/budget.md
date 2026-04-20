@@ -17,7 +17,7 @@ None.
   "total_budget": 100000,
   "estimated_used": 78500,
   "estimated_remaining": 21500,
-  "pressure_level": "high",
+  "pressure_level": "critical",
   "eviction_candidates": [
     {
       "content_id": "docs/setup.md#prerequisites",
@@ -32,7 +32,12 @@ None.
     "topical_misses": 4,
     "structural_hits": 1,
     "structural_misses": 2
-  }
+  },
+  "session_metrics": { "turn_count": 24, "tokens_delivered": 78500 },
+  "schema_tokens": 3120,
+  "tool_count": 15,
+  "coherence_alerts": [],
+  "elicitation_evicted": []
 }
 ```
 
@@ -43,9 +48,14 @@ None.
 | `total_budget` | Total context window budget in tokens |
 | `estimated_used` | Estimated tokens currently in the agent's window |
 | `estimated_remaining` | Estimated tokens available |
-| `pressure_level` | `"normal"`, `"elevated"`, or `"high"` |
+| `pressure_level` | `"normal"`, `"elevated"`, or `"critical"` |
 | `eviction_candidates` | Ranked list of content safe to drop (populated under pressure) |
 | `prefetch_metrics` | Hit/miss counts per prefetch strategy |
+| `session_metrics` | Cumulative token economics for the session (turns, delivered totals) |
+| `schema_tokens` | Tokens consumed by MCP tool schemas (descriptions + parameters) |
+| `tool_count` | Number of registered MCP tools |
+| `coherence_alerts` | Pending alerts when underlying content has changed (omitted when empty) |
+| `elicitation_evicted` | Content IDs evicted via interactive elicitation (omitted when empty) |
 
 ### Pressure Levels
 
@@ -53,7 +63,7 @@ None.
 |---|---|---|
 | `normal` | < 80% used | Standard operation |
 | `elevated` | 80-90% used | Eviction candidates suggested |
-| `high` | > 90% used | Responses auto-compressed, strong eviction recommendations |
+| `critical` | > 90% used | Responses auto-compressed, strong eviction recommendations |
 
 ## Behavior
 

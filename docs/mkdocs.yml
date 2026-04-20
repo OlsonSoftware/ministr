@@ -168,7 +168,6 @@ nav:
   - CLI:
       - Reference: cli.md
       - iris init: tools/init.md
-  - Benchmarks: benchmarks.md
 
 extra:
   social:

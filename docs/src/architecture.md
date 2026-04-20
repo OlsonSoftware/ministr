@@ -1,3 +1,7 @@
+---
+description: Workspace layout, layered architecture, daemon topology, and on-disk format for the iris context cache.
+---
+
 # Architecture Overview
 
 ## Workspace Structure
@@ -108,7 +112,7 @@ Documents are indexed at three simultaneous levels — summaries, sections, and 
 Four MCP tools (`survey` → `read` → `extract` → `related`) give the agent explicit control over retrieval depth, mirroring how a human researcher navigates a knowledge base.
 
 ### 4. Speculative Prefetch
-Predicts what the agent will need next based on sequential, topical, and structural locality. Pre-computes results so warm responses are served in <1ms. See [Prefetch Engine](concepts/prefetch-engine.md).
+Predicts what the agent will need next based on sequential, topical, and structural locality. Pre-computes results so warm responses are served from cache instead of re-embedded and re-searched. See [Prefetch Engine](concepts/prefetch-engine.md).
 
 ### 5. Context Budget Management
 Tracks cumulative token usage, detects pressure, and provides eviction recommendations with compressed replacement summaries. See [Budget Management](concepts/budget-management.md).

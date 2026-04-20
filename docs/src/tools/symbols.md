@@ -10,13 +10,12 @@ Search the code symbol index for structs, functions, traits, enums, and other de
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `query` | string | no | — | Name substring or semantic query |
-| `kind` | string | no | — | Filter by kind: `struct`, `function`, `trait`, `enum`, `const`, `impl`, `method` |
-| `module` | string | no | — | Filter by module path prefix |
-| `visibility` | string | no | — | Filter by visibility: `pub`, `pub(crate)`, `private` |
-| `top_k` | integer | no | 20 | Maximum number of results |
-
-At least one of `query`, `kind`, or `module` must be provided.
+| `query` | string | no | — | Fuzzy name search (case-insensitive substring match) |
+| `kind` | string | no | — | Filter by kind: `function`, `struct`, `trait`, `enum`, `impl`, `const`, `static`, `type`, `mod` |
+| `module` | string | no | — | Module path prefix filter (e.g. `config` matches `config::sub`) |
+| `visibility` | string | no | — | Filter by visibility: `pub`, `pub(crate)`, `pub(super)`, or `""` for private |
+| `offset` | integer | no | 0 | Number of entries to skip |
+| `limit` | integer | no | 100 | Maximum number of entries to return |
 
 ## Response
 

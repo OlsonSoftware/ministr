@@ -10,9 +10,10 @@ Query cross-language binding links between exported symbols and their consumers 
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `query` | string | no | Search bridge links by symbol name or binding key |
-| `kind` | string | no | Filter by bridge kind: `tauri`, `napi`, `pyo3`, `wasm_bindgen`, `http_route` |
-| `top_k` | integer | no | Maximum number of results (default: 20) |
+| `query` | string | no | Filter by binding key or symbol name (case-insensitive substring match) |
+| `bridge_kind` | string | no | Filter by kind: `tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi` |
+| `language` | string | no | Filter to links involving this language (e.g. `rust`, `typescript`, `javascript`, `python`) |
+| `file_path` | string | no | Filter to links where either endpoint is in this file path |
 
 ## Response
 
@@ -20,21 +21,18 @@ Query cross-language binding links between exported symbols and their consumers 
 {
   "bridges": [
     {
-      "kind": "tauri",
-      "binding_key": "open_file",
+      "kind": "tauri_command",
       "confidence": 1.0,
       "export": {
         "symbol_id": "sym-src-tauri/src/commands.rs::commands::open_file",
         "file_path": "src-tauri/src/commands.rs",
         "line": 42
       },
-      "imports": [
-        {
-          "file_path": "src/App.tsx",
-          "line": 87,
-          "context": "invoke('open_file', { path: selectedPath })"
-        }
-      ]
+      "import": {
+        "file_path": "src/App.tsx",
+        "line": 87,
+        "context": "invoke('open_file', { path: selectedPath })"
+      }
     }
   ],
   "budget_status": { ... }
@@ -45,11 +43,10 @@ Query cross-language binding links between exported symbols and their consumers 
 
 | Field | Description |
 |---|---|
-| `bridges[].kind` | Binding framework (`tauri`, `napi`, `pyo3`, `wasm_bindgen`, `http_route`) |
-| `bridges[].binding_key` | The binding identifier (command name, export name, route path) |
+| `bridges[].kind` | Binding mechanism (`tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi`) |
 | `bridges[].confidence` | Link confidence score (1.0 = exact match, <1.0 = semantic fallback) |
 | `bridges[].export` | The producing side (e.g., `#[tauri::command]` function) |
-| `bridges[].imports[]` | Consumer sites (e.g., `invoke()` calls) |
+| `bridges[].import` | The consuming site (e.g., an `invoke()` call) |
 
 ### Supported Frameworks
 

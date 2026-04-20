@@ -8,33 +8,43 @@ Re-fetch changed web sources and pull updates for cloned git repositories.
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `source_id` | string | no | — | Specific source to refresh (URL or clone ID) |
-| `all` | boolean | no | false | Refresh all external sources |
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `url` | string | no | URL (web) or repo URL (git) to check for staleness |
 
-If neither is provided, only sources with expired cache headers are refreshed.
+If omitted, checks all cached web and git sources.
 
 ## Response
 
 ```json
 {
-  "refreshed": [
-    {
-      "source_id": "https://example.com/docs",
-      "kind": "web",
-      "change_detected": true,
-      "sections_updated": 3
-    },
-    {
-      "source_id": "github.com/serde-rs/serde",
-      "kind": "git",
-      "change_detected": false
-    }
+  "urls_checked": 2,
+  "urls_refreshed": 1,
+  "urls_unchanged": 1,
+  "urls_failed": 0,
+  "details": [
+    { "url": "https://example.com/docs/guide", "status": "updated" },
+    { "url": "https://example.com/docs/api", "status": "unchanged" }
+  ],
+  "git_repos_checked": 1,
+  "git_repos_refreshed": 0,
+  "git_repos_unchanged": 1,
+  "git_repos_failed": 0,
+  "git_details": [
+    { "repo_url": "https://github.com/serde-rs/serde.git", "status": "unchanged" }
   ],
   "budget_status": { ... }
 }
 ```
+
+### Response Fields
+
+| Field | Description |
+|---|---|
+| `urls_checked` / `urls_refreshed` / `urls_unchanged` / `urls_failed` | Counts for web sources |
+| `details[]` | Per-URL `{url, status}` entries; `status` is `"unchanged"`, `"updated"`, or `"failed: <reason>"` |
+| `git_repos_checked` / `git_repos_refreshed` / `git_repos_unchanged` / `git_repos_failed` | Counts for cached git clones (omitted when zero) |
+| `git_details[]` | Per-repo `{repo_url, status}` entries (omitted when empty) |
 
 ## Behavior
 

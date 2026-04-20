@@ -1,3 +1,7 @@
+---
+description: How the iris daemon, MCP proxy, and desktop tray app communicate over ~/.iris/irisd.sock.
+---
+
 # Daemon & Tray Architecture
 
 ## Topology

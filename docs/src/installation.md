@@ -1,3 +1,7 @@
+---
+description: How to install the iris CLI and desktop app — install script, Cargo, Homebrew (post-1.0), and pre-built binaries for macOS / Linux / Windows.
+---
+
 # Installation
 
 !!! tip "Want the desktop app too?"

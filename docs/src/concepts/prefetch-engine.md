@@ -1,10 +1,10 @@
 # Prefetch Engine
 
-The prefetch engine predicts what the agent will need next and pre-computes it, reducing response times from 50-200ms (cold retrieval) to <1ms (memory lookup).
+The prefetch engine predicts what the agent will need next and pre-computes it, so cached results are served without re-embedding and re-searching on every call.
 
 ## Why Prefetch Matters
 
-Every tool call round-trip costs latency, tokens, and money. If iris can predict what the agent will ask for next and have it ready, the interaction feels instantaneous. The goal is a hit rate of >50% after the first 3 turns of a session.
+Every tool call round-trip costs latency, tokens, and money. If iris can predict what the agent will ask for next and have it ready, the interaction feels instantaneous.
 
 ## Prediction Strategies
 

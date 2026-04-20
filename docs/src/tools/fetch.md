@@ -8,35 +8,41 @@ Fetch a web URL and add its content to the corpus. Supports single pages, sitema
 
 ## Parameters
 
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `url` | string | yes | HTTP(S) URL to fetch |
-| `recursive` | boolean | no | Follow sitemap.xml or llms.txt if the URL points to a site root |
-| `max_pages` | integer | no | Maximum pages to fetch when `recursive` is true (default: 100) |
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `url` | string | yes | — | HTTP(S) URL to fetch |
+| `depth` | integer | no | 0 | Crawl depth for following same-domain links (0 = single page only) |
+| `max_pages` | integer | no | 50 | Maximum pages to fetch when crawling |
+| `path_filter` | string | no | — | Only fetch URLs whose path starts with this prefix (e.g. `/docs/`) |
 
 ## Response
 
 ```json
 {
-  "ingested": [
-    {
-      "url": "https://example.com/docs/auth",
-      "document_id": "https://example.com/docs/auth",
-      "section_count": 5,
-      "token_count": 1240
-    }
-  ],
-  "skipped": [],
-  "errors": [],
+  "pages_fetched": 14,
+  "sections_indexed": 62,
+  "claims_extracted": 148,
+  "tokens_added": 18420,
+  "strategy_used": "sitemap",
   "budget_status": { ... }
 }
 ```
+
+### Response Fields
+
+| Field | Description |
+|---|---|
+| `pages_fetched` | Number of pages successfully fetched |
+| `sections_indexed` | Total sections indexed across all fetched pages |
+| `claims_extracted` | Total claims extracted across all fetched pages |
+| `tokens_added` | Total tokens added to the corpus |
+| `strategy_used` | Fetch strategy selected (`direct`, `sitemap`, `llms_txt`, etc.) |
 
 ## Behavior
 
 - HTML is converted to Markdown via readability extraction before indexing
 - PDF URLs are text-extracted via `pdf-extract`
-- `sitemap.xml` and `llms.txt` are auto-detected for recursive fetching
+- `sitemap.xml` and `llms.txt` feeds are detected and used to expand crawls when present
 - Fetched content is cached locally with ETag / Last-Modified headers
 - Use `iris_refresh` to re-fetch changed sources
 - Subject to rate limiting (default: 4 concurrent requests)

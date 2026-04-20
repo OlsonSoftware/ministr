@@ -25,7 +25,7 @@ hide:
   <li><svg class="icon icon-sm"><use href="assets/icons.svg#shield-check-fill"/></svg> Apple-signed + notarized</li>
   <li><svg class="icon icon-sm"><use href="assets/icons.svg#cpu"/></svg> 100% local — no telemetry</li>
   <li><svg class="icon icon-sm"><use href="assets/icons.svg#code"/></svg> Open source · MIT / Apache-2.0</li>
-  <li><svg class="icon icon-sm"><use href="assets/icons.svg#lightning"/></svg> Universal binary · arm64 + x64</li>
+  <li><svg class="icon icon-sm"><use href="assets/icons.svg#lightning"/></svg> Native Apple Silicon + Intel builds</li>
 </ul>
 
 <aside
@@ -282,7 +282,7 @@ hide:
 
 <pre class="iris-install-tree" aria-label="Filesystem paths touched by the installer"><code><span class="iris-install-tree__root">/</span>
 ├── <span class="iris-install-tree__dir">Applications/</span>
-│   └── <span class="iris-install-tree__leaf">iris.app</span>                      <span class="iris-install-tree__note">← observatory (Tauri bundle)</span>
+│   └── <span class="iris-install-tree__leaf">iris.app</span>                      <span class="iris-install-tree__note">← desktop observatory</span>
 ├── <span class="iris-install-tree__dir">usr/local/bin/</span>
 │   └── <span class="iris-install-tree__leaf">iris</span>                          <span class="iris-install-tree__note">← CLI · agents + scripts</span>
 └── <span class="iris-install-tree__dir">etc/paths.d/</span>
@@ -344,7 +344,7 @@ hide:
     Other platforms
   </span>
   <h2>Linux & Windows</h2>
-  <p>The Tauri app builds for every platform. The PKG auto-PATH magic is macOS-only — elsewhere, installer bundles set up PATH natively.</p>
+  <p>The desktop app builds for every platform. The PKG auto-PATH magic is macOS-only — elsewhere, installer bundles set up PATH natively.</p>
 </div>
 
 <div class="iris-features" markdown>
@@ -435,14 +435,14 @@ All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](htt
 <details class="iris-faq__item">
   <summary>Does iris phone home or send data anywhere?</summary>
   <div>
-    <p>No. The daemon listens on a local Unix domain socket, embeddings run locally via ONNX (optionally Metal-accelerated), and the vector index lives on disk under <code>~/.iris/</code>. The only network activity iris initiates is <code>iris_fetch</code> / <code>iris_clone</code> when you explicitly ask it to add web or Git sources to your corpus. No telemetry, no analytics, no update pings.</p>
+    <p>No. Everything runs on your machine — the embedding model, the index, the session state. The only network activity iris initiates is <code>iris_fetch</code> / <code>iris_clone</code> when you explicitly ask it to add web or Git sources to your corpus. No telemetry, no analytics, no update pings.</p>
   </div>
 </details>
 
 <details class="iris-faq__item">
   <summary>Do I need the desktop app, or can I just use the CLI?</summary>
   <div>
-    <p>Either works. The MCP proxy ships as <code>iris</code> on your <code>PATH</code> and is the only piece your agent talks to. The desktop app is an optional observatory that attaches to the same daemon — it's useful for inspecting corpora, replaying sessions, and tuning configuration visually. If you're headless on a server, grab the CLI-only tarball instead.</p>
+    <p>Either works. The <code>iris</code> CLI on your <code>PATH</code> is the only piece your agent talks to. The desktop app is an optional observatory — useful for inspecting corpora, replaying sessions, and tuning configuration visually. If you're headless on a server, grab the CLI-only tarball instead.</p>
   </div>
 </details>
 
@@ -463,7 +463,7 @@ All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](htt
 <details class="iris-faq__item">
   <summary>How much disk space does iris use?</summary>
   <div>
-    <p>The app and CLI are small. Per-corpus storage scales with what you index — a typical project codebase fits comfortably alongside its own source tree. Exact numbers for sample corpora are on the <a href="../benchmarks/">benchmarks page</a>.</p>
+    <p>The app and CLI are small. Per-corpus storage scales with what you index — a typical project codebase fits comfortably alongside its own source tree.</p>
   </div>
 </details>
 
@@ -560,7 +560,7 @@ All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](htt
           "name": "Does iris phone home or send data anywhere?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. The daemon listens on a local Unix domain socket, embeddings run locally via ONNX (optionally Metal-accelerated), and the vector index lives on disk under ~/.iris/. The only network activity iris initiates is iris_fetch / iris_clone when you explicitly ask it to add web or Git sources to your corpus. No telemetry, no analytics, no update pings."
+            "text": "No. Everything runs on your machine — the embedding model, the index, the session state. The only network activity iris initiates is iris_fetch / iris_clone when you explicitly ask it to add web or Git sources to your corpus. No telemetry, no analytics, no update pings."
           }
         },
         {
@@ -568,7 +568,7 @@ All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](htt
           "name": "Do I need the desktop app, or can I just use the CLI?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Either works. The MCP proxy ships as iris on your PATH and is the only piece your agent talks to. The desktop app is an optional observatory that attaches to the same daemon — it's useful for inspecting corpora, replaying sessions, and tuning configuration visually."
+            "text": "Either works. The iris CLI on your PATH is the only piece your agent talks to. The desktop app is an optional observatory — useful for inspecting corpora, replaying sessions, and tuning configuration visually."
           }
         },
         {
@@ -592,7 +592,7 @@ All release artifacts are listed at [github.com/AlrikOlson/iris-rs/releases](htt
           "name": "How much disk space does iris use?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "The binary is ~14 MB, the desktop app bundle is ~35 MB, and per-corpus storage depends on what you index — a 10k-file codebase typically lands around 150–300 MB. Embeddings are quantized int8 to keep the vector store small."
+            "text": "The app and CLI are small. Per-corpus storage scales with what you index — a typical project codebase fits comfortably alongside its own source tree."
           }
         },
         {

@@ -1,3 +1,7 @@
+---
+description: Reference for the iris binary — serve, index, init, status, search, export/import, and hooks test subcommands.
+---
+
 # CLI Reference
 
 The `iris` binary provides subcommands for running the MCP server, indexing corpora, managing projects, and distributing pre-built indexes.
@@ -50,7 +54,7 @@ iris serve --proxy                                      # delegate to iris daemo
 | `--oauth` | Enable OAuth 2.1 authentication (HTTP transport only) |
 | `--oauth-issuer <URL>` | OAuth issuer URL (default: `http://<host>:<port>`) |
 
-The `--proxy` mode uses ~20 MB of RAM vs ~2 GB for the monolithic server, making it ideal when running alongside the iris desktop app.
+The `--proxy` mode keeps the CLI lightweight by delegating heavy work to the daemon — ideal when running alongside the iris desktop app.
 
 ## `iris index`
 
@@ -87,7 +91,7 @@ iris search "authentication" --top-k 5
 
 ## `iris export` / `iris import`
 
-Export the corpus index to a portable `.iris-index` bundle (zstd-compressed archive of the content database and HNSW index). Import on another machine to skip re-indexing.
+Export the corpus index to a portable `.iris-index` bundle. Import on another machine to skip re-indexing.
 
 ```sh
 iris export -o my-corpus.iris-index

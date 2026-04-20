@@ -729,6 +729,11 @@
     line-height: 1.55;
     text-wrap: balance;
   }
+  .md-typeset .iris-hero__tagline--wide,
+  p.iris-hero__tagline--wide {
+    max-width: 48rem;
+    margin-top: calc(var(--spacing) * 8);
+  }
 
   .iris-hero__install {
     display: inline-flex;
@@ -756,6 +761,9 @@
     gap: calc(var(--spacing) * 3);
     justify-content: center;
     flex-wrap: wrap;
+  }
+  .iris-hero__ctas--spaced {
+    margin-bottom: calc(var(--spacing) * 8);
   }
   .iris-hero__cta {
     display: inline-flex;
@@ -2867,6 +2875,12 @@
     gap: calc(var(--spacing) * 2);
     margin: var(--section-gap-inline) auto var(--section-gap-standard);
     max-width: 780px;
+  }
+  /* python-markdown wraps bare sibling <span> children in a single <p>, which
+     would collapse the flex layout to one item and break wrap+gap. Flatten
+     the <p> with display: contents so the spans become direct flex items. */
+  .iris-languages > p {
+    display: contents;
   }
   .md-typeset .iris-lang {
     display: inline-flex;

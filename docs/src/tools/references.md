@@ -11,8 +11,9 @@ Find all references to a symbol — callers, implementors, importers, and cross-
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `symbol_id` | string | yes | — | Symbol ID from `iris_symbols` |
-| `ref_kind` | string | no | — | Filter by reference kind: `calls`, `implements`, `imports`, `extends`, `mentions` |
-| `top_k` | integer | no | 50 | Maximum number of results |
+| `ref_kind` | string | no | — | Filter by reference kind: `calls`, `implements`, `imports`, `uses`, `bridge` |
+| `offset` | integer | no | 0 | Number of entries to skip |
+| `limit` | integer | no | 100 | Maximum number of entries to return |
 
 ## Response
 
@@ -56,8 +57,8 @@ Find all references to a symbol — callers, implementors, importers, and cross-
 | `calls` | Function/method call site |
 | `implements` | Trait implementation |
 | `imports` | `use` or `import` statement |
-| `extends` | Class/struct extension or inheritance |
-| `mentions` | Type reference in signatures or annotations |
+| `uses` | Type reference in signatures or annotations |
+| `bridge` | Cross-language binding site (Tauri `invoke`, napi import, PyO3 call, etc.) |
 
 ## Behavior
 
