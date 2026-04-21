@@ -8,24 +8,30 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Disable incremental compilation in CI. Incremental bloats the target
+  # dir (bigger cache save + restore) without helping, because the
+  # runner's workspace is recreated from a restored cache every time —
+  # there's no "last build" state incremental can reuse beyond what the
+  # cache already provides.
+  CARGO_INCREMENTAL: 0
+  # Surface flaky crates.io reads instead of hard-failing on first drop.
+  CARGO_NET_RETRY: 10
+  # -D warnings turns every compile warning into an error. Matches the
+  # local `just lint` stance so CI never lets noise slip through.
   RUSTFLAGS: "-D warnings"
+  # Short backtraces keep CI logs readable while still giving enough
+  # context to diagnose a panic.
+  RUST_BACKTRACE: short
 
-# Each job is self-contained and runs in parallel. The critical path is
-# whichever of lint / test / docker-build is slowest. Past shape:
-#   - lint     ~6-8 min cold, ~2-3 min cached
-#   - test     ~6-8 min cold, ~2-3 min cached
-#   - security  <1 min (prebuilt binaries)
-#   - mcp-smoke ~3-5 min cached
-#   - docker   ~2-3 min with buildx layer cache, ~10-15 min cold
-#   - eval     ~1-2 min
+# Each Rust job uses the same Swatinem/rust-cache shared-key so the
+# target/ + registry cache is portable across jobs *and* across
+# subsequent PR pushes. First commit's lint run populates the cache,
+# later commits' test/doctest/mcp-smoke jobs warm-start from it.
+#
+# Wall-clock expectation:
+#   cold (first PR push): slowest job ~= 8-10 min (docker is unaffected)
+#   warm (subsequent push with same deps): ~2-3 min
 jobs:
-  # ────────────────────────────────────────────────────────────────────
-  # Shared setup steps reused across lint + test.
-  # ────────────────────────────────────────────────────────────────────
-  # (factored into the individual jobs below rather than a composite
-  # action — GH composite actions force serial step execution and add
-  # fetch overhead that cancels the gain.)
-
   lint:
     name: Lint (fmt + clippy)
     runs-on: ubuntu-latest
@@ -37,10 +43,10 @@ jobs:
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ministr-ci
 
       - name: Install Tauri Linux build deps
-        # ministr-app/src-tauri depends on webkit2gtk + gtk + appindicator
-        # + rsvg to compile on Linux. Official Tauri 2 prereqs.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -55,17 +61,13 @@ jobs:
             librsvg2-dev
 
       - name: Stub Tauri bundle artifacts
-        # tauri-build and `tauri::generate_context!()` run during regular
-        # cargo check/compile and probe the filesystem for bundle-time
-        # inputs declared in tauri.conf.json:
-        #
+        # tauri-build and tauri::generate_context!() probe bundle-time
+        # inputs during regular cargo check/compile:
         #   - binaries/ministr-cli-<triple>  ← externalBin sidecar
         #   - ../dist/                       ← frontendDist (pnpm build output)
-        #
         # Neither is produced by cargo; in real use they're built by
-        # `just pkg` / `pnpm build`. For lint/test we only need the
-        # existence checks to pass — nothing ever runs the sidecar or
-        # serves the frontend. Actual Linux coverage for ministr-cli
+        # `just pkg` / `pnpm build`. Lint/test/doctests only need the
+        # existence checks to pass. Real Linux ministr-cli coverage
         # lives in mcp-smoke (full release build + live smoke test).
         run: |
           triple=$(rustc -vV | awk '/^host:/ {print $2}')
@@ -80,7 +82,7 @@ jobs:
 
       - name: cargo clippy
         run: |
-          cargo clippy --workspace --all-targets \
+          cargo clippy --workspace --all-targets --locked \
               -- -D warnings -W clippy::pedantic
 
   test:
@@ -92,6 +94,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ministr-ci
+
+      # Prebuilt nextest — ~5s vs ~1min compile-from-source. Runs tests
+      # in a process-per-test model; ~35% faster than cargo test once
+      # tests are compiled, especially on multi-core runners.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - name: Install Tauri Linux build deps
         run: |
@@ -108,8 +119,6 @@ jobs:
             librsvg2-dev
 
       - name: Stub Tauri bundle artifacts
-        # See lint job for rationale. tauri-build + generate_context!()
-        # probe both paths during compile, neither is produced by cargo.
         run: |
           triple=$(rustc -vV | awk '/^host:/ {print $2}')
           mkdir -p ministr-app/src-tauri/binaries
@@ -118,22 +127,30 @@ jobs:
           mkdir -p ministr-app/dist
           : > ministr-app/dist/index.html
 
-      - name: cargo test (lib + bins + integration)
-        # --all-targets excludes doc-tests, which each spawn a standalone
-        # linker invocation against the full dep graph. With 130+ doc
-        # examples in ministr-core, the cumulative peak linker memory
-        # OOMs ubuntu-latest runners (`ld terminated with signal 7
-        # [Bus error]`). Doc-tests run in their own job below where
-        # they get a fresh runner + memory budget.
-        run: cargo test --workspace --all-targets
+      - name: cargo nextest run
+        # --all-targets runs lib + bins + integration tests + benches;
+        # doc-tests are excluded (nextest doesn't support them and they
+        # ran in their own job below with limited parallelism to avoid
+        # linker OOM).
+        run: cargo nextest run --workspace --all-targets --locked
 
   doctests:
     name: Doc tests
     runs-on: ubuntu-latest
+    env:
+      # Each doc-test compiles to its own standalone binary and links
+      # the full ministr-core dep graph. With 130+ doc examples the
+      # cumulative peak linker memory exhausts ubuntu-latest's 16 GB
+      # (`ld terminated with signal 7 [Bus error]`). Capping cargo's
+      # parallel build jobs at 2 keeps the number of concurrent linker
+      # invocations low enough to fit.
+      CARGO_BUILD_JOBS: "2"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ministr-ci
 
       - name: Install Tauri Linux build deps
         run: |
@@ -159,10 +176,7 @@ jobs:
           : > ministr-app/dist/index.html
 
       - name: cargo test --doc
-        # Doc-tests run in their own job with a fresh runner so the
-        # peak linker memory from 130+ standalone doc-example links
-        # doesn't collide with the regular test binaries.
-        run: cargo test --workspace --doc
+        run: cargo test --workspace --doc --locked
 
   security:
     name: Security (deny + audit)
@@ -192,6 +206,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ministr-ci
       - uses: extractions/setup-just@v2
 
       - name: Run retrieval regression gate
@@ -204,12 +220,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Separate shared-key because this job builds `--release`;
+          # release and dev profiles live in different target/
+          # subdirectories and sharing would churn the cache on every
+          # profile swap.
+          shared-key: ministr-ci-release
 
       - name: Build release binary
         # Real Linux build of ministr-cli. This is the authoritative
         # "does the CLI compile on Linux" signal that backs the stub
-        # sidecar the lint/test jobs use.
-        run: cargo build --release -p ministr-cli
+        # sidecar the lint/test/doctests jobs use.
+        run: cargo build --release -p ministr-cli --locked
 
       - name: MCP initialize + tools/list
         run: |
@@ -251,8 +273,8 @@ jobs:
 
       # buildx + GHA layer cache. First run on a branch is still full
       # cost (~10-15 min), but every subsequent run pulls the Rust dep
-      # layer from cache and finishes in ~2-3 min. Without this, every
-      # CI run rebuilt ~500 crates from scratch.
+      # layer from cache and finishes in ~30s. Without this, every CI
+      # run rebuilt ~500 crates from scratch.
       - uses: docker/setup-buildx-action@v3
 
       - name: Build Docker image
