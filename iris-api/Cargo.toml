@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Shared API types for the iris daemon, MCP proxy, and CLI."
+readme = "../README.md"
+homepage = "https://github.com/AlrikOlson/iris-rs"
+keywords = ["mcp", "iris", "api", "types"]
+categories = ["development-tools", "api-bindings"]
 
 [lints]
 workspace = true

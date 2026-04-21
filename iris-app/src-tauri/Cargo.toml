@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "iris desktop app — central index daemon with GUI dashboard."
+publish = false
 
 [lints]
 workspace = true
