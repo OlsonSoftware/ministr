@@ -142,7 +142,7 @@ impl CompressionPipeline {
         }
 
         // Sort by tokens freed descending (most impactful first)
-        promotions.sort_by(|a, b| b.estimated_tokens_freed.cmp(&a.estimated_tokens_freed));
+        promotions.sort_by_key(|p| std::cmp::Reverse(p.estimated_tokens_freed));
 
         promotions
     }

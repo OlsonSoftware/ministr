@@ -83,7 +83,7 @@ const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180)
 const CONNECT_RETRY_BACKOFFS: [std::time::Duration; 3] = [
     std::time::Duration::from_millis(200),
     std::time::Duration::from_millis(500),
-    std::time::Duration::from_millis(1000),
+    std::time::Duration::from_secs(1),
 ];
 
 /// HTTP client for the ministr daemon API over Unix domain socket.

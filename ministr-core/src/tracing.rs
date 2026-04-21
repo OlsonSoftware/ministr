@@ -22,9 +22,7 @@ fn build_filter() -> EnvFilter {
 }
 
 fn is_json() -> bool {
-    std::env::var(LOG_FORMAT_VAR)
-        .map(|v| v.eq_ignore_ascii_case("json"))
-        .unwrap_or(false)
+    std::env::var(LOG_FORMAT_VAR).is_ok_and(|v| v.eq_ignore_ascii_case("json"))
 }
 
 /// Initialize the global tracing subscriber (stderr only).

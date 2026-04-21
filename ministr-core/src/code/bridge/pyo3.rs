@@ -133,11 +133,9 @@ fn walk_rust_pyo3_items(
                     });
                 }
             }
-            "impl_item" => {
-                // #[pymethods] impl blocks — extract method names
-                if has_attribute_before(&node, source, PYO3_METHODS_ATTRS) {
-                    walk_pymethods_impl(cursor, source, file_path, endpoints);
-                }
+            // #[pymethods] impl blocks — extract method names.
+            "impl_item" if has_attribute_before(&node, source, PYO3_METHODS_ATTRS) => {
+                walk_pymethods_impl(cursor, source, file_path, endpoints);
             }
             _ => {}
         }

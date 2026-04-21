@@ -275,7 +275,7 @@ async fn search_symbols_from_query(service: &QueryService, query: &str) -> Vec<(
                     (s, relevance)
                 })
                 .collect();
-            file_syms.sort_by(|a, b| b.1.cmp(&a.1));
+            file_syms.sort_by_key(|s| std::cmp::Reverse(s.1));
 
             for (sym, _) in file_syms.into_iter().take(3) {
                 let sym_id = sym.id.0.clone();

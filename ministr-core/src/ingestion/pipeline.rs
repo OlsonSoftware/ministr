@@ -328,8 +328,7 @@ impl Default for IngestionProgress {
 
 fn default_concurrency() -> usize {
     std::thread::available_parallelism()
-        .map(std::num::NonZero::get)
-        .unwrap_or(4)
+        .map_or(4, std::num::NonZero::get)
         .min(16)
 }
 

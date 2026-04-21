@@ -110,12 +110,9 @@ fn walk_rust_napi_items(
                     });
                 }
             }
-            "impl_item" => {
-                // Walk into impl blocks to find #[napi] methods
-                if has_napi_attribute_before(&node, source) {
-                    // The whole impl is #[napi] — extract methods from inside
-                    walk_napi_impl_methods(cursor, source, file_path, endpoints);
-                }
+            // Walk into #[napi] impl blocks and extract their methods.
+            "impl_item" if has_napi_attribute_before(&node, source) => {
+                walk_napi_impl_methods(cursor, source, file_path, endpoints);
             }
             _ => {}
         }

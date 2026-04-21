@@ -245,10 +245,9 @@ impl SparseIndex for InvertedIndex {
     }
 
     fn len_sparse(&self) -> usize {
-        self.inner
-            .read()
-            .map(|inner| inner.doc_ids.len().saturating_sub(inner.deleted.len()))
-            .unwrap_or(0)
+        self.inner.read().map_or(0, |inner| {
+            inner.doc_ids.len().saturating_sub(inner.deleted.len())
+        })
     }
 }
 

@@ -67,8 +67,7 @@ impl std::fmt::Debug for HnswIndex {
         let (len, dim) = self
             .inner
             .read()
-            .map(|inner| (inner.int_to_id.len(), inner.dim))
-            .unwrap_or((0, 0));
+            .map_or((0, 0), |inner| (inner.int_to_id.len(), inner.dim));
         f.debug_struct("HnswIndex")
             .field("len", &len)
             .field("dimension", &dim)
@@ -407,14 +406,11 @@ impl VectorIndex for HnswIndex {
     }
 
     fn len(&self) -> usize {
-        self.inner
-            .read()
-            .map(|inner| inner.int_to_id.len())
-            .unwrap_or(0)
+        self.inner.read().map_or(0, |inner| inner.int_to_id.len())
     }
 
     fn dimension(&self) -> usize {
-        self.inner.read().map(|inner| inner.dim).unwrap_or(0)
+        self.inner.read().map_or(0, |inner| inner.dim)
     }
 }
 

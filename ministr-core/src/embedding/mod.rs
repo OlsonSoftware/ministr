@@ -223,12 +223,9 @@ pub fn create_embedder(
 ) -> Result<(std::sync::Arc<dyn Embedder>, BackendInfo), IndexError> {
     let backend_env = std::env::var("MINISTR_BACKEND").unwrap_or_default();
     #[cfg(all(feature = "candle", target_os = "macos"))]
-    let force_cpu = std::env::var("MINISTR_DEVICE")
-        .map(|v| v.eq_ignore_ascii_case("cpu"))
-        .unwrap_or(false);
+    let force_cpu = std::env::var("MINISTR_DEVICE").is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
     let prefer_quantized = std::env::var("MINISTR_PREFER_QUANTIZED")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
 
     // Auto-select quantized variant if requested and available.
     let model_name = if prefer_quantized {

@@ -107,11 +107,9 @@ fn walk_rust_wasm_items(
                     });
                 }
             }
-            "impl_item" => {
-                // Walk into impl blocks to find #[wasm_bindgen] methods
-                if has_wasm_bindgen_attribute_before(&node, source) {
-                    walk_wasm_impl_methods(cursor, source, file_path, endpoints);
-                }
+            // Walk into #[wasm_bindgen] impl blocks and extract their methods.
+            "impl_item" if has_wasm_bindgen_attribute_before(&node, source) => {
+                walk_wasm_impl_methods(cursor, source, file_path, endpoints);
             }
             _ => {}
         }
