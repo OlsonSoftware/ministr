@@ -100,7 +100,7 @@ export function SessionTrace() {
 
   if (!mounted) {
     return (
-      <div className="mx-auto mt-10 w-full max-w-2xl">
+      <div className="w-full">
         <Shell>
           <div className="h-[248px]" />
         </Shell>
@@ -207,7 +207,7 @@ function TraceAnimator() {
   const pressureHot = budgetPct > 80;
 
   return (
-    <div className="mx-auto mt-10 w-full max-w-2xl">
+    <div className="w-full">
       <Shell budget={budgetPct} pressureHot={pressureHot} pulseTag={pulseTag}>
         <div
           ref={scrollRef}
@@ -233,6 +233,9 @@ function TraceAnimator() {
           />
         </div>
       </Shell>
+      <p className="mt-3 text-[11px] text-fd-muted-foreground/80">
+        Illustrative session replay — numbers are indicative, not measured.
+      </p>
     </div>
   );
 }
@@ -267,7 +270,7 @@ function Shell({
         <span className="size-2.5 rounded-full bg-[var(--color-traffic-close)]" />
         <span className="size-2.5 rounded-full bg-[var(--color-traffic-min)]" />
         <span className="size-2.5 rounded-full bg-[var(--color-traffic-max)]" />
-        <span className="ml-2 text-[11px] text-fd-muted-foreground">iris — session</span>
+        <span className="ml-2 text-[11px] text-fd-muted-foreground">iris — session (example)</span>
         {typeof budget === 'number' && (
           <span className="ml-auto flex items-center gap-2 text-[10px] font-mono text-fd-muted-foreground">
             <span className="uppercase tracking-wider">budget</span>

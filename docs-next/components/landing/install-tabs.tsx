@@ -1,22 +1,31 @@
 'use client';
 
 import { useState } from 'react';
+import { CopyButton } from '@/components/landing/copy-button';
+
+// Step 2's command bundle — copying grabs all three lines so the
+// reader can paste the entire wire-up in one go.
+const STEP_2_COMMANDS = [
+  'cd your-project',
+  'iris init',
+  'claude mcp add iris -- iris',
+].join('\n');
 
 const TABS = [
   {
     id: 'macos',
     label: 'macOS',
-    body: `curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash`,
+    body: 'curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash',
   },
   {
     id: 'linux',
     label: 'Linux',
-    body: `curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash`,
+    body: 'curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash',
   },
   {
     id: 'cargo',
     label: 'Cargo',
-    body: `cargo install --git https://github.com/AlrikOlson/iris-rs iris-cli`,
+    body: 'cargo install --git https://github.com/AlrikOlson/iris-rs iris-cli',
   },
 ] as const;
 
@@ -25,40 +34,76 @@ export function InstallTabs() {
   const current = TABS.find((t) => t.id === active) ?? TABS[0];
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
-      <div className="rounded-2xl border border-fd-border bg-fd-card p-5 sm:p-6">
-        <div className="mb-4 inline-flex rounded-lg border border-fd-border bg-fd-background p-1">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActive(tab.id)}
-              className={
-                'rounded-md px-3 py-1.5 text-sm font-medium transition ' +
-                (active === tab.id
-                  ? 'bg-[var(--color-iris-500)] text-white shadow-sm'
-                  : 'text-fd-muted-foreground hover:text-fd-foreground')
-              }
-            >
-              {tab.label}
-            </button>
-          ))}
+    <div className="relative mx-auto w-full max-w-3xl px-4 sm:px-6">
+      <div className="glass-card overflow-hidden p-0">
+        <div className="flex items-center justify-between border-b border-[color-mix(in_oklch,var(--color-iris-400)_18%,transparent)] px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex size-5 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--color-iris-500)_22%,transparent)] text-[10px] font-mono font-bold text-[var(--iris-accent-text)]">
+              1
+            </span>
+            <span className="iris-body-quiet text-xs font-mono">install the CLI</span>
+          </div>
+          <div className="inline-flex rounded-md border border-[color-mix(in_oklch,var(--color-iris-400)_20%,transparent)] bg-[color-mix(in_oklch,var(--iris-surface)_50%,transparent)] p-0.5 backdrop-blur">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActive(tab.id)}
+                className={
+                  'rounded px-2.5 py-1 text-xs font-medium transition ' +
+                  (active === tab.id
+                    ? 'bg-[var(--color-iris-600)] text-white shadow-sm'
+                    : 'iris-body-quiet hover:text-fd-foreground')
+                }
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <pre className="overflow-x-auto rounded-lg border border-fd-border bg-fd-background p-3 font-mono text-sm">
-          {current.body}
-        </pre>
+        <div className="relative">
+          <pre className="overflow-x-auto px-5 py-4 pr-14 font-mono text-sm text-fd-foreground/90">
+            <span className="select-none text-[var(--color-iris-400)]">$ </span>
+            {current.body}
+          </pre>
+          <CopyButton
+            value={current.body}
+            label={`Copy ${current.label} install command`}
+            size="sm"
+            className="absolute right-3 top-3"
+          />
+        </div>
       </div>
-      <div className="mx-auto mt-4 max-w-3xl rounded-2xl border border-fd-border bg-fd-card p-5 sm:p-6">
-        <p className="mb-3 text-sm text-fd-muted-foreground">Then initialize and connect:</p>
-        <pre className="overflow-x-auto rounded-lg border border-fd-border bg-fd-background p-3 font-mono text-sm">
-{`cd your-project
-iris init                          # creates .iris.toml + .mcp.json
-claude mcp add iris -- iris        # Claude Code`}
-        </pre>
-        <p className="mt-3 text-xs text-fd-muted-foreground">
-          iris auto-discovers <code className="font-mono">.iris.toml</code> from the working directory. No flags needed.
-        </p>
+
+      <div className="glass-card mt-4 overflow-hidden p-0">
+        <div className="flex items-center gap-2 border-b border-[color-mix(in_oklch,var(--color-iris-400)_18%,transparent)] px-4 py-2.5">
+          <span className="inline-flex size-5 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--color-iris-500)_22%,transparent)] text-[10px] font-mono font-bold text-[var(--iris-accent-text)]">
+            2
+          </span>
+          <span className="iris-body-quiet text-xs font-mono">wire it into your agent</span>
+        </div>
+        <div className="relative">
+          <pre className="overflow-x-auto px-5 py-4 pr-14 font-mono text-sm text-fd-foreground/90 leading-relaxed">
+            <span className="select-none text-[var(--color-iris-400)]">$ </span>
+            cd your-project{'\n'}
+            <span className="select-none text-[var(--color-iris-400)]">$ </span>
+            iris init                          <span className="iris-body-quiet"># creates .iris.toml + .mcp.json</span>
+            {'\n'}
+            <span className="select-none text-[var(--color-iris-400)]">$ </span>
+            claude mcp add iris -- iris        <span className="iris-body-quiet"># Claude Code</span>
+          </pre>
+          <CopyButton
+            value={STEP_2_COMMANDS}
+            label="Copy all three setup commands"
+            size="sm"
+            className="absolute right-3 top-3"
+          />
+        </div>
       </div>
+
+      <p className="iris-body-quiet mt-4 text-center text-xs">
+        iris auto-discovers <code className="font-mono text-[var(--color-iris-400)]">.iris.toml</code> from the working directory. No flags needed.
+      </p>
     </div>
   );
 }

@@ -1,66 +1,113 @@
+'use client';
+
 import Link from 'next/link';
 import { ArrowRight, Box } from 'lucide-react';
+import { GithubGlyph } from '@/components/landing/github-glyph';
+import { motion, useReducedMotion } from 'motion/react';
 import { SessionTrace } from '@/components/landing/session-trace';
+import { GlassCard } from '@/components/landing/glass-card';
+import { CopyButton } from '@/components/landing/copy-button';
+import { EASE_OUT } from '@/lib/motion';
 
+/**
+ * Hero — headline + animated terminal, layered over the page-wide
+ * chromatic-flow shader. No local backdrop layer: the shader handles
+ * all ambience so the hero can stay clean and typographic.
+ */
 export function Hero() {
+  const reduced = useReducedMotion();
+  const stagger = (i: number) => ({
+    initial: reduced ? false : { opacity: 0, y: 14 },
+    animate: reduced ? undefined : { opacity: 1, y: 0 },
+    transition: { duration: 0.7, ease: EASE_OUT, delay: 0.08 * i },
+  });
+
   return (
-    <section className="relative mx-auto w-full max-w-5xl px-4 sm:px-6 pt-16 pb-20 sm:pt-24 text-center">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 [background:radial-gradient(ellipse_70%_55%_at_50%_35%,color-mix(in_srgb,var(--color-iris-400)_18%,transparent)_0%,transparent_70%)]"
-      />
+    <section className="relative w-full pt-24 pb-24 sm:pt-28 sm:pb-28">
+      <div className="relative mx-auto w-full max-w-6xl px-4 sm:px-6">
+        <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,_1fr)_minmax(0,_1.1fr)] lg:gap-14">
+          <div className="relative">
+            <motion.span
+              {...stagger(0)}
+              className="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--color-iris-400)_28%,transparent)] bg-[color-mix(in_oklch,var(--iris-surface)_60%,transparent)] px-3 py-1 text-[11px] font-mono text-fd-muted-foreground backdrop-blur"
+            >
+              <Box className="size-3.5 text-[var(--color-iris-400)]" aria-hidden />
+              MCP server · local · Rust
+            </motion.span>
 
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-fd-border bg-fd-card px-3 py-1 text-xs font-mono text-fd-muted-foreground">
-        <Box className="size-3.5" aria-hidden />
-        MCP server · runs locally
-      </span>
+            <motion.h1
+              {...stagger(1)}
+              className="iris-hero-mark mt-6 text-[clamp(3.25rem,9vw,6.75rem)] font-semibold leading-[0.9] text-fd-foreground"
+            >
+              iris<span className="iris-gradient-text">.</span>
+            </motion.h1>
 
-      <h1 className="mt-6 text-5xl sm:text-6xl md:text-7xl font-bold tracking-tight iris-gradient-text">
-        iris
-      </h1>
+            <motion.p
+              {...stagger(2)}
+              className="mt-6 max-w-[48ch] text-[clamp(1.125rem,1.6vw,1.375rem)] leading-snug font-medium text-fd-foreground/95"
+            >
+              An L1 cache for your agent&rsquo;s context.
+            </motion.p>
 
-      <p className="mx-auto mt-6 max-w-2xl text-balance text-base sm:text-lg text-fd-muted-foreground">
-        Serve context to your LLM agent like an L1 cache — with session tracking,
-        predictive prefetch, and budget awareness.
-      </p>
+            <motion.p
+              {...stagger(3)}
+              className="iris-body mt-4 max-w-[52ch] text-[14.5px] leading-relaxed"
+            >
+              Serve what&rsquo;s needed. Remember what&rsquo;s been sent.
+              Predict what comes next. Semantic search, symbol navigation,
+              and cross-language bridges over your files — running as a
+              single local process, state in a SQLite file.
+            </motion.p>
 
-      <div className="mt-8 inline-flex items-center gap-2 rounded-lg border border-fd-border bg-fd-card px-5 py-3 font-mono text-sm shadow-sm">
-        <span className="text-[var(--color-iris-500)] font-semibold select-none">$</span>
-        <span>claude mcp add iris -- iris</span>
-      </div>
+            <motion.div {...stagger(4)} className="mt-8">
+              <GlassCard padded={false} className="inline-flex items-center gap-3 pl-4 pr-2 py-2 font-mono text-sm">
+                <span className="text-[var(--color-iris-400)] select-none">$</span>
+                <span>claude mcp add iris -- iris</span>
+                <CopyButton
+                  value="claude mcp add iris -- iris"
+                  label="Copy install command"
+                  size="sm"
+                  className="ml-1"
+                />
+              </GlassCard>
+            </motion.div>
 
-      <div className="mt-8 flex flex-wrap justify-center gap-3">
-        <Link
-          href="/docs/getting-started"
-          className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-iris-600)] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--color-iris-700)] hover:-translate-y-px"
-        >
-          Get started <ArrowRight className="size-4" aria-hidden />
-        </Link>
-        <Link
-          href="https://github.com/AlrikOlson/iris-rs"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border bg-fd-card px-5 py-2.5 text-sm font-medium transition hover:bg-fd-accent hover:text-fd-accent-foreground"
-        >
-          GitHub
-        </Link>
-      </div>
+            <motion.div {...stagger(5)} className="mt-6 flex flex-wrap items-center gap-3">
+              <Link
+                href="/docs/getting-started"
+                className="iris-cta-primary group inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-medium"
+              >
+                Install iris
+                <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
+              </Link>
+              <Link
+                href="/docs/architecture"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border/70 bg-[color-mix(in_oklch,var(--iris-surface)_55%,transparent)] px-4 py-2.5 text-sm font-medium text-fd-foreground backdrop-blur transition hover:bg-[color-mix(in_oklch,var(--iris-surface)_75%,transparent)]"
+              >
+                Read the architecture
+              </Link>
+              <Link
+                href="https://github.com/AlrikOlson/iris-rs"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-fd-muted-foreground transition hover:text-[var(--iris-accent-text)]"
+              >
+                <GithubGlyph className="size-4" />
+                GitHub
+              </Link>
+            </motion.div>
+          </div>
 
-      <SessionTrace />
-
-      <div className="mx-auto mt-12 grid max-w-3xl grid-cols-2 gap-6 sm:grid-cols-4">
-        <StatItem value="Local" label="No API keys" />
-        <StatItem value="Session-aware" label="Remembers what it sent" />
-        <StatItem value="Predictive" label="Warms what's next" />
-        <StatItem value="12" label="Languages indexed" />
+          <motion.div
+            initial={reduced ? false : { opacity: 0, scale: 0.97 }}
+            animate={reduced ? undefined : { opacity: 1, scale: 1 }}
+            transition={{ duration: 0.9, ease: EASE_OUT, delay: 0.4 }}
+            className="relative"
+          >
+            <GlassCard padded={false} className="p-2 sm:p-3">
+              <SessionTrace />
+            </GlassCard>
+          </motion.div>
+        </div>
       </div>
     </section>
-  );
-}
-
-function StatItem({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="text-xl sm:text-2xl font-semibold tracking-tight">{value}</div>
-      <div className="text-xs text-fd-muted-foreground">{label}</div>
-    </div>
   );
 }

@@ -1,226 +1,152 @@
 import Link from 'next/link';
-import {
-  ArrowRight,
-  Braces,
-  Cpu,
-  Eye,
-  EyeOff,
-  Gauge,
-  GitBranch,
-  History,
-  Layers,
-  Package,
-  Puzzle,
-  Repeat,
-  SearchCode,
-  Sparkles,
-  Squircle,
-  TerminalSquare,
-  TreePine,
-  Wand2,
-  Waypoints,
-} from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { Hero } from '@/components/landing/hero';
-import { SectionHeader } from '@/components/landing/section-header';
-import { FeatureCard } from '@/components/landing/feature-card';
-import { LanguageChips } from '@/components/landing/language-chips';
-import { ArchitectureDiagram } from '@/components/landing/architecture-diagram';
-import { BridgesDiagram } from '@/components/landing/bridges-diagram';
-import { CompareTable } from '@/components/landing/compare-table';
+import { ChromaticFlowClient } from '@/components/landing/chromatic-flow-client';
+import { StatsStrip } from '@/components/landing/stats-strip';
+import { Thesis } from '@/components/landing/thesis';
+import { Mechanisms } from '@/components/landing/mechanisms';
+import { ArchitectureFlow } from '@/components/landing/architecture-flow';
+import { WhatIrisIsnt } from '@/components/landing/what-iris-isnt';
 import { InstallTabs } from '@/components/landing/install-tabs';
-import { ObservatoryPreview } from '@/components/landing/observatory-preview';
+import { ToolList } from '@/components/landing/tool-list';
+import { CtaCoda } from '@/components/landing/cta-coda';
+import { NoiseOverlay } from '@/components/landing/noise-overlay';
+import { Reveal } from '@/components/landing/reveal';
 
+/**
+ * Landing — the iris "Observatory" composition.
+ *
+ * Flow (Z→F scan path, research-informed):
+ *   1. Hero composite (aurora + lens + wordmark + terminal)
+ *   2. Stats strip  (trust signals, F-bar)
+ *   3. Thesis       (what agents waste)
+ *   4. Mechanisms   (5 mechanisms + hybrid search, bento)
+ *   5. Architecture (how it wires up)
+ *   6. What iris isn't (differentiation strikethroughs)
+ *   7. Install      (30-second path)
+ *   8. Tool ref     (twelve tools your agent already speaks)
+ *   9. CTA coda     (stop re-reading the same files)
+ *  10. Footer       (retained, tightened)
+ */
 export default function HomePage() {
   return (
-    <main className="flex flex-col items-stretch pb-24">
+    <main
+      data-iris-landing
+      className="iris-landing relative isolate flex flex-col items-stretch overflow-x-hidden pb-0"
+    >
+      {/* Page-wide chromatic flow — subtle shader ambience, scroll-driven */}
+      <ChromaticFlowClient />
+      <NoiseOverlay />
+
       <Hero />
+      <StatsStrip />
+      <Thesis />
+      <Mechanisms />
+      <ArchitectureFlow />
+      <WhatIrisIsnt />
 
-      <section className="mx-auto w-full max-w-5xl px-4 sm:px-6 mt-8">
-        <SectionHeader
-          eyebrow="Problem"
-          eyebrowIcon={<Sparkles className="size-3.5" aria-hidden />}
-          title="Why iris"
-          subtitle="LLM agents waste most of their context window. iris fixes the three root causes."
-        />
-        <div className="grid gap-4 sm:grid-cols-3">
-          <FeatureCard
-            icon={<Repeat className="size-5" aria-hidden />}
-            title="Re-reading"
-            body="Agents fetch the same file over and over. iris remembers what it sent this session and deduplicates. When a section changes, it delivers only the delta."
-          />
-          <FeatureCard
-            icon={<EyeOff className="size-5" aria-hidden />}
-            title="Blind retrieval"
-            body={<>
-              <code className="font-mono text-[0.9em]">grep</code> +{' '}
-              <code className="font-mono text-[0.9em]">cat</code>{' '}burn tokens on code that isn&apos;t relevant. iris indexes
-              your corpus semantically and returns just the piece that answers the question.
-            </>}
-          />
-          <FeatureCard
-            icon={<Wand2 className="size-5" aria-hidden />}
-            title="Cold reads"
-            body="Every new fetch is a round trip your agent waits on. iris predicts what it's going to ask for next and warms it in the background."
-          />
+      <Section belowFold>
+        <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
+          <Reveal>
+            <p className="iris-eyebrow">Install</p>
+          </Reveal>
+          <Reveal delay={0.08}>
+            <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
+              Install in 30 seconds.
+            </h2>
+          </Reveal>
+          <Reveal delay={0.16}>
+            <p className="iris-body mt-4 text-[15.5px]">
+              Three commands. Any MCP client. Fully local.
+            </p>
+          </Reveal>
         </div>
-      </section>
-
-      <section className="mt-24">
-        <SectionHeader
-          eyebrow="Architecture"
-          eyebrowIcon={<Squircle className="size-3.5" aria-hidden />}
-          title="How it fits together"
-          subtitle="One local binary sits between your MCP client and your files."
-        />
-        <ArchitectureDiagram />
-      </section>
-
-      <section className="mx-auto w-full max-w-5xl px-4 sm:px-6 mt-24">
-        <SectionHeader
-          eyebrow="Capabilities"
-          eyebrowIcon={<Gauge className="size-3.5" aria-hidden />}
-          title="What iris does"
-          subtitle="One local binary, no API keys."
-        />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <FeatureCard
-            icon={<SearchCode className="size-5" aria-hidden />}
-            title="Semantic search"
-            body="Search across your codebase and docs by meaning, not just text. Returns the specific section that answers the question."
-          />
-          <FeatureCard
-            icon={<Braces className="size-5" aria-hidden />}
-            title="Code symbol navigation"
-            body="Find and trace functions, types, and callers across your project — not just file-level matches."
-          />
-          <FeatureCard
-            icon={<Waypoints className="size-5" aria-hidden />}
-            title="Cross-language bridges"
-            body="Follows function calls where one language hands off to another — Rust to JavaScript, Python to Rust, front-end to back-end."
-          />
-          <FeatureCard
-            icon={<History className="size-5" aria-hidden />}
-            title="Session tracking"
-            body="Remembers what it sent your agent this session. Skips repeats; ships only the changed part when a section is edited."
-          />
-          <FeatureCard
-            icon={<Gauge className="size-5" aria-hidden />}
-            title="Budget awareness"
-            body="Tracks context-window usage. When it fills up, older material gets compressed instead of silently dropping."
-          />
-          <FeatureCard
-            icon={<Cpu className="size-5" aria-hidden />}
-            title="Local embeddings"
-            body="Embeddings run on your machine, not a third-party API. No network calls, no API keys, no tokens leaving the box."
-          />
+        <div className="mt-10">
+          <Reveal delay={0.24}>
+            <InstallTabs />
+          </Reveal>
         </div>
-      </section>
+      </Section>
 
-      <section className="mt-24">
-        <SectionHeader
-          eyebrow="Desktop app"
-          eyebrowIcon={<Eye className="size-3.5" aria-hidden />}
-          title="The observatory, for when you want to watch"
-          subtitle="A desktop companion that attaches to the same local daemon your agents use — inspect corpora, replay sessions, and tune configuration without leaving the GUI."
-        />
-        <ObservatoryPreview />
-        <div className="mx-auto mt-8 grid w-full max-w-5xl gap-4 px-4 sm:grid-cols-2 sm:px-6 lg:grid-cols-3">
-          <FeatureCard
-            icon={<Layers className="size-5" aria-hidden />}
-            title="Overview"
-            body="Live counts of files, code symbols, and active sessions across every registered corpus — plus a live feed of what's being indexed."
-          />
-          <FeatureCard
-            icon={<SearchCode className="size-5" aria-hidden />}
-            title="Query playground"
-            body="Run iris_survey, iris_symbols, iris_definition, and iris_references against any registered corpus. See the same ranked results your agent sees."
-          />
-          <FeatureCard
-            icon={<Gauge className="size-5" aria-hidden />}
-            title="Session dashboard"
-            body="Replay a session turn by turn: which sections were delivered, which got evicted, and how the budget tracked across the conversation."
-          />
-          <FeatureCard
-            icon={<GitBranch className="size-5" aria-hidden />}
-            title="Symbol graph"
-            body="An interactive map of your codebase as a collapsible graph. Navigate callers, implementors, and cross-language bridges visually."
-          />
-          <FeatureCard
-            icon={<TreePine className="size-5" aria-hidden />}
-            title="Corpus treemap"
-            body="Treemap of disk and token footprint per path. Spot a runaway directory before it bloats your index."
-          />
-          <FeatureCard
-            icon={<TerminalSquare className="size-5" aria-hidden />}
-            title="Log viewer + settings"
-            body="Tail daemon logs with filtering, and tune budget, prefetch, and embedding settings from the UI — changes apply without a restart."
-          />
+      <Section belowFold>
+        <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
+          <Reveal>
+            <p className="iris-eyebrow">Tools</p>
+          </Reveal>
+          <Reveal delay={0.08}>
+            <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
+              Twelve tools your agent already speaks.
+            </h2>
+          </Reveal>
+          <Reveal delay={0.16}>
+            <p className="iris-body mt-4 text-[15.5px]">
+              iris exposes these as MCP tools. Every one links to its doc page.
+            </p>
+          </Reveal>
+          <div className="iris-spectrum-rule mt-10" />
+          <div className="mt-10">
+            <Reveal delay={0.24}>
+              <ToolList />
+            </Reveal>
+          </div>
         </div>
-      </section>
+      </Section>
 
-      <section className="mt-24">
-        <SectionHeader
-          eyebrow="Bridges"
-          eyebrowIcon={<Puzzle className="size-3.5" aria-hidden />}
-          title="Cross-language bridges"
-          subtitle="Trace function calls across language boundaries automatically."
-        />
-        <BridgesDiagram />
-      </section>
+      <CtaCoda />
 
-      <section className="mx-auto w-full max-w-4xl px-4 sm:px-6 mt-24">
-        <SectionHeader
-          eyebrow="Languages"
-          eyebrowIcon={<Layers className="size-3.5" aria-hidden />}
-          title="Twelve languages, one symbol index"
-          subtitle="Real parsers, not regex — symbol extraction, reference tracing, and bridge detection across the stack."
-        />
-        <LanguageChips />
-      </section>
-
-      <section className="mt-24">
-        <SectionHeader
-          eyebrow="Comparison"
-          eyebrowIcon={<Sparkles className="size-3.5" aria-hidden />}
-          title="How it compares"
-          subtitle="iris isn't a vector DB, a RAG framework, or a search tool. It's a stateful, cache-aware context source exposed as MCP tools."
-        />
-        <CompareTable />
-      </section>
-
-      <section className="mt-24">
-        <SectionHeader
-          eyebrow="Install"
-          eyebrowIcon={<Package className="size-3.5" aria-hidden />}
-          title="Get started in 30 seconds"
-          subtitle="Install the CLI, wire it into your agent. No API keys, no service."
-        />
-        <InstallTabs />
-      </section>
-
-      <section className="mx-auto w-full max-w-3xl px-4 sm:px-6 mt-24 text-center">
-        <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Dig deeper</h2>
-        <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Link
-            href="/docs/getting-started"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-iris-600)] px-4 py-2 text-sm font-medium text-white transition hover:bg-[var(--color-iris-700)]"
-          >
-            Get started <ArrowRight className="size-4" aria-hidden />
-          </Link>
-          <Link
-            href="/docs/tools"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border bg-fd-card px-4 py-2 text-sm font-medium transition hover:bg-fd-accent hover:text-fd-accent-foreground"
-          >
-            Tool reference
-          </Link>
-          <Link
-            href="/docs/architecture"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border bg-fd-card px-4 py-2 text-sm font-medium transition hover:bg-fd-accent hover:text-fd-accent-foreground"
-          >
-            Architecture
-          </Link>
+      <Section tight belowFold>
+        <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
+          <div className="flex flex-col items-center gap-4 pt-10 text-center">
+            {/* Spectrum hairline separator — ties into the brand material set */}
+            <div className="iris-spectrum-rule-major w-full max-w-md" />
+            <p className="iris-body-quiet inline-flex items-center gap-2 text-[13px]">
+              <span aria-hidden className="iris-mark-dot" />
+              Full docs cover every tool, every config key, and the architecture in depth.
+            </p>
+            <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-[14px]">
+              <FooterLink href="/docs/getting-started">
+                Getting started
+                <ArrowRight className="ml-1 size-3.5" aria-hidden />
+              </FooterLink>
+              <FooterLink href="/docs/tools">Tool reference</FooterLink>
+              <FooterLink href="/docs/architecture">Architecture</FooterLink>
+              <FooterLink href="/docs/concepts">Concepts</FooterLink>
+              <FooterLink href="https://github.com/AlrikOlson/iris-rs">GitHub</FooterLink>
+            </nav>
+          </div>
         </div>
-      </section>
+      </Section>
     </main>
+  );
+}
+
+function Section({
+  children,
+  tight,
+  belowFold,
+}: {
+  children: React.ReactNode;
+  tight?: boolean;
+  belowFold?: boolean;
+}) {
+  const pad = tight ? 'py-10 sm:py-12' : 'py-20 sm:py-24';
+  const cv = belowFold ? ' below-fold' : '';
+  return <section className={'relative ' + pad + cv}>{children}</section>;
+}
+
+function FooterLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group inline-flex items-center text-fd-muted-foreground transition hover:text-[var(--iris-accent-text)]"
+    >
+      {children}
+    </Link>
   );
 }

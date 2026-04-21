@@ -60,6 +60,75 @@
 
 html {
   scrollbar-gutter: stable;
+  /* Native widgets (scrollbars, form controls) pick up the active theme. */
+  color-scheme: light dark;
+}
+
+body {
+  /* Inter stylistic alternates — single-story 'a', open apertures, clean
+     digits. Baseline OpenType feature, no JS cost. */
+  font-feature-settings: 'ss01', 'cv02', 'cv11';
+}
+
+/* Typography defaults grounded in Ling & Van Schaik 2006 + Miniukovich 2017:
+   balanced line-breaking improves heading processing; pretty line-breaking
+   eliminates widow lines in body prose. Baseline 2024 (Safari, Chrome, Firefox). */
+h1, h2, h3, h4 {
+  text-wrap: balance;
+}
+p {
+  text-wrap: pretty;
+}
+
+/* Safari ships hanging-punctuation; Chrome/Firefox don't yet. Progressive
+   enhancement — a Safari-only polish, no fallback needed. */
+main {
+  hanging-punctuation: first last;
+}
+
+/* Cross-document view transitions (Chrome 126+, Safari 18.2+, Firefox 144+).
+   Pairs with `experimental.viewTransition` in next.config.mjs for same-
+   origin soft-nav transitions through <Link>. Unsupported browsers navigate
+   normally. */
+@view-transition { navigation: auto; }
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+/* Hero wordmark — trim font-metric overshoot for tight vertical rhythm.
+   Requires a font with proper cap-height + alphabetic-baseline metadata
+   (Inter qualifies). Chrome 133+, Safari 17.5+. */
+.iris-hero-mark {
+  text-box: trim-both cap alphabetic;
+  letter-spacing: -0.04em;
+}
+
+/* Below-fold paint perf — browser skips layout/paint for these until they
+   near the viewport. Reserves 640px to avoid scroll-height jumps. */
+.below-fold {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 640px;
+}
+
+/* ToolList: two-column grid when container is wide enough, single column
+   otherwise. Container queries adapt to the tool list's own width rather
+   than the viewport — robust across embeddings. Baseline. */
+.tool-list-dl {
+  grid-template-columns: 1fr;
+}
+@container (width > 34rem) {
+  .tool-list-dl {
+    grid-template-columns: minmax(0, 10rem) 1fr;
+  }
 }
 
 /* Docs sidebar: Fumadocs wraps it in a Radix ScrollArea with type="scroll",
@@ -174,3 +243,529 @@ h1.iris-gradient-text,
   0%   { opacity: 1; }
   100% { opacity: 0; }
 }
+
+/* =====================================================
+   iris 2026 landing system — "Observatory"
+   -----------------------------------------------------
+   Paired dark + light treatments. The observatory metaphor drives dark
+   (deep ink, aurora spectrum, glass). Light flips to a clean white-paper
+   observatory: softer iris-tinted aurora on bright ground, darker text,
+   lighter glass, dimmer noise.
+   ===================================================== */
+
+.iris-landing {
+  color: var(--fd-foreground);
+  background: var(--iris-landing-bg);
+}
+
+/* Dark base (default when .dark is on the root). */
+.iris-landing {
+  --iris-landing-bg: var(--color-ink-950);
+  --iris-surface: var(--color-ink-900);
+  --iris-surface-strong: var(--color-ink-800);
+  --iris-aurora-opacity: 1;
+  --iris-noise-opacity: 0.028;
+  --iris-noise-blend: overlay;
+  --iris-lens-pupil: var(--color-ink-950);
+  --iris-scrim-tint: color-mix(in oklch, var(--color-ink-950) 65%, transparent);
+  --iris-accent-text: var(--color-iris-300);
+  --iris-hairline: color-mix(in oklch, var(--color-iris-300) 30%, transparent);
+}
+
+/* Light override — cleaner, paper-white ground with a soft iris-tinted
+   aurora wash. Pairs with fumadocs light tokens. */
+:root:not(.dark) .iris-landing {
+  --iris-landing-bg: color-mix(in oklch, white 82%, var(--color-iris-50) 18%);
+  --iris-surface: white;
+  --iris-surface-strong: color-mix(in oklch, white 80%, var(--color-iris-100));
+  --iris-aurora-opacity: 0.55;
+  --iris-noise-opacity: 0.045;
+  --iris-noise-blend: multiply;
+  --iris-lens-pupil: color-mix(in oklch, var(--color-iris-900) 70%, white);
+  --iris-scrim-tint: color-mix(in oklch, white 55%, transparent);
+  --iris-accent-text: var(--color-iris-700);
+  --iris-hairline: color-mix(in oklch, var(--color-iris-500) 35%, transparent);
+}
+
+/* =====================================================
+   Text-contrast utilities tuned for the smoke shader backdrop.
+   The shader tints both modes in motion, so plain fd-muted-foreground
+   sometimes falls below 4.5:1 contrast against lit smoke patches.
+   These classes raise that floor while preserving the designed
+   hierarchy (strong body vs subdued caption).
+
+   Wrapped in @layer utilities so they win against Tailwind's base
+   rules and Fumadocs's typography preset without needing !important.
+   ===================================================== */
+
+@layer utilities {
+  /* Primary body over shader — used for "important paragraph" text.
+     Stronger than muted, softer than foreground. 82% / 68% were
+     picked empirically so that AA contrast holds over the brightest
+     aurora peaks the shader paints in dark mode and over the
+     darkest smoke patches in light mode. */
+  .iris-body {
+    color: color-mix(in oklch, var(--fd-foreground) 82%, transparent);
+  }
+  .iris-body-quiet {
+    color: color-mix(in oklch, var(--fd-foreground) 68%, transparent);
+  }
+
+  /* Standardised section eyebrow — mono, tracking, spectrum accent + a
+     small leading square that inherits the spectrum for visual anchor. */
+  .iris-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--iris-accent-text);
+  }
+  .iris-eyebrow::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 1px;
+    background: linear-gradient(135deg in oklch,
+      var(--color-iris-500),
+      var(--color-fuchsia-400));
+    box-shadow: 0 0 8px color-mix(in oklch, var(--color-iris-400) 60%, transparent);
+  }
+
+  /* Sub-eyebrow — same colour and tracking as the main eyebrow but
+     without the spectrum dot and smaller. Used for sub-labels inside
+     section content (step counters, column headers, chip labels) so
+     they still belong to the eyebrow family without competing with
+     the main section eyebrow for attention. */
+  .iris-eyebrow-sm {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--iris-accent-text);
+  }
+
+  /* Primary iris CTA — bold iris-600 pill with an animated spectrum
+     rim glow on hover. Pairs with the hero install button and any
+     other conversion surface that wants the "primary" treatment. */
+  .iris-cta-primary {
+    position: relative;
+    isolation: isolate;
+    background: var(--color-iris-600);
+    color: white;
+    box-shadow:
+      0 8px 30px -10px color-mix(in oklch, var(--color-iris-500) 70%, transparent);
+    transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                box-shadow 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                background-color 220ms ease;
+  }
+  .iris-cta-primary:hover {
+    background: var(--color-iris-700);
+    transform: translateY(-1px);
+    box-shadow:
+      0 14px 40px -12px color-mix(in oklch, var(--color-iris-500) 85%, transparent),
+      0 0 0 1px color-mix(in oklch, var(--color-fuchsia-400) 40%, transparent);
+  }
+  .iris-cta-primary::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg in oklch,
+      var(--color-iris-400) 0%,
+      var(--color-violet-500) 50%,
+      var(--color-fuchsia-400) 100%);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 260ms ease;
+    pointer-events: none;
+  }
+  .iris-cta-primary:hover::after { opacity: 0.85; }
+
+  /* Spectrum divider variants for section beats — a thicker
+     "major" rule for decisive boundaries and a "minor" hairline
+     for softer separations. Already had iris-spectrum-rule above;
+     these are light-touch variations. */
+  .iris-spectrum-rule-major {
+    height: 1px;
+    background-image: linear-gradient(
+      90deg in oklch,
+      transparent 0%,
+      var(--color-iris-500) 22%,
+      var(--color-violet-500) 50%,
+      var(--color-fuchsia-400) 78%,
+      transparent 100%
+    );
+    opacity: 0.8;
+  }
+
+  /* Tiny spectrum glyph — the brand period. A 0.5em dot rendered
+     with the iris spectrum, for inline use in the footer signature
+     and anywhere the "iris." wordmark is referenced in copy. */
+  .iris-mark-dot {
+    display: inline-block;
+    width: 0.48em;
+    height: 0.48em;
+    border-radius: 2px;
+    background: linear-gradient(135deg in oklch,
+      var(--color-iris-500),
+      var(--color-violet-500),
+      var(--color-fuchsia-400));
+    box-shadow: 0 0 6px color-mix(in oklch, var(--color-iris-400) 50%, transparent);
+    vertical-align: 0.05em;
+  }
+}
+
+/* Signature brand spectrum used on headings, rules, and backdrops.
+   OKLCH colours interpolated smoothly in oklch colour space. */
+.iris-spectrum {
+  background-image: linear-gradient(
+    90deg in oklch,
+    var(--color-iris-600) 0%,
+    var(--color-iris-500) 28%,
+    var(--color-violet-500) 62%,
+    var(--color-fuchsia-400) 100%
+  );
+}
+
+/* Thin horizontal rule painted with the spectrum — used as section
+   dividers and accent under stats strip. */
+.iris-spectrum-rule {
+  height: 1px;
+  background-image: linear-gradient(
+    90deg in oklch,
+    transparent 0%,
+    var(--color-iris-500) 28%,
+    var(--color-violet-500) 62%,
+    transparent 100%
+  );
+  opacity: 0.55;
+}
+
+/* Aurora backdrop — layered radial gradients over the iris spectrum.
+   One static base layer + one slow drifting highlight. Drift is GPU-
+   composited via transform so it never reflows. Disabled under
+   prefers-reduced-motion. */
+.aurora-layer {
+  position: absolute;
+  inset: -20%;
+  pointer-events: none;
+  filter: blur(64px);
+  opacity: var(--iris-aurora-opacity, 1);
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  background:
+    radial-gradient(40% 45% at 18% 24%, color-mix(in oklch, var(--color-iris-500) 55%, transparent), transparent 72%),
+    radial-gradient(38% 38% at 82% 18%, color-mix(in oklch, var(--color-violet-500) 50%, transparent), transparent 70%),
+    radial-gradient(45% 42% at 62% 78%, color-mix(in oklch, var(--color-fuchsia-400) 42%, transparent), transparent 74%),
+    radial-gradient(32% 32% at 22% 86%, color-mix(in oklch, var(--color-iris-400) 45%, transparent), transparent 70%);
+}
+
+/* Light mode: softer, lower-saturation aurora so dark text stays legible. */
+:root:not(.dark) .aurora-layer {
+  background:
+    radial-gradient(42% 48% at 18% 24%, color-mix(in oklch, var(--color-iris-300) 70%, transparent), transparent 72%),
+    radial-gradient(38% 40% at 82% 18%, color-mix(in oklch, var(--color-violet-400) 55%, transparent), transparent 70%),
+    radial-gradient(45% 44% at 62% 78%, color-mix(in oklch, var(--color-fuchsia-400) 45%, transparent), transparent 74%),
+    radial-gradient(32% 34% at 22% 86%, color-mix(in oklch, var(--color-iris-200) 70%, transparent), transparent 70%);
+  filter: blur(80px);
+}
+
+.aurora-layer--drift {
+  animation: aurora-drift 28s ease-in-out infinite alternate;
+}
+
+@keyframes aurora-drift {
+  0%   { transform: translate3d(-2%, -1%, 0) scale(1); }
+  50%  { transform: translate3d(3%, 2%, 0) scale(1.06); }
+  100% { transform: translate3d(-1%, 3%, 0) scale(1.02); }
+}
+
+/* Tight scrim to keep text readable over aurora. Dark scrim in dark,
+   light scrim in light — tone driven by --iris-scrim-tint. */
+.aurora-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(80% 60% at 50% 40%, transparent, var(--iris-scrim-tint) 85%),
+    linear-gradient(180deg, transparent 0%, var(--iris-scrim-tint) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-layer--drift { animation: none; }
+}
+
+/* Glass card — frosted panel with spectrum hairline + inner highlight.
+   Designed to let the page-wide chromatic smoke shader through in both
+   modes: semi-transparent substrate + heavy backdrop blur + saturation
+   boost so the smoke tints the card warmly without muddying the copy.
+   In dark mode the substrate is ink with an iris tint; in light mode
+   it's paper-white with a violet tint — paired so each mode reads as
+   "glass resting on the same smoke." */
+.glass-card {
+  position: relative;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--color-ink-800) 55%, transparent) 0%,
+      color-mix(in oklch, var(--color-ink-900) 62%, transparent) 100%
+    );
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid color-mix(in oklch, var(--color-iris-300) 22%, transparent);
+  border-radius: 18px;
+  box-shadow:
+    0 28px 90px -30px color-mix(in oklch, var(--color-iris-700) 55%, transparent),
+    0 1px 0 color-mix(in oklch, var(--color-iris-200) 18%, transparent) inset,
+    0 0 0 1px color-mix(in oklch, var(--color-iris-500) 8%, transparent) inset;
+}
+
+.glass-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, white 12%, transparent) 0%,
+    transparent 32%
+  );
+  mask: linear-gradient(180deg, black 0%, transparent 55%);
+  -webkit-mask: linear-gradient(180deg, black 0%, transparent 55%);
+}
+
+/* Subtle outer bleed — a warm iris aura around the card so it reads as
+   a physical glass object catching light from the scene behind it. */
+.glass-card::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  padding: 1px;
+  background: linear-gradient(
+    135deg in oklch,
+    color-mix(in oklch, var(--color-iris-400) 35%, transparent) 0%,
+    transparent 45%,
+    color-mix(in oklch, var(--color-fuchsia-400) 28%, transparent) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0.8;
+}
+
+:root:not(.dark) .glass-card {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, white 68%, transparent) 0%,
+      color-mix(in oklch, white 55%, transparent) 100%
+    );
+  border-color: color-mix(in oklch, var(--color-iris-600) 20%, transparent);
+  box-shadow:
+    0 28px 90px -30px color-mix(in oklch, var(--color-iris-700) 22%, transparent),
+    0 1px 0 color-mix(in oklch, white 90%, transparent) inset,
+    0 0 0 1px color-mix(in oklch, var(--color-iris-500) 6%, transparent) inset;
+}
+
+:root:not(.dark) .glass-card::after {
+  background: linear-gradient(
+    135deg in oklch,
+    color-mix(in oklch, var(--color-iris-500) 28%, transparent) 0%,
+    transparent 45%,
+    color-mix(in oklch, var(--color-fuchsia-400) 22%, transparent) 100%
+  );
+  opacity: 0.6;
+}
+
+
+/* Chromatic-flow shader mount — theme-aware blend mode so the same
+   shader output composites sensibly over both backgrounds.
+   Dark: `screen` brightens the ink-950 ground with iris peaks.
+   Light: `multiply` darkens the paper with deep iris ink, which
+   avoids the washed-out pastel look of translucent purple on white. */
+.chromatic-flow-mount {
+  mix-blend-mode: screen;
+}
+:root:not(.dark) .chromatic-flow-mount {
+  mix-blend-mode: multiply;
+  opacity: 1;
+}
+
+/* Noise overlay — static SVG turbulence, theme-responsive opacity and
+   blend mode (overlay in dark, multiply in light). */
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: var(--iris-noise-opacity, 0.028);
+  mix-blend-mode: var(--iris-noise-blend, overlay);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* Lens — concentric SVG rings get a breathing dilation & slow spin.
+   JS scroll-driven dilation layers on top via inline style when the
+   component wires up motion's useScroll. */
+@keyframes lens-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50%      { transform: scale(1.04); opacity: 1; }
+}
+
+.lens-ring {
+  transform-origin: 50% 50%;
+  animation: lens-breathe 9s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lens-ring { animation: none; }
+}
+
+/* Bento tile base + hover tilt custom props.
+   Tilt angle is computed in JS via --mx / --my pointer-relative
+   values; CSS uses them to rotate and shift a sheen layer. */
+.bento-tile {
+  position: relative;
+  isolation: isolate;
+  transform-style: preserve-3d;
+  transition: transform 400ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.bento-tile__sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    220px 140px at calc(var(--mx, 50%) * 1%) calc(var(--my, 30%) * 1%),
+    color-mix(in oklch, white 14%, transparent),
+    transparent 60%
+  );
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.bento-tile:hover .bento-tile__sheen { opacity: 1; }
+
+/* Bento tiles size to their content — the grid lets row heights vary
+   so a ledger + a compact score card don't force each other to match. */
+.bento-tile { align-self: start; }
+
+/* Bento responsive spans driven by data-attributes (avoids Tailwind
+   JIT + dynamic-class issues). Base span applies at all breakpoints;
+   md/lg spans override when the viewport is wide enough. */
+.bento-tile[data-span-base='1']  { grid-column: span 1 / span 1; }
+.bento-tile[data-span-base='2']  { grid-column: span 2 / span 2; }
+.bento-tile[data-span-base='3']  { grid-column: span 3 / span 3; }
+.bento-tile[data-span-base='4']  { grid-column: span 4 / span 4; }
+
+@media (width >= 48rem) {
+  .bento-tile[data-span-md='1']  { grid-column: span 1 / span 1; }
+  .bento-tile[data-span-md='2']  { grid-column: span 2 / span 2; }
+  .bento-tile[data-span-md='3']  { grid-column: span 3 / span 3; }
+  .bento-tile[data-span-md='4']  { grid-column: span 4 / span 4; }
+  .bento-tile[data-span-md='5']  { grid-column: span 5 / span 5; }
+  .bento-tile[data-span-md='6']  { grid-column: span 6 / span 6; }
+  .bento-tile[data-rows-md='1']  { grid-row: span 1 / span 1; }
+  .bento-tile[data-rows-md='2']  { grid-row: span 2 / span 2; }
+  .bento-tile[data-rows-md='3']  { grid-row: span 3 / span 3; }
+}
+@media (width >= 64rem) {
+  .bento-tile[data-span-lg='1']  { grid-column: span 1  / span 1; }
+  .bento-tile[data-span-lg='2']  { grid-column: span 2  / span 2; }
+  .bento-tile[data-span-lg='3']  { grid-column: span 3  / span 3; }
+  .bento-tile[data-span-lg='4']  { grid-column: span 4  / span 4; }
+  .bento-tile[data-span-lg='5']  { grid-column: span 5  / span 5; }
+  .bento-tile[data-span-lg='6']  { grid-column: span 6  / span 6; }
+  .bento-tile[data-span-lg='7']  { grid-column: span 7  / span 7; }
+  .bento-tile[data-span-lg='8']  { grid-column: span 8  / span 8; }
+  .bento-tile[data-span-lg='9']  { grid-column: span 9  / span 9; }
+  .bento-tile[data-span-lg='10'] { grid-column: span 10 / span 10; }
+  .bento-tile[data-span-lg='11'] { grid-column: span 11 / span 11; }
+  .bento-tile[data-span-lg='12'] { grid-column: span 12 / span 12; }
+  .bento-tile[data-rows-lg='1']  { grid-row: span 1 / span 1; }
+  .bento-tile[data-rows-lg='2']  { grid-row: span 2 / span 2; }
+  .bento-tile[data-rows-lg='3']  { grid-row: span 3 / span 3; }
+}
+
+/* Architecture-flow channel pulse — small bead travels along each
+   connective pipe. Two variants for data direction. Transform keeps
+   the bead locked to the pipe center (no Tailwind translate wars). */
+@keyframes channel-pulse-down {
+  0%   { transform: translate(-50%, 4px);  opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translate(-50%, 54px); opacity: 0; }
+}
+@keyframes channel-pulse-up {
+  0%   { transform: translate(-50%, 54px); opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translate(-50%, 4px);  opacity: 0; }
+}
+.channel-pulse-down { animation: channel-pulse-down 1.8s ease-in-out infinite; }
+.channel-pulse-up   { animation: channel-pulse-up   1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .channel-pulse-down, .channel-pulse-up { animation: none; transform: translate(-50%, 28px); }
+}
+
+/* Strikethrough differentiator — attention hotspot. The struck text
+   uses a muted brand-tinted tone (readable but clearly dismissed),
+   and the line itself is the iris spectrum so it reads as the brand
+   *crossing out* the wrong answer. */
+.strike-claim {
+  position: relative;
+  display: inline-block;
+  color: color-mix(in oklch, var(--color-iris-300) 72%, var(--color-ink-300));
+}
+:root:not(.dark) .strike-claim {
+  color: color-mix(in oklch, var(--color-iris-700) 68%, var(--color-ink-400));
+}
+.strike-claim::after {
+  content: '';
+  position: absolute;
+  left: -3%;
+  right: -3%;
+  top: 54%;
+  height: 3px;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg in oklch,
+    color-mix(in oklch, var(--color-iris-500) 90%, transparent) 0%,
+    color-mix(in oklch, var(--color-violet-500) 95%, transparent) 50%,
+    color-mix(in oklch, var(--color-fuchsia-400) 95%, transparent) 100%
+  );
+  box-shadow: 0 0 12px color-mix(in oklch, var(--color-fuchsia-400) 45%, transparent);
+  transform-origin: left center;
+  transform: scaleX(0);
+  animation: strike-in 900ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+:root:not(.dark) .strike-claim::after {
+  box-shadow: 0 0 10px color-mix(in oklch, var(--color-iris-500) 35%, transparent);
+}
+@keyframes strike-in {
+  to { transform: scaleX(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .strike-claim::after { transform: scaleX(1); animation: none; }
+}
+

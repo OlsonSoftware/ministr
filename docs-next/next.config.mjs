@@ -17,6 +17,12 @@ const config = {
   env: {
     NEXT_PUBLIC_BASE_PATH: basePath,
   },
+  // Enable native cross-document View Transitions through Next.js soft navs.
+  // Requires Next.js 15+; falls back to the CSS @view-transition rule for
+  // hard document loads in supported browsers.
+  experimental: {
+    viewTransition: true,
+  },
 };
 
 export default withMDX(config);
