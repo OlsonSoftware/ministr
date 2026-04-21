@@ -54,6 +54,9 @@ eval/model-comparison.json
 # Signing credentials
 .env.signing
 
+# Design-iteration screenshots (archived, not versioned)
+/design-archive/
+
 # Screenshot/Playwright artifacts
 .playwright-mcp/
 .cache/
