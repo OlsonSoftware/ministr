@@ -153,14 +153,28 @@ release version:
         echo "error: version must be in semver format (e.g. 0.2.0)" >&2
         exit 1
     fi
-    # Bump version in all workspace crates
-    for toml in iris-cli/Cargo.toml iris-core/Cargo.toml iris-mcp/Cargo.toml; do
-        sed -i'' -e "s/^version = \".*\"/version = \"{{version}}\"/" "$toml"
+    # Bump version in every workspace crate. Must match the root
+    # [workspace] members list — missing one breaks cross-crate publish
+    # ordering because path deps still pin the old version.
+    # Uses `-i.bak` + explicit rm so the recipe works on both GNU sed
+    # (Linux CI) and BSD sed (macOS dev machines).
+    for toml in \
+        iris-api/Cargo.toml \
+        iris-core/Cargo.toml \
+        iris-daemon/Cargo.toml \
+        iris-mcp/Cargo.toml \
+        iris-cli/Cargo.toml \
+        iris-app/src-tauri/Cargo.toml; \
+    do
+        sed -i.bak -e "s/^version = \".*\"/version = \"{{version}}\"/" "$toml"
+        rm -f "$toml.bak"
     done
-    # Add new section to CHANGELOG.md
+    # Add new section to CHANGELOG.md (inserted before the first
+    # existing `## [` heading so the freshest release stays on top).
     date=$(date +%Y-%m-%d)
     printf '\n## [{{version}}] - %s\n\n### Added\n\n### Changed\n\n### Fixed\n\n' "$date" | \
-        sed -i'' -e "/^## \[/r /dev/stdin" CHANGELOG.md
+        sed -i.bak -e "/^## \[/r /dev/stdin" CHANGELOG.md
+    rm -f CHANGELOG.md.bak
     # Add link reference at bottom
     echo "[{{version}}]: https://github.com/AlrikOlson/iris-rs/releases/tag/v{{version}}" >> CHANGELOG.md
     # Validate the workspace compiles
