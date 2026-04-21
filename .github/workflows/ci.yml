@@ -54,20 +54,26 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
-      - name: Stub Tauri sidecar
-        # tauri.conf.json declares an externalBin at `binaries/ministr-cli`.
-        # tauri-build probes for a target-suffixed file every time the
-        # crate is checked. This job doesn't bundle anything, so we only
-        # need the existence check to pass. An empty executable file is
-        # enough — nothing runs the sidecar during clippy/test.
+      - name: Stub Tauri bundle artifacts
+        # tauri-build and `tauri::generate_context!()` run during regular
+        # cargo check/compile and probe the filesystem for bundle-time
+        # inputs declared in tauri.conf.json:
         #
-        # Actual Linux build coverage for ministr-cli lives in the
-        # `mcp-smoke` job, which compiles + runs the CLI end-to-end.
+        #   - binaries/ministr-cli-<triple>  ← externalBin sidecar
+        #   - ../dist/                       ← frontendDist (pnpm build output)
+        #
+        # Neither is produced by cargo; in real use they're built by
+        # `just pkg` / `pnpm build`. For lint/test we only need the
+        # existence checks to pass — nothing ever runs the sidecar or
+        # serves the frontend. Actual Linux coverage for ministr-cli
+        # lives in mcp-smoke (full release build + live smoke test).
         run: |
           triple=$(rustc -vV | awk '/^host:/ {print $2}')
           mkdir -p ministr-app/src-tauri/binaries
           : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
           chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          mkdir -p ministr-app/dist
+          : > ministr-app/dist/index.html
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
