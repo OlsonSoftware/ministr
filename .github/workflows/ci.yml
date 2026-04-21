@@ -107,12 +107,16 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
-      - name: Stub Tauri sidecar
+      - name: Stub Tauri bundle artifacts
+        # See lint job for rationale. tauri-build + generate_context!()
+        # probe both paths during compile, neither is produced by cargo.
         run: |
           triple=$(rustc -vV | awk '/^host:/ {print $2}')
           mkdir -p ministr-app/src-tauri/binaries
           : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
           chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          mkdir -p ministr-app/dist
+          : > ministr-app/dist/index.html
 
       - name: cargo test
         run: cargo test --workspace
