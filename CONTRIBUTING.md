@@ -142,6 +142,13 @@ CI runs these automatically on every PR.
 - **Link issues** — reference related issues in the PR description
 - **Be patient** — reviews may take a few days
 
+## Releases
+
+- **macOS signing & notarization** — the desktop app and CLI binary both
+  need a Developer ID identity before distribution. See
+  [iris-app/SIGNING.md](iris-app/SIGNING.md) for env vars, entitlements,
+  and the `just pkg` / `just pkg-dev` workflows.
+
 ## Reporting issues
 
 - Use [GitHub Issues](https://github.com/AlrikOlson/iris-rs/issues)
