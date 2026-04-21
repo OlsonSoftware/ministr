@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# iris installer — downloads the latest release binary from GitHub.
-# Usage: curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
+# ministr installer — downloads the latest release binary from GitHub.
+# Usage: curl -fsSL https://raw.githubusercontent.com/AlrikOlson/ministr-rs/main/install.sh | bash
 set -euo pipefail
 
-REPO="AlrikOlson/iris-rs"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.iris/bin}"
+REPO="AlrikOlson/ministr-rs"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.ministr/bin}"
 
 info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
 err()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -24,10 +24,10 @@ case "$(uname -m)" in
 esac
 
 target="${arch}-${os}"
-archive="iris-${target}.tar.gz"
+archive="ministr-${target}.tar.gz"
 
 # Find latest release tag
-info "Finding latest iris release..."
+info "Finding latest ministr release..."
 tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
     | grep '"tag_name"' | head -1 | cut -d'"' -f4)
 
@@ -46,15 +46,15 @@ tar xzf "${tmpdir}/${archive}" -C "$tmpdir"
 
 # Install
 mkdir -p "$INSTALL_DIR"
-mv "${tmpdir}/iris" "${INSTALL_DIR}/iris"
-chmod +x "${INSTALL_DIR}/iris"
+mv "${tmpdir}/ministr" "${INSTALL_DIR}/ministr"
+chmod +x "${INSTALL_DIR}/ministr"
 
-info "Installed iris to ${INSTALL_DIR}/iris"
+info "Installed ministr to ${INSTALL_DIR}/ministr"
 
 # PATH instructions
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
     echo ""
-    info "Add iris to your PATH:"
+    info "Add ministr to your PATH:"
     echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
     echo ""
     echo "Add this line to your shell profile (~/.bashrc, ~/.zshrc, etc.)"

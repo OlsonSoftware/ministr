@@ -1,5 +1,5 @@
 ---
-title: iris_symbols
+title: ministr_symbols
 description: Search the code symbol index for structs, functions, traits, enums, and other declarations by name, kind, module, or visibility.
 ---
 
@@ -41,7 +41,7 @@ Search the code symbol index for structs, functions, traits, enums, and other de
 
 | Field | Description |
 |---|---|
-| `symbols[].id` | Symbol ID for use with `iris_definition` and `iris_references` |
+| `symbols[].id` | Symbol ID for use with `ministr_definition` and `ministr_references` |
 | `symbols[].name` | Declared name |
 | `symbols[].kind` | Symbol kind (struct, function, trait, etc.) |
 | `symbols[].visibility` | Visibility modifier |
@@ -54,5 +54,5 @@ Search the code symbol index for structs, functions, traits, enums, and other de
 - Supports exact-name, substring, and semantic embedding match
 - Multi-word queries are tokenized and matched against symbol names
 - Results are ranked by name similarity with kind and visibility boosts
-- Use `iris_definition` to get the full source of a symbol
-- Use `iris_references` to find callers, implementors, and importers
+- Use `ministr_definition` to get the full source of a symbol
+- Use `ministr_references` to find callers, implementors, and importers

@@ -1,5 +1,5 @@
 {
-  "description": "Ground-truth retrieval annotations for the iris evaluation corpus. Each query maps to a list of expected results with relevance grades (3=highly relevant, 2=relevant, 1=marginally relevant).",
+  "description": "Ground-truth retrieval annotations for the ministr evaluation corpus. Each query maps to a list of expected results with relevance grades (3=highly relevant, 2=relevant, 1=marginally relevant).",
   "queries": [
     {
       "query": "How does JWT token authentication work?",

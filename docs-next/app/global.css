@@ -3,29 +3,29 @@
 @import 'fumadocs-ui/css/preset.css';
 
 /* =====================================================
-   iris design tokens — ported from docs/styles/tokens.css
+   ministr design tokens — ported from docs/styles/tokens.css
    ===================================================== */
 
 @theme {
-  /* Iris brand scale (indigo/violet) */
-  --color-iris-50:  oklch(0.96 0.02 285);
-  --color-iris-100: oklch(0.93 0.04 285);
-  --color-iris-200: oklch(0.87 0.07 280);
-  --color-iris-300: oklch(0.79 0.11 280);
-  --color-iris-400: oklch(0.70 0.16 278);
-  --color-iris-500: #6366f1;
-  --color-iris-600: #4f46e5;
-  --color-iris-700: #4338ca;
-  --color-iris-800: #3730a3;
-  --color-iris-900: #312e81;
-  --color-iris-950: #1e1b4b;
+  /* Ministr brand scale (indigo/violet) */
+  --color-ministr-50:  oklch(0.96 0.02 285);
+  --color-ministr-100: oklch(0.93 0.04 285);
+  --color-ministr-200: oklch(0.87 0.07 280);
+  --color-ministr-300: oklch(0.79 0.11 280);
+  --color-ministr-400: oklch(0.70 0.16 278);
+  --color-ministr-500: #6366f1;
+  --color-ministr-600: #4f46e5;
+  --color-ministr-700: #4338ca;
+  --color-ministr-800: #3730a3;
+  --color-ministr-900: #312e81;
+  --color-ministr-950: #1e1b4b;
 
   /* Extra iridescent accents */
   --color-violet-400: #a78bfa;
   --color-violet-500: #8b5cf6;
   --color-fuchsia-400: #e879f9;
 
-  /* Custom dark surface scale — cool-tinted so iris accent pops */
+  /* Custom dark surface scale — cool-tinted so ministr accent pops */
   --color-ink-50:  #f5f5fa;
   --color-ink-100: #e6e7f0;
   --color-ink-200: #b9bacc;
@@ -107,7 +107,7 @@ main {
 /* Hero wordmark — trim font-metric overshoot for tight vertical rhythm.
    Requires a font with proper cap-height + alphabetic-baseline metadata
    (Inter qualifies). Chrome 133+, Safari 17.5+. */
-.iris-hero-mark {
+.ministr-hero-mark {
   text-box: trim-both cap alphabetic;
   letter-spacing: -0.04em;
 }
@@ -181,22 +181,22 @@ html > body[data-scroll-locked] {
   --removed-body-scroll-bar-size: 0px !important;
 }
 
-/* Subtle iris-gradient text utility for hero titles.
+/* Subtle ministr-gradient text utility for hero titles.
    Safari notes: with background-clip: text + animated background-position,
    Safari needs (a) color: transparent alongside -webkit-text-fill-color,
    (b) an explicit -webkit-animation, (c) will-change to hint the GPU path.
    Without those, the text renders correctly on first paint but the
    animation never commits in Safari. */
-.iris-gradient-text,
-h1.iris-gradient-text,
-.md-typeset .iris-gradient-text {
+.ministr-gradient-text,
+h1.ministr-gradient-text,
+.md-typeset .ministr-gradient-text {
   background-image: linear-gradient(
     90deg,
-    var(--color-iris-600) 0%,
-    var(--color-iris-500) 25%,
+    var(--color-ministr-600) 0%,
+    var(--color-ministr-500) 25%,
     var(--color-violet-400) 50%,
-    var(--color-iris-500) 75%,
-    var(--color-iris-600) 100%
+    var(--color-ministr-500) 75%,
+    var(--color-ministr-600) 100%
   );
   background-size: 220% 100%;
   background-position: 0% 50%;
@@ -206,24 +206,24 @@ h1.iris-gradient-text,
   -webkit-text-fill-color: transparent;
   color: transparent;
   will-change: background-position;
-  -webkit-animation: iris-shimmer 14s ease-in-out infinite;
-  animation: iris-shimmer 14s ease-in-out infinite;
+  -webkit-animation: ministr-shimmer 14s ease-in-out infinite;
+  animation: ministr-shimmer 14s ease-in-out infinite;
 }
 
-@-webkit-keyframes iris-shimmer {
+@-webkit-keyframes ministr-shimmer {
   0%   { background-position: 0% 50%; }
   50%  { background-position: 100% 50%; }
   100% { background-position: 0% 50%; }
 }
 
-@keyframes iris-shimmer {
+@keyframes ministr-shimmer {
   0%   { background-position: 0% 50%; }
   50%  { background-position: 100% 50%; }
   100% { background-position: 0% 50%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .iris-gradient-text {
+  .ministr-gradient-text {
     -webkit-animation: none;
     animation: none;
   }
@@ -245,46 +245,46 @@ h1.iris-gradient-text,
 }
 
 /* =====================================================
-   iris 2026 landing system — "Observatory"
+   ministr 2026 landing system — "Observatory"
    -----------------------------------------------------
    Paired dark + light treatments. The observatory metaphor drives dark
    (deep ink, aurora spectrum, glass). Light flips to a clean white-paper
-   observatory: softer iris-tinted aurora on bright ground, darker text,
+   observatory: softer ministr-tinted aurora on bright ground, darker text,
    lighter glass, dimmer noise.
    ===================================================== */
 
-.iris-landing {
+.ministr-landing {
   color: var(--fd-foreground);
-  background: var(--iris-landing-bg);
+  background: var(--ministr-landing-bg);
 }
 
 /* Dark base (default when .dark is on the root). */
-.iris-landing {
-  --iris-landing-bg: var(--color-ink-950);
-  --iris-surface: var(--color-ink-900);
-  --iris-surface-strong: var(--color-ink-800);
-  --iris-aurora-opacity: 1;
-  --iris-noise-opacity: 0.028;
-  --iris-noise-blend: overlay;
-  --iris-lens-pupil: var(--color-ink-950);
-  --iris-scrim-tint: color-mix(in oklch, var(--color-ink-950) 65%, transparent);
-  --iris-accent-text: var(--color-iris-300);
-  --iris-hairline: color-mix(in oklch, var(--color-iris-300) 30%, transparent);
+.ministr-landing {
+  --ministr-landing-bg: var(--color-ink-950);
+  --ministr-surface: var(--color-ink-900);
+  --ministr-surface-strong: var(--color-ink-800);
+  --ministr-aurora-opacity: 1;
+  --ministr-noise-opacity: 0.028;
+  --ministr-noise-blend: overlay;
+  --ministr-lens-pupil: var(--color-ink-950);
+  --ministr-scrim-tint: color-mix(in oklch, var(--color-ink-950) 65%, transparent);
+  --ministr-accent-text: var(--color-ministr-300);
+  --ministr-hairline: color-mix(in oklch, var(--color-ministr-300) 30%, transparent);
 }
 
-/* Light override — cleaner, paper-white ground with a soft iris-tinted
+/* Light override — cleaner, paper-white ground with a soft ministr-tinted
    aurora wash. Pairs with fumadocs light tokens. */
-:root:not(.dark) .iris-landing {
-  --iris-landing-bg: color-mix(in oklch, white 82%, var(--color-iris-50) 18%);
-  --iris-surface: white;
-  --iris-surface-strong: color-mix(in oklch, white 80%, var(--color-iris-100));
-  --iris-aurora-opacity: 0.55;
-  --iris-noise-opacity: 0.045;
-  --iris-noise-blend: multiply;
-  --iris-lens-pupil: color-mix(in oklch, var(--color-iris-900) 70%, white);
-  --iris-scrim-tint: color-mix(in oklch, white 55%, transparent);
-  --iris-accent-text: var(--color-iris-700);
-  --iris-hairline: color-mix(in oklch, var(--color-iris-500) 35%, transparent);
+:root:not(.dark) .ministr-landing {
+  --ministr-landing-bg: color-mix(in oklch, white 82%, var(--color-ministr-50) 18%);
+  --ministr-surface: white;
+  --ministr-surface-strong: color-mix(in oklch, white 80%, var(--color-ministr-100));
+  --ministr-aurora-opacity: 0.55;
+  --ministr-noise-opacity: 0.045;
+  --ministr-noise-blend: multiply;
+  --ministr-lens-pupil: color-mix(in oklch, var(--color-ministr-900) 70%, white);
+  --ministr-scrim-tint: color-mix(in oklch, white 55%, transparent);
+  --ministr-accent-text: var(--color-ministr-700);
+  --ministr-hairline: color-mix(in oklch, var(--color-ministr-500) 35%, transparent);
 }
 
 /* =====================================================
@@ -304,16 +304,16 @@ h1.iris-gradient-text,
      picked empirically so that AA contrast holds over the brightest
      aurora peaks the shader paints in dark mode and over the
      darkest smoke patches in light mode. */
-  .iris-body {
+  .ministr-body {
     color: color-mix(in oklch, var(--fd-foreground) 82%, transparent);
   }
-  .iris-body-quiet {
+  .ministr-body-quiet {
     color: color-mix(in oklch, var(--fd-foreground) 68%, transparent);
   }
 
   /* Standardised section eyebrow — mono, tracking, spectrum accent + a
      small leading square that inherits the spectrum for visual anchor. */
-  .iris-eyebrow {
+  .ministr-eyebrow {
     display: inline-flex;
     align-items: center;
     gap: 0.55rem;
@@ -321,18 +321,18 @@ h1.iris-gradient-text,
     font-size: 11px;
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: var(--iris-accent-text);
+    color: var(--ministr-accent-text);
   }
-  .iris-eyebrow::before {
+  .ministr-eyebrow::before {
     content: '';
     display: inline-block;
     width: 6px;
     height: 6px;
     border-radius: 1px;
     background: linear-gradient(135deg in oklch,
-      var(--color-iris-500),
+      var(--color-ministr-500),
       var(--color-fuchsia-400));
-    box-shadow: 0 0 8px color-mix(in oklch, var(--color-iris-400) 60%, transparent);
+    box-shadow: 0 0 8px color-mix(in oklch, var(--color-ministr-400) 60%, transparent);
   }
 
   /* Sub-eyebrow — same colour and tracking as the main eyebrow but
@@ -340,43 +340,43 @@ h1.iris-gradient-text,
      section content (step counters, column headers, chip labels) so
      they still belong to the eyebrow family without competing with
      the main section eyebrow for attention. */
-  .iris-eyebrow-sm {
+  .ministr-eyebrow-sm {
     font-family: var(--font-mono);
     font-size: 10.5px;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--iris-accent-text);
+    color: var(--ministr-accent-text);
   }
 
-  /* Primary iris CTA — bold iris-600 pill with an animated spectrum
+  /* Primary ministr CTA — bold ministr-600 pill with an animated spectrum
      rim glow on hover. Pairs with the hero install button and any
      other conversion surface that wants the "primary" treatment. */
-  .iris-cta-primary {
+  .ministr-cta-primary {
     position: relative;
     isolation: isolate;
-    background: var(--color-iris-600);
+    background: var(--color-ministr-600);
     color: white;
     box-shadow:
-      0 8px 30px -10px color-mix(in oklch, var(--color-iris-500) 70%, transparent);
+      0 8px 30px -10px color-mix(in oklch, var(--color-ministr-500) 70%, transparent);
     transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
                 box-shadow 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
                 background-color 220ms ease;
   }
-  .iris-cta-primary:hover {
-    background: var(--color-iris-700);
+  .ministr-cta-primary:hover {
+    background: var(--color-ministr-700);
     transform: translateY(-1px);
     box-shadow:
-      0 14px 40px -12px color-mix(in oklch, var(--color-iris-500) 85%, transparent),
+      0 14px 40px -12px color-mix(in oklch, var(--color-ministr-500) 85%, transparent),
       0 0 0 1px color-mix(in oklch, var(--color-fuchsia-400) 40%, transparent);
   }
-  .iris-cta-primary::after {
+  .ministr-cta-primary::after {
     content: '';
     position: absolute;
     inset: -1px;
     border-radius: inherit;
     padding: 1px;
     background: linear-gradient(135deg in oklch,
-      var(--color-iris-400) 0%,
+      var(--color-ministr-400) 0%,
       var(--color-violet-500) 50%,
       var(--color-fuchsia-400) 100%);
     -webkit-mask:
@@ -391,18 +391,18 @@ h1.iris-gradient-text,
     transition: opacity 260ms ease;
     pointer-events: none;
   }
-  .iris-cta-primary:hover::after { opacity: 0.85; }
+  .ministr-cta-primary:hover::after { opacity: 0.85; }
 
   /* Spectrum divider variants for section beats — a thicker
      "major" rule for decisive boundaries and a "minor" hairline
-     for softer separations. Already had iris-spectrum-rule above;
+     for softer separations. Already had ministr-spectrum-rule above;
      these are light-touch variations. */
-  .iris-spectrum-rule-major {
+  .ministr-spectrum-rule-major {
     height: 1px;
     background-image: linear-gradient(
       90deg in oklch,
       transparent 0%,
-      var(--color-iris-500) 22%,
+      var(--color-ministr-500) 22%,
       var(--color-violet-500) 50%,
       var(--color-fuchsia-400) 78%,
       transparent 100%
@@ -411,29 +411,29 @@ h1.iris-gradient-text,
   }
 
   /* Tiny spectrum glyph — the brand period. A 0.5em dot rendered
-     with the iris spectrum, for inline use in the footer signature
-     and anywhere the "iris." wordmark is referenced in copy. */
-  .iris-mark-dot {
+     with the ministr spectrum, for inline use in the footer signature
+     and anywhere the "ministr." wordmark is referenced in copy. */
+  .ministr-mark-dot {
     display: inline-block;
     width: 0.48em;
     height: 0.48em;
     border-radius: 2px;
     background: linear-gradient(135deg in oklch,
-      var(--color-iris-500),
+      var(--color-ministr-500),
       var(--color-violet-500),
       var(--color-fuchsia-400));
-    box-shadow: 0 0 6px color-mix(in oklch, var(--color-iris-400) 50%, transparent);
+    box-shadow: 0 0 6px color-mix(in oklch, var(--color-ministr-400) 50%, transparent);
     vertical-align: 0.05em;
   }
 }
 
 /* Signature brand spectrum used on headings, rules, and backdrops.
    OKLCH colours interpolated smoothly in oklch colour space. */
-.iris-spectrum {
+.ministr-spectrum {
   background-image: linear-gradient(
     90deg in oklch,
-    var(--color-iris-600) 0%,
-    var(--color-iris-500) 28%,
+    var(--color-ministr-600) 0%,
+    var(--color-ministr-500) 28%,
     var(--color-violet-500) 62%,
     var(--color-fuchsia-400) 100%
   );
@@ -441,19 +441,19 @@ h1.iris-gradient-text,
 
 /* Thin horizontal rule painted with the spectrum — used as section
    dividers and accent under stats strip. */
-.iris-spectrum-rule {
+.ministr-spectrum-rule {
   height: 1px;
   background-image: linear-gradient(
     90deg in oklch,
     transparent 0%,
-    var(--color-iris-500) 28%,
+    var(--color-ministr-500) 28%,
     var(--color-violet-500) 62%,
     transparent 100%
   );
   opacity: 0.55;
 }
 
-/* Aurora backdrop — layered radial gradients over the iris spectrum.
+/* Aurora backdrop — layered radial gradients over the ministr spectrum.
    One static base layer + one slow drifting highlight. Drift is GPU-
    composited via transform so it never reflows. Disabled under
    prefers-reduced-motion. */
@@ -462,23 +462,23 @@ h1.iris-gradient-text,
   inset: -20%;
   pointer-events: none;
   filter: blur(64px);
-  opacity: var(--iris-aurora-opacity, 1);
+  opacity: var(--ministr-aurora-opacity, 1);
   will-change: transform, opacity;
   transform: translateZ(0);
   background:
-    radial-gradient(40% 45% at 18% 24%, color-mix(in oklch, var(--color-iris-500) 55%, transparent), transparent 72%),
+    radial-gradient(40% 45% at 18% 24%, color-mix(in oklch, var(--color-ministr-500) 55%, transparent), transparent 72%),
     radial-gradient(38% 38% at 82% 18%, color-mix(in oklch, var(--color-violet-500) 50%, transparent), transparent 70%),
     radial-gradient(45% 42% at 62% 78%, color-mix(in oklch, var(--color-fuchsia-400) 42%, transparent), transparent 74%),
-    radial-gradient(32% 32% at 22% 86%, color-mix(in oklch, var(--color-iris-400) 45%, transparent), transparent 70%);
+    radial-gradient(32% 32% at 22% 86%, color-mix(in oklch, var(--color-ministr-400) 45%, transparent), transparent 70%);
 }
 
 /* Light mode: softer, lower-saturation aurora so dark text stays legible. */
 :root:not(.dark) .aurora-layer {
   background:
-    radial-gradient(42% 48% at 18% 24%, color-mix(in oklch, var(--color-iris-300) 70%, transparent), transparent 72%),
+    radial-gradient(42% 48% at 18% 24%, color-mix(in oklch, var(--color-ministr-300) 70%, transparent), transparent 72%),
     radial-gradient(38% 40% at 82% 18%, color-mix(in oklch, var(--color-violet-400) 55%, transparent), transparent 70%),
     radial-gradient(45% 44% at 62% 78%, color-mix(in oklch, var(--color-fuchsia-400) 45%, transparent), transparent 74%),
-    radial-gradient(32% 34% at 22% 86%, color-mix(in oklch, var(--color-iris-200) 70%, transparent), transparent 70%);
+    radial-gradient(32% 34% at 22% 86%, color-mix(in oklch, var(--color-ministr-200) 70%, transparent), transparent 70%);
   filter: blur(80px);
 }
 
@@ -493,14 +493,14 @@ h1.iris-gradient-text,
 }
 
 /* Tight scrim to keep text readable over aurora. Dark scrim in dark,
-   light scrim in light — tone driven by --iris-scrim-tint. */
+   light scrim in light — tone driven by --ministr-scrim-tint. */
 .aurora-scrim {
   position: absolute;
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(80% 60% at 50% 40%, transparent, var(--iris-scrim-tint) 85%),
-    linear-gradient(180deg, transparent 0%, var(--iris-scrim-tint) 100%);
+    radial-gradient(80% 60% at 50% 40%, transparent, var(--ministr-scrim-tint) 85%),
+    linear-gradient(180deg, transparent 0%, var(--ministr-scrim-tint) 100%);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -511,7 +511,7 @@ h1.iris-gradient-text,
    Designed to let the page-wide chromatic smoke shader through in both
    modes: semi-transparent substrate + heavy backdrop blur + saturation
    boost so the smoke tints the card warmly without muddying the copy.
-   In dark mode the substrate is ink with an iris tint; in light mode
+   In dark mode the substrate is ink with an ministr tint; in light mode
    it's paper-white with a violet tint — paired so each mode reads as
    "glass resting on the same smoke." */
 .glass-card {
@@ -524,12 +524,12 @@ h1.iris-gradient-text,
     );
   backdrop-filter: blur(20px) saturate(150%);
   -webkit-backdrop-filter: blur(20px) saturate(150%);
-  border: 1px solid color-mix(in oklch, var(--color-iris-300) 22%, transparent);
+  border: 1px solid color-mix(in oklch, var(--color-ministr-300) 22%, transparent);
   border-radius: 18px;
   box-shadow:
-    0 28px 90px -30px color-mix(in oklch, var(--color-iris-700) 55%, transparent),
-    0 1px 0 color-mix(in oklch, var(--color-iris-200) 18%, transparent) inset,
-    0 0 0 1px color-mix(in oklch, var(--color-iris-500) 8%, transparent) inset;
+    0 28px 90px -30px color-mix(in oklch, var(--color-ministr-700) 55%, transparent),
+    0 1px 0 color-mix(in oklch, var(--color-ministr-200) 18%, transparent) inset,
+    0 0 0 1px color-mix(in oklch, var(--color-ministr-500) 8%, transparent) inset;
 }
 
 .glass-card::before {
@@ -547,7 +547,7 @@ h1.iris-gradient-text,
   -webkit-mask: linear-gradient(180deg, black 0%, transparent 55%);
 }
 
-/* Subtle outer bleed — a warm iris aura around the card so it reads as
+/* Subtle outer bleed — a warm ministr aura around the card so it reads as
    a physical glass object catching light from the scene behind it. */
 .glass-card::after {
   content: '';
@@ -558,7 +558,7 @@ h1.iris-gradient-text,
   padding: 1px;
   background: linear-gradient(
     135deg in oklch,
-    color-mix(in oklch, var(--color-iris-400) 35%, transparent) 0%,
+    color-mix(in oklch, var(--color-ministr-400) 35%, transparent) 0%,
     transparent 45%,
     color-mix(in oklch, var(--color-fuchsia-400) 28%, transparent) 100%
   );
@@ -580,17 +580,17 @@ h1.iris-gradient-text,
       color-mix(in oklch, white 68%, transparent) 0%,
       color-mix(in oklch, white 55%, transparent) 100%
     );
-  border-color: color-mix(in oklch, var(--color-iris-600) 20%, transparent);
+  border-color: color-mix(in oklch, var(--color-ministr-600) 20%, transparent);
   box-shadow:
-    0 28px 90px -30px color-mix(in oklch, var(--color-iris-700) 22%, transparent),
+    0 28px 90px -30px color-mix(in oklch, var(--color-ministr-700) 22%, transparent),
     0 1px 0 color-mix(in oklch, white 90%, transparent) inset,
-    0 0 0 1px color-mix(in oklch, var(--color-iris-500) 6%, transparent) inset;
+    0 0 0 1px color-mix(in oklch, var(--color-ministr-500) 6%, transparent) inset;
 }
 
 :root:not(.dark) .glass-card::after {
   background: linear-gradient(
     135deg in oklch,
-    color-mix(in oklch, var(--color-iris-500) 28%, transparent) 0%,
+    color-mix(in oklch, var(--color-ministr-500) 28%, transparent) 0%,
     transparent 45%,
     color-mix(in oklch, var(--color-fuchsia-400) 22%, transparent) 100%
   );
@@ -600,8 +600,8 @@ h1.iris-gradient-text,
 
 /* Chromatic-flow shader mount — theme-aware blend mode so the same
    shader output composites sensibly over both backgrounds.
-   Dark: `screen` brightens the ink-950 ground with iris peaks.
-   Light: `multiply` darkens the paper with deep iris ink, which
+   Dark: `screen` brightens the ink-950 ground with ministr peaks.
+   Light: `multiply` darkens the paper with deep ministr ink, which
    avoids the washed-out pastel look of translucent purple on white. */
 .chromatic-flow-mount {
   mix-blend-mode: screen;
@@ -618,8 +618,8 @@ h1.iris-gradient-text,
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  opacity: var(--iris-noise-opacity, 0.028);
-  mix-blend-mode: var(--iris-noise-blend, overlay);
+  opacity: var(--ministr-noise-opacity, 0.028);
+  mix-blend-mode: var(--ministr-noise-blend, overlay);
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
 }
 
@@ -730,15 +730,15 @@ h1.iris-gradient-text,
 
 /* Strikethrough differentiator — attention hotspot. The struck text
    uses a muted brand-tinted tone (readable but clearly dismissed),
-   and the line itself is the iris spectrum so it reads as the brand
+   and the line itself is the ministr spectrum so it reads as the brand
    *crossing out* the wrong answer. */
 .strike-claim {
   position: relative;
   display: inline-block;
-  color: color-mix(in oklch, var(--color-iris-300) 72%, var(--color-ink-300));
+  color: color-mix(in oklch, var(--color-ministr-300) 72%, var(--color-ink-300));
 }
 :root:not(.dark) .strike-claim {
-  color: color-mix(in oklch, var(--color-iris-700) 68%, var(--color-ink-400));
+  color: color-mix(in oklch, var(--color-ministr-700) 68%, var(--color-ink-400));
 }
 .strike-claim::after {
   content: '';
@@ -750,7 +750,7 @@ h1.iris-gradient-text,
   border-radius: 3px;
   background: linear-gradient(
     90deg in oklch,
-    color-mix(in oklch, var(--color-iris-500) 90%, transparent) 0%,
+    color-mix(in oklch, var(--color-ministr-500) 90%, transparent) 0%,
     color-mix(in oklch, var(--color-violet-500) 95%, transparent) 50%,
     color-mix(in oklch, var(--color-fuchsia-400) 95%, transparent) 100%
   );
@@ -760,7 +760,7 @@ h1.iris-gradient-text,
   animation: strike-in 900ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 :root:not(.dark) .strike-claim::after {
-  box-shadow: 0 0 10px color-mix(in oklch, var(--color-iris-500) 35%, transparent);
+  box-shadow: 0 0 10px color-mix(in oklch, var(--color-ministr-500) 35%, transparent);
 }
 @keyframes strike-in {
   to { transform: scaleX(1); }

@@ -11,11 +11,11 @@ import {
 } from 'motion/react';
 
 /**
- * Lens — the iris "eye" visual for the hero.
+ * Lens — the ministr "eye" visual for the hero.
  *
- * An anatomically-informed iris: layered limbal ring, radial fibers,
+ * An anatomically-informed ministr: layered limbal ring, radial fibers,
  * collarette, pupil, and a specular catchlight. The pupil tracks the
- * cursor via motion springs (bounded to the iris interior) with a
+ * cursor via motion springs (bounded to the ministr interior) with a
  * parallax catchlight moving against it for depth. Scroll drives a
  * dilating scale + subtle rotation.
  *
@@ -53,13 +53,13 @@ export function Lens({
   const smoothX = useSpring(mx, { stiffness: 120, damping: 18, mass: 0.4 });
   const smoothY = useSpring(my, { stiffness: 120, damping: 18, mass: 0.4 });
 
-  // Pupil can travel ~6% of the iris radius — any more reads as wall-eyed
+  // Pupil can travel ~6% of the ministr radius — any more reads as wall-eyed
   const pupilDX = useTransform(smoothX, (v) => v * 6);
   const pupilDY = useTransform(smoothY, (v) => v * 6);
   // Catchlight moves in the opposite direction for parallax depth
   const highlightDX = useTransform(smoothX, (v) => v * -3);
   const highlightDY = useTransform(smoothY, (v) => v * -3);
-  // Iris fibers rotate a hair with gaze
+  // Ministr fibers rotate a hair with gaze
   const fiberRotate = useTransform(smoothX, (v) => v * 2);
 
   useEffect(() => {
@@ -94,28 +94,28 @@ export function Lens({
           <radialGradient id="lens-glow" cx="50%" cy="50%" r="55%">
             <stop offset="0%"  stopColor="var(--color-fuchsia-400)" stopOpacity="0.35" />
             <stop offset="55%" stopColor="var(--color-violet-500)"  stopOpacity="0.18" />
-            <stop offset="100%" stopColor="var(--color-iris-700)"   stopOpacity="0" />
+            <stop offset="100%" stopColor="var(--color-ministr-700)"   stopOpacity="0" />
           </radialGradient>
 
-          {/* Main iris body — rich OKLCH spectrum, hot center fading to deep outer */}
-          <radialGradient id="lens-iris" cx="50%" cy="50%" r="50%">
+          {/* Main ministr body — rich OKLCH spectrum, hot center fading to deep outer */}
+          <radialGradient id="lens-ministr" cx="50%" cy="50%" r="50%">
             <stop offset="0%"  stopColor="var(--color-fuchsia-400)" stopOpacity="0.95" />
             <stop offset="28%" stopColor="var(--color-violet-400)"  stopOpacity="0.85" />
-            <stop offset="58%" stopColor="var(--color-iris-500)"    stopOpacity="0.85" />
-            <stop offset="88%" stopColor="var(--color-iris-700)"    stopOpacity="0.95" />
-            <stop offset="100%" stopColor="var(--color-iris-900)"   stopOpacity="1" />
+            <stop offset="58%" stopColor="var(--color-ministr-500)"    stopOpacity="0.85" />
+            <stop offset="88%" stopColor="var(--color-ministr-700)"    stopOpacity="0.95" />
+            <stop offset="100%" stopColor="var(--color-ministr-900)"   stopOpacity="1" />
           </radialGradient>
 
           {/* Fiber stroke gradient — gives striations a shimmer along their length */}
           <linearGradient id="lens-fiber" x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%"   stopColor="var(--color-fuchsia-400)" stopOpacity="0.0" />
             <stop offset="40%"  stopColor="var(--color-violet-300, #c4b5fd)" stopOpacity="0.9" />
-            <stop offset="100%" stopColor="var(--color-iris-400)"    stopOpacity="0.25" />
+            <stop offset="100%" stopColor="var(--color-ministr-400)"    stopOpacity="0.25" />
           </linearGradient>
 
           {/* Pupil gradient — not pure black; a faint inner glow keeps it alive */}
           <radialGradient id="lens-pupil" cx="45%" cy="42%" r="60%">
-            <stop offset="0%"  stopColor="var(--color-iris-700)"  stopOpacity="0.75" />
+            <stop offset="0%"  stopColor="var(--color-ministr-700)"  stopOpacity="0.75" />
             <stop offset="70%" stopColor="var(--color-ink-950)"   stopOpacity="1" />
             <stop offset="100%" stopColor="black" stopOpacity="1" />
           </radialGradient>
@@ -136,17 +136,17 @@ export function Lens({
         {/* 1. Outer glow / halation */}
         <circle cx="100" cy="100" r="96" fill="url(#lens-glow)" />
 
-        {/* 2. Limbal ring — dark band at the iris/sclera boundary */}
+        {/* 2. Limbal ring — dark band at the ministr/sclera boundary */}
         <circle
           cx="100" cy="100" r="70"
           fill="none"
-          stroke="var(--color-iris-900)"
+          stroke="var(--color-ministr-900)"
           strokeOpacity="0.9"
           strokeWidth="2.2"
         />
 
-        {/* 3. Iris body — the big colored disc */}
-        <circle cx="100" cy="100" r="68" fill="url(#lens-iris)" />
+        {/* 3. Ministr body — the big colored disc */}
+        <circle cx="100" cy="100" r="68" fill="url(#lens-ministr)" />
 
         {/* 4. Radial fibers — striations from pupil to limbal ring.
                Rotates a few degrees with gaze. */}
@@ -191,7 +191,7 @@ export function Lens({
           strokeWidth="0.6"
         />
 
-        {/* 6. Depth shadow inside iris */}
+        {/* 6. Depth shadow inside ministr */}
         <circle cx="100" cy="100" r="68" fill="url(#lens-shadow)" />
 
         {/* 7. Pupil — tracks cursor */}
@@ -201,7 +201,7 @@ export function Lens({
           <circle
             cx="100" cy="100" r="16"
             fill="none"
-            stroke="var(--color-iris-900)"
+            stroke="var(--color-ministr-900)"
             strokeOpacity="0.8"
             strokeWidth="0.6"
           />

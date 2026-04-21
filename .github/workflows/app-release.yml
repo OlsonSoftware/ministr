@@ -49,10 +49,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: iris-app/pnpm-lock.yaml
+          cache-dependency-path: ministr-app/pnpm-lock.yaml
 
       - name: Install frontend deps
-        working-directory: iris-app
+        working-directory: ministr-app
         run: pnpm install
 
       - name: Install Linux deps
@@ -66,10 +66,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "iris app ${{ github.ref_name }}"
-          releaseBody: "Cross-platform iris desktop app release."
+          releaseName: "ministr app ${{ github.ref_name }}"
+          releaseBody: "Cross-platform ministr desktop app release."
           releaseDraft: true
           prerelease: false
-          projectPath: iris-app
+          projectPath: ministr-app
           tauriScript: pnpm tauri
           args: ${{ matrix.args }}

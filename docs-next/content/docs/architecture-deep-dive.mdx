@@ -1,33 +1,33 @@
 ---
-title: iris-rs Architecture — The Deep Dive
-description: In-depth walk through the iris workspace, ingestion pipeline, session shadow, prefetch engine, and embedding backends.
+title: ministr-rs Architecture — The Deep Dive
+description: In-depth walk through the ministr workspace, ingestion pipeline, session shadow, prefetch engine, and embedding backends.
 ---
 
-> **iris** is a Rust-native MCP server that serves context to LLM agents the way
+> **ministr** is a Rust-native MCP server that serves context to LLM agents the way
 > an L1 cache serves the CPU — with session tracking, predictive prefetching,
 > budget awareness, and coherence.
 >
-> iris does not (and can't) edit the agent's context window directly. It manages
+> ministr does not (and can't) edit the agent's context window directly. It manages
 > *its own output* — what it sends, when, and at what resolution — so the window
 > fills with signal instead of redundant reads.
 
 ## The Big Picture
 
-Think of iris as a **smart librarian** that sits between an LLM agent and a codebase. Instead of the agent naively reading files and losing track of what it's already seen, iris indexes everything, tracks what's been delivered, predicts what's needed next, and shapes its own output — resolution, compression, deduplication — so the agent's finite window stays as clear as a well-managed L1 cache.
+Think of ministr as a **smart librarian** that sits between an LLM agent and a codebase. Instead of the agent naively reading files and losing track of what it's already seen, ministr indexes everything, tracks what's been delivered, predicts what's needed next, and shapes its own output — resolution, compression, deduplication — so the agent's finite window stays as clear as a well-managed L1 cache.
 
 ```mermaid
 flowchart TB
-  agent["LLM Agent (Claude, etc.)<br/>iris_survey · iris_read · iris_symbols"]
+  agent["LLM Agent (Claude, etc.)<br/>ministr_survey · ministr_read · ministr_symbols"]
 
-  subgraph mcp["iris-mcp (Transport Layer)"]
-    server["IrisServer — tool routing, JSON-RPC"]
+  subgraph mcp["ministr-mcp (Transport Layer)"]
+    server["MinistrServer — tool routing, JSON-RPC"]
     sessions["SessionRegistry"]
     prefetch["PrefetchEngine"]
     server --> sessions
     server --> prefetch
   end
 
-  subgraph core["iris-core (Domain Logic)"]
+  subgraph core["ministr-core (Domain Logic)"]
     query["QueryService — survey, read, extract, symbols, refs"]
     search["MultiResolutionSearch<br/>dense + sparse + rerank"]
     ingest["IngestionPipeline<br/>parse → extract → embed"]
@@ -51,8 +51,8 @@ flowchart TB
 ## Workspace Structure
 
 ```text
-iris-rs/
-├── iris-cli/              ← Binary entry point, CLI commands
+ministr-rs/
+├── ministr-cli/              ← Binary entry point, CLI commands
 │   └── src/
 │       ├── main.rs        ← CLI parsing, subcommand dispatch
 │       ├── commands/      ← serve, index, init, search, export/import, hooks
@@ -61,14 +61,14 @@ iris-rs/
 │       ├── instance.rs    ← Single-instance lock, stdio↔HTTP proxy
 │       └── proxy.rs       ← Secondary instance proxy over HTTP
 │
-├── iris-mcp/              ← MCP server adapter (depends on iris-core + rmcp)
+├── ministr-mcp/              ← MCP server adapter (depends on ministr-core + rmcp)
 │   └── src/
-│       ├── server/        ← IrisServer: tool handlers, session management
+│       ├── server/        ← MinistrServer: tool handlers, session management
 │       ├── auth.rs        ← OAuth for cloud deployments
-│       ├── proxy.rs       ← Thin proxy that delegates to iris-daemon
+│       ├── proxy.rs       ← Thin proxy that delegates to ministr-daemon
 │       └── error.rs       ← MCP-specific error types
 │
-├── iris-daemon/           ← HTTP API over Unix domain socket
+├── ministr-daemon/           ← HTTP API over Unix domain socket
 │   └── src/
 │       ├── daemon.rs      ← Axum server, lifecycle management
 │       ├── registry.rs    ← CorpusRegistry: manage multiple corpora
@@ -76,12 +76,12 @@ iris-rs/
 │       ├── inference.rs   ← Embedding service
 │       └── state.rs       ← Shared daemon state
 │
-├── iris-api/              ← Shared wire types (no iris-core dependency)
+├── ministr-api/              ← Shared wire types (no ministr-core dependency)
 │   └── src/
 │       ├── query.rs       ← Request/response types
 │       └── client.rs      ← DaemonClient for UDS communication
 │
-├── iris-core/             ← Pure domain logic, NO transport dependencies
+├── ministr-core/             ← Pure domain logic, NO transport dependencies
 │   └── src/
 │       ├── service/       ← QueryService: the main API facade
 │       ├── ingestion/     ← File discovery → parse → embed pipeline
@@ -94,37 +94,37 @@ iris-rs/
 │       ├── code/          ← tree-sitter, symbols, cross-lang bridges
 │       └── extraction/    ← Claims, relationships, summaries
 │
-└── iris-app/src-tauri/    ← Tauri v2 desktop app with system tray
+└── ministr-app/src-tauri/    ← Tauri v2 desktop app with system tray
 ```
 
 ### Dependency Rule
 
 ```mermaid
 flowchart LR
-  cli[iris-cli] --> mcp[iris-mcp]
-  mcp --> core[iris-core<br/>pure domain]
-  mcp --> api[iris-api]
-  daemon[iris-daemon] --> api
+  cli[ministr-cli] --> mcp[ministr-mcp]
+  mcp --> core[ministr-core<br/>pure domain]
+  mcp --> api[ministr-api]
+  daemon[ministr-daemon] --> api
   daemon --> core
-  app[iris-app] --> daemon
+  app[ministr-app] --> daemon
   app --> core
 ```
 
-`iris-core` **never** imports MCP types. `iris-api` never depends on `iris-core`. The boundaries are enforced structurally.
+`ministr-core` **never** imports MCP types. `ministr-api` never depends on `ministr-core`. The boundaries are enforced structurally.
 
 ## How It Boots Up
 
-When you run `iris serve`, here's the startup sequence:
+When you run `ministr serve`, here's the startup sequence:
 
 ```text
 main()
   │
   ├─ 1. Parse CLI args (clap)
   │
-  ├─ 2. Load config (.iris.toml + ~/.iris/config.toml)
+  ├─ 2. Load config (.ministr.toml + ~/.ministr/config.toml)
   │
   ├─ 3. acquire_role()
-  │     ├─ Try to grab a file lock on ~/.iris/corpora/<hash>/iris.lock
+  │     ├─ Try to grab a file lock on ~/.ministr/corpora/<hash>/ministr.lock
   │     ├─ Got it? → You're the PRIMARY (runs the real server)
   │     └─ Locked? → You're a SECONDARY (proxies stdio→HTTP to primary)
   │
@@ -136,9 +136,9 @@ main()
   │
   ├─ 5. build_server()
   │     ├─ Create QueryService(storage, embedder, index)
-  │     ├─ Create IrisServer(service, registry, prefetch, ...)
-  │     ├─ Enable web fetcher (for iris_fetch)
-  │     ├─ Enable git fetcher (for iris_clone)
+  │     ├─ Create MinistrServer(service, registry, prefetch, ...)
+  │     ├─ Enable web fetcher (for ministr_fetch)
+  │     ├─ Enable git fetcher (for ministr_clone)
   │     └─ Spawn coherence file watcher
   │
   └─ 6. Start transport
@@ -148,7 +148,7 @@ main()
 
 ## The Ingestion Pipeline
 
-Before iris can answer queries, it needs to index the codebase. The pipeline runs in three stages:
+Before ministr can answer queries, it needs to index the codebase. The pipeline runs in three stages:
 
 - **File discovery** — walk directory, filter by extension, hash for incremental, skip unchanged files.
 - **Parse & split** — detect parser (md / html / pdf / code), parse into sections with headings. For code: tree-sitter AST plus extraction of symbols, references, bridges.
@@ -157,7 +157,7 @@ Before iris can answer queries, it needs to index the codebase. The pipeline run
 ### What Gets Stored
 
 ```text
-SQLite Database (~/.iris/corpora/<hash>/content.db)
+SQLite Database (~/.ministr/corpora/<hash>/content.db)
   │
   ├── documents        ─ file path, hash, root kind
   ├── sections         ─ heading path, text, token count, parent
@@ -195,9 +195,9 @@ The embeddings are cached in SQLite keyed by content hash — if the text hasn't
 
 ## The Query Path
 
-When the agent calls `iris_survey`, the flow end-to-end is:
+When the agent calls `ministr_survey`, the flow end-to-end is:
 
-1. **IrisServer** checks the warm prefetch cache.
+1. **MinistrServer** checks the warm prefetch cache.
 2. **SessionRegistry** gets or creates the session (keyed by MCP session ID).
 3. **QueryService.survey_excluding(query, top_k, delivered_ids)** excludes already-delivered content.
 4. **MultiResolutionSearch**: embed → HNSW kNN → optional SPLADE → RRF fusion → optional rerank.
@@ -218,7 +218,7 @@ Session {
 }
 ```
 
-## The Session Shadow: iris's "Cache Controller" Brain
+## The Session Shadow: ministr's "Cache Controller" Brain
 
 This is the most novel subsystem. It models the agent's context window **from the outside**, predicting what the agent has retained and what's been evicted.
 
@@ -265,7 +265,7 @@ This is included in **every response** as `budget_status`:
 
 ## The Prefetch Engine
 
-After each `iris_read`, the prefetch engine speculatively pre-warms sections the agent is likely to request next. Five strategies:
+After each `ministr_read`, the prefetch engine speculatively pre-warms sections the agent is likely to request next. Five strategies:
 
 1. **Sequential** (cache line prefetch) — pre-warm section N+1, N+2 in same document
 2. **Topical** (branch prediction) — query HNSW with running EMA topic vector
@@ -288,14 +288,14 @@ topic_vector = alpha * latest_embedding + (1 - alpha) * topic_vector
 
 ## The Coherence Engine
 
-When files change on disk, iris needs to update the index AND notify active sessions.
+When files change on disk, ministr needs to update the index AND notify active sessions.
 
 Flow:
 1. `notify` crate detects a file-system change.
 2. `CoherenceEngine` re-parses, re-extracts claims, re-embeds, updates SQLite, updates HNSW.
 3. `SessionRegistry` marks affected sections stale and queues coherence alerts.
 
-When the agent next calls any iris tool, it receives pending alerts:
+When the agent next calls any ministr tool, it receives pending alerts:
 
 ```json
 {
@@ -305,11 +305,11 @@ When the agent next calls any iris tool, it receives pending alerts:
 }
 ```
 
-And `iris_read` on a stale section delivers only the **delta** (what changed), not the full text again.
+And `ministr_read` on a stale section delivers only the **delta** (what changed), not the full text again.
 
 ## Content Resolution
 
-iris indexes content at multiple granularity levels and delivers at the appropriate resolution based on context budget pressure:
+ministr indexes content at multiple granularity levels and delivers at the appropriate resolution based on context budget pressure:
 
 - **Document** — "Here's the entire file"
 - **Section** — "Here's the #login function section" (default)
@@ -318,7 +318,7 @@ iris indexes content at multiple granularity levels and delivers at the appropri
 
 ### Delta Delivery
 
-When the agent re-reads a section it already has, iris computes a diff:
+When the agent re-reads a section it already has, ministr computes a diff:
 
 ```rust
 ContentDelta {
@@ -337,7 +337,7 @@ This saves massive amounts of context window space — only the changes are deli
 
 ## Code Intelligence
 
-iris doesn't just search text. It builds a rich code model via tree-sitter:
+ministr doesn't just search text. It builds a rich code model via tree-sitter:
 
 - **Symbols** — structs, fns, traits, enums, impls — with name, kind, visibility, module, signature, docs
 - **References** — callers, callees, implementors, importers
@@ -345,7 +345,7 @@ iris doesn't just search text. It builds a rich code model via tree-sitter:
 
 ### Cross-Language Bridges
 
-iris detects and links cross-language bindings via a two-pass pipeline:
+ministr detects and links cross-language bindings via a two-pass pipeline:
 
 1. **Extract** endpoints from all source files (`#[napi]`, `#[pyfunction]`, `#[tauri::command]`, `#[wasm_bindgen]`, HTTP route attributes)
 2. **Link** export↔import pairs by binding key (exact match → case-normalized → semantic fallback)
@@ -354,25 +354,25 @@ Supported bridges: napi-rs, PyO3, Tauri commands, wasm-bindgen, HTTP routes.
 
 ## The MCP Server: How Tools Map to Code
 
-Each iris MCP tool maps to a method chain:
+Each ministr MCP tool maps to a method chain:
 
-| MCP Tool | `IrisServer` method | `QueryService` method |
+| MCP Tool | `MinistrServer` method | `QueryService` method |
 |---|---|---|
-| `iris_survey` | `handle_survey()` | `survey_excluding()` |
-| `iris_read` | `handle_read()` | `read_section()` |
-| `iris_extract` | `handle_extract()` | `extract_claims()` |
-| `iris_symbols` | `handle_symbols()` | `search_symbols()` |
-| `iris_definition` | `handle_definition()` | `symbol_definition()` |
-| `iris_references` | `handle_references()` | `symbol_references()` |
-| `iris_toc` | `handle_toc()` | `table_of_contents()` |
-| `iris_budget` | `handle_budget()` | *(session state only)* |
-| `iris_compress` | `handle_compress()` | `compress_for_eviction()` |
-| `iris_evicted` | `handle_evicted()` | *(session state only)* |
-| `iris_fetch` | `handle_fetch()` | `WebFetcher` + ingest |
-| `iris_clone` | `handle_clone()` | `GitFetcher` + ingest |
-| `iris_refresh` | `handle_refresh()` | `WebFetcher` staleness check |
-| `iris_bridge` | `handle_bridge()` | `search_bridge_links()` |
-| `iris_related` | `handle_related()` | `related_claims()` |
+| `ministr_survey` | `handle_survey()` | `survey_excluding()` |
+| `ministr_read` | `handle_read()` | `read_section()` |
+| `ministr_extract` | `handle_extract()` | `extract_claims()` |
+| `ministr_symbols` | `handle_symbols()` | `search_symbols()` |
+| `ministr_definition` | `handle_definition()` | `symbol_definition()` |
+| `ministr_references` | `handle_references()` | `symbol_references()` |
+| `ministr_toc` | `handle_toc()` | `table_of_contents()` |
+| `ministr_budget` | `handle_budget()` | *(session state only)* |
+| `ministr_compress` | `handle_compress()` | `compress_for_eviction()` |
+| `ministr_evicted` | `handle_evicted()` | *(session state only)* |
+| `ministr_fetch` | `handle_fetch()` | `WebFetcher` + ingest |
+| `ministr_clone` | `handle_clone()` | `GitFetcher` + ingest |
+| `ministr_refresh` | `handle_refresh()` | `WebFetcher` staleness check |
+| `ministr_bridge` | `handle_bridge()` | `search_bridge_links()` |
+| `ministr_related` | `handle_related()` | `related_claims()` |
 
 Every response wraps the result data with `budget_status`, so the agent always knows how much context budget it has remaining.
 
@@ -380,7 +380,7 @@ Every response wraps the result data with `budget_status`, so the agent always k
 
 ### Why "Like a CPU Cache"?
 
-| CPU Cache Concept | iris Equivalent |
+| CPU Cache Concept | ministr Equivalent |
 |---|---|
 | Cache line | Section (a heading-delimited chunk of content) |
 | L1/L2/L3 hierarchy | Claim → Section → Document resolution levels |

@@ -21,29 +21,29 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            binary: iris
-            archive: iris-x86_64-unknown-linux-gnu.tar.gz
+            binary: ministr
+            archive: ministr-x86_64-unknown-linux-gnu.tar.gz
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            binary: iris
-            archive: iris-aarch64-unknown-linux-gnu.tar.gz
+            binary: ministr
+            archive: ministr-aarch64-unknown-linux-gnu.tar.gz
             use_cross: true
 
           - target: aarch64-apple-darwin
             os: macos-latest
-            binary: iris
-            archive: iris-aarch64-apple-darwin.tar.gz
+            binary: ministr
+            archive: ministr-aarch64-apple-darwin.tar.gz
 
           - target: x86_64-apple-darwin
             os: macos-latest
-            binary: iris
-            archive: iris-x86_64-apple-darwin.tar.gz
+            binary: ministr
+            archive: ministr-x86_64-apple-darwin.tar.gz
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            binary: iris.exe
-            archive: iris-x86_64-pc-windows-msvc.zip
+            binary: ministr.exe
+            archive: ministr-x86_64-pc-windows-msvc.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -63,9 +63,9 @@ jobs:
       - name: Build release binary
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} -p iris-cli
+            cross build --release --target ${{ matrix.target }} -p ministr-cli
           else
-            cargo build --release --target ${{ matrix.target }} -p iris-cli
+            cargo build --release --target ${{ matrix.target }} -p ministr-cli
           fi
         shell: bash
 

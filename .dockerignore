@@ -10,7 +10,7 @@ docs/
 
 # Frontend build artifacts
 node_modules/
-iris-app/dist/
+ministr-app/dist/
 
 # IDE and editor configs
 .claude/
@@ -35,5 +35,5 @@ launch/
 # Evaluation and benchmarks (not needed in container)
 eval/
 
-# Tauri app (not needed in container — Docker only builds iris-cli)
-iris-app/
+# Tauri app (not needed in container — Docker only builds ministr-cli)
+ministr-app/

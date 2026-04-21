@@ -1,5 +1,5 @@
 ---
-title: iris_read
+title: ministr_read
 description: Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count.
 ---
 
@@ -28,11 +28,11 @@ Read the full text of a section by its hierarchical ID. Returns content with hea
 
 ### Already Delivered (unchanged)
 
-If the section was already delivered and has not changed, iris returns a short acknowledgment instead of re-delivering the full text. This is treated as a **fault-based eviction signal** — iris infers the agent's context window dropped the content and corrects the window estimate.
+If the section was already delivered and has not changed, ministr returns a short acknowledgment instead of re-delivering the full text. This is treated as a **fault-based eviction signal** — ministr infers the agent's context window dropped the content and corrects the window estimate.
 
 ### Already Delivered (changed)
 
-If the section was delivered but the underlying document changed, iris returns a line-level delta showing what was added, removed, or modified.
+If the section was delivered but the underlying document changed, ministr returns a line-level delta showing what was added, removed, or modified.
 
 ## Response Fields
 
@@ -42,7 +42,7 @@ If the section was delivered but the underlying document changed, iris returns a
 | `heading_path` | Heading hierarchy (e.g. `["Chapter 3", "Section 3.2"]`) |
 | `text` | Full section content |
 | `token_count` | Token count of the delivered text |
-| `claims_available` | Number of claims that can be extracted with `iris_extract` |
+| `claims_available` | Number of claims that can be extracted with `ministr_extract` |
 
 ## Behavior
 

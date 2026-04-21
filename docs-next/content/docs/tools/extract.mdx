@@ -1,5 +1,5 @@
 ---
-title: iris_extract
+title: ministr_extract
 description: Extract atomic claims from a section, optionally filtered by relevance to a query. Claims are single factual statements that can stand alone.
 ---
 
@@ -37,7 +37,7 @@ Extract atomic claims from a section, optionally filtered by relevance to a quer
 | Field | Description |
 |---|---|
 | `claims` | List of extracted claims |
-| `claims[].id` | Claim ID for use with `iris_related` |
+| `claims[].id` | Claim ID for use with `ministr_related` |
 | `claims[].text` | The atomic factual statement |
 | `claims[].relevance_score` | Relevance to the query (1.0 if no query provided) |
 
@@ -45,5 +45,5 @@ Extract atomic claims from a section, optionally filtered by relevance to a quer
 
 - When `query` is provided, claims are ranked by embedding similarity to the query
 - When `query` is omitted, all claims from the section are returned in document order
-- Claims are the highest-resolution unit in iris — use them for surgical precision
-- Each claim ID can be passed to `iris_related` to follow dependency chains
+- Claims are the highest-resolution unit in ministr — use them for surgical precision
+- Each claim ID can be passed to `ministr_related` to follow dependency chains

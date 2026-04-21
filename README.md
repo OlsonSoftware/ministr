@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">iris</h1>
+  <h1 align="center">ministr</h1>
 </p>
 
 <p align="center">
@@ -7,40 +7,40 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AlrikOlson/iris-rs/actions/workflows/ci.yml"><img src="https://github.com/AlrikOlson/iris-rs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/AlrikOlson/ministr-rs/actions/workflows/ci.yml"><img src="https://github.com/AlrikOlson/ministr-rs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.88%2B-orange.svg" alt="Rust"></a>
 </p>
 
 <p align="center">
-  <a href="https://AlrikOlson.github.io/iris-rs">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
+  <a href="https://AlrikOlson.github.io/ministr-rs">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 ---
 
-iris is an [MCP server](https://modelcontextprotocol.io) that serves your agent's context the way an L1 cache serves the CPU — tracking what it has delivered, pre-warming what's likely next, and flagging budget pressure. Your agent still owns its context window; iris just keeps its own output lean. Runs locally, embeds locally, works with any MCP client.
+ministr is an [MCP server](https://modelcontextprotocol.io) that serves your agent's context the way an L1 cache serves the CPU — tracking what it has delivered, pre-warming what's likely next, and flagging budget pressure. Your agent still owns its context window; ministr just keeps its own output lean. Runs locally, embeds locally, works with any MCP client.
 
 ```sh
-claude mcp add iris -- iris
+claude mcp add ministr -- ministr
 ```
 
 <p align="center">
-  <img src="assets/launch.gif" alt="iris CLI demo — iris init, claude mcp add iris, and an agent trace with a cache hit" width="860" loading="lazy">
+  <img src="assets/launch.gif" alt="ministr CLI demo — ministr init, claude mcp add ministr, and an agent trace with a cache hit" width="860" loading="lazy">
 </p>
 
-## Why iris
+## Why ministr
 
-LLM agents waste most of their context window. iris fixes the three root causes:
+LLM agents waste most of their context window. ministr fixes the three root causes:
 
-**Re-reading** — iris tracks what the agent has already seen and deduplicates. When a section changes, it delivers only the delta.
+**Re-reading** — ministr tracks what the agent has already seen and deduplicates. When a section changes, it delivers only the delta.
 
-**Blind retrieval** — iris indexes your codebase at multiple resolutions (documents, sections, claims, symbols) and returns precisely what's relevant — not entire files.
+**Blind retrieval** — ministr indexes your codebase at multiple resolutions (documents, sections, claims, symbols) and returns precisely what's relevant — not entire files.
 
-**No lookahead** — iris predicts what the agent will need next and pre-warms it. Sequential, structural, and topical prefetch strategies mean cache hits instead of cold reads.
+**No lookahead** — ministr predicts what the agent will need next and pre-warms it. Sequential, structural, and topical prefetch strategies mean cache hits instead of cold reads.
 
 ## Setup
 
-**1.** Create `.iris.toml` in your project root (or run `iris init`):
+**1.** Create `.ministr.toml` in your project root (or run `ministr init`):
 
 ```toml
 [corpus]
@@ -50,14 +50,14 @@ paths = ["src", "docs", "README.md"]
 **2.** Connect your MCP client:
 
 ```sh
-claude mcp add iris -- iris                                    # Claude Code
+claude mcp add ministr -- ministr                                    # Claude Code
 ```
 
 ```json
-{ "mcpServers": { "iris": { "command": "iris", "args": [] } } }
+{ "mcpServers": { "ministr": { "command": "ministr", "args": [] } } }
 ```
 
-<sup>Save as <code>.mcp.json</code> (Claude Code) or <code>.cursor/mcp.json</code> (Cursor). iris auto-discovers <code>.iris.toml</code> from the working directory.</sup>
+<sup>Save as <code>.mcp.json</code> (Claude Code) or <code>.cursor/mcp.json</code> (Cursor). ministr auto-discovers <code>.ministr.toml</code> from the working directory.</sup>
 
 ## Features
 
@@ -71,7 +71,7 @@ claude mcp add iris -- iris                                    # Claude Code
 
 ## Cross-language bridges
 
-iris detects and links cross-language bindings automatically:
+ministr detects and links cross-language bindings automatically:
 
 <p align="center">
   <img src="assets/bridges.svg" alt="Cross-language bridge diagram: Rust exports (napi, PyO3, Tauri) linked to JavaScript/Python consumers" width="720">
@@ -82,16 +82,16 @@ iris detects and links cross-language bindings automatically:
 **Install script** (macOS & Linux)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/AlrikOlson/ministr-rs/main/install.sh | bash
 ```
 
 **Cargo** (latest `main`)
 
 ```sh
-cargo install --git https://github.com/AlrikOlson/iris-rs iris-cli
+cargo install --git https://github.com/AlrikOlson/ministr-rs ministr-cli
 ```
 
-**Pre-built binaries** — download from [GitHub Releases](https://github.com/AlrikOlson/iris-rs/releases) for macOS, Linux, and Windows.
+**Pre-built binaries** — download from [GitHub Releases](https://github.com/AlrikOlson/ministr-rs/releases) for macOS, Linux, and Windows.
 
 A Homebrew tap (`AlrikOlson/homebrew-tap`) and a crates.io publish land with 1.0.
 
@@ -99,13 +99,13 @@ A Homebrew tap (`AlrikOlson/homebrew-tap`) and a crates.io publish land with 1.0
 
 | | |
 |---|---|
-| [Docs home](https://AlrikOlson.github.io/iris-rs/) | Landing page with full overview |
-| [Tool reference](https://AlrikOlson.github.io/iris-rs/docs/tools/) | All MCP tools with parameters and examples |
-| [Architecture](https://AlrikOlson.github.io/iris-rs/docs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
-| [Configuration](https://AlrikOlson.github.io/iris-rs/docs/configuration/) | `.iris.toml` options and CLI flags |
+| [Docs home](https://AlrikOlson.github.io/ministr-rs/) | Landing page with full overview |
+| [Tool reference](https://AlrikOlson.github.io/ministr-rs/docs/tools/) | All MCP tools with parameters and examples |
+| [Architecture](https://AlrikOlson.github.io/ministr-rs/docs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
+| [Configuration](https://AlrikOlson.github.io/ministr-rs/docs/configuration/) | `.ministr.toml` options and CLI flags |
 | [Design specification](DESIGN.md) | Research references and design rationale |
 | [Deployment](deploy/README.md) | Docker, Fly.io, Railway, nginx/Caddy reverse proxy |
-| [Example configs](examples/) | `.iris.toml` templates for Rust, Tauri, PyO3, React |
+| [Example configs](examples/) | `.ministr.toml` templates for Rust, Tauri, PyO3, React |
 
 ## Contributing
 

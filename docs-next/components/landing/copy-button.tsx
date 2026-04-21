@@ -14,7 +14,7 @@ import { Check, Copy } from 'lucide-react';
  *   • keyboard accessible (native button, focus-visible ring)
  *   • gracefully no-ops if the Clipboard API is unavailable
  *
- * Styling uses iris tokens so it reads as part of the brand surface
+ * Styling uses ministr tokens so it reads as part of the brand surface
  * in both light and dark themes.
  */
 export function CopyButton({
@@ -58,9 +58,9 @@ export function CopyButton({
       onClick={onCopy}
       aria-label={copied ? 'Copied to clipboard' : label}
       className={
-        'group/copy inline-flex items-center justify-center rounded-md border border-[color-mix(in_oklch,var(--color-iris-400)_20%,transparent)] bg-[color-mix(in_oklch,var(--iris-surface)_50%,transparent)] text-fd-muted-foreground backdrop-blur-sm transition ' +
-        'hover:border-[color-mix(in_oklch,var(--color-iris-400)_45%,transparent)] hover:bg-[color-mix(in_oklch,var(--color-iris-500)_14%,transparent)] hover:text-[var(--iris-accent-text)] ' +
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklch,var(--color-iris-400)_55%,transparent)] ' +
+        'group/copy inline-flex items-center justify-center rounded-md border border-[color-mix(in_oklch,var(--color-ministr-400)_20%,transparent)] bg-[color-mix(in_oklch,var(--ministr-surface)_50%,transparent)] text-fd-muted-foreground backdrop-blur-sm transition ' +
+        'hover:border-[color-mix(in_oklch,var(--color-ministr-400)_45%,transparent)] hover:bg-[color-mix(in_oklch,var(--color-ministr-500)_14%,transparent)] hover:text-[var(--ministr-accent-text)] ' +
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklch,var(--color-ministr-400)_55%,transparent)] ' +
         pad + ' ' + className
       }
     >

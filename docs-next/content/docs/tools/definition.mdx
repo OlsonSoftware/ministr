@@ -1,5 +1,5 @@
 ---
-title: iris_definition
+title: ministr_definition
 description: Get the full source code of a symbol by ID — declaration, body, doc comments, and surrounding context.
 ---
 
@@ -9,7 +9,7 @@ Get the full source code of a symbol by ID. Returns the complete declaration inc
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `symbol_id` | string | yes | Symbol ID from `iris_symbols` |
+| `symbol_id` | string | yes | Symbol ID from `ministr_symbols` |
 
 ## Response
 
@@ -42,4 +42,4 @@ Get the full source code of a symbol by ID. Returns the complete declaration inc
 - For `impl` blocks and traits, includes all method stubs
 - For structs and enums, includes all fields and variants
 - Tokens are counted against the session budget
-- Use `iris_references` to find call sites after reading a definition
+- Use `ministr_references` to find call sites after reading a definition

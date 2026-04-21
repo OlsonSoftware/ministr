@@ -1,11 +1,11 @@
-# Releasing iris
+# Releasing ministr
 
 End-to-end checklist for cutting a release. The repo publishes to four
 surfaces: GitHub Releases (CLI binaries), GitHub Releases again (Tauri
 app installers), crates.io (library crates), and the Homebrew tap.
 
 Prerequisites: the signing env vars described in
-[iris-app/SIGNING.md](iris-app/SIGNING.md) must be set before `just pkg`
+[ministr-app/SIGNING.md](ministr-app/SIGNING.md) must be set before `just pkg`
 is run, and a crates.io API token must be in `~/.cargo/credentials`
 (`cargo login <token>`).
 
@@ -29,8 +29,8 @@ just release X.Y.Z
 ```
 
 This recipe:
-- Updates `version = ...` in all six workspace crates (iris-api,
-  iris-core, iris-daemon, iris-mcp, iris-cli, iris-app/src-tauri).
+- Updates `version = ...` in all six workspace crates (ministr-api,
+  ministr-core, ministr-daemon, ministr-mcp, ministr-cli, ministr-app/src-tauri).
 - Prepends a `## [X.Y.Z] — YYYY-MM-DD` section to `CHANGELOG.md` with
   empty `### Added / Changed / Fixed` subsections.
 - Runs `cargo check --workspace` so the bump compiles.
@@ -48,7 +48,7 @@ git push origin main vX.Y.Z
 ```
 
 `.github/workflows/release.yml` fires on `v*` tags. It builds
-`iris-cli` on the five-target matrix (Linux x86_64/aarch64, macOS
+`ministr-cli` on the five-target matrix (Linux x86_64/aarch64, macOS
 x86_64/aarch64, Windows x86_64) and publishes a GitHub Release with
 tarballs plus SHA-256 sums.
 
@@ -81,7 +81,7 @@ source .env.signing
 just pkg
 ```
 
-Upload `target/pkg/iris-X.Y.Z.pkg` to the GitHub Release as an extra
+Upload `target/pkg/ministr-X.Y.Z.pkg` to the GitHub Release as an extra
 asset.
 
 ## 5. Publish to crates.io
@@ -90,14 +90,14 @@ Publish in dependency order. Each command blocks for ~30 seconds while
 the index updates; do not skip ahead:
 
 ```sh
-cargo publish -p iris-api
-cargo publish -p iris-core
-cargo publish -p iris-daemon
-cargo publish -p iris-mcp
-cargo publish -p iris-cli
+cargo publish -p ministr-api
+cargo publish -p ministr-core
+cargo publish -p ministr-daemon
+cargo publish -p ministr-mcp
+cargo publish -p ministr-cli
 ```
 
-`iris-app` is `publish = false` — it ships as an installer, not a
+`ministr-app` is `publish = false` — it ships as an installer, not a
 library.
 
 If a `cargo publish` fails partway through, do not re-run earlier
@@ -110,14 +110,14 @@ and bump version + SHA-256:
 
 ```sh
 # In AlrikOlson/homebrew-tap
-cp ~/Code/iris-rs/homebrew/iris.rb Formula/iris.rb
+cp ~/Code/ministr-rs/homebrew/ministr.rb Formula/ministr.rb
 # Update version, URL, and sha256 to match the vX.Y.Z release tarball
-brew audit --strict --online iris
-git commit -am "iris X.Y.Z"
+brew audit --strict --online ministr
+git commit -am "ministr X.Y.Z"
 git push
 ```
 
-Verify with `brew install AlrikOlson/tap/iris` on a clean machine.
+Verify with `brew install AlrikOlson/tap/ministr` on a clean machine.
 
 ## 7. Announce
 

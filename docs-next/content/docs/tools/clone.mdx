@@ -1,5 +1,5 @@
 ---
-title: iris_clone
+title: ministr_clone
 description: Clone a git repository and index it into the corpus.
 ---
 
@@ -42,8 +42,8 @@ Clone a git repository and index it into the corpus.
 
 ## Behavior
 
-- Clones into the iris data directory (`~/.iris/clones/<hash>`)
+- Clones into the ministr data directory (`~/.ministr/clones/<hash>`)
 - Sparse checkout dramatically reduces disk and index time for large monorepos
 - Subsequent calls with the same URL are idempotent — the cache is reused if the ref hasn't changed
-- Use `iris_refresh` to pull updates after upstream changes
+- Use `ministr_refresh` to pull updates after upstream changes
 - Cloned content is treated as a separate corpus root alongside local paths

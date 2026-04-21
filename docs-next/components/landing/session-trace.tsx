@@ -27,7 +27,7 @@ type Step = {
 const SCRIPT: Step[] = [
   {
     lines: [
-      { kind: 'prompt', text: 'iris_survey("authentication middleware")' },
+      { kind: 'prompt', text: 'ministr_survey("authentication middleware")' },
       { kind: 'meta', text: 'ranked 5 results · 42 ms', accent: 'muted' },
       { kind: 'result', label: 'src/auth.rs#login', value: 'Validates JWT, calls validate_token', score: '0.91' },
       { kind: 'result', label: 'src/auth.rs#logout', value: 'Revokes cookie, blacklists refresh', score: '0.87' },
@@ -39,7 +39,7 @@ const SCRIPT: Step[] = [
   },
   {
     lines: [
-      { kind: 'prompt', text: 'iris_read("src/auth.rs#login")' },
+      { kind: 'prompt', text: 'ministr_read("src/auth.rs#login")' },
       { kind: 'meta', text: '420 tokens · section delivered', accent: 'muted' },
     ],
     budget: 5,
@@ -47,7 +47,7 @@ const SCRIPT: Step[] = [
   },
   {
     lines: [
-      { kind: 'prompt', text: 'iris_read("src/auth.rs#logout")' },
+      { kind: 'prompt', text: 'ministr_read("src/auth.rs#logout")' },
       { kind: 'meta', text: 'CACHE HIT — served from prefetch · 0 ms', accent: 'success' },
     ],
     budget: 7,
@@ -56,7 +56,7 @@ const SCRIPT: Step[] = [
   },
   {
     lines: [
-      { kind: 'prompt', text: 'iris_symbols(kind="function", query="validate")' },
+      { kind: 'prompt', text: 'ministr_symbols(kind="function", query="validate")' },
       { kind: 'meta', text: '8 symbols found · top match validate_token', accent: 'muted' },
     ],
     budget: 9,
@@ -69,7 +69,7 @@ const SCRIPT: Step[] = [
   },
   {
     lines: [
-      { kind: 'prompt', text: 'iris_survey("rate limiting")' },
+      { kind: 'prompt', text: 'ministr_survey("rate limiting")' },
       { kind: 'meta', text: 'pressure: ELEVATED · results at CLAIM resolution', accent: 'warning' },
       { kind: 'meta', text: 'eviction_recommendations: [src/setup.rs#prerequisites, docs/intro.md]', accent: 'muted' },
     ],
@@ -79,7 +79,7 @@ const SCRIPT: Step[] = [
   },
   {
     lines: [
-      { kind: 'prompt', text: 'iris_evicted(["src/setup.rs#prerequisites"])' },
+      { kind: 'prompt', text: 'ministr_evicted(["src/setup.rs#prerequisites"])' },
       { kind: 'meta', text: 'session shadow updated · freed 6% of budget', accent: 'success' },
     ],
     budget: 78,
@@ -256,21 +256,21 @@ function Shell({
       ? 'border-[color-mix(in_srgb,var(--color-warning)_45%,var(--fd-border))] shadow-[0_0_0_1px_color-mix(in_srgb,var(--color-warning)_25%,transparent),0_20px_60px_-20px_color-mix(in_srgb,var(--color-warning)_30%,transparent)]'
       : pulseTag === 'cache-hit'
       ? 'border-[color-mix(in_srgb,var(--color-success)_45%,var(--fd-border))] shadow-[0_0_0_1px_color-mix(in_srgb,var(--color-success)_25%,transparent),0_20px_60px_-20px_color-mix(in_srgb,var(--color-success)_30%,transparent)]'
-      : 'border-fd-border shadow-[0_20px_60px_-30px_color-mix(in_srgb,var(--color-iris-500)_30%,transparent)]';
+      : 'border-fd-border shadow-[0_20px_60px_-30px_color-mix(in_srgb,var(--color-ministr-500)_30%,transparent)]';
 
   return (
     <div
       className={
         'relative rounded-xl border font-mono text-[12.5px] leading-relaxed transition-[border-color,box-shadow] duration-500 ' +
         accentClass +
-        ' bg-[color-mix(in_srgb,var(--fd-card)_92%,var(--color-iris-950)_8%)]'
+        ' bg-[color-mix(in_srgb,var(--fd-card)_92%,var(--color-ministr-950)_8%)]'
       }
     >
       <div className="flex items-center gap-2 border-b border-fd-border/70 px-3 py-2">
         <span className="size-2.5 rounded-full bg-[var(--color-traffic-close)]" />
         <span className="size-2.5 rounded-full bg-[var(--color-traffic-min)]" />
         <span className="size-2.5 rounded-full bg-[var(--color-traffic-max)]" />
-        <span className="ml-2 text-[11px] text-fd-muted-foreground">iris — session (example)</span>
+        <span className="ml-2 text-[11px] text-fd-muted-foreground">ministr — session (example)</span>
         {typeof budget === 'number' && (
           <span className="ml-auto flex items-center gap-2 text-[10px] font-mono text-fd-muted-foreground">
             <span className="uppercase tracking-wider">budget</span>
@@ -284,8 +284,8 @@ function Shell({
                   (pressureHot
                     ? 'bg-[var(--color-warning)]'
                     : budget > 60
-                    ? 'bg-gradient-to-r from-[var(--color-iris-500)] to-[var(--color-warning)]'
-                    : 'bg-[var(--color-iris-500)]')
+                    ? 'bg-gradient-to-r from-[var(--color-ministr-500)] to-[var(--color-warning)]'
+                    : 'bg-[var(--color-ministr-500)]')
                 }
                 style={{ width: `${budget}%` }}
               />
@@ -352,12 +352,12 @@ function PromptRow({
   const typed = text.slice(0, typedChars);
   return (
     <div className="flex items-start gap-2 text-fd-foreground">
-      <span className="select-none text-[var(--color-iris-500)] font-semibold">➜</span>
+      <span className="select-none text-[var(--color-ministr-500)] font-semibold">➜</span>
       <span className="break-all whitespace-pre-wrap">{typed}</span>
       {active && typedChars < text.length && (
         <span
           aria-hidden
-          className="ml-0.5 inline-block h-[1.1em] w-[0.55em] translate-y-[0.12em] bg-[var(--color-iris-500)]/80 animate-[trace-cursor_0.9s_steps(2,end)_infinite]"
+          className="ml-0.5 inline-block h-[1.1em] w-[0.55em] translate-y-[0.12em] bg-[var(--color-ministr-500)]/80 animate-[trace-cursor_0.9s_steps(2,end)_infinite]"
         />
       )}
     </div>
@@ -376,7 +376,7 @@ function LineRow({
   if (line.kind === 'prompt') {
     return (
       <div className="flex items-start gap-2 text-fd-foreground">
-        <span className="select-none text-[var(--color-iris-500)] font-semibold">➜</span>
+        <span className="select-none text-[var(--color-ministr-500)] font-semibold">➜</span>
         <span className="break-all whitespace-pre-wrap">{line.text}</span>
       </div>
     );
@@ -394,7 +394,7 @@ function LineRow({
         : line.accent === 'warning'
         ? 'text-[var(--color-warning)]'
         : line.accent === 'info'
-        ? 'text-[var(--color-iris-400)]'
+        ? 'text-[var(--color-ministr-400)]'
         : 'text-fd-muted-foreground';
     return (
       <div
@@ -414,10 +414,10 @@ function LineRow({
       style={fadeStyle}
     >
       <span className="select-none text-fd-muted-foreground/40">└</span>
-      <span className="text-[var(--color-iris-400)] shrink-0">{line.label}</span>
+      <span className="text-[var(--color-ministr-400)] shrink-0">{line.label}</span>
       <span className="text-fd-muted-foreground truncate flex-1">{line.value}</span>
       {line.score && (
-        <span className="shrink-0 font-mono text-[10px] text-[var(--color-iris-500)] tabular-nums">
+        <span className="shrink-0 font-mono text-[10px] text-[var(--color-ministr-500)] tabular-nums">
           {line.score}
         </span>
       )}

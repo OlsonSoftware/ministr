@@ -1,5 +1,5 @@
 ---
-title: iris_fetch
+title: ministr_fetch
 description: Fetch a web URL and add its content to the corpus. Supports single pages, sitemaps, and llms.txt feeds.
 ---
 
@@ -43,5 +43,5 @@ Fetch a web URL and add its content to the corpus. Supports single pages, sitema
 - PDF URLs are text-extracted via `pdf-extract`
 - `sitemap.xml` and `llms.txt` feeds are detected and used to expand crawls when present
 - Fetched content is cached locally with ETag / Last-Modified headers
-- Use `iris_refresh` to re-fetch changed sources
+- Use `ministr_refresh` to re-fetch changed sources
 - Subject to rate limiting (default: 4 concurrent requests)

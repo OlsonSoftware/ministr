@@ -1,0 +1,83 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickelpack/nk/main/schemas/tauri/2.0/config.schema.json",
+  "productName": "ministr",
+  "version": "0.1.0",
+  "identifier": "com.ministr.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "title": "ministr",
+        "width": 900,
+        "height": 600,
+        "resizable": true,
+        "visible": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "externalBin": [
+      "binaries/ministr-cli"
+    ],
+    "resources": [
+      "resources/*"
+    ],
+    "macOS": {
+      "signingIdentity": null,
+      "entitlements": "./Entitlements.plist",
+      "minimumSystemVersion": "13.0",
+      "dmg": {
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        },
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ],
+        "section": "utils"
+      },
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    },
+    "category": "DeveloperTool",
+    "shortDescription": "Context cache for LLM agents",
+    "longDescription": "ministr is an MCP server that serves context to LLM agents the way an L1 cache serves the CPU — with session tracking, predictive prefetching, budget awareness, and coherence. Your agent still owns its context window; ministr keeps its own output tight."
+  }
+}

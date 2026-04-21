@@ -1,5 +1,5 @@
 ---
-title: iris_survey
+title: ministr_survey
 description: Semantic search across the indexed corpus — documents, sections, claims, and code symbols. Returns ranked results with relevance scores.
 ---
 
@@ -45,7 +45,7 @@ Semantic search across the indexed corpus — documents, sections, claims, and c
 | Field | Description |
 |---|---|
 | `results` | Ranked list of matching content |
-| `results[].content_id` | Hierarchical ID — use with `iris_read` (sections) or `iris_definition` (symbols) |
+| `results[].content_id` | Hierarchical ID — use with `ministr_read` (sections) or `ministr_definition` (symbols) |
 | `results[].relevance_score` | Similarity score (0.0-1.0) |
 | `results[].resolution` | Match level: `"summary"`, `"section"`, `"claim"`, `"symbol_stub"`, or `"symbol_full"` |
 | `results[].heading_path` | Heading hierarchy or symbol path (when applicable) |

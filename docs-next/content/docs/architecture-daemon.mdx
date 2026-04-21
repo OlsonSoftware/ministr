@@ -1,6 +1,6 @@
 ---
 title: Daemon & Tray Architecture
-description: How the iris daemon, MCP proxy, and desktop tray app communicate over ~/.iris/irisd.sock.
+description: How the ministr daemon, MCP proxy, and desktop tray app communicate over ~/.ministr/ministrd.sock.
 ---
 
 ## Topology
@@ -8,14 +8,14 @@ description: How the iris daemon, MCP proxy, and desktop tray app communicate ov
 ```mermaid
 flowchart TB
   subgraph client["Claude Code / other MCP client"]
-    proxy["MCP proxy (iris-mcp)"]
+    proxy["MCP proxy (ministr-mcp)"]
   end
 
-  subgraph tray["iris tray app (Tauri + React)"]
+  subgraph tray["ministr tray app (Tauri + React)"]
     dashboard["Dashboard GUI"]
   end
 
-  subgraph daemon["iris daemon (iris-daemon)"]
+  subgraph daemon["ministr daemon (ministr-daemon)"]
     router["axum router"]
     registry["CorpusRegistry + handles"]
     sessions["Session registry"]
@@ -30,7 +30,7 @@ flowchart TB
     query --> prefetch
   end
 
-  proxy -->|"HTTP/1.1 over UDS<br/>~/.iris/irisd.sock"| router
+  proxy -->|"HTTP/1.1 over UDS<br/>~/.ministr/ministrd.sock"| router
   dashboard -->|"Direct Rust API"| router
 ```
 
@@ -38,11 +38,11 @@ flowchart TB
 
 | Component | Crate | Role |
 |-----------|-------|------|
-| **MCP Proxy** | `iris-mcp` | Thin proxy: translates MCP tool calls to daemon HTTP API |
-| **Daemon** | `iris-daemon` | Axum HTTP server on UDS: corpus management, queries, sessions |
-| **Tray App** | `iris-app` | Tauri GUI: project management, dashboard, system tray |
-| **Core** | `iris-core` | Domain logic: ingestion, search, embeddings, storage |
-| **API** | `iris-api` | Shared wire types + `DaemonClient` for UDS communication |
+| **MCP Proxy** | `ministr-mcp` | Thin proxy: translates MCP tool calls to daemon HTTP API |
+| **Daemon** | `ministr-daemon` | Axum HTTP server on UDS: corpus management, queries, sessions |
+| **Tray App** | `ministr-app` | Tauri GUI: project management, dashboard, system tray |
+| **Core** | `ministr-core` | Domain logic: ingestion, search, embeddings, storage |
+| **API** | `ministr-api` | Shared wire types + `DaemonClient` for UDS communication |
 
 ## Data Flow
 
@@ -54,7 +54,7 @@ flowchart TB
 
 ## Socket & PID Files
 
-- **Socket**: `~/.iris/irisd.sock` (Unix domain socket)
-- **PID file**: `~/.iris/irisd.pid` (for stale socket detection)
-- **Data**: `~/.iris/corpora/<corpus-id>/` (SQLite + HNSW per corpus)
-- **Config**: `~/.iris/config.toml` (global settings)
+- **Socket**: `~/.ministr/ministrd.sock` (Unix domain socket)
+- **PID file**: `~/.ministr/ministrd.pid` (for stale socket detection)
+- **Data**: `~/.ministr/corpora/<corpus-id>/` (SQLite + HNSW per corpus)
+- **Config**: `~/.ministr/config.toml` (global settings)

@@ -1,44 +1,44 @@
 ---
 title: Tool Reference
-description: All MCP tools iris exposes — search, code navigation, budget management, and multi-source corpus ingestion.
+description: All MCP tools ministr exposes — search, code navigation, budget management, and multi-source corpus ingestion.
 ---
 
-iris exposes MCP tools that give the agent explicit control over context retrieval. The tools cover document search, code navigation, cross-language bridges, budget management, and multi-source corpus ingestion.
+ministr exposes MCP tools that give the agent explicit control over context retrieval. The tools cover document search, code navigation, cross-language bridges, budget management, and multi-source corpus ingestion.
 
 ## Search & retrieval
 
 | Tool | Purpose | Typical Token Cost |
 |---|---|---|
-| [`iris_survey`](/docs/tools/survey) | Semantic search across docs and code | 100-300 |
-| [`iris_read`](/docs/tools/read) | Read a section in full | 200-2000 |
-| [`iris_extract`](/docs/tools/extract) | Pull specific claims | 50-500 |
-| [`iris_related`](/docs/tools/related) | Follow claim relationships | 50-300 |
-| [`iris_toc`](/docs/tools/toc) | Structural overview of the corpus | 100-500 |
+| [`ministr_survey`](/docs/tools/survey) | Semantic search across docs and code | 100-300 |
+| [`ministr_read`](/docs/tools/read) | Read a section in full | 200-2000 |
+| [`ministr_extract`](/docs/tools/extract) | Pull specific claims | 50-500 |
+| [`ministr_related`](/docs/tools/related) | Follow claim relationships | 50-300 |
+| [`ministr_toc`](/docs/tools/toc) | Structural overview of the corpus | 100-500 |
 
 ## Code navigation
 
 | Tool | Purpose | Typical Token Cost |
 |---|---|---|
-| [`iris_symbols`](/docs/tools/symbols) | Find structs, functions, traits, enums | 50-300 |
-| [`iris_definition`](/docs/tools/definition) | Get full source of a symbol | 100-2000 |
-| [`iris_references`](/docs/tools/references) | Find callers, implementors, importers | 50-300 |
-| [`iris_bridge`](/docs/tools/bridge) | Query cross-language bindings | 50-200 |
+| [`ministr_symbols`](/docs/tools/symbols) | Find structs, functions, traits, enums | 50-300 |
+| [`ministr_definition`](/docs/tools/definition) | Get full source of a symbol | 100-2000 |
+| [`ministr_references`](/docs/tools/references) | Find callers, implementors, importers | 50-300 |
+| [`ministr_bridge`](/docs/tools/bridge) | Query cross-language bindings | 50-200 |
 
 ## Budget management
 
 | Tool | Purpose | Typical Token Cost |
 |---|---|---|
-| [`iris_budget`](/docs/tools/budget) | Check budget status | minimal |
-| [`iris_compress`](/docs/tools/compress) | Get compressed summaries | 50-200 |
-| [`iris_evicted`](/docs/tools/evicted) | Signal evicted content | minimal |
+| [`ministr_budget`](/docs/tools/budget) | Check budget status | minimal |
+| [`ministr_compress`](/docs/tools/compress) | Get compressed summaries | 50-200 |
+| [`ministr_evicted`](/docs/tools/evicted) | Signal evicted content | minimal |
 
 ## Multi-source corpora
 
 | Tool | Purpose | Typical Token Cost | Latency |
 |---|---|---|---|
-| [`iris_fetch`](/docs/tools/fetch) | Fetch web content into the corpus | 50-200 | seconds (network) |
-| [`iris_clone`](/docs/tools/clone) | Clone and index a git repo | 50-200 | seconds to minutes |
-| [`iris_refresh`](/docs/tools/refresh) | Re-fetch changed sources | 50-200 | seconds (network) |
+| [`ministr_fetch`](/docs/tools/fetch) | Fetch web content into the corpus | 50-200 | seconds (network) |
+| [`ministr_clone`](/docs/tools/clone) | Clone and index a git repo | 50-200 | seconds to minutes |
+| [`ministr_refresh`](/docs/tools/refresh) | Re-fetch changed sources | 50-200 | seconds (network) |
 
 ## Common Response Fields
 
@@ -61,4 +61,4 @@ budget ← compress ← evicted
 4. **Related** to follow reasoning chains
 5. **Budget** to check pressure and get eviction recommendations
 6. **Compress** sections before evicting them
-7. **Evicted** to tell iris what was dropped (improves tracking accuracy)
+7. **Evicted** to tell ministr what was dropped (improves tracking accuracy)

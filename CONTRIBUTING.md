@@ -1,8 +1,8 @@
-# Contributing to iris
+# Contributing to ministr
 
 Contributions are welcome — whether it's a bug fix, new language grammar, documentation improvement, or a new feature. This guide covers everything you need to get started.
 
-If you're looking for a place to begin, check the [issues labeled `good first issue`](https://github.com/AlrikOlson/iris-rs/labels/good%20first%20issue).
+If you're looking for a place to begin, check the [issues labeled `good first issue`](https://github.com/AlrikOlson/ministr-rs/labels/good%20first%20issue).
 
 ## Development setup
 
@@ -15,8 +15,8 @@ If you're looking for a place to begin, check the [issues labeled `good first is
 ### Clone and build
 
 ```sh
-git clone https://github.com/AlrikOlson/iris-rs.git
-cd iris-rs
+git clone https://github.com/AlrikOlson/ministr-rs.git
+cd ministr-rs
 cargo build --workspace
 ```
 
@@ -29,32 +29,32 @@ just fmt-check         # Check formatting
 just validate          # All three: fmt-check + lint + test
 ```
 
-### Run iris locally
+### Run ministr locally
 
 Always use `--release` — debug mode is unusably slow due to ONNX runtime + macOS XProtect scanning:
 
 ```sh
-cargo install --path iris-cli
-iris index             # Pre-warm the index
-iris serve             # Start MCP server (stdio)
+cargo install --path ministr-cli
+ministr index             # Pre-warm the index
+ministr serve             # Start MCP server (stdio)
 ```
 
 ## Architecture overview
 
 ```
-iris-core/          — domain logic, no transport dependencies
-iris-api/           — shared request/response types for daemon ↔ MCP/CLI
-iris-daemon/        — HTTP API over Unix domain socket
-iris-mcp/           — MCP server adapter (rmcp)
-iris-cli/           — binary entry point
-iris-app/src-tauri/ — Tauri v2 desktop app with system tray
+ministr-core/          — domain logic, no transport dependencies
+ministr-api/           — shared request/response types for daemon ↔ MCP/CLI
+ministr-daemon/        — HTTP API over Unix domain socket
+ministr-mcp/           — MCP server adapter (rmcp)
+ministr-cli/           — binary entry point
+ministr-app/src-tauri/ — Tauri v2 desktop app with system tray
 ```
 
 ### Layered architecture
 
 Each crate follows **transport → service → storage** layering:
 
-- **Transport** (iris-mcp, iris-daemon): MCP tool handlers, JSON-RPC routing, HTTP API
+- **Transport** (ministr-mcp, ministr-daemon): MCP tool handlers, JSON-RPC routing, HTTP API
 - **Service**: Business logic — session shadow, prefetch engine, budget manager
 - **Storage**: SQLite, HNSW index, file system access
 
@@ -64,23 +64,23 @@ No layer may skip a level. Transport calls service; service calls storage.
 
 | Subsystem | Location | Purpose |
 |-----------|----------|---------|
-| Session Shadow | `iris-core/src/session/` | Tracks delivered content, deduplicates, detects evictions |
-| Prefetch Engine | `iris-core/src/session/prefetch/` | Predicts next reads using sequential, structural, topical, and cross-session strategies |
-| Budget Manager | `iris-core/src/session/budget.rs` | Estimates token usage, recommends evictions |
-| Coherence | `iris-core/src/coherence/` | Watches filesystem, invalidates stale content |
-| Bridge Linker | `iris-core/src/bridge/` | Detects cross-language bindings (napi, pyo3, tauri, wasm-bindgen) |
+| Session Shadow | `ministr-core/src/session/` | Tracks delivered content, deduplicates, detects evictions |
+| Prefetch Engine | `ministr-core/src/session/prefetch/` | Predicts next reads using sequential, structural, topical, and cross-session strategies |
+| Budget Manager | `ministr-core/src/session/budget.rs` | Estimates token usage, recommends evictions |
+| Coherence | `ministr-core/src/coherence/` | Watches filesystem, invalidates stale content |
+| Bridge Linker | `ministr-core/src/bridge/` | Detects cross-language bindings (napi, pyo3, tauri, wasm-bindgen) |
 
 ### Dependency rule
 
 ```
-iris-cli  →  iris-mcp  →  iris-core
+ministr-cli  →  ministr-mcp  →  ministr-core
                 ↑    ↘        ↑
-            uses rmcp  iris-api (shared types)
+            uses rmcp  ministr-api (shared types)
             (MCP SDK)     ↑
-                      iris-daemon (UDS API)
+                      ministr-daemon (UDS API)
 ```
 
-`iris-core` never imports MCP or transport types. `iris-api` never depends on `iris-core`.
+`ministr-core` never imports MCP or transport types. `ministr-api` never depends on `ministr-core`.
 
 ## Making changes
 
@@ -97,7 +97,7 @@ iris-cli  →  iris-mcp  →  iris-core
 
 - **No `.unwrap()` or `.expect()`** in library code (tests are fine)
 - **`#![deny(unsafe_code)]`** in every crate
-- **`thiserror`** for error types in iris-core; **`miette`** for diagnostics in iris-cli/iris-mcp
+- **`thiserror`** for error types in ministr-core; **`miette`** for diagnostics in ministr-cli/ministr-mcp
 - **`tracing`** for all instrumentation (not `log`)
 - **Clippy pedantic** — `cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic`
 - **Edition 2024** — use modern Rust idioms
@@ -150,13 +150,13 @@ CI runs these automatically on every PR.
   installers), crates.io publish order, and Homebrew tap update.
 - **macOS signing & notarization** — the desktop app and CLI binary both
   need a Developer ID identity before distribution. See
-  [iris-app/SIGNING.md](iris-app/SIGNING.md) for env vars, entitlements,
+  [ministr-app/SIGNING.md](ministr-app/SIGNING.md) for env vars, entitlements,
   and the `just pkg` / `just pkg-dev` workflows.
 
 ## Reporting issues
 
-- Use [GitHub Issues](https://github.com/AlrikOlson/iris-rs/issues)
-- Include: iris version, OS, Rust version, and steps to reproduce
+- Use [GitHub Issues](https://github.com/AlrikOlson/ministr-rs/issues)
+- Include: ministr version, OS, Rust version, and steps to reproduce
 - For performance issues, include `RUST_LOG=debug` output
 
 ## License

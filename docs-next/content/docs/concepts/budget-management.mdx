@@ -1,9 +1,9 @@
 ---
 title: Budget Management
-description: How iris tracks cumulative token usage, enters pressure mode, and provides eviction recommendations to prevent context-window thrashing.
+description: How ministr tracks cumulative token usage, enters pressure mode, and provides eviction recommendations to prevent context-window thrashing.
 ---
 
-Context budget management is iris's equivalent of a CPU cache replacement policy. It tracks cumulative token usage and provides active guidance to prevent context thrashing.
+Context budget management is ministr's equivalent of a CPU cache replacement policy. It tracks cumulative token usage and provides active guidance to prevent context thrashing.
 
 ## The Problem
 
@@ -13,7 +13,7 @@ This is the AI equivalent of cache thrashing.
 
 ## How It Works
 
-iris accepts a `default_context_budget` configuration parameter representing the agent's total context window budget in tokens. As the session progresses, iris tracks cumulative delivery and provides:
+ministr accepts a `default_context_budget` configuration parameter representing the agent's total context window budget in tokens. As the session progresses, ministr tracks cumulative delivery and provides:
 
 ### Budget-Aware Responses
 
@@ -34,7 +34,7 @@ The agent can use this to make informed decisions about what to read next.
 
 ### Pressure Mode
 
-When estimated usage exceeds a threshold (default: 80% of budget), iris enters pressure mode:
+When estimated usage exceeds a threshold (default: 80% of budget), ministr enters pressure mode:
 
 - **Responses are automatically compressed** — claim-level extracts instead of full sections, reducing tokens by 60-80%
 - **Eviction recommendations are attached** — ranked by recency, relevance decay, and dependency analysis
@@ -42,7 +42,7 @@ When estimated usage exceeds a threshold (default: 80% of budget), iris enters p
 
 ### Eviction Recommendations
 
-Call `iris_budget` to get current status and eviction candidates:
+Call `ministr_budget` to get current status and eviction candidates:
 
 ```json
 {
@@ -59,7 +59,7 @@ Call `iris_budget` to get current status and eviction candidates:
 
 ### Compression on Demand
 
-Call `iris_compress` with content IDs to get compressed summaries before evicting:
+Call `ministr_compress` with content IDs to get compressed summaries before evicting:
 
 ```json
 {

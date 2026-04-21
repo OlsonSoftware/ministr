@@ -29,17 +29,17 @@ export function Hero() {
           <div className="relative">
             <motion.span
               {...stagger(0)}
-              className="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--color-iris-400)_28%,transparent)] bg-[color-mix(in_oklch,var(--iris-surface)_60%,transparent)] px-3 py-1 text-[11px] font-mono text-fd-muted-foreground backdrop-blur"
+              className="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--color-ministr-400)_28%,transparent)] bg-[color-mix(in_oklch,var(--ministr-surface)_60%,transparent)] px-3 py-1 text-[11px] font-mono text-fd-muted-foreground backdrop-blur"
             >
-              <Box className="size-3.5 text-[var(--color-iris-400)]" aria-hidden />
+              <Box className="size-3.5 text-[var(--color-ministr-400)]" aria-hidden />
               MCP server · local · Rust
             </motion.span>
 
             <motion.h1
               {...stagger(1)}
-              className="iris-hero-mark mt-6 text-[clamp(3.25rem,9vw,6.75rem)] font-semibold leading-[0.9] text-fd-foreground"
+              className="ministr-hero-mark mt-6 text-[clamp(3.25rem,9vw,6.75rem)] font-semibold leading-[0.9] text-fd-foreground"
             >
-              iris<span className="iris-gradient-text">.</span>
+              ministr<span className="ministr-gradient-text">.</span>
             </motion.h1>
 
             <motion.p
@@ -51,7 +51,7 @@ export function Hero() {
 
             <motion.p
               {...stagger(3)}
-              className="iris-body mt-4 max-w-[52ch] text-[14.5px] leading-relaxed"
+              className="ministr-body mt-4 max-w-[52ch] text-[14.5px] leading-relaxed"
             >
               Serve what&rsquo;s needed. Remember what&rsquo;s been sent.
               Predict what comes next. Semantic search, symbol navigation,
@@ -61,10 +61,10 @@ export function Hero() {
 
             <motion.div {...stagger(4)} className="mt-8">
               <GlassCard padded={false} className="inline-flex items-center gap-3 pl-4 pr-2 py-2 font-mono text-sm">
-                <span className="text-[var(--color-iris-400)] select-none">$</span>
-                <span>claude mcp add iris -- iris</span>
+                <span className="text-[var(--color-ministr-400)] select-none">$</span>
+                <span>claude mcp add ministr -- ministr</span>
                 <CopyButton
-                  value="claude mcp add iris -- iris"
+                  value="claude mcp add ministr -- ministr"
                   label="Copy install command"
                   size="sm"
                   className="ml-1"
@@ -75,20 +75,20 @@ export function Hero() {
             <motion.div {...stagger(5)} className="mt-6 flex flex-wrap items-center gap-3">
               <Link
                 href="/docs/getting-started"
-                className="iris-cta-primary group inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-medium"
+                className="ministr-cta-primary group inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-medium"
               >
-                Install iris
+                Install ministr
                 <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
               </Link>
               <Link
                 href="/docs/architecture"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border/70 bg-[color-mix(in_oklch,var(--iris-surface)_55%,transparent)] px-4 py-2.5 text-sm font-medium text-fd-foreground backdrop-blur transition hover:bg-[color-mix(in_oklch,var(--iris-surface)_75%,transparent)]"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border/70 bg-[color-mix(in_oklch,var(--ministr-surface)_55%,transparent)] px-4 py-2.5 text-sm font-medium text-fd-foreground backdrop-blur transition hover:bg-[color-mix(in_oklch,var(--ministr-surface)_75%,transparent)]"
               >
                 Read the architecture
               </Link>
               <Link
-                href="https://github.com/AlrikOlson/iris-rs"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-fd-muted-foreground transition hover:text-[var(--iris-accent-text)]"
+                href="https://github.com/AlrikOlson/ministr-rs"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-fd-muted-foreground transition hover:text-[var(--ministr-accent-text)]"
               >
                 <GithubGlyph className="size-4" />
                 GitHub

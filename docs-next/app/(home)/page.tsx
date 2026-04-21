@@ -6,7 +6,7 @@ import { StatsStrip } from '@/components/landing/stats-strip';
 import { Thesis } from '@/components/landing/thesis';
 import { Mechanisms } from '@/components/landing/mechanisms';
 import { ArchitectureFlow } from '@/components/landing/architecture-flow';
-import { WhatIrisIsnt } from '@/components/landing/what-iris-isnt';
+import { WhatMinistrIsnt } from '@/components/landing/what-ministr-isnt';
 import { InstallTabs } from '@/components/landing/install-tabs';
 import { ToolList } from '@/components/landing/tool-list';
 import { CtaCoda } from '@/components/landing/cta-coda';
@@ -14,7 +14,7 @@ import { NoiseOverlay } from '@/components/landing/noise-overlay';
 import { Reveal } from '@/components/landing/reveal';
 
 /**
- * Landing — the iris "Observatory" composition.
+ * Landing — the ministr "Observatory" composition.
  *
  * Flow (Z→F scan path, research-informed):
  *   1. Hero composite (aurora + lens + wordmark + terminal)
@@ -22,7 +22,7 @@ import { Reveal } from '@/components/landing/reveal';
  *   3. Thesis       (what agents waste)
  *   4. Mechanisms   (5 mechanisms + hybrid search, bento)
  *   5. Architecture (how it wires up)
- *   6. What iris isn't (differentiation strikethroughs)
+ *   6. What ministr isn't (differentiation strikethroughs)
  *   7. Install      (30-second path)
  *   8. Tool ref     (twelve tools your agent already speaks)
  *   9. CTA coda     (stop re-reading the same files)
@@ -31,8 +31,8 @@ import { Reveal } from '@/components/landing/reveal';
 export default function HomePage() {
   return (
     <main
-      data-iris-landing
-      className="iris-landing relative isolate flex flex-col items-stretch overflow-x-hidden pb-0"
+      data-ministr-landing
+      className="ministr-landing relative isolate flex flex-col items-stretch overflow-x-hidden pb-0"
     >
       {/* Page-wide chromatic flow — subtle shader ambience, scroll-driven */}
       <ChromaticFlowClient />
@@ -43,12 +43,12 @@ export default function HomePage() {
       <Thesis />
       <Mechanisms />
       <ArchitectureFlow />
-      <WhatIrisIsnt />
+      <WhatMinistrIsnt />
 
       <Section belowFold>
         <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
           <Reveal>
-            <p className="iris-eyebrow">Install</p>
+            <p className="ministr-eyebrow">Install</p>
           </Reveal>
           <Reveal delay={0.08}>
             <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
@@ -56,7 +56,7 @@ export default function HomePage() {
             </h2>
           </Reveal>
           <Reveal delay={0.16}>
-            <p className="iris-body mt-4 text-[15.5px]">
+            <p className="ministr-body mt-4 text-[15.5px]">
               Three commands. Any MCP client. Fully local.
             </p>
           </Reveal>
@@ -71,7 +71,7 @@ export default function HomePage() {
       <Section belowFold>
         <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
           <Reveal>
-            <p className="iris-eyebrow">Tools</p>
+            <p className="ministr-eyebrow">Tools</p>
           </Reveal>
           <Reveal delay={0.08}>
             <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
@@ -79,11 +79,11 @@ export default function HomePage() {
             </h2>
           </Reveal>
           <Reveal delay={0.16}>
-            <p className="iris-body mt-4 text-[15.5px]">
-              iris exposes these as MCP tools. Every one links to its doc page.
+            <p className="ministr-body mt-4 text-[15.5px]">
+              ministr exposes these as MCP tools. Every one links to its doc page.
             </p>
           </Reveal>
-          <div className="iris-spectrum-rule mt-10" />
+          <div className="ministr-spectrum-rule mt-10" />
           <div className="mt-10">
             <Reveal delay={0.24}>
               <ToolList />
@@ -98,9 +98,9 @@ export default function HomePage() {
         <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
           <div className="flex flex-col items-center gap-4 pt-10 text-center">
             {/* Spectrum hairline separator — ties into the brand material set */}
-            <div className="iris-spectrum-rule-major w-full max-w-md" />
-            <p className="iris-body-quiet inline-flex items-center gap-2 text-[13px]">
-              <span aria-hidden className="iris-mark-dot" />
+            <div className="ministr-spectrum-rule-major w-full max-w-md" />
+            <p className="ministr-body-quiet inline-flex items-center gap-2 text-[13px]">
+              <span aria-hidden className="ministr-mark-dot" />
               Full docs cover every tool, every config key, and the architecture in depth.
             </p>
             <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-[14px]">
@@ -111,7 +111,7 @@ export default function HomePage() {
               <FooterLink href="/docs/tools">Tool reference</FooterLink>
               <FooterLink href="/docs/architecture">Architecture</FooterLink>
               <FooterLink href="/docs/concepts">Concepts</FooterLink>
-              <FooterLink href="https://github.com/AlrikOlson/iris-rs">GitHub</FooterLink>
+              <FooterLink href="https://github.com/AlrikOlson/ministr-rs">GitHub</FooterLink>
             </nav>
           </div>
         </div>
@@ -144,7 +144,7 @@ function FooterLink({
   return (
     <Link
       href={href}
-      className="group inline-flex items-center text-fd-muted-foreground transition hover:text-[var(--iris-accent-text)]"
+      className="group inline-flex items-center text-fd-muted-foreground transition hover:text-[var(--ministr-accent-text)]"
     >
       {children}
     </Link>

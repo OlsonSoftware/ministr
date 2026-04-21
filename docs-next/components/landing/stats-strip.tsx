@@ -14,7 +14,7 @@ const STATS = [
 export function StatsStrip() {
   return (
     <section className="relative py-10 sm:py-12">
-      <div className="iris-spectrum-rule mx-auto max-w-6xl" />
+      <div className="ministr-spectrum-rule mx-auto max-w-6xl" />
       <div className="mx-auto grid max-w-6xl grid-cols-2 gap-6 px-6 py-8 sm:grid-cols-4 sm:gap-4">
         {STATS.map((s, i) => (
           <Reveal key={s.u} delay={i * 0.08}>
@@ -22,15 +22,15 @@ export function StatsStrip() {
               <span className="font-mono text-[clamp(1.5rem,2.4vw,2rem)] font-semibold tracking-tight text-fd-foreground tabular-nums">
                 {s.k}
               </span>
-              <span className="text-[11px] font-mono uppercase tracking-[0.18em] text-[var(--iris-accent-text)]">
+              <span className="text-[11px] font-mono uppercase tracking-[0.18em] text-[var(--ministr-accent-text)]">
                 {s.u}
               </span>
-              <span className="iris-body-quiet text-[12.5px]">{s.sub}</span>
+              <span className="ministr-body-quiet text-[12.5px]">{s.sub}</span>
             </div>
           </Reveal>
         ))}
       </div>
-      <div className="iris-spectrum-rule mx-auto max-w-6xl" />
+      <div className="ministr-spectrum-rule mx-auto max-w-6xl" />
     </section>
   );
 }

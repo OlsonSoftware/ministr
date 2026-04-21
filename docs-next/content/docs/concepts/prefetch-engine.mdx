@@ -1,13 +1,13 @@
 ---
 title: Prefetch Engine
-description: How iris predicts what the agent will need next using sequential, topical, and structural locality heuristics.
+description: How ministr predicts what the agent will need next using sequential, topical, and structural locality heuristics.
 ---
 
 The prefetch engine predicts what the agent will need next and pre-computes it, so cached results are served without re-embedding and re-searching on every call.
 
 ## Why Prefetch Matters
 
-Every tool call round-trip costs latency, tokens, and money. If iris can predict what the agent will ask for next and have it ready, the interaction feels instantaneous.
+Every tool call round-trip costs latency, tokens, and money. If ministr can predict what the agent will ask for next and have it ready, the interaction feels instantaneous.
 
 ## Prediction Strategies
 
@@ -46,7 +46,7 @@ Prefetching can be disabled entirely with `enabled = false`. The cache size cont
 
 ## Cross-Session Learning
 
-Over time, iris accumulates data about access patterns:
+Over time, ministr accumulates data about access patterns:
 
 - **Frequently accessed sections** get priority in prefetch caches
 - **Sections consistently delivered together** are pre-bundled

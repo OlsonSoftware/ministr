@@ -18,8 +18,8 @@ export function CtaCoda() {
           </h2>
         </Reveal>
         <Reveal delay={0.12}>
-          <p className="iris-body mx-auto mt-6 max-w-[52ch] text-[17px]">
-            Install iris in 30 seconds. It works with any MCP client, runs
+          <p className="ministr-body mx-auto mt-6 max-w-[52ch] text-[17px]">
+            Install ministr in 30 seconds. It works with any MCP client, runs
             100% locally, and leaves no trace on the wire.
           </p>
         </Reveal>
@@ -27,14 +27,14 @@ export function CtaCoda() {
           <div className="mt-10 flex flex-wrap justify-center gap-3">
             <Link
               href="/docs/getting-started"
-              className="iris-cta-primary group inline-flex items-center gap-1.5 rounded-lg px-5 py-3 text-[15px] font-medium"
+              className="ministr-cta-primary group inline-flex items-center gap-1.5 rounded-lg px-5 py-3 text-[15px] font-medium"
             >
-              Install iris
+              Install ministr
               <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
             </Link>
             <Link
-              href="https://github.com/AlrikOlson/iris-rs"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border/70 bg-[color-mix(in_oklch,var(--iris-surface)_55%,transparent)] px-5 py-3 text-[15px] font-medium text-fd-foreground backdrop-blur transition hover:bg-[color-mix(in_oklch,var(--iris-surface)_78%,transparent)]"
+              href="https://github.com/AlrikOlson/ministr-rs"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border/70 bg-[color-mix(in_oklch,var(--ministr-surface)_55%,transparent)] px-5 py-3 text-[15px] font-medium text-fd-foreground backdrop-blur transition hover:bg-[color-mix(in_oklch,var(--ministr-surface)_78%,transparent)]"
             >
               <GithubGlyph className="size-4" />
               Star on GitHub
@@ -42,8 +42,8 @@ export function CtaCoda() {
           </div>
         </Reveal>
         <Reveal delay={0.3}>
-          <p className="iris-body-quiet mt-10 inline-flex items-center gap-2 text-[12.5px]">
-            <span aria-hidden className="iris-mark-dot" />
+          <p className="ministr-body-quiet mt-10 inline-flex items-center gap-2 text-[12.5px]">
+            <span aria-hidden className="ministr-mark-dot" />
             Made by Alrik · MIT license · Rust, zero unsafe.
           </p>
         </Reveal>

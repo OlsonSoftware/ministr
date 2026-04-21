@@ -20,7 +20,7 @@ export function Thesis() {
         <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-end lg:gap-16">
           <div>
             <Reveal>
-              <p className="iris-eyebrow">The problem</p>
+              <p className="ministr-eyebrow">The problem</p>
             </Reveal>
             <h2 className="mt-5 space-y-2 text-[clamp(2rem,4.4vw,3.5rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
               <Reveal as="div" delay={0.0}>Grep finds lines. Read dumps files.</Reveal>
@@ -33,14 +33,14 @@ export function Thesis() {
             </h2>
           </div>
           <Reveal delay={0.4}>
-            <p className="iris-body max-w-[56ch] text-[17px] leading-relaxed">
+            <p className="ministr-body max-w-[56ch] text-[17px] leading-relaxed">
               Claude Code&rsquo;s default tools are <span className="font-mono">Glob</span>,{' '}
               <span className="font-mono">Grep</span>, and{' '}
               <span className="font-mono">Read</span>: coarse text matching plus full-file dumps.
               Agents pay for every line, get no session memory, and re-read the same files
               turn after turn.{' '}
               <span className="font-medium text-fd-foreground">
-                iris replaces all three with a semantic index that ships the exact section, once.
+                ministr replaces all three with a semantic index that ships the exact section, once.
               </span>
             </p>
           </Reveal>
@@ -55,12 +55,12 @@ export function Thesis() {
 }
 
 /**
- * WasteDiagram — interactive playback of grep+read vs iris.
+ * WasteDiagram — interactive playback of grep+read vs ministr.
  *
  * A playable step-through comparing the two workflows tool-call by
  * tool-call. Press play and cumulative token bars fill while each
  * call becomes active; the grep+read side blows past the 80% budget
- * wall while iris stays in a green zone. Hover a step to see the
+ * wall while ministr stays in a green zone. Hover a step to see the
  * output preview; click a step to jump to it.
  *
  * Why grep burns tokens: Claude Code's Grep prepends every match with
@@ -69,8 +69,8 @@ export function Thesis() {
  * dumps across several candidates. Followups pay for re-reads too
  * because Claude Code has no session memory across turns.
  *
- * Why iris saves: iris_survey returns ranked section IDs, not line
- * dumps. iris_definition returns only the function body. Follow-up
+ * Why ministr saves: ministr_survey returns ranked section IDs, not line
+ * dumps. ministr_definition returns only the function body. Follow-up
  * reads turn into delta pointers via the session shadow.
  */
 type Step = {
@@ -83,7 +83,7 @@ type Step = {
 };
 
 // Claude Code path — reflects the actual Glob/Grep/Read toolset.
-const WITHOUT_IRIS: Step[] = [
+const WITHOUT_MINISTR: Step[] = [
   {
     tool: 'Glob',
     args: '"**/*.rs"',
@@ -131,11 +131,11 @@ const WITHOUT_IRIS: Step[] = [
   },
 ];
 
-// iris path — semantic survey + direct section read. Follow-up call
+// ministr path — semantic survey + direct section read. Follow-up call
 // becomes a delta pointer because the session shadow remembers.
-const WITH_IRIS: Step[] = [
+const WITH_MINISTR: Step[] = [
   {
-    tool: 'iris_survey',
+    tool: 'ministr_survey',
     args: '"validate email function"',
     tokens: 200,
     signal: 200,
@@ -144,7 +144,7 @@ const WITH_IRIS: Step[] = [
     note: 'ranked section ids · no line dumps',
   },
   {
-    tool: 'iris_definition',
+    tool: 'ministr_definition',
     args: '"users.rs#validate_email"',
     tokens: 220,
     signal: 220,
@@ -153,7 +153,7 @@ const WITH_IRIS: Step[] = [
     note: '22 lines · nothing else',
   },
   {
-    tool: 'iris_references',
+    tool: 'ministr_references',
     args: '"validate_email"',
     tokens: 100,
     signal: 100,
@@ -162,7 +162,7 @@ const WITH_IRIS: Step[] = [
     note: '4 callers · surgical list',
   },
   {
-    tool: 'iris_read',
+    tool: 'ministr_read',
     args: 'users.rs#validate_email',
     tokens: 5,
     signal: 5,
@@ -176,12 +176,12 @@ function sum(s: Step[], k: 'tokens' | 'signal') {
   return s.reduce((a, v) => a + v[k], 0);
 }
 
-const BLIND_TOTAL = sum(WITHOUT_IRIS, 'tokens');
-const IRIS_TOTAL = sum(WITH_IRIS, 'tokens');
+const BLIND_TOTAL = sum(WITHOUT_MINISTR, 'tokens');
+const MINISTR_TOTAL = sum(WITH_MINISTR, 'tokens');
 const BUDGET = 12500; // token budget for the cumulative bar
 const WALL = 0.8 * BUDGET; // 80% pressure line
 const STEP_MS = 900;     // playback cadence
-const TOTAL_STEPS = Math.max(WITHOUT_IRIS.length, WITH_IRIS.length);
+const TOTAL_STEPS = Math.max(WITHOUT_MINISTR.length, WITH_MINISTR.length);
 
 // Rough Claude Sonnet 4 pricing as of early 2026: $3/1M input tokens.
 // Shown only as a subtle "at scale, across a 10k-session week" multiplier
@@ -209,7 +209,7 @@ function WasteDiagram() {
   const reduced = useReducedMotion();
   const [active, setActive] = useState(-1); // -1 = nothing played yet
   const [playing, setPlaying] = useState(false);
-  const [hovered, setHovered] = useState<null | { side: 'blind' | 'iris'; index: number }>(null);
+  const [hovered, setHovered] = useState<null | { side: 'blind' | 'ministr'; index: number }>(null);
   const timer = useRef<number | null>(null);
 
   // Auto-run: when Play pressed, advance active step every STEP_MS
@@ -270,35 +270,35 @@ function WasteDiagram() {
 
   // Cumulative token & signal totals driven by `active`. These drive
   // the running budget bars at the top of the diagram.
-  const blindCum = cumulative(WITHOUT_IRIS, active);
-  const irisCum = cumulative(WITH_IRIS, active);
+  const blindCum = cumulative(WITHOUT_MINISTR, active);
+  const ministrCum = cumulative(WITH_MINISTR, active);
   const blindPastWall = blindCum.tok >= WALL;
 
   const activePreview = hovered
-    ? (hovered.side === 'blind' ? WITHOUT_IRIS : WITH_IRIS)[hovered.index]
+    ? (hovered.side === 'blind' ? WITHOUT_MINISTR : WITH_MINISTR)[hovered.index]
     : active >= 0
       ? // Show the most recently activated step on the grep+read side by default
-        WITHOUT_IRIS[Math.min(active, WITHOUT_IRIS.length - 1)]
+        WITHOUT_MINISTR[Math.min(active, WITHOUT_MINISTR.length - 1)]
       : null;
 
-  const reduction = Math.round((1 - IRIS_TOTAL / BLIND_TOTAL) * 100);
-  const multiple = Math.round(BLIND_TOTAL / IRIS_TOTAL);
+  const reduction = Math.round((1 - MINISTR_TOTAL / BLIND_TOTAL) * 100);
+  const multiple = Math.round(BLIND_TOTAL / MINISTR_TOTAL);
 
   return (
     <div
-      className="glass-card relative overflow-hidden p-5 sm:p-7 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklch,var(--color-iris-400)_55%,transparent)]"
+      className="glass-card relative overflow-hidden p-5 sm:p-7 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklch,var(--color-ministr-400)_55%,transparent)]"
       role="region"
-      aria-label="Interactive comparison: grep + read workflow vs iris workflow. Use Space to play/pause, arrow keys to step, R to reset."
+      aria-label="Interactive comparison: grep + read workflow vs ministr workflow. Use Space to play/pause, arrow keys to step, R to reset."
       tabIndex={0}
       onKeyDown={onKeyDown}
     >
       {/* ── Header: eyebrow + task + playback controls ─────────── */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="iris-eyebrow">One task · two workflows</p>
-          <p className="iris-body-quiet mt-2 font-mono text-[12px] leading-relaxed">
+          <p className="ministr-eyebrow">One task · two workflows</p>
+          <p className="ministr-body-quiet mt-2 font-mono text-[12px] leading-relaxed">
             <span className="text-fd-foreground">task:</span> find and edit the{' '}
-            <span className="text-[var(--iris-accent-text)]">validate_email</span>{' '}
+            <span className="text-[var(--ministr-accent-text)]">validate_email</span>{' '}
             function in a mid-size Rust repo.
           </p>
         </div>
@@ -308,7 +308,7 @@ function WasteDiagram() {
             onClick={togglePlay}
             aria-label={playing ? 'Pause playback (space)' : 'Play workflow comparison (space)'}
             aria-pressed={playing}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[color-mix(in_oklch,var(--color-iris-400)_40%,transparent)] bg-[color-mix(in_oklch,var(--color-iris-500)_16%,transparent)] px-3 py-1.5 font-mono text-[12px] font-medium text-fd-foreground transition hover:bg-[color-mix(in_oklch,var(--color-iris-500)_26%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklch,var(--color-iris-400)_55%,transparent)]"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[color-mix(in_oklch,var(--color-ministr-400)_40%,transparent)] bg-[color-mix(in_oklch,var(--color-ministr-500)_16%,transparent)] px-3 py-1.5 font-mono text-[12px] font-medium text-fd-foreground transition hover:bg-[color-mix(in_oklch,var(--color-ministr-500)_26%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklch,var(--color-ministr-400)_55%,transparent)]"
           >
             {playing ? (
               <>
@@ -328,11 +328,11 @@ function WasteDiagram() {
             type="button"
             onClick={reset}
             aria-label="Reset playback (R)"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border/50 bg-[color-mix(in_oklch,var(--iris-surface)_45%,transparent)] px-2.5 py-1.5 font-mono text-[12px] text-fd-muted-foreground transition hover:text-fd-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklch,var(--color-iris-400)_55%,transparent)]"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border/50 bg-[color-mix(in_oklch,var(--ministr-surface)_45%,transparent)] px-2.5 py-1.5 font-mono text-[12px] text-fd-muted-foreground transition hover:text-fd-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklch,var(--color-ministr-400)_55%,transparent)]"
           >
             <RotateCcw className="size-3.5" aria-hidden />
           </button>
-          <span className="iris-body-quiet ml-1 font-mono text-[10.5px] uppercase tracking-[0.16em]">
+          <span className="ministr-body-quiet ml-1 font-mono text-[10.5px] uppercase tracking-[0.16em]">
             step {String(Math.max(active + 1, 0)).padStart(2, '0')} / {String(TOTAL_STEPS).padStart(2, '0')}
           </span>
         </div>
@@ -341,14 +341,14 @@ function WasteDiagram() {
       {/* Keyboard shortcuts hint — only visible after focus, keeps
           the panel quiet for mouse users while power users get it. */}
       <p
-        className="iris-body-quiet mt-2 hidden font-mono text-[10px] uppercase tracking-[0.16em] md:block"
+        className="ministr-body-quiet mt-2 hidden font-mono text-[10px] uppercase tracking-[0.16em] md:block"
         aria-hidden
       >
-        <kbd className="rounded border border-fd-border/50 bg-[color-mix(in_oklch,var(--iris-surface)_55%,transparent)] px-1">space</kbd>{' '}
+        <kbd className="rounded border border-fd-border/50 bg-[color-mix(in_oklch,var(--ministr-surface)_55%,transparent)] px-1">space</kbd>{' '}
         play/pause ·{' '}
-        <kbd className="rounded border border-fd-border/50 bg-[color-mix(in_oklch,var(--iris-surface)_55%,transparent)] px-1">← →</kbd>{' '}
+        <kbd className="rounded border border-fd-border/50 bg-[color-mix(in_oklch,var(--ministr-surface)_55%,transparent)] px-1">← →</kbd>{' '}
         step ·{' '}
-        <kbd className="rounded border border-fd-border/50 bg-[color-mix(in_oklch,var(--iris-surface)_55%,transparent)] px-1">R</kbd>{' '}
+        <kbd className="rounded border border-fd-border/50 bg-[color-mix(in_oklch,var(--ministr-surface)_55%,transparent)] px-1">R</kbd>{' '}
         reset · click any step to jump
       </p>
 
@@ -366,9 +366,9 @@ function WasteDiagram() {
           reduced={!!reduced}
         />
         <CumulativeBar
-          label="iris"
+          label="ministr"
           sublabel={active >= TOTAL_STEPS - 1 ? `−${reduction}% (${multiple}× less)` : 'semantic · stateful'}
-          total={irisCum.tok}
+          total={ministrCum.tok}
           budget={BUDGET}
           past={false}
           accent="success"
@@ -381,8 +381,8 @@ function WasteDiagram() {
       <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
         <Column
           title="grep + read workflow"
-          subtitle={`${WITHOUT_IRIS.length} calls · ${BLIND_TOTAL.toLocaleString()} tokens · 95% noise`}
-          steps={WITHOUT_IRIS}
+          subtitle={`${WITHOUT_MINISTR.length} calls · ${BLIND_TOTAL.toLocaleString()} tokens · 95% noise`}
+          steps={WITHOUT_MINISTR}
           mode="blind"
           active={active}
           hovered={hovered}
@@ -391,10 +391,10 @@ function WasteDiagram() {
           reduced={!!reduced}
         />
         <Column
-          title="iris workflow"
-          subtitle={`${WITH_IRIS.length} calls · ${IRIS_TOTAL.toLocaleString()} tokens · 100% signal`}
-          steps={WITH_IRIS}
-          mode="iris"
+          title="ministr workflow"
+          subtitle={`${WITH_MINISTR.length} calls · ${MINISTR_TOTAL.toLocaleString()} tokens · 100% signal`}
+          steps={WITH_MINISTR}
+          mode="ministr"
           active={active}
           hovered={hovered}
           onHover={setHovered}
@@ -406,16 +406,16 @@ function WasteDiagram() {
       {/* ── Verdict card appears when playback completes ──────── */}
       <AnimatePresence>
         {active >= TOTAL_STEPS - 1 && (
-          <Verdict blind={BLIND_TOTAL} iris={IRIS_TOTAL} reduced={!!reduced} />
+          <Verdict blind={BLIND_TOTAL} ministr={MINISTR_TOTAL} reduced={!!reduced} />
         )}
       </AnimatePresence>
 
       {/* ── Output preview pane: shows what the currently-active
              (or hovered) tool call actually returned. Makes the
              noise-vs-signal argument concrete. ────────────────────── */}
-      <div className="mt-6 rounded-lg border border-[color-mix(in_oklch,var(--color-iris-400)_18%,transparent)] bg-[color-mix(in_oklch,var(--iris-surface-strong)_40%,transparent)] p-4">
+      <div className="mt-6 rounded-lg border border-[color-mix(in_oklch,var(--color-ministr-400)_18%,transparent)] bg-[color-mix(in_oklch,var(--ministr-surface-strong)_40%,transparent)] p-4">
         <div className="flex items-center justify-between">
-          <span className="iris-body-quiet font-mono text-[10px] uppercase tracking-[0.18em]">
+          <span className="ministr-body-quiet font-mono text-[10px] uppercase tracking-[0.18em]">
             {activePreview ? 'tool output' : 'press play, or hover a step'}
           </span>
           {activePreview && (
@@ -532,17 +532,17 @@ function CumulativeBar({
       <div className="relative flex items-baseline justify-between">
         <span className="font-mono text-[11px] uppercase tracking-[0.18em]">
           <span style={{ color: accentVar }}>{label}</span>
-          <span className="iris-body-quiet ml-2">({sublabel})</span>
+          <span className="ministr-body-quiet ml-2">({sublabel})</span>
         </span>
         <span
           className="font-mono text-[clamp(1.1rem,1.8vw,1.35rem)] font-semibold tabular-nums"
           style={{ color: accentVar }}
         >
           <AnimatedNumber value={total} reduced={reduced} />
-          <span className="iris-body-quiet ml-1 text-[10.5px] font-normal">tok</span>
+          <span className="ministr-body-quiet ml-1 text-[10.5px] font-normal">tok</span>
         </span>
       </div>
-      <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--iris-surface-strong)_65%,transparent)]">
+      <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_65%,transparent)]">
         <motion.span
           className="absolute inset-y-0 left-0 rounded-full"
           style={{
@@ -582,7 +582,7 @@ function CumulativeBar({
         </div>
       </div>
       <div className="mt-1 flex items-baseline justify-between font-mono text-[10px] uppercase tracking-[0.18em]">
-        <span className="iris-body-quiet">
+        <span className="ministr-body-quiet">
           {'$'}
           {usd(total).toFixed(4)} this session · {'$'}
           {Math.round(weeklyUsd(total)).toLocaleString()}/wk @ 10k sessions
@@ -613,10 +613,10 @@ function Column({
   title: string;
   subtitle: string;
   steps: Step[];
-  mode: 'blind' | 'iris';
+  mode: 'blind' | 'ministr';
   active: number;
-  hovered: null | { side: 'blind' | 'iris'; index: number };
-  onHover: (h: null | { side: 'blind' | 'iris'; index: number }) => void;
+  hovered: null | { side: 'blind' | 'ministr'; index: number };
+  onHover: (h: null | { side: 'blind' | 'ministr'; index: number }) => void;
   onJump: (i: number) => void;
   reduced: boolean;
 }) {
@@ -627,7 +627,7 @@ function Column({
         <span className={mode === 'blind' ? 'text-[var(--color-warning)]' : 'text-[var(--color-success)]'}>
           {title}
         </span>
-        <span className="iris-body-quiet">{subtitle}</span>
+        <span className="ministr-body-quiet">{subtitle}</span>
       </div>
       <ol className="space-y-2">
         {steps.map((s, i) => {
@@ -653,25 +653,25 @@ function Column({
                 }
               }}
               className={
-                'group cursor-pointer rounded-md border px-3 py-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklch,var(--color-iris-400)_55%,transparent)] ' +
+                'group cursor-pointer rounded-md border px-3 py-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklch,var(--color-ministr-400)_55%,transparent)] ' +
                 (isActive
-                  ? 'border-[color-mix(in_oklch,var(--color-iris-400)_32%,transparent)] bg-[color-mix(in_oklch,var(--iris-surface-strong)_55%,transparent)]'
-                  : 'border-[color-mix(in_oklch,var(--color-iris-400)_10%,transparent)] bg-[color-mix(in_oklch,var(--iris-surface-strong)_20%,transparent)] opacity-55') +
+                  ? 'border-[color-mix(in_oklch,var(--color-ministr-400)_32%,transparent)] bg-[color-mix(in_oklch,var(--ministr-surface-strong)_55%,transparent)]'
+                  : 'border-[color-mix(in_oklch,var(--color-ministr-400)_10%,transparent)] bg-[color-mix(in_oklch,var(--ministr-surface-strong)_20%,transparent)] opacity-55') +
                 (isCurrent
-                  ? ' ring-1 ring-[color-mix(in_oklch,var(--color-iris-400)_50%,transparent)] shadow-[0_0_0_4px_color-mix(in_oklch,var(--color-iris-400)_12%,transparent)]'
+                  ? ' ring-1 ring-[color-mix(in_oklch,var(--color-ministr-400)_50%,transparent)] shadow-[0_0_0_4px_color-mix(in_oklch,var(--color-ministr-400)_12%,transparent)]'
                   : '') +
                 (isHovered ? ' scale-[1.01]' : '')
               }
             >
               <div className="flex items-baseline justify-between gap-2">
                 <span className="flex min-w-0 items-baseline gap-2 truncate font-mono text-[12px]">
-                  <span className="iris-body-quiet shrink-0">{String(i + 1).padStart(2, '0')}</span>
+                  <span className="ministr-body-quiet shrink-0">{String(i + 1).padStart(2, '0')}</span>
                   <span
                     className={
                       'shrink-0 ' +
                       (mode === 'blind'
                         ? 'text-[var(--color-warning)]'
-                        : 'text-[var(--iris-accent-text)]')
+                        : 'text-[var(--ministr-accent-text)]')
                     }
                   >
                     {s.tool}
@@ -685,11 +685,11 @@ function Column({
 
               {/* Signal / noise bar — animates in when this step
                   becomes active during playback. */}
-              <div className="mt-2 flex h-[8px] w-full overflow-hidden rounded-[3px] bg-[color-mix(in_oklch,var(--iris-surface-strong)_70%,transparent)]">
+              <div className="mt-2 flex h-[8px] w-full overflow-hidden rounded-[3px] bg-[color-mix(in_oklch,var(--ministr-surface-strong)_70%,transparent)]">
                 <motion.span
                   className="h-full"
                   style={{
-                    background: mode === 'iris' ? 'var(--color-success)' : 'var(--color-iris-500)',
+                    background: mode === 'ministr' ? 'var(--color-success)' : 'var(--color-ministr-500)',
                   }}
                   animate={{ width: `${isActive ? (s.signal / SCALE) * 100 : 0}%` }}
                   transition={{ duration: reduced ? 0 : 0.35, ease: [0.2, 0.8, 0.2, 1] }}
@@ -706,7 +706,7 @@ function Column({
               </div>
 
               <div className="mt-1.5 flex items-baseline justify-between font-mono text-[10px]">
-                <span className="iris-body-quiet truncate pr-2">{s.note}</span>
+                <span className="ministr-body-quiet truncate pr-2">{s.note}</span>
                 <span
                   className={
                     'shrink-0 uppercase tracking-[0.14em] ' +
@@ -793,7 +793,7 @@ function TypewriterBlock({ text, reduced }: { text: string; reduced: boolean }) 
       <span
         aria-hidden
         className={
-          'inline-block w-[0.5ch] translate-y-[2px] bg-[var(--iris-accent-text)] ' +
+          'inline-block w-[0.5ch] translate-y-[2px] bg-[var(--ministr-accent-text)] ' +
           (done ? 'animate-pulse' : '')
         }
         style={{ height: '0.95em' }}
@@ -809,22 +809,22 @@ function TypewriterBlock({ text, reduced }: { text: string; reduced: boolean }) 
  */
 function Verdict({
   blind,
-  iris,
+  ministr,
   reduced,
 }: {
   blind: number;
-  iris: number;
+  ministr: number;
   reduced: boolean;
 }) {
-  const multiple = Math.round(blind / Math.max(iris, 1));
-  const reduction = Math.round((1 - iris / blind) * 100);
-  const weeklySaved = Math.round(weeklyUsd(blind - iris));
+  const multiple = Math.round(blind / Math.max(ministr, 1));
+  const reduction = Math.round((1 - ministr / blind) * 100);
+  const weeklySaved = Math.round(weeklyUsd(blind - ministr));
   return (
     <motion.div
       initial={reduced ? false : { opacity: 0, y: 12, scale: 0.98 }}
       animate={reduced ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.55, ease: [0.2, 0.8, 0.2, 1] }}
-      className="relative mt-5 overflow-hidden rounded-lg border border-[color-mix(in_oklch,var(--color-iris-400)_32%,transparent)] bg-gradient-to-br from-[color-mix(in_oklch,var(--color-iris-500)_14%,transparent)] via-[color-mix(in_oklch,var(--color-violet-500)_10%,transparent)] to-[color-mix(in_oklch,var(--color-fuchsia-400)_10%,transparent)] px-4 py-4"
+      className="relative mt-5 overflow-hidden rounded-lg border border-[color-mix(in_oklch,var(--color-ministr-400)_32%,transparent)] bg-gradient-to-br from-[color-mix(in_oklch,var(--color-ministr-500)_14%,transparent)] via-[color-mix(in_oklch,var(--color-violet-500)_10%,transparent)] to-[color-mix(in_oklch,var(--color-fuchsia-400)_10%,transparent)] px-4 py-4"
     >
       {/* Spectrum hairline */}
       <div
@@ -832,18 +832,18 @@ function Verdict({
         className="pointer-events-none absolute inset-x-0 top-0 h-px"
         style={{
           background:
-            'linear-gradient(90deg in oklch, transparent 0%, var(--color-iris-500) 25%, var(--color-violet-500) 55%, var(--color-fuchsia-400) 80%, transparent 100%)',
+            'linear-gradient(90deg in oklch, transparent 0%, var(--color-ministr-500) 25%, var(--color-violet-500) 55%, var(--color-fuchsia-400) 80%, transparent 100%)',
           opacity: 0.8,
         }}
       />
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <span className="iris-eyebrow">Verdict</span>
+          <span className="ministr-eyebrow">Verdict</span>
           <div className="mt-1 flex items-baseline gap-3">
             <span className="font-mono text-[clamp(2rem,4vw,3rem)] font-semibold leading-none tabular-nums text-fd-foreground">
               {multiple}×
             </span>
-            <span className="iris-body font-mono text-[12px] uppercase tracking-[0.18em]">
+            <span className="ministr-body font-mono text-[12px] uppercase tracking-[0.18em]">
               fewer tokens · −{reduction}%
             </span>
           </div>
@@ -852,12 +852,12 @@ function Verdict({
           <span className="font-mono text-[clamp(1.1rem,2vw,1.45rem)] font-semibold tabular-nums text-[var(--color-success)]">
             ${weeklySaved.toLocaleString()}
           </span>
-          <span className="iris-body-quiet font-mono text-[10.5px] uppercase tracking-[0.18em]">
+          <span className="ministr-body-quiet font-mono text-[10.5px] uppercase tracking-[0.18em]">
             saved per week @ 10k sessions
           </span>
         </div>
       </div>
-      <p className="iris-body-quiet mt-3 font-mono text-[11px] leading-relaxed">
+      <p className="ministr-body-quiet mt-3 font-mono text-[11px] leading-relaxed">
         same task, same agent, same model — just the retrieval layer changed. the saved budget
         becomes reasoning room for the <span className="text-fd-foreground">next</span> question.
       </p>

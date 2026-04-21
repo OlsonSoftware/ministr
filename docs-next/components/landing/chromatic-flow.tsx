@@ -15,10 +15,10 @@ import * as THREE from 'three';
  * feels like stepping between differently-lit rooms. A damped lerp
  * handles the in-between so transitions are smooth.
  *
- * Dark mode: screen blend over an ink-950 page, iris/violet/fuchsia
+ * Dark mode: screen blend over an ink-950 page, ministr/violet/fuchsia
  * spectrum, brightening contribution.
  * Light mode: multiply blend over a near-white page, desaturated
- * iris ink, darkening contribution — so the backdrop reads as faint
+ * ministr ink, darkening contribution — so the backdrop reads as faint
  * coloured paper grain, never washed out.
  */
 export function ChromaticFlow({ className = '' }: { className?: string }) {
@@ -80,7 +80,7 @@ function FlowQuad({ reduced }: { reduced: boolean }) {
   useEffect(() => {
     const discover = () => {
       const list = Array.from(
-        document.querySelectorAll<HTMLElement>('.iris-landing > section'),
+        document.querySelectorAll<HTMLElement>('.ministr-landing > section'),
       );
       setSections(list);
     };
@@ -281,21 +281,21 @@ const FRAG = /* glsl */ `
     return vec3(v, q.x, r.x);
   }
 
-  /* ------------ iris spectrum ------------
+  /* ------------ ministr spectrum ------------
 
      Two palettes — the light one is a deliberate inversion of the
      dark palette: each colour pushed toward a desaturated ink that
      multiplies onto paper without going muddy. */
   vec3 darkHue(float phase) {
     phase = fract(phase);
-    vec3 iris    = vec3(0.36, 0.27, 0.85);
+    vec3 ministr    = vec3(0.36, 0.27, 0.85);
     vec3 violet  = vec3(0.58, 0.28, 0.95);
     vec3 fuchsia = vec3(0.92, 0.42, 0.92);
     vec3 magenta = vec3(0.72, 0.30, 0.78);
-    vec3 col = mix(iris,    violet,  smoothstep(0.00, 0.33, phase));
+    vec3 col = mix(ministr,    violet,  smoothstep(0.00, 0.33, phase));
     col      = mix(col,     fuchsia, smoothstep(0.33, 0.66, phase));
     col      = mix(col,     magenta, smoothstep(0.66, 0.95, phase));
-    col      = mix(col,     iris,    smoothstep(0.92, 1.00, phase));
+    col      = mix(col,     ministr,    smoothstep(0.92, 1.00, phase));
     return col;
   }
 
@@ -304,14 +304,14 @@ const FRAG = /* glsl */ `
     // Deeper, paper-safe variants: saturated but darker so they
     // read as coloured ink rather than pastel wash when used with
     // multiply blend over white. Hand-picked for OKLCH legibility.
-    vec3 iris    = vec3(0.24, 0.20, 0.70);
+    vec3 ministr    = vec3(0.24, 0.20, 0.70);
     vec3 violet  = vec3(0.36, 0.18, 0.75);
     vec3 fuchsia = vec3(0.68, 0.25, 0.74);
     vec3 magenta = vec3(0.50, 0.18, 0.52);
-    vec3 col = mix(iris,    violet,  smoothstep(0.00, 0.33, phase));
+    vec3 col = mix(ministr,    violet,  smoothstep(0.00, 0.33, phase));
     col      = mix(col,     fuchsia, smoothstep(0.33, 0.66, phase));
     col      = mix(col,     magenta, smoothstep(0.66, 0.95, phase));
-    col      = mix(col,     iris,    smoothstep(0.92, 1.00, phase));
+    col      = mix(col,     ministr,    smoothstep(0.92, 1.00, phase));
     return col;
   }
 
@@ -1048,7 +1048,7 @@ const FRAG = /* glsl */ `
     /* Lens ghost bubbles — a constellation of soft circular
        artifacts marching along the line from the sun through the
        screen centre. Each one is tinted a step further along the
-       iris spectrum, mimicking how real multi-element lens coatings
+       ministr spectrum, mimicking how real multi-element lens coatings
        create a rainbow chain of ghosts. */
     vec2 ghostVec = -sunPos; // sun → centre direction (centre is 0)
     // Ghosts are lens-coating artifacts in SCREEN space — the
@@ -1290,7 +1290,7 @@ const FRAG = /* glsl */ `
 
     /* Chromatic dispersion — scroll velocity cranks the wavelength
        split so quick scrolls feel like a camera whip-pan with
-       motion-chroma fringing that settles back to a calm iris
+       motion-chroma fringing that settles back to a calm ministr
        split when you stop. */
     float chromaAmt = 0.04 + vel * 0.14;
     float nr = smoothstep(0.05, 0.95, f2.z + chromaAmt);
@@ -1311,7 +1311,7 @@ const FRAG = /* glsl */ `
     darkOut *= mix(0.45, 1.0, falloff);
 
     /* ---- LIGHT mode path (multiply blend target) ----
-       Physically-based GREY smoke on paper. No iris colour wash.
+       Physically-based GREY smoke on paper. No ministr colour wash.
        Real smoke scatters sunlight forward (HG phase function),
        absorbs light via Beer-Lambert along a shadow ray toward the
        sun, and picks up a blue-ish ambient fill from the sky.

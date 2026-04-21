@@ -16,7 +16,7 @@ FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-# Stage 3: build dependencies, then build iris
+# Stage 3: build dependencies, then build ministr
 FROM chef AS builder
 
 # Install build-time system dependencies (Ubuntu 24.04 ships GCC 14)
@@ -30,12 +30,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Cook dependencies from recipe (cached unless Cargo.toml/lock change)
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json -p iris-cli
+RUN cargo chef cook --release --recipe-path recipe.json -p ministr-cli
 
 # Copy full source and build the actual binary
 COPY . .
-RUN cargo build --release -p iris-cli && \
-    cp target/release/iris /usr/local/bin/iris
+RUN cargo build --release -p ministr-cli && \
+    cp target/release/ministr /usr/local/bin/ministr
 
 # Stage 4: minimal runtime image
 FROM ubuntu:24.04 AS runtime
@@ -47,13 +47,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user
-RUN useradd --create-home --home-dir /data iris
-USER iris
+RUN useradd --create-home --home-dir /data ministr
+USER ministr
 WORKDIR /data
 
-COPY --from=builder /usr/local/bin/iris /usr/local/bin/iris
+COPY --from=builder /usr/local/bin/ministr /usr/local/bin/ministr
 
-ENV RUST_LOG=iris=info
+ENV RUST_LOG=ministr=info
 EXPOSE 8080
 
-ENTRYPOINT ["iris", "serve", "--transport", "http", "--host", "0.0.0.0", "--port", "8080"]
+ENTRYPOINT ["ministr", "serve", "--transport", "http", "--host", "0.0.0.0", "--port", "8080"]

@@ -1,4 +1,4 @@
-# iris — task runner recipes
+# ministr — task runner recipes
 
 # Build all workspace crates
 build:
@@ -34,43 +34,43 @@ deny:
 
 # Run HNSW search benchmarks (no model download required)
 bench:
-    cargo bench --bench search -p iris-core
+    cargo bench --bench search -p ministr-core
 
 # Run embedding throughput benchmarks (requires ~80MB model download)
 bench-embedding:
-    cargo bench --bench embedding -p iris-core
+    cargo bench --bench embedding -p ministr-core
 
 # Run ingestion pipeline benchmarks (no model download required)
 bench-ingestion:
-    cargo bench --bench ingestion -p iris-core
+    cargo bench --bench ingestion -p ministr-core
 
 # Run prefetch cache benchmarks (no model download required)
 bench-prefetch:
-    cargo bench --bench prefetch -p iris-core
+    cargo bench --bench prefetch -p ministr-core
 
 # Run evaluation retrieval test with metrics output
 bench-eval:
-    cargo test --test eval_retrieval -p iris-core -- --nocapture
+    cargo test --test eval_retrieval -p ministr-core -- --nocapture
 
 # Run retrieval quality regression gate (fails build if metrics drop)
 eval-gate:
-    cargo test --test eval_retrieval eval_retrieval_regression_gate -p iris-core -- --nocapture
+    cargo test --test eval_retrieval eval_retrieval_regression_gate -p ministr-core -- --nocapture
 
 # Compare embedding model retrieval quality (requires ~1GB model downloads)
 bench-models:
-    cargo test --test eval_model_comparison -p iris-core --release -- --nocapture --ignored
+    cargo test --test eval_model_comparison -p ministr-core --release -- --nocapture --ignored
 
 # Compare a single model (pass model name, use @dim suffix for Matryoshka)
 bench-model model:
-    IRIS_EVAL_MODELS="{{model}}" cargo test --test eval_model_comparison -p iris-core --release -- --nocapture --ignored
+    MINISTR_EVAL_MODELS="{{model}}" cargo test --test eval_model_comparison -p ministr-core --release -- --nocapture --ignored
 
 # Run all benchmarks
 bench-all:
-    cargo bench -p iris-core
+    cargo bench -p ministr-core
 
 # Test Candle vs ONNX vector equivalence (macOS only, requires ~160MB model downloads)
 test-backend-equiv:
-    cargo test --test backend_equivalence -p iris-core --features candle --release -- --ignored --nocapture
+    cargo test --test backend_equivalence -p ministr-core --features candle --release -- --ignored --nocapture
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Documentation site (Fumadocs, Next.js) — docs-next/
@@ -98,11 +98,11 @@ docs-typecheck:
 
 # Build Docker image
 docker-build:
-    docker build -t iris .
+    docker build -t ministr .
 
-# Run iris in Docker with HTTP transport
+# Run ministr in Docker with HTTP transport
 docker-run *args:
-    docker run -p 8080:8080 -v iris_data:/data iris {{args}}
+    docker run -p 8080:8080 -v ministr_data:/data ministr {{args}}
 
 # Build signed + notarized macOS .pkg installer
 pkg:
@@ -120,25 +120,25 @@ pkg-backgrounds:
 reinstall:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "==> Killing existing iris daemons..."
-    pkill -f "iris-app" || true
-    pkill -f "iris serve" || true
-    rm -f ~/.iris/irisd.sock ~/.iris/irisd.pid
+    echo "==> Killing existing ministr daemons..."
+    pkill -f "ministr-app" || true
+    pkill -f "ministr serve" || true
+    rm -f ~/.ministr/ministrd.sock ~/.ministr/ministrd.pid
     sleep 1
     echo "==> Clean rebuild (release)..."
-    cargo clean -p iris-mcp -p iris-cli -p iris-daemon -p iris-app
-    cargo build --release -p iris-cli -p iris-app
+    cargo clean -p ministr-mcp -p ministr-cli -p ministr-daemon -p ministr-app
+    cargo build --release -p ministr-cli -p ministr-app
     echo "==> Installing CLI..."
-    # Canonical dev location: ~/.iris/bin/iris (first in PATH).
+    # Canonical dev location: ~/.ministr/bin/ministr (first in PATH).
     # Remove stale copies from other locations to prevent shadow binaries.
-    rm -f ~/.cargo/bin/iris
-    rm -f /usr/local/bin/iris 2>/dev/null || true
-    mkdir -p ~/.iris/bin
-    cp target/release/iris ~/.iris/bin/iris
+    rm -f ~/.cargo/bin/ministr
+    rm -f /usr/local/bin/ministr 2>/dev/null || true
+    mkdir -p ~/.ministr/bin
+    cp target/release/ministr ~/.ministr/bin/ministr
     echo "==> Installing Tauri app..."
-    cp target/release/iris-app /Applications/iris.app/Contents/MacOS/iris-app
+    cp target/release/ministr-app /Applications/ministr.app/Contents/MacOS/ministr-app
     echo "==> Launching tray app..."
-    open /Applications/iris.app
+    open /Applications/ministr.app
     echo "==> Done. Restart your Claude Code session to pick up the new binary."
 
 # Run all quality gates: format check + build + test + lint
@@ -159,12 +159,12 @@ release version:
     # Uses `-i.bak` + explicit rm so the recipe works on both GNU sed
     # (Linux CI) and BSD sed (macOS dev machines).
     for toml in \
-        iris-api/Cargo.toml \
-        iris-core/Cargo.toml \
-        iris-daemon/Cargo.toml \
-        iris-mcp/Cargo.toml \
-        iris-cli/Cargo.toml \
-        iris-app/src-tauri/Cargo.toml; \
+        ministr-api/Cargo.toml \
+        ministr-core/Cargo.toml \
+        ministr-daemon/Cargo.toml \
+        ministr-mcp/Cargo.toml \
+        ministr-cli/Cargo.toml \
+        ministr-app/src-tauri/Cargo.toml; \
     do
         sed -i.bak -e "s/^version = \".*\"/version = \"{{version}}\"/" "$toml"
         rm -f "$toml.bak"
@@ -176,7 +176,7 @@ release version:
         sed -i.bak -e "/^## \[/r /dev/stdin" CHANGELOG.md
     rm -f CHANGELOG.md.bak
     # Add link reference at bottom
-    echo "[{{version}}]: https://github.com/AlrikOlson/iris-rs/releases/tag/v{{version}}" >> CHANGELOG.md
+    echo "[{{version}}]: https://github.com/AlrikOlson/ministr-rs/releases/tag/v{{version}}" >> CHANGELOG.md
     # Validate the workspace compiles
     cargo check --workspace
     # Commit and tag

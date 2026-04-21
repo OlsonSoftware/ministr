@@ -1,42 +1,42 @@
 ---
 title: Getting Started
-description: Install iris, initialize .iris.toml in your project, and wire it into Claude Code or Cursor.
+description: Install ministr, initialize .ministr.toml in your project, and wire it into Claude Code or Cursor.
 ---
 
 ## Installation
 
-The easiest path is the [Download page](https://github.com/AlrikOlson/iris-rs/releases) — the signed `.pkg` installs both `iris.app` (the desktop observatory) and the `iris` CLI with `PATH` wiring done automatically. Alternatives below.
+The easiest path is the [Download page](https://github.com/AlrikOlson/ministr-rs/releases) — the signed `.pkg` installs both `ministr.app` (the desktop observatory) and the `ministr` CLI with `PATH` wiring done automatically. Alternatives below.
 
 ### Install script (macOS & Linux)
 
 CLI-only; detects your platform, verifies SHA-256, installs to `/usr/local/bin` (or `~/.local/bin` without sudo).
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/AlrikOlson/iris-rs/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/AlrikOlson/ministr-rs/main/install.sh | bash
 ```
 
 ### Cargo (from source, requires Rust 1.85+)
 
 ```sh
-cargo install --git https://github.com/AlrikOlson/iris-rs iris-cli
+cargo install --git https://github.com/AlrikOlson/ministr-rs ministr-cli
 ```
 
 ### Pre-built binaries
 
-Download from the [GitHub Releases](https://github.com/AlrikOlson/iris-rs/releases) page.
+Download from the [GitHub Releases](https://github.com/AlrikOlson/ministr-rs/releases) page.
 
 ## Quick Start
 
-### 1. Initialize iris in your project
+### 1. Initialize ministr in your project
 
 ```sh
 cd your-project
-iris init
+ministr init
 ```
 
-This creates `.iris.toml` with auto-detected corpus paths and `.mcp.json` for Claude Code.
+This creates `.ministr.toml` with auto-detected corpus paths and `.mcp.json` for Claude Code.
 
-Or create `.iris.toml` manually:
+Or create `.ministr.toml` manually:
 
 ```toml
 [corpus]
@@ -49,7 +49,7 @@ ignore = ["*.snap", "node_modules"]
 **Claude Code:**
 
 ```sh
-claude mcp add iris -- iris
+claude mcp add ministr -- ministr
 ```
 
 **Cursor** — create `.cursor/mcp.json`:
@@ -57,15 +57,15 @@ claude mcp add iris -- iris
 ```json
 {
   "mcpServers": {
-    "iris": {
-      "command": "iris",
+    "ministr": {
+      "command": "ministr",
       "args": []
     }
   }
 }
 ```
 
-iris auto-discovers `.iris.toml` by walking up from the working directory — no flags needed.
+ministr auto-discovers `.ministr.toml` by walking up from the working directory — no flags needed.
 
 ### 3. Use the tools
 
@@ -73,31 +73,31 @@ Once connected, your agent has access to these tools:
 
 | Tool | Purpose |
 |------|---------|
-| `iris_survey` | Semantic search across docs and code |
-| `iris_read` | Read a section by ID (with deduplication & delta delivery) |
-| `iris_extract` | Get atomic claims from a section |
-| `iris_related` | Follow dependency chains between claims |
-| `iris_symbols` | Search the code symbol index |
-| `iris_definition` | Get full source of a symbol |
-| `iris_references` | Find callers, implementors, importers |
-| `iris_bridge` | Query cross-language bindings |
-| `iris_budget` | Check context budget and get eviction advice |
-| `iris_compress` | Generate compressed summaries for eviction |
-| `iris_evicted` | Signal that content has been dropped |
+| `ministr_survey` | Semantic search across docs and code |
+| `ministr_read` | Read a section by ID (with deduplication & delta delivery) |
+| `ministr_extract` | Get atomic claims from a section |
+| `ministr_related` | Follow dependency chains between claims |
+| `ministr_symbols` | Search the code symbol index |
+| `ministr_definition` | Get full source of a symbol |
+| `ministr_references` | Find callers, implementors, importers |
+| `ministr_bridge` | Query cross-language bindings |
+| `ministr_budget` | Check context budget and get eviction advice |
+| `ministr_compress` | Generate compressed summaries for eviction |
+| `ministr_evicted` | Signal that content has been dropped |
 
 ### Typical Workflow
 
 ```text
-iris_survey("authentication")
+ministr_survey("authentication")
   → 5 relevant sections found
 
-iris_read("src/auth.rs#login")
+ministr_read("src/auth.rs#login")
   → full section text, 847 tokens
 
-iris_symbols("validate_token")
+ministr_symbols("validate_token")
   → symbol definition with signature and docs
 
-iris_references("src/auth.rs::validate_token")
+ministr_references("src/auth.rs::validate_token")
   → 3 callers across the codebase
 ```
 

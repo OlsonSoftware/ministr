@@ -1,15 +1,15 @@
 ---
 title: Coherence
-description: How iris detects underlying document changes and notifies active sessions holding stale content — the CPU cache-coherence analog.
+description: How ministr detects underlying document changes and notifies active sessions holding stale content — the CPU cache-coherence analog.
 ---
 
-Coherence is iris's equivalent of a CPU cache coherence protocol. When the underlying documents change, iris detects the change and notifies active sessions that hold stale content.
+Coherence is ministr's equivalent of a CPU cache coherence protocol. When the underlying documents change, ministr detects the change and notifies active sessions that hold stale content.
 
 ## How It Works
 
 ### File Watching
 
-When `watch = true` in the corpus config, iris monitors source directories for changes using the `notify` crate. When a file is modified:
+When `watch = true` in the corpus config, ministr monitors source directories for changes using the `notify` crate. When a file is modified:
 
 1. The file is re-parsed and re-indexed. Only changed sections are re-embedded and re-inserted.
 2. The session shadow is consulted — if any active session references a changed section, a coherence alert is generated.
@@ -17,7 +17,7 @@ When `watch = true` in the corpus config, iris monitors source directories for c
 
 ### Coherence Alerts
 
-Alerts are attached to tool responses when the agent next calls any iris tool:
+Alerts are attached to tool responses when the agent next calls any ministr tool:
 
 ```json
 {
@@ -35,11 +35,11 @@ This allows the agent to decide whether to re-read the changed section or contin
 
 ### Delta Delivery
 
-When the agent reads a section it previously received, and that section has changed, iris returns a line-level delta instead of the full text. This shows exactly what was added, removed, or modified — minimizing token cost while keeping the agent's context current.
+When the agent reads a section it previously received, and that section has changed, ministr returns a line-level delta instead of the full text. This shows exactly what was added, removed, or modified — minimizing token cost while keeping the agent's context current.
 
 ## Incremental Re-Indexing
 
-iris tracks file hashes to enable incremental updates:
+ministr tracks file hashes to enable incremental updates:
 
 - Only modified files are re-parsed
 - Only changed sections within those files are re-embedded
@@ -53,8 +53,8 @@ This makes re-indexing fast even for large corpora — proportional to the size 
 File watching is controlled per corpus:
 
 ```toml
-# In ~/.iris/corpora/<name>/meta.toml
+# In ~/.ministr/corpora/<name>/meta.toml
 watch = true
 ```
 
-When disabled, coherence is passive — iris only detects changes when the corpus is explicitly re-indexed.
+When disabled, coherence is passive — ministr only detects changes when the corpus is explicitly re-indexed.

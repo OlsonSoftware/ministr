@@ -2,7 +2,7 @@ import { BentoGrid, BentoTile } from '@/components/landing/bento';
 import { Reveal } from '@/components/landing/reveal';
 
 /**
- * Mechanisms — 6-tile bento grid showcasing iris's five mechanisms
+ * Mechanisms — 6-tile bento grid showcasing ministr's five mechanisms
  * plus hybrid search. Each tile has a pure-CSS micro-visual and a
  * one-sentence claim.
  */
@@ -11,7 +11,7 @@ export function Mechanisms() {
     <section className="relative py-24 sm:py-32">
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
         <Reveal>
-          <p className="iris-eyebrow">How it works</p>
+          <p className="ministr-eyebrow">How it works</p>
         </Reveal>
         <Reveal delay={0.08}>
           <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
@@ -19,7 +19,7 @@ export function Mechanisms() {
           </h2>
         </Reveal>
         <Reveal delay={0.16}>
-          <p className="iris-body mt-4 max-w-[60ch] text-[15.5px]">
+          <p className="ministr-body mt-4 max-w-[60ch] text-[15.5px]">
             Each one solves a class of waste the agent can&rsquo;t see. They
             run together, invisibly, every time your agent asks for context.
           </p>
@@ -32,7 +32,7 @@ export function Mechanisms() {
               <TileHeader
                 kicker="Mechanism 1"
                 title="Session Shadow"
-                copy="A per-session timeline of every section, claim, and symbol iris has delivered — so it knows what your agent already has."
+                copy="A per-session timeline of every section, claim, and symbol ministr has delivered — so it knows what your agent already has."
               />
               <div className="mt-5">
                 <TimelineVisual />
@@ -66,7 +66,7 @@ export function Mechanisms() {
               <TileHeader
                 kicker="Mechanism 4"
                 title="Budget & Pressure Mode"
-                copy="Live token accounting. At ~80% iris auto-compresses responses and ranks eviction candidates."
+                copy="Live token accounting. At ~80% ministr auto-compresses responses and ranks eviction candidates."
               />
               <div className="mt-5">
                 <BudgetVisual />
@@ -78,7 +78,7 @@ export function Mechanisms() {
               <TileHeader
                 kicker="Mechanism 5"
                 title="Coherence"
-                copy="When a file changes, iris flags the delivered content as stale. No silently rotten context."
+                copy="When a file changes, ministr flags the delivered content as stale. No silently rotten context."
               />
               <div className="mt-5">
                 <CoherenceVisual />
@@ -113,20 +113,20 @@ function TileHeader({
 }) {
   return (
     <>
-      <p className="iris-eyebrow" style={{ fontSize: '10px' }}>
+      <p className="ministr-eyebrow" style={{ fontSize: '10px' }}>
         {kicker}
       </p>
       <h3 className="mt-2 text-[clamp(1.25rem,2vw,1.6rem)] font-semibold tracking-tight text-fd-foreground">
         {title}
       </h3>
-      <p className="iris-body mt-3 text-[14.5px] leading-relaxed">{copy}</p>
+      <p className="ministr-body mt-3 text-[14.5px] leading-relaxed">{copy}</p>
     </>
   );
 }
 
 /* ---------------------------------------------------------------
    Bento micro-visuals — "tiny instrument panels"
-   Each graphic is a mini iris interface showing the feature happening
+   Each graphic is a mini ministr interface showing the feature happening
    rather than an abstract metaphor. Telegraph: <2 sec to parse.
    --------------------------------------------------------------- */
 
@@ -142,12 +142,12 @@ function PanelShell({
   return (
     <div
       className={
-        'overflow-hidden rounded-lg border border-fd-border/50 bg-[color-mix(in_oklch,var(--iris-surface)_55%,transparent)] ' +
+        'overflow-hidden rounded-lg border border-fd-border/50 bg-[color-mix(in_oklch,var(--ministr-surface)_55%,transparent)] ' +
         className
       }
     >
       <div className="flex items-center justify-between border-b border-fd-border/40 px-3 py-1.5">
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--iris-accent-text)]">
+        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--ministr-accent-text)]">
           {label}
         </span>
         <span className="flex gap-1">
@@ -161,7 +161,7 @@ function PanelShell({
   );
 }
 
-/** Session Shadow — a delivered-items ledger. Core telegraph: "iris
+/** Session Shadow — a delivered-items ledger. Core telegraph: "ministr
  *  remembers what's been sent, so it won't send it again." */
 function TimelineVisual() {
   const rows = [
@@ -181,7 +181,7 @@ function TimelineVisual() {
             {r.state === 'warm' ? (
               <span
                 aria-hidden
-                className="size-2.5 shrink-0 rounded-full border border-[var(--color-iris-400)] border-t-transparent animate-spin"
+                className="size-2.5 shrink-0 rounded-full border border-[var(--color-ministr-400)] border-t-transparent animate-spin"
                 style={{ animationDuration: '1.6s' }}
               />
             ) : (
@@ -191,7 +191,7 @@ function TimelineVisual() {
                   'shrink-0 text-[13px] ' +
                   (r.state === 'hit'
                     ? 'text-[var(--color-success)]'
-                    : 'text-[var(--iris-accent-text)]')
+                    : 'text-[var(--ministr-accent-text)]')
                 }
               >
                 ✓
@@ -212,7 +212,7 @@ function TimelineVisual() {
       </div>
       <div className="mt-2 flex items-center justify-between text-[10.5px] text-fd-muted-foreground">
         <span>3 sent · 1 warming · next request is free</span>
-        <span className="font-mono text-[var(--iris-accent-text)]">live</span>
+        <span className="font-mono text-[var(--ministr-accent-text)]">live</span>
       </div>
     </PanelShell>
   );
@@ -221,19 +221,19 @@ function TimelineVisual() {
 /** Delta Delivery — side-by-side sent-vs-disk with line-level diff markers. */
 function DeltaVisual() {
   return (
-    <PanelShell label="iris_read · src/auth.rs#validate">
+    <PanelShell label="ministr_read · src/auth.rs#validate">
       <div className="font-mono text-[11.5px] leading-[1.55]">
         <div className="flex items-center justify-between text-[10px] text-fd-muted-foreground">
           <span className="flex items-center gap-1.5">
             <span className="rounded border border-fd-border/60 px-1 py-px">v1 sent</span>
             →
-            <span className="rounded border border-[color-mix(in_oklch,var(--color-iris-400)_45%,transparent)] px-1 py-px text-[var(--iris-accent-text)]">
+            <span className="rounded border border-[color-mix(in_oklch,var(--color-ministr-400)_45%,transparent)] px-1 py-px text-[var(--ministr-accent-text)]">
               v2 on disk
             </span>
           </span>
           <span className="tabular-nums">+3 / −3</span>
         </div>
-        <pre className="mt-2 overflow-hidden rounded bg-[color-mix(in_oklch,var(--iris-surface-strong)_55%,transparent)] p-2">
+        <pre className="mt-2 overflow-hidden rounded bg-[color-mix(in_oklch,var(--ministr-surface-strong)_55%,transparent)] p-2">
           <span className="block text-fd-muted-foreground/50 line-through">
             <span className="select-none pr-2">−</span>fn validate(token: &str) -&gt; bool &#123;
           </span>
@@ -243,26 +243,26 @@ function DeltaVisual() {
           <span className="block text-fd-muted-foreground/50 line-through">
             <span className="select-none pr-2">−</span>&#125;
           </span>
-          <span className="block text-[var(--iris-accent-text)]">
+          <span className="block text-[var(--ministr-accent-text)]">
             <span className="select-none pr-2">+</span>fn validate(tok: &amp;Token) -&gt; Result&lt;Claims&gt; &#123;
           </span>
-          <span className="block text-[var(--iris-accent-text)]">
+          <span className="block text-[var(--ministr-accent-text)]">
             <span className="select-none pr-2">+</span>  jwt::decode(tok, &amp;KEY)
           </span>
-          <span className="block text-[var(--iris-accent-text)]">
+          <span className="block text-[var(--ministr-accent-text)]">
             <span className="select-none pr-2">+</span>&#125;
           </span>
         </pre>
       </div>
       <div className="mt-2 text-[10.5px] text-fd-muted-foreground">
-        shipped <span className="font-mono text-[var(--iris-accent-text)]">3 lines</span> · skipped{' '}
+        shipped <span className="font-mono text-[var(--ministr-accent-text)]">3 lines</span> · skipped{' '}
         <span className="font-mono text-[var(--color-success)]">47 lines</span> (unchanged)
       </div>
     </PanelShell>
   );
 }
 
-/** Predictive Prefetch — three-lane flow showing agent → iris → prefetch queue. */
+/** Predictive Prefetch — three-lane flow showing agent → ministr → prefetch queue. */
 function PrefetchVisual() {
   const queue = [
     { path: '#logout',  status: 'warm',   progress: 100 },
@@ -274,16 +274,16 @@ function PrefetchVisual() {
       <div className="font-mono text-[11px]">
         {/* Trigger row */}
         <div className="flex items-center gap-2 text-fd-foreground">
-          <span className="shrink-0 text-[var(--iris-accent-text)]">➜</span>
-          <span className="truncate">iris_read(src/auth.rs#login)</span>
+          <span className="shrink-0 text-[var(--ministr-accent-text)]">➜</span>
+          <span className="truncate">ministr_read(src/auth.rs#login)</span>
         </div>
         {/* Arrow to queue */}
         <div className="mt-1.5 flex items-center gap-1 pl-4 text-[10px] text-fd-muted-foreground">
-          <span>iris warms next likely reads</span>
+          <span>ministr warms next likely reads</span>
           <span aria-hidden>↓</span>
         </div>
         {/* Queue */}
-        <div className="mt-1.5 space-y-1.5 rounded-md border border-fd-border/40 bg-[color-mix(in_oklch,var(--iris-surface-strong)_40%,transparent)] p-2">
+        <div className="mt-1.5 space-y-1.5 rounded-md border border-fd-border/40 bg-[color-mix(in_oklch,var(--ministr-surface-strong)_40%,transparent)] p-2">
           {queue.map((q) => (
             <div key={q.path} className="flex items-center gap-2">
               <span
@@ -292,16 +292,16 @@ function PrefetchVisual() {
                   (q.status === 'warm'
                     ? 'text-[var(--color-success)]'
                     : q.status === 'warming'
-                    ? 'text-[var(--iris-accent-text)]'
+                    ? 'text-[var(--ministr-accent-text)]'
                     : 'text-fd-muted-foreground/60')
                 }
               >
                 {q.status === 'warm' ? '●' : q.status === 'warming' ? '◐' : '○'}
               </span>
               <span className="w-[90px] truncate text-fd-foreground">src/auth.rs{q.path}</span>
-              <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--iris-surface-strong)_75%,transparent)]">
+              <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_75%,transparent)]">
                 <div
-                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[var(--color-iris-500)] to-[var(--color-violet-500)]"
+                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[var(--color-ministr-500)] to-[var(--color-violet-500)]"
                   style={{ width: `${q.progress}%` }}
                 />
               </div>
@@ -332,8 +332,8 @@ function BudgetVisual() {
           pressure · elevated
         </span>
       </div>
-      <div className="relative mt-3 h-2 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--iris-surface-strong)_85%,transparent)]">
-        <div className="absolute inset-y-0 left-0 w-[84%] rounded-full bg-gradient-to-r from-[var(--color-iris-500)] via-[var(--color-violet-500)] to-[var(--color-warning)]" />
+      <div className="relative mt-3 h-2 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_85%,transparent)]">
+        <div className="absolute inset-y-0 left-0 w-[84%] rounded-full bg-gradient-to-r from-[var(--color-ministr-500)] via-[var(--color-violet-500)] to-[var(--color-warning)]" />
         <div
           aria-label="80% threshold"
           className="absolute inset-y-[-4px] left-[80%] w-px bg-[var(--color-warning)] opacity-90"
@@ -345,15 +345,15 @@ function BudgetVisual() {
         <span>100k</span>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
-        <div className="rounded bg-[color-mix(in_oklch,var(--iris-surface-strong)_50%,transparent)] p-2">
+        <div className="rounded bg-[color-mix(in_oklch,var(--ministr-surface-strong)_50%,transparent)] p-2">
           <div className="text-[9.5px] uppercase tracking-wider text-fd-muted-foreground">auto-compress</div>
           <div className="font-mono text-[var(--color-success)]">−62%</div>
         </div>
-        <div className="rounded bg-[color-mix(in_oklch,var(--iris-surface-strong)_50%,transparent)] p-2">
+        <div className="rounded bg-[color-mix(in_oklch,var(--ministr-surface-strong)_50%,transparent)] p-2">
           <div className="text-[9.5px] uppercase tracking-wider text-fd-muted-foreground">eviction queue</div>
-          <div className="font-mono text-[var(--iris-accent-text)]">3 ready</div>
+          <div className="font-mono text-[var(--ministr-accent-text)]">3 ready</div>
         </div>
-        <div className="rounded bg-[color-mix(in_oklch,var(--iris-surface-strong)_50%,transparent)] p-2">
+        <div className="rounded bg-[color-mix(in_oklch,var(--ministr-surface-strong)_50%,transparent)] p-2">
           <div className="text-[9.5px] uppercase tracking-wider text-fd-muted-foreground">salience</div>
           <div className="font-mono text-fd-foreground">ranked</div>
         </div>
@@ -390,7 +390,7 @@ function CoherenceVisual() {
           <span className="relative inline-flex size-2 rounded-full bg-[var(--color-fuchsia-400)]" />
         </span>
         <span>
-          iris flagged <span className="text-fd-foreground">session shadow</span> as stale
+          ministr flagged <span className="text-fd-foreground">session shadow</span> as stale
         </span>
       </div>
     </PanelShell>
@@ -404,30 +404,30 @@ function HybridVisual() {
     { path: 'src/middleware.rs#throttle', dense: 74, sparse: 82, rank: 78 },
   ];
   return (
-    <PanelShell label='iris_survey("rate limiting")'>
+    <PanelShell label='ministr_survey("rate limiting")'>
       <div className="space-y-2.5 font-mono text-[10.5px]">
         {results.map((r, i) => (
           <div key={r.path}>
             <div className="flex items-baseline justify-between">
               <span className="truncate text-fd-foreground">{r.path}</span>
               {i === 0 && (
-                <span className="ml-2 shrink-0 rounded bg-[color-mix(in_oklch,var(--color-iris-500)_22%,transparent)] px-1 py-px text-[9px] uppercase tracking-wider text-[var(--iris-accent-text)]">
+                <span className="ml-2 shrink-0 rounded bg-[color-mix(in_oklch,var(--color-ministr-500)_22%,transparent)] px-1 py-px text-[9px] uppercase tracking-wider text-[var(--ministr-accent-text)]">
                   top
                 </span>
               )}
             </div>
             <div className="mt-1 grid grid-cols-[42px_1fr_32px] items-center gap-1.5 text-[9.5px]">
-              <span className="uppercase tracking-wider text-[var(--iris-accent-text)]">dense</span>
-              <div className="h-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--iris-surface-strong)_75%,transparent)]">
+              <span className="uppercase tracking-wider text-[var(--ministr-accent-text)]">dense</span>
+              <div className="h-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_75%,transparent)]">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-[var(--color-iris-500)] to-[var(--color-violet-500)]"
+                  className="h-full rounded-full bg-gradient-to-r from-[var(--color-ministr-500)] to-[var(--color-violet-500)]"
                   style={{ width: `${r.dense}%` }}
                 />
               </div>
               <span className="text-right tabular-nums text-fd-muted-foreground">.{r.dense}</span>
 
               <span className="uppercase tracking-wider text-[var(--color-fuchsia-400)]">sparse</span>
-              <div className="h-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--iris-surface-strong)_75%,transparent)]">
+              <div className="h-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_75%,transparent)]">
                 <div
                   className="h-full rounded-full bg-[var(--color-fuchsia-400)]"
                   style={{ width: `${r.sparse}%` }}
@@ -436,9 +436,9 @@ function HybridVisual() {
               <span className="text-right tabular-nums text-fd-muted-foreground">.{r.sparse}</span>
 
               <span className="uppercase tracking-wider text-fd-foreground">rank</span>
-              <div className="h-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--iris-surface-strong)_75%,transparent)]">
+              <div className="h-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_75%,transparent)]">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-[var(--color-iris-400)] via-[var(--color-violet-400)] to-[var(--color-fuchsia-400)]"
+                  className="h-full rounded-full bg-gradient-to-r from-[var(--color-ministr-400)] via-[var(--color-violet-400)] to-[var(--color-fuchsia-400)]"
                   style={{ width: `${r.rank}%` }}
                 />
               </div>

@@ -72,7 +72,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --release -p iris-cli
+        run: cargo build --release -p ministr-cli
 
       - name: MCP initialize + tools/list
         run: |
@@ -81,7 +81,7 @@ jobs:
             '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"1.0"}},"id":1}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","method":"tools/list","id":2}' \
-            | timeout 30 ./target/release/iris serve 2>/dev/null || true)
+            | timeout 30 ./target/release/ministr serve 2>/dev/null || true)
 
           # Validate initialize response
           echo "$response" | head -1 | jq -e '.result.serverInfo.name' > /dev/null
@@ -89,7 +89,7 @@ jobs:
 
           # Validate tools/list response contains expected tools
           tools_response=$(echo "$response" | grep '"tools"')
-          for tool in iris_survey iris_read iris_extract iris_budget iris_compress iris_toc; do
+          for tool in ministr_survey ministr_read ministr_extract ministr_budget ministr_compress ministr_toc; do
             echo "$tools_response" | jq -e ".result.tools[] | select(.name == \"$tool\")" > /dev/null
             echo "✓ found tool: $tool"
           done
@@ -102,4 +102,4 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t iris .
+        run: docker build -t ministr .

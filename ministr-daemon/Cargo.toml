@@ -1,0 +1,61 @@
+[package]
+name = "ministr-daemon"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ministr daemon — HTTP API over Unix domain socket for corpus management and querying."
+readme = "../README.md"
+homepage = "https://github.com/AlrikOlson/ministr-rs"
+keywords = ["mcp", "ministr", "daemon", "cache", "ipc"]
+categories = ["development-tools", "caching"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# ministr crates
+ministr-core = { workspace = true }
+ministr-api = { workspace = true }
+
+# HTTP daemon on UDS
+axum = { workspace = true }
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Observability
+tracing = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Async utilities
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# Storage (session persistence)
+rusqlite = { workspace = true }
+
+# HTTP client (cloud bundle fetch)
+reqwest = { workspace = true }
+
+# Temp files (cloud bundle download)
+tempfile = { workspace = true }
+
+# Hashing
+sha2 = { workspace = true }
+
+# SSE streaming
+async-stream = "0.3"
+futures-core = "0.3"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tower = "0.5"
+http = "1"
+http-body-util = "0.1"
+serde_json = { workspace = true }

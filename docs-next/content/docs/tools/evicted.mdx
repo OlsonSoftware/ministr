@@ -1,5 +1,5 @@
 ---
-title: iris_evicted
+title: ministr_evicted
 description: Signal that content IDs have been evicted from the agent's context window. Updates session tracking for accurate budget and deduplication.
 ---
 
@@ -32,6 +32,6 @@ Signal that content IDs have been evicted from the agent's context window. Updat
 
 - Removes the specified content from the session shadow
 - Reduces the estimated token usage in the budget tracker
-- Future `iris_survey` calls will no longer filter out evicted content
-- Improves the accuracy of window estimation — without explicit signals, iris relies on heuristic estimation which may drift over long sessions
-- This is the agent's way of correcting iris's window estimate, analogous to an explicit cache invalidation
+- Future `ministr_survey` calls will no longer filter out evicted content
+- Improves the accuracy of window estimation — without explicit signals, ministr relies on heuristic estimation which may drift over long sessions
+- This is the agent's way of correcting ministr's window estimate, analogous to an explicit cache invalidation

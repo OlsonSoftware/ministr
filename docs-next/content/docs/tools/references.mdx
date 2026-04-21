@@ -1,5 +1,5 @@
 ---
-title: iris_references
+title: ministr_references
 description: Find all references to a symbol — callers, implementors, importers, and cross-language binding sites.
 ---
 
@@ -9,7 +9,7 @@ Find all references to a symbol — callers, implementors, importers, and cross-
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `symbol_id` | string | yes | — | Symbol ID from `iris_symbols` |
+| `symbol_id` | string | yes | — | Symbol ID from `ministr_symbols` |
 | `ref_kind` | string | no | — | Filter by reference kind: `calls`, `implements`, `imports`, `uses`, `bridge` |
 | `offset` | integer | no | 0 | Number of entries to skip |
 | `limit` | integer | no | 100 | Maximum number of entries to return |
@@ -63,5 +63,5 @@ Find all references to a symbol — callers, implementors, importers, and cross-
 
 - Includes cross-crate references within the same workspace
 - Includes cross-language bridges when applicable (e.g., a Rust `#[tauri::command]` referenced by `invoke()` in TypeScript)
-- For finding cross-language bindings explicitly, use `iris_bridge`
+- For finding cross-language bindings explicitly, use `ministr_bridge`
 - Use this before modifying or deleting shared code to understand blast radius

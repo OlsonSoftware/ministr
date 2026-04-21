@@ -1,29 +1,29 @@
 ---
 title: MCP Client Setup
-description: Wire iris into Claude Code, Cursor, or any MCP-compatible client — stdio, Streamable HTTP, and environment-variable configuration.
+description: Wire ministr into Claude Code, Cursor, or any MCP-compatible client — stdio, Streamable HTTP, and environment-variable configuration.
 ---
 
-iris communicates over **stdio** using the Model Context Protocol (MCP). Any MCP-compatible client can connect by spawning the `iris` binary as a subprocess.
+ministr communicates over **stdio** using the Model Context Protocol (MCP). Any MCP-compatible client can connect by spawning the `ministr` binary as a subprocess.
 
-iris auto-discovers `.iris.toml` by walking up from the working directory, so no flags are needed in most configurations.
+ministr auto-discovers `.ministr.toml` by walking up from the working directory, so no flags are needed in most configurations.
 
 ## Claude Code
 
 ### CLI shorthand (recommended)
 
 ```sh
-claude mcp add iris -- iris
+claude mcp add ministr -- ministr
 ```
 
 ### Project-scoped
 
-Create `.mcp.json` at your project root (or run `iris init` to generate it):
+Create `.mcp.json` at your project root (or run `ministr init` to generate it):
 
 ```json
 {
   "mcpServers": {
-    "iris": {
-      "command": "iris",
+    "ministr": {
+      "command": "ministr",
       "args": []
     }
   }
@@ -38,7 +38,7 @@ After adding the server, start Claude Code and run:
 /mcp
 ```
 
-You should see `iris` listed with its tools.
+You should see `ministr` listed with its tools.
 
 ## Cursor
 
@@ -49,8 +49,8 @@ Create `.cursor/mcp.json` in your project root:
 ```json
 {
   "mcpServers": {
-    "iris": {
-      "command": "iris",
+    "ministr": {
+      "command": "ministr",
       "args": []
     }
   }
@@ -61,22 +61,22 @@ Create `.cursor/mcp.json` in your project root:
 
 Open **Cursor Settings > Tools & MCP > Add New MCP Server** and enter:
 
-- **Name**: `iris`
-- **Command**: `iris`
+- **Name**: `ministr`
+- **Command**: `ministr`
 
 Restart Cursor after adding the configuration.
 
 ## Generic JSON-RPC Client
 
-iris speaks JSON-RPC 2.0 over stdin/stdout. Any client that can spawn a subprocess and exchange newline-delimited JSON can connect.
+ministr speaks JSON-RPC 2.0 over stdin/stdout. Any client that can spawn a subprocess and exchange newline-delimited JSON can connect.
 
-### Spawning iris
+### Spawning ministr
 
 ```sh
-iris serve
+ministr serve
 ```
 
-iris reads JSON-RPC requests from stdin and writes responses to stdout. Logs go to stderr.
+ministr reads JSON-RPC requests from stdin and writes responses to stdout. Logs go to stderr.
 
 ### Initialize handshake
 
@@ -88,15 +88,15 @@ iris reads JSON-RPC requests from stdin and writes responses to stdout. Logs go 
 
 ```sh
 echo '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}},"id":1}' \
-  | iris serve 2>/dev/null
+  | ministr serve 2>/dev/null
 ```
 
 ## Remote (Streamable HTTP)
 
-iris also supports Streamable HTTP transport for remote deployments:
+ministr also supports Streamable HTTP transport for remote deployments:
 
 ```sh
-iris serve --transport http --host 0.0.0.0 --port 8080
+ministr serve --transport http --host 0.0.0.0 --port 8080
 ```
 
 Connect with:
@@ -104,7 +104,7 @@ Connect with:
 ```json
 {
   "mcpServers": {
-    "iris": {
+    "ministr": {
       "url": "https://your-server.example.com/mcp"
     }
   }
@@ -117,18 +117,18 @@ See `deploy/README.md` for Docker, Fly.io, and Railway deployment guides.
 
 | Variable | Description |
 |---|---|
-| `RUST_LOG` | Controls log verbosity. Example: `RUST_LOG=iris_core=debug,iris_mcp=info` |
+| `RUST_LOG` | Controls log verbosity. Example: `RUST_LOG=ministr_core=debug,ministr_mcp=info` |
 
 You can pass environment variables in MCP configurations:
 
 ```json
 {
   "mcpServers": {
-    "iris": {
-      "command": "iris",
+    "ministr": {
+      "command": "ministr",
       "args": [],
       "env": {
-        "RUST_LOG": "iris_core=info"
+        "RUST_LOG": "ministr_core=info"
       }
     }
   }
@@ -137,10 +137,10 @@ You can pass environment variables in MCP configurations:
 
 ## Troubleshooting
 
-**iris not found**: Ensure `iris` is on your `PATH`. Common locations: `~/.iris/bin/iris` (install script), `~/.cargo/bin/iris` (cargo install), `/usr/local/bin/iris` (Homebrew).
+**ministr not found**: Ensure `ministr` is on your `PATH`. Common locations: `~/.ministr/bin/ministr` (install script), `~/.cargo/bin/ministr` (cargo install), `/usr/local/bin/ministr` (Homebrew).
 
-**No tools listed**: Check that `.iris.toml` exists in your project or a parent directory and that its `corpus.paths` point to existing directories.
+**No tools listed**: Check that `.ministr.toml` exists in your project or a parent directory and that its `corpus.paths` point to existing directories.
 
-**Slow first start**: On first run, iris downloads the embedding model (~80 MB). Subsequent starts reuse the cached model at `~/.iris/models/`.
+**Slow first start**: On first run, ministr downloads the embedding model (~80 MB). Subsequent starts reuse the cached model at `~/.ministr/models/`.
 
-**Connection drops**: iris communicates over stdio. Make sure no other process is reading stdin or writing to stdout in the same pipe. Logs always go to stderr.
+**Connection drops**: ministr communicates over stdio. Make sure no other process is reading stdin or writing to stdout in the same pipe. Logs always go to stderr.
