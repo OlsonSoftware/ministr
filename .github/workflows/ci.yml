@@ -118,8 +118,51 @@ jobs:
           mkdir -p ministr-app/dist
           : > ministr-app/dist/index.html
 
-      - name: cargo test
-        run: cargo test --workspace
+      - name: cargo test (lib + bins + integration)
+        # --all-targets excludes doc-tests, which each spawn a standalone
+        # linker invocation against the full dep graph. With 130+ doc
+        # examples in ministr-core, the cumulative peak linker memory
+        # OOMs ubuntu-latest runners (`ld terminated with signal 7
+        # [Bus error]`). Doc-tests run in their own job below where
+        # they get a fresh runner + memory budget.
+        run: cargo test --workspace --all-targets
+
+  doctests:
+    name: Doc tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Tauri Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Stub Tauri bundle artifacts
+        run: |
+          triple=$(rustc -vV | awk '/^host:/ {print $2}')
+          mkdir -p ministr-app/src-tauri/binaries
+          : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          mkdir -p ministr-app/dist
+          : > ministr-app/dist/index.html
+
+      - name: cargo test --doc
+        # Doc-tests run in their own job with a fresh runner so the
+        # peak linker memory from 130+ standalone doc-example links
+        # doesn't collide with the regular test binaries.
+        run: cargo test --workspace --doc
 
   security:
     name: Security (deny + audit)
