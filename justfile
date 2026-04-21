@@ -136,7 +136,21 @@ reinstall:
     mkdir -p ~/.ministr/bin
     cp target/release/ministr ~/.ministr/bin/ministr
     echo "==> Installing Tauri app..."
+    if [ ! -d /Applications/ministr.app/Contents/MacOS ]; then
+        echo "   ministr.app bundle not found at /Applications/ministr.app." >&2
+        echo "   This recipe only updates the inner binary; it cannot build the" >&2
+        echo "   .app bundle from scratch. Run \`just pkg-dev\` (or \`just pkg\` for" >&2
+        echo "   a signed+notarized build), install the produced .pkg, then" >&2
+        echo "   re-run this recipe." >&2
+        exit 1
+    fi
     cp target/release/ministr-app /Applications/ministr.app/Contents/MacOS/ministr-app
+    # Sidecar binary lives inside the bundle too; keep it in sync.
+    if [ -f /Applications/ministr.app/Contents/MacOS/ministr-cli ]; then
+        cp target/release/ministr /Applications/ministr.app/Contents/MacOS/ministr-cli
+    fi
+    # We modified the bundle contents; ad-hoc re-sign so macOS will launch it.
+    codesign --force --deep --sign - /Applications/ministr.app >/dev/null 2>&1 || true
     echo "==> Launching tray app..."
     open /Applications/ministr.app
     echo "==> Done. Restart your Claude Code session to pick up the new binary."
