@@ -128,13 +128,24 @@ reinstall:
     echo "==> Clean rebuild (release)..."
     cargo clean -p ministr-mcp -p ministr-cli -p ministr-daemon -p ministr-app
     cargo build --release -p ministr-cli -p ministr-app
-    echo "==> Installing CLI..."
-    # Canonical dev location: ~/.ministr/bin/ministr (first in PATH).
+    echo "==> Installing CLI to ~/.ministr/bin/ministr (canonical dev location)..."
     # Remove stale copies from other locations to prevent shadow binaries.
     rm -f ~/.cargo/bin/ministr
     rm -f /usr/local/bin/ministr 2>/dev/null || true
     mkdir -p ~/.ministr/bin
     cp target/release/ministr ~/.ministr/bin/ministr
+    # PATH sanity: warn if ~/.ministr/bin isn't on PATH so the user knows
+    # they need to source their shell rc or restart their terminal /
+    # Claude Code session before the `ministr` command resolves.
+    case ":$PATH:" in
+        *":$HOME/.ministr/bin:"*) : ;;
+        *)
+            echo "   WARNING: ~/.ministr/bin is not on PATH for this shell." >&2
+            echo "   Add this to ~/.zshrc or ~/.profile:" >&2
+            echo "     export PATH=\"\$HOME/.ministr/bin:\$PATH\"" >&2
+            echo "   Then restart your shell / Claude Code session." >&2
+            ;;
+    esac
     echo "==> Installing Tauri app..."
     if [ ! -d /Applications/ministr.app/Contents/MacOS ]; then
         echo "   ministr.app bundle not found at /Applications/ministr.app." >&2

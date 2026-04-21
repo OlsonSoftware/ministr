@@ -19,10 +19,9 @@ paths = [
     "README.md",
     "CHANGELOG.md",
     "DESIGN.md",
-    "docs",
-
-    # Research corpus (text-extracted papers on ANN/HNSW/quantization/prefetch)
-    "docs/research",
+    "CONTRIBUTING.md",
+    "RELEASE.md",
+    "SECURITY.md",
 ]
 
 ignore = [
