@@ -716,6 +716,14 @@ pub trait Storage: Send + Sync {
         file_path: &str,
     ) -> impl Future<Output = Result<(), StorageError>> + Send;
 
+    /// Truncate every bridge endpoint and link in this corpus.
+    ///
+    /// Bridge data is a global view derived from current extractor logic.
+    /// Per-file content hashes do NOT capture extractor-rule changes, so
+    /// a full ingest pass always clears and rebuilds bridge tables from
+    /// scratch to keep them in sync with the current extractors.
+    fn clear_bridge_data(&self) -> impl Future<Output = Result<(), StorageError>> + Send;
+
     // -- Pending refs (deferred resolution queue) --
 
     /// Insert or replace pending refs that could not be resolved in the current pass.

@@ -2234,6 +2234,23 @@ impl Storage for SqliteStorage {
         .await
     }
 
+    async fn clear_bridge_data(&self) -> Result<(), StorageError> {
+        self.with_conn(|conn| {
+            // Delete links first so the FK from links -> endpoints is never
+            // dangling mid-transaction (even if enforcement is deferred).
+            conn.execute("DELETE FROM bridge_links", [])
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            conn.execute("DELETE FROM bridge_endpoints", [])
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            Ok(())
+        })
+        .await
+    }
+
     // -- Pending refs (deferred resolution queue) --
 
     async fn upsert_pending_refs(&self, refs: &[PendingRefRecord]) -> Result<(), StorageError> {

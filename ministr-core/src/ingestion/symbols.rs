@@ -677,6 +677,82 @@ fn find_endpoint_id(
     })
 }
 
+/// Re-extract bridge endpoints from every tracked code file in `files`.
+///
+/// Bridge data is a global view derived from current extractor logic — per-file
+/// content hashes do NOT capture extractor-rule changes, so changes to
+/// extractor code won't propagate to unchanged files via the incremental
+/// ingest path. This helper re-reads and re-parses every code file in
+/// `files` and runs `linker.extract_all` over the full set, yielding a
+/// complete view that `store_bridge_links` can then link and persist.
+///
+/// Non-code files (no recognized language) are silently skipped. I/O or
+/// parse failures on individual files are logged at DEBUG and the file is
+/// dropped from the batch rather than failing the whole pass.
+///
+/// `files` is a slice of `(absolute_path, relative_path)` pairs. The
+/// relative path is what gets stored in bridge_endpoints.file_path so it
+/// matches how symbols.file_path is keyed elsewhere.
+pub(super) async fn rebuild_bridge_endpoints(
+    files: &[(std::path::PathBuf, String)],
+    linker: &BridgeLinker,
+) -> Vec<BridgeEndpoint> {
+    let registry = GrammarRegistry::global();
+    let mut endpoints = Vec::new();
+
+    for (abs_path, relative) in files {
+        let ext = Path::new(relative.as_str())
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let Some(lang_name) = registry.language_name_for_extension(ext) else {
+            continue;
+        };
+        let content = match tokio::fs::read(abs_path).await {
+            Ok(c) => c,
+            Err(e) => {
+                debug!(path = %relative, error = %e, "bridge rebuild: skipping unreadable file");
+                continue;
+            }
+        };
+
+        let tree = if lang_name == "rust" {
+            let mut parser = AstParser::new();
+            match parser.parse(&content) {
+                Ok(t) => t,
+                Err(e) => {
+                    debug!(path = %relative, error = %e, "bridge rebuild: rust parse failed");
+                    continue;
+                }
+            }
+        } else {
+            let Some(ts_lang) = registry.language_for_extension(ext) else {
+                continue;
+            };
+            let Ok(mut parser) = AstParser::with_language(ts_lang) else {
+                continue;
+            };
+            match parser.parse(&content) {
+                Ok(t) => t,
+                Err(e) => {
+                    debug!(path = %relative, lang = %lang_name, error = %e, "bridge rebuild: parse failed");
+                    continue;
+                }
+            }
+        };
+
+        let sf = BridgeSourceFile {
+            file_path: relative.as_str(),
+            language: lang_name,
+            tree: &tree,
+            source: &content,
+        };
+        endpoints.extend(linker.extract_all(&[sf]));
+    }
+
+    endpoints
+}
+
 #[cfg(test)]
 mod tests {
     use crate::storage::SqliteStorage;
@@ -811,5 +887,109 @@ fn run() {
         // The ref from run → unknown_function should be pending (unresolved
         // target), not silently dropped.
         let _ = refs; // No assertion on refs — target doesn't exist in this file.
+    }
+
+    // -- rebuild_bridge_endpoints: full-corpus bridge rebuild path --
+
+    /// Regression: bridge data is a global view derived from current
+    /// extractor logic, not per-file content. `rebuild_bridge_endpoints`
+    /// must re-read and re-parse every file regardless of content-hash
+    /// cache, so extractor changes propagate to unchanged files.
+    #[cfg(feature = "lang-typescript")]
+    #[tokio::test]
+    async fn rebuild_extracts_from_all_tracked_files() {
+        use crate::code::bridge::tauri::TauriCommandExtractor;
+        use std::fs;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let root = tmp.path();
+
+        // Rust export side: #[tauri::command] functions.
+        let rust_path = root.join("commands.rs");
+        fs::write(
+            &rust_path,
+            "#[tauri::command]\n\
+             fn greet(name: &str) -> String { String::new() }\n\
+             #[tauri::command]\n\
+             fn farewell() -> String { String::new() }\n",
+        )
+        .unwrap();
+
+        // TSX import side (the path the tsx grammar fix unblocked).
+        let tsx_path = root.join("App.tsx");
+        fs::write(
+            &tsx_path,
+            "import { invoke } from '@tauri-apps/api/core';\n\
+             export function App() {\n  \
+               return invoke('greet', { name: 'world' });\n\
+             }\n",
+        )
+        .unwrap();
+
+        // Plain TS import side.
+        let ts_path = root.join("hook.ts");
+        fs::write(
+            &ts_path,
+            "import { invoke } from '@tauri-apps/api/core';\n\
+             export async function load() {\n  \
+               await invoke('farewell');\n\
+             }\n",
+        )
+        .unwrap();
+
+        let mut linker = BridgeLinker::new();
+        linker.register(Box::new(TauriCommandExtractor));
+
+        let files = vec![
+            (rust_path, "commands.rs".to_string()),
+            (tsx_path, "App.tsx".to_string()),
+            (ts_path, "hook.ts".to_string()),
+        ];
+
+        let endpoints = rebuild_bridge_endpoints(&files, &linker).await;
+
+        // Rust side contributes 2 exports (greet, farewell).
+        // TSX side contributes 1 import (greet).
+        // TS side contributes 1 import (farewell).
+        assert_eq!(
+            endpoints.len(),
+            4,
+            "expected 2 rust exports + 1 tsx import + 1 ts import = 4 endpoints, got {endpoints:#?}"
+        );
+        let keys: Vec<&str> = endpoints.iter().map(|e| e.binding_key.as_str()).collect();
+        assert!(keys.contains(&"greet"));
+        assert!(keys.contains(&"farewell"));
+        assert!(
+            endpoints.iter().any(|e| e.language == "tsx"),
+            "rebuild must pick up tsx-language endpoints"
+        );
+    }
+
+    /// Unknown extensions and missing files don't crash the rebuild.
+    #[tokio::test]
+    async fn rebuild_tolerates_non_code_files_and_missing_paths() {
+        use crate::code::bridge::tauri::TauriCommandExtractor;
+        use std::fs;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let root = tmp.path();
+
+        let readme = root.join("README.md");
+        fs::write(&readme, "# docs only\nno bridges here").unwrap();
+
+        let missing = root.join("never_created.rs");
+
+        let mut linker = BridgeLinker::new();
+        linker.register(Box::new(TauriCommandExtractor));
+
+        let files = vec![
+            (readme, "README.md".to_string()),
+            (missing, "never_created.rs".to_string()),
+        ];
+
+        let endpoints = rebuild_bridge_endpoints(&files, &linker).await;
+        assert!(endpoints.is_empty(), "no code → no bridge endpoints");
     }
 }

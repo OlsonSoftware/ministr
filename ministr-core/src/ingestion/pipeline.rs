@@ -40,8 +40,8 @@ use super::roots::{
     strip_root_prefix, update_root_stats,
 };
 use super::symbols::{
-    PendingRef, extract_code_symbols, persist_pending_refs, repair_missing_refs,
-    resolve_pending_refs, store_bridge_links,
+    PendingRef, extract_code_symbols, persist_pending_refs, rebuild_bridge_endpoints,
+    repair_missing_refs, resolve_pending_refs, store_bridge_links,
 };
 
 // ── Stats types ──────────────────────────────────────────────────────────────
@@ -861,7 +861,16 @@ impl IngestionPipeline {
             })
             .collect();
 
-        let (was_cancelled, embed_count, pending_refs, bridge_endpoints) = self
+        // Snapshot (abs_path, relative_path) pairs for the bridge rebuild
+        // pass. run_producer_consumer consumes file_items, but
+        // finalize_ingestion needs the full set even when files were
+        // fast-skipped by content hash.
+        let all_files_for_bridges: Vec<(PathBuf, String)> = file_items
+            .iter()
+            .map(|f| (f.path.clone(), f.relative.clone()))
+            .collect();
+
+        let (was_cancelled, embed_count, pending_refs, _bridge_endpoints) = self
             .run_producer_consumer(
                 file_items,
                 storage,
@@ -882,7 +891,7 @@ impl IngestionPipeline {
 
         self.finalize_ingestion(
             &pending_refs,
-            &bridge_endpoints,
+            &all_files_for_bridges,
             bridge_linker.as_ref(),
             active_graph,
             storage,
@@ -1074,7 +1083,16 @@ impl IngestionPipeline {
             })
             .collect();
 
-        let (_was_cancelled, embed_count, pending_refs, bridge_endpoints) = self
+        // Snapshot (abs_path, relative_path) pairs for the bridge rebuild
+        // pass. run_producer_consumer consumes file_items, but
+        // finalize_ingestion needs the full set even when files were
+        // fast-skipped by content hash.
+        let all_files_for_bridges: Vec<(PathBuf, String)> = file_items
+            .iter()
+            .map(|f| (f.path.clone(), f.relative.clone()))
+            .collect();
+
+        let (_was_cancelled, embed_count, pending_refs, _bridge_endpoints) = self
             .run_producer_consumer(
                 file_items,
                 storage,
@@ -1090,7 +1108,7 @@ impl IngestionPipeline {
 
         self.finalize_ingestion(
             &pending_refs,
-            &bridge_endpoints,
+            &all_files_for_bridges,
             bridge_linker.as_ref(),
             active_graph,
             storage,
@@ -1467,10 +1485,18 @@ impl IngestionPipeline {
     }
 
     /// Resolve pending cross-references and store bridge links.
+    ///
+    /// Bridge data is rebuilt from **all** code files in `all_files`, not
+    /// from the per-file-hash incremental batch. The incremental batch
+    /// misses files that were fast-skipped by content hash, and extractor
+    /// logic changes (new language support, new rules) won't propagate
+    /// unless every file is re-extracted. The full rebuild is cheap:
+    /// tree-sitter parse + short walks, typically a few hundred ms on a
+    /// 200-file corpus.
     async fn finalize_ingestion<S: Storage + ?Sized>(
         &self,
         pending_refs: &[PendingRef],
-        bridge_endpoints: &[BridgeEndpoint],
+        all_files: &[(PathBuf, String)],
         bridge_linker: Option<&BridgeLinker>,
         active_graph: Option<&PackageGraph>,
         storage: &S,
@@ -1478,7 +1504,18 @@ impl IngestionPipeline {
         let (_resolved, still_pending) =
             resolve_pending_refs(pending_refs, storage, active_graph).await;
         persist_pending_refs(&still_pending, storage).await;
-        store_bridge_links(bridge_endpoints, bridge_linker, storage).await;
+
+        if let Some(linker) = bridge_linker {
+            // Wipe stale rows so retired extractor outputs don't linger.
+            // A failure to clear is logged but not fatal — store_bridge_links
+            // will still write fresh rows; worst case we have duplicates
+            // that get resolved on the next full pass.
+            if let Err(e) = storage.clear_bridge_data().await {
+                warn!(error = %e, "failed to clear stale bridge data before rebuild");
+            }
+            let endpoints = rebuild_bridge_endpoints(all_files, linker).await;
+            store_bridge_links(&endpoints, Some(linker), storage).await;
+        }
     }
 
     // ── Shared file processing (used by rooted + multi-path) ─────────────
