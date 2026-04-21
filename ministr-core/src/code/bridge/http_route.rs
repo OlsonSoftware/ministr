@@ -46,7 +46,7 @@ impl BridgeExtractor for HttpRouteExtractor {
     }
 
     fn applicable_languages(&self) -> &[&str] {
-        &["rust", "python", "javascript", "typescript"]
+        &["rust", "python", "javascript", "typescript", "tsx"]
     }
 
     fn extract_endpoints(
@@ -59,7 +59,9 @@ impl BridgeExtractor for HttpRouteExtractor {
         match language {
             "rust" => extract_rust_routes(tree, source, file_path),
             "python" => extract_python_endpoints(tree, source, file_path),
-            "javascript" | "typescript" => extract_js_endpoints(tree, source, file_path, language),
+            "javascript" | "typescript" | "tsx" => {
+                extract_js_endpoints(tree, source, file_path, language)
+            }
             _ => Vec::new(),
         }
     }

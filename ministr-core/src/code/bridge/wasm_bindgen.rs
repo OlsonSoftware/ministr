@@ -41,7 +41,7 @@ impl BridgeExtractor for WasmBindgenExtractor {
     }
 
     fn applicable_languages(&self) -> &[&str] {
-        &["rust", "javascript", "typescript"]
+        &["rust", "javascript", "typescript", "tsx"]
     }
 
     fn extract_endpoints(
@@ -53,7 +53,7 @@ impl BridgeExtractor for WasmBindgenExtractor {
     ) -> Vec<BridgeEndpoint> {
         match language {
             "rust" => extract_rust_wasm_exports(tree, source, file_path),
-            "javascript" | "typescript" => {
+            "javascript" | "typescript" | "tsx" => {
                 extract_js_wasm_imports(tree, source, file_path, language)
             }
             _ => Vec::new(),

@@ -44,7 +44,9 @@ impl BridgeExtractor for TauriCommandExtractor {
     }
 
     fn applicable_languages(&self) -> &[&str] {
-        &["rust", "javascript", "typescript"]
+        // "tsx" is a separate grammar in the registry — list it alongside
+        // "typescript" so every .tsx file that calls `invoke()` is covered.
+        &["rust", "javascript", "typescript", "tsx"]
     }
 
     fn extract_endpoints(
@@ -56,7 +58,7 @@ impl BridgeExtractor for TauriCommandExtractor {
     ) -> Vec<BridgeEndpoint> {
         match language {
             "rust" => extract_rust_command_exports(tree, source, file_path),
-            "javascript" | "typescript" => {
+            "javascript" | "typescript" | "tsx" => {
                 extract_js_command_imports(tree, source, file_path, language)
             }
             _ => Vec::new(),
@@ -87,7 +89,7 @@ impl BridgeExtractor for TauriEventExtractor {
     }
 
     fn applicable_languages(&self) -> &[&str] {
-        &["rust", "javascript", "typescript"]
+        &["rust", "javascript", "typescript", "tsx"]
     }
 
     fn extract_endpoints(
@@ -99,7 +101,9 @@ impl BridgeExtractor for TauriEventExtractor {
     ) -> Vec<BridgeEndpoint> {
         match language {
             "rust" => extract_rust_events(tree, source, file_path),
-            "javascript" | "typescript" => extract_js_events(tree, source, file_path, language),
+            "javascript" | "typescript" | "tsx" => {
+                extract_js_events(tree, source, file_path, language)
+            }
             _ => Vec::new(),
         }
     }
@@ -876,6 +880,62 @@ async function main() {
         assert!(keys.contains(&"cmd_a"));
         assert!(keys.contains(&"cmd_b"));
         assert!(keys.contains(&"cmd_c"));
+    }
+
+    /// Regression: every React component in a Tauri project is a `.tsx` file,
+    /// and the grammar registry maps the `.tsx` extension to language name
+    /// `"tsx"` — a separate grammar from `"typescript"`. Before this was
+    /// patched, the extractor's `match language { ... }` fell through to
+    /// `Vec::new()` for anything other than "javascript" | "typescript",
+    /// so every `invoke()` call inside a `.tsx` file was silently dropped
+    /// and the Tauri app's 20+ commands only produced 1 bridge link
+    /// (the sole `.ts` caller).
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn tsx_invoke_import_produces_endpoints() {
+        let source = r#"
+import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
+
+export function Component() {
+    const [s, setS] = useState(null);
+    const load = async () => {
+        const status = await invoke<string>("daemon_status");
+        const items = await invoke("list_corpora");
+        setS(status);
+    };
+    return <button onClick={load}>{s}</button>;
+}
+"#;
+        // Parse as TSX — that's what the grammar registry picks for .tsx.
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())
+            .unwrap();
+        let tree = parser.parse(source.as_bytes(), None).unwrap();
+
+        let extractor = TauriCommandExtractor;
+        // Pass "tsx" (the canonical grammar name) — this must be a
+        // supported language, not fall through to the default branch.
+        let endpoints = extractor.extract_endpoints(
+            &tree,
+            source.as_bytes(),
+            "src/components/Thing.tsx",
+            "tsx",
+        );
+
+        assert_eq!(
+            endpoints.len(),
+            2,
+            "expected both invoke() calls to register"
+        );
+        let keys: Vec<&str> = endpoints.iter().map(|e| e.binding_key.as_str()).collect();
+        assert!(keys.contains(&"daemon_status"));
+        assert!(keys.contains(&"list_corpora"));
+        for ep in &endpoints {
+            assert_eq!(ep.role, EndpointRole::Import);
+            assert_eq!(ep.language, "tsx");
+        }
     }
 
     // -- TauriEventExtractor: Rust events --
