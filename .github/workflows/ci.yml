@@ -32,6 +32,25 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
+      # Tauri 2 requires webkit2gtk + gtk + appindicator + rsvg at build
+      # time to compile the desktop-app crate on Linux. Without these,
+      # ministr-app/src-tauri fails its system-lib probes. These are
+      # the official Tauri 2 Ubuntu prerequisites:
+      # https://v2.tauri.app/start/prerequisites/
+      - name: Install Tauri Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
       - name: Run validation
         run: just validate
 

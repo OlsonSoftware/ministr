@@ -19,7 +19,8 @@ workspace = true
 
 [dependencies]
 ministr-api.workspace = true
-ministr-core = { workspace = true, features = ["candle"] }
+# Non-macOS: fastembed/ONNX path only. candle-core pulls in the Apple-only
+# `metal` crate stack (objc2), which refuses to compile on Linux/Windows.
 ministr-mcp.workspace = true
 clap.workspace = true
 rmcp.workspace = true
@@ -34,6 +35,14 @@ serde_json.workspace = true
 notify.workspace = true
 toml.workspace = true
 dialoguer.workspace = true
+
+# macOS: enable the candle Metal backend on top of the default fastembed path.
+[target.'cfg(target_os = "macos")'.dependencies]
+ministr-core = { workspace = true, features = ["candle"] }
+
+# Non-macOS: fastembed path only (candle-metal unavailable off Apple).
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+ministr-core = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
