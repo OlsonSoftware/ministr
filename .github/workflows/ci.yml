@@ -95,21 +95,32 @@ jobs:
 
       - name: MCP initialize + tools/list
         run: |
-          # Send initialize, initialized notification, and tools/list via stdin
+          # Drive the MCP stdio transport: initialize → initialized
+          # notification → tools/list. Every response is NDJSON so each
+          # JSON-RPC reply lives on its own line.
           response=$(printf '%s\n%s\n%s\n' \
             '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"1.0"}},"id":1}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","method":"tools/list","id":2}' \
             | timeout 30 ./target/release/ministr serve 2>/dev/null || true)
 
-          # Validate initialize response
-          echo "$response" | head -1 | jq -e '.result.serverInfo.name' > /dev/null
+          # Pick each response by its JSON-RPC id. jq processes the full
+          # NDJSON stream and emits only matching documents, so we don't
+          # depend on line ordering or substring matches.
+          init_response=$(echo "$response" | jq -c 'select(.id == 1)')
+          tools_response=$(echo "$response" | jq -c 'select(.id == 2)')
+
+          test -n "$init_response"  || { echo "no initialize response"; exit 1; }
+          test -n "$tools_response" || { echo "no tools/list response"; exit 1; }
+
+          echo "$init_response" | jq -e '.result.serverInfo.name' > /dev/null
           echo "✓ initialize succeeded"
 
-          # Validate tools/list response contains expected tools
-          tools_response=$(echo "$response" | grep '"tools"')
-          for tool in ministr_survey ministr_read ministr_extract ministr_budget ministr_compress ministr_toc; do
-            echo "$tools_response" | jq -e ".result.tools[] | select(.name == \"$tool\")" > /dev/null
+          for tool in ministr_survey ministr_read ministr_extract \
+                      ministr_budget ministr_compress ministr_toc; do
+            echo "$tools_response" \
+              | jq -e --arg t "$tool" '.result.tools[] | select(.name == $t)' \
+                > /dev/null
             echo "✓ found tool: $tool"
           done
           echo "✓ MCP smoke test passed"
