@@ -10,9 +10,24 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
+# Each job is self-contained and runs in parallel. The critical path is
+# whichever of lint / test / docker-build is slowest. Past shape:
+#   - lint     ~6-8 min cold, ~2-3 min cached
+#   - test     ~6-8 min cold, ~2-3 min cached
+#   - security  <1 min (prebuilt binaries)
+#   - mcp-smoke ~3-5 min cached
+#   - docker   ~2-3 min with buildx layer cache, ~10-15 min cold
+#   - eval     ~1-2 min
 jobs:
-  validate:
-    name: Validate
+  # ────────────────────────────────────────────────────────────────────
+  # Shared setup steps reused across lint + test.
+  # ────────────────────────────────────────────────────────────────────
+  # (factored into the individual jobs below rather than a composite
+  # action — GH composite actions force serial step execution and add
+  # fetch overhead that cancels the gain.)
+
+  lint:
+    name: Lint (fmt + clippy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,20 +38,55 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install just
-        uses: extractions/setup-just@v2
+      - name: Install Tauri Linux build deps
+        # ministr-app/src-tauri depends on webkit2gtk + gtk + appindicator
+        # + rsvg to compile on Linux. Official Tauri 2 prereqs.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
 
-      - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+      - name: Stub Tauri sidecar
+        # tauri.conf.json declares an externalBin at `binaries/ministr-cli`.
+        # tauri-build probes for a target-suffixed file every time the
+        # crate is checked. This job doesn't bundle anything, so we only
+        # need the existence check to pass. An empty executable file is
+        # enough — nothing runs the sidecar during clippy/test.
+        #
+        # Actual Linux build coverage for ministr-cli lives in the
+        # `mcp-smoke` job, which compiles + runs the CLI end-to-end.
+        run: |
+          triple=$(rustc -vV | awk '/^host:/ {print $2}')
+          mkdir -p ministr-app/src-tauri/binaries
+          : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
 
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
 
-      # Tauri 2 requires webkit2gtk + gtk + appindicator + rsvg at build
-      # time to compile the desktop-app crate on Linux. Without these,
-      # ministr-app/src-tauri fails its system-lib probes. These are
-      # the official Tauri 2 Ubuntu prerequisites:
-      # https://v2.tauri.app/start/prerequisites/
+      - name: cargo clippy
+        run: |
+          cargo clippy --workspace --all-targets \
+              -- -D warnings -W clippy::pedantic
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install Tauri Linux build deps
         run: |
           sudo apt-get update
@@ -51,31 +101,35 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
-      # tauri.conf.json declares `binaries/ministr-cli` as an externalBin
-      # sidecar. tauri-build runs every time ministr-app is checked and
-      # probes for a target-suffixed binary at that path. Build the real
-      # ministr-cli first and place it where tauri-build expects it —
-      # that way the sidecar-existence check is a meaningful signal
-      # (Linux builds of ministr-cli aren't silently broken) and the
-      # Tauri app actually has a functional sidecar if it gets bundled.
-      - name: Build ministr-cli sidecar for ministr-app
+      - name: Stub Tauri sidecar
         run: |
-          cargo build --release -p ministr-cli
           triple=$(rustc -vV | awk '/^host:/ {print $2}')
           mkdir -p ministr-app/src-tauri/binaries
-          cp target/release/ministr "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
 
-      - name: Run validation
-        run: just validate
+      - name: cargo test
+        run: cargo test --workspace
 
-      - name: Run cargo deny
-        run: just deny
+  security:
+    name: Security (deny + audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Prebuilt binaries — no `cargo install` compile step (was ~2 min each).
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+
+      - name: cargo deny check
+        run: cargo deny check
 
       # Gates only on actual vulnerabilities. Unmaintained-crate warnings
-      # (gtk-rs bindings pulled in via tauri's Linux tray-icon) and soundness
-      # advisories are handled separately in deny.toml with documented
+      # (gtk-rs bindings pulled in via Tauri's Linux tray-icon) and
+      # soundness advisories are handled in deny.toml with documented
       # ignore rationales.
-      - name: Run cargo audit
+      - name: cargo audit
         run: cargo audit
 
   eval-retrieval:
@@ -83,13 +137,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
-
-      - name: Install just
-        uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v2
 
       - name: Run retrieval regression gate
         run: just eval-gate
@@ -99,12 +149,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
+        # Real Linux build of ministr-cli. This is the authoritative
+        # "does the CLI compile on Linux" signal that backs the stub
+        # sidecar the lint/test jobs use.
         run: cargo build --release -p ministr-cli
 
       - name: MCP initialize + tools/list
@@ -145,5 +196,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # buildx + GHA layer cache. First run on a branch is still full
+      # cost (~10-15 min), but every subsequent run pulls the Rust dep
+      # layer from cache and finishes in ~2-3 min. Without this, every
+      # CI run rebuilt ~500 crates from scratch.
+      - uses: docker/setup-buildx-action@v3
+
       - name: Build Docker image
-        run: docker build -t ministr .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: ministr:ci
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
