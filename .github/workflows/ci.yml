@@ -51,6 +51,20 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
+      # tauri.conf.json declares `binaries/ministr-cli` as an externalBin
+      # sidecar. tauri-build runs every time ministr-app is checked and
+      # probes for a target-suffixed binary at that path. Build the real
+      # ministr-cli first and place it where tauri-build expects it —
+      # that way the sidecar-existence check is a meaningful signal
+      # (Linux builds of ministr-cli aren't silently broken) and the
+      # Tauri app actually has a functional sidecar if it gets bundled.
+      - name: Build ministr-cli sidecar for ministr-app
+        run: |
+          cargo build --release -p ministr-cli
+          triple=$(rustc -vV | awk '/^host:/ {print $2}')
+          mkdir -p ministr-app/src-tauri/binaries
+          cp target/release/ministr "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+
       - name: Run validation
         run: just validate
 
