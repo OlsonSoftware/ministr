@@ -144,6 +144,10 @@ CI runs these automatically on every PR.
 
 ## Releases
 
+- **Tag/publish checklist** — [RELEASE.md](RELEASE.md) covers the
+  end-to-end flow: pre-flight gates, `just release X.Y.Z`, the two-tag
+  split (`vX.Y.Z` for CLI binaries, `vX.Y.Z-app` for the Tauri
+  installers), crates.io publish order, and Homebrew tap update.
 - **macOS signing & notarization** — the desktop app and CLI binary both
   need a Developer ID identity before distribution. See
   [iris-app/SIGNING.md](iris-app/SIGNING.md) for env vars, entitlements,
