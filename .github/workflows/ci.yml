@@ -109,20 +109,44 @@ jobs:
 
   mcp-smoke:
     name: MCP Smoke Test (Linux)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macos, arm64]
+    # Runs inside a linux/arm64 container on the Mac's Docker Desktop.
+    # Native arm64 (no QEMU), layer-cached after first pull. Gives us
+    # the same "does ministr-cli compile on Linux" coverage the cloud
+    # job did, at a fraction of the wall-clock.
+    container:
+      image: ubuntu:24.04
+      # Bind-mount a host directory so CARGO_HOME + CARGO_TARGET_DIR
+      # survive between runs. Without this, the container is ephemeral
+      # and the Linux target dir would be rebuilt from scratch every
+      # time — the whole point of self-hosted is to avoid that.
+      volumes:
+        - /Users/alrik/.cache/ministr-ci-linux:/var/ministr-ci-linux
+    env:
+      CARGO_HOME: /var/ministr-ci-linux/cargo
+      CARGO_TARGET_DIR: /var/ministr-ci-linux/target
     steps:
+      - name: Prepare container
+        # ubuntu:24.04 is minimal — install what the rest of the job
+        # needs (git for checkout, build deps for linking, jq for the
+        # smoke assertions). apt is fast when the image layer is cached.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git curl ca-certificates build-essential pkg-config libssl-dev jq
+          # Persistent cargo/target state lives here. Created once; the
+          # volume survives between runs because the self-hosted runner
+          # mounts it each time.
+          mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR"
+
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Release profile lives in a different target/ subdir than the
-          # macOS jobs so a separate shared key avoids unnecessary churn.
-          shared-key: ministr-ci-linux-release
 
       - name: Build release binary
         # Authoritative "does ministr-cli compile on Linux" signal. The
-        # macOS jobs above don't cover this because candle-metal is
-        # Apple-only and the dep graphs diverge.
+        # self-hosted macOS jobs don't cover this because candle-metal
+        # is Apple-only and the dep graphs diverge.
         run: cargo build --release -p ministr-cli --locked
 
       - name: MCP initialize + tools/list
@@ -134,7 +158,7 @@ jobs:
             '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"1.0"}},"id":1}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","method":"tools/list","id":2}' \
-            | timeout 30 ./target/release/ministr serve 2>/dev/null || true)
+            | timeout 30 "$CARGO_TARGET_DIR/release/ministr" serve 2>/dev/null || true)
 
           # Pick each response by its JSON-RPC id — order-independent,
           # substring-match-free.
@@ -158,17 +182,12 @@ jobs:
 
   docker-build:
     name: Docker Build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macos, arm64]
+    # Uses the Mac's Docker Desktop (linux/arm64) to build the Linux
+    # container image. Layer cache lives in the host's Docker engine,
+    # so warm runs are seconds.
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          tags: ministr:ci
-          push: false
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: docker build
+        run: docker build -t ministr:ci .
