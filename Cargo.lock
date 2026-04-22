@@ -3792,7 +3792,7 @@ dependencies = [
  "ort",
  "parking_lot",
  "pdf-extract",
- "quick-xml 0.37.5",
+ "quick-xml 0.38.4",
  "rand 0.8.5",
  "reqwest 0.13.2",
  "rusqlite",
