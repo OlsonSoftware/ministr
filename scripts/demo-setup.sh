@@ -34,6 +34,34 @@ home="$dir/home"
 mkdir -p "$project/src/greeter_cli" "$project/.claude" \
          "$home/.claude" "$home/.local/bin"
 
+# Minimal readline + bash config so an interactive shell spawned under
+# HOME=$home (via VHS or asciinema) has correct backspace/arrow-key
+# handling. Without this, readline falls back to builtin defaults that
+# don't match the key codes terminals like Rio/Kitty/WezTerm send, and
+# Backspace visibly renders as a space instead of erasing.
+cat > "$home/.inputrc" <<'INPUTRC'
+# Both the DEL (0x7F) and BS (0x08) byte sequences should erase back.
+"\C-?": backward-delete-char
+"\C-h": backward-delete-char
+# Arrow keys for command history / cursor movement.
+"\e[A": previous-history
+"\e[B": next-history
+"\e[C": forward-char
+"\e[D": backward-char
+# Bracketed paste (safer when tutorials paste multi-line snippets).
+set enable-bracketed-paste on
+set editing-mode emacs
+set horizontal-scroll-mode off
+INPUTRC
+
+cat > "$home/.bashrc" <<'BASHRC'
+# Quiet, deterministic prompt for the recording. Keeps the cast visually
+# close to Claude Code's own chrome without leaking the real host/user.
+export PS1='$ '
+stty sane 2>/dev/null || true
+stty erase '^?' 2>/dev/null || true
+BASHRC
+
 # Mirror just the two binaries we need into the scratch HOME so:
 #   1. Claude Code's installMethod check ($HOME/.local/bin/claude) passes.
 #   2. `claude mcp add ministr -- ministr` can spawn the ministr subprocess

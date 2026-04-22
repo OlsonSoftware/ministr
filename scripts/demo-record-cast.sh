@@ -25,6 +25,14 @@ if ! command -v asciinema >/dev/null 2>&1; then
     exit 1
 fi
 
+# Normalize TERM so `clear` (tput) and asciinema's ncurses bits don't
+# fail on terminals whose terminfo entries aren't installed system-wide
+# (seen with Rio, WezTerm on minimal installs, etc.). xterm-256color is
+# the safe lingua franca that every macOS / Linux setup has.
+if ! infocmp -x "${TERM:-}" >/dev/null 2>&1; then
+    export TERM=xterm-256color
+fi
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 CAST="$REPO/assets/launch.cast"
 DEMO_DIR=$(mktemp -d)
@@ -34,7 +42,8 @@ DEMO_DIR=$(mktemp -d)
 export HOME="$DEMO_DIR/home"
 export PATH="$HOME/.local/bin:$PATH"
 
-clear
+# Clear without going through `tput` — avoids terminfo lookup failures.
+printf '\033[2J\033[H'
 
 cat <<EOF
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -67,6 +76,16 @@ read -r
 
 cd "$DEMO_DIR/project"
 
+# Reset TTY settings in the parent so the PTY asciinema spawns inherits
+# them sane.
+stty sane 2>/dev/null || true
+
+# Point readline at the inputrc demo-setup.sh staged inside the scratch
+# HOME — ensures Backspace / arrow keys work the same on Rio, WezTerm,
+# Kitty, iTerm2. Force bash (not the user's $SHELL, which may be zsh
+# with custom key bindings that don't match the scratch HOME).
+export INPUTRC="$HOME/.inputrc"
+
 # Use asciicast-v2 for broadest player compatibility.
 # --idle-time-limit caps long pauses so the cast file stays small and
 # the playback stays brisk.
@@ -74,6 +93,7 @@ asciinema rec \
     --overwrite \
     --output-format asciicast-v2 \
     --idle-time-limit 2 \
+    --command "/bin/bash --rcfile $HOME/.bashrc -i" \
     "$CAST"
 
 echo
