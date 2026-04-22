@@ -39,14 +39,17 @@ env:
 #   ci-complete   → gate job, required check for branch protection
 #
 # Sticky disks (NVMe-backed, ~3s mount vs ~1m6s for GitHub Actions
-# cache) hydrate ~/.cargo/registry, ~/.cargo/git, and target/ from
-# the previous run. The heavy Rust pipeline is a single job so
-# clippy→nextest→doc→release all share the same hydrated target/
-# dir without concurrent-write contention.
+# cache) hydrate every piece of per-runner state that's expensive to
+# reconstruct: rustup toolchain, cargo-install'd binaries, the crate
+# registry, git dependencies, and target/. Shared disks (rustup, cargo
+# bin, registry, git) use one key per repo; target/ is the only one
+# with contention, and we keep the Rust pipeline serial in one job so
+# there's no concurrent-write LWW problem.
 
 jobs:
   # ────────────────────────────────────────────────────────────────
-  # fmt runs in parallel — instant feedback, no compile needed.
+  # fmt: instant feedback, no compile. Gates `rust` below — if fmt
+  # fails there's no point burning 10 min of Rust CI on whitespace.
   # ────────────────────────────────────────────────────────────────
   fmt:
     name: fmt
@@ -54,6 +57,16 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: Sticky disk — rustup toolchain
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-rustup
+          path: /home/runner/.rustup
+      - name: Sticky disk — cargo bin (rustup wrappers + cargo-install'd tools)
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-bin
+          path: /home/runner/.cargo/bin
       - uses: ./.github/actions/rust-setup
         with:
           components: rustfmt
@@ -63,9 +76,11 @@ jobs:
   # The big Rust pipeline: one runner, one target/ sticky disk,
   # every Rust gate. Kept serial so clippy→test→doc→release→smoke
   # all reuse the same in-job target/ dir without LWW contention.
+  # Waits on fmt so whitespace failures don't waste 10 min of CI.
   # ────────────────────────────────────────────────────────────────
   rust:
     name: rust (clippy → test → doc → smoke → eval)
+    needs: [fmt]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
@@ -78,10 +93,16 @@ jobs:
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
             patchelf jq
 
-      - uses: ./.github/actions/rust-setup
+      - name: Sticky disk — rustup toolchain
+        uses: useblacksmith/stickydisk@v1
         with:
-          components: clippy
-
+          key: ${{ github.repository }}-rustup
+          path: /home/runner/.rustup
+      - name: Sticky disk — cargo bin
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-bin
+          path: /home/runner/.cargo/bin
       - name: Sticky disk — cargo registry
         uses: useblacksmith/stickydisk@v1
         with:
@@ -97,6 +118,10 @@ jobs:
         with:
           key: ${{ github.repository }}-cargo-target
           path: ${{ github.workspace }}/target
+
+      - uses: ./.github/actions/rust-setup
+        with:
+          components: clippy
 
       - uses: taiki-e/install-action@v2
         with:
@@ -167,13 +192,22 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust-setup
-      # Advisory-db lookup still benefits from a warm registry.
+      - name: Sticky disk — rustup toolchain
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-rustup
+          path: /home/runner/.rustup
+      - name: Sticky disk — cargo bin
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-bin
+          path: /home/runner/.cargo/bin
       - name: Sticky disk — cargo registry
         uses: useblacksmith/stickydisk@v1
         with:
           key: ${{ github.repository }}-cargo-registry
           path: /home/runner/.cargo/registry
+      - uses: ./.github/actions/rust-setup
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny,cargo-audit
@@ -196,8 +230,8 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   # Gate job — single required status check for branch protection.
   # `if: always()` ensures we evaluate even when upstream jobs
-  # failed/cancelled (otherwise this job would get "skipped" and
-  # branch protection wouldn't see a failure).
+  # failed/cancelled/skipped (otherwise this job would be "skipped"
+  # and branch protection wouldn't see a failure).
   # ────────────────────────────────────────────────────────────────
   ci-complete:
     name: ci complete
