@@ -1,16 +1,14 @@
-name: Rust toolchain + persistent target + Tauri stubs
+name: Rust toolchain + Tauri stubs
 description: |
   One-stop setup for every job in this repo that needs to compile
-  Rust. Idempotent and fast on warm self-hosted runners.
+  Rust. Safe to use on ephemeral runners — pairs well with
+  useblacksmith/rust-cache (or Swatinem/rust-cache) for target/ reuse.
 
   Responsibilities:
     1. Ensure a stable Rust toolchain is on PATH (installs rustup
        only if missing).
     2. Add the requested rustup components.
-    3. Point CARGO_TARGET_DIR at a persistent per-runner cache dir
-       outside the workspace so `actions/checkout`'s git-clean can't
-       wipe compile artifacts between jobs.
-    4. Create placeholder Tauri bundle artifacts
+    3. Create placeholder Tauri bundle artifacts
        (`ministr-app/src-tauri/binaries/ministr-cli-<triple>` and
        `ministr-app/dist/index.html`). tauri-build and
        `tauri::generate_context!()` probe for these during regular
@@ -45,14 +43,6 @@ runs:
           comps="$(echo '${{ inputs.components }}' | tr ',' ' ')"
           rustup component add $comps
         fi
-
-    - name: Point CARGO_TARGET_DIR at a persistent per-runner cache
-      shell: bash
-      run: |
-        dir="$HOME/.cache/ministr-ci-target-${RUNNER_NAME}"
-        mkdir -p "$dir"
-        echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
-        echo "using CARGO_TARGET_DIR=$dir"
 
     - name: Stub Tauri bundle artifacts (frontendDist + externalBin)
       shell: bash

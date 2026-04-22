@@ -18,20 +18,17 @@ env:
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: short
 
-# Runner topology (2 native macOS self-hosted runners on Alrik's Mac):
+# Runner topology: Blacksmith-hosted ephemeral Linux runners.
 #
-#   ministr-native-1 labels: self-hosted, macOS, ARM64, m-series, ministr-primary
-#   ministr-native-2 labels: self-hosted, macOS, ARM64, m-series
+#   rust-ci     → blacksmith-4vcpu-ubuntu-2404  (16 GB RAM — avoids linker OOM)
+#   security    → blacksmith-2vcpu-ubuntu-2404
+#   docker-build → blacksmith-2vcpu-ubuntu-2404
 #
-# The heavy `rust-ci` pipeline pins to `ministr-primary` so every
-# step in it reuses the same persistent $CARGO_TARGET_DIR — clippy
-# warms the debug build, nextest reuses it, doc-tests add their
-# bits, release build populates target/release, mcp-smoke uses it.
-# Zero redundant compiles.
-#
-# `security` and `docker-build` need none of that compilation, so
-# they run in parallel on the other runner (`m-series`) — or on
-# either if `ministr-primary` happens to also be free.
+# Caching: useblacksmith/rust-cache is a drop-in for Swatinem's, backed
+# by Blacksmith's colocated sticky disk. Warm restores take seconds.
+# On ephemeral runners there's no persistent $CARGO_TARGET_DIR — the
+# single-job rust-ci pipeline still chains fmt→clippy→nextest→doc→
+# release so every cargo step reuses the in-job target/ dir.
 
 jobs:
   # ────────────────────────────────────────────────────────────────
@@ -39,21 +36,30 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   rust-ci:
     name: Rust CI (fmt → clippy → test → doc → smoke → eval)
-    runs-on: [self-hosted, macOS, ARM64, ministr-primary]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Tauri + ministr-app system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            patchelf jq
+
       - uses: ./.github/actions/rust-setup
         with:
           components: clippy,rustfmt
 
-      # nextest is prerequisite for the test step below; install once
-      # per runner, no-op thereafter.
-      - uses: ./.github/actions/install-cargo-tool
-        with:
-          tool: cargo-nextest
+      - uses: useblacksmith/rust-cache@v3
 
-      # Every cargo step below shares $CARGO_TARGET_DIR. clippy populates
-      # target/debug, nextest reuses it and adds test binaries, doc-tests
+      # Pre-built binaries — faster than `cargo install` on ephemeral runners.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,just
+
+      # Every cargo step below reuses the job's target/ dir. clippy
+      # populates target/debug, nextest adds test binaries, doc-tests
       # add their artifacts, release build populates target/release,
       # mcp-smoke consumes target/release. No redundant compiles.
 
@@ -80,7 +86,7 @@ jobs:
             '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"1.0"}},"id":1}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","method":"tools/list","id":2}' \
-            | timeout 30 "$CARGO_TARGET_DIR/release/ministr" serve 2>/dev/null || true)
+            | timeout 30 ./target/release/ministr serve 2>/dev/null || true)
 
           init_response=$(echo "$response" | jq -c 'select(.id == 1)')
           tools_response=$(echo "$response" | jq -c 'select(.id == 2)')
@@ -101,33 +107,28 @@ jobs:
           echo "✓ MCP smoke test passed"
 
       - name: Retrieval quality gate
-        run: |
-          if ! command -v just >/dev/null 2>&1; then brew install just; fi
-          just eval-gate
+        run: just eval-gate
 
   # ────────────────────────────────────────────────────────────────
-  # Independent, fast — runs in parallel on any available runner.
+  # Independent, fast — runs in parallel.
   # ────────────────────────────────────────────────────────────────
   security:
     name: Security (deny + audit)
-    runs-on: [self-hosted, macOS, ARM64, m-series]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust-setup
-      - uses: ./.github/actions/install-cargo-tool
+      - uses: useblacksmith/rust-cache@v3
+      - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny
-      - uses: ./.github/actions/install-cargo-tool
-        with:
-          tool: cargo-audit
+          tool: cargo-deny,cargo-audit
       - run: cargo deny check
       - run: cargo audit
 
   docker-build:
     name: Docker Build
-    runs-on: [self-hosted, macOS, ARM64, m-series]
-    # Uses the Mac's Docker daemon (linux/arm64). Layer cache lives
-    # in the host engine, so warm rebuilds are seconds.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
+      - uses: useblacksmith/setup-docker-builder@v1
       - run: docker build -t ministr:ci .
