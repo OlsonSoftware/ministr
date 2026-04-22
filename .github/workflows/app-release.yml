@@ -5,6 +5,14 @@ on:
     tags:
       - "v*-app"
 
+# Don't cancel in-flight app releases — tauri-action uploads
+# platform-specific bundles; killing mid-upload leaves a half-
+# published release draft.
+concurrency:
+  group: app-release-${{ github.ref }}
+  cancel-in-progress: false
+
+# tauri-action needs write to create/update the draft release.
 permissions:
   contents: write
 
@@ -15,6 +23,7 @@ jobs:
   build:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

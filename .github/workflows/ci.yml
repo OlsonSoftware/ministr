@@ -6,11 +6,14 @@ on:
   pull_request:
     branches: [main]
 
-# Auto-cancel in-flight runs when a new commit lands on the same PR —
-# saves a runner slot and gives faster feedback on the latest push.
+# Auto-cancel in-flight runs when a new commit lands on the same PR.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+# Principle of least privilege — no write access anywhere by default.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,24 +23,42 @@ env:
 
 # Runner topology: Blacksmith-hosted ephemeral Linux runners.
 #
-#   rust-ci     → blacksmith-4vcpu-ubuntu-2404  (16 GB RAM — avoids linker OOM)
-#   security    → blacksmith-2vcpu-ubuntu-2404
-#   docker-build → blacksmith-2vcpu-ubuntu-2404
+#   fmt           → blacksmith-2vcpu-ubuntu-2404 (instant feedback, no compile)
+#   rust          → blacksmith-4vcpu-ubuntu-2404 (16 GB RAM — linker needs it)
+#   security      → blacksmith-2vcpu-ubuntu-2404
+#   docker-build  → blacksmith-2vcpu-ubuntu-2404
+#   ci-complete   → gate job, required check for branch protection
 #
-# Caching strategy: Blacksmith sticky disks (NVMe-backed, 3s mount vs
-# ~1m6s for GitHub Actions cache). Three separate disks hydrate
-# ~/.cargo/registry, ~/.cargo/git, and target/ from the previous run.
-# useblacksmith/rust-cache is archived — Swatinem/rust-cache would also
-# work (Blacksmith transparently routes it through the 4x colocated
-# cache), but sticky disks are ~20x faster.
+# Sticky disks (NVMe-backed, ~3s mount vs ~1m6s for GitHub Actions
+# cache) hydrate ~/.cargo/registry, ~/.cargo/git, and target/ from
+# the previous run. The heavy Rust pipeline is a single job so
+# clippy→nextest→doc→release all share the same hydrated target/
+# dir without concurrent-write contention.
 
 jobs:
   # ────────────────────────────────────────────────────────────────
-  # The big pipeline: one runner, one target dir, every Rust gate.
+  # fmt runs in parallel — instant feedback, no compile needed.
   # ────────────────────────────────────────────────────────────────
-  rust-ci:
-    name: Rust CI (fmt → clippy → test → doc → smoke → eval)
+  fmt:
+    name: fmt
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-setup
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  # ────────────────────────────────────────────────────────────────
+  # The big Rust pipeline: one runner, one target/ sticky disk,
+  # every Rust gate. Kept serial so clippy→test→doc→release→smoke
+  # all reuse the same in-job target/ dir without LWW contention.
+  # ────────────────────────────────────────────────────────────────
+  rust:
+    name: rust (clippy → test → doc → smoke → eval)
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -50,10 +71,8 @@ jobs:
 
       - uses: ./.github/actions/rust-setup
         with:
-          components: clippy,rustfmt
+          components: clippy
 
-      # Sticky disks — mount BEFORE cargo touches these paths so the
-      # hydrated state from previous runs is what cargo sees.
       - name: Sticky disk — cargo registry
         uses: useblacksmith/stickydisk@v1
         with:
@@ -70,18 +89,9 @@ jobs:
           key: ${{ github.repository }}-cargo-target
           path: ${{ github.workspace }}/target
 
-      # Pre-built binaries — faster than `cargo install` on ephemeral runners.
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest,just
-
-      # Every cargo step below reuses the job's target/ dir. clippy
-      # populates target/debug, nextest adds test binaries, doc-tests
-      # add their artifacts, release build populates target/release,
-      # mcp-smoke consumes target/release. No redundant compiles.
-
-      - name: cargo fmt --check
-        run: cargo fmt --all -- --check
 
       - name: cargo clippy (pedantic, --all-targets)
         run: |
@@ -127,17 +137,16 @@ jobs:
         run: just eval-gate
 
   # ────────────────────────────────────────────────────────────────
-  # Independent, fast — runs in parallel.
+  # Independent, fast — runs in parallel with `rust`.
   # ────────────────────────────────────────────────────────────────
   security:
-    name: Security (deny + audit)
+    name: security (deny + audit)
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust-setup
-      # cargo-deny / cargo-audit only read the lockfile + advisory-db,
-      # no cargo build happens — registry cache is still worth warming
-      # to skip ~30s of index download.
+      # Advisory-db lookup still benefits from a warm registry.
       - name: Sticky disk — cargo registry
         uses: useblacksmith/stickydisk@v1
         with:
@@ -150,8 +159,9 @@ jobs:
       - run: cargo audit
 
   docker-build:
-    name: Docker Build
+    name: docker build
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: useblacksmith/setup-docker-builder@v1
@@ -160,3 +170,36 @@ jobs:
           context: .
           push: false
           tags: ministr:ci
+
+  # ────────────────────────────────────────────────────────────────
+  # Gate job — single required status check for branch protection.
+  # `if: always()` ensures we evaluate even when upstream jobs
+  # failed/cancelled (otherwise this job would get "skipped" and
+  # branch protection wouldn't see a failure).
+  # ────────────────────────────────────────────────────────────────
+  ci-complete:
+    name: ci complete
+    needs: [fmt, rust, security, docker-build]
+    if: always()
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 2
+    steps:
+      - name: Verify all required jobs succeeded
+        env:
+          FMT_RESULT: ${{ needs.fmt.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          DOCKER_RESULT: ${{ needs.docker-build.result }}
+        run: |
+          echo "fmt:          $FMT_RESULT"
+          echo "rust:         $RUST_RESULT"
+          echo "security:     $SECURITY_RESULT"
+          echo "docker-build: $DOCKER_RESULT"
+          if [ "$FMT_RESULT" != "success" ] \
+             || [ "$RUST_RESULT" != "success" ] \
+             || [ "$SECURITY_RESULT" != "success" ] \
+             || [ "$DOCKER_RESULT" != "success" ]; then
+            echo "::error::One or more required jobs failed."
+            exit 1
+          fi
+          echo "✓ all required jobs passed"

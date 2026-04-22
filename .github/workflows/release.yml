@@ -5,8 +5,15 @@ on:
     tags:
       - "v*"
 
+# Don't cancel in-flight releases — they upload artifacts; killing
+# mid-upload leaves a half-published release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Default to read-only; the `release` job below elevates to write.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,6 +22,7 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -88,6 +96,10 @@ jobs:
     name: Create Release
     needs: build
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    # Only this job needs write access to create the GitHub Release.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 

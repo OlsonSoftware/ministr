@@ -26,6 +26,7 @@ concurrency:
 jobs:
   build:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: docs-next
@@ -58,6 +59,7 @@ jobs:
   deploy:
     needs: build
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
