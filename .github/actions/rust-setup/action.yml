@@ -1,0 +1,53 @@
+name: Rust toolchain + persistent target dir
+description: |
+  Ensures a stable Rust toolchain is available (no-op if already
+  installed), adds the requested components, and points
+  CARGO_TARGET_DIR at a per-runner persistent cache dir outside the
+  workspace so `actions/checkout` doesn't git-clean it between jobs.
+
+  Designed for the native macOS self-hosted runners — both the
+  toolchain and the target dir persist across runs, so warm jobs
+  only pay for the actual source changes.
+
+inputs:
+  components:
+    description: Comma-separated list of rustup components to add (e.g. "clippy,rustfmt")
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure rustup + stable toolchain
+      shell: bash
+      run: |
+        # Add ~/.cargo/bin to PATH for every subsequent step.
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        # ...and to this step's PATH too so the install-check works.
+        export PATH="$HOME/.cargo/bin:$PATH"
+
+        if ! command -v rustup >/dev/null 2>&1; then
+          echo "installing rustup..."
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+        fi
+
+        rustup default stable
+
+        if [ -n "${{ inputs.components }}" ]; then
+          # rustup component add takes space-separated args; turn commas into spaces.
+          comps="$(echo '${{ inputs.components }}' | tr ',' ' ')"
+          rustup component add $comps
+        fi
+
+    - name: Point CARGO_TARGET_DIR at a persistent per-runner cache
+      shell: bash
+      run: |
+        # One target dir per runner keeps parallel jobs on different
+        # runners from contending on cargo's build lock, and keeps the
+        # cache alive across checkout's git-clean (which would blow
+        # away target/ if it lived inside the workspace).
+        dir="$HOME/.cache/ministr-ci-target-${RUNNER_NAME}"
+        mkdir -p "$dir"
+        echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
+        echo "using CARGO_TARGET_DIR=$dir"
