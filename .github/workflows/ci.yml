@@ -119,7 +119,7 @@ jobs:
             --hide-progress-bar \
             --status-level pass \
             --final-status-level flaky \
-            -E 'not test(/^index::hnsw::tests::(concurrent_reads|insert_multiple_and_search|persist_and_load_roundtrip)$/)'
+            -E 'not test(/hnsw::tests::(concurrent_reads|insert_multiple_and_search|persist_and_load_roundtrip)/)'
 
       - name: cargo test --doc
         run: cargo test --workspace --doc --locked
