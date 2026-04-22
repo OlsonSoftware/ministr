@@ -24,11 +24,12 @@ env:
 #   security    → blacksmith-2vcpu-ubuntu-2404
 #   docker-build → blacksmith-2vcpu-ubuntu-2404
 #
-# Caching: useblacksmith/rust-cache is a drop-in for Swatinem's, backed
-# by Blacksmith's colocated sticky disk. Warm restores take seconds.
-# On ephemeral runners there's no persistent $CARGO_TARGET_DIR — the
-# single-job rust-ci pipeline still chains fmt→clippy→nextest→doc→
-# release so every cargo step reuses the in-job target/ dir.
+# Caching strategy: Blacksmith sticky disks (NVMe-backed, 3s mount vs
+# ~1m6s for GitHub Actions cache). Three separate disks hydrate
+# ~/.cargo/registry, ~/.cargo/git, and target/ from the previous run.
+# useblacksmith/rust-cache is archived — Swatinem/rust-cache would also
+# work (Blacksmith transparently routes it through the 4x colocated
+# cache), but sticky disks are ~20x faster.
 
 jobs:
   # ────────────────────────────────────────────────────────────────
@@ -51,7 +52,23 @@ jobs:
         with:
           components: clippy,rustfmt
 
-      - uses: useblacksmith/rust-cache@v3
+      # Sticky disks — mount BEFORE cargo touches these paths so the
+      # hydrated state from previous runs is what cargo sees.
+      - name: Sticky disk — cargo registry
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-registry
+          path: /home/runner/.cargo/registry
+      - name: Sticky disk — cargo git
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-git
+          path: /home/runner/.cargo/git
+      - name: Sticky disk — cargo target
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-target
+          path: ${{ github.workspace }}/target
 
       # Pre-built binaries — faster than `cargo install` on ephemeral runners.
       - uses: taiki-e/install-action@v2
@@ -118,7 +135,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust-setup
-      - uses: useblacksmith/rust-cache@v3
+      # cargo-deny / cargo-audit only read the lockfile + advisory-db,
+      # no cargo build happens — registry cache is still worth warming
+      # to skip ~30s of index download.
+      - name: Sticky disk — cargo registry
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-registry
+          path: /home/runner/.cargo/registry
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny,cargo-audit
