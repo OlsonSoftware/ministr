@@ -4,15 +4,17 @@ import Link from 'next/link';
 import { ArrowRight, Box } from 'lucide-react';
 import { GithubGlyph } from '@/components/landing/github-glyph';
 import { motion, useReducedMotion } from 'motion/react';
-import { SessionTrace } from '@/components/landing/session-trace';
+import { HeroPlayer } from '@/components/landing/hero-player';
 import { GlassCard } from '@/components/landing/glass-card';
 import { CopyButton } from '@/components/landing/copy-button';
 import { EASE_OUT } from '@/lib/motion';
 
 /**
- * Hero — headline + animated terminal, layered over the page-wide
- * chromatic-flow shader. No local backdrop layer: the shader handles
- * all ambience so the hero can stay clean and typographic.
+ * Hero — headline + live asciinema recording of ministr + Claude Code,
+ * layered over the page-wide chromatic-flow shader. The player wears
+ * the same Shell as the old SessionTrace simulation (traffic-light
+ * dots, ministr-tinted surface, glow shadow) — asciinema's own chrome
+ * is suppressed via `app/global.css` overrides.
  */
 export function Hero() {
   const reduced = useReducedMotion();
@@ -103,7 +105,7 @@ export function Hero() {
             className="relative"
           >
             <GlassCard padded={false} className="p-2 sm:p-3">
-              <SessionTrace />
+              <HeroPlayer />
             </GlassCard>
           </motion.div>
         </div>

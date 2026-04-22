@@ -3,6 +3,8 @@
 import 'asciinema-player/dist/bundle/asciinema-player.css';
 import { useEffect, useRef } from 'react';
 
+import type { PlayerOptions } from 'asciinema-player';
+
 export interface LaunchPlayerProps {
   /** URL or absolute path to the .cast file. */
   src: string;
@@ -12,6 +14,10 @@ export interface LaunchPlayerProps {
    * undefined for the default (blank terminal at t=0).
    */
   poster?: string;
+  /** Additional player options merged over the defaults. */
+  options?: Partial<PlayerOptions>;
+  /** Extra class on the mount element. */
+  className?: string;
 }
 
 /**
@@ -24,8 +30,17 @@ export interface LaunchPlayerProps {
  * (LaunchDemo) — both belt-and-braces are needed because the player's
  * ESM entry touches DOM globals at module-evaluation time.
  */
-export default function LaunchPlayer({ src, poster }: LaunchPlayerProps) {
+export default function LaunchPlayer({
+  src,
+  poster,
+  options,
+  className,
+}: LaunchPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Serialize the caller's options so we don't re-create the player every
+  // render just because the parent passed a fresh object literal.
+  const optionsKey = options ? JSON.stringify(options) : '';
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +59,7 @@ export default function LaunchPlayer({ src, poster }: LaunchPlayerProps) {
         autoPlay: false,
         controls: 'auto',
         ...(poster ? { poster } : {}),
+        ...(options ?? {}),
       });
     })().catch((err) => {
       if (!cancelled) console.error('asciinema-player failed to mount', err);
@@ -57,12 +73,13 @@ export default function LaunchPlayer({ src, poster }: LaunchPlayerProps) {
         /* swallow — unmounting a partially-initialised player is fine */
       }
     };
-  }, [src, poster]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src, poster, optionsKey]);
 
   return (
     <div
       ref={containerRef}
-      className="launch-player"
+      className={['launch-player', className].filter(Boolean).join(' ')}
       aria-label="ministr + Claude Code terminal recording"
     />
   );

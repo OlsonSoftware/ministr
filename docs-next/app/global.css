@@ -769,3 +769,37 @@ h1.ministr-gradient-text,
   .strike-claim::after { transform: scaleX(1); animation: none; }
 }
 
+/* =====================================================
+   asciinema-player overrides — make it blend into the
+   hero Shell (traffic-light header + ministr surface).
+   Defaults are listed at
+   node_modules/asciinema-player/dist/bundle/asciinema-player.css.
+   ===================================================== */
+
+/* Kill the player's own border-radius so our Shell's rounded-xl is
+   the sole frame. Let the player fill its container horizontally. */
+.hero-player-stage .ap-wrapper {
+  height: auto;
+  display: block;
+}
+.hero-player-stage div.ap-wrapper .ap-player {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  border-radius: 0;
+  background-color: color-mix(in srgb, var(--fd-card) 92%, var(--color-ministr-950) 8%);
+}
+/* Default .ap-term has a 0.75em solid border matching the terminal
+   background — effectively a chunky inset padding. Trim it so the
+   recorded content is flush with our Shell's inner edge. */
+.hero-player-stage div.ap-term {
+  border-width: 0.5em;
+}
+
+/* Control bar (play/seek) — soften its background so it sits inside
+   the Shell cleanly. Leave colors alone so readability stays. */
+.hero-player-stage .ap-control-bar {
+  background: color-mix(in srgb, var(--fd-card) 85%, var(--color-ministr-950) 15%);
+  border-top: 1px solid color-mix(in srgb, var(--fd-border) 80%, transparent);
+}
+
