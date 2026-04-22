@@ -35,7 +35,7 @@ pub enum McpError {
     Parse(#[from] ParseError),
 
     /// An MCP protocol-level error (e.g. invalid tool parameters).
-    #[error("MCP protocol error: {reason}")]
+    #[error("MCP protocol error: {0}")]
     #[diagnostic(code(ministr::mcp::protocol), help("check the tool call parameters"))]
-    Protocol { reason: String },
+    Protocol(String),
 }
