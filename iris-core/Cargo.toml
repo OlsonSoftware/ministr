@@ -98,7 +98,7 @@ lang-kotlin = ["dep:tree-sitter-kotlin-ng"]
 [dev-dependencies]
 serde_json.workspace = true
 criterion = { version = "0.5", features = ["html_reports"] }
-rand = "0.8"
+rand = "0.10"
 
 [[bench]]
 name = "search"
