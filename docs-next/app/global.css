@@ -770,28 +770,83 @@ h1.ministr-gradient-text,
 }
 
 /* =====================================================
-   asciinema-player overrides — make it blend into the
-   hero Shell (traffic-light header + ministr surface).
-   Defaults are listed at
+   asciinema-player — custom "ministr" theme + hero chrome
+   overrides so the player blends into the hero Shell
+   (traffic-light header + ministr surface) in both dark
+   and light modes. Defaults are listed at
    node_modules/asciinema-player/dist/bundle/asciinema-player.css.
    ===================================================== */
 
-/* Kill the player's own border-radius so our Shell's rounded-xl is
-   the sole frame. Let the player fill its container horizontally. */
-.hero-player-stage .ap-wrapper {
-  height: auto;
-  display: block;
+/* Dark-mode palette — GitHub-dark-ish, matches the cast's recorded
+   theme and stays readable on the ministr-tinted surface. */
+.asciinema-player-theme-ministr {
+  --term-color-foreground: #c9d1d9;
+  --term-color-background: color-mix(in srgb, var(--fd-card) 92%, var(--color-ministr-950) 8%);
+  --term-color-0:  #0d1117;
+  --term-color-1:  #ff7b72;
+  --term-color-2:  #7ee787;
+  --term-color-3:  #ffa657;
+  --term-color-4:  #79c0ff;
+  --term-color-5:  #d2a8ff;
+  --term-color-6:  #a5d6ff;
+  --term-color-7:  #c9d1d9;
+  --term-color-8:  #6e7681;
+  --term-color-9:  #ffa198;
+  --term-color-10: #56d364;
+  --term-color-11: #e3b341;
+  --term-color-12: #79c0ff;
+  --term-color-13: #d2a8ff;
+  --term-color-14: #a5d6ff;
+  --term-color-15: #f0f6fc;
+}
+
+/* Light-mode override — GitHub-light-ish, with a warm near-white
+   background that blends into the Shell's light surface instead of
+   stamping a black brick on the page. */
+:root:not(.dark) .asciinema-player-theme-ministr {
+  --term-color-foreground: #1f2328;
+  --term-color-background: color-mix(in srgb, var(--fd-card) 92%, var(--color-ministr-50) 8%);
+  --term-color-0:  #24292f;
+  --term-color-1:  #cf222e;
+  --term-color-2:  #116329;
+  --term-color-3:  #4d2d00;
+  --term-color-4:  #0969da;
+  --term-color-5:  #8250df;
+  --term-color-6:  #1b7c83;
+  --term-color-7:  #6e7781;
+  --term-color-8:  #57606a;
+  --term-color-9:  #a40e26;
+  --term-color-10: #1a7f37;
+  --term-color-11: #633c01;
+  --term-color-12: #0550ae;
+  --term-color-13: #6639ba;
+  --term-color-14: #0598a3;
+  --term-color-15: #6e7781;
+}
+
+/* Kill the player's own border-radius so the Shell's rounded-xl is
+   the sole frame. Stretch the player to fill its container so our
+   aspect-ratio wrapper controls sizing. */
+.hero-player-stage {
+  /* 96 cols × 50 rows at char-aspect 0.5 ≈ 48:66 → 0.72:1 (taller
+     than wide). A 4/5 container lets the natural cast aspect fit
+     with minimal pillarbox and the player never needs to reflow. */
+  aspect-ratio: 4 / 5;
+  position: relative;
+}
+.hero-player-stage .ap-wrapper,
+.hero-player-stage .ap-player {
+  height: 100%;
+  max-width: 100%;
 }
 .hero-player-stage div.ap-wrapper .ap-player {
   display: block;
   width: 100%;
-  max-width: 100%;
   border-radius: 0;
-  background-color: color-mix(in srgb, var(--fd-card) 92%, var(--color-ministr-950) 8%);
 }
 /* Default .ap-term has a 0.75em solid border matching the terminal
    background — effectively a chunky inset padding. Trim it so the
-   recorded content is flush with our Shell's inner edge. */
+   recorded content is flush with the Shell's inner edge. */
 .hero-player-stage div.ap-term {
   border-width: 0.5em;
 }
@@ -801,5 +856,8 @@ h1.ministr-gradient-text,
 .hero-player-stage .ap-control-bar {
   background: color-mix(in srgb, var(--fd-card) 85%, var(--color-ministr-950) 15%);
   border-top: 1px solid color-mix(in srgb, var(--fd-border) 80%, transparent);
+}
+:root:not(.dark) .hero-player-stage .ap-control-bar {
+  background: color-mix(in srgb, var(--fd-card) 85%, var(--color-ministr-50) 15%);
 }
 

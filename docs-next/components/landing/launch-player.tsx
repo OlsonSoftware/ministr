@@ -50,14 +50,21 @@ export default function LaunchPlayer({
       const { create } = await import('asciinema-player');
       if (cancelled || !containerRef.current) return;
       instance = create(src, containerRef.current, {
-        theme: 'dracula',
-        fit: 'width',
+        theme: 'ministr',
+        // fit:'both' + an aspect-ratio container keeps the cast at its
+        // natural shape. fit:'width' in a narrow column makes the 96
+        // cols squeeze to a tiny font and stretches the 50 rows into
+        // a ~700px-tall block. Let the container own the shape.
+        fit: 'both',
         terminalFontFamily: 'var(--font-mono)',
-        terminalFontSize: 'medium',
+        terminalFontSize: 'small',
         idleTimeLimit: 2,
         loop: true,
         autoPlay: false,
         controls: 'auto',
+        // Preload the cast on mount so the player reports its real
+        // dimensions before the user clicks play — no layout jump.
+        preload: true,
         ...(poster ? { poster } : {}),
         ...(options ?? {}),
       });

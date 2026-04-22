@@ -56,9 +56,11 @@ export function HeroPlayer() {
 }
 
 function HeroPlayerSkeleton() {
+  // Matches .hero-player-stage aspect-ratio exactly so there is no
+  // reflow when the dynamically-imported player swaps in.
   return (
     <div
-      className="aspect-[4/3] w-full animate-pulse bg-[color-mix(in_srgb,var(--fd-card)_80%,var(--color-ministr-950)_20%)]"
+      className="aspect-[4/5] w-full animate-pulse bg-[color-mix(in_srgb,var(--fd-card)_80%,var(--color-ministr-950)_20%)]"
       aria-hidden
     />
   );
