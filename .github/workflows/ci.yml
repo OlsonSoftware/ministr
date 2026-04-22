@@ -132,28 +132,28 @@ jobs:
           cargo clippy --workspace --all-targets --locked \
               -- -D warnings -W clippy::pedantic
 
-      - name: cargo nextest run (lib + bins + integration)
-        # --workspace --exclude ministr-app: ministr-app is a binary-only
-        #   Tauri desktop crate. Its test binary links in ort (ONNX) +
-        #   tauri-plugin-* which have static initializers that hang on a
-        #   headless Linux runner when nextest launches the binary for
-        #   test enumeration (--list). The compile succeeds quickly, then
-        #   startup hangs. Excluding the whole package sidesteps this.
-        #   Its integration coverage is via the release-build smoke test
-        #   below, not unit tests.
+      - name: cargo nextest run (unit tests — lib + bins)
+        # --lib --bins (NOT --all-targets): only run unit tests in
+        #   each crate, skipping the tests/ directories. Integration
+        #   tests in this workspace include heavy stress/soak cases
+        #   (stress_concurrent_clients_on_shared_corpus,
+        #   soak_large_corpus_indexing_and_query) + e2e harnesses that
+        #   spin up daemons with fastembed/ORT init — these reliably
+        #   hang during nextest's --list enumeration on headless Linux.
+        #   A follow-up job can run integration tests with appropriate
+        #   isolation once the main pipeline is green.
+        # --workspace --exclude ministr-app: ministr-app is a binary-
+        #   only Tauri desktop crate; its test binary hangs on static
+        #   init against a headless Linux runner (no display, no DBus).
         # Config lives in .config/nextest.toml:
-        #   - profile 'ci': streams every test as it completes + final flaky
-        #     status so the log never goes silent post-compile.
-        #   - slow-timeout + terminate-after: any test hanging >2min gets
-        #     killed and reported by name. No more mystery hangs.
-        #   - override: HNSW tests serialize via threads-required=num-cpus,
-        #     avoiding the parallel-execution contention they exhibit on
-        #     Linux/ext4 (passes in isolation locally, flakes in CI).
+        #   - profile 'ci': streams every test as it completes + final
+        #     flaky status; slow-timeout kills hung tests by name.
+        #   - override: HNSW tests serialize via threads-required=num-cpus.
         run: |
           cargo nextest run \
             --profile ci \
             --workspace --exclude ministr-app \
-            --all-targets --locked \
+            --lib --bins --locked \
             --hide-progress-bar \
             --no-tests=warn
 
