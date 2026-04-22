@@ -88,6 +88,15 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    env:
+      # Cap parallel linker invocations. With lib tests + integration
+      # tests + bench binaries the workspace produces ~35 executables,
+      # each linking the full ministr-core dep graph. Unbounded
+      # parallelism (nproc=4 on ubuntu-latest) runs the 16 GB runner
+      # out of memory during link, which kills the runner agent
+      # mid-step (observed: step stays in_progress with no log output,
+      # job is marked failed). Two concurrent links stays within budget.
+      CARGO_BUILD_JOBS: "2"
     steps:
       - uses: actions/checkout@v4
 
