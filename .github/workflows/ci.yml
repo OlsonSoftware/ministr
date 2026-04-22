@@ -18,6 +18,15 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_NET_RETRY: "10"
+  # Incremental compilation is useless in CI (every run starts from the
+  # cache, not a prior compile state) and materially bloats target/.
+  # Disabling it also eliminates the target/debug/incremental/ tree.
+  CARGO_INCREMENTAL: "0"
+  # line-tables-only keeps backtraces readable but drops the bulk of the
+  # debug-info bytes from every .rlib — roughly halves target/debug/.
+  # Applied to both dev + test profiles since nextest builds test bins.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: short
 
