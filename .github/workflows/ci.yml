@@ -8,74 +8,32 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Disable incremental compilation in CI. Incremental bloats the target
-  # dir (bigger cache save + restore) without helping, because the
-  # runner's workspace is recreated from a restored cache every time —
-  # there's no "last build" state incremental can reuse beyond what the
-  # cache already provides.
-  CARGO_INCREMENTAL: 0
-  # Surface flaky crates.io reads instead of hard-failing on first drop.
-  CARGO_NET_RETRY: 10
-  # -D warnings turns every compile warning into an error. Matches the
-  # local `just lint` stance so CI never lets noise slip through.
+  CARGO_INCREMENTAL: "0"    # smaller cache, and incremental state doesn't survive runs anyway
+  CARGO_NET_RETRY: "10"
   RUSTFLAGS: "-D warnings"
-  # Short backtraces keep CI logs readable while still giving enough
-  # context to diagnose a panic.
   RUST_BACKTRACE: short
 
-# Each Rust job uses the same Swatinem/rust-cache shared-key so the
-# target/ + registry cache is portable across jobs *and* across
-# subsequent PR pushes. First commit's lint run populates the cache,
-# later commits' test/doctest/mcp-smoke jobs warm-start from it.
+# The Rust-heavy jobs run on Alrik's self-hosted arm64 macOS runner
+# (labels: self-hosted, macos, arm64, m-series). That box has 18
+# cores and 48 GB RAM — ~4.5× the CPU and 3× the memory of
+# ubuntu-latest, plus a persistent `target/` between runs — so a
+# cold ~8 min cloud run drops to seconds once warm.
 #
-# Wall-clock expectation:
-#   cold (first PR push): slowest job ~= 8-10 min (docker is unaffected)
-#   warm (subsequent push with same deps): ~2-3 min
+# Keep one Linux job (mcp-smoke) on ubuntu-latest so we still exercise
+# the cross-platform CLI path and Docker Build stays on ubuntu-latest
+# because the image itself is Linux.
 jobs:
   lint:
     name: Lint (fmt + clippy)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macos, arm64]
+    env:
+      # Persistent target dir outside the workspace so `actions/checkout`
+      # doesn't git-clean it between runs. Shared across every Rust job
+      # on the runner; the incremental+persisted target/ makes warm
+      # runs near-instant.
+      CARGO_TARGET_DIR: /Users/alrik/.cache/ministr-ci-target
     steps:
       - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ministr-ci
-
-      - name: Install Tauri Linux build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
-
-      - name: Stub Tauri bundle artifacts
-        # tauri-build and tauri::generate_context!() probe bundle-time
-        # inputs during regular cargo check/compile:
-        #   - binaries/ministr-cli-<triple>  ← externalBin sidecar
-        #   - ../dist/                       ← frontendDist (pnpm build output)
-        # Neither is produced by cargo; in real use they're built by
-        # `just pkg` / `pnpm build`. Lint/test/doctests only need the
-        # existence checks to pass. Real Linux ministr-cli coverage
-        # lives in mcp-smoke (full release build + live smoke test).
-        run: |
-          triple=$(rustc -vV | awk '/^host:/ {print $2}')
-          mkdir -p ministr-app/src-tauri/binaries
-          : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
-          chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
-          mkdir -p ministr-app/dist
-          : > ministr-app/dist/index.html
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
@@ -87,159 +45,84 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macos, arm64]
     env:
-      # Cap parallel linker invocations. With lib tests + integration
-      # tests + bench binaries the workspace produces ~35 executables,
-      # each linking the full ministr-core dep graph. Unbounded
-      # parallelism (nproc=4 on ubuntu-latest) runs the 16 GB runner
-      # out of memory during link, which kills the runner agent
-      # mid-step (observed: step stays in_progress with no log output,
-      # job is marked failed). Two concurrent links stays within budget.
-      CARGO_BUILD_JOBS: "2"
+      CARGO_TARGET_DIR: /Users/alrik/.cache/ministr-ci-target
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ministr-ci
-
-      # Prebuilt nextest — ~5s vs ~1min compile-from-source. Runs tests
-      # in a process-per-test model; ~35% faster than cargo test once
-      # tests are compiled, especially on multi-core runners.
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
-      - name: Install Tauri Linux build deps
+      # Host cargo-nextest install is persistent; only (re)install if
+      # missing. Faster than a prebuilt-binary fetch every run.
+      - name: Ensure cargo-nextest is installed
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
-
-      - name: Stub Tauri bundle artifacts
-        run: |
-          triple=$(rustc -vV | awk '/^host:/ {print $2}')
-          mkdir -p ministr-app/src-tauri/binaries
-          : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
-          chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
-          mkdir -p ministr-app/dist
-          : > ministr-app/dist/index.html
+          if ! command -v cargo-nextest >/dev/null 2>&1; then
+            cargo install cargo-nextest --locked
+          fi
 
       - name: cargo nextest run
-        # --all-targets runs lib + bins + integration tests + benches;
-        # doc-tests are excluded (nextest doesn't support them and they
-        # ran in their own job below with limited parallelism to avoid
-        # linker OOM).
         run: cargo nextest run --workspace --all-targets --locked
 
   doctests:
     name: Doc tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macos, arm64]
     env:
-      # Each doc-test compiles to its own standalone binary and links
-      # the full ministr-core dep graph. With 130+ doc examples the
-      # cumulative peak linker memory exhausts ubuntu-latest's 16 GB
-      # (`ld terminated with signal 7 [Bus error]`). Capping cargo's
-      # parallel build jobs at 2 keeps the number of concurrent linker
-      # invocations low enough to fit.
-      CARGO_BUILD_JOBS: "2"
+      CARGO_TARGET_DIR: /Users/alrik/.cache/ministr-ci-target
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ministr-ci
-
-      - name: Install Tauri Linux build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
-
-      - name: Stub Tauri bundle artifacts
-        run: |
-          triple=$(rustc -vV | awk '/^host:/ {print $2}')
-          mkdir -p ministr-app/src-tauri/binaries
-          : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
-          chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
-          mkdir -p ministr-app/dist
-          : > ministr-app/dist/index.html
 
       - name: cargo test --doc
         run: cargo test --workspace --doc --locked
 
   security:
     name: Security (deny + audit)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macos, arm64]
     steps:
       - uses: actions/checkout@v4
 
-      # Prebuilt binaries — no `cargo install` compile step (was ~2 min each).
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny,cargo-audit
+      - name: Ensure cargo-deny + cargo-audit are installed
+        run: |
+          if ! command -v cargo-deny  >/dev/null 2>&1; then cargo install cargo-deny  --locked; fi
+          if ! command -v cargo-audit >/dev/null 2>&1; then cargo install cargo-audit --locked; fi
 
       - name: cargo deny check
         run: cargo deny check
 
-      # Gates only on actual vulnerabilities. Unmaintained-crate warnings
-      # (gtk-rs bindings pulled in via Tauri's Linux tray-icon) and
-      # soundness advisories are handled in deny.toml with documented
-      # ignore rationales.
       - name: cargo audit
         run: cargo audit
 
   eval-retrieval:
     name: Retrieval Quality Gate
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macos, arm64]
+    env:
+      CARGO_TARGET_DIR: /Users/alrik/.cache/ministr-ci-target
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ministr-ci
-      - uses: extractions/setup-just@v2
+
+      - name: Ensure just is installed
+        run: |
+          if ! command -v just >/dev/null 2>&1; then
+            brew install just
+          fi
 
       - name: Run retrieval regression gate
         run: just eval-gate
 
   mcp-smoke:
-    name: MCP Smoke Test
+    name: MCP Smoke Test (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # Separate shared-key because this job builds `--release`;
-          # release and dev profiles live in different target/
-          # subdirectories and sharing would churn the cache on every
-          # profile swap.
-          shared-key: ministr-ci-release
+          # Release profile lives in a different target/ subdir than the
+          # macOS jobs so a separate shared key avoids unnecessary churn.
+          shared-key: ministr-ci-linux-release
 
       - name: Build release binary
-        # Real Linux build of ministr-cli. This is the authoritative
-        # "does the CLI compile on Linux" signal that backs the stub
-        # sidecar the lint/test/doctests jobs use.
+        # Authoritative "does ministr-cli compile on Linux" signal. The
+        # macOS jobs above don't cover this because candle-metal is
+        # Apple-only and the dep graphs diverge.
         run: cargo build --release -p ministr-cli --locked
 
       - name: MCP initialize + tools/list
@@ -253,9 +136,8 @@ jobs:
             '{"jsonrpc":"2.0","method":"tools/list","id":2}' \
             | timeout 30 ./target/release/ministr serve 2>/dev/null || true)
 
-          # Pick each response by its JSON-RPC id. jq processes the full
-          # NDJSON stream and emits only matching documents, so we don't
-          # depend on line ordering or substring matches.
+          # Pick each response by its JSON-RPC id — order-independent,
+          # substring-match-free.
           init_response=$(echo "$response" | jq -c 'select(.id == 1)')
           tools_response=$(echo "$response" | jq -c 'select(.id == 2)')
 
@@ -279,11 +161,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # buildx + GHA layer cache. First run on a branch is still full
-      # cost (~10-15 min), but every subsequent run pulls the Rust dep
-      # layer from cache and finishes in ~30s. Without this, every CI
-      # run rebuilt ~500 crates from scratch.
       - uses: docker/setup-buildx-action@v3
 
       - name: Build Docker image
