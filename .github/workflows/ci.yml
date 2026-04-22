@@ -111,14 +111,21 @@ jobs:
         # --hide-progress-bar: ANSI progress bar never renders in CI logs.
         # --status-level pass: print every test as it finishes so output
         #   streams in real time instead of going silent post-compile.
-        # -E filter skips three HNSW tests that deadlock under parallel
-        #   execution (pre-existing flake, tracked; pass in isolation).
+        # --test-threads 2: cap concurrency. nextest defaults to num-cpus
+        #   (4 here), which races with tests that share on-disk state
+        #   (HNSW, SQLite fixtures). Local `cargo test` serializes within
+        #   a binary, hiding these races — mirror that behavior in CI.
+        # -E filter: skip three HNSW tests that deadlock even at low
+        #   concurrency (pre-existing flake; pass in isolation).
+        # --no-tests=warn: don't fail if a package has no tests.
         run: |
           cargo nextest run \
             --workspace --all-targets --locked \
             --hide-progress-bar \
             --status-level pass \
             --final-status-level flaky \
+            --test-threads 2 \
+            --no-tests=warn \
             -E 'not test(/hnsw::tests::(concurrent_reads|insert_multiple_and_search|persist_and_load_roundtrip)/)'
 
       - name: cargo test --doc
