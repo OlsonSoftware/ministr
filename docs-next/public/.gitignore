@@ -1,0 +1,4 @@
+# The cast file is copied in from ../../assets/launch.cast by the
+# `prebuild` / `predev` npm script. Single source of truth lives in
+# the repo-root assets/ directory.
+launch.cast

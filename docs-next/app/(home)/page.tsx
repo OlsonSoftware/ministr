@@ -7,6 +7,7 @@ import { Thesis } from '@/components/landing/thesis';
 import { Mechanisms } from '@/components/landing/mechanisms';
 import { ArchitectureFlow } from '@/components/landing/architecture-flow';
 import { WhatMinistrIsnt } from '@/components/landing/what-ministr-isnt';
+import { LaunchDemo } from '@/components/landing/launch-demo';
 import { InstallTabs } from '@/components/landing/install-tabs';
 import { ToolList } from '@/components/landing/tool-list';
 import { CtaCoda } from '@/components/landing/cta-coda';
@@ -23,10 +24,11 @@ import { Reveal } from '@/components/landing/reveal';
  *   4. Mechanisms   (5 mechanisms + hybrid search, bento)
  *   5. Architecture (how it wires up)
  *   6. What ministr isn't (differentiation strikethroughs)
- *   7. Install      (30-second path)
- *   8. Tool ref     (twelve tools your agent already speaks)
- *   9. CTA coda     (stop re-reading the same files)
- *  10. Footer       (retained, tightened)
+ *   7. Live demo    (asciinema replay of real Claude Code + ministr)
+ *   8. Install      (30-second path)
+ *   9. Tool ref     (twelve tools your agent already speaks)
+ *  10. CTA coda     (stop re-reading the same files)
+ *  11. Footer       (retained, tightened)
  */
 export default function HomePage() {
   return (
@@ -44,6 +46,10 @@ export default function HomePage() {
       <Mechanisms />
       <ArchitectureFlow />
       <WhatMinistrIsnt />
+
+      <Section belowFold>
+        <LaunchDemo />
+      </Section>
 
       <Section belowFold>
         <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">

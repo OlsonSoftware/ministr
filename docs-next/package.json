@@ -3,6 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "prebuild": "mkdir -p public && (cp ../assets/launch.cast public/launch.cast 2>/dev/null || echo 'warn: assets/launch.cast not yet recorded — player will 404 at runtime')",
+    "predev": "mkdir -p public && (cp ../assets/launch.cast public/launch.cast 2>/dev/null || echo 'warn: assets/launch.cast not yet recorded — player will 404 at runtime')",
     "build": "next build",
     "dev": "next dev",
     "start": "serve out",
@@ -10,10 +12,11 @@
   },
   "dependencies": {
     "@orama/orama": "^3.1.18",
+    "@react-three/fiber": "^9.0.0",
+    "asciinema-player": "^3.15.1",
     "fumadocs-core": "^16.8",
     "fumadocs-mdx": "^14",
     "fumadocs-ui": "^16.8",
-    "@react-three/fiber": "^9.0.0",
     "lucide-react": "^1.8.0",
     "mermaid": "^11.14.0",
     "motion": "^12.38.0",

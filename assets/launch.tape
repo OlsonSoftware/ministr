@@ -22,6 +22,7 @@
 #   4. Exit cleanly.
 
 Output assets/launch.gif
+Output assets/launch.mp4
 
 # `Require` is checked against the shell that launched vhs — before the
 # tape's Hide block extends PATH. Only guard on `claude` (in ~/.local/bin
