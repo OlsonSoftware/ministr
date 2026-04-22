@@ -74,7 +74,7 @@ quick-xml = "0.37"
 sha2 = "0.10"
 
 # File watching
-notify = "7"
+notify = "8"
 
 # Glob pattern matching
 glob = "0.3"
