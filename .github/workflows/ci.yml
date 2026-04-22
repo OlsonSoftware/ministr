@@ -6,112 +6,76 @@ on:
   pull_request:
     branches: [main]
 
+# Auto-cancel in-flight runs when a new commit lands on the same PR —
+# saves a runner slot and gives faster feedback on the latest push.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_NET_RETRY: "10"
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: short
 
-# Every job runs on the native macOS self-hosted runners registered
-# on Alrik's MacBook (labels: self-hosted, macOS, ARM64, m-series).
-# Architecture-wise this means:
+# Runner topology (2 native macOS self-hosted runners on Alrik's Mac):
 #
-#   - Real Rust toolchain, real Tauri bundle artifacts on disk — no
-#     stubbing of sidecar binaries or frontendDist directories.
-#   - No "Install Linux build deps" steps; the Mac has a working
-#     Tauri toolchain from regular development.
-#   - CARGO_TARGET_DIR is a per-runner persistent cache outside the
-#     workspace (set by ./.github/actions/rust-setup). Warm jobs only
-#     recompile what actually changed.
-#   - cargo-{nextest,deny,audit} and just are installed on demand per
-#     runner via ./.github/actions/install-cargo-tool and stay cached
-#     across subsequent jobs.
+#   ministr-native-1 labels: self-hosted, macOS, ARM64, m-series, ministr-primary
+#   ministr-native-2 labels: self-hosted, macOS, ARM64, m-series
 #
-# Repeated setup lives in two composite actions:
+# The heavy `rust-ci` pipeline pins to `ministr-primary` so every
+# step in it reuses the same persistent $CARGO_TARGET_DIR — clippy
+# warms the debug build, nextest reuses it, doc-tests add their
+# bits, release build populates target/release, mcp-smoke uses it.
+# Zero redundant compiles.
 #
-#   .github/actions/rust-setup           — toolchain + CARGO_TARGET_DIR
-#   .github/actions/install-cargo-tool   — lazy cargo install
-#
-# Jobs are parallel; add more runners by re-running
-# scripts/setup-runners.py NUM=4 when concurrency matters.
+# `security` and `docker-build` need none of that compilation, so
+# they run in parallel on the other runner (`m-series`) — or on
+# either if `ministr-primary` happens to also be free.
 
 jobs:
-  lint:
-    name: Lint (fmt + clippy)
-    runs-on: [self-hosted, macOS, ARM64, m-series]
+  # ────────────────────────────────────────────────────────────────
+  # The big pipeline: one runner, one target dir, every Rust gate.
+  # ────────────────────────────────────────────────────────────────
+  rust-ci:
+    name: Rust CI (fmt → clippy → test → doc → smoke → eval)
+    runs-on: [self-hosted, macOS, ARM64, ministr-primary]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust-setup
         with:
           components: clippy,rustfmt
-      - run: cargo fmt --all -- --check
-      - run: |
-          cargo clippy --workspace --all-targets --locked \
-              -- -D warnings -W clippy::pedantic
 
-  test:
-    name: Test
-    runs-on: [self-hosted, macOS, ARM64, m-series]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust-setup
+      # nextest is prerequisite for the test step below; install once
+      # per runner, no-op thereafter.
       - uses: ./.github/actions/install-cargo-tool
         with:
           tool: cargo-nextest
-      - run: cargo nextest run --workspace --all-targets --locked
 
-  doctests:
-    name: Doc tests
-    runs-on: [self-hosted, macOS, ARM64, m-series]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust-setup
-      - run: cargo test --workspace --doc --locked
+      # Every cargo step below shares $CARGO_TARGET_DIR. clippy populates
+      # target/debug, nextest reuses it and adds test binaries, doc-tests
+      # add their artifacts, release build populates target/release,
+      # mcp-smoke consumes target/release. No redundant compiles.
 
-  security:
-    name: Security (deny + audit)
-    runs-on: [self-hosted, macOS, ARM64, m-series]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust-setup
-      - uses: ./.github/actions/install-cargo-tool
-        with:
-          tool: cargo-deny
-      - uses: ./.github/actions/install-cargo-tool
-        with:
-          tool: cargo-audit
-      - run: cargo deny check
-      # Gates only on actual vulnerabilities. Unmaintained-crate
-      # warnings and soundness advisories are handled via deny.toml
-      # with documented rationales.
-      - run: cargo audit
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
 
-  eval-retrieval:
-    name: Retrieval Quality Gate
-    runs-on: [self-hosted, macOS, ARM64, m-series]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust-setup
-      - name: Ensure `just` is installed
+      - name: cargo clippy (pedantic, --all-targets)
         run: |
-          if ! command -v just >/dev/null 2>&1; then
-            brew install just
-          fi
-      - run: just eval-gate
+          cargo clippy --workspace --all-targets --locked \
+              -- -D warnings -W clippy::pedantic
 
-  mcp-smoke:
-    name: MCP Smoke Test
-    runs-on: [self-hosted, macOS, ARM64, m-series]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust-setup
-      - name: Build release binary
+      - name: cargo nextest run (lib + bins + integration)
+        run: cargo nextest run --workspace --all-targets --locked
+
+      - name: cargo test --doc
+        run: cargo test --workspace --doc --locked
+
+      - name: Build release ministr-cli
         run: cargo build --release -p ministr-cli --locked
-      - name: MCP initialize + tools/list
+
+      - name: MCP smoke (initialize + tools/list)
         run: |
-          # Drive the MCP stdio transport: initialize → initialized
-          # notification → tools/list. Every response is NDJSON so each
-          # JSON-RPC reply lives on its own line.
           response=$(printf '%s\n%s\n%s\n' \
             '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"1.0"}},"id":1}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
@@ -136,12 +100,34 @@ jobs:
           done
           echo "✓ MCP smoke test passed"
 
+      - name: Retrieval quality gate
+        run: |
+          if ! command -v just >/dev/null 2>&1; then brew install just; fi
+          just eval-gate
+
+  # ────────────────────────────────────────────────────────────────
+  # Independent, fast — runs in parallel on any available runner.
+  # ────────────────────────────────────────────────────────────────
+  security:
+    name: Security (deny + audit)
+    runs-on: [self-hosted, macOS, ARM64, m-series]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-setup
+      - uses: ./.github/actions/install-cargo-tool
+        with:
+          tool: cargo-deny
+      - uses: ./.github/actions/install-cargo-tool
+        with:
+          tool: cargo-audit
+      - run: cargo deny check
+      - run: cargo audit
+
   docker-build:
     name: Docker Build
     runs-on: [self-hosted, macOS, ARM64, m-series]
-    # Uses the Mac's Docker daemon to build the linux/arm64 image.
-    # Layer cache lives in the host Docker engine, so warm rebuilds
-    # are seconds.
+    # Uses the Mac's Docker daemon (linux/arm64). Layer cache lives
+    # in the host engine, so warm rebuilds are seconds.
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t ministr:ci .

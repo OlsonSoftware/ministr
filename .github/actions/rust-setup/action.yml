@@ -1,17 +1,27 @@
-name: Rust toolchain + persistent target dir
+name: Rust toolchain + persistent target + Tauri stubs
 description: |
-  Ensures a stable Rust toolchain is available (no-op if already
-  installed), adds the requested components, and points
-  CARGO_TARGET_DIR at a per-runner persistent cache dir outside the
-  workspace so `actions/checkout` doesn't git-clean it between jobs.
+  One-stop setup for every job in this repo that needs to compile
+  Rust. Idempotent and fast on warm self-hosted runners.
 
-  Designed for the native macOS self-hosted runners — both the
-  toolchain and the target dir persist across runs, so warm jobs
-  only pay for the actual source changes.
+  Responsibilities:
+    1. Ensure a stable Rust toolchain is on PATH (installs rustup
+       only if missing).
+    2. Add the requested rustup components.
+    3. Point CARGO_TARGET_DIR at a persistent per-runner cache dir
+       outside the workspace so `actions/checkout`'s git-clean can't
+       wipe compile artifacts between jobs.
+    4. Create placeholder Tauri bundle artifacts
+       (`ministr-app/src-tauri/binaries/ministr-cli-<triple>` and
+       `ministr-app/dist/index.html`). tauri-build and
+       `tauri::generate_context!()` probe for these during regular
+       cargo check/compile. They're produced by `just pkg`/`pnpm
+       build` in real use, but lint/test/doc-tests only need the
+       existence checks to pass. The actual build paths are covered
+       by mcp-smoke (release build) and docker-build (Linux image).
 
 inputs:
   components:
-    description: Comma-separated list of rustup components to add (e.g. "clippy,rustfmt")
+    description: Comma-separated rustup components (e.g. "clippy,rustfmt")
     required: false
     default: ""
 
@@ -21,9 +31,7 @@ runs:
     - name: Ensure rustup + stable toolchain
       shell: bash
       run: |
-        # Add ~/.cargo/bin to PATH for every subsequent step.
         echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-        # ...and to this step's PATH too so the install-check works.
         export PATH="$HOME/.cargo/bin:$PATH"
 
         if ! command -v rustup >/dev/null 2>&1; then
@@ -33,9 +41,7 @@ runs:
         fi
 
         rustup default stable
-
         if [ -n "${{ inputs.components }}" ]; then
-          # rustup component add takes space-separated args; turn commas into spaces.
           comps="$(echo '${{ inputs.components }}' | tr ',' ' ')"
           rustup component add $comps
         fi
@@ -43,11 +49,17 @@ runs:
     - name: Point CARGO_TARGET_DIR at a persistent per-runner cache
       shell: bash
       run: |
-        # One target dir per runner keeps parallel jobs on different
-        # runners from contending on cargo's build lock, and keeps the
-        # cache alive across checkout's git-clean (which would blow
-        # away target/ if it lived inside the workspace).
         dir="$HOME/.cache/ministr-ci-target-${RUNNER_NAME}"
         mkdir -p "$dir"
         echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
         echo "using CARGO_TARGET_DIR=$dir"
+
+    - name: Stub Tauri bundle artifacts (frontendDist + externalBin)
+      shell: bash
+      run: |
+        triple="$(rustc -vV | awk '/^host:/ {print $2}')"
+        mkdir -p ministr-app/src-tauri/binaries
+        : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+        chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+        mkdir -p ministr-app/dist
+        : > ministr-app/dist/index.html
