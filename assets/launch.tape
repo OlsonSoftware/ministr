@@ -1,10 +1,19 @@
 # assets/launch.tape — VHS source for the README demo GIF.
 #
-# Regenerate with:
-#   ANTHROPIC_API_KEY=sk-...  vhs assets/launch.tape
+# Regenerate:
+#   ANTHROPIC_API_KEY=sk-...            vhs assets/launch.tape
+#   # OR
+#   CLAUDE_CODE_OAUTH_TOKEN=$(claude setup-token)  vhs assets/launch.tape
 #
 # Requirements on PATH: vhs, claude, ministr.
-# Uses a fresh mktemp dir — leaves nothing on disk after.
+#
+# Why explicit auth?
+#   The tape runs with HOME pointed at a scratch dir so the recording leaks
+#   no personal data (displayName / email / organization / subscription line
+#   are blanked). macOS keychain OAuth tokens are tied to the original
+#   login-session binary grant, so they do NOT resolve through the scratch
+#   HOME even with the same keychain service name. Env-var auth bypasses
+#   keychain and just works.
 #
 # Story:
 #   1. `ministr init` scaffolds .ministr.toml for the current project.
@@ -34,22 +43,34 @@ Set Padding         16
 Set BorderRadius    8
 
 # -----------------------------------------------------------------------------
-# Hidden setup: make a tmp demo project with one sample file and a
-# .claude/settings.local.json that pre-allows the ministr MCP tools
-# (otherwise Claude Code would pause on permission prompts).
+# Hidden setup.
+#
+# 1. Save the maintainer's real HOME as $REAL_HOME so ~/.ministr/bin remains
+#    resolvable after we point HOME at a scratch dir.
+# 2. Stage demo-setup.sh's tree (project/ + home/) under $DEMO_DIR.
+# 3. Point HOME at the scratch $DEMO_DIR/home so claude never reads the
+#    maintainer's oauthAccount / subscription / trust history.
 # -----------------------------------------------------------------------------
 Hide
-# Ensure ministr + claude resolve via PATH in the recording shell.
-Type "export PATH=$HOME/.ministr/bin:$HOME/.local/bin:$PATH"
+Type "export REAL_HOME=$HOME"
 Enter
-Sleep 100ms
+Sleep 80ms
 Type "REPO=$PWD && DEMO_DIR=$(mktemp -d)"
 Enter
-Sleep 150ms
-Type "$REPO/scripts/demo-setup.sh $DEMO_DIR"
+Sleep 80ms
+Type "$REPO/scripts/demo-setup.sh $DEMO_DIR $REAL_HOME"
 Enter
 Sleep 200ms
-Type "cd $DEMO_DIR && clear"
+Type "export HOME=$DEMO_DIR/home"
+Enter
+Sleep 80ms
+# Put the scratch HOME's .local/bin first so `claude`/`ministr` resolve
+# through the symlinks demo-setup.sh created there. Claude Code also
+# probes $HOME/.local/bin/claude directly for its installMethod check.
+Type "export PATH=$HOME/.local/bin:$PATH"
+Enter
+Sleep 80ms
+Type "cd $DEMO_DIR/project && clear"
 Enter
 Sleep 200ms
 Show
@@ -74,20 +95,32 @@ Sleep 1800ms
 Type "claude --permission-mode acceptEdits"
 Enter
 
-# Workspace-trust dialog renders first; default selection is "Yes, I trust".
-# One Enter confirms and drops us into the REPL.
+# Two dialogs fire on first launch in a fresh HOME:
+#   (a) Workspace trust (default = "Yes, I trust this folder")
+#   (b) New MCP server approval for `ministr` (default = "Use this and all
+#       future MCP servers in this project")
+# Press Enter on each to accept defaults.
+Sleep 2500ms
+Enter
 Sleep 2500ms
 Enter
 
 # Welcome banner + MCP handshake + REPL ready.
 Sleep 4s
 
-Type "Using ministr tools, summarize what src/greeter.py does in one sentence."
+Type "Using ministr, trace how greet is wired up — find its definition, list every caller, and tell me what the three tones resolve to."
 Sleep 400ms
 Enter
 
-# Let the model run ministr_survey / ministr_read and render a reply.
-Sleep 18s
+# Expected ministr calls: symbols(greet) → definition → references → read(Tone).
+# Budget generously so the full tool trace lands before we linger.
+Sleep 26s
+
+# -----------------------------------------------------------------------------
+# Hold on the final answer so a reader can actually parse it.
+# GIF compresses duplicate frames cheaply, so this costs almost nothing.
+# -----------------------------------------------------------------------------
+Sleep 8s
 
 # -----------------------------------------------------------------------------
 # Clean exit.
