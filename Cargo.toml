@@ -107,7 +107,7 @@ zstd = "0.13"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
-dialoguer = "0.11"
+dialoguer = "0.12"
 
 # MCP
 rmcp = { version = "1.2", features = ["server", "transport-io", "transport-streamable-http-server", "elicitation", "schemars"] }
