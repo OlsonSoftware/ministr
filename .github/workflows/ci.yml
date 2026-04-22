@@ -132,21 +132,15 @@ jobs:
           cargo clippy --workspace --all-targets --locked \
               -- -D warnings -W clippy::pedantic
 
-      # Split compile from test execution so the log never goes silent.
-      # Previously nextest was "silent for 4+ minutes" because it was
-      # linking 35 test binaries back-to-back (clippy only type-checks;
-      # nextest needs fully codegen'd + linked binaries). Now the
-      # compile phase is an explicit step that surfaces cargo's normal
-      # "Compiling foo v0.1.0" output, and the run step streams tests
-      # as soon as they start.
-      - name: Compile test binaries (nextest --no-run)
-        run: |
-          cargo nextest run \
-            --profile ci \
-            --workspace --all-targets --locked \
-            --no-run
-
       - name: cargo nextest run (lib + bins + integration)
+        # --workspace --exclude ministr-app: ministr-app is a binary-only
+        #   Tauri desktop crate. Its test binary links in ort (ONNX) +
+        #   tauri-plugin-* which have static initializers that hang on a
+        #   headless Linux runner when nextest launches the binary for
+        #   test enumeration (--list). The compile succeeds quickly, then
+        #   startup hangs. Excluding the whole package sidesteps this.
+        #   Its integration coverage is via the release-build smoke test
+        #   below, not unit tests.
         # Config lives in .config/nextest.toml:
         #   - profile 'ci': streams every test as it completes + final flaky
         #     status so the log never goes silent post-compile.
@@ -158,7 +152,8 @@ jobs:
         run: |
           cargo nextest run \
             --profile ci \
-            --workspace --all-targets --locked \
+            --workspace --exclude ministr-app \
+            --all-targets --locked \
             --hide-progress-bar \
             --no-tests=warn
 
