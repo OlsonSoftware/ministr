@@ -131,4 +131,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: useblacksmith/setup-docker-builder@v1
-      - run: docker build -t ministr:ci .
+      - uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          push: false
+          tags: ministr:ci
