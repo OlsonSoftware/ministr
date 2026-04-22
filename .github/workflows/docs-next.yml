@@ -49,7 +49,7 @@ jobs:
       - name: Build static export
         run: npm run build
         env:
-          DOCS_BASE_PATH: /ministr-rs
+          DOCS_BASE_PATH: /ministr
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
