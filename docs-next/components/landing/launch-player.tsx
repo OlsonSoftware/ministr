@@ -18,6 +18,12 @@ export interface LaunchPlayerProps {
   options?: Partial<PlayerOptions>;
   /** Extra class on the mount element. */
   className?: string;
+  /**
+   * Start playing automatically when the player first scrolls into view.
+   * Respects `prefers-reduced-motion` — users who opt out of motion
+   * see the static poster frame and must click Play themselves.
+   */
+  autoPlayOnVisible?: boolean;
 }
 
 /**
@@ -35,8 +41,10 @@ export default function LaunchPlayer({
   poster,
   options,
   className,
+  autoPlayOnVisible = false,
 }: LaunchPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const instanceRef = useRef<import('asciinema-player').PlayerInstance | null>(null);
 
   // Serialize the caller's options so we don't re-create the player every
   // render just because the parent passed a fresh object literal.
@@ -44,12 +52,11 @@ export default function LaunchPlayer({
 
   useEffect(() => {
     let cancelled = false;
-    let instance: import('asciinema-player').PlayerInstance | null = null;
 
     (async () => {
       const { create } = await import('asciinema-player');
       if (cancelled || !containerRef.current) return;
-      instance = create(src, containerRef.current, {
+      instanceRef.current = create(src, containerRef.current, {
         theme: 'ministr',
         // fit:'both' + an aspect-ratio container keeps the cast at its
         // natural shape. fit:'width' in a narrow column makes the 96
@@ -75,13 +82,51 @@ export default function LaunchPlayer({
     return () => {
       cancelled = true;
       try {
-        instance?.dispose();
+        instanceRef.current?.dispose();
       } catch {
         /* swallow — unmounting a partially-initialised player is fine */
       }
+      instanceRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, poster, optionsKey]);
+
+  // Autoplay when the player first enters the viewport — but only for
+  // users who haven't opted out of motion. Fires once per mount so a
+  // scroll-past-and-back doesn't restart playback mid-session.
+  useEffect(() => {
+    if (!autoPlayOnVisible) return;
+    const el = containerRef.current;
+    if (!el) return;
+
+    const reduceMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) return;
+
+    let triggered = false;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting || triggered) continue;
+          triggered = true;
+          // Small delay so the player has time to finish mounting
+          // + preloading before we call play().
+          window.setTimeout(() => {
+            try {
+              void instanceRef.current?.play();
+            } catch {
+              /* player not ready yet — user can still click */
+            }
+          }, 400);
+          obs.disconnect();
+        }
+      },
+      { threshold: 0.4 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [autoPlayOnVisible]);
 
   return (
     <div

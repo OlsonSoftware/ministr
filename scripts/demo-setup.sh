@@ -58,6 +58,10 @@ cat > "$home/.bashrc" <<'BASHRC'
 # Quiet, deterministic prompt for the recording. Keeps the cast visually
 # close to Claude Code's own chrome without leaking the real host/user.
 export PS1='$ '
+# Suppress macOS's "default interactive shell is now zsh" nag that
+# otherwise prints as the first 3 lines of every bash session — that
+# lands as the cast's opening frame and muddies the demo.
+export BASH_SILENCE_DEPRECATION_WARNING=1
 stty sane 2>/dev/null || true
 stty erase '^?' 2>/dev/null || true
 BASHRC

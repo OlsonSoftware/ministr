@@ -49,7 +49,15 @@ export function HeroPlayer() {
         </span>
       </div>
       <div className="hero-player-stage">
-        <LaunchPlayer src={src} />
+        {/*
+         * autoPlayOnVisible = engaging first impression; respects
+         * prefers-reduced-motion inside LaunchPlayer.
+         *
+         * poster `npt:1:05` lands on a frame near the end where Claude
+         * has responded — much more compelling than the default blank
+         * cursor at t=0.
+         */}
+        <LaunchPlayer src={src} poster="npt:1:05" autoPlayOnVisible />
       </div>
     </div>
   );
