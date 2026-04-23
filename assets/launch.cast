@@ -1,4 +1,4 @@
-{"version": 2, "width": 96, "height": 26, "timestamp": 1776896787, "idle_time_limit": 2.0, "command": "/bin/bash --rcfile /var/folders/ml/51b226t50rxf09jwljnq7tn00000gn/T/tmp.L05fLUWU00/home/.bashrc -i", "env": {"SHELL": "/bin/zsh"}, "theme": {"fg": "#c9d1d9", "bg": "#0d1117", "palette": "#0d1117:#ff7b72:#7ee787:#ffa657:#79c0ff:#d2a8ff:#a5d6ff:#c9d1d9:#6b6b6b:#c55555:#aac474:#feca88:#82b8c8:#c28cb8:#93d3c3:#f8f8f8"}}
+{"version": 2, "width": 96, "height": 26, "timestamp": 1776896787, "idle_time_limit": 2.0, "command": "/bin/bash -i", "env": {"SHELL": "/bin/zsh"}, "theme": {"fg": "#c9d1d9", "bg": "#0d1117", "palette": "#0d1117:#ff7b72:#7ee787:#ffa657:#79c0ff:#d2a8ff:#a5d6ff:#c9d1d9:#6b6b6b:#c55555:#aac474:#feca88:#82b8c8:#c28cb8:#93d3c3:#f8f8f8"}}
 [0.0, "o", "$ "]
 [1.072231, "o", "m"]
 [1.183053, "o", "i"]
