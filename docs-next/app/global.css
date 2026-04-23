@@ -833,14 +833,14 @@ h1.ministr-gradient-text,
   --term-color-15: #6e7781;
 }
 
-/* Give the stage a bounded box so asciinema-player's fit algorithm
-   has something to fit INTO. The 4/5 ratio (slightly taller than
-   wide) matches the cast's natural 96col×50row shape closely so the
-   player lands with minimal pillarbox.
-   The LaunchPlayer's own <div> must fill the stage so asciinema's
-   `.ap-wrapper` (height:100% by default) can measure correctly. */
+/* Stage aspect-ratio should match the cast's claimed dimensions so
+   asciinema-player fills without pillarbox/letterbox. The cast header
+   was rewritten to height=32 rows (from the 50 it was recorded at) —
+   Claude Code uses ~30 rows of alt-screen, so 32 shows one screenful
+   without cutting off the response. At char-aspect ~0.5:1 that's an
+   aspect of 96:64 = 3/2 landscape. Overflow scrolls naturally. */
 .hero-player-stage {
-  aspect-ratio: 4 / 5;
+  aspect-ratio: 3 / 2;
   overflow: hidden;
 }
 .hero-player-stage > .launch-player {

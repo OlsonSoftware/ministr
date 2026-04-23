@@ -60,7 +60,7 @@ function HeroPlayerSkeleton() {
   // reflow when the dynamically-imported player swaps in.
   return (
     <div
-      className="aspect-[4/5] w-full animate-pulse bg-[color-mix(in_srgb,var(--fd-card)_80%,var(--color-ministr-950)_20%)]"
+      className="aspect-[3/2] w-full animate-pulse bg-[color-mix(in_srgb,var(--fd-card)_80%,var(--color-ministr-950)_20%)]"
       aria-hidden
     />
   );

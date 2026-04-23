@@ -77,8 +77,12 @@ read -r
 cd "$DEMO_DIR/project"
 
 # Reset TTY settings in the parent so the PTY asciinema spawns inherits
-# them sane.
+# them sane. Force a landscape geometry (96 cols × 26 rows) so the cast
+# header reflects the hero's 3:2 aspect-ratio target — no post-hoc
+# rewriting of the cast JSON needed. 26 rows comfortably holds one
+# Claude Code alt-screen; anything beyond scrolls naturally.
 stty sane 2>/dev/null || true
+stty cols 96 rows 26 2>/dev/null || true
 
 # Point readline at the inputrc demo-setup.sh staged inside the scratch
 # HOME — ensures Backspace / arrow keys work the same on Rio, WezTerm,

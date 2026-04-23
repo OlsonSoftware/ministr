@@ -1,4 +1,4 @@
-{"version":2,"width":96,"height":50,"timestamp":1776896787,"idle_time_limit":2.0,"command":"/bin/bash --rcfile /var/folders/ml/51b226t50rxf09jwljnq7tn00000gn/T/tmp.L05fLUWU00/home/.bashrc -i","env":{"SHELL":"/bin/zsh"},"theme":{"fg":"#c9d1d9","bg":"#0d1117","palette":"#0d1117:#ff7b72:#7ee787:#ffa657:#79c0ff:#d2a8ff:#a5d6ff:#c9d1d9:#6b6b6b:#c55555:#aac474:#feca88:#82b8c8:#c28cb8:#93d3c3:#f8f8f8"}}
+{"version": 2, "width": 96, "height": 26, "timestamp": 1776896787, "idle_time_limit": 2.0, "command": "/bin/bash --rcfile /var/folders/ml/51b226t50rxf09jwljnq7tn00000gn/T/tmp.L05fLUWU00/home/.bashrc -i", "env": {"SHELL": "/bin/zsh"}, "theme": {"fg": "#c9d1d9", "bg": "#0d1117", "palette": "#0d1117:#ff7b72:#7ee787:#ffa657:#79c0ff:#d2a8ff:#a5d6ff:#c9d1d9:#6b6b6b:#c55555:#aac474:#feca88:#82b8c8:#c28cb8:#93d3c3:#f8f8f8"}}
 [0.01642, "o", "\r\nThe default interactive shell is now zsh.\r\nTo update your account to use zsh, please run `chsh -s /bin/zsh`.\r\nFor more details, please visit https://support.apple.com/kb/HT208050.\r\n"]
 [0.016547, "o", "$ "]
 [1.088778, "o", "m"]
