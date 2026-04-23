@@ -7,6 +7,7 @@ import { Thesis } from '@/components/landing/thesis';
 import { Mechanisms } from '@/components/landing/mechanisms';
 import { ArchitectureFlow } from '@/components/landing/architecture-flow';
 import { WhatMinistrIsnt } from '@/components/landing/what-ministr-isnt';
+import { WorkflowComparison } from '@/components/landing/workflow-comparison';
 import { InstallTabs } from '@/components/landing/install-tabs';
 import { ToolList } from '@/components/landing/tool-list';
 import { CtaCoda } from '@/components/landing/cta-coda';
@@ -20,13 +21,14 @@ import { Reveal } from '@/components/landing/reveal';
  *   1. Hero composite (aurora + lens + wordmark + live asciinema)
  *   2. Stats strip  (trust signals, F-bar)
  *   3. Thesis       (what agents waste)
- *   4. Mechanisms   (5 mechanisms + hybrid search, bento)
- *   5. Architecture (how it wires up)
- *   6. What ministr isn't (differentiation strikethroughs)
- *   7. Install      (30-second path)
- *   8. Tool ref     (twelve tools your agent already speaks)
- *   9. CTA coda     (stop re-reading the same files)
- *  10. Footer       (retained, tightened)
+ *   4. Workflow cmp (real casts, same task, two tool loadouts)
+ *   5. Mechanisms   (5 mechanisms + hybrid search, bento)
+ *   6. Architecture (how it wires up)
+ *   7. What ministr isn't (differentiation strikethroughs)
+ *   8. Install      (30-second path)
+ *   9. Tool ref     (twelve tools your agent already speaks)
+ *  10. CTA coda     (stop re-reading the same files)
+ *  11. Footer       (retained, tightened)
  */
 export default function HomePage() {
   return (
@@ -41,6 +43,18 @@ export default function HomePage() {
       <Hero />
       <StatsStrip />
       <Thesis />
+
+      <Section belowFold>
+        {/*
+         * Real asciinema recordings side-by-side — same prompt, two
+         * tool loadouts. `hasBaseline` flips to true once
+         * assets/launch-baseline.cast is recorded (see
+         * scripts/demo-record-baseline-cast.sh); until then only the
+         * ministr side renders.
+         */}
+        <WorkflowComparison hasBaseline={false} />
+      </Section>
+
       <Mechanisms />
       <ArchitectureFlow />
       <WhatMinistrIsnt />

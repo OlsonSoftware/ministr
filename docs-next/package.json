@@ -3,8 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "prebuild": "mkdir -p public && (cp ../assets/launch.cast public/launch.cast 2>/dev/null || echo 'warn: assets/launch.cast not yet recorded — player will 404 at runtime')",
-    "predev": "mkdir -p public && (cp ../assets/launch.cast public/launch.cast 2>/dev/null || echo 'warn: assets/launch.cast not yet recorded — player will 404 at runtime')",
+    "prebuild": "mkdir -p public && (cp ../assets/launch.cast public/launch.cast 2>/dev/null || echo 'warn: assets/launch.cast not yet recorded — hero player will 404 at runtime') && (cp ../assets/launch-baseline.cast public/launch-baseline.cast 2>/dev/null || true)",
+    "predev": "mkdir -p public && (cp ../assets/launch.cast public/launch.cast 2>/dev/null || echo 'warn: assets/launch.cast not yet recorded — hero player will 404 at runtime') && (cp ../assets/launch-baseline.cast public/launch-baseline.cast 2>/dev/null || true)",
     "build": "next build",
     "dev": "next dev",
     "start": "serve out",
