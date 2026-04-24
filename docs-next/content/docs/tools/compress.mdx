@@ -40,7 +40,7 @@ Generate compressed summaries for sections the agent wants to evict from context
 | `summaries[].summary` | Short summary preserving key information |
 | `summaries[].original_tokens` | Token count of the original content |
 | `summaries[].compressed_tokens` | Token count of the compressed summary |
-| `summaries[].method` | Compression method — `"extractive"` for prose sections, `"symbol_stub"` for code symbols compressed to their signature + doc comment |
+| `summaries[].method` | Compression method — `"extractive"` (TF-IDF sentence selection, always available), `"abstractive"` (LLM-assisted via MCP sampling, with automatic fallback to extractive on failure), or `"symbol_stub"` (signature + doc comment for code symbols) |
 | `total_original_tokens` | Sum of `original_tokens` across all compressed items |
 | `total_compressed_tokens` | Sum of `compressed_tokens` across all compressed items |
 | `compression_ratio` | Aggregate ratio (`total_compressed / total_original`); lower is better |
