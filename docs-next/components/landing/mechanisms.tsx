@@ -38,7 +38,7 @@ export function Mechanisms() {
           <MechanismTile
             title="Warms the next likely read"
             technical="Predictive Prefetch"
-            copy="Pre-loads neighbouring functions, called symbols, and referenced docs so the next tool call is a cache hit instead of a fresh search."
+            copy="Pre-warms the next likely sections — the next one in the document, neighbouring siblings, and others on the same topic — so your agent&rsquo;s next tool call hits a warm cache instead of running a fresh search."
           >
             <PrefetchVisual />
           </MechanismTile>

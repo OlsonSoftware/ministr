@@ -78,7 +78,7 @@ claude mcp add ministr -- ministr                                    # Claude Co
 - **Cross-language bridge detection** — Tauri commands and events, napi-rs, PyO3, wasm-bindgen exports, HTTP routes (actix-web / axum / rocket), and raw FFI
 - **Session tracking** with predictive prefetch, deduplication, and delta delivery
 - **Budget management** — token usage monitoring, eviction recommendations, compressed summaries under pressure
-- **Local embeddings** — FastEmbed + ONNX (~5ms/embed), optional Metal GPU acceleration on Apple Silicon
+- **Local embeddings** — Candle with Metal GPU acceleration on Apple Silicon by default (7-12× faster than the ONNX fallback for batch embedding); ONNX/FastEmbed on Linux and Windows
 - **Desktop app** — dashboard, live tool-call activity stream, `⌘K` command palette, `?` shortcut sheet, and system-tray submenus (Tauri v2, macOS/Linux/Windows)
 
 ## Cross-language bridges
