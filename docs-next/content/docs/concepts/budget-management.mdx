@@ -76,7 +76,7 @@ Call `ministr_compress` with content IDs to get compressed summaries before evic
 
 ## Eviction Policies
 
-The window estimator supports two policies:
+The window estimator supports two real strategies:
 
-- **FIFO** (default) — oldest delivered content is assumed evicted first
-- **LRU** — least recently accessed content is assumed evicted first
+- **FIFO** (default) — oldest delivered content is evicted first. Fast and allocation-free; reasonable approximation of how many LLM context windows behave when they overflow.
+- **FSRS** — evict the entry with the lowest predicted recall probability, using stability/difficulty scores from the [FSRS](https://github.com/open-spaced-repetition/fsrs4anki) spaced-repetition memory model. Requires a companion `MemoryTracker`; enable by calling `BudgetTracker::record_tokens_with_memory` with retrievability scores instead of `record_tokens`.

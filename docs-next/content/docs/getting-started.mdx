@@ -34,9 +34,22 @@ cd your-project
 ministr init
 ```
 
-This creates `.ministr.toml` with auto-detected corpus paths and `.mcp.json` for Claude Code.
+This sets up ministr for every major agent platform in your project at once. `ministr init` writes:
 
-Or create `.ministr.toml` manually:
+- **`.ministr.toml`** — corpus paths and config, auto-detected from project manifests (`Cargo.toml`, `package.json`, `pyproject.toml`)
+- **MCP configs** — `.mcp.json` (Claude Code), `.cursor/mcp.json` (Cursor), and `.vscode/mcp.json` (VS Code / GitHub Copilot). Each existing file is merged non-destructively — only the `ministr` key is added.
+- **Agent rules** — `.claude/rules/`, `.cursor/rules/ministr.mdc`, `windsurf/rules/ministr.md`, `.continue/rules/ministr.md`, `.github/copilot-instructions.md`, and a platform-neutral `AGENTS.md`. These teach each agent about the ministr tools and their intended workflow.
+- **PreToolUse hooks** — `.claude/settings.json`, `.cursor/hooks.json`, `.windsurf/hooks.json`, and `.github/hooks/`. These **block `Grep`, `Glob`, `find`, and shell-pipe search** in agents that support hooks, redirecting the agent to `ministr_survey` / `ministr_symbols` instead. If you don't want the hooks, delete those files after running `init` — the advisory `.md` / `.mdc` rules stay.
+
+<Callout type="info" title="Don't want the agent tool blocking?">
+The hook files above are what enforce the "no Grep / no Glob / use ministr instead" policy. They're machine-generated JSON and auto-healed by `ministr init` to the current template. To opt out for a given platform, delete that platform's hook file — the advisory markdown rules still nudge the agent toward ministr tools, but won't block the built-ins.
+</Callout>
+
+Advisory markdown files (`.md`, `.mdc`) are created once and **never overwritten** so you can customise them. Hook JSON files are auto-healed — running `ministr init` again brings them back to the current template.
+
+To verify what's installed, run `ministr hooks test` — it simulates common tool calls and reports which would be blocked on which platforms.
+
+Or, if you only want the corpus config without the agent scaffolding, create `.ministr.toml` manually:
 
 ```toml
 [corpus]
@@ -44,7 +57,9 @@ paths = ["src", "docs", "README.md"]
 ignore = ["*.snap", "node_modules"]
 ```
 
-### 2. Configure your MCP client
+### 2. Configure your MCP client (manual — only if you skipped `ministr init`)
+
+`ministr init` writes the MCP configs for Claude Code, Cursor, and VS Code / Copilot automatically. If you skipped that step or want to add ministr to a client manually, use one of these snippets:
 
 **Claude Code:**
 
