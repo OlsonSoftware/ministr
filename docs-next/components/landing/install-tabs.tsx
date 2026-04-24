@@ -25,7 +25,7 @@ const TABS = [
   {
     id: 'cargo',
     label: 'Cargo',
-    body: 'cargo install --git https://github.com/AlrikOlson/ministr-rs ministr-cli',
+    body: 'cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli',
   },
 ] as const;
 

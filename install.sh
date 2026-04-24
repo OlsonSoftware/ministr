@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# ministr installer — downloads the latest release binary from GitHub.
+# ministr installer — downloads the latest release binary from our release proxy.
 # Usage: curl -fsSL https://ministr.app/install.sh | bash
+#
+# Fetches assets from https://dl.ministr.app, a Cloudflare Worker that
+# fronts the private GitHub repo's releases. The Worker auth is opaque
+# to this script — all downloads are unauthenticated HTTPS GETs.
 set -euo pipefail
 
-REPO="AlrikOlson/ministr-rs"
+DL_HOST="${MINISTR_DL_HOST:-https://dl.ministr.app}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.ministr/bin}"
 
 info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
@@ -26,15 +30,15 @@ esac
 target="${arch}-${os}"
 archive="ministr-${target}.tar.gz"
 
-# Find latest release tag
+# Find latest release tag via the proxy's /latest metadata endpoint.
 info "Finding latest ministr release..."
-tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-    | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+tag=$(curl -fsSL "${DL_HOST}/latest" \
+    | grep '"tag"' | head -1 | cut -d'"' -f4)
 
-[ -n "$tag" ] || err "could not determine latest release tag"
+[ -n "$tag" ] || err "could not determine latest release tag from ${DL_HOST}/latest"
 info "Latest release: ${tag}"
 
-url="https://github.com/${REPO}/releases/download/${tag}/${archive}"
+url="${DL_HOST}/${tag}/${archive}"
 
 # Download and extract
 info "Downloading ${archive}..."

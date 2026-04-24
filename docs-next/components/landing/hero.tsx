@@ -89,7 +89,7 @@ export function Hero() {
                 Read the architecture
               </Link>
               <Link
-                href="https://github.com/AlrikOlson/ministr-rs"
+                href="https://github.com/OlsonSoftware/ministr"
                 className="inline-flex items-center gap-1.5 text-sm font-medium text-fd-muted-foreground transition hover:text-[var(--ministr-accent-text)]"
               >
                 <GithubGlyph className="size-4" />

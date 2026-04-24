@@ -9,29 +9,34 @@
 #   1. Download the new .sha256 files from the GitHub Release
 #   2. Update the version and sha256 values below
 #   3. Push to the homebrew-tap repo
+#
+# Binaries are fetched from dl.ministr.app — a Cloudflare Worker that
+# fronts the private GitHub repo's release assets with a read-only PAT.
+# When the source repo is made public, rewrite these URLs to
+# github.com/OlsonSoftware/ministr/releases/download/... directly.
 
 class Ministr < Formula
   desc "Context cache controller for LLM agents — MCP server with session tracking, prefetch, and budget management"
-  homepage "https://github.com/AlrikOlson/ministr-rs"
+  homepage "https://ministr.ai"
   version "0.1.0"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/AlrikOlson/ministr-rs/releases/download/v#{version}/ministr-aarch64-apple-darwin.tar.gz"
+      url "https://dl.ministr.app/v#{version}/ministr-aarch64-apple-darwin.tar.gz"
       sha256 "PLACEHOLDER_ARM64_SHA256"
     else
-      url "https://github.com/AlrikOlson/ministr-rs/releases/download/v#{version}/ministr-x86_64-apple-darwin.tar.gz"
+      url "https://dl.ministr.app/v#{version}/ministr-x86_64-apple-darwin.tar.gz"
       sha256 "PLACEHOLDER_X86_64_SHA256"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/AlrikOlson/ministr-rs/releases/download/v#{version}/ministr-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://dl.ministr.app/v#{version}/ministr-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "PLACEHOLDER_LINUX_ARM64_SHA256"
     else
-      url "https://github.com/AlrikOlson/ministr-rs/releases/download/v#{version}/ministr-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://dl.ministr.app/v#{version}/ministr-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "PLACEHOLDER_LINUX_X86_64_SHA256"
     end
   end
