@@ -21,17 +21,11 @@ Query cross-language binding links between exported symbols and their consumers 
   "bridges": [
     {
       "kind": "tauri_command",
-      "confidence": 1.0,
-      "export": {
-        "symbol_id": "sym-src-tauri/src/commands.rs::commands::open_file",
-        "file_path": "src-tauri/src/commands.rs",
-        "line": 42
-      },
-      "import": {
-        "file_path": "src/App.tsx",
-        "line": 87,
-        "context": "invoke('open_file', { path: selectedPath })"
-      }
+      "source": "open_file",
+      "source_language": "rust",
+      "target": "invoke('open_file', { path })",
+      "target_language": "typescript",
+      "confidence": 1.0
     }
   ],
   "budget_status": { ... }
@@ -43,9 +37,12 @@ Query cross-language binding links between exported symbols and their consumers 
 | Field | Description |
 |---|---|
 | `bridges[].kind` | Binding mechanism (`tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi`) |
-| `bridges[].confidence` | Link confidence score (1.0 = exact match, &lt;1.0 = semantic fallback) |
-| `bridges[].export` | The producing side (e.g., `#[tauri::command]` function) |
-| `bridges[].import` | The consuming site (e.g., an `invoke()` call) |
+| `bridges[].source` | Producing-side symbol or identifier (e.g., the Rust function name for a Tauri command) |
+| `bridges[].source_language` | Language of the producing side (e.g. `rust`) |
+| `bridges[].target` | Consuming-side symbol or call site (e.g., the JS `invoke('…')` call) |
+| `bridges[].target_language` | Language of the consuming side (e.g. `typescript`) |
+| `bridges[].confidence` | Link confidence score (1.0 = exact match; lower values are case-normalized or semantic fallbacks) |
+| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ### Supported Frameworks
 
