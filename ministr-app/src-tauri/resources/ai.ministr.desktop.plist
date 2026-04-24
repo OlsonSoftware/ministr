@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.ministr.desktop</string>
+    <string>ai.ministr.desktop</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -20,9 +20,9 @@
     <string>Interactive</string>
 
     <key>StandardOutPath</key>
-    <string>/tmp/com.ministr.desktop.stdout.log</string>
+    <string>/tmp/ai.ministr.desktop.stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/tmp/com.ministr.desktop.stderr.log</string>
+    <string>/tmp/ai.ministr.desktop.stderr.log</string>
 </dict>
 </plist>

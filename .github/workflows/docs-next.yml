@@ -47,9 +47,9 @@ jobs:
         run: npm run types:check
 
       - name: Build static export
+        # Site now serves at https://ministr.ai/ via the CNAME in
+        # docs-next/public/CNAME — no sub-path prefix needed.
         run: npm run build
-        env:
-          DOCS_BASE_PATH: /ministr
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

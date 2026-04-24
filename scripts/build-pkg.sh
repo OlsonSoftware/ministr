@@ -26,7 +26,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="ministr"
-BUNDLE_ID="com.ministr.desktop"
+BUNDLE_ID="ai.ministr.desktop"
 TAURI_DIR="$REPO_ROOT/ministr-app/src-tauri"
 INSTALLER_DIR="$REPO_ROOT/installer"
 OUTPUT_DIR="$REPO_ROOT/target/pkg"

@@ -152,14 +152,14 @@ fn ensure_path(bin_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Install the `com.ministr.desktop` launchd plist for the current user.
+/// Install the `ai.ministr.desktop` launchd plist for the current user.
 #[cfg(target_os = "macos")]
 fn install_launchd_plist() -> Result<(), Box<dyn std::error::Error>> {
     let home = home_dir()?;
     let agents_dir = home.join("Library/LaunchAgents");
     fs::create_dir_all(&agents_dir)?;
 
-    let plist_dest = agents_dir.join("com.ministr.desktop.plist");
+    let plist_dest = agents_dir.join("ai.ministr.desktop.plist");
 
     // Only install if not already present (don't clobber user customizations).
     if plist_dest.exists() {
@@ -167,7 +167,7 @@ fn install_launchd_plist() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let plist_content = include_str!("../resources/com.ministr.desktop.plist");
+    let plist_content = include_str!("../resources/ai.ministr.desktop.plist");
     fs::write(&plist_dest, plist_content)?;
     info!(path = %plist_dest.display(), "installed launchd plist");
 

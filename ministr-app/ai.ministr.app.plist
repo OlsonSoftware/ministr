@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.ministr.app</string>
+    <string>ai.ministr.app</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/ministr-app</string>

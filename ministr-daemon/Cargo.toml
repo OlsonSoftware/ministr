@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 description = "ministr daemon — HTTP API over Unix domain socket for corpus management and querying."
 readme = "../README.md"
-homepage = "https://github.com/AlrikOlson/ministr-rs"
+homepage.workspace = true
 keywords = ["mcp", "ministr", "daemon", "cache", "ipc"]
 categories = ["development-tools", "caching"]
 

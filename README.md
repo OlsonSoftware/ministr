@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://AlrikOlson.github.io/ministr-rs">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
+  <a href="https://ministr.ai">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 ---
@@ -37,7 +37,7 @@ claude mcp add ministr -- ministr
 </p>
 
 <p align="center">
-  <sub>Prefer an interactive version with selectable text and timeline scrubbing? <a href="https://AlrikOlson.github.io/ministr-rs#live-demo">Watch it on the docs site</a>.</sub>
+  <sub>Prefer an interactive version with selectable text and timeline scrubbing? <a href="https://ministr.ai/#live-demo">Watch it on the docs site</a>.</sub>
 </p>
 
 ## Why ministr
@@ -94,7 +94,7 @@ ministr detects and links cross-language bindings automatically:
 **Install script** (macOS & Linux)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/AlrikOlson/ministr-rs/main/install.sh | bash
+curl -fsSL https://ministr.app/install.sh | bash
 ```
 
 **Cargo** (latest `main`)
@@ -111,10 +111,10 @@ A Homebrew tap (`AlrikOlson/homebrew-tap`) and a crates.io publish land with 1.0
 
 | | |
 |---|---|
-| [Docs home](https://AlrikOlson.github.io/ministr-rs/) | Landing page with full overview |
-| [Tool reference](https://AlrikOlson.github.io/ministr-rs/docs/tools/) | All MCP tools with parameters and examples |
-| [Architecture](https://AlrikOlson.github.io/ministr-rs/docs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
-| [Configuration](https://AlrikOlson.github.io/ministr-rs/docs/configuration/) | `.ministr.toml` options and CLI flags |
+| [Docs home](https://ministr.ai/) | Landing page with full overview |
+| [Tool reference](https://ministr.ai/docs/tools/) | All MCP tools with parameters and examples |
+| [Architecture](https://ministr.ai/docs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
+| [Configuration](https://ministr.ai/docs/configuration/) | `.ministr.toml` options and CLI flags |
 | [Design specification](DESIGN.md) | Research references and design rationale |
 | [Deployment](deploy/README.md) | Docker, Fly.io, Railway, nginx/Caddy reverse proxy |
 | [Example configs](examples/) | `.ministr.toml` templates for Rust, Tauri, PyO3, React |

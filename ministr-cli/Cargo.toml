@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "A context cache for LLM agents — MCP server for intelligent document retrieval"
 readme = "../README.md"
 categories = ["command-line-utilities", "development-tools"]

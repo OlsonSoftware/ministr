@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nickelpack/nk/main/schemas/tauri/2.0/config.schema.json",
   "productName": "ministr",
   "version": "0.1.0",
-  "identifier": "com.ministr.desktop",
+  "identifier": "ai.ministr.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",

@@ -15,12 +15,12 @@ const TABS = [
   {
     id: 'macos',
     label: 'macOS',
-    body: 'curl -fsSL https://raw.githubusercontent.com/AlrikOlson/ministr-rs/main/install.sh | bash',
+    body: 'curl -fsSL https://ministr.app/install.sh | bash',
   },
   {
     id: 'linux',
     label: 'Linux',
-    body: 'curl -fsSL https://raw.githubusercontent.com/AlrikOlson/ministr-rs/main/install.sh | bash',
+    body: 'curl -fsSL https://ministr.app/install.sh | bash',
   },
   {
     id: 'cargo',

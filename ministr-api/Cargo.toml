@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 description = "Shared API types for the ministr daemon, MCP proxy, and CLI."
 readme = "../README.md"
-homepage = "https://github.com/AlrikOlson/ministr-rs"
+homepage.workspace = true
 keywords = ["mcp", "ministr", "api", "types"]
 categories = ["development-tools", "api-bindings"]
 

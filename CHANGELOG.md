@@ -72,6 +72,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Primary brand domain migrated from `AlrikOlson.github.io/ministr-rs` to
+  `https://ministr.ai`. Docs now deploy at the site root via
+  `docs-next/public/CNAME`; the `DOCS_BASE_PATH=/ministr` env var is
+  no longer set by the deploy workflow
+- Install-script URL shortened to `curl -fsSL https://ministr.app/install.sh | bash`
+  (mirror of the canonical `install.sh` lives in `docs-next/public/` so
+  `https://ministr.ai/install.sh` also resolves)
+- **Breaking:** Tauri bundle identifier changed from `com.ministr.desktop`
+  to `ai.ministr.desktop` (reverse-DNS of the primary domain). macOS
+  treats existing installs as a separate app — auto-updater won't see
+  old installs, keychain entries under the prior identifier become
+  orphaned. Launchd plist files and PKG component identifiers updated
+  to match
+- Workspace `Cargo.toml` gained a `homepage = "https://ministr.ai"` field;
+  every crate now inherits via `homepage.workspace = true`
 - Workspace expanded from 3 crates to 6 (`ministr-api`, `ministr-daemon`, `ministr-app`)
 - Prefetch engine overhauled — `PriorityCache`, adaptive alpha, cache invalidation
 - Ingestion pipeline split into focused submodules

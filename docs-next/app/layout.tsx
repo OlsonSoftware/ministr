@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { Provider } from '@/components/provider';
 import './global.css';
@@ -5,6 +6,13 @@ import './global.css';
 const inter = Inter({
   subsets: ['latin'],
 });
+
+// Canonical host for all OpenGraph / Twitter / absolute-URL resolution.
+// Drives how Next.js expands relative `openGraph.images`, canonical tags,
+// and the sitemap absolute URLs.
+export const metadata: Metadata = {
+  metadataBase: new URL('https://ministr.ai'),
+};
 
 export default function Layout({ children }: LayoutProps<'/'>) {
   return (
