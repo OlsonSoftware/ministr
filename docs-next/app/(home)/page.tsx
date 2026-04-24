@@ -60,7 +60,7 @@ export default function HomePage() {
             <div className="ministr-spectrum-rule-major w-full max-w-md" />
             <p className="ministr-body-quiet inline-flex items-center gap-2 text-[13px]">
               <span aria-hidden className="ministr-mark-dot" />
-              Full docs cover every tool, every config key, and the architecture in depth.
+              Docs cover every tool, every config key, and how ministr wires up.
             </p>
             <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-[14px]">
               <FooterLink href="/docs/getting-started">

@@ -757,8 +757,8 @@ function Verdict({
         </span>
       </div>
       <p className="ministr-body-quiet mt-3 font-mono text-[11px] leading-relaxed">
-        same task, same agent, same model — just the retrieval layer changed. the saved budget
-        becomes reasoning room for the <span className="text-fd-foreground">next</span> question.
+        same task, same agent, same model — only the retrieval layer changed. the tokens
+        ministr saved are budget the agent still has for the <span className="text-fd-foreground">next</span> turn.
       </p>
     </motion.div>
   );
