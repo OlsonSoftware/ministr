@@ -1,0 +1,41 @@
+{
+  "name": "ministr-docs-next",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "prebuild": "mkdir -p public && (cp ../assets/launch.cast public/launch.cast 2>/dev/null || echo 'warn: assets/launch.cast not yet recorded — hero player will 404 at runtime') && (cp ../assets/launch-baseline.cast public/launch-baseline.cast 2>/dev/null || true)",
+    "predev": "mkdir -p public && (cp ../assets/launch.cast public/launch.cast 2>/dev/null || echo 'warn: assets/launch.cast not yet recorded — hero player will 404 at runtime') && (cp ../assets/launch-baseline.cast public/launch-baseline.cast 2>/dev/null || true)",
+    "build": "next build",
+    "dev": "next dev",
+    "start": "serve out",
+    "types:check": "fumadocs-mdx && next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@orama/orama": "^3.1.18",
+    "@react-three/fiber": "^9.0.0",
+    "asciinema-player": "^3.15.1",
+    "fumadocs-core": "^16.8",
+    "fumadocs-mdx": "^14",
+    "fumadocs-ui": "^16.8",
+    "lucide-react": "^1.8.0",
+    "mermaid": "^11.14.0",
+    "motion": "^12.38.0",
+    "next": "16.2.4",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "tailwind-merge": "^3.5.0",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
+    "@types/mdx": "^2.0.13",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.170.0",
+    "postcss": "^8.5.10",
+    "serve": "^14.2.6",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^6.0.3"
+  }
+}

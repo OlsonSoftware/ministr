@@ -1,0 +1,51 @@
+---
+title: ministr_read
+description: Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count.
+---
+
+Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count.
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `section_id` | string | yes | Section ID (e.g. `"docs/auth.md#error-handling"`) |
+
+## Response
+
+### New Content
+
+```json
+{
+  "section_id": "docs/auth.md#error-handling",
+  "heading_path": ["Authentication", "Error Handling"],
+  "text": "Full section text...",
+  "token_count": 847,
+  "claims_available": 5,
+  "budget_status": { ... }
+}
+```
+
+### Already Delivered (unchanged)
+
+If the section was already delivered and has not changed, ministr returns a short acknowledgment instead of re-delivering the full text. This is treated as a **fault-based eviction signal** — ministr infers the agent's context window dropped the content and corrects the window estimate.
+
+### Already Delivered (changed)
+
+If the section was delivered but the underlying document changed, ministr returns a line-level delta showing what was added, removed, or modified.
+
+## Response Fields
+
+| Field | Description |
+|---|---|
+| `section_id` | The requested section ID |
+| `heading_path` | Heading hierarchy (e.g. `["Chapter 3", "Section 3.2"]`) |
+| `text` | Full section content |
+| `token_count` | Token count of the delivered text |
+| `claims_available` | Number of claims that can be extracted with `ministr_extract` |
+
+## Behavior
+
+- Triggers prefetch for adjacent and related sections
+- Records delivery in the session shadow
+- Handles three cases: new content, unchanged re-request (fault), changed re-request (delta)

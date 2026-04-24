@@ -5,6 +5,14 @@ on:
     tags:
       - "v*-app"
 
+# Don't cancel in-flight app releases — tauri-action uploads
+# platform-specific bundles; killing mid-upload leaves a half-
+# published release draft.
+concurrency:
+  group: app-release-${{ github.ref }}
+  cancel-in-progress: false
+
+# tauri-action needs write to create/update the draft release.
 permissions:
   contents: write
 
@@ -15,6 +23,7 @@ jobs:
   build:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -29,7 +38,7 @@ jobs:
             os: windows-latest
             args: ""
           - platform: linux
-            os: ubuntu-22.04
+            os: blacksmith-4vcpu-ubuntu-2404
             args: ""
 
     steps:
@@ -49,10 +58,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: iris-app/pnpm-lock.yaml
+          cache-dependency-path: ministr-app/pnpm-lock.yaml
 
       - name: Install frontend deps
-        working-directory: iris-app
+        working-directory: ministr-app
         run: pnpm install
 
       - name: Install Linux deps
@@ -66,10 +75,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "iris app ${{ github.ref_name }}"
-          releaseBody: "Cross-platform iris desktop app release."
+          releaseName: "ministr app ${{ github.ref_name }}"
+          releaseBody: "Cross-platform ministr desktop app release."
           releaseDraft: true
           prerelease: false
-          projectPath: iris-app
+          projectPath: ministr-app
           tauriScript: pnpm tauri
           args: ${{ matrix.args }}

@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in iris
+description: Report a bug in ministr
 labels: [bug]
 body:
   - type: textarea
@@ -16,9 +16,9 @@ body:
       label: Steps to reproduce
       description: Minimal steps to reproduce the issue.
       placeholder: |
-        1. Create `.iris.toml` with corpus paths
-        2. Connect via Claude Code (`claude mcp add iris -- iris`)
-        3. Call `iris_survey("auth")`
+        1. Create `.ministr.toml` with corpus paths
+        2. Connect via Claude Code (`claude mcp add ministr -- ministr`)
+        3. Call `ministr_survey("auth")`
         4. See error...
     validations:
       required: true
@@ -26,9 +26,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: iris version
-      description: Output of `iris --version`
-      placeholder: "iris 0.1.0"
+      label: ministr version
+      description: Output of `ministr --version`
+      placeholder: "ministr 0.1.0"
     validations:
       required: true
 

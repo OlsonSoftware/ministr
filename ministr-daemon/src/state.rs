@@ -1,0 +1,165 @@
+//! Shared application state for the ministr daemon.
+
+use std::collections::VecDeque;
+use std::sync::Arc;
+
+use ministr_api::activity::ActivityEvent;
+use ministr_api::coherence::CoherenceEvent;
+use tokio::sync::RwLock;
+
+use crate::inference::{ClaudeCliInference, Inference};
+use crate::registry::CorpusRegistry;
+
+/// Default maximum concurrent expensive queries (survey, symbols, compress).
+const DEFAULT_QUERY_CONCURRENCY: usize = 4;
+
+/// Capacity of the in-memory activity ring buffer.
+///
+/// Old events age out as new tool calls arrive; callers (Tauri, CLI, MCP)
+/// should poll often enough to catch events before they fall off the end.
+/// At a sustained 10 calls/sec that's ~50s of history.
+pub const ACTIVITY_BUFFER_CAPACITY: usize = 500;
+
+/// Capacity of the in-memory coherence (file-change) ring buffer.
+///
+/// File-change events are lower-frequency than tool calls — 500 entries
+/// is comfortably deep for realistic editing sessions.
+pub const COHERENCE_BUFFER_CAPACITY: usize = 500;
+
+/// Application-wide shared state.
+///
+/// Passed to both Tauri commands (GUI) and axum handlers (daemon API)
+/// via `Arc`. Holds the single [`CorpusRegistry`] that manages all
+/// indexed corpora and the shared embedding model.
+#[derive(Clone)]
+pub struct AppState {
+    pub registry: Arc<CorpusRegistry>,
+    pub started_at: std::time::Instant,
+    /// Semaphore limiting concurrent expensive operations (survey, symbols, compress).
+    pub query_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Sub-inference engine for `ministr_ask`.
+    pub inference: Arc<dyn Inference>,
+    /// Recent tool-call activity (newest at back, popped from front when
+    /// capacity is exceeded). Written fire-and-forget from each tool route;
+    /// read by the Tauri app, `/activity` HTTP endpoint, and any other
+    /// `DaemonClient` consumer.
+    pub activity: Arc<RwLock<VecDeque<ActivityEvent>>>,
+    /// Recent file-change events — one entry per distinct file observed
+    /// during a watcher debounce window. Populated by a subscriber task
+    /// per registered corpus; read by the Tauri app, `/coherence-events`
+    /// HTTP endpoint, and `DaemonClient::recent_coherence_events`.
+    pub coherence: Arc<RwLock<VecDeque<CoherenceEvent>>>,
+}
+
+impl AppState {
+    #[must_use]
+    pub fn new(registry: CorpusRegistry) -> Self {
+        let coherence = Arc::new(RwLock::new(VecDeque::with_capacity(
+            COHERENCE_BUFFER_CAPACITY,
+        )));
+        // Wire the sink BEFORE wrapping in Arc so any later `register`
+        // call — including the first one from `restore` — spawns a
+        // pusher task that feeds this buffer.
+        registry.set_coherence_sink(Arc::clone(&coherence));
+        Self {
+            registry: Arc::new(registry),
+            started_at: std::time::Instant::now(),
+            query_semaphore: Arc::new(tokio::sync::Semaphore::new(DEFAULT_QUERY_CONCURRENCY)),
+            inference: Arc::new(ClaudeCliInference::new()),
+            activity: Arc::new(RwLock::new(VecDeque::with_capacity(
+                ACTIVITY_BUFFER_CAPACITY,
+            ))),
+            coherence,
+        }
+    }
+
+    /// Create state from an already-shared registry.
+    #[must_use]
+    pub fn from_arc(registry: Arc<CorpusRegistry>) -> Self {
+        let coherence = Arc::new(RwLock::new(VecDeque::with_capacity(
+            COHERENCE_BUFFER_CAPACITY,
+        )));
+        registry.set_coherence_sink(Arc::clone(&coherence));
+        Self {
+            registry,
+            started_at: std::time::Instant::now(),
+            query_semaphore: Arc::new(tokio::sync::Semaphore::new(DEFAULT_QUERY_CONCURRENCY)),
+            inference: Arc::new(ClaudeCliInference::new()),
+            activity: Arc::new(RwLock::new(VecDeque::with_capacity(
+                ACTIVITY_BUFFER_CAPACITY,
+            ))),
+            coherence,
+        }
+    }
+
+    /// Override the inference engine (for testing).
+    #[must_use]
+    pub fn with_inference(mut self, inference: Arc<dyn Inference>) -> Self {
+        self.inference = inference;
+        self
+    }
+
+    #[must_use]
+    pub fn uptime_secs(&self) -> u64 {
+        self.started_at.elapsed().as_secs()
+    }
+
+    /// Record a tool-call activity event. Fire-and-forget: if the lock is
+    /// contended or the buffer is poisoned, the event is silently dropped
+    /// rather than failing the enclosing tool call.
+    pub async fn push_activity(&self, event: ActivityEvent) {
+        let mut buf = self.activity.write().await;
+        while buf.len() >= ACTIVITY_BUFFER_CAPACITY {
+            buf.pop_front();
+        }
+        buf.push_back(event);
+    }
+
+    /// Snapshot the most recent `limit` events, newest first.
+    ///
+    /// The buffer is stored newest-at-back for O(1) appends; this method
+    /// reverses on read.
+    pub async fn recent_activity(&self, limit: usize) -> Vec<ActivityEvent> {
+        let buf = self.activity.read().await;
+        buf.iter().rev().take(limit).cloned().collect()
+    }
+
+    /// Snapshot events newer than `since_ms` (unix millis), newest first.
+    pub async fn activity_since(&self, since_ms: u64, limit: usize) -> Vec<ActivityEvent> {
+        let buf = self.activity.read().await;
+        buf.iter()
+            .rev()
+            .filter(|e| e.timestamp_ms > since_ms)
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+
+    /// Record a file-change coherence event. Fire-and-forget mirrors of
+    /// [`push_activity`](Self::push_activity); drops events rather than
+    /// blocking the watcher task under buffer pressure.
+    pub async fn push_coherence(&self, event: CoherenceEvent) {
+        let mut buf = self.coherence.write().await;
+        while buf.len() >= COHERENCE_BUFFER_CAPACITY {
+            buf.pop_front();
+        }
+        buf.push_back(event);
+    }
+
+    /// Snapshot the most recent `limit` coherence events, newest first.
+    pub async fn recent_coherence(&self, limit: usize) -> Vec<CoherenceEvent> {
+        let buf = self.coherence.read().await;
+        buf.iter().rev().take(limit).cloned().collect()
+    }
+
+    /// Snapshot coherence events newer than `since_ms`, newest first.
+    pub async fn coherence_since(&self, since_ms: u64, limit: usize) -> Vec<CoherenceEvent> {
+        let buf = self.coherence.read().await;
+        buf.iter()
+            .rev()
+            .filter(|e| e.timestamp_ms > since_ms)
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+}

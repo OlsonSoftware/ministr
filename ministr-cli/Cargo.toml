@@ -1,0 +1,54 @@
+[package]
+name = "ministr-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "A context cache for LLM agents — MCP server for intelligent document retrieval"
+readme = "../README.md"
+categories = ["command-line-utilities", "development-tools"]
+keywords = ["mcp", "llm", "context", "embeddings", "rag"]
+
+[[bin]]
+name = "ministr"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ministr-api.workspace = true
+# Non-macOS: fastembed/ONNX path only. candle-core pulls in the Apple-only
+# `metal` crate stack (objc2), which refuses to compile on Linux/Windows.
+ministr-mcp.workspace = true
+clap.workspace = true
+rmcp.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+miette.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+notify.workspace = true
+toml.workspace = true
+dialoguer.workspace = true
+
+[features]
+# Opt-in DirectML GPU acceleration for Windows (no-op elsewhere).
+# Forwarded to ministr-core, which in turn enables fastembed/directml.
+directml = ["ministr-core/directml"]
+
+# macOS: enable the candle Metal backend on top of the default fastembed path.
+[target.'cfg(target_os = "macos")'.dependencies]
+ministr-core = { workspace = true, features = ["candle"] }
+
+# Non-macOS: fastembed path only (candle-metal unavailable off Apple).
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+ministr-core = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

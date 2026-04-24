@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <installer-gui-script minSpecVersion="2">
-    <title>iris</title>
-    <organization>com.iris</organization>
+    <title>ministr</title>
+    <organization>ai.ministr</organization>
     <domains enable_localSystem="true" enable_currentUserHome="false" />
     <options customize="allow" require-scripts="false" hostArchitectures="arm64,x86_64" />
 
@@ -24,32 +24,32 @@
         <line choice="choice-cli" />
     </choices-outline>
 
-    <!-- iris.app — always installed -->
+    <!-- ministr.app — always installed -->
     <choice id="choice-app"
             visible="true"
             enabled="true"
             selected="true"
-            title="iris Desktop"
-            description="The iris desktop app — system tray daemon with GUI dashboard for managing context indexes.">
-        <pkg-ref id="com.iris.desktop.app" />
+            title="ministr Desktop"
+            description="The ministr desktop app — system tray daemon with GUI dashboard for managing context indexes.">
+        <pkg-ref id="ai.ministr.desktop.app" />
     </choice>
 
-    <!-- iris CLI — optional but selected by default -->
+    <!-- ministr CLI — optional but selected by default -->
     <choice id="choice-cli"
             visible="true"
             enabled="true"
             selected="true"
-            title="iris CLI"
-            description="The iris command-line tool. Installs to /usr/local/bin/iris and adds it to your PATH.">
-        <pkg-ref id="com.iris.desktop.cli" />
+            title="ministr CLI"
+            description="The ministr command-line tool. Installs to /usr/local/bin/ministr and adds it to your PATH.">
+        <pkg-ref id="ai.ministr.desktop.cli" />
     </choice>
 
     <!-- Package references (paths relative to the package-path argument) -->
-    <pkg-ref id="com.iris.desktop.app"
+    <pkg-ref id="ai.ministr.desktop.app"
              version="__VERSION__"
-             onConclusion="none">iris-app.pkg</pkg-ref>
+             onConclusion="none">ministr-app.pkg</pkg-ref>
 
-    <pkg-ref id="com.iris.desktop.cli"
+    <pkg-ref id="ai.ministr.desktop.cli"
              version="__VERSION__"
-             onConclusion="none">iris-cli.pkg</pkg-ref>
+             onConclusion="none">ministr-cli.pkg</pkg-ref>
 </installer-gui-script>

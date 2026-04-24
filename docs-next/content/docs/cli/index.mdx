@@ -1,0 +1,115 @@
+---
+title: CLI Reference
+description: Reference for the ministr binary — serve, index, init, status, search, export/import, and hooks test subcommands.
+---
+
+The `ministr` binary provides subcommands for running the MCP server, indexing corpora, managing projects, and distributing pre-built indexes.
+
+```text
+ministr [OPTIONS] [COMMAND]
+```
+
+If no subcommand is given, `ministr` runs `serve` with stdio transport — the default behavior for MCP clients.
+
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `serve` | Start the MCP server (stdio or HTTP transport) |
+| `index` | Run ingestion synchronously and exit (no MCP server) |
+| `init` | Generate `.ministr.toml` and scaffold agent configs |
+| `status` | Show daemon status |
+| `search` | Search the corpus via the daemon |
+| `export` | Export the corpus index to a portable bundle |
+| `import` | Import a bundle into the local corpus store |
+| `hooks test` | Validate installed agent hooks |
+
+## Global options
+
+| Flag | Description |
+|---|---|
+| `-c, --corpus <PATH>` | Corpus source (repeatable): local paths, `https://` URLs, or `github://` URLs |
+| `-C, --config <PATH>` | Path to config file (default: `~/.ministr/config.toml`) |
+| `-h, --help` | Print help |
+| `-V, --version` | Print version |
+
+## `ministr serve`
+
+Starts the MCP server. Default transport is stdio — any MCP client can spawn `ministr` as a subprocess and exchange JSON-RPC over stdin/stdout.
+
+```sh
+ministr serve                                              # stdio (default)
+ministr serve --transport http --host 0.0.0.0 --port 8080  # Streamable HTTP
+ministr serve --transport http --oauth                     # with OAuth 2.1
+ministr serve --proxy                                      # delegate to ministr daemon
+```
+
+| Flag | Description |
+|---|---|
+| `-t, --transport <TRANSPORT>` | `stdio` (default) or `http` (Streamable HTTP) |
+| `--host <HOST>` | Bind host for HTTP transport (default: `127.0.0.1`) |
+| `-p, --port <PORT>` | HTTP port (default: `8080`) |
+| `--proxy` | Run as thin proxy to the ministr daemon over `~/.ministr/ministrd.sock` |
+| `--oauth` | Enable OAuth 2.1 authentication (HTTP transport only) |
+| `--oauth-issuer <URL>` | OAuth issuer URL (default: `http://<host>:<port>`) |
+
+The `--proxy` mode keeps the CLI lightweight by delegating heavy work to the daemon — ideal when running alongside the ministr desktop app.
+
+## `ministr index`
+
+Runs corpus ingestion synchronously and exits. Useful for pre-warming the index, debugging ingestion issues, or running in CI.
+
+```sh
+ministr index                                  # index from .ministr.toml
+ministr index --corpus ./src --corpus ./docs   # explicit paths
+```
+
+ministr indexes on first MCP connection automatically — `ministr index` is optional.
+
+## `ministr init`
+
+Generates `.ministr.toml` with auto-detected corpus paths and scaffolds agent configuration files. See [ministr init](/docs/cli/init) for the full reference.
+
+```sh
+ministr init                  # non-interactive, auto-detected
+ministr init --interactive    # wizard with prompts
+ministr init --force          # overwrite existing .ministr.toml
+```
+
+## `ministr status`
+
+Shows the ministr daemon status — whether it's running, which corpora are registered, ingestion state, and socket path. Requires the ministr desktop app or `ministr-daemon` to be running.
+
+## `ministr search`
+
+One-shot search against the daemon without going through the MCP protocol. Useful for debugging and shell scripts.
+
+```sh
+ministr search "authentication" --top-k 5
+```
+
+## `ministr export` / `ministr import`
+
+Export the corpus index to a portable `.ministr-index` bundle. Import on another machine to skip re-indexing.
+
+```sh
+ministr export -o my-corpus.ministr-index
+ministr import my-corpus.ministr-index
+```
+
+Session-local data is stripped during export — only the corpus content and embeddings are included.
+
+## `ministr hooks test`
+
+Validates that installed agent hooks are correctly configured and simulates tool calls to report which would be blocked.
+
+```sh
+ministr hooks test
+```
+
+## Environment variables
+
+| Variable | Description |
+|---|---|
+| `RUST_LOG` | Log verbosity (`ministr=debug`, `ministr_core=trace`, etc.) |
+| `MINISTR_DATA_DIR` | Override the data directory (default: `~/.ministr`) |

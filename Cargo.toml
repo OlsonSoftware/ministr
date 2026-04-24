@@ -1,12 +1,13 @@
 [workspace]
-members = ["iris-api", "iris-core", "iris-daemon", "iris-mcp", "iris-cli", "iris-app/src-tauri"]
+members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-mcp", "ministr-cli", "ministr-app/src-tauri"]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/AlrikOlson/iris-rs"
+repository = "https://github.com/AlrikOlson/ministr-rs"
+homepage = "https://ministr.ai"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -116,8 +117,8 @@ axum = "0.8"
 # Testing
 tempfile = "3"
 
-# iris workspace crates
-iris-api = { path = "iris-api" }
-iris-core = { path = "iris-core" }
-iris-daemon = { path = "iris-daemon" }
-iris-mcp = { path = "iris-mcp" }
+# ministr workspace crates
+ministr-api = { path = "ministr-api" }
+ministr-core = { path = "ministr-core" }
+ministr-daemon = { path = "ministr-daemon" }
+ministr-mcp = { path = "ministr-mcp" }

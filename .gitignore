@@ -26,7 +26,7 @@ docs/research/*.pdf
 
 # Node / frontend
 node_modules/
-iris-app/dist/
+ministr-app/dist/
 
 # IDE and editor configs
 .claude/
@@ -54,16 +54,19 @@ eval/model-comparison.json
 # Signing credentials
 .env.signing
 
+# Design-iteration screenshots (archived, not versioned)
+/design-archive/
+
 # Screenshot/Playwright artifacts
 .playwright-mcp/
 .cache/
-iris-landing-*.png
-iris-docs-*.png
-iris-mobile-*.png
-iris-tablet-*.png
-iris-tool-*.png
-iris-tools-*.png
-iris-404*.png
+ministr-landing-*.png
+ministr-docs-*.png
+ministr-mobile-*.png
+ministr-tablet-*.png
+ministr-tool-*.png
+ministr-tools-*.png
+ministr-404*.png
 /og-preview.png
 /og-rendered.png
 /og.png
@@ -72,3 +75,11 @@ iris-404*.png
 /reading-*.png
 /landing-hero.png
 /chart-*.png
+/download-*.png
+/stepper-*.png
+/observatory-*.png
+/faq-*.png
+/alt-*.png
+/desktop-*.png
+/landing-*.png
+/after-*.png

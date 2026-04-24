@@ -1,0 +1,28 @@
+# ministr config for a Tauri v2 app
+#
+# Typical layout:
+#   src-tauri/src/  — Rust backend (commands, state, plugins)
+#   src/            — TypeScript/React frontend
+#   docs/           — project docs
+#
+# ministr automatically detects Tauri commands and events,
+# building cross-language bridge links between Rust and TypeScript.
+
+[corpus]
+paths = [
+    # Rust backend
+    "src-tauri/src",
+
+    # TypeScript frontend
+    "src",
+
+    # Documentation
+    "docs",
+    "README.md",
+]
+
+ignore = [
+    "*.snap",              # insta test snapshots
+    "*.test.ts",           # test files
+    "*.spec.ts",
+]

@@ -1,11 +1,11 @@
-# Caddy reverse proxy for iris MCP server
+# Caddy reverse proxy for ministr MCP server
 # Auto-TLS via ACME + SSE passthrough
 #
 # Usage:
-#   1. Replace iris.example.com with your domain
+#   1. Replace ministr.example.com with your domain
 #   2. caddy run --config Caddyfile
 
-iris.example.com {
+ministr.example.com {
 	reverse_proxy localhost:8080 {
 		# Disable response buffering for SSE streams
 		flush_interval -1

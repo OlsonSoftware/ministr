@@ -13,7 +13,7 @@ unsound = "all"
 ignore = [
     # Unsound iterator in glib 0.18. Pulled in on Linux only via
     # tauri 2.10 → tray-icon 0.21 → libappindicator 0.9 → gtk 0.18 → glib 0.18.
-    # Not reachable from iris's own code — the tray icon is the only thing that
+    # Not reachable from ministr's own code — the tray icon is the only thing that
     # touches glib, and it doesn't iterate GVariants. Will resolve upstream when
     # tauri ships tray-icon 0.22+ with updated gtk-rs bindings; revisit on every
     # tauri bump.
@@ -23,7 +23,7 @@ ignore = [
     # selectors → phf_generator. The unsound path requires a custom log logger
     # calling rand::rng() during a reseed — a pure runtime concern. PHF hash
     # seeding runs at build time and never touches the log crate, so the
-    # preconditions can't be met. Not in iris's runtime binary.
+    # preconditions can't be met. Not in ministr's runtime binary.
     "RUSTSEC-2026-0097",
 ]
 

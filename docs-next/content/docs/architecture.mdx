@@ -1,0 +1,79 @@
+---
+title: Architecture Overview
+description: Workspace layout, layered architecture, daemon topology, and on-disk format for the ministr context cache.
+---
+
+## Workspace Structure
+
+ministr is organized as a Cargo workspace with six crates:
+
+```text
+ministr-core/          — domain logic, no transport dependencies
+ministr-api/           — shared request/response types for daemon ↔ MCP/CLI communication
+ministr-daemon/        — HTTP API over Unix domain socket, depends on ministr-core + ministr-api
+ministr-mcp/           — MCP server adapter, depends on ministr-core + ministr-api + rmcp
+ministr-cli/           — binary entry point, depends on ministr-mcp
+ministr-app/src-tauri/ — Tauri v2 desktop app, depends on ministr-core + ministr-api + ministr-daemon
+```
+
+**ministr-core** contains all business logic: parsing, indexing, embedding, search, session management, prefetching, and budget tracking. It has no knowledge of MCP or any transport protocol.
+
+**ministr-api** defines the shared request/response types and the `DaemonClient` for communicating with the ministr daemon over a Unix domain socket (`~/.ministr/ministrd.sock`). It has no dependency on ministr-core — it is pure types.
+
+**ministr-daemon** is the long-running background service that owns the heavy resources (ONNX model, HNSW indexes, SQLite). It exposes an HTTP API over UDS for corpus management and querying.
+
+**ministr-mcp** adapts ministr-core's service layer to the MCP protocol using the `rmcp` crate. It implements tool handlers, request routing, and response formatting. Transitioning to a thin proxy that delegates storage/embedding/indexing to the daemon.
+
+**ministr-cli** is the binary entry point. It parses CLI arguments, loads configuration, and starts the MCP server over stdio transport.
+
+**ministr-app** is the Tauri v2 desktop application that wraps the daemon with a GUI dashboard and system tray icon.
+
+## The Five Mechanisms
+
+ministr combines five mechanisms that map directly to CPU cache controller concepts:
+
+### 1. Session Shadow
+Tracks exactly what context has been delivered to the agent, enabling deduplication, delta updates, and eviction estimation.
+
+### 2. Multi-Resolution Index
+Documents are indexed at three simultaneous levels — summaries, sections, and claims — preserving the author's original structure rather than destroying it with fixed-size chunking.
+
+### 3. Progressive Disclosure
+Four MCP tools (`survey` → `read` → `extract` → `related`) give the agent explicit control over retrieval depth, mirroring how a human researcher navigates a knowledge base.
+
+### 4. Speculative Prefetch
+Predicts what the agent will need next based on sequential, topical, and structural locality. Pre-computes results so warm responses are served from cache instead of re-embedded and re-searched.
+
+### 5. Context Budget Management
+Tracks cumulative token usage, detects pressure, and provides eviction recommendations with compressed replacement summaries.
+
+## On-Disk Layout
+
+```text
+~/.ministr/
+├── config.toml                     # Global configuration
+├── corpora.json                    # Daemon's registered-corpus manifest
+├── ministrd.sock                      # Daemon Unix domain socket
+├── ministrd.pid                       # Daemon PID file
+└── corpora/
+    └── <corpus-id>/                # Stable hash derived from corpus paths
+        ├── content.db              # SQLite: sections, claims, summaries,
+        │                           # file hashes, and session shadows
+        └── index/
+            ├── ministr_hnsw.hnsw.data # HNSW vector dump
+            ├── ministr_hnsw.hnsw.graph
+            └── id_map.json         # Section ID ↔ vector slot mapping
+```
+
+## Key Dependencies
+
+| Purpose | Crate |
+|---|---|
+| Embeddings | `fastembed` (ONNX-based, local) |
+| Vector search | HNSW index (in-memory, memory-mapped) |
+| Storage | `rusqlite` (SQLite) |
+| MCP protocol | `rmcp` |
+| Document parsing | `comrak` (Markdown), `scraper` (HTML), `pdf-extract` (PDF) |
+| Async runtime | `tokio` |
+| Observability | `tracing` |
+| File watching | `notify` |

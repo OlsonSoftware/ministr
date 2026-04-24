@@ -1,0 +1,49 @@
+---
+title: ministr_clone
+description: Clone a git repository and index it into the corpus.
+---
+
+Clone a git repository and index it into the corpus.
+
+## Parameters
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `repo` | string | yes | — | Git repository URL (HTTPS or SSH) |
+| `branch` | string | no | default branch | Branch to clone |
+| `paths` | list of strings | no | — | Sparse-checkout paths (only check out + index these directories) |
+
+## Response
+
+```json
+{
+  "files_discovered": 312,
+  "files_indexed": 298,
+  "sections_extracted": 1204,
+  "clone_time_ms": 2740,
+  "index_time_ms": 8190,
+  "from_cache": false,
+  "dependency_refs_linked": 46,
+  "budget_status": { ... }
+}
+```
+
+### Response Fields
+
+| Field | Description |
+|---|---|
+| `files_discovered` | Number of files discovered in the clone checkout |
+| `files_indexed` | Number of files parsed and stored |
+| `sections_extracted` | Total sections extracted across all indexed files |
+| `clone_time_ms` | Time spent cloning the repository, in milliseconds |
+| `index_time_ms` | Time spent running the ingestion pipeline, in milliseconds |
+| `from_cache` | `true` if the clone was served from a previous cached checkout |
+| `dependency_refs_linked` | Number of cross-references linked from local code to this cloned dependency |
+
+## Behavior
+
+- Clones into the ministr data directory (`~/.ministr/clones/<hash>`)
+- Sparse checkout dramatically reduces disk and index time for large monorepos
+- Subsequent calls with the same URL are idempotent — the cache is reused if the ref hasn't changed
+- Use `ministr_refresh` to pull updates after upstream changes
+- Cloned content is treated as a separate corpus root alongside local paths

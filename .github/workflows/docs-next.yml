@@ -1,0 +1,70 @@
+name: Deploy Documentation
+
+# Builds and publishes the Fumadocs-based docs-next/ site to GitHub Pages
+# on every push to main that touches it. PRs get build + type-check only.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs-next/**'
+      - '.github/workflows/docs-next.yml'
+  pull_request:
+    paths:
+      - 'docs-next/**'
+      - '.github/workflows/docs-next.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs-next
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: docs-next/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run types:check
+
+      - name: Build static export
+        # Site now serves at https://ministr.ai/ via the CNAME in
+        # docs-next/public/CNAME — no sub-path prefix needed.
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-next/out
+
+  deploy:
+    needs: build
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

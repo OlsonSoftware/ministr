@@ -1,0 +1,666 @@
+//! Tauri IPC commands — bridge between the React frontend and Rust backend.
+
+use serde::Serialize;
+
+use ministr_api::activity::ActivityEvent;
+use ministr_api::coherence::CoherenceEvent;
+use ministr_api::corpus::{CorpusInfo, RegisterCorpusResponse};
+use ministr_api::status::DaemonStatus;
+use ministr_core::session::PressureLevel;
+use ministr_core::storage::traits::Storage;
+use tauri::{AppHandle, Manager, State};
+
+use ministr_daemon::state::AppState;
+
+/// List all registered corpora.
+#[tauri::command]
+pub async fn list_corpora(state: State<'_, AppState>) -> Result<Vec<CorpusInfo>, String> {
+    Ok(state.registry.list().await)
+}
+
+/// Register a new corpus by paths.
+#[tauri::command]
+pub async fn register_corpus(
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<RegisterCorpusResponse, String> {
+    let (corpus_id, indexing_started) = state
+        .registry
+        .register(&paths)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RegisterCorpusResponse {
+        corpus_id,
+        indexing_started,
+    })
+}
+
+/// Unregister a corpus.
+#[tauri::command]
+pub async fn unregister_corpus(
+    state: State<'_, AppState>,
+    corpus_id: String,
+) -> Result<(), String> {
+    state
+        .registry
+        .unregister(&corpus_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get daemon status (memory, uptime, corpora).
+#[tauri::command]
+pub async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonStatus, String> {
+    let corpora = state.registry.list().await;
+    tracing::debug!(corpora_count = corpora.len(), "daemon_status polled");
+    let rss = ministr_core::mem_profile::rss_mb().unwrap_or(0.0);
+    let total_sessions: usize = corpora.iter().map(|c| c.active_sessions).sum();
+
+    let log_path = Some(ministr_api::daemon_data_dir().join("ministr.log"))
+        .filter(|p| p.exists())
+        .map(|p| p.display().to_string());
+
+    Ok(DaemonStatus {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        uptime_secs: state.uptime_secs(),
+        memory_mb: rss,
+        model: state.registry.config().default_model.clone(),
+        model_dimension: state.registry.embedder().dimension(),
+        corpora,
+        log_path,
+        total_sessions,
+    })
+}
+
+/// Open a directory picker dialog and register the selected directory as a corpus.
+#[tauri::command]
+pub async fn add_project_dialog(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<RegisterCorpusResponse>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let picked = app.dialog().file().blocking_pick_folder();
+
+    let Some(folder) = picked else {
+        return Ok(None);
+    };
+
+    let path = folder.to_string();
+    let (corpus_id, indexing_started) = state
+        .registry
+        .register(&[path])
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Some(RegisterCorpusResponse {
+        corpus_id,
+        indexing_started,
+    }))
+}
+
+/// Remove a project and clean up its index data.
+#[tauri::command]
+pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Result<(), String> {
+    tracing::info!(corpus_id = %corpus_id, "remove_project called from frontend");
+
+    // Get data_dir before unregistering.
+    let data_dir = {
+        let guard = state.registry.corpora().read().await;
+        guard.get(&corpus_id).map(|h| h.data_dir.clone())
+    };
+
+    state.registry.unregister(&corpus_id).await.map_err(|e| {
+        tracing::error!(corpus_id = %corpus_id, error = %e, "unregister failed");
+        e.to_string()
+    })?;
+
+    // Clean up index data.
+    if let Some(dir) = data_dir
+        && dir.exists()
+    {
+        let _ = std::fs::remove_dir_all(&dir);
+        tracing::info!(path = %dir.display(), "cleaned up corpus data");
+    }
+
+    Ok(())
+}
+
+/// Trigger a full re-index of a corpus.
+#[tauri::command]
+pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> Result<(), String> {
+    tracing::info!(corpus_id = %corpus_id, "trigger_reindex called from frontend");
+
+    // Get the paths for this corpus.
+    let paths = {
+        let guard = state.registry.corpora().read().await;
+        let Some(h) = guard.get(&corpus_id) else {
+            tracing::warn!(corpus_id = %corpus_id, "trigger_reindex: corpus not found");
+            return Err(format!("corpus '{corpus_id}' not found"));
+        };
+        h.info.read().await.paths.clone()
+    };
+
+    tracing::info!(corpus_id = %corpus_id, paths = ?paths, "trigger_reindex: unregister + re-register");
+    // Unregister first, then re-register to force a fresh indexing run.
+    let _ = state.registry.unregister(&corpus_id).await;
+    state
+        .registry
+        .register(&paths)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Add a project from the tray menu (called from Rust, not from JS).
+pub async fn add_project_from_tray(handle: &AppHandle) {
+    use tauri_plugin_dialog::DialogExt;
+
+    let picked = handle.dialog().file().blocking_pick_folder();
+
+    let Some(folder) = picked else {
+        return;
+    };
+
+    let path = folder.to_string();
+    let state = handle.state::<AppState>();
+    match state.registry.register(std::slice::from_ref(&path)).await {
+        Ok((corpus_id, _)) => {
+            tracing::info!(corpus_id, path, "project added from tray");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, path, "failed to add project from tray");
+        }
+    }
+}
+
+/// Check if auto-start at login is enabled.
+#[tauri::command]
+pub async fn is_autostart_enabled(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// Enable or disable auto-start at login.
+#[tauri::command]
+pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|e| e.to_string())
+    } else {
+        manager.disable().map_err(|e| e.to_string())
+    }
+}
+
+/// Read the last N lines from the daemon log file.
+#[tauri::command]
+pub async fn read_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
+    let max_lines = lines.unwrap_or(200);
+    let log_path = ministr_api::daemon_data_dir().join("ministr.log");
+
+    if !log_path.exists() {
+        return Ok(vec!["No log file found.".to_string()]);
+    }
+
+    let content = std::fs::read_to_string(&log_path).map_err(|e| e.to_string())?;
+    let all_lines: Vec<String> = content.lines().map(String::from).collect();
+    let start = all_lines.len().saturating_sub(max_lines);
+    Ok(all_lines[start..].to_vec())
+}
+
+/// Check if first-run onboarding should be shown.
+#[tauri::command]
+pub async fn should_show_onboarding() -> Result<bool, String> {
+    let sentinel = ministr_api::daemon_data_dir().join("onboarding_done");
+    Ok(!sentinel.exists())
+}
+
+/// Dismiss the onboarding screen.
+#[tauri::command]
+pub async fn dismiss_onboarding() -> Result<(), String> {
+    let sentinel = ministr_api::daemon_data_dir().join("onboarding_done");
+    std::fs::write(&sentinel, "").map_err(|e| e.to_string())
+}
+
+/// Reset onboarding so it shows again on next visit.
+#[tauri::command]
+pub async fn reset_onboarding() -> Result<(), String> {
+    let sentinel = ministr_api::daemon_data_dir().join("onboarding_done");
+    if sentinel.exists() {
+        std::fs::remove_file(&sentinel).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Detected project for onboarding.
+#[derive(Serialize)]
+pub struct DetectedProject {
+    pub path: String,
+    pub name: String,
+}
+
+/// Scan common directories for projects with `.ministr.toml` files.
+#[tauri::command]
+pub async fn detect_projects() -> Result<Vec<DetectedProject>, String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let scan_dirs = [
+        home.clone(),
+        format!("{home}/Code"),
+        format!("{home}/Projects"),
+        format!("{home}/Developer"),
+        format!("{home}/src"),
+    ];
+
+    let mut found = Vec::new();
+    for dir in &scan_dirs {
+        let dir_path = std::path::Path::new(dir);
+        if !dir_path.is_dir() {
+            continue;
+        }
+        // Check the directory itself for .ministr.toml
+        if dir != &home && dir_path.join(".ministr.toml").exists() {
+            let name = dir_path
+                .file_name()
+                .map_or_else(|| dir.clone(), |n| n.to_string_lossy().into_owned());
+            found.push(DetectedProject {
+                path: dir.clone(),
+                name,
+            });
+            continue;
+        }
+        // Scan one level deep
+        let Ok(entries) = std::fs::read_dir(dir_path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_dir() && entry_path.join(".ministr.toml").exists() {
+                let name = entry_path
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                found.push(DetectedProject {
+                    path: entry_path.display().to_string(),
+                    name,
+                });
+            }
+        }
+    }
+
+    // Deduplicate by path
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found.dedup_by(|a, b| a.path == b.path);
+
+    Ok(found)
+}
+
+/// Register multiple projects at once (for onboarding batch import).
+#[tauri::command]
+pub async fn register_projects_batch(
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let mut registered = Vec::new();
+    for path in &paths {
+        let project_dir = std::path::Path::new(path);
+        let resolved = ministr_core::config::RepoConfig::discover(project_dir)
+            .ok()
+            .flatten()
+            .map_or_else(
+                || vec![path.clone()],
+                |(base, rc)| rc.resolve_local_paths(&base),
+            );
+        match state.registry.register(&resolved).await {
+            Ok((corpus_id, _)) => registered.push(corpus_id),
+            Err(e) => {
+                tracing::warn!(error = %e, path, "failed to register project in batch");
+            }
+        }
+    }
+    Ok(registered)
+}
+
+/// Remove a project by ID (called from tray menu).
+#[allow(dead_code)]
+pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result<(), String> {
+    let state = handle.state::<AppState>();
+
+    // Get data_dir before unregistering.
+    let data_dir = {
+        let guard = state.registry.corpora().read().await;
+        guard.get(corpus_id).map(|h| h.data_dir.clone())
+    };
+
+    state
+        .registry
+        .unregister(corpus_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if let Some(dir) = data_dir
+        && dir.exists()
+    {
+        let _ = std::fs::remove_dir_all(&dir);
+        tracing::info!(path = %dir.display(), "cleaned up corpus data from tray remove");
+    }
+
+    Ok(())
+}
+
+// ── New GUI feature commands ─────────────────────────────────────────────────
+
+/// Session info returned to the frontend.
+#[derive(Serialize)]
+pub struct SessionDetail {
+    pub session_id: String,
+    pub corpus_id: String,
+    pub pressure_level: String,
+    pub tokens_used: usize,
+    pub tokens_remaining: usize,
+    pub utilization: f64,
+    pub delivered_count: usize,
+    pub current_turn: u32,
+    // Token economics metrics
+    pub total_deliveries: u64,
+    pub cumulative_tokens_delivered: u64,
+    pub total_tokens_saved: u64,
+    pub total_evictions: u64,
+    pub total_compressions: u64,
+    pub dedup_hits: u64,
+    pub compression_ratio: f64,
+}
+
+/// List all active sessions across all corpora.
+#[tauri::command]
+pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDetail>, String> {
+    let guard = state.registry.corpora().read().await;
+    let mut sessions = Vec::new();
+
+    for (corpus_id, handle) in guard.iter() {
+        let reg = handle.sessions.lock().await;
+        for sid in reg.session_ids() {
+            if let Some(entry) = reg.get_session(&sid) {
+                let status = entry.budget.budget_status();
+                let metrics = entry.session.metrics();
+                #[allow(clippy::cast_precision_loss)]
+                let compression_ratio = if metrics.cumulative_tokens_delivered > 0 {
+                    metrics.total_tokens_saved() as f64 / metrics.cumulative_tokens_delivered as f64
+                } else {
+                    0.0
+                };
+                sessions.push(SessionDetail {
+                    session_id: sid.clone(),
+                    corpus_id: corpus_id.clone(),
+                    pressure_level: match entry.budget.pressure_level() {
+                        PressureLevel::Normal => "normal",
+                        PressureLevel::Elevated => "elevated",
+                        PressureLevel::Critical => "critical",
+                    }
+                    .to_string(),
+                    tokens_used: status.tokens_used,
+                    tokens_remaining: status.tokens_remaining,
+                    utilization: status.utilization,
+                    delivered_count: entry.session.delivered_ids().len(),
+                    current_turn: entry.session.current_turn(),
+                    total_deliveries: metrics.total_deliveries,
+                    cumulative_tokens_delivered: metrics.cumulative_tokens_delivered,
+                    total_tokens_saved: metrics.total_tokens_saved(),
+                    total_evictions: metrics.total_evictions,
+                    total_compressions: metrics.total_compressions,
+                    dedup_hits: metrics.dedup_hits,
+                    compression_ratio,
+                });
+            }
+        }
+    }
+
+    Ok(sessions)
+}
+
+/// File info for the corpus treemap.
+#[derive(Serialize)]
+pub struct FileInfo {
+    pub path: String,
+    pub content_hash: String,
+    pub mtime_ns: Option<i64>,
+    pub section_count: usize,
+}
+
+/// List all indexed files for a corpus with section counts.
+#[tauri::command]
+pub async fn list_corpus_files(
+    state: State<'_, AppState>,
+    corpus_id: String,
+) -> Result<Vec<FileInfo>, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+    let storage = &handle.storage;
+
+    let hashes = storage
+        .list_file_hashes()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Count sections per source_path by querying documents then sections.
+    let docs = storage.list_documents().await.map_err(|e| e.to_string())?;
+
+    let mut section_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for doc in &docs {
+        let sections = storage.list_sections(&doc.id).await.unwrap_or_default();
+        *section_counts.entry(doc.source_path.clone()).or_default() += sections.len();
+    }
+
+    Ok(hashes
+        .into_iter()
+        .map(|h| FileInfo {
+            section_count: section_counts.get(&h.path).copied().unwrap_or(0),
+            path: h.path,
+            content_hash: h.content_hash,
+            mtime_ns: h.mtime_ns,
+        })
+        .collect())
+}
+
+/// Search result returned to the frontend.
+#[derive(Serialize)]
+pub struct SearchResult {
+    pub content_id: String,
+    pub resolution: String,
+    pub score: f32,
+    pub text: String,
+    pub heading_path: Vec<String>,
+}
+
+/// Search a corpus by query (wraps `QueryService::survey`).
+#[tauri::command]
+pub async fn search_corpus(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    query: String,
+    top_k: Option<usize>,
+) -> Result<Vec<SearchResult>, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let results = handle
+        .service
+        .survey(&query, top_k.unwrap_or(10))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(results
+        .into_iter()
+        .map(|r| SearchResult {
+            content_id: r.content_id,
+            resolution: r.resolution,
+            score: r.score,
+            text: r.text,
+            heading_path: r.heading_path.unwrap_or_default(),
+        })
+        .collect())
+}
+
+/// Symbol info returned to the frontend.
+#[derive(Serialize)]
+pub struct SymbolInfo {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub file_path: String,
+    pub visibility: String,
+    pub signature: String,
+    pub doc_comment: Option<String>,
+    pub module_path: String,
+}
+
+/// Search symbols in a corpus.
+#[tauri::command]
+pub async fn search_symbols(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    query: String,
+    kind: Option<String>,
+) -> Result<Vec<SymbolInfo>, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let filter = ministr_core::storage::traits::SymbolFilter {
+        name: Some(query),
+        name_exact: None,
+        kind,
+        visibility: None,
+        module: None,
+        file_path: None,
+    };
+
+    let records = handle
+        .storage
+        .list_symbols(&filter)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(records
+        .into_iter()
+        .map(|r| SymbolInfo {
+            id: r.id.0,
+            name: r.name,
+            kind: r.kind,
+            file_path: r.file_path,
+            visibility: r.visibility,
+            signature: r.signature,
+            doc_comment: r.doc_comment,
+            module_path: r.module_path,
+        })
+        .collect())
+}
+
+/// Reference link for the symbol graph.
+#[derive(Serialize)]
+pub struct SymbolRef {
+    pub from_name: String,
+    pub from_file: String,
+    pub to_name: String,
+    pub to_file: String,
+    pub ref_kind: String,
+}
+
+/// Get references (callers, importers, implementors) for a symbol.
+#[tauri::command]
+pub async fn symbol_references(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    symbol_id: String,
+) -> Result<Vec<SymbolRef>, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let refs = handle
+        .service
+        .get_symbol_references(&symbol_id, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(refs
+        .into_iter()
+        .map(|r| SymbolRef {
+            from_name: r.from_name,
+            from_file: r.from_file,
+            to_name: r.to_name,
+            to_file: r.to_file,
+            ref_kind: r.ref_kind,
+        })
+        .collect())
+}
+
+/// Ingestion progress snapshot for a corpus.
+#[derive(Serialize)]
+pub struct IngestionProgressInfo {
+    pub corpus_id: String,
+    pub status: u8,
+    pub phase: String,
+    pub files_total: usize,
+    pub files_done: usize,
+    pub sections_done: usize,
+    pub embeddings_total: usize,
+    pub embeddings_done: usize,
+    pub current_file: String,
+}
+
+/// Snapshot recent coherence (file-change) events from the in-process
+/// ring buffer. Mirrors the daemon's `/coherence-events` route.
+#[tauri::command]
+pub async fn recent_coherence_events(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+    since_ms: Option<u64>,
+) -> Result<Vec<CoherenceEvent>, String> {
+    let limit = limit.unwrap_or(50);
+    let events = if let Some(since) = since_ms {
+        state.coherence_since(since, limit).await
+    } else {
+        state.recent_coherence(limit).await
+    };
+    Ok(events)
+}
+
+/// Snapshot recent tool-call activity events from the in-process ring buffer.
+///
+/// Mirrors the daemon's `/activity` HTTP endpoint for the Tauri frontend —
+/// when the Tauri app runs in-process it consults [`AppState::activity`]
+/// directly rather than hopping over UDS.
+#[tauri::command]
+pub async fn recent_activity(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+    since_ms: Option<u64>,
+) -> Result<Vec<ActivityEvent>, String> {
+    let limit = limit.unwrap_or(50);
+    let events = if let Some(since) = since_ms {
+        state.activity_since(since, limit).await
+    } else {
+        state.recent_activity(limit).await
+    };
+    Ok(events)
+}
+
+/// Get ingestion progress for all corpora.
+#[tauri::command]
+pub async fn ingestion_progress(
+    state: State<'_, AppState>,
+) -> Result<Vec<IngestionProgressInfo>, String> {
+    let guard = state.registry.corpora().read().await;
+    Ok(guard
+        .iter()
+        .map(|(corpus_id, handle)| IngestionProgressInfo {
+            corpus_id: corpus_id.clone(),
+            status: handle.progress.status(),
+            phase: handle.progress.phase().as_str().to_string(),
+            files_total: handle.progress.files_total(),
+            files_done: handle.progress.files_done(),
+            sections_done: handle.progress.sections_done(),
+            embeddings_total: handle.progress.embeddings_total(),
+            embeddings_done: handle.progress.embeddings_done(),
+            current_file: handle.progress.current_file(),
+        })
+        .collect())
+}

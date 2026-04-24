@@ -1,0 +1,127 @@
+[package]
+name = "ministr-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Core domain logic for ministr — a context cache for LLM agents"
+readme = "../README.md"
+categories = ["development-tools", "text-processing"]
+keywords = ["mcp", "llm", "context", "embeddings", "rag"]
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+toml.workspace = true
+dirs = "6"
+reqwest.workspace = true
+url.workspace = true
+comrak.workspace = true
+scraper.workspace = true
+pdf-extract.workspace = true
+rusqlite.workspace = true
+rusqlite_migration.workspace = true
+tiktoken-rs.workspace = true
+sha2.workspace = true
+quick-xml.workspace = true
+fastembed.workspace = true
+ort.workspace = true
+hnsw_rs.workspace = true
+notify.workspace = true
+tokio-util = "0.7"
+futures = "0.3"
+glob.workspace = true
+ignore.workspace = true
+parking_lot.workspace = true
+tree-sitter.workspace = true
+tree-sitter-language.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-javascript = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-java = { workspace = true, optional = true }
+tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-ruby = { workspace = true, optional = true }
+tree-sitter-c-sharp = { workspace = true, optional = true }
+tree-sitter-swift = { workspace = true, optional = true }
+tree-sitter-kotlin-ng = { workspace = true, optional = true }
+tar.workspace = true
+zstd.workspace = true
+tempfile.workspace = true
+
+# Candle (optional — Metal GPU embedding backend)
+candle-core = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+hf-hub = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
+
+[features]
+default = ["lang-all"]
+candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub", "dep:tokenizers"]
+# DirectML GPU acceleration for the ONNX/FastEmbed backend on Windows.
+# No-op on other platforms (the activation code is `#[cfg(target_os = "windows")]`-gated
+# in fastembed_impl.rs), so it's safe to leave enabled in a portable workspace
+# build — the feature just forwards to fastembed's directml capability.
+directml = ["fastembed/directml"]
+lang-all = [
+    "lang-python",
+    "lang-javascript",
+    "lang-typescript",
+    "lang-go",
+    "lang-java",
+    "lang-c",
+    "lang-cpp",
+    "lang-ruby",
+    "lang-csharp",
+    "lang-swift",
+    "lang-kotlin",
+]
+lang-python = ["dep:tree-sitter-python"]
+lang-javascript = ["dep:tree-sitter-javascript"]
+lang-typescript = ["dep:tree-sitter-typescript"]
+lang-go = ["dep:tree-sitter-go"]
+lang-java = ["dep:tree-sitter-java"]
+lang-c = ["dep:tree-sitter-c"]
+lang-cpp = ["dep:tree-sitter-cpp"]
+lang-ruby = ["dep:tree-sitter-ruby"]
+lang-csharp = ["dep:tree-sitter-c-sharp"]
+lang-swift = ["dep:tree-sitter-swift"]
+lang-kotlin = ["dep:tree-sitter-kotlin-ng"]
+
+[dev-dependencies]
+serde_json.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+
+[[bench]]
+name = "search"
+harness = false
+
+[[bench]]
+name = "embedding"
+harness = false
+
+[[bench]]
+name = "ingestion"
+harness = false
+
+[[bench]]
+name = "prefetch"
+harness = false
+
+[[bench]]
+name = "token_economics"
+harness = false

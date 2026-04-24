@@ -10,7 +10,7 @@ docs/
 
 # Frontend build artifacts
 node_modules/
-iris-app/dist/
+ministr-app/dist/
 
 # IDE and editor configs
 .claude/
@@ -35,5 +35,17 @@ launch/
 # Evaluation and benchmarks (not needed in container)
 eval/
 
-# Tauri app (not needed in container — Docker only builds iris-cli)
-iris-app/
+# Tauri app — the Docker image only builds ministr-cli, but cargo-chef
+# still needs to read every workspace member's Cargo.toml to generate
+# the dependency recipe. Keep the crate's manifest + source in context
+# and let `cargo build -p ministr-cli` simply not compile ministr-app.
+# The large frontend-only artifacts (dist/, node_modules/) are still
+# excluded above.
+ministr-app/src/
+ministr-app/dist/
+ministr-app/node_modules/
+ministr-app/pnpm-lock.yaml
+ministr-app/package.json
+ministr-app/tsconfig*.json
+ministr-app/vite.config.ts
+ministr-app/index.html

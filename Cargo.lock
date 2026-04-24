@@ -3717,164 +3717,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iris-api"
-version = "0.1.0"
-dependencies = [
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "iris-app"
-version = "0.1.0"
-dependencies = [
- "fastembed",
- "iris-api",
- "iris-core",
- "iris-daemon",
- "ort",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "iris-cli"
-version = "0.1.0"
-dependencies = [
- "axum",
- "clap",
- "dialoguer",
- "iris-api",
- "iris-core",
- "iris-mcp",
- "miette",
- "notify",
- "reqwest 0.13.2",
- "rmcp",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "toml 0.8.2",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "iris-core"
-version = "0.1.0"
-dependencies = [
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "comrak",
- "criterion",
- "dirs 6.0.0",
- "fastembed",
- "futures",
- "glob",
- "hf-hub 0.5.0",
- "hnsw_rs",
- "ignore",
- "notify",
- "ort",
- "parking_lot",
- "pdf-extract",
- "quick-xml 0.37.5",
- "rand 0.8.5",
- "reqwest 0.13.2",
- "rusqlite",
- "rusqlite_migration",
- "schemars 1.2.1",
- "scraper",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "tempfile",
- "thiserror 2.0.18",
- "tiktoken-rs",
- "tokenizers",
- "tokio",
- "tokio-util",
- "toml 0.8.2",
- "tracing",
- "tracing-subscriber",
- "tree-sitter",
- "tree-sitter-c",
- "tree-sitter-c-sharp",
- "tree-sitter-cpp",
- "tree-sitter-go",
- "tree-sitter-java",
- "tree-sitter-javascript",
- "tree-sitter-kotlin-ng",
- "tree-sitter-language",
- "tree-sitter-python",
- "tree-sitter-ruby",
- "tree-sitter-rust",
- "tree-sitter-swift",
- "tree-sitter-typescript",
- "url",
- "zstd",
-]
-
-[[package]]
-name = "iris-daemon"
-version = "0.1.0"
-dependencies = [
- "async-stream",
- "axum",
- "futures-core",
- "http",
- "http-body-util",
- "iris-api",
- "iris-core",
- "reqwest 0.13.2",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
-]
-
-[[package]]
-name = "iris-mcp"
-version = "0.1.0"
-dependencies = [
- "axum",
- "iris-api",
- "iris-core",
- "miette",
- "rmcp",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "is-docker"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4544,6 +4386,164 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "ministr-api"
+version = "0.1.0"
+dependencies = [
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "ministr-app"
+version = "0.1.0"
+dependencies = [
+ "fastembed",
+ "ministr-api",
+ "ministr-core",
+ "ministr-daemon",
+ "ort",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ministr-cli"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "dialoguer",
+ "miette",
+ "ministr-api",
+ "ministr-core",
+ "ministr-mcp",
+ "notify",
+ "reqwest 0.13.2",
+ "rmcp",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "toml 0.8.2",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ministr-core"
+version = "0.1.0"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "comrak",
+ "criterion",
+ "dirs 6.0.0",
+ "fastembed",
+ "futures",
+ "glob",
+ "hf-hub 0.5.0",
+ "hnsw_rs",
+ "ignore",
+ "notify",
+ "ort",
+ "parking_lot",
+ "pdf-extract",
+ "quick-xml 0.37.5",
+ "rand 0.8.5",
+ "reqwest 0.13.2",
+ "rusqlite",
+ "rusqlite_migration",
+ "schemars 1.2.1",
+ "scraper",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tiktoken-rs",
+ "tokenizers",
+ "tokio",
+ "tokio-util",
+ "toml 0.8.2",
+ "tracing",
+ "tracing-subscriber",
+ "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-c-sharp",
+ "tree-sitter-cpp",
+ "tree-sitter-go",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-kotlin-ng",
+ "tree-sitter-language",
+ "tree-sitter-python",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-swift",
+ "tree-sitter-typescript",
+ "url",
+ "zstd",
+]
+
+[[package]]
+name = "ministr-daemon"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "axum",
+ "futures-core",
+ "http",
+ "http-body-util",
+ "ministr-api",
+ "ministr-core",
+ "reqwest 0.13.2",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "ministr-mcp"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "miette",
+ "ministr-api",
+ "ministr-core",
+ "rmcp",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -6617,9 +6617,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.12"
+version = "0.103.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8279bb85272c9f10811ae6a6c547ff594d6a7f3c6c6b02ee9726d1d0dcfcdd06"
+checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
 dependencies = [
  "aws-lc-rs",
  "ring",
