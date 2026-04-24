@@ -7,36 +7,50 @@
    ===================================================== */
 
 @theme {
-  /* Ministr brand scale (indigo/violet) */
-  --color-ministr-50:  oklch(0.96 0.02 285);
-  --color-ministr-100: oklch(0.93 0.04 285);
-  --color-ministr-200: oklch(0.87 0.07 280);
-  --color-ministr-300: oklch(0.79 0.11 280);
-  --color-ministr-400: oklch(0.70 0.16 278);
-  --color-ministr-500: #6366f1;
-  --color-ministr-600: #4f46e5;
-  --color-ministr-700: #4338ca;
-  --color-ministr-800: #3730a3;
-  --color-ministr-900: #312e81;
-  --color-ministr-950: #1e1b4b;
+  /* Ministr brand scale — amber.
+   *
+   * Picked as the anti-AI-slop accent: every metric says 2025/2026
+   * AI-generated landing pages default to purple/violet/indigo
+   * gradients ("The AI Purple Problem"). We moved the whole palette
+   * to the opposite warm end of the wheel. Amber has dev heritage
+   * (amber-phosphor terminals) that fits a context-cache CLI, and a
+   * single warm accent on warm ink reads as intentional rather than
+   * templated. Scale follows Tailwind's amber family so midtones
+   * land on familiar accessibility points. */
+  --color-ministr-50:  #fffbeb;
+  --color-ministr-100: #fef3c7;
+  --color-ministr-200: #fde68a;
+  --color-ministr-300: #fcd34d;
+  --color-ministr-400: #fbbf24;
+  --color-ministr-500: #f59e0b;
+  --color-ministr-600: #d97706;
+  --color-ministr-700: #b45309;
+  --color-ministr-800: #92400e;
+  --color-ministr-900: #78350f;
+  --color-ministr-950: #451a03;
 
-  /* Extra iridescent accents */
-  --color-violet-400: #a78bfa;
-  --color-violet-500: #8b5cf6;
-  --color-fuchsia-400: #e879f9;
+  /* Legacy violet/fuchsia aliases kept so any stray reference still
+     compiles; they all point at the amber scale now so nothing can
+     slip through and render purple. */
+  --color-violet-400: #fbbf24;
+  --color-violet-500: #f59e0b;
+  --color-fuchsia-400: #d97706;
 
-  /* Custom dark surface scale — cool-tinted so ministr accent pops */
-  --color-ink-50:  #f5f5fa;
-  --color-ink-100: #e6e7f0;
-  --color-ink-200: #b9bacc;
-  --color-ink-300: #7c7e9a;
-  --color-ink-400: #4a4d6e;
-  --color-ink-500: #32344f;
-  --color-ink-600: #23253d;
-  --color-ink-700: #191b2f;
-  --color-ink-800: #111224;
-  --color-ink-900: #0a0b14;
-  --color-ink-950: #05060e;
+  /* Dark surface scale — warm near-blacks. Previously cool, slightly
+     blue-tinted (#05060e etc.) to make a purple accent pop; a cool
+     ground next to a purple accent is textbook AI-slop. Warm charcoal
+     next to amber reads as ink on lit paper. */
+  --color-ink-50:  #f7f2e3;
+  --color-ink-100: #eae3cd;
+  --color-ink-200: #c9c0a7;
+  --color-ink-300: #8b8575;
+  --color-ink-400: #5c5648;
+  --color-ink-500: #3a352b;
+  --color-ink-600: #2a261e;
+  --color-ink-700: #211f1a;
+  --color-ink-800: #171613;
+  --color-ink-900: #110f0c;
+  --color-ink-950: #0d0c0a;
 
   /* Traffic-light swatches — macOS chrome reference colors */
   --color-traffic-close: #ff5f57;
@@ -212,12 +226,13 @@ h1.ministr-gradient-text,
 }
 
 /* =====================================================
-   ministr 2026 landing system — "Observatory"
+   ministr landing system — warm ink + amber accent
    -----------------------------------------------------
-   Paired dark + light treatments. The observatory metaphor drives dark
-   (deep ink, aurora spectrum, glass). Light flips to a clean white-paper
-   observatory: softer ministr-tinted aurora on bright ground, darker text,
-   lighter glass, dimmer noise.
+   Dark: deep warm charcoal ground, cream-leaning text, amber accents.
+   Light: warm paper ground, ink text, deeper-amber accents for AA.
+   The earlier "observatory" theming (aurora backdrop, scrim tints,
+   lens pupil) is gone with the shader; the vars are retained but
+   no longer drive any layer.
    ===================================================== */
 
 .ministr-landing {
@@ -230,28 +245,20 @@ h1.ministr-gradient-text,
   --ministr-landing-bg: var(--color-ink-950);
   --ministr-surface: var(--color-ink-900);
   --ministr-surface-strong: var(--color-ink-800);
-  --ministr-aurora-opacity: 1;
-  --ministr-noise-opacity: 0.028;
-  --ministr-noise-blend: overlay;
-  --ministr-lens-pupil: var(--color-ink-950);
-  --ministr-scrim-tint: color-mix(in oklch, var(--color-ink-950) 65%, transparent);
-  --ministr-accent-text: var(--color-ministr-300);
-  --ministr-hairline: color-mix(in oklch, var(--color-ministr-300) 30%, transparent);
+  --ministr-accent-text: var(--color-ministr-400);
+  --ministr-hairline: color-mix(in oklch, var(--color-ministr-400) 28%, transparent);
 }
 
-/* Light override — cleaner, paper-white ground with a soft ministr-tinted
-   aurora wash. Pairs with fumadocs light tokens. */
+/* Light override — warm cream ground. Fumadocs's default white is
+   cool-tinted; we override with our ink-50 (warm cream) so amber
+   accents sit on paper, not on a cool surface that would make the
+   accent read as a mismatch. */
 :root:not(.dark) .ministr-landing {
-  --ministr-landing-bg: color-mix(in oklch, white 82%, var(--color-ministr-50) 18%);
-  --ministr-surface: white;
-  --ministr-surface-strong: color-mix(in oklch, white 80%, var(--color-ministr-100));
-  --ministr-aurora-opacity: 0.55;
-  --ministr-noise-opacity: 0.045;
-  --ministr-noise-blend: multiply;
-  --ministr-lens-pupil: color-mix(in oklch, var(--color-ministr-900) 70%, white);
-  --ministr-scrim-tint: color-mix(in oklch, white 55%, transparent);
+  --ministr-landing-bg: var(--color-ink-50);
+  --ministr-surface: #ffffff;
+  --ministr-surface-strong: #f0e9d4;
   --ministr-accent-text: var(--color-ministr-700);
-  --ministr-hairline: color-mix(in oklch, var(--color-ministr-500) 35%, transparent);
+  --ministr-hairline: color-mix(in oklch, var(--color-ministr-700) 28%, transparent);
 }
 
 /* =====================================================
@@ -312,26 +319,26 @@ h1.ministr-gradient-text,
     color: var(--ministr-accent-text);
   }
 
-  /* Primary ministr CTA — bold ministr-600 pill with an animated spectrum
-     rim glow on hover. Pairs with the hero install button and any
-     other conversion surface that wants the "primary" treatment. */
+  /* Primary ministr CTA — amber pill with dark ink text. White-on-amber
+     is a contrast trap; dark text on the brand colour sits cleanly at
+     ~8:1 and matches how amber buttons read in print. */
   .ministr-cta-primary {
     position: relative;
     isolation: isolate;
-    background: var(--color-ministr-600);
-    color: white;
+    background: var(--color-ministr-500);
+    color: var(--color-ink-950);
+    font-weight: 600;
     box-shadow:
-      0 8px 30px -10px color-mix(in oklch, var(--color-ministr-500) 70%, transparent);
+      0 6px 24px -10px color-mix(in oklch, var(--color-ministr-500) 60%, transparent);
     transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
                 box-shadow 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
                 background-color 220ms ease;
   }
   .ministr-cta-primary:hover {
-    background: var(--color-ministr-700);
+    background: var(--color-ministr-400);
     transform: translateY(-1px);
     box-shadow:
-      0 14px 40px -12px color-mix(in oklch, var(--color-ministr-500) 85%, transparent),
-      0 0 0 1px color-mix(in oklch, var(--color-fuchsia-400) 40%, transparent);
+      0 10px 32px -12px color-mix(in oklch, var(--color-ministr-500) 75%, transparent);
   }
   /* Hover rim removed — was a ministr→violet→fuchsia gradient border
      that animated in on hover. Solid box-shadow handles emphasis now. */
@@ -421,72 +428,9 @@ h1.ministr-gradient-text,
   .lens-ring { animation: none; }
 }
 
-/* Bento tile base + hover tilt custom props.
-   Tilt angle is computed in JS via --mx / --my pointer-relative
-   values; CSS uses them to rotate and shift a sheen layer. */
-.bento-tile {
-  position: relative;
-  isolation: isolate;
-  transform-style: preserve-3d;
-  transition: transform 400ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.bento-tile__sheen {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: radial-gradient(
-    220px 140px at calc(var(--mx, 50%) * 1%) calc(var(--my, 30%) * 1%),
-    color-mix(in oklch, white 14%, transparent),
-    transparent 60%
-  );
-  opacity: 0;
-  transition: opacity 300ms ease;
-}
-
-.bento-tile:hover .bento-tile__sheen { opacity: 1; }
-
-/* Bento tiles size to their content — the grid lets row heights vary
-   so a ledger + a compact score card don't force each other to match. */
-.bento-tile { align-self: start; }
-
-/* Bento responsive spans driven by data-attributes (avoids Tailwind
-   JIT + dynamic-class issues). Base span applies at all breakpoints;
-   md/lg spans override when the viewport is wide enough. */
-.bento-tile[data-span-base='1']  { grid-column: span 1 / span 1; }
-.bento-tile[data-span-base='2']  { grid-column: span 2 / span 2; }
-.bento-tile[data-span-base='3']  { grid-column: span 3 / span 3; }
-.bento-tile[data-span-base='4']  { grid-column: span 4 / span 4; }
-
-@media (width >= 48rem) {
-  .bento-tile[data-span-md='1']  { grid-column: span 1 / span 1; }
-  .bento-tile[data-span-md='2']  { grid-column: span 2 / span 2; }
-  .bento-tile[data-span-md='3']  { grid-column: span 3 / span 3; }
-  .bento-tile[data-span-md='4']  { grid-column: span 4 / span 4; }
-  .bento-tile[data-span-md='5']  { grid-column: span 5 / span 5; }
-  .bento-tile[data-span-md='6']  { grid-column: span 6 / span 6; }
-  .bento-tile[data-rows-md='1']  { grid-row: span 1 / span 1; }
-  .bento-tile[data-rows-md='2']  { grid-row: span 2 / span 2; }
-  .bento-tile[data-rows-md='3']  { grid-row: span 3 / span 3; }
-}
-@media (width >= 64rem) {
-  .bento-tile[data-span-lg='1']  { grid-column: span 1  / span 1; }
-  .bento-tile[data-span-lg='2']  { grid-column: span 2  / span 2; }
-  .bento-tile[data-span-lg='3']  { grid-column: span 3  / span 3; }
-  .bento-tile[data-span-lg='4']  { grid-column: span 4  / span 4; }
-  .bento-tile[data-span-lg='5']  { grid-column: span 5  / span 5; }
-  .bento-tile[data-span-lg='6']  { grid-column: span 6  / span 6; }
-  .bento-tile[data-span-lg='7']  { grid-column: span 7  / span 7; }
-  .bento-tile[data-span-lg='8']  { grid-column: span 8  / span 8; }
-  .bento-tile[data-span-lg='9']  { grid-column: span 9  / span 9; }
-  .bento-tile[data-span-lg='10'] { grid-column: span 10 / span 10; }
-  .bento-tile[data-span-lg='11'] { grid-column: span 11 / span 11; }
-  .bento-tile[data-span-lg='12'] { grid-column: span 12 / span 12; }
-  .bento-tile[data-rows-lg='1']  { grid-row: span 1 / span 1; }
-  .bento-tile[data-rows-lg='2']  { grid-row: span 2 / span 2; }
-  .bento-tile[data-rows-lg='3']  { grid-row: span 3 / span 3; }
-}
+/* bento-tile CSS removed with components/landing/bento.tsx — the
+   asymmetric bento grid was an explicit 2026 design cliche.
+   Mechanisms now renders as a uniform 2-column feature grid. */
 
 /* Architecture-flow channel pulse — small bead travels along each
    connective pipe. Two variants for data direction. Transform keeps

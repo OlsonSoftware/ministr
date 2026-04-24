@@ -5,7 +5,6 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Reveal } from '@/components/landing/reveal';
 import { GlassCard } from '@/components/landing/glass-card';
 
 /* ---------------------------------------------------------------
@@ -166,14 +165,10 @@ export function ArchitectureFlow() {
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] lg:gap-16 lg:items-start">
           <div className="lg:sticky lg:top-24">
-            <Reveal>
-              <p className="ministr-eyebrow">How it wires up</p>
-            </Reveal>
-            <Reveal delay={0.08}>
-              <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
-                A single local process between your agent and your files.
-              </h2>
-            </Reveal>
+            <p className="ministr-eyebrow">How it wires up</p>
+            <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
+              A single local process between your agent and your files.
+            </h2>
 
             {/* Step narration — updates per active step */}
             <div className="mt-8 min-h-[220px]">
@@ -181,7 +176,7 @@ export function ArchitectureFlow() {
                 <span className="ministr-eyebrow-sm tabular-nums">
                   step {String(stepIndex + 1).padStart(2, '0')} / {String(STEPS.length).padStart(2, '0')}
                 </span>
-                <span className="h-px flex-1 bg-gradient-to-r from-[color-mix(in_oklch,var(--color-ministr-400)_50%,transparent)] to-transparent" />
+                <span className="h-px flex-1 bg-[color-mix(in_oklch,var(--color-ministr-400)_25%,transparent)]" />
               </div>
 
               <AnimatePresence mode="wait">
@@ -249,27 +244,23 @@ export function ArchitectureFlow() {
               </span>
             </div>
 
-            <Reveal delay={0.2}>
-              <Link
-                href="/docs/architecture"
-                className="mt-8 inline-flex items-center gap-1.5 text-[14px] font-medium text-[var(--ministr-accent-text)] transition hover:text-[var(--color-ministr-500)]"
-              >
-                Read the full architecture
-                <ArrowRight className="size-4" aria-hidden />
-              </Link>
-            </Reveal>
+            <Link
+              href="/docs/architecture"
+              className="mt-8 inline-flex items-center gap-1.5 text-[14px] font-medium text-[var(--ministr-accent-text)] transition hover:text-[var(--color-ministr-500)]"
+            >
+              Read the full architecture
+              <ArrowRight className="size-4" aria-hidden />
+            </Link>
           </div>
 
-          <Reveal delay={0.2}>
-            <GlassCard padded={false} className="overflow-hidden p-5 sm:p-6">
-              <FlowDiagram
-                step={step}
-                stepIndex={stepIndex}
-                progress={progress}
-                onJump={jumpTo}
-              />
-            </GlassCard>
-          </Reveal>
+          <GlassCard padded={false} className="overflow-hidden p-5 sm:p-6">
+            <FlowDiagram
+              step={step}
+              stepIndex={stepIndex}
+              progress={progress}
+              onJump={jumpTo}
+            />
+          </GlassCard>
         </div>
       </div>
     </section>
@@ -470,7 +461,7 @@ function Channel({
         className={
           'absolute left-1/2 top-2 bottom-2 w-px -translate-x-1/2 transition-opacity duration-500 ' +
           (active
-            ? 'bg-gradient-to-b from-[color-mix(in_oklch,var(--color-ministr-400)_70%,transparent)] via-[color-mix(in_oklch,var(--color-violet-400)_80%,transparent)] to-[color-mix(in_oklch,var(--color-fuchsia-400)_70%,transparent)] opacity-100'
+            ? 'bg-[color-mix(in_oklch,var(--color-ministr-400)_75%,transparent)] opacity-100'
             : 'bg-[color-mix(in_oklch,var(--color-ministr-400)_22%,transparent)] opacity-60')
         }
       />
@@ -564,7 +555,7 @@ function MechanismRow({
         aria-hidden
         className={
           'shrink-0 transition-colors ' +
-          (active ? 'text-[var(--color-fuchsia-400)]' : 'text-[var(--ministr-accent-text)]')
+          (active ? 'text-[var(--color-ministr-400)]' : 'text-[var(--ministr-accent-text)]')
         }
       >
         ◇
@@ -574,7 +565,7 @@ function MechanismRow({
       {active && (
         <span
           aria-hidden
-          className="ml-auto size-1.5 shrink-0 rounded-full bg-[var(--color-fuchsia-400)] shadow-[0_0_8px_var(--color-fuchsia-400)] motion-safe:animate-pulse"
+          className="ml-auto size-1.5 shrink-0 rounded-full bg-[var(--color-ministr-400)]"
         />
       )}
     </motion.div>

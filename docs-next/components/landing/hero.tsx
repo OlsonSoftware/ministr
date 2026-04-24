@@ -45,17 +45,19 @@ export function Hero() {
               {...stagger(2)}
               className="mt-6 max-w-[48ch] text-[clamp(1.125rem,1.6vw,1.375rem)] leading-snug font-medium text-fd-foreground/95"
             >
-              An L1 cache for your agent&rsquo;s context.
+              Stop your AI agent from re-reading the same files.
             </motion.p>
 
             <motion.p
               {...stagger(3)}
               className="ministr-body mt-4 max-w-[52ch] text-[14.5px] leading-relaxed"
             >
-              Serve what&rsquo;s needed. Remember what&rsquo;s been sent.
-              Predict what comes next. Semantic search, symbol navigation,
-              and cross-language bridges over your files — running as a
-              single local process, state in a SQLite file.
+              Claude Code, Cursor, and Copilot waste most of their context
+              window re-grepping and re-reading code they already saw.
+              ministr gives them a local index that ships the exact section
+              once, tracks what&rsquo;s been delivered, and skips it on the
+              next turn. Your agent finishes tasks faster and actually
+              remembers what it&rsquo;s looked at.
             </motion.p>
 
             <motion.div {...stagger(4)} className="mt-8">
