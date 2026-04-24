@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build an SVG sprite from Phosphor icons for the iris docs site.
+# Build an SVG sprite from Phosphor icons for the ministr docs site.
 #
 # Downloads the SVGs we reference from phosphor-icons/core (MIT licensed) and
 # concatenates them as <symbol> elements inside a single file referenced by

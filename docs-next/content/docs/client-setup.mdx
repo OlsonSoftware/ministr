@@ -1,0 +1,146 @@
+---
+title: MCP Client Setup
+description: Wire ministr into Claude Code, Cursor, or any MCP-compatible client — stdio, Streamable HTTP, and environment-variable configuration.
+---
+
+ministr communicates over **stdio** using the Model Context Protocol (MCP). Any MCP-compatible client can connect by spawning the `ministr` binary as a subprocess.
+
+ministr auto-discovers `.ministr.toml` by walking up from the working directory, so no flags are needed in most configurations.
+
+## Claude Code
+
+### CLI shorthand (recommended)
+
+```sh
+claude mcp add ministr -- ministr
+```
+
+### Project-scoped
+
+Create `.mcp.json` at your project root (or run `ministr init` to generate it):
+
+```json
+{
+  "mcpServers": {
+    "ministr": {
+      "command": "ministr",
+      "args": []
+    }
+  }
+}
+```
+
+### Verifying the connection
+
+After adding the server, start Claude Code and run:
+
+```text
+/mcp
+```
+
+You should see `ministr` listed with its tools.
+
+## Cursor
+
+### Project-scoped
+
+Create `.cursor/mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "ministr": {
+      "command": "ministr",
+      "args": []
+    }
+  }
+}
+```
+
+### Settings UI
+
+Open **Cursor Settings > Tools & MCP > Add New MCP Server** and enter:
+
+- **Name**: `ministr`
+- **Command**: `ministr`
+
+Restart Cursor after adding the configuration.
+
+## Generic JSON-RPC Client
+
+ministr speaks JSON-RPC 2.0 over stdin/stdout. Any client that can spawn a subprocess and exchange newline-delimited JSON can connect.
+
+### Spawning ministr
+
+```sh
+ministr serve
+```
+
+ministr reads JSON-RPC requests from stdin and writes responses to stdout. Logs go to stderr.
+
+### Initialize handshake
+
+```json
+{"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "my-client", "version": "1.0"}}, "id": 1}
+```
+
+### Quick smoke test
+
+```sh
+echo '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}},"id":1}' \
+  | ministr serve 2>/dev/null
+```
+
+## Remote (Streamable HTTP)
+
+ministr also supports Streamable HTTP transport for remote deployments:
+
+```sh
+ministr serve --transport http --host 0.0.0.0 --port 8080
+```
+
+Connect with:
+
+```json
+{
+  "mcpServers": {
+    "ministr": {
+      "url": "https://your-server.example.com/mcp"
+    }
+  }
+}
+```
+
+See `deploy/README.md` for Docker, Fly.io, and Railway deployment guides.
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `RUST_LOG` | Controls log verbosity. Example: `RUST_LOG=ministr_core=debug,ministr_mcp=info` |
+
+You can pass environment variables in MCP configurations:
+
+```json
+{
+  "mcpServers": {
+    "ministr": {
+      "command": "ministr",
+      "args": [],
+      "env": {
+        "RUST_LOG": "ministr_core=info"
+      }
+    }
+  }
+}
+```
+
+## Troubleshooting
+
+**ministr not found**: Ensure `ministr` is on your `PATH`. Common locations: `~/.ministr/bin/ministr` (install script), `~/.cargo/bin/ministr` (cargo install), `/usr/local/bin/ministr` (Homebrew).
+
+**No tools listed**: Check that `.ministr.toml` exists in your project or a parent directory and that its `corpus.paths` point to existing directories.
+
+**Slow first start**: On first run, ministr downloads the embedding model (~80 MB). Subsequent starts reuse the cached model at `~/.ministr/models/`.
+
+**Connection drops**: ministr communicates over stdio. Make sure no other process is reading stdin or writing to stdout in the same pipe. Logs always go to stderr.

@@ -1,4 +1,4 @@
-# iris — Design Specification
+# ministr — Design Specification
 
 **A context cache for LLM agents.**
 *Don't waste your agent's scarcest resource.*
@@ -39,7 +39,7 @@ The implication: **more tokens in the window does not mean better answers.** In 
 
 ### 1.2 The context window is L1 cache, not memory
 
-A March 2026 arxiv paper titled "The Missing Memory Hierarchy: Demand Paging for LLM Context Windows" (Mason, 2026) articulates a framing that is central to iris's design:
+A March 2026 arxiv paper titled "The Missing Memory Hierarchy: Demand Paging for LLM Context Windows" (Mason, 2026) articulates a framing that is central to ministr's design:
 
 > "The context window of a large language model is not memory. It is L1 cache: a small, fast, expensive resource that the field treats as the entire memory system. There is no L2, no virtual memory, no paging."
 
@@ -90,15 +90,15 @@ Every round-trip in this loop costs latency, tokens, and money. The quality of t
 
 ## 2. The idea
 
-### 2.1 iris in one sentence
+### 2.1 ministr in one sentence
 
-iris is a Rust-native MCP server that serves context to an LLM agent the way an L1 cache serves the CPU — with state tracking, predictive prefetching, budget awareness, and coherence. iris doesn't (and can't) manipulate the agent's context window directly; it manages its own output — what it sends, when, and at what resolution — so the agent's window stays clear of redundant reads.
+ministr is a Rust-native MCP server that serves context to an LLM agent the way an L1 cache serves the CPU — with state tracking, predictive prefetching, budget awareness, and coherence. ministr doesn't (and can't) manipulate the agent's context window directly; it manages its own output — what it sends, when, and at what resolution — so the agent's window stays clear of redundant reads.
 
 ### 2.2 The cache analogy
 
-Every design decision in iris derives from a single structural analogy:
+Every design decision in ministr derives from a single structural analogy:
 
-| CPU cache concept | iris equivalent | What it does |
+| CPU cache concept | ministr equivalent | What it does |
 |---|---|---|
 | Cache directory | Session shadow | Tracks what context the agent currently has in its window |
 | Cache line | Context unit | The atomic element of context: a claim, a section, or a summary |
@@ -111,17 +111,17 @@ Every design decision in iris derives from a single structural analogy:
 
 This analogy is not decorative. It constrains every design choice. When evaluating a feature request, the question is: "Does a cache controller do this?" If not, it is out of scope.
 
-### 2.3 How iris differs from everything else
+### 2.3 How ministr differs from everything else
 
-**iris is NOT Letta/MemGPT.** Letta is an agent runtime — you build your agent inside it, and it manages context as part of its execution loop. iris is a sidecar — it sits alongside any agent that speaks MCP and serves context on demand. Letta is the operating system; iris is the cache controller that the operating system calls.
+**ministr is NOT Letta/MemGPT.** Letta is an agent runtime — you build your agent inside it, and it manages context as part of its execution loop. ministr is a sidecar — it sits alongside any agent that speaks MCP and serves context on demand. Letta is the operating system; ministr is the cache controller that the operating system calls.
 
 **[VALIDATE]** Search: `Letta MemGPT agent runtime Python "operating system" architecture 2026`
 
-**iris is NOT a vector database.** Qdrant, Pinecone, and Weaviate are storage engines. They answer "what vectors are similar to this one?" iris answers "given what this agent already knows and what it is trying to do, what is the minimum additional context needed to make progress?"
+**ministr is NOT a vector database.** Qdrant, Pinecone, and Weaviate are storage engines. They answer "what vectors are similar to this one?" ministr answers "given what this agent already knows and what it is trying to do, what is the minimum additional context needed to make progress?"
 
-**iris is NOT classical RAG.** RAG is a single-shot query-response pattern. iris is a stateful, multi-turn context management service. RAG doesn't know what the agent already has; iris tracks it. RAG doesn't predict next needs; iris prefetches. RAG ignores budget; iris manages it.
+**ministr is NOT classical RAG.** RAG is a single-shot query-response pattern. ministr is a stateful, multi-turn context management service. RAG doesn't know what the agent already has; ministr tracks it. RAG doesn't predict next needs; ministr prefetches. RAG ignores budget; ministr manages it.
 
-**iris is NOT the Pichay system** described in Mason (2026). Pichay operates at the *token level* as a transparent proxy between client and API, evicting stale tool outputs from the raw message stream. iris operates at the *knowledge level* as an MCP tool server, deciding which information from a document corpus should become tokens in the first place. They are complementary: Pichay manages the plumbing; iris manages the water supply.
+**ministr is NOT the Pichay system** described in Mason (2026). Pichay operates at the *token level* as a transparent proxy between client and API, evicting stale tool outputs from the raw message stream. ministr operates at the *knowledge level* as an MCP tool server, deciding which information from a document corpus should become tokens in the first place. They are complementary: Pichay manages the plumbing; ministr manages the water supply.
 
 ---
 
@@ -129,41 +129,41 @@ This analogy is not decorative. It constrains every design choice. When evaluati
 
 ### 3.1 Deployment model
 
-iris runs as a standalone process that any MCP-compatible agent can connect to. It is not embedded inside the agent, not a library linked into the agent's binary, and not a cloud service. It is a local sidecar process, the same way a language server (LSP) sits alongside an editor.
+ministr runs as a standalone process that any MCP-compatible agent can connect to. It is not embedded inside the agent, not a library linked into the agent's binary, and not a cloud service. It is a local sidecar process, the same way a language server (LSP) sits alongside an editor.
 
 <p align="center">
-  <img src="docs/src/assets/deployment-model.svg" alt="Deployment model: MCP client (agent) connects to iris, which reads from a local document corpus" width="780">
+  <img src="docs/src/assets/deployment-model.svg" alt="Deployment model: MCP client (agent) connects to ministr, which reads from a local document corpus" width="780">
 </p>
 
-The MCP protocol (donated to the Linux Foundation's Agentic AI Foundation in December 2025, co-founded by Anthropic, Block, and OpenAI) is the universal interface. iris does not need to know anything about the agent's internals. It only needs to receive tool calls and return context.
+The MCP protocol (donated to the Linux Foundation's Agentic AI Foundation in December 2025, co-founded by Anthropic, Block, and OpenAI) is the universal interface. ministr does not need to know anything about the agent's internals. It only needs to receive tool calls and return context.
 
 **[VALIDATE]** Search: `MCP Model Context Protocol Linux Foundation Agentic AI Foundation December 2025`
 
 ### 3.2 The five mechanisms
 
-iris combines five mechanisms that, individually, exist in fragments across the research landscape but have never been unified into a single system:
+ministr combines five mechanisms that, individually, exist in fragments across the research landscape but have never been unified into a single system:
 
 #### Mechanism 1: Session shadow
 
-When iris delivers context to an agent, it records exactly what was delivered — the specific sections, claims, and summaries, along with the turn number. This creates a "shadow" of what is currently in the agent's context window.
+When ministr delivers context to an agent, it records exactly what was delivered — the specific sections, claims, and summaries, along with the turn number. This creates a "shadow" of what is currently in the agent's context window.
 
 The shadow enables three capabilities that no existing retrieval system provides:
 
-- **Deduplication.** If the agent asks about "authentication" and iris already provided the auth docs three turns ago, iris does not return the same text. It recognizes the overlap and either says "you already have this" or provides only what has changed.
+- **Deduplication.** If the agent asks about "authentication" and ministr already provided the auth docs three turns ago, ministr does not return the same text. It recognizes the overlap and either says "you already have this" or provides only what has changed.
 - **Delta updates.** "Section 3.2 was updated since you last read it. Here is what changed." This is impossible without knowing what was previously delivered.
-- **Eviction estimation.** Based on how many turns have passed and how much new context has been added, iris estimates what the agent has likely dropped from its window (due to context window limits or summarization). This allows iris to re-deliver critical context that may have been evicted.
+- **Eviction estimation.** Based on how many turns have passed and how much new context has been added, ministr estimates what the agent has likely dropped from its window (due to context window limits or summarization). This allows ministr to re-deliver critical context that may have been evicted.
 
 The shadow is a lightweight data structure (a set of content hashes with turn numbers and token counts) stored in memory for the active session and persisted to SQLite for session recovery.
 
 #### Mechanism 2: Multi-resolution document index
 
-Classical RAG destroys document structure by splitting text into fixed-size chunks. iris preserves it by indexing at three simultaneous resolutions:
+Classical RAG destroys document structure by splitting text into fixed-size chunks. ministr preserves it by indexing at three simultaneous resolutions:
 
-**Level 1: Summaries.** For every document and every major section within a document, iris pre-generates a compressed summary (typically 50–100 tokens for a section, 200–400 for a document). These summaries are generated at ingestion time using a small local model or heuristic extraction. They give the agent a "table of contents" view of the knowledge base.
+**Level 1: Summaries.** For every document and every major section within a document, ministr pre-generates a compressed summary (typically 50–100 tokens for a section, 200–400 for a document). These summaries are generated at ingestion time using a small local model or heuristic extraction. They give the agent a "table of contents" view of the knowledge base.
 
 **Level 2: Sections.** The document's natural structure — headings, paragraphs, code blocks, tables — is preserved as discrete, addressable units. Each section retains its heading hierarchy (e.g., "Chapter 3 > Section 3.2 > Subsection: Error Handling"). Sections are the primary unit of retrieval.
 
-**Level 3: Claims.** Within each section, iris extracts atomic factual statements — individual claims that can stand alone. "The auth service uses JWT tokens with RS256 signing." "Rate limits are set to 100 requests per minute per API key." Claims are the highest-resolution unit, used when the agent needs a specific fact rather than surrounding context.
+**Level 3: Claims.** Within each section, ministr extracts atomic factual statements — individual claims that can stand alone. "The auth service uses JWT tokens with RS256 signing." "Rate limits are set to 100 requests per minute per API key." Claims are the highest-resolution unit, used when the agent needs a specific fact rather than surrounding context.
 
 These three levels are not separate indexes. They form a tree: documents contain sections contain claims. Each level has its own embedding vector, enabling search at any granularity. The tree structure enables navigation: an agent can survey at the summary level, read at the section level, and extract at the claim level.
 
@@ -173,21 +173,21 @@ This hierarchical approach aligns with the "cross-granularity retrieval" pattern
 
 #### Mechanism 3: Progressive disclosure via MCP tools
 
-Instead of a single `search(query) → chunks` interface, iris exposes four MCP tools that give the agent explicit control over retrieval depth:
+Instead of a single `search(query) → chunks` interface, ministr exposes four MCP tools that give the agent explicit control over retrieval depth:
 
-**`iris_survey(query)`** — Returns high-level summaries of relevant document areas. Costs ~200 tokens. Designed to orient the agent before it commits to reading anything in detail. Analogous to scanning chapter titles in a book.
+**`ministr_survey(query)`** — Returns high-level summaries of relevant document areas. Costs ~200 tokens. Designed to orient the agent before it commits to reading anything in detail. Analogous to scanning chapter titles in a book.
 
-**`iris_read(section_id)`** — Returns the full text of a specific section identified by its hierarchical ID (e.g., `docs/auth.md#error-handling`). The agent chooses what to read based on what the survey revealed.
+**`ministr_read(section_id)`** — Returns the full text of a specific section identified by its hierarchical ID (e.g., `docs/auth.md#error-handling`). The agent chooses what to read based on what the survey revealed.
 
-**`iris_extract(query, section_id)`** — Returns only the specific claims within a section that are relevant to the query. This is for surgical precision: "I know the answer is somewhere in this section; give me just the facts."
+**`ministr_extract(query, section_id)`** — Returns only the specific claims within a section that are relevant to the query. This is for surgical precision: "I know the answer is somewhere in this section; give me just the facts."
 
-**`iris_related(claim_id)`** — Given a specific claim, returns other claims that reference, depend on, or contradict it. This enables the agent to follow chains of reasoning across documents: "The rate limit is 100/min" → "Rate limit exceptions require an API key with the 'elevated' tier" → "Elevated tier keys are provisioned by the platform team."
+**`ministr_related(claim_id)`** — Given a specific claim, returns other claims that reference, depend on, or contradict it. This enables the agent to follow chains of reasoning across documents: "The rate limit is 100/min" → "Rate limit exceptions require an API key with the 'elevated' tier" → "Elevated tier keys are provisioned by the platform team."
 
 This four-tool interface mirrors how a human researcher navigates a knowledge base: survey, read, extract, connect. It gives the agent agency over its own context loading, rather than forcing it to accept whatever a search algorithm returns.
 
 #### Mechanism 4: Speculative prefetch
 
-Based on the sequence of tool calls the agent has made so far, iris predicts what the agent will likely need next and pre-computes it.
+Based on the sequence of tool calls the agent has made so far, ministr predicts what the agent will likely need next and pre-computes it.
 
 The prediction model is deliberately simple and heuristic-based (no LLM in the loop for prefetching — that would defeat the latency purpose):
 
@@ -199,22 +199,22 @@ When a prefetched result is served, the response time drops from 50–200ms (col
 
 #### Mechanism 5: Context budget management
 
-iris accepts a `max_context_tokens` configuration parameter that represents the agent's total context window budget. As the session shadow grows, iris tracks cumulative token usage and provides active guidance:
+ministr accepts a `max_context_tokens` configuration parameter that represents the agent's total context window budget. As the session shadow grows, ministr tracks cumulative token usage and provides active guidance:
 
-- **Budget-aware responses.** When iris returns context, it includes a `tokens_used` count and a `budget_remaining` estimate. The agent (or its orchestration framework) can use this to make informed decisions.
-- **Eviction recommendations.** When the budget is approaching capacity, iris can be asked: "What should I drop?" It ranks currently-shadowed content by recency, relevance to the current task, and dependency (content that other content depends on is retained longer). It returns a list of section IDs to evict, along with compressed summaries that can replace them.
-- **Compression on demand.** An agent can call `iris_compress(section_id)` to get a summary of a section it wants to evict. This preserves the gist of the information while freeing window space.
+- **Budget-aware responses.** When ministr returns context, it includes a `tokens_used` count and a `budget_remaining` estimate. The agent (or its orchestration framework) can use this to make informed decisions.
+- **Eviction recommendations.** When the budget is approaching capacity, ministr can be asked: "What should I drop?" It ranks currently-shadowed content by recency, relevance to the current task, and dependency (content that other content depends on is retained longer). It returns a list of section IDs to evict, along with compressed summaries that can replace them.
+- **Compression on demand.** An agent can call `ministr_compress(section_id)` to get a summary of a section it wants to evict. This preserves the gist of the information while freeing window space.
 
 This mechanism has no analogue in any existing retrieval system. RAG does not know the agent's budget. Vector databases do not track cumulative token usage. Letta manages budget internally but does not expose it as a service.
 
-### 3.3 What iris does NOT do
+### 3.3 What ministr does NOT do
 
-Following the cache controller analogy strictly, iris excludes:
+Following the cache controller analogy strictly, ministr excludes:
 
-- **LLM inference.** iris does not generate answers. It provides context to agents that generate answers. (A cache controller does not execute instructions; it feeds data to the processor.)
-- **Agent orchestration.** iris does not decide when to retrieve or what task the agent is working on. The agent calls iris when it needs context. (A cache controller responds to memory requests; it does not initiate them.)
-- **Multi-tenancy or authentication.** iris serves one agent (or one user's agents) at a time. Enterprise multi-tenancy belongs in a layer above.
-- **Document creation or editing.** iris is read-only over the document corpus. It indexes and serves; it does not modify source documents.
+- **LLM inference.** ministr does not generate answers. It provides context to agents that generate answers. (A cache controller does not execute instructions; it feeds data to the processor.)
+- **Agent orchestration.** ministr does not decide when to retrieve or what task the agent is working on. The agent calls ministr when it needs context. (A cache controller responds to memory requests; it does not initiate them.)
+- **Multi-tenancy or authentication.** ministr serves one agent (or one user's agents) at a time. Enterprise multi-tenancy belongs in a layer above.
+- **Document creation or editing.** ministr is read-only over the document corpus. It indexes and serves; it does not modify source documents.
 
 ---
 
@@ -222,13 +222,13 @@ Following the cache controller analogy strictly, iris excludes:
 
 ### 4.1 Ingestion pipeline
 
-When iris ingests a document, it performs the following steps:
+When ministr ingests a document, it performs the following steps:
 
 **Step 1: Parse and structure.** The document is parsed into a structural tree that preserves the author's original organization: headings, paragraphs, code blocks, tables, lists. Each structural element becomes a node in the tree, tagged with its position, depth, and type. The parser is format-aware — Markdown headings, HTML sections, PDF page boundaries, and code function definitions each produce appropriate structural nodes.
 
 **Step 2: Section identification.** The structural tree is segmented into sections — coherent, author-defined units of text. A section is typically the content under a heading, but heuristics handle documents without clear headings (e.g., plain text split at paragraph boundaries, code files split at function/class boundaries). Each section receives a stable, human-readable ID based on its heading hierarchy.
 
-**Step 3: Claim extraction.** Within each section, iris extracts atomic claims — single factual statements that can stand alone. This can be done via:
+**Step 3: Claim extraction.** Within each section, ministr extracts atomic claims — single factual statements that can stand alone. This can be done via:
 - **Heuristic extraction:** Split on sentence boundaries, filter for statements containing named entities, numbers, or specific assertions. Fast, no model required.
 - **Model-assisted extraction:** Use a small local model (via `fastembed` or a small GGUF model) to identify and normalize claims. Higher quality, higher ingestion cost.
 
@@ -236,9 +236,9 @@ When iris ingests a document, it performs the following steps:
 
 The extraction mode is configurable per corpus. For a fast first pass, heuristic extraction is sufficient. For high-value corpora (legal documents, API specifications, compliance docs), model-assisted extraction is worth the cost.
 
-**Step 4: Embedding.** Each node in the tree — summary, section, and claim — receives its own embedding vector. iris uses `fastembed` (a Rust crate wrapping ONNX Runtime with built-in support for models like all-MiniLM-L6-v2, BGE, and others) for embedding. The three-level embedding strategy means the same query can match at any resolution: a broad query matches summaries, a specific query matches claims.
+**Step 4: Embedding.** Each node in the tree — summary, section, and claim — receives its own embedding vector. ministr uses `fastembed` (a Rust crate wrapping ONNX Runtime with built-in support for models like all-MiniLM-L6-v2, BGE, and others) for embedding. The three-level embedding strategy means the same query can match at any resolution: a broad query matches summaries, a specific query matches claims.
 
-**Step 5: Summary generation.** For each section and each document, iris generates a compressed summary. The default strategy is extractive: select the top-k most information-dense sentences (measured by TF-IDF score relative to the section) and concatenate them. An optional mode uses a small local model for abstractive summarization.
+**Step 5: Summary generation.** For each section and each document, ministr generates a compressed summary. The default strategy is extractive: select the top-k most information-dense sentences (measured by TF-IDF score relative to the section) and concatenate them. An optional mode uses a small local model for abstractive summarization.
 
 **Step 6: Index and store.** All embeddings are inserted into an HNSW vector index. All text, metadata, and structural relationships are stored in SQLite. The vector index is memory-mapped for instant loading on startup.
 
@@ -246,10 +246,10 @@ The extraction mode is configurable per corpus. For a fast first pass, heuristic
 
 ### 4.2 Incremental updates
 
-iris tracks document file hashes. When a watched directory changes:
+ministr tracks document file hashes. When a watched directory changes:
 
 1. Modified files are re-parsed and re-indexed. Only changed sections are re-embedded and re-inserted.
-2. The session shadow is consulted: if any active session references a section that has changed, iris generates a "coherence notification" — a delta describing what changed. This notification is available to the agent on its next tool call.
+2. The session shadow is consulted: if any active session references a section that has changed, ministr generates a "coherence notification" — a delta describing what changed. This notification is available to the agent on its next tool call.
 3. Deleted files have their sections and claims removed from the index and marked as invalidated in any active session shadows.
 
 This is directly analogous to a cache coherence protocol: when the backing store changes, cached copies are invalidated and updated.
@@ -289,17 +289,17 @@ DeliveredItem {
 
 ### 5.2 Window estimation
 
-iris does not have direct access to the agent's actual context window (MCP does not expose this). Instead, it maintains an *estimate* based on:
+ministr does not have direct access to the agent's actual context window (MCP does not expose this). Instead, it maintains an *estimate* based on:
 
-- **Cumulative token count.** Every item delivered is tracked by size. When cumulative delivery exceeds the agent's declared budget, iris assumes older items have been evicted (FIFO assumption, configurable to LRU).
-- **Agent behavior signals.** If the agent re-asks for something iris already delivered (a "fault"), iris infers that the item was evicted and updates the shadow accordingly. This is directly analogous to a page fault in virtual memory.
-- **Explicit signals.** An agent can optionally call `iris_evicted(content_ids)` to explicitly tell iris what it dropped, improving the shadow's accuracy.
+- **Cumulative token count.** Every item delivered is tracked by size. When cumulative delivery exceeds the agent's declared budget, ministr assumes older items have been evicted (FIFO assumption, configurable to LRU).
+- **Agent behavior signals.** If the agent re-asks for something ministr already delivered (a "fault"), ministr infers that the item was evicted and updates the shadow accordingly. This is directly analogous to a page fault in virtual memory.
+- **Explicit signals.** An agent can optionally call `ministr_evicted(content_ids)` to explicitly tell ministr what it dropped, improving the shadow's accuracy.
 
 The window estimate does not need to be perfect. Even a rough approximation prevents the most wasteful failure mode (re-delivering identical context every turn) while the fault-based correction mechanism converges on accuracy over time.
 
 ### 5.3 Cross-session learning
 
-Over time, iris accumulates data about which context was useful across sessions:
+Over time, ministr accumulates data about which context was useful across sessions:
 
 - **Frequently accessed sections** get priority in prefetch caches.
 - **Sections that are consistently delivered together** are pre-bundled.
@@ -313,7 +313,7 @@ This is analogous to hardware cache profiling: observing access patterns to tune
 
 ### 6.1 Prediction heuristics
 
-Prefetch in iris is deliberately based on simple, fast heuristics rather than LLM-powered prediction. The reason is latency: if predicting the next need takes 500ms of LLM inference, you have not saved any time over just retrieving on demand. The prefetcher must operate in <5ms to be useful.
+Prefetch in ministr is deliberately based on simple, fast heuristics rather than LLM-powered prediction. The reason is latency: if predicting the next need takes 500ms of LLM inference, you have not saved any time over just retrieving on demand. The prefetcher must operate in <5ms to be useful.
 
 **Sequential prefetch.** When the agent reads section N of a document, pre-embed and pre-rank section N+1. Also pre-warm the parent section's summary (for navigation) and any sections that the current section cross-references.
 
@@ -339,13 +339,13 @@ The most pernicious issue in multi-turn agent workflows is invisible context evi
 
 This is the AI equivalent of cache thrashing — the working set exceeds the cache size, and performance collapses.
 
-### 7.2 iris's approach
+### 7.2 ministr's approach
 
-When an agent's estimated window usage exceeds a configurable threshold (default: 80% of `max_context_tokens`), iris enters "pressure mode." In pressure mode:
+When an agent's estimated window usage exceeds a configurable threshold (default: 80% of `max_context_tokens`), ministr enters "pressure mode." In pressure mode:
 
-- **Responses are automatically compressed.** Instead of returning full sections, iris returns claim-level extracts by default, reducing token count by 60–80%.
-- **Eviction recommendations are attached to every response.** iris identifies the delivered content most likely to be safe to drop (based on recency, relevance decay, and dependency analysis) and includes these recommendations in tool call responses.
-- **Summaries replace evicted content.** When recommending eviction, iris simultaneously provides a compressed summary of each evicted item (typically 10–20% of the original token count) that the agent can retain as a placeholder.
+- **Responses are automatically compressed.** Instead of returning full sections, ministr returns claim-level extracts by default, reducing token count by 60–80%.
+- **Eviction recommendations are attached to every response.** ministr identifies the delivered content most likely to be safe to drop (based on recency, relevance decay, and dependency analysis) and includes these recommendations in tool call responses.
+- **Summaries replace evicted content.** When recommending eviction, ministr simultaneously provides a compressed summary of each evicted item (typically 10–20% of the original token count) that the agent can retain as a placeholder.
 
 This is analogous to how an OS under memory pressure swaps pages to disk and replaces them with compact metadata — the information is not lost, but it occupies less of the scarce resource, and can be faulted back in on demand.
 
@@ -355,58 +355,58 @@ This is analogous to how an OS under memory pressure swaps pages to disk and rep
 
 ### 8.1 Tools
 
-iris exposes the following MCP tools. Tool definitions follow the MCP 2025-11-25 specification.
+ministr exposes the following MCP tools. Tool definitions follow the MCP 2025-11-25 specification.
 
 **[VALIDATE]** Search: `MCP specification 2025-11-25 tools resources JSON-RPC`
 
-**`iris_survey`** — Orient the agent within the knowledge base.
+**`ministr_survey`** — Orient the agent within the knowledge base.
 - Input: `{ query: string, max_results?: number }`
 - Output: `{ areas: [{ id, title, summary, relevance_score, token_count }], budget_status: { used, remaining, pressure } }`
 - Typical token cost: 100–300 tokens
 - Expected latency: <50ms cold, <5ms warm
 
-**`iris_read`** — Read a specific section in full.
+**`ministr_read`** — Read a specific section in full.
 - Input: `{ section_id: string }`
 - Output: `{ text: string, heading_path: string[], token_count: number, claims_available: number, budget_status }`
 - Typical token cost: 200–2000 tokens (varies by section length)
 - Expected latency: <10ms (sections are pre-loaded in memory)
 
-**`iris_extract`** — Get only relevant claims from a section.
+**`ministr_extract`** — Get only relevant claims from a section.
 - Input: `{ query: string, section_id: string, max_claims?: number }`
 - Output: `{ claims: [{ id, text, relevance_score }], budget_status }`
 - Typical token cost: 50–500 tokens
 - Expected latency: <50ms cold, <5ms warm
 
-**`iris_related`** — Follow dependency chains between claims.
+**`ministr_related`** — Follow dependency chains between claims.
 - Input: `{ claim_id: string, relation_types?: ["references", "contradicts", "depends_on", "updates"] }`
 - Output: `{ related: [{ claim_id, text, relation_type, source_section }], budget_status }`
 - Typical token cost: 50–300 tokens
 - Expected latency: <20ms
 
-**`iris_compress`** — Get a compressed summary of content the agent wants to evict.
+**`ministr_compress`** — Get a compressed summary of content the agent wants to evict.
 - Input: `{ content_ids: string[] }`
 - Output: `{ summaries: [{ original_id, summary, original_tokens, compressed_tokens }] }`
 
-**`iris_budget`** — Get the current budget status and eviction recommendations.
+**`ministr_budget`** — Get the current budget status and eviction recommendations.
 - Input: `{}`
 - Output: `{ total_budget, estimated_used, estimated_remaining, pressure_level, eviction_candidates: [{ id, reason, tokens_recoverable, replacement_summary }] }`
 
-**`iris_evicted`** — Tell iris what the agent explicitly dropped (improves shadow accuracy).
+**`ministr_evicted`** — Tell ministr what the agent explicitly dropped (improves shadow accuracy).
 - Input: `{ content_ids: string[] }`
 - Output: `{ acknowledged: true }`
 
 ### 8.2 Resources
 
-iris also exposes MCP resources for metadata access:
+ministr also exposes MCP resources for metadata access:
 
-- `iris://status` — Index statistics: document count, section count, claim count, index size.
-- `iris://corpus/{path}` — Metadata about a specific source document (title, sections, last modified).
+- `ministr://status` — Index statistics: document count, section count, claim count, index size.
+- `ministr://corpus/{path}` — Metadata about a specific source document (title, sections, last modified).
 
 ### 8.3 Notifications
 
-iris uses MCP notifications (server-initiated messages) for:
+ministr uses MCP notifications (server-initiated messages) for:
 
-- **Coherence alerts.** When a watched file changes and the change affects content in the session shadow, iris pushes a notification: `{ type: "coherence_alert", changed_sections: [...], stale_content_ids: [...] }`.
+- **Coherence alerts.** When a watched file changes and the change affects content in the session shadow, ministr pushes a notification: `{ type: "coherence_alert", changed_sections: [...], stale_content_ids: [...] }`.
 
 ---
 
@@ -415,7 +415,7 @@ iris uses MCP notifications (server-initiated messages) for:
 ### 9.1 On-disk layout
 
 ```
-~/.iris/
+~/.ministr/
 ├── config.toml                     # Global configuration
 └── corpora/
     └── <corpus-name>/
@@ -438,7 +438,7 @@ Session data is stored separately from corpus data so that a corpus can be share
 
 ## 10. Dependency strategy
 
-iris's dependency philosophy: use the best existing Rust crates for solved problems, build custom only for the novel mechanisms (session shadow, prefetch engine, budget manager).
+ministr's dependency philosophy: use the best existing Rust crates for solved problems, build custom only for the novel mechanisms (session shadow, prefetch engine, budget manager).
 
 **For embeddings:** `fastembed` (v5+). This crate provides local ONNX-based embedding with support for dozens of models, reranking, and sparse embeddings. It is maintained by the Qdrant team and has 23k+ monthly downloads. No reason to build custom.
 
@@ -494,21 +494,21 @@ iris's dependency philosophy: use the best existing Rust crates for solved probl
 
 ### Phase 0: Foundation (weeks 1–3)
 
-- Cargo workspace: `iris-core`, `iris-mcp`, `iris-cli`
+- Cargo workspace: `ministr-core`, `ministr-mcp`, `ministr-cli`
 - MCP server scaffolding using `rmcp` (stdio transport)
 - SQLite schema and storage layer
 - Document parser trait + Markdown parser
 - Basic section-level indexing (no claims, no summaries yet)
-- `iris_read` tool working end-to-end
+- `ministr_read` tool working end-to-end
 
-**Milestone:** An agent can point iris at a folder of Markdown files and read individual sections via MCP.
+**Milestone:** An agent can point ministr at a folder of Markdown files and read individual sections via MCP.
 
 ### Phase 1: Multi-resolution index (weeks 4–7)
 
 - Embedding pipeline using `fastembed`
 - HNSW vector index with persistence
-- `iris_survey` tool (vector search over section embeddings)
-- `iris_extract` tool (claim extraction — heuristic mode)
+- `ministr_survey` tool (vector search over section embeddings)
+- `ministr_extract` tool (claim extraction — heuristic mode)
 - Summary generation (extractive)
 - HTML and PDF parsers
 - Incremental re-indexing
@@ -520,16 +520,16 @@ iris's dependency philosophy: use the best existing Rust crates for solved probl
 - Session shadow implementation
 - Deduplication (don't return what agent already has)
 - Budget tracking and pressure mode
-- `iris_budget` and `iris_compress` tools
-- `iris_evicted` tool (agent feedback)
+- `ministr_budget` and `ministr_compress` tools
+- `ministr_evicted` tool (agent feedback)
 - Basic prefetch engine (sequential + topical locality)
 - Warm/cold response metrics
 
-**Milestone:** iris tracks session state, deduplicates, manages budget, and achieves >30% prefetch hit rate.
+**Milestone:** ministr tracks session state, deduplicates, manages budget, and achieves >30% prefetch hit rate.
 
 ### Phase 3: Polish and release (weeks 13–16)
 
-- `iris_related` tool (claim dependency traversal)
+- `ministr_related` tool (claim dependency traversal)
 - File watching with coherence notifications
 - Cross-session analytics (frequently-accessed sections, co-access patterns)
 - Model-assisted claim extraction (optional feature flag)
@@ -545,9 +545,9 @@ iris's dependency philosophy: use the best existing Rust crates for solved probl
 - **Multi-corpus support:** search across multiple knowledge bases with per-corpus ranking.
 - **Reranking:** integrate `fastembed`'s built-in cross-encoder reranking for improved precision.
 - **HTTP transport:** optional HTTP/SSE transport in addition to stdio, for remote deployment.
-- **Agent feedback loop:** agents explicitly mark which context was useful; iris uses this to improve future retrieval and prefetch.
+- **Agent feedback loop:** agents explicitly mark which context was useful; ministr uses this to improve future retrieval and prefetch.
 - **Conversation-aware retrieval:** use the full agent conversation (not just the latest tool call) to improve survey relevance.
-- **WebAssembly target:** compile iris-core to WASM for browser-based deployments.
+- **WebAssembly target:** compile ministr-core to WASM for browser-based deployments.
 
 ---
 
@@ -555,28 +555,28 @@ iris's dependency philosophy: use the best existing Rust crates for solved probl
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| **Session shadow accuracy degrades over long sessions.** Without direct access to the agent's actual window, the shadow estimate drifts. | High | Fault-based correction (re-requests indicate eviction). Explicit `iris_evicted` signal. Conservative eviction estimates. Regular accuracy audits in benchmarks. |
+| **Session shadow accuracy degrades over long sessions.** Without direct access to the agent's actual window, the shadow estimate drifts. | High | Fault-based correction (re-requests indicate eviction). Explicit `ministr_evicted` signal. Conservative eviction estimates. Regular accuracy audits in benchmarks. |
 | **Prefetch hit rate too low to justify memory cost.** If the agent's behavior is unpredictable, pre-warming is wasted work. | Medium | Default prefetch cache is small (50 items). Hit rate is measured per session. Prefetch can be disabled entirely via config. Simple heuristics fail gracefully (wasted memory, not wrong answers). |
 | **Claim extraction quality is unreliable.** Heuristic extraction may produce incomplete or noisy claims. | Medium | Claim extraction is a progressive enhancement, not a requirement. Agents can always fall back to section-level retrieval. Model-assisted extraction is available for high-value corpora. Claims are always linked to their source section for verification. |
 | **MCP ecosystem instability.** The MCP spec and Rust SDKs are evolving rapidly. | Medium | Abstract the MCP transport behind a trait. Support both `rmcp` and raw JSON-RPC. Pin to a specific spec version (2025-11-25) and track the 2026 roadmap. **[VALIDATE]** Search: `MCP 2026 roadmap specification release June` |
 | **Embedding model quality limits retrieval.** Small local models may produce embeddings that miss semantic nuances. | Medium | Default to `all-MiniLM-L6-v2` (proven, fast, 384d). Support model swapping via config. Multi-resolution indexing partially compensates — if embeddings miss at one level, they may hit at another. |
-| **Scope creep toward becoming a full agent framework.** | High | The cache controller analogy is the scope boundary. Every feature request is evaluated: "Does a cache controller do this?" If not, it is out of scope. iris provides data; the agent provides intelligence. |
+| **Scope creep toward becoming a full agent framework.** | High | The cache controller analogy is the scope boundary. Every feature request is evaluated: "Does a cache controller do this?" If not, it is out of scope. ministr provides data; the agent provides intelligence. |
 
 ---
 
 ## 14. Open questions
 
-1. **How should iris handle multi-modal documents?** PDFs with images, diagrams, tables. For v0.1, iris extracts text only. Should future versions integrate vision models for image understanding, or is that a different system's job? **[VALIDATE]** Search: `multi-modal RAG document image table extraction 2026 approaches`
+1. **How should ministr handle multi-modal documents?** PDFs with images, diagrams, tables. For v0.1, ministr extracts text only. Should future versions integrate vision models for image understanding, or is that a different system's job? **[VALIDATE]** Search: `multi-modal RAG document image table extraction 2026 approaches`
 
-2. **Should iris manage conversation history?** Currently, iris only manages knowledge retrieval from a document corpus. Some agent frameworks also struggle with conversation history management (summarizing old turns, retaining key decisions). Should iris's budget management extend to non-document context? The cache controller analogy says no (that's a different cache), but the user's pain says maybe.
+2. **Should ministr manage conversation history?** Currently, ministr only manages knowledge retrieval from a document corpus. Some agent frameworks also struggle with conversation history management (summarizing old turns, retaining key decisions). Should ministr's budget management extend to non-document context? The cache controller analogy says no (that's a different cache), but the user's pain says maybe.
 
-3. **How to handle claims that contradict each other across documents?** If two documents make conflicting claims (e.g., different version numbers), should iris detect and surface the contradiction? This adds complexity but could be high-value for compliance and audit use cases.
+3. **How to handle claims that contradict each other across documents?** If two documents make conflicting claims (e.g., different version numbers), should ministr detect and surface the contradiction? This adds complexity but could be high-value for compliance and audit use cases.
 
 4. **What is the right default embedding model in March 2026?** The landscape shifts constantly. `all-MiniLM-L6-v2` is proven but aging. Newer models like `nomic-embed-text-v1.5` and `bge-small-en-v1.5` may offer better quality. The `fastembed` crate now supports Qwen3 embeddings via candle. **[VALIDATE]** Search: `best small embedding model 2026 comparison MiniLM BGE nomic`
 
-5. **Should iris support remote corpus sources?** Currently, iris indexes local files. But agents increasingly work with cloud data (Google Drive, Notion, GitHub). Should iris support remote ingestion, or should that be handled by separate tools that materialize documents locally? The cache controller analogy suggests the latter (a cache controller doesn't fetch from the network; the memory bus does).
+5. **Should ministr support remote corpus sources?** Currently, ministr indexes local files. But agents increasingly work with cloud data (Google Drive, Notion, GitHub). Should ministr support remote ingestion, or should that be handled by separate tools that materialize documents locally? The cache controller analogy suggests the latter (a cache controller doesn't fetch from the network; the memory bus does).
 
-6. **How does iris interact with the Pichay-style systems?** If an agent uses both iris (for knowledge retrieval) and a Pichay-like proxy (for token-level window management), how should they coordinate? Is there a shared budget model? This is unexplored territory. **[VALIDATE]** Search: `arxiv Pichay demand paging LLM context proxy 2026`
+6. **How does ministr interact with the Pichay-style systems?** If an agent uses both ministr (for knowledge retrieval) and a Pichay-like proxy (for token-level window management), how should they coordinate? Is there a shared budget model? This is unexplored territory. **[VALIDATE]** Search: `arxiv Pichay demand paging LLM context proxy 2026`
 
 ---
 
@@ -586,7 +586,7 @@ iris's dependency philosophy: use the best existing Rust crates for solved probl
 
 The convergence of three developments makes this the right moment:
 
-1. **MCP standardization.** The protocol is now governed by the Linux Foundation with backing from every major AI company. Building on MCP means iris is immediately compatible with every major agent platform. This was not possible a year ago.
+1. **MCP standardization.** The protocol is now governed by the Linux Foundation with backing from every major AI company. Building on MCP means ministr is immediately compatible with every major agent platform. This was not possible a year ago.
 
 2. **"Context engineering" as a recognized discipline.** The industry has moved past "just use RAG" and acknowledged that context management is a distinct engineering problem requiring dedicated tooling. The demand exists; the tooling does not.
 
@@ -594,7 +594,7 @@ The convergence of three developments makes this the right moment:
 
 ### Why Rust
 
-The hot path in iris — session shadow lookup, prefetch cache check, vector search, budget calculation — must be invisible to the agent. If a tool call adds 200ms of latency, agents will make fewer calls and get worse context. The target is <5ms for warm responses, which requires:
+The hot path in ministr — session shadow lookup, prefetch cache check, vector search, budget calculation — must be invisible to the agent. If a tool call adds 200ms of latency, agents will make fewer calls and get worse context. The target is <5ms for warm responses, which requires:
 
 - In-memory data structures with no GC pauses.
 - Memory-mapped file I/O for instant index loading.
@@ -614,7 +614,7 @@ Every design choice can be traced to the cache controller analogy:
 - **Budget management** = replacement policy + pressure handling.
 - **Coherence notifications** = cache coherence protocol.
 
-The analogy is not decoration. It is a constraint that prevents scope creep, guides prioritization, and provides a proven theoretical framework for every mechanism in the system. Cache controllers are among the most well-studied subsystems in computer architecture. iris applies fifty years of that theory to a new domain.
+The analogy is not decoration. It is a constraint that prevents scope creep, guides prioritization, and provides a proven theoretical framework for every mechanism in the system. Cache controllers are among the most well-studied subsystems in computer architecture. ministr applies fifty years of that theory to a new domain.
 
 ---
 

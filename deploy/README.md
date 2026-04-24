@@ -1,6 +1,6 @@
-# Deploying iris as a Remote MCP Server
+# Deploying ministr as a Remote MCP Server
 
-iris supports Streamable HTTP transport, enabling remote deployment as an MCP server that any MCP client can connect to over HTTPS.
+ministr supports Streamable HTTP transport, enabling remote deployment as an MCP server that any MCP client can connect to over HTTPS.
 
 ## Contents
 
@@ -16,22 +16,22 @@ iris supports Streamable HTTP transport, enabling remote deployment as an MCP se
 
 ```bash
 # Build the image
-docker build -t iris .
+docker build -t ministr .
 
 # Run with a corpus directory mounted
-docker run -p 8080:8080 -v /path/to/code:/corpus -v iris_data:/data \
-  iris --corpus /corpus
+docker run -p 8080:8080 -v /path/to/code:/corpus -v ministr_data:/data \
+  ministr --corpus /corpus
 
 # With OAuth enabled
-docker run -p 8080:8080 -v /path/to/code:/corpus -v iris_data:/data \
-  iris --corpus /corpus --oauth --oauth-issuer https://iris.example.com
+docker run -p 8080:8080 -v /path/to/code:/corpus -v ministr_data:/data \
+  ministr --corpus /corpus --oauth --oauth-issuer https://ministr.example.com
 ```
 
 The `/data` volume persists the index between restarts, avoiding re-ingestion.
 
 ## Fly.io
 
-iris includes a `fly.toml` configured for Fly.io deployment:
+ministr includes a `fly.toml` configured for Fly.io deployment:
 
 ```bash
 # Install flyctl
@@ -39,13 +39,13 @@ curl -L https://fly.io/install.sh | sh
 
 # Launch (first time)
 fly launch --no-deploy
-fly volumes create iris_data --size 10 --region iad
+fly volumes create ministr_data --size 10 --region iad
 fly deploy
 
 # Push corpus to the volume, then configure
 fly ssh console
 # Inside the machine:
-iris index --corpus /data/your-repo
+ministr index --corpus /data/your-repo
 ```
 
 Requirements:
@@ -70,13 +70,13 @@ Railway sets the `PORT` environment variable automatically. The start command in
 
 ## Reverse Proxy (nginx)
 
-If running iris on a VPS, use `deploy/nginx.conf` for TLS termination:
+If running ministr on a VPS, use `deploy/nginx.conf` for TLS termination:
 
 ```bash
 # Copy and customize the config
-sudo cp deploy/nginx.conf /etc/nginx/sites-available/iris
-sudo sed -i 's/iris.example.com/your-domain.com/g' /etc/nginx/sites-available/iris
-sudo ln -s /etc/nginx/sites-available/iris /etc/nginx/sites-enabled/
+sudo cp deploy/nginx.conf /etc/nginx/sites-available/ministr
+sudo sed -i 's/ministr.example.com/your-domain.com/g' /etc/nginx/sites-available/ministr
+sudo ln -s /etc/nginx/sites-available/ministr /etc/nginx/sites-enabled/
 sudo certbot --nginx -d your-domain.com
 sudo nginx -t && sudo systemctl reload nginx
 ```
@@ -93,7 +93,7 @@ Caddy handles TLS automatically via ACME:
 ```bash
 # Copy and customize
 cp deploy/Caddyfile /etc/caddy/Caddyfile
-sed -i 's/iris.example.com/your-domain.com/g' /etc/caddy/Caddyfile
+sed -i 's/ministr.example.com/your-domain.com/g' /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
@@ -106,8 +106,8 @@ Once deployed, configure your MCP client to connect via Streamable HTTP:
 ```json
 {
   "mcpServers": {
-    "iris": {
-      "url": "https://iris.example.com/mcp"
+    "ministr": {
+      "url": "https://ministr.example.com/mcp"
     }
   }
 }
@@ -117,13 +117,13 @@ With OAuth:
 ```json
 {
   "mcpServers": {
-    "iris": {
-      "url": "https://iris.example.com/mcp",
+    "ministr": {
+      "url": "https://ministr.example.com/mcp",
       "auth": {
         "type": "oauth2",
-        "authorization_url": "https://iris.example.com/oauth/authorize",
-        "token_url": "https://iris.example.com/oauth/token",
-        "registration_url": "https://iris.example.com/oauth/register"
+        "authorization_url": "https://ministr.example.com/oauth/authorize",
+        "token_url": "https://ministr.example.com/oauth/token",
+        "registration_url": "https://ministr.example.com/oauth/register"
       }
     }
   }

@@ -1,0 +1,64 @@
+---
+title: ministr_bridge
+description: Query cross-language binding links between exported symbols and their consumers across language boundaries.
+---
+
+Query cross-language binding links between exported symbols and their consumers across language boundaries.
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `query` | string | no | Filter by binding key or symbol name (case-insensitive substring match) |
+| `bridge_kind` | string | no | Filter by kind: `tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi` |
+| `language` | string | no | Filter to links involving this language (e.g. `rust`, `typescript`, `javascript`, `python`) |
+| `file_path` | string | no | Filter to links where either endpoint is in this file path |
+
+## Response
+
+```json
+{
+  "bridges": [
+    {
+      "kind": "tauri_command",
+      "confidence": 1.0,
+      "export": {
+        "symbol_id": "sym-src-tauri/src/commands.rs::commands::open_file",
+        "file_path": "src-tauri/src/commands.rs",
+        "line": 42
+      },
+      "import": {
+        "file_path": "src/App.tsx",
+        "line": 87,
+        "context": "invoke('open_file', { path: selectedPath })"
+      }
+    }
+  ],
+  "budget_status": { ... }
+}
+```
+
+### Response Fields
+
+| Field | Description |
+|---|---|
+| `bridges[].kind` | Binding mechanism (`tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi`) |
+| `bridges[].confidence` | Link confidence score (1.0 = exact match, &lt;1.0 = semantic fallback) |
+| `bridges[].export` | The producing side (e.g., `#[tauri::command]` function) |
+| `bridges[].import` | The consuming site (e.g., an `invoke()` call) |
+
+### Supported Frameworks
+
+| Framework | Export Side | Import Side |
+|---|---|---|
+| Tauri | `#[tauri::command]` | `invoke('name', ...)` |
+| napi-rs | `#[napi]` | `import { name }` from native module |
+| PyO3 | `#[pyfunction]`, `#[pymethods]` | `from module import name` |
+| wasm-bindgen | `#[wasm_bindgen]` | JS/TS import from WASM module |
+| HTTP routes | `#[get]`, `#[post]`, etc. | `fetch('/path')`, `axios.get('/path')` |
+
+## Behavior
+
+- Links are resolved with exact match first, then case-normalized, then semantic embedding fallback
+- Confidence scores below `0.85` indicate fuzzy matches that should be verified
+- Use `ministr_references` with a symbol ID to find references without the cross-language filter

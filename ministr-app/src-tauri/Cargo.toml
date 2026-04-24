@@ -1,0 +1,61 @@
+[package]
+name = "ministr-app"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "ministr desktop app — central index daemon with GUI dashboard."
+publish = false
+
+[lints]
+workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri framework
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+
+# ministr crates (non-core — ministr-core is target-gated below because of
+# the candle Metal backend, which only compiles on Apple platforms).
+ministr-api = { workspace = true }
+ministr-daemon = { workspace = true }
+
+# HTTP daemon on UDS
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Observability
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Embedding & indexing (owned by daemon)
+fastembed = { workspace = true }
+ort = { workspace = true }
+
+# macOS: enable the candle Metal backend alongside the default fastembed path.
+[target.'cfg(target_os = "macos")'.dependencies]
+ministr-core = { workspace = true, features = ["candle"] }
+
+# Non-Apple targets: fastembed/ONNX only. candle-core with `metal` pulls
+# in objc2 + the Apple Metal crate stack, which refuses to compile.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+ministr-core = { workspace = true }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+# Opt-in DirectML GPU acceleration for Windows (no-op elsewhere). Forwards
+# to the ministr-core feature, which in turn enables fastembed/directml.
+directml = ["ministr-core/directml", "ministr-daemon/directml"]

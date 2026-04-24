@@ -1,0 +1,23 @@
+name: Install a cargo tool if missing
+description: |
+  Runs `cargo install <tool> --locked` only if the binary is not
+  already on PATH. Self-hosted runners reuse installed tools across
+  jobs, so this is a cheap no-op after the first run per machine.
+
+inputs:
+  tool:
+    description: The cargo tool to install (e.g. "cargo-nextest")
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        tool="${{ inputs.tool }}"
+        if command -v "$tool" >/dev/null 2>&1; then
+          echo "✓ $tool already installed at $(command -v "$tool")"
+        else
+          echo "installing $tool..."
+          cargo install "$tool" --locked
+        fi

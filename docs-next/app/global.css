@@ -1,0 +1,869 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* =====================================================
+   ministr design tokens — ported from docs/styles/tokens.css
+   ===================================================== */
+
+@theme {
+  /* Ministr brand scale (indigo/violet) */
+  --color-ministr-50:  oklch(0.96 0.02 285);
+  --color-ministr-100: oklch(0.93 0.04 285);
+  --color-ministr-200: oklch(0.87 0.07 280);
+  --color-ministr-300: oklch(0.79 0.11 280);
+  --color-ministr-400: oklch(0.70 0.16 278);
+  --color-ministr-500: #6366f1;
+  --color-ministr-600: #4f46e5;
+  --color-ministr-700: #4338ca;
+  --color-ministr-800: #3730a3;
+  --color-ministr-900: #312e81;
+  --color-ministr-950: #1e1b4b;
+
+  /* Extra iridescent accents */
+  --color-violet-400: #a78bfa;
+  --color-violet-500: #8b5cf6;
+  --color-fuchsia-400: #e879f9;
+
+  /* Custom dark surface scale — cool-tinted so ministr accent pops */
+  --color-ink-50:  #f5f5fa;
+  --color-ink-100: #e6e7f0;
+  --color-ink-200: #b9bacc;
+  --color-ink-300: #7c7e9a;
+  --color-ink-400: #4a4d6e;
+  --color-ink-500: #32344f;
+  --color-ink-600: #23253d;
+  --color-ink-700: #191b2f;
+  --color-ink-800: #111224;
+  --color-ink-900: #0a0b14;
+  --color-ink-950: #05060e;
+
+  /* Traffic-light swatches — macOS chrome reference colors */
+  --color-traffic-close: #ff5f57;
+  --color-traffic-min:   #febc2e;
+  --color-traffic-max:   #28c840;
+
+  /* Semantic status colors — light-mode defaults */
+  --color-success: #34d399;
+  --color-warning: #f97316;
+
+  /* Fonts */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* Dark-mode overrides — target Fumadocs's .dark class (via next-themes) */
+.dark {
+  --color-success: #4ade80;
+  --color-warning: #fb923c;
+}
+
+html {
+  scrollbar-gutter: stable;
+  /* Native widgets (scrollbars, form controls) pick up the active theme. */
+  color-scheme: light dark;
+}
+
+body {
+  /* Inter stylistic alternates — single-story 'a', open apertures, clean
+     digits. Baseline OpenType feature, no JS cost. */
+  font-feature-settings: 'ss01', 'cv02', 'cv11';
+}
+
+/* Typography defaults grounded in Ling & Van Schaik 2006 + Miniukovich 2017:
+   balanced line-breaking improves heading processing; pretty line-breaking
+   eliminates widow lines in body prose. Baseline 2024 (Safari, Chrome, Firefox). */
+h1, h2, h3, h4 {
+  text-wrap: balance;
+}
+p {
+  text-wrap: pretty;
+}
+
+/* Safari ships hanging-punctuation; Chrome/Firefox don't yet. Progressive
+   enhancement — a Safari-only polish, no fallback needed. */
+main {
+  hanging-punctuation: first last;
+}
+
+/* Cross-document view transitions (Chrome 126+, Safari 18.2+, Firefox 144+).
+   Pairs with `experimental.viewTransition` in next.config.mjs for same-
+   origin soft-nav transitions through <Link>. Unsupported browsers navigate
+   normally. */
+@view-transition { navigation: auto; }
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+/* Hero wordmark — trim font-metric overshoot for tight vertical rhythm.
+   Requires a font with proper cap-height + alphabetic-baseline metadata
+   (Inter qualifies). Chrome 133+, Safari 17.5+. */
+.ministr-hero-mark {
+  text-box: trim-both cap alphabetic;
+  letter-spacing: -0.04em;
+}
+
+/* Below-fold paint perf — browser skips layout/paint for these until they
+   near the viewport. Reserves 640px to avoid scroll-height jumps. */
+.below-fold {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 640px;
+}
+
+/* ToolList: two-column grid when container is wide enough, single column
+   otherwise. Container queries adapt to the tool list's own width rather
+   than the viewport — robust across embeddings. Baseline. */
+.tool-list-dl {
+  grid-template-columns: 1fr;
+}
+@container (width > 34rem) {
+  .tool-list-dl {
+    grid-template-columns: minmax(0, 10rem) 1fr;
+  }
+}
+
+/* Docs sidebar: Fumadocs wraps it in a Radix ScrollArea with type="scroll",
+   which only reveals its custom scrollbar during an active scroll gesture and
+   hides the native one via scrollbar-width: none. With 30+ nav items that
+   makes the sidebar feel unscrollable until you happen to wheel over it —
+   especially on macOS where system "auto-hide scrollbars" also hides the
+   native one. Force a thin always-visible webkit scrollbar instead.
+
+   Note: we DON'T set scrollbar-width (Firefox-style) because on macOS that
+   disables the ::-webkit-scrollbar-* rules, which are the only way to get a
+   reliably always-visible bar across OS settings. */
+aside [data-radix-scroll-area-viewport]::-webkit-scrollbar {
+  /* Radix Primitive.Root ships its own rule "display: none" to hide the
+     native scrollbar (so its own custom one can take over). We want the
+     native one — re-enable. */
+  display: block !important;
+  width: 10px;
+  height: 10px;
+}
+aside [data-radix-scroll-area-viewport]::-webkit-scrollbar-track {
+  background: transparent;
+}
+aside [data-radix-scroll-area-viewport]::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--fd-muted-foreground) 40%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+aside [data-radix-scroll-area-viewport]::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--fd-muted-foreground) 70%, transparent);
+}
+
+/* The Radix viewport inline-styles "overflow: hidden scroll" and Radix's own
+   scrollbar-width: none hides the native scrollbar. Force overflow-y: scroll
+   (always reserve space) and a non-default scrollbar-width so that Chromium
+   on macOS switches from overlay scrollbars to classic reserved-space ones
+   and the ::-webkit-scrollbar rules above actually render. */
+aside [data-radix-scroll-area-viewport] {
+  scrollbar-width: auto !important;
+  scrollbar-gutter: stable !important;
+  overflow-y: scroll !important;
+  /* Drop the top/bottom fade mask — it makes the scrollbar itself fade. */
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* Subtle ministr-gradient text utility for hero titles.
+   Safari notes: with background-clip: text + animated background-position,
+   Safari needs (a) color: transparent alongside -webkit-text-fill-color,
+   (b) an explicit -webkit-animation, (c) will-change to hint the GPU path.
+   Without those, the text renders correctly on first paint but the
+   animation never commits in Safari. */
+.ministr-gradient-text,
+h1.ministr-gradient-text,
+.md-typeset .ministr-gradient-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-ministr-600) 0%,
+    var(--color-ministr-500) 25%,
+    var(--color-violet-400) 50%,
+    var(--color-ministr-500) 75%,
+    var(--color-ministr-600) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 0% 50%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  will-change: background-position;
+  -webkit-animation: ministr-shimmer 14s ease-in-out infinite;
+  animation: ministr-shimmer 14s ease-in-out infinite;
+}
+
+@-webkit-keyframes ministr-shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes ministr-shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ministr-gradient-text {
+    -webkit-animation: none;
+    animation: none;
+  }
+}
+
+/* Session-trace keyframes (hero terminal replay). Defined at the top
+   level so they're available regardless of component scoping. */
+@keyframes trace-fade {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes trace-cursor {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes trace-flash {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* =====================================================
+   ministr 2026 landing system — "Observatory"
+   -----------------------------------------------------
+   Paired dark + light treatments. The observatory metaphor drives dark
+   (deep ink, aurora spectrum, glass). Light flips to a clean white-paper
+   observatory: softer ministr-tinted aurora on bright ground, darker text,
+   lighter glass, dimmer noise.
+   ===================================================== */
+
+.ministr-landing {
+  color: var(--fd-foreground);
+  background: var(--ministr-landing-bg);
+}
+
+/* Dark base (default when .dark is on the root). */
+.ministr-landing {
+  --ministr-landing-bg: var(--color-ink-950);
+  --ministr-surface: var(--color-ink-900);
+  --ministr-surface-strong: var(--color-ink-800);
+  --ministr-aurora-opacity: 1;
+  --ministr-noise-opacity: 0.028;
+  --ministr-noise-blend: overlay;
+  --ministr-lens-pupil: var(--color-ink-950);
+  --ministr-scrim-tint: color-mix(in oklch, var(--color-ink-950) 65%, transparent);
+  --ministr-accent-text: var(--color-ministr-300);
+  --ministr-hairline: color-mix(in oklch, var(--color-ministr-300) 30%, transparent);
+}
+
+/* Light override — cleaner, paper-white ground with a soft ministr-tinted
+   aurora wash. Pairs with fumadocs light tokens. */
+:root:not(.dark) .ministr-landing {
+  --ministr-landing-bg: color-mix(in oklch, white 82%, var(--color-ministr-50) 18%);
+  --ministr-surface: white;
+  --ministr-surface-strong: color-mix(in oklch, white 80%, var(--color-ministr-100));
+  --ministr-aurora-opacity: 0.55;
+  --ministr-noise-opacity: 0.045;
+  --ministr-noise-blend: multiply;
+  --ministr-lens-pupil: color-mix(in oklch, var(--color-ministr-900) 70%, white);
+  --ministr-scrim-tint: color-mix(in oklch, white 55%, transparent);
+  --ministr-accent-text: var(--color-ministr-700);
+  --ministr-hairline: color-mix(in oklch, var(--color-ministr-500) 35%, transparent);
+}
+
+/* =====================================================
+   Text-contrast utilities tuned for the smoke shader backdrop.
+   The shader tints both modes in motion, so plain fd-muted-foreground
+   sometimes falls below 4.5:1 contrast against lit smoke patches.
+   These classes raise that floor while preserving the designed
+   hierarchy (strong body vs subdued caption).
+
+   Wrapped in @layer utilities so they win against Tailwind's base
+   rules and Fumadocs's typography preset without needing !important.
+   ===================================================== */
+
+@layer utilities {
+  /* Primary body over shader — used for "important paragraph" text.
+     Stronger than muted, softer than foreground. 82% / 68% were
+     picked empirically so that AA contrast holds over the brightest
+     aurora peaks the shader paints in dark mode and over the
+     darkest smoke patches in light mode. */
+  .ministr-body {
+    color: color-mix(in oklch, var(--fd-foreground) 82%, transparent);
+  }
+  .ministr-body-quiet {
+    color: color-mix(in oklch, var(--fd-foreground) 68%, transparent);
+  }
+
+  /* Standardised section eyebrow — mono, tracking, spectrum accent + a
+     small leading square that inherits the spectrum for visual anchor. */
+  .ministr-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ministr-accent-text);
+  }
+  .ministr-eyebrow::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 1px;
+    background: linear-gradient(135deg in oklch,
+      var(--color-ministr-500),
+      var(--color-fuchsia-400));
+    box-shadow: 0 0 8px color-mix(in oklch, var(--color-ministr-400) 60%, transparent);
+  }
+
+  /* Sub-eyebrow — same colour and tracking as the main eyebrow but
+     without the spectrum dot and smaller. Used for sub-labels inside
+     section content (step counters, column headers, chip labels) so
+     they still belong to the eyebrow family without competing with
+     the main section eyebrow for attention. */
+  .ministr-eyebrow-sm {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ministr-accent-text);
+  }
+
+  /* Primary ministr CTA — bold ministr-600 pill with an animated spectrum
+     rim glow on hover. Pairs with the hero install button and any
+     other conversion surface that wants the "primary" treatment. */
+  .ministr-cta-primary {
+    position: relative;
+    isolation: isolate;
+    background: var(--color-ministr-600);
+    color: white;
+    box-shadow:
+      0 8px 30px -10px color-mix(in oklch, var(--color-ministr-500) 70%, transparent);
+    transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                box-shadow 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                background-color 220ms ease;
+  }
+  .ministr-cta-primary:hover {
+    background: var(--color-ministr-700);
+    transform: translateY(-1px);
+    box-shadow:
+      0 14px 40px -12px color-mix(in oklch, var(--color-ministr-500) 85%, transparent),
+      0 0 0 1px color-mix(in oklch, var(--color-fuchsia-400) 40%, transparent);
+  }
+  .ministr-cta-primary::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg in oklch,
+      var(--color-ministr-400) 0%,
+      var(--color-violet-500) 50%,
+      var(--color-fuchsia-400) 100%);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 260ms ease;
+    pointer-events: none;
+  }
+  .ministr-cta-primary:hover::after { opacity: 0.85; }
+
+  /* Spectrum divider variants for section beats — a thicker
+     "major" rule for decisive boundaries and a "minor" hairline
+     for softer separations. Already had ministr-spectrum-rule above;
+     these are light-touch variations. */
+  .ministr-spectrum-rule-major {
+    height: 1px;
+    background-image: linear-gradient(
+      90deg in oklch,
+      transparent 0%,
+      var(--color-ministr-500) 22%,
+      var(--color-violet-500) 50%,
+      var(--color-fuchsia-400) 78%,
+      transparent 100%
+    );
+    opacity: 0.8;
+  }
+
+  /* Tiny spectrum glyph — the brand period. A 0.5em dot rendered
+     with the ministr spectrum, for inline use in the footer signature
+     and anywhere the "ministr." wordmark is referenced in copy. */
+  .ministr-mark-dot {
+    display: inline-block;
+    width: 0.48em;
+    height: 0.48em;
+    border-radius: 2px;
+    background: linear-gradient(135deg in oklch,
+      var(--color-ministr-500),
+      var(--color-violet-500),
+      var(--color-fuchsia-400));
+    box-shadow: 0 0 6px color-mix(in oklch, var(--color-ministr-400) 50%, transparent);
+    vertical-align: 0.05em;
+  }
+}
+
+/* Signature brand spectrum used on headings, rules, and backdrops.
+   OKLCH colours interpolated smoothly in oklch colour space. */
+.ministr-spectrum {
+  background-image: linear-gradient(
+    90deg in oklch,
+    var(--color-ministr-600) 0%,
+    var(--color-ministr-500) 28%,
+    var(--color-violet-500) 62%,
+    var(--color-fuchsia-400) 100%
+  );
+}
+
+/* Thin horizontal rule painted with the spectrum — used as section
+   dividers and accent under stats strip. */
+.ministr-spectrum-rule {
+  height: 1px;
+  background-image: linear-gradient(
+    90deg in oklch,
+    transparent 0%,
+    var(--color-ministr-500) 28%,
+    var(--color-violet-500) 62%,
+    transparent 100%
+  );
+  opacity: 0.55;
+}
+
+/* Aurora backdrop — layered radial gradients over the ministr spectrum.
+   One static base layer + one slow drifting highlight. Drift is GPU-
+   composited via transform so it never reflows. Disabled under
+   prefers-reduced-motion. */
+.aurora-layer {
+  position: absolute;
+  inset: -20%;
+  pointer-events: none;
+  filter: blur(64px);
+  opacity: var(--ministr-aurora-opacity, 1);
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  background:
+    radial-gradient(40% 45% at 18% 24%, color-mix(in oklch, var(--color-ministr-500) 55%, transparent), transparent 72%),
+    radial-gradient(38% 38% at 82% 18%, color-mix(in oklch, var(--color-violet-500) 50%, transparent), transparent 70%),
+    radial-gradient(45% 42% at 62% 78%, color-mix(in oklch, var(--color-fuchsia-400) 42%, transparent), transparent 74%),
+    radial-gradient(32% 32% at 22% 86%, color-mix(in oklch, var(--color-ministr-400) 45%, transparent), transparent 70%);
+}
+
+/* Light mode: softer, lower-saturation aurora so dark text stays legible. */
+:root:not(.dark) .aurora-layer {
+  background:
+    radial-gradient(42% 48% at 18% 24%, color-mix(in oklch, var(--color-ministr-300) 70%, transparent), transparent 72%),
+    radial-gradient(38% 40% at 82% 18%, color-mix(in oklch, var(--color-violet-400) 55%, transparent), transparent 70%),
+    radial-gradient(45% 44% at 62% 78%, color-mix(in oklch, var(--color-fuchsia-400) 45%, transparent), transparent 74%),
+    radial-gradient(32% 34% at 22% 86%, color-mix(in oklch, var(--color-ministr-200) 70%, transparent), transparent 70%);
+  filter: blur(80px);
+}
+
+.aurora-layer--drift {
+  animation: aurora-drift 28s ease-in-out infinite alternate;
+}
+
+@keyframes aurora-drift {
+  0%   { transform: translate3d(-2%, -1%, 0) scale(1); }
+  50%  { transform: translate3d(3%, 2%, 0) scale(1.06); }
+  100% { transform: translate3d(-1%, 3%, 0) scale(1.02); }
+}
+
+/* Tight scrim to keep text readable over aurora. Dark scrim in dark,
+   light scrim in light — tone driven by --ministr-scrim-tint. */
+.aurora-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(80% 60% at 50% 40%, transparent, var(--ministr-scrim-tint) 85%),
+    linear-gradient(180deg, transparent 0%, var(--ministr-scrim-tint) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-layer--drift { animation: none; }
+}
+
+/* Glass card — frosted panel with spectrum hairline + inner highlight.
+   Designed to let the page-wide chromatic smoke shader through in both
+   modes: semi-transparent substrate + heavy backdrop blur + saturation
+   boost so the smoke tints the card warmly without muddying the copy.
+   In dark mode the substrate is ink with an ministr tint; in light mode
+   it's paper-white with a violet tint — paired so each mode reads as
+   "glass resting on the same smoke." */
+.glass-card {
+  position: relative;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--color-ink-800) 55%, transparent) 0%,
+      color-mix(in oklch, var(--color-ink-900) 62%, transparent) 100%
+    );
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid color-mix(in oklch, var(--color-ministr-300) 22%, transparent);
+  border-radius: 18px;
+  box-shadow:
+    0 28px 90px -30px color-mix(in oklch, var(--color-ministr-700) 55%, transparent),
+    0 1px 0 color-mix(in oklch, var(--color-ministr-200) 18%, transparent) inset,
+    0 0 0 1px color-mix(in oklch, var(--color-ministr-500) 8%, transparent) inset;
+}
+
+.glass-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, white 12%, transparent) 0%,
+    transparent 32%
+  );
+  mask: linear-gradient(180deg, black 0%, transparent 55%);
+  -webkit-mask: linear-gradient(180deg, black 0%, transparent 55%);
+}
+
+/* Subtle outer bleed — a warm ministr aura around the card so it reads as
+   a physical glass object catching light from the scene behind it. */
+.glass-card::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  padding: 1px;
+  background: linear-gradient(
+    135deg in oklch,
+    color-mix(in oklch, var(--color-ministr-400) 35%, transparent) 0%,
+    transparent 45%,
+    color-mix(in oklch, var(--color-fuchsia-400) 28%, transparent) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0.8;
+}
+
+:root:not(.dark) .glass-card {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, white 68%, transparent) 0%,
+      color-mix(in oklch, white 55%, transparent) 100%
+    );
+  border-color: color-mix(in oklch, var(--color-ministr-600) 20%, transparent);
+  box-shadow:
+    0 28px 90px -30px color-mix(in oklch, var(--color-ministr-700) 22%, transparent),
+    0 1px 0 color-mix(in oklch, white 90%, transparent) inset,
+    0 0 0 1px color-mix(in oklch, var(--color-ministr-500) 6%, transparent) inset;
+}
+
+:root:not(.dark) .glass-card::after {
+  background: linear-gradient(
+    135deg in oklch,
+    color-mix(in oklch, var(--color-ministr-500) 28%, transparent) 0%,
+    transparent 45%,
+    color-mix(in oklch, var(--color-fuchsia-400) 22%, transparent) 100%
+  );
+  opacity: 0.6;
+}
+
+
+/* Chromatic-flow shader mount — theme-aware blend mode so the same
+   shader output composites sensibly over both backgrounds.
+   Dark: `screen` brightens the ink-950 ground with ministr peaks.
+   Light: `multiply` darkens the paper with deep ministr ink, which
+   avoids the washed-out pastel look of translucent purple on white. */
+.chromatic-flow-mount {
+  mix-blend-mode: screen;
+}
+:root:not(.dark) .chromatic-flow-mount {
+  mix-blend-mode: multiply;
+  opacity: 1;
+}
+
+/* Noise overlay — static SVG turbulence, theme-responsive opacity and
+   blend mode (overlay in dark, multiply in light). */
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: var(--ministr-noise-opacity, 0.028);
+  mix-blend-mode: var(--ministr-noise-blend, overlay);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* Lens — concentric SVG rings get a breathing dilation & slow spin.
+   JS scroll-driven dilation layers on top via inline style when the
+   component wires up motion's useScroll. */
+@keyframes lens-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50%      { transform: scale(1.04); opacity: 1; }
+}
+
+.lens-ring {
+  transform-origin: 50% 50%;
+  animation: lens-breathe 9s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lens-ring { animation: none; }
+}
+
+/* Bento tile base + hover tilt custom props.
+   Tilt angle is computed in JS via --mx / --my pointer-relative
+   values; CSS uses them to rotate and shift a sheen layer. */
+.bento-tile {
+  position: relative;
+  isolation: isolate;
+  transform-style: preserve-3d;
+  transition: transform 400ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.bento-tile__sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    220px 140px at calc(var(--mx, 50%) * 1%) calc(var(--my, 30%) * 1%),
+    color-mix(in oklch, white 14%, transparent),
+    transparent 60%
+  );
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.bento-tile:hover .bento-tile__sheen { opacity: 1; }
+
+/* Bento tiles size to their content — the grid lets row heights vary
+   so a ledger + a compact score card don't force each other to match. */
+.bento-tile { align-self: start; }
+
+/* Bento responsive spans driven by data-attributes (avoids Tailwind
+   JIT + dynamic-class issues). Base span applies at all breakpoints;
+   md/lg spans override when the viewport is wide enough. */
+.bento-tile[data-span-base='1']  { grid-column: span 1 / span 1; }
+.bento-tile[data-span-base='2']  { grid-column: span 2 / span 2; }
+.bento-tile[data-span-base='3']  { grid-column: span 3 / span 3; }
+.bento-tile[data-span-base='4']  { grid-column: span 4 / span 4; }
+
+@media (width >= 48rem) {
+  .bento-tile[data-span-md='1']  { grid-column: span 1 / span 1; }
+  .bento-tile[data-span-md='2']  { grid-column: span 2 / span 2; }
+  .bento-tile[data-span-md='3']  { grid-column: span 3 / span 3; }
+  .bento-tile[data-span-md='4']  { grid-column: span 4 / span 4; }
+  .bento-tile[data-span-md='5']  { grid-column: span 5 / span 5; }
+  .bento-tile[data-span-md='6']  { grid-column: span 6 / span 6; }
+  .bento-tile[data-rows-md='1']  { grid-row: span 1 / span 1; }
+  .bento-tile[data-rows-md='2']  { grid-row: span 2 / span 2; }
+  .bento-tile[data-rows-md='3']  { grid-row: span 3 / span 3; }
+}
+@media (width >= 64rem) {
+  .bento-tile[data-span-lg='1']  { grid-column: span 1  / span 1; }
+  .bento-tile[data-span-lg='2']  { grid-column: span 2  / span 2; }
+  .bento-tile[data-span-lg='3']  { grid-column: span 3  / span 3; }
+  .bento-tile[data-span-lg='4']  { grid-column: span 4  / span 4; }
+  .bento-tile[data-span-lg='5']  { grid-column: span 5  / span 5; }
+  .bento-tile[data-span-lg='6']  { grid-column: span 6  / span 6; }
+  .bento-tile[data-span-lg='7']  { grid-column: span 7  / span 7; }
+  .bento-tile[data-span-lg='8']  { grid-column: span 8  / span 8; }
+  .bento-tile[data-span-lg='9']  { grid-column: span 9  / span 9; }
+  .bento-tile[data-span-lg='10'] { grid-column: span 10 / span 10; }
+  .bento-tile[data-span-lg='11'] { grid-column: span 11 / span 11; }
+  .bento-tile[data-span-lg='12'] { grid-column: span 12 / span 12; }
+  .bento-tile[data-rows-lg='1']  { grid-row: span 1 / span 1; }
+  .bento-tile[data-rows-lg='2']  { grid-row: span 2 / span 2; }
+  .bento-tile[data-rows-lg='3']  { grid-row: span 3 / span 3; }
+}
+
+/* Architecture-flow channel pulse — small bead travels along each
+   connective pipe. Two variants for data direction. Transform keeps
+   the bead locked to the pipe center (no Tailwind translate wars). */
+@keyframes channel-pulse-down {
+  0%   { transform: translate(-50%, 4px);  opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translate(-50%, 54px); opacity: 0; }
+}
+@keyframes channel-pulse-up {
+  0%   { transform: translate(-50%, 54px); opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translate(-50%, 4px);  opacity: 0; }
+}
+.channel-pulse-down { animation: channel-pulse-down 1.8s ease-in-out infinite; }
+.channel-pulse-up   { animation: channel-pulse-up   1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .channel-pulse-down, .channel-pulse-up { animation: none; transform: translate(-50%, 28px); }
+}
+
+/* Strikethrough differentiator — attention hotspot. The struck text
+   uses a muted brand-tinted tone (readable but clearly dismissed),
+   and the line itself is the ministr spectrum so it reads as the brand
+   *crossing out* the wrong answer. */
+.strike-claim {
+  position: relative;
+  display: inline-block;
+  color: color-mix(in oklch, var(--color-ministr-300) 72%, var(--color-ink-300));
+}
+:root:not(.dark) .strike-claim {
+  color: color-mix(in oklch, var(--color-ministr-700) 68%, var(--color-ink-400));
+}
+.strike-claim::after {
+  content: '';
+  position: absolute;
+  left: -3%;
+  right: -3%;
+  top: 54%;
+  height: 3px;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg in oklch,
+    color-mix(in oklch, var(--color-ministr-500) 90%, transparent) 0%,
+    color-mix(in oklch, var(--color-violet-500) 95%, transparent) 50%,
+    color-mix(in oklch, var(--color-fuchsia-400) 95%, transparent) 100%
+  );
+  box-shadow: 0 0 12px color-mix(in oklch, var(--color-fuchsia-400) 45%, transparent);
+  transform-origin: left center;
+  transform: scaleX(0);
+  animation: strike-in 900ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+:root:not(.dark) .strike-claim::after {
+  box-shadow: 0 0 10px color-mix(in oklch, var(--color-ministr-500) 35%, transparent);
+}
+@keyframes strike-in {
+  to { transform: scaleX(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .strike-claim::after { transform: scaleX(1); animation: none; }
+}
+
+/* =====================================================
+   asciinema-player — custom "ministr" theme + hero chrome
+   overrides so the player blends into the hero Shell
+   (traffic-light header + ministr surface) in both dark
+   and light modes. Defaults are listed at
+   node_modules/asciinema-player/dist/bundle/asciinema-player.css.
+   ===================================================== */
+
+/* Dark-mode palette — GitHub-dark-ish, matches the cast's recorded
+   theme and stays readable on the ministr-tinted surface.
+   Double-class selector (.ap-player.asciinema-player-theme-ministr)
+   beats asciinema-player.css's own .ap-player defaults regardless of
+   import order — their CSS lands after ours in Next's bundle and a
+   single-class selector would lose the cascade. */
+.ap-player.asciinema-player-theme-ministr {
+  --term-color-foreground: #c9d1d9;
+  /* Dark ministr-tinted terminal bg. Explicit hex (not color-mix over
+     fumadocs vars) because --fd-card wasn't exposing a value on the
+     player element and color-mix silently failed to an empty string. */
+  --term-color-background: #13132a;
+  --term-color-0:  #0d1117;
+  --term-color-1:  #ff7b72;
+  --term-color-2:  #7ee787;
+  --term-color-3:  #ffa657;
+  --term-color-4:  #79c0ff;
+  --term-color-5:  #d2a8ff;
+  --term-color-6:  #a5d6ff;
+  --term-color-7:  #c9d1d9;
+  --term-color-8:  #6e7681;
+  --term-color-9:  #ffa198;
+  --term-color-10: #56d364;
+  --term-color-11: #e3b341;
+  --term-color-12: #79c0ff;
+  --term-color-13: #d2a8ff;
+  --term-color-14: #a5d6ff;
+  --term-color-15: #f0f6fc;
+}
+
+/* Light-mode override — GitHub-light-ish, with a warm near-white
+   background that blends into the Shell's light surface instead of
+   stamping a black brick on the page. */
+:root:not(.dark) .ap-player.asciinema-player-theme-ministr {
+  --term-color-foreground: #1f2328;
+  /* Near-white warm tint — blends into a light page without the harsh
+     dark-terminal-on-light-bg look. */
+  --term-color-background: #f7f6fb;
+  --term-color-0:  #24292f;
+  --term-color-1:  #cf222e;
+  --term-color-2:  #116329;
+  --term-color-3:  #4d2d00;
+  --term-color-4:  #0969da;
+  --term-color-5:  #8250df;
+  --term-color-6:  #1b7c83;
+  --term-color-7:  #6e7781;
+  --term-color-8:  #57606a;
+  --term-color-9:  #a40e26;
+  --term-color-10: #1a7f37;
+  --term-color-11: #633c01;
+  --term-color-12: #0550ae;
+  --term-color-13: #6639ba;
+  --term-color-14: #0598a3;
+  --term-color-15: #6e7781;
+}
+
+/* Stage aspect-ratio should match the cast's claimed dimensions so
+   asciinema-player fills without pillarbox/letterbox. The cast header
+   was rewritten to height=32 rows (from the 50 it was recorded at) —
+   Claude Code uses ~30 rows of alt-screen, so 32 shows one screenful
+   without cutting off the response. At char-aspect ~0.5:1 that's an
+   aspect of 96:64 = 3/2 landscape. Overflow scrolls naturally. */
+.hero-player-stage {
+  aspect-ratio: 3 / 2;
+  overflow: hidden;
+}
+.hero-player-stage > .launch-player {
+  width: 100%;
+  height: 100%;
+}
+
+/* Cosmetic overrides — make the player's own chrome disappear into
+   the Shell. */
+.hero-player-stage .ap-player {
+  border-radius: 0;
+}
+.hero-player-stage .ap-term {
+  /* Default .ap-term has a 0.75em solid border matching the terminal
+     background — effectively a chunky inset padding. Trim it so the
+     recorded content is flush with the Shell's inner edge. */
+  border-width: 0.5em;
+}
+.hero-player-stage .ap-control-bar {
+  background: color-mix(in srgb, var(--fd-card) 85%, var(--color-ministr-950) 15%);
+  border-top: 1px solid color-mix(in srgb, var(--fd-border) 80%, transparent);
+}
+:root:not(.dark) .hero-player-stage .ap-control-bar {
+  background: color-mix(in srgb, var(--fd-card) 85%, var(--color-ministr-50) 15%);
+}
+

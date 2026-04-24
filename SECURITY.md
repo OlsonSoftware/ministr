@@ -23,15 +23,15 @@ Older pre-release versions are not supported. If you're running a development sn
 
 ## Scope
 
-iris runs locally by default and does not expose network services without explicit configuration. The primary attack surface is:
+ministr runs locally by default and does not expose network services without explicit configuration. The primary attack surface is:
 
 | Surface | Vector |
 |---|---|
 | Corpus ingestion | Malicious files (Markdown, HTML, PDF, source code) parsed during indexing |
 | MCP tool parameters | Input from the LLM agent via JSON-RPC |
-| Web fetching | URLs provided via `iris_fetch` or `.iris.toml` |
-| Git clone | Repositories cloned via `iris_clone` |
-| HTTP transport | When running `iris serve --transport http` for remote deployments |
+| Web fetching | URLs provided via `ministr_fetch` or `.ministr.toml` |
+| Git clone | Repositories cloned via `ministr_clone` |
+| HTTP transport | When running `ministr serve --transport http` for remote deployments |
 
 ## Hardening
 

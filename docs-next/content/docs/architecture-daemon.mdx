@@ -1,0 +1,60 @@
+---
+title: Daemon & Tray Architecture
+description: How the ministr daemon, MCP proxy, and desktop tray app communicate over ~/.ministr/ministrd.sock.
+---
+
+## Topology
+
+```mermaid
+flowchart TB
+  subgraph client["Claude Code / other MCP client"]
+    proxy["MCP proxy (ministr-mcp)"]
+  end
+
+  subgraph tray["ministr tray app (Tauri + React)"]
+    dashboard["Dashboard GUI"]
+  end
+
+  subgraph daemon["ministr daemon (ministr-daemon)"]
+    router["axum router"]
+    registry["CorpusRegistry + handles"]
+    sessions["Session registry"]
+    query["QueryService (per corpus)"]
+    prefetch["Prefetch engine"]
+    storage[("SQLite + HNSW index")]
+
+    router --> registry
+    registry --> query
+    registry --> sessions
+    query --> storage
+    query --> prefetch
+  end
+
+  proxy -->|"HTTP/1.1 over UDS<br/>~/.ministr/ministrd.sock"| router
+  dashboard -->|"Direct Rust API"| router
+```
+
+## Component Responsibilities
+
+| Component | Crate | Role |
+|-----------|-------|------|
+| **MCP Proxy** | `ministr-mcp` | Thin proxy: translates MCP tool calls to daemon HTTP API |
+| **Daemon** | `ministr-daemon` | Axum HTTP server on UDS: corpus management, queries, sessions |
+| **Tray App** | `ministr-app` | Tauri GUI: project management, dashboard, system tray |
+| **Core** | `ministr-core` | Domain logic: ingestion, search, embeddings, storage |
+| **API** | `ministr-api` | Shared wire types + `DaemonClient` for UDS communication |
+
+## Data Flow
+
+1. **MCP client** connects to the proxy via stdio
+2. **Proxy** delegates tool calls to the daemon over UDS HTTP
+3. **Daemon** manages corpora: indexing, querying, sessions, prefetch
+4. **Tray app** shares the same daemon process, accesses it via direct Rust API
+5. **File watcher** detects changes, triggers re-indexing, broadcasts coherence events
+
+## Socket & PID Files
+
+- **Socket**: `~/.ministr/ministrd.sock` (Unix domain socket)
+- **PID file**: `~/.ministr/ministrd.pid` (for stale socket detection)
+- **Data**: `~/.ministr/corpora/<corpus-id>/` (SQLite + HNSW per corpus)
+- **Config**: `~/.ministr/config.toml` (global settings)

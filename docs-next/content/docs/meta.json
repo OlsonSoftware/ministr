@@ -1,0 +1,19 @@
+{
+  "title": "ministr docs",
+  "pages": [
+    "index",
+    "---Getting started---",
+    "installation",
+    "getting-started",
+    "configuration",
+    "client-setup",
+    "---Architecture---",
+    "architecture",
+    "architecture-deep-dive",
+    "architecture-daemon",
+    "concepts",
+    "---Reference---",
+    "tools",
+    "cli"
+  ]
+}

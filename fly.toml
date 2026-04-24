@@ -1,11 +1,11 @@
-app = "iris-mcp"
+app = "ministr-mcp"
 primary_region = "iad"
 
 [build]
   dockerfile = "Dockerfile"
 
 [env]
-  RUST_LOG = "iris=info"
+  RUST_LOG = "ministr=info"
 
 [http_service]
   internal_port = 8080
@@ -20,7 +20,7 @@ primary_region = "iad"
     soft_limit = 25
 
 [mounts]
-  source = "iris_data"
+  source = "ministr_data"
   destination = "/data"
 
 [[vm]]

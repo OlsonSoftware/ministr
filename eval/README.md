@@ -1,6 +1,6 @@
 # Retrieval Evaluation Suite
 
-Ground-truth annotations and a representative corpus for measuring iris retrieval quality. Used by the CI regression gate to catch quality drops before they ship.
+Ground-truth annotations and a representative corpus for measuring ministr retrieval quality. Used by the CI regression gate to catch quality drops before they ship.
 
 ## Contents
 
@@ -16,7 +16,7 @@ just bench-eval       # run and print metrics (MRR, Recall@k, nDCG@k)
 just eval-gate        # CI regression gate: fails if metrics drop below threshold
 ```
 
-The gate compares metrics against the committed baseline at `iris-core/tests/eval_retrieval.rs`. Raising the bar requires updating the baseline and justifying the change in the PR.
+The gate compares metrics against the committed baseline at `ministr-core/tests/eval_retrieval.rs`. Raising the bar requires updating the baseline and justifying the change in the PR.
 
 ## Model comparison
 

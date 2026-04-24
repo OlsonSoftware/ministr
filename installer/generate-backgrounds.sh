@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Light mode background
-cat > /tmp/iris-bg-light.svg <<'SVG'
+cat > /tmp/ministr-bg-light.svg <<'SVG'
 <svg xmlns="http://www.w3.org/2000/svg" width="620" height="440" viewBox="0 0 620 440">
   <defs>
     <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -25,7 +25,7 @@ cat > /tmp/iris-bg-light.svg <<'SVG'
 SVG
 
 # Dark mode background
-cat > /tmp/iris-bg-dark.svg <<'SVG'
+cat > /tmp/ministr-bg-dark.svg <<'SVG'
 <svg xmlns="http://www.w3.org/2000/svg" width="620" height="440" viewBox="0 0 620 440">
   <defs>
     <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -41,8 +41,8 @@ cat > /tmp/iris-bg-dark.svg <<'SVG'
 SVG
 
 if command -v rsvg-convert &>/dev/null; then
-    rsvg-convert /tmp/iris-bg-light.svg -o resources/background.png
-    rsvg-convert /tmp/iris-bg-dark.svg -o resources/background-dark.png
+    rsvg-convert /tmp/ministr-bg-light.svg -o resources/background.png
+    rsvg-convert /tmp/ministr-bg-dark.svg -o resources/background-dark.png
     echo "Generated background.png and background-dark.png"
 elif command -v sips &>/dev/null; then
     # macOS fallback: use sips (built-in) via intermediate PDF
@@ -76,4 +76,4 @@ else
     exit 1
 fi
 
-rm -f /tmp/iris-bg-light.svg /tmp/iris-bg-dark.svg
+rm -f /tmp/ministr-bg-light.svg /tmp/ministr-bg-dark.svg

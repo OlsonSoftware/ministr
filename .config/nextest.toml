@@ -1,0 +1,27 @@
+# Nextest configuration.
+# https://nexte.st/docs/configuration/
+
+[profile.default]
+# Default per-test timeout. If a test is running for longer than this, nextest
+# flags it as "slow". After `terminate-after` slow periods, it's killed —
+# turning silent hangs into explicit, named failures that are easy to diagnose.
+slow-timeout = { period = "60s", terminate-after = 2 }
+# Never hold CI hostage — if tests are still running after 10 minutes, fail.
+# Tests worth running should finish in well under a minute each; anything
+# longer indicates a real bug (deadlock, infinite loop, etc.).
+
+[profile.ci]
+# CI inherits default timeouts. Keep the passing-test output streaming so
+# the log doesn't go silent between "Compiling done" and the summary.
+status-level = "pass"
+final-status-level = "flaky"
+
+[[profile.default.overrides]]
+# The HNSW tests hit `hnsw_rs` internals that can get contended under
+# high-concurrency nextest execution (multiple test processes racing for
+# CPU + any internal locks). `threads-required = num-cpus` reserves every
+# slot, which means these tests run ONE AT A TIME — no other test runs
+# concurrently with them. Local `cargo test` effectively does the same
+# (tests serialize within a binary).
+filter = 'test(/hnsw::tests::/)'
+threads-required = 'num-cpus'

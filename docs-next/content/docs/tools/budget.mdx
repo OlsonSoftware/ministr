@@ -1,0 +1,71 @@
+---
+title: ministr_budget
+description: Get the current context budget status — total budget, estimated usage, pressure level, and eviction recommendations.
+---
+
+Get the current context budget status: total budget, estimated usage, pressure level, and eviction recommendations.
+
+## Parameters
+
+None.
+
+## Response
+
+```json
+{
+  "total_budget": 100000,
+  "estimated_used": 78500,
+  "estimated_remaining": 21500,
+  "pressure_level": "critical",
+  "eviction_candidates": [
+    {
+      "content_id": "docs/setup.md#prerequisites",
+      "reason": "low relevance, delivered 8 turns ago",
+      "tokens_recoverable": 450
+    }
+  ],
+  "prefetch_metrics": {
+    "sequential_hits": 3,
+    "sequential_misses": 1,
+    "topical_hits": 2,
+    "topical_misses": 4,
+    "structural_hits": 1,
+    "structural_misses": 2
+  },
+  "session_metrics": { "turn_count": 24, "tokens_delivered": 78500 },
+  "schema_tokens": 3120,
+  "tool_count": 15,
+  "coherence_alerts": [],
+  "elicitation_evicted": []
+}
+```
+
+### Response Fields
+
+| Field | Description |
+|---|---|
+| `total_budget` | Total context window budget in tokens |
+| `estimated_used` | Estimated tokens currently in the agent's window |
+| `estimated_remaining` | Estimated tokens available |
+| `pressure_level` | `"normal"`, `"elevated"`, or `"critical"` |
+| `eviction_candidates` | Ranked list of content safe to drop (populated under pressure) |
+| `prefetch_metrics` | Hit/miss counts per prefetch strategy |
+| `session_metrics` | Cumulative token economics for the session (turns, delivered totals) |
+| `schema_tokens` | Tokens consumed by MCP tool schemas (descriptions + parameters) |
+| `tool_count` | Number of registered MCP tools |
+| `coherence_alerts` | Pending alerts when underlying content has changed (omitted when empty) |
+| `elicitation_evicted` | Content IDs evicted via interactive elicitation (omitted when empty) |
+
+### Pressure Levels
+
+| Level | Threshold | Behavior |
+|---|---|---|
+| `normal` | &lt; 80% used | Standard operation |
+| `elevated` | 80-90% used | Eviction candidates suggested |
+| `critical` | &gt; 90% used | Responses auto-compressed, strong eviction recommendations |
+
+## Behavior
+
+- Call this periodically to monitor budget health
+- Eviction candidates are ranked by recency, relevance decay, and dependency analysis
+- Prefetch metrics help assess whether prefetching is effective for the current session

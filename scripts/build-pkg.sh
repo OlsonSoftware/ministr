@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ build-pkg.sh — Build a signed, notarized macOS .pkg installer for iris.    │
+# │ build-pkg.sh — Build a signed, notarized macOS .pkg installer for ministr.    │
 # │                                                                            │
 # │ Produces a distribution package containing:                                │
-# │   • iris.app          → /Applications                                      │
-# │   • iris CLI binary   → /usr/local/bin/iris                                │
-# │   • PATH config       → /etc/paths.d/iris                                  │
+# │   • ministr.app          → /Applications                                      │
+# │   • ministr CLI binary   → /usr/local/bin/ministr                                │
+# │   • PATH config       → /etc/paths.d/ministr                                  │
 # │                                                                            │
 # │ Requirements:                                                              │
 # │   • Xcode Command Line Tools                                               │
@@ -25,9 +25,9 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="iris"
-BUNDLE_ID="com.iris.desktop"
-TAURI_DIR="$REPO_ROOT/iris-app/src-tauri"
+APP_NAME="ministr"
+BUNDLE_ID="ai.ministr.desktop"
+TAURI_DIR="$REPO_ROOT/ministr-app/src-tauri"
 INSTALLER_DIR="$REPO_ROOT/installer"
 OUTPUT_DIR="$REPO_ROOT/target/pkg"
 
@@ -39,7 +39,7 @@ with open('$TAURI_DIR/tauri.conf.json') as f:
 ")
 
 echo "═══════════════════════════════════════════════════════════════════"
-echo "  iris PKG builder — v${VERSION}"
+echo "  ministr PKG builder — v${VERSION}"
 echo "═══════════════════════════════════════════════════════════════════"
 
 # ── Validate environment ──────────────────────────────────────────────────────
@@ -85,10 +85,10 @@ mkdir -p "$STAGING/components" "$STAGING/cli-root/usr/local/bin" "$STAGING/cli-r
 
 # ── Step 1: Build the Tauri app bundle ────────────────────────────────────────
 
-echo "▸ Building iris.app..."
+echo "▸ Building ministr.app..."
 
 export APPLE_SIGNING_IDENTITY
-cd "$REPO_ROOT/iris-app"
+cd "$REPO_ROOT/ministr-app"
 
 # When skipping notarization, fully unset the env vars that trigger
 # Tauri's built-in notarization so it only signs.
@@ -111,12 +111,12 @@ echo "  ✓ App bundle: $APP_BUNDLE"
 
 # ── Step 2: Build and sign the standalone CLI binary ──────────────────────────
 
-echo "▸ Building iris CLI..."
+echo "▸ Building ministr CLI..."
 
 cd "$REPO_ROOT"
-cargo build --release --package iris-cli --target "$RUST_TARGET"
+cargo build --release --package ministr-cli --target "$RUST_TARGET"
 
-CLI_BINARY="$REPO_ROOT/target/${RUST_TARGET}/release/iris-cli"
+CLI_BINARY="$REPO_ROOT/target/${RUST_TARGET}/release/ministr-cli"
 if [[ ! -f "$CLI_BINARY" ]]; then
     echo "error: CLI binary not found at $CLI_BINARY" >&2
     exit 1
@@ -134,12 +134,12 @@ echo "  ✓ CLI signed"
 
 # ── Step 3: Prepare CLI payload ───────────────────────────────────────────────
 
-cp "$CLI_BINARY" "$STAGING/cli-root/usr/local/bin/iris"
-chmod 755 "$STAGING/cli-root/usr/local/bin/iris"
+cp "$CLI_BINARY" "$STAGING/cli-root/usr/local/bin/ministr"
+chmod 755 "$STAGING/cli-root/usr/local/bin/ministr"
 
-# /etc/paths.d/iris ensures /usr/local/bin is on PATH for all shells.
+# /etc/paths.d/ministr ensures /usr/local/bin is on PATH for all shells.
 # This is a no-op on most systems but guarantees it for edge cases.
-echo "/usr/local/bin" > "$STAGING/cli-root/etc/paths.d/iris"
+echo "/usr/local/bin" > "$STAGING/cli-root/etc/paths.d/ministr"
 
 # ── Step 4: Create component packages ────────────────────────────────────────
 
@@ -153,9 +153,9 @@ pkgbuild \
     --install-location "/Applications" \
     --timestamp \
     --sign "$APPLE_INSTALLER_IDENTITY" \
-    "$STAGING/components/iris-app.pkg"
+    "$STAGING/components/ministr-app.pkg"
 
-echo "  ✓ iris-app.pkg"
+echo "  ✓ ministr-app.pkg"
 
 # CLI component
 pkgbuild \
@@ -165,9 +165,9 @@ pkgbuild \
     --install-location "/" \
     --timestamp \
     --sign "$APPLE_INSTALLER_IDENTITY" \
-    "$STAGING/components/iris-cli.pkg"
+    "$STAGING/components/ministr-cli.pkg"
 
-echo "  ✓ iris-cli.pkg"
+echo "  ✓ ministr-cli.pkg"
 
 # ── Step 5: Stamp version into distribution.xml and HTML resources ────────────
 
@@ -204,8 +204,8 @@ for name in os.listdir(src_dir):
 
 echo "▸ Building distribution package..."
 
-UNSIGNED_PKG="$STAGING/iris-unsigned.pkg"
-FINAL_PKG="$OUTPUT_DIR/iris-${VERSION}.pkg"
+UNSIGNED_PKG="$STAGING/ministr-unsigned.pkg"
+FINAL_PKG="$OUTPUT_DIR/ministr-${VERSION}.pkg"
 
 productbuild \
     --distribution "$DIST_XML" \
@@ -248,6 +248,6 @@ fi
 SIZE=$(du -h "$FINAL_PKG" | cut -f1)
 echo ""
 echo "═══════════════════════════════════════════════════════════════════"
-echo "  ✓ iris-${VERSION}.pkg  ($SIZE)"
+echo "  ✓ ministr-${VERSION}.pkg  ($SIZE)"
 echo "    $FINAL_PKG"
 echo "═══════════════════════════════════════════════════════════════════"
