@@ -197,10 +197,7 @@ pub async fn start(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
 /// # Errors
 ///
 /// Returns an error if the axum server fails.
-pub async fn serve(
-    state: AppState,
-    listener: Listener,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn serve(state: AppState, listener: Listener) -> Result<(), Box<dyn std::error::Error>> {
     axum::serve(listener, router(state)).await?;
     Ok(())
 }

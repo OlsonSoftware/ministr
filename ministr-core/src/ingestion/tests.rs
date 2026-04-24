@@ -847,12 +847,7 @@ mod tests {
             ),
         ];
         for (expected_id, text) in cases {
-            let q = embedder
-                .embed(&[text])
-                .unwrap()
-                .into_iter()
-                .next()
-                .unwrap();
+            let q = embedder.embed(&[text]).unwrap().into_iter().next().unwrap();
             let results = index.search_knn(&q, 4).unwrap();
             assert!(
                 !results.is_empty(),

@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
-use tracing::{info, instrument};
 #[cfg(all(target_os = "windows", feature = "directml"))]
 use tracing::warn;
+use tracing::{info, instrument};
 
 use crate::error::IndexError;
 
@@ -467,8 +467,8 @@ impl FastEmbedder {
         // Disable at runtime with MINISTR_DEVICE=cpu.
         #[cfg(all(target_os = "windows", feature = "directml"))]
         {
-            let cpu_forced = std::env::var("MINISTR_DEVICE")
-                .is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
+            let cpu_forced =
+                std::env::var("MINISTR_DEVICE").is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
             if cpu_forced {
                 info!("DirectML disabled (MINISTR_DEVICE=cpu), using CPU execution provider");
             } else {
@@ -507,7 +507,12 @@ impl FastEmbedder {
             }
         };
 
-        info!(model = model_name, dim, provider = active_provider, "embedding model loaded");
+        info!(
+            model = model_name,
+            dim,
+            provider = active_provider,
+            "embedding model loaded"
+        );
 
         Ok(Self {
             model: Mutex::new(model),

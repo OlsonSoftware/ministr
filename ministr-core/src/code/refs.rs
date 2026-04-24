@@ -495,8 +495,7 @@ fn extract_call_ref(
             // name field of the path for nested scopes like
             // `foo::Bar::baz` (→ Uses(Bar)), or the path itself when it's
             // a leaf identifier like `Listener::bind` (→ Uses(Listener)).
-            if let Some(parent_name) =
-                immediate_scope_parent(&func_node, source)
+            if let Some(parent_name) = immediate_scope_parent(&func_node, source)
                 && !is_primitive_type(parent_name)
             {
                 refs.push(RawRef {
@@ -541,10 +540,7 @@ fn extract_call_ref(
 /// For `foo::bar::Baz::qux` → `Some("Baz")`.
 /// For `crate::baz` → `Some("crate")` (filtered out downstream by the
 /// primitive / keyword guard in the caller).
-fn immediate_scope_parent<'a>(
-    scoped: &tree_sitter::Node<'_>,
-    source: &'a [u8],
-) -> Option<&'a str> {
+fn immediate_scope_parent<'a>(scoped: &tree_sitter::Node<'_>, source: &'a [u8]) -> Option<&'a str> {
     let path = scoped.child_by_field_name("path")?;
     match path.kind() {
         "identifier" | "type_identifier" => path.utf8_text(source).ok(),

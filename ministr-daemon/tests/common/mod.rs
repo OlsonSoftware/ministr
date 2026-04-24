@@ -143,7 +143,11 @@ fn test_ipc_addr(tmp_dir: &tempfile::TempDir) -> IpcAddr {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let _ = tmp_dir;
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        IpcAddr::NamedPipe(format!(r"\\.\pipe\ministr-test-{}-{}", std::process::id(), id))
+        IpcAddr::NamedPipe(format!(
+            r"\\.\pipe\ministr-test-{}-{}",
+            std::process::id(),
+            id
+        ))
     }
 }
 

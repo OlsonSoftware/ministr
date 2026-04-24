@@ -6,8 +6,6 @@
 
 use serde::de::DeserializeOwned;
 
-use crate::transport;
-use crate::{ApiError, IpcAddr};
 use crate::activity::ActivityResponse;
 use crate::coherence::CoherenceEventsResponse;
 use crate::corpus::{
@@ -18,6 +16,8 @@ use crate::query::{
     SurveyResponse, SymbolDefinition, SymbolsRequest, SymbolsResponse,
 };
 use crate::status::DaemonStatus;
+use crate::transport;
+use crate::{ApiError, IpcAddr};
 
 /// Errors from daemon client operations.
 #[derive(Debug)]
