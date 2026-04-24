@@ -1,6 +1,6 @@
 # ministr MCP — Codebase Navigation (MANDATORY)
 
-This project uses [ministr](https://github.com/AlrikOlson/ministr-rs) as an MCP server for semantic code search.
+This project uses [ministr](https://github.com/OlsonSoftware/ministr) as an MCP server for semantic code search.
 
 ## CRITICAL: Tool Restrictions
 

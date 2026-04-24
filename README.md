@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AlrikOlson/ministr-rs/actions/workflows/ci.yml"><img src="https://github.com/AlrikOlson/ministr-rs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/OlsonSoftware/ministr/actions/workflows/ci.yml"><img src="https://github.com/OlsonSoftware/ministr/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.88%2B-orange.svg" alt="Rust"></a>
 </p>
@@ -100,10 +100,10 @@ curl -fsSL https://ministr.app/install.sh | bash
 **Cargo** (latest `main`)
 
 ```sh
-cargo install --git https://github.com/AlrikOlson/ministr-rs ministr-cli
+cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli
 ```
 
-**Pre-built binaries** — download from [GitHub Releases](https://github.com/AlrikOlson/ministr-rs/releases) for macOS, Linux, and Windows.
+**Pre-built binaries** — download from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases) for macOS, Linux, and Windows.
 
 A Homebrew tap (`AlrikOlson/homebrew-tap`) and a crates.io publish land with 1.0.
 
