@@ -1,5 +1,5 @@
 ---
-title: ministr-rs Architecture — The Deep Dive
+title: Architecture — The Deep Dive
 description: In-depth walk through the ministr workspace, ingestion pipeline, session shadow, prefetch engine, and embedding backends.
 ---
 
@@ -51,7 +51,7 @@ flowchart TB
 ## Workspace Structure
 
 ```text
-ministr-rs/
+ministr/
 ├── ministr-cli/              ← Binary entry point, CLI commands
 │   └── src/
 │       ├── main.rs        ← CLI parsing, subcommand dispatch

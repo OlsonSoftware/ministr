@@ -8,7 +8,7 @@ If you're looking for a place to begin, check the [issues labeled `good first is
 
 ### Prerequisites
 
-- **Rust 1.85+** (edition 2024) — install via [rustup](https://rustup.rs)
+- **Rust 1.88+** (edition 2024) — install via [rustup](https://rustup.rs)
 - **just** — task runner (`cargo install just` or `brew install just`)
 - **cargo-deny** — license and advisory checks (`cargo install cargo-deny`)
 
@@ -16,7 +16,7 @@ If you're looking for a place to begin, check the [issues labeled `good first is
 
 ```sh
 git clone https://github.com/OlsonSoftware/ministr.git
-cd ministr-rs
+cd ministr
 cargo build --workspace
 ```
 

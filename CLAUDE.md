@@ -1,4 +1,4 @@
-# ministr-rs — contributor notes for Claude Code
+# ministr — contributor notes for Claude Code
 
 This file is auto-loaded by Claude Code when working in this repo. It captures conventions and gotchas specific to developing ministr itself (not using ministr).
 
@@ -38,7 +38,7 @@ Always use `--release` when running ministr manually — debug builds are unusab
 
 ## Conventions
 
-- Edition 2024 (Rust 1.85+)
+- Edition 2024 (Rust 1.88+)
 - `#![deny(unsafe_code)]` in every crate
 - No `.unwrap()` or `.expect()` in library code (tests are fine)
 - `thiserror` for ministr-core errors, `miette` for ministr-cli/ministr-mcp diagnostics
