@@ -13,7 +13,7 @@ description: In-depth walk through the ministr workspace, ingestion pipeline, se
 
 ## The Big Picture
 
-Think of ministr as a **smart librarian** that sits between an LLM agent and a codebase. Instead of the agent naively reading files and losing track of what it's already seen, ministr indexes everything, tracks what's been delivered, predicts what's needed next, and shapes its own output — resolution, compression, deduplication — so the agent's finite window stays as clear as a well-managed L1 cache.
+Think of ministr as a **smart librarian** that sits between an LLM agent and a codebase. Instead of the agent naively reading files and losing track of what it's already seen, ministr indexes everything, tracks what's been delivered, predicts what's needed next, and shapes its own output — resolution, compression, deduplication — so the agent's finite window stays full of signal instead of redundant re-reads.
 
 ```mermaid
 flowchart TB

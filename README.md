@@ -42,7 +42,7 @@ claude mcp add ministr -- ministr
 
 ## Why ministr
 
-LLM agents waste most of their context window. ministr fixes the three root causes:
+LLM agents waste a lot of their context window. ministr fixes three of them:
 
 **Re-reading** — ministr tracks what the agent has already seen and deduplicates. When a section changes, it delivers only the delta.
 

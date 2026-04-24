@@ -13,11 +13,11 @@ export function Mechanisms() {
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
         <p className="ministr-eyebrow">What ministr does</p>
         <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
-          Six jobs, done for your agent, automatically.
+          Six jobs your agent doesn&rsquo;t have to do.
         </h2>
         <p className="ministr-body mt-4 max-w-[60ch] text-[15.5px]">
           Each one fixes a specific way AI coding agents waste their context
-          window. You don&rsquo;t configure them; they just run.
+          window. Defaults are sensible &mdash; most users never touch a knob.
         </p>
 
         <div className="mt-12 grid grid-cols-1 gap-5 md:grid-cols-2">

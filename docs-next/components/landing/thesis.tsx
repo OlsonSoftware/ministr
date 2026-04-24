@@ -433,7 +433,7 @@ function WasteDiagram() {
                 text={
                   activePreview
                     ? activePreview.preview
-                    : 'Press Play to watch both workflows execute in real time.\nHover any step to preview what that tool call returned.'
+                    : 'Press Play, or hover any step to see what that tool call returned.'
                 }
                 reduced={!!reduced}
               />
@@ -757,7 +757,7 @@ function Verdict({
         </span>
       </div>
       <p className="ministr-body-quiet mt-3 font-mono text-[11px] leading-relaxed">
-        same task, same agent, same model — only the retrieval layer changed. the tokens
+        Same task, same agent, same model — only the retrieval layer changed. The tokens
         ministr saved are budget the agent still has for the <span className="text-fd-foreground">next</span> turn.
       </p>
     </motion.div>

@@ -45,7 +45,7 @@ export function Hero() {
               {...stagger(2)}
               className="mt-6 max-w-[48ch] text-[clamp(1.125rem,1.6vw,1.375rem)] leading-snug font-medium text-fd-foreground/95"
             >
-              Stop your AI agent from re-reading the same files.
+              Stop your AI agent from re-reading the same files needlessly.
             </motion.p>
 
             <motion.p
@@ -57,7 +57,7 @@ export function Hero() {
               already saw. ministr gives them a local index that ships the
               exact section once, tracks what&rsquo;s been delivered, and
               skips it on the next turn &mdash; so your agent uses fewer
-              tokens per turn and actually remembers what it&rsquo;s looked at.
+              tokens per turn and remembers what it&rsquo;s looked at.
             </motion.p>
 
             <motion.div {...stagger(4)} className="mt-8">

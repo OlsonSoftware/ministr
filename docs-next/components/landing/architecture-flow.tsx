@@ -35,7 +35,7 @@ const STEPS: Step[] = [
     label: 'agent sends tool call',
     caption: 'Claude Code → ministr_read("src/auth.rs#login")',
     detail:
-      'The agent — Claude Code, Cursor, Copilot, any MCP client — wants a section of your code. It fires a JSON-RPC call over stdio to the ministr daemon spawned as a subprocess. No network hop. The whole conversation will stay on this one machine.',
+      'The agent — Claude Code, Cursor, Copilot, any MCP client — wants a section of your code. It issues a JSON-RPC call over stdio to the ministr daemon spawned as a subprocess. No network hop. The whole conversation will stay on this one machine.',
     activeLayers: ['agent'],
     activeMechs: [],
     mcp: 'down', query: 'idle', corpus: 'idle',
@@ -85,7 +85,7 @@ const STEPS: Step[] = [
     label: 'response delivered',
     caption: '← 420 tokens · 3 changed lines · shadow updated',
     detail:
-      'The delta flies back up the MCP pipe to the agent. In the same atomic step, ministr writes what it just delivered into Session Shadow, so the next turn’s lookup is a hit. The agent sees the content; ministr remembers what it sent.',
+      'The delta returns to the agent over MCP. In the same atomic step, ministr writes what it just delivered into Session Shadow, so the next turn’s lookup is a hit. The agent sees the content; ministr remembers what it sent.',
     activeLayers: ['daemon', 'agent'],
     activeMechs: ['delta', 'shadow'],
     mcp: 'up', query: 'idle', corpus: 'idle',
