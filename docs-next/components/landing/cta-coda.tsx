@@ -3,8 +3,7 @@ import { ArrowRight } from 'lucide-react';
 import { Reveal } from '@/components/landing/reveal';
 
 /**
- * CtaCoda — closing CTA. Single primary action; ambient from the
- * page-wide chromatic-flow shader.
+ * CtaCoda — closing CTA. Single primary action, plain surface.
  */
 export function CtaCoda() {
   return (

@@ -9,11 +9,9 @@ import { CopyButton } from '@/components/landing/copy-button';
 import { EASE_OUT } from '@/lib/motion';
 
 /**
- * Hero — headline + live asciinema recording of ministr + Claude Code,
- * layered over the page-wide chromatic-flow shader. The player wears
- * the same Shell as the old SessionTrace simulation (traffic-light
- * dots, ministr-tinted surface, glow shadow) — asciinema's own chrome
- * is suppressed via `app/global.css` overrides.
+ * Hero — headline + live asciinema recording of ministr + Claude Code.
+ * The player wears a plain panel (traffic-light dots, ministr-tinted
+ * surface) — asciinema's own chrome is suppressed via `app/global.css`.
  */
 export function Hero() {
   const reduced = useReducedMotion();
@@ -40,7 +38,7 @@ export function Hero() {
               {...stagger(1)}
               className="ministr-hero-mark mt-6 text-[clamp(3.25rem,9vw,6.75rem)] font-semibold leading-[0.9] text-fd-foreground"
             >
-              ministr<span className="ministr-gradient-text">.</span>
+              ministr<span className="text-[var(--color-ministr-500)]">.</span>
             </motion.h1>
 
             <motion.p

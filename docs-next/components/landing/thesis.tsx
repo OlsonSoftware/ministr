@@ -790,9 +790,8 @@ function TypewriterBlock({ text, reduced }: { text: string; reduced: boolean }) 
 }
 
 /**
- * Verdict — hero metric card that slides up when playback finishes.
- * Shows the multiplier in a huge number, with sublines for tokens
- * saved and dollar-per-week impact at 10k sessions.
+ * Verdict — summary card that slides up when playback finishes.
+ * Multiplier + token reduction percentage, nothing extrapolated.
  */
 function Verdict({
   blind,
@@ -810,17 +809,8 @@ function Verdict({
       initial={reduced ? false : { opacity: 0, y: 12, scale: 0.98 }}
       animate={reduced ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.55, ease: [0.2, 0.8, 0.2, 1] }}
-      className="relative mt-5 overflow-hidden rounded-lg border border-[color-mix(in_oklch,var(--color-ministr-400)_32%,transparent)] bg-gradient-to-br from-[color-mix(in_oklch,var(--color-ministr-500)_14%,transparent)] via-[color-mix(in_oklch,var(--color-violet-500)_10%,transparent)] to-[color-mix(in_oklch,var(--color-fuchsia-400)_10%,transparent)] px-4 py-4"
+      className="relative mt-5 overflow-hidden rounded-lg border border-[color-mix(in_oklch,var(--color-ministr-400)_28%,transparent)] bg-[color-mix(in_oklch,var(--color-ministr-500)_10%,transparent)] px-4 py-4"
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-px"
-        style={{
-          background:
-            'linear-gradient(90deg in oklch, transparent 0%, var(--color-ministr-500) 25%, var(--color-violet-500) 55%, var(--color-fuchsia-400) 80%, transparent 100%)',
-          opacity: 0.8,
-        }}
-      />
       <div className="flex items-baseline gap-3">
         <span className="ministr-eyebrow">Verdict</span>
         <span className="font-mono text-[clamp(2rem,4vw,3rem)] font-semibold leading-none tabular-nums text-fd-foreground">

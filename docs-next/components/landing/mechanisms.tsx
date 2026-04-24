@@ -301,7 +301,7 @@ function PrefetchVisual() {
               <span className="w-[90px] truncate text-fd-foreground">src/auth.rs{q.path}</span>
               <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_75%,transparent)]">
                 <div
-                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[var(--color-ministr-500)] to-[var(--color-violet-500)]"
+                  className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-ministr-500)]"
                   style={{ width: `${q.progress}%` }}
                 />
               </div>
@@ -333,7 +333,7 @@ function BudgetVisual() {
         </span>
       </div>
       <div className="relative mt-3 h-2 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_85%,transparent)]">
-        <div className="absolute inset-y-0 left-0 w-[84%] rounded-full bg-gradient-to-r from-[var(--color-ministr-500)] via-[var(--color-violet-500)] to-[var(--color-warning)]" />
+        <div className="absolute inset-y-0 left-0 w-[84%] rounded-full bg-[var(--color-warning)]" />
         <div
           aria-label="80% threshold"
           className="absolute inset-y-[-4px] left-[80%] w-px bg-[var(--color-warning)] opacity-90"
@@ -420,16 +420,16 @@ function HybridVisual() {
               <span className="uppercase tracking-wider text-[var(--ministr-accent-text)]">dense</span>
               <div className="h-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_75%,transparent)]">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-[var(--color-ministr-500)] to-[var(--color-violet-500)]"
+                  className="h-full rounded-full bg-[var(--color-ministr-500)]"
                   style={{ width: `${r.dense}%` }}
                 />
               </div>
               <span className="text-right tabular-nums text-fd-muted-foreground">.{r.dense}</span>
 
-              <span className="uppercase tracking-wider text-[var(--color-fuchsia-400)]">sparse</span>
+              <span className="uppercase tracking-wider text-fd-muted-foreground">sparse</span>
               <div className="h-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_75%,transparent)]">
                 <div
-                  className="h-full rounded-full bg-[var(--color-fuchsia-400)]"
+                  className="h-full rounded-full bg-[color-mix(in_oklch,var(--color-ministr-500)_60%,transparent)]"
                   style={{ width: `${r.sparse}%` }}
                 />
               </div>
@@ -438,7 +438,7 @@ function HybridVisual() {
               <span className="uppercase tracking-wider text-fd-foreground">rank</span>
               <div className="h-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_75%,transparent)]">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-[var(--color-ministr-400)] via-[var(--color-violet-400)] to-[var(--color-fuchsia-400)]"
+                  className="h-full rounded-full bg-[var(--color-ministr-600)]"
                   style={{ width: `${r.rank}%` }}
                 />
               </div>

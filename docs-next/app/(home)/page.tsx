@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import { Hero } from '@/components/landing/hero';
-import { ChromaticFlowClient } from '@/components/landing/chromatic-flow-client';
 import { StatsStrip } from '@/components/landing/stats-strip';
 import { Thesis } from '@/components/landing/thesis';
 import { Mechanisms } from '@/components/landing/mechanisms';
@@ -9,7 +8,6 @@ import { ArchitectureFlow } from '@/components/landing/architecture-flow';
 import { InstallTabs } from '@/components/landing/install-tabs';
 import { ToolList } from '@/components/landing/tool-list';
 import { CtaCoda } from '@/components/landing/cta-coda';
-import { NoiseOverlay } from '@/components/landing/noise-overlay';
 import { Reveal } from '@/components/landing/reveal';
 
 /**
@@ -32,10 +30,6 @@ export default function HomePage() {
       data-ministr-landing
       className="ministr-landing relative isolate flex flex-col items-stretch overflow-x-hidden pb-0"
     >
-      {/* Page-wide chromatic flow — subtle shader ambience, scroll-driven */}
-      <ChromaticFlowClient />
-      <NoiseOverlay />
-
       <Hero />
       <StatsStrip />
       <Thesis />
