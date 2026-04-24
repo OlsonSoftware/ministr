@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use tracing::{info, instrument};
+#[cfg(all(target_os = "windows", feature = "directml"))]
+use tracing::warn;
 
 use crate::error::IndexError;
 
@@ -346,6 +348,13 @@ const DEFAULT_BATCH_SIZE: usize = 128;
 pub struct FastEmbedder {
     model: Mutex<TextEmbedding>,
     dim: usize,
+    /// Execution provider that actually backed the loaded model.
+    ///
+    /// `"coreml"`, `"directml"`, or `"onnx-cpu"`. Exposed to callers via
+    /// [`FastEmbedder::active_provider`] so status reporting reflects what
+    /// really happened — a DirectML request that silently fell back to CPU
+    /// looks identical to a plain CPU run otherwise.
+    active_provider: &'static str,
 }
 
 impl FastEmbedder {
@@ -371,14 +380,27 @@ impl FastEmbedder {
     #[instrument(skip_all, fields(model = model_name))]
     #[must_use = "constructors return a new value"]
     pub fn new(model_name: &str, cache_dir: Option<&str>) -> Result<Self, IndexError> {
-        let embedding_model = parse_model_name(model_name)?;
-        let dim = model_dimension(&embedding_model);
+        let dim = model_dimension(&parse_model_name(model_name)?);
 
-        let mut options = InitOptions::new(embedding_model).with_show_download_progress(true);
+        // Rebuilt per try_new attempt — InitOptions is consumed by try_new,
+        // and the parsed model handle isn't Clone on all fastembed versions,
+        // so we re-parse (cheap — just string matching) for each attempt.
+        let make_base_options = || -> Result<InitOptions, IndexError> {
+            let model = parse_model_name(model_name)?;
+            let mut options = InitOptions::new(model).with_show_download_progress(true);
+            if let Some(dir) = cache_dir {
+                options = options.with_cache_dir(PathBuf::from(dir));
+            }
+            Ok(options)
+        };
 
-        if let Some(dir) = cache_dir {
-            options = options.with_cache_dir(PathBuf::from(dir));
-        }
+        // `mut` is load-bearing on macOS (CoreML block reassigns) and on
+        // Windows+directml (DirectML block reassigns); unused on plain
+        // Linux / feature-less Windows, hence the targeted allow.
+        #[allow(unused_mut)]
+        let mut active_provider: &'static str = "onnx-cpu";
+        #[allow(unused_mut)]
+        let mut options = make_base_options()?;
 
         // CoreML on macOS: enabled by default with CPUAndGPU compute units.
         //
@@ -388,6 +410,9 @@ impl FastEmbedder {
         //
         // Override via MINISTR_COMPUTE_UNITS: "cpu_and_gpu" (default), "cpu_only",
         // "cpu_and_ane", or "all". Set MINISTR_COREML=0 to disable CoreML entirely.
+        //
+        // No graceful fallback on macOS — a CoreML init failure bubbles out
+        // so users notice (rather than silently getting CPU speeds).
         #[cfg(target_os = "macos")]
         {
             let coreml_disabled =
@@ -421,20 +446,81 @@ impl FastEmbedder {
                 }
 
                 options = options.with_execution_providers(vec![coreml.build()]);
+                active_provider = "coreml";
                 info!(?compute_units, "CoreML execution provider enabled");
             }
         }
 
-        let model = TextEmbedding::try_new(options).map_err(|e| IndexError::EmbeddingFailed {
-            reason: format!("failed to initialize model '{model_name}': {e}"),
-        })?;
+        // DirectML on Windows: opt-in via the `directml` cargo feature so
+        // default builds stay CPU-only (no DirectML.dll dependency).
+        //
+        // Works on any DirectX 12 GPU (NVIDIA / AMD / Intel / Qualcomm).
+        // As of 2026 DirectML is in "sustained engineering" — still shipped
+        // and supported, but Microsoft's forward-looking recommendation
+        // for Windows 11 24H2+ is WinML, which has no Rust/ort path today.
+        //
+        // Unlike CoreML on macOS, we gracefully fall back to CPU ONNX on
+        // DirectML init failure (missing DLL on a minimal Windows install,
+        // driver mismatch, unusual GPU configurations). The warning log
+        // surfaces the reason so the regression is visible.
+        //
+        // Disable at runtime with MINISTR_DEVICE=cpu.
+        #[cfg(all(target_os = "windows", feature = "directml"))]
+        {
+            let cpu_forced = std::env::var("MINISTR_DEVICE")
+                .is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
+            if cpu_forced {
+                info!("DirectML disabled (MINISTR_DEVICE=cpu), using CPU execution provider");
+            } else {
+                options =
+                    options.with_execution_providers(vec![ort::ep::DirectML::default().build()]);
+                active_provider = "directml";
+                info!("DirectML execution provider enabled");
+            }
+        }
 
-        info!(model = model_name, dim, "embedding model loaded");
+        let model = match TextEmbedding::try_new(options) {
+            Ok(m) => m,
+            #[cfg(all(target_os = "windows", feature = "directml"))]
+            Err(e) if active_provider == "directml" => {
+                warn!(
+                    error = %e,
+                    "DirectML init failed — falling back to CPU ONNX. \
+                     This is usually a driver / DirectML.dll issue; try \
+                     updating your GPU driver, or set MINISTR_DEVICE=cpu \
+                     to silence this warning."
+                );
+                active_provider = "onnx-cpu";
+                TextEmbedding::try_new(make_base_options()?).map_err(|fb| {
+                    IndexError::EmbeddingFailed {
+                        reason: format!(
+                            "CPU fallback also failed for '{model_name}' \
+                             (DirectML error: {e}; CPU error: {fb})"
+                        ),
+                    }
+                })?
+            }
+            Err(e) => {
+                return Err(IndexError::EmbeddingFailed {
+                    reason: format!("failed to initialize model '{model_name}': {e}"),
+                });
+            }
+        };
+
+        info!(model = model_name, dim, provider = active_provider, "embedding model loaded");
 
         Ok(Self {
             model: Mutex::new(model),
             dim,
+            active_provider,
         })
+    }
+
+    /// The execution provider that actually backed the loaded model
+    /// (`"coreml"`, `"directml"`, or `"onnx-cpu"`).
+    #[must_use]
+    pub fn active_provider(&self) -> &'static str {
+        self.active_provider
     }
 
     /// Create a `FastEmbedder` with a cache directory under the ministr data directory.

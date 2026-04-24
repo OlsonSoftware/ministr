@@ -70,6 +70,11 @@ tokenizers = { workspace = true, optional = true }
 [features]
 default = ["lang-all"]
 candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub", "dep:tokenizers"]
+# DirectML GPU acceleration for the ONNX/FastEmbed backend on Windows.
+# No-op on other platforms (the activation code is `#[cfg(target_os = "windows")]`-gated
+# in fastembed_impl.rs), so it's safe to leave enabled in a portable workspace
+# build — the feature just forwards to fastembed's directml capability.
+directml = ["fastembed/directml"]
 lang-all = [
     "lang-python",
     "lang-javascript",

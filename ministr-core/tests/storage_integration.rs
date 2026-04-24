@@ -282,6 +282,7 @@ async fn file_hash_crud() {
         path: "docs/api.md".into(),
         content_hash: "abc123".into(),
         mtime_ns: Some(1_700_000_000_000_000_000),
+        extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
     };
     storage.upsert_file_hash(&record).await.unwrap();
 
@@ -291,12 +292,17 @@ async fn file_hash_crud() {
     let retrieved = retrieved.unwrap();
     assert_eq!(retrieved.content_hash, "abc123");
     assert_eq!(retrieved.mtime_ns, Some(1_700_000_000_000_000_000));
+    assert_eq!(
+        retrieved.extractor_version,
+        ministr_core::ingestion::EXTRACTOR_VERSION
+    );
 
     // Update (upsert)
     let updated = FileHashRecord {
         path: "docs/api.md".into(),
         content_hash: "def456".into(),
         mtime_ns: Some(1_700_000_001_000_000_000),
+        extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
     };
     storage.upsert_file_hash(&updated).await.unwrap();
     let retrieved = storage.get_file_hash("docs/api.md").await.unwrap().unwrap();
@@ -329,6 +335,7 @@ async fn file_hash_mtime_none_roundtrip() {
         path: "src/main.rs".into(),
         content_hash: "aaa".into(),
         mtime_ns: None,
+        extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
     };
     storage.upsert_file_hash(&record).await.unwrap();
 
@@ -348,6 +355,7 @@ async fn list_file_hashes_returns_all() {
                 path: path.into(),
                 content_hash: format!("hash-{path}"),
                 mtime_ns: mtime,
+                extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
             })
             .await
             .unwrap();
@@ -359,6 +367,65 @@ async fn list_file_hashes_returns_all() {
     assert_eq!(all[0].mtime_ns, Some(100));
     assert_eq!(all[2].path, "c.rs");
     assert_eq!(all[2].mtime_ns, None);
+}
+
+/// Regression guard for the auto-heal path.
+///
+/// When `EXTRACTOR_VERSION` bumps, stale rows compare less-than the
+/// current constant and the re-ingest skip-logic must fall through so
+/// the file gets re-parsed with the new extractor. The DB-layer
+/// contract for that is: `get_file_hash` returns the stored
+/// `extractor_version` unchanged; a row written with V=0 is observable
+/// as V=0 on read, distinguishable from one written with the current
+/// version.
+#[tokio::test]
+async fn file_hash_extractor_version_round_trips() {
+    use ministr_core::storage::traits::FileHashRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Simulate a stale-version row (e.g. from a pre-upgrade ingest).
+    storage
+        .upsert_file_hash(&FileHashRecord {
+            path: "stale.rs".into(),
+            content_hash: "aaa".into(),
+            mtime_ns: Some(100),
+            extractor_version: 0,
+        })
+        .await
+        .unwrap();
+
+    // And a current-version row.
+    storage
+        .upsert_file_hash(&FileHashRecord {
+            path: "fresh.rs".into(),
+            content_hash: "bbb".into(),
+            mtime_ns: Some(200),
+            extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
+        })
+        .await
+        .unwrap();
+
+    let stale = storage
+        .get_file_hash("stale.rs")
+        .await
+        .unwrap()
+        .expect("stale row should exist");
+    let fresh = storage
+        .get_file_hash("fresh.rs")
+        .await
+        .unwrap()
+        .expect("fresh row should exist");
+
+    assert_eq!(stale.extractor_version, 0);
+    assert_eq!(
+        fresh.extractor_version,
+        ministr_core::ingestion::EXTRACTOR_VERSION
+    );
+    // Compile-time guard: EXTRACTOR_VERSION must stay strictly above 0
+    // so pre-migration rows (stored with the DEFAULT 0) always compare
+    // as stale and trigger re-parsing on first post-upgrade ingest.
+    const { assert!(ministr_core::ingestion::EXTRACTOR_VERSION > 0) };
 }
 
 #[tokio::test]
@@ -424,7 +491,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 18);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 19);
 }
 
 #[tokio::test]

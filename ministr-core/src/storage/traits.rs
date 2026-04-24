@@ -130,6 +130,13 @@ pub struct FileHashRecord {
     pub content_hash: String,
     /// File modification time in nanoseconds since epoch (for fast mtime pre-check).
     pub mtime_ns: Option<i64>,
+    /// Version of the extractor pipeline that produced the cached refs /
+    /// symbols for this file. Compared against
+    /// [`crate::ingestion::EXTRACTOR_VERSION`] on re-ingest — mismatches
+    /// force re-parsing even when `content_hash` is unchanged, so the
+    /// index auto-heals after extractor-logic changes. Pre-versioning
+    /// rows (from migration V1–V18) read back as `0`.
+    pub extractor_version: i64,
 }
 
 /// A web cache record tracking fetch metadata for staleness detection.

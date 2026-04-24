@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use ministr_api::IpcAddr;
 use ministr_api::client::DaemonClient;
 use ministr_api::corpus::{CorpusInfo, IndexingStatus};
 use ministr_core::embedding::Embedder;
@@ -54,9 +55,13 @@ impl Embedder for MockEmbedder {
     }
 }
 
-/// A running test daemon on a temporary Unix domain socket.
+/// A running test daemon bound to a per-test IPC endpoint.
+///
+/// On Unix the endpoint is a UDS inside the test's tempdir. On Windows
+/// it's a named pipe whose name embeds the process id and a counter so
+/// parallel tests don't collide.
 pub struct TestDaemon {
-    pub socket_path: PathBuf,
+    pub addr: IpcAddr,
     pub corpus_id: String,
     _tmp_dir: tempfile::TempDir,
 }
@@ -65,7 +70,7 @@ impl TestDaemon {
     /// Start a daemon with a pre-populated test corpus.
     pub async fn start() -> Self {
         let tmp_dir = tempfile::TempDir::new().unwrap();
-        let socket_path = tmp_dir.path().join("test.sock");
+        let addr = test_ipc_addr(&tmp_dir);
         let db_path = tmp_dir.path().join("content.db");
 
         let dim = 16;
@@ -101,7 +106,7 @@ impl TestDaemon {
 
         let state = AppState::from_arc(registry);
 
-        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+        let listener = ministr_daemon::transport::Listener::bind(&addr).unwrap();
         tokio::spawn(async move {
             ministr_daemon::daemon::serve(state, listener)
                 .await
@@ -112,7 +117,7 @@ impl TestDaemon {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         Self {
-            socket_path,
+            addr,
             corpus_id,
             _tmp_dir: tmp_dir,
         }
@@ -120,7 +125,25 @@ impl TestDaemon {
 
     /// Create a new `DaemonClient` connected to this test daemon.
     pub fn client(&self) -> DaemonClient {
-        DaemonClient::with_socket(self.socket_path.clone())
+        DaemonClient::with_addr(self.addr.clone())
+    }
+}
+
+/// Build a per-test IPC endpoint. Unix uses a UDS in the tempdir; Windows
+/// uses a named pipe whose name combines pid + a process-local counter so
+/// parallel tests in the same binary don't collide.
+fn test_ipc_addr(tmp_dir: &tempfile::TempDir) -> IpcAddr {
+    #[cfg(unix)]
+    {
+        IpcAddr::Unix(tmp_dir.path().join("test.sock"))
+    }
+    #[cfg(windows)]
+    {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let _ = tmp_dir;
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        IpcAddr::NamedPipe(format!(r"\\.\pipe\ministr-test-{}-{}", std::process::id(), id))
     }
 }
 

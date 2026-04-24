@@ -14,6 +14,10 @@ categories = ["development-tools", "caching"]
 [lints]
 workspace = true
 
+[features]
+# Opt-in DirectML GPU acceleration for Windows (no-op elsewhere).
+directml = ["ministr-core/directml"]
+
 [dependencies]
 # ministr crates
 ministr-core = { workspace = true }

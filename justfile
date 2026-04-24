@@ -1,5 +1,12 @@
 # ministr — task runner recipes
 
+# On Windows, use cmd.exe for recipe bodies that don't carry their own
+# shebang. The just default is `sh`, which fails on Windows boxes without
+# Git Bash / MSYS installed ("could not find the shell: program not found").
+# Unix/macOS recipes are unaffected — `set windows-shell` only applies on
+# Windows, and shebang recipes bypass this entirely on every platform.
+set windows-shell := ["cmd.exe", "/c"]
+
 # Build all workspace crates
 build:
     cargo build --workspace
@@ -117,6 +124,7 @@ pkg-backgrounds:
     ./installer/generate-backgrounds.sh
 
 # Clean rebuild + install CLI + Tauri app + restart daemon
+[unix]
 reinstall:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -165,6 +173,11 @@ reinstall:
     echo "==> Launching tray app..."
     open /Applications/ministr.app
     echo "==> Done. Restart your Claude Code session to pick up the new binary."
+
+# Clean rebuild + install CLI + Tauri app + launch tray (Windows)
+[windows]
+reinstall:
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\reinstall.ps1
 
 # Run all quality gates: format check + build + test + lint
 validate: fmt-check lint test

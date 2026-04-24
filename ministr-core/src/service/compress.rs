@@ -18,11 +18,18 @@ use super::{CompressedItem, QueryError, QueryService};
 impl QueryService {
     /// Compress content items into shorter summaries for eviction.
     ///
-    /// Uses the given [`CompressStrategy`] for section text. Falls back to
-    /// symbol stub compression for content IDs starting with `sym-`.
+    /// Accepts three content-ID shapes — the same ones [`QueryService`]
+    /// hands back to callers via survey / extract / symbols:
     ///
-    /// Content IDs that don't match any section or symbol are silently skipped.
-    /// Sections too small to compress are also skipped.
+    /// - Section IDs (e.g. `…/foo.rs#mod::Bar`) → compressed with `strategy`.
+    /// - Claim IDs (section with a `:cN` suffix) → transparently rewritten to
+    ///   the parent section ID and compressed. The returned
+    ///   [`CompressedItem::original_id`] preserves the caller's claim ID so
+    ///   input ↔ output correlation still works.
+    /// - Symbol IDs (`sym-…`) → compressed via a symbol-stub summary.
+    ///
+    /// Content IDs that don't match any of the above are silently skipped,
+    /// as are sections whose compressed form doesn't shrink.
     ///
     /// # Errors
     ///
@@ -36,7 +43,17 @@ impl QueryService {
         let mut results = Vec::with_capacity(content_ids.len());
 
         for id in content_ids {
-            if let Some(item) = self.try_compress_section_with(id, strategy).await? {
+            let section_lookup_id = strip_claim_suffix(id);
+            if let Some(mut item) = self
+                .try_compress_section_with(section_lookup_id, strategy)
+                .await?
+            {
+                // Preserve the caller's original ID (e.g. a claim ID) so
+                // they can correlate this result with the ID they asked
+                // about, even when we compressed the parent section.
+                if section_lookup_id != id.as_str() {
+                    item.original_id.clone_from(id);
+                }
                 results.push(item);
             } else if let Some(item) = self.try_compress_symbol(id).await? {
                 results.push(item);
@@ -251,7 +268,11 @@ impl QueryService {
         let mut results = Vec::with_capacity(content_ids.len());
 
         for id in content_ids {
-            let sid = SectionId(id.clone());
+            // Accept both section and claim IDs: claim IDs point at a
+            // concrete sub-range of text, but compression operates on the
+            // parent section. Round-trip the caller's ID unchanged.
+            let section_lookup_id = strip_claim_suffix(id);
+            let sid = SectionId(section_lookup_id.to_string());
             let Some(section) = self.storage.get_section(&sid).await? else {
                 // Fall back to symbol compression for non-section content IDs
                 if let Some(item) = self.try_compress_symbol(id).await? {
@@ -292,5 +313,65 @@ impl QueryService {
         }
 
         Ok(results)
+    }
+}
+
+/// Strip a trailing `:c<digits>` claim suffix from a content ID, returning
+/// the parent section ID. Pass-through for IDs that don't have the suffix
+/// (so this is safe to call unconditionally on any caller-supplied ID).
+///
+/// Claim IDs are emitted by `ministr_survey` and `ministr_extract`; the
+/// compression pipeline operates on sections, so we need to resolve claims
+/// to their parent before the section-store lookup.
+fn strip_claim_suffix(id: &str) -> &str {
+    let Some(colon_idx) = id.rfind(":c") else {
+        return id;
+    };
+    let suffix = &id[colon_idx + 2..];
+    if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) {
+        &id[..colon_idx]
+    } else {
+        id
+    }
+}
+
+#[cfg(test)]
+mod claim_suffix_tests {
+    use super::strip_claim_suffix;
+
+    #[test]
+    fn strips_numeric_claim_suffix() {
+        assert_eq!(
+            strip_claim_suffix("D:\\foo\\bar.rs#mod::Foo:c0"),
+            "D:\\foo\\bar.rs#mod::Foo"
+        );
+        assert_eq!(
+            strip_claim_suffix("D:\\foo\\bar.rs#mod::Foo:c142"),
+            "D:\\foo\\bar.rs#mod::Foo"
+        );
+    }
+
+    #[test]
+    fn passes_through_plain_section_ids() {
+        assert_eq!(
+            strip_claim_suffix("D:\\foo\\bar.rs#mod::Foo"),
+            "D:\\foo\\bar.rs#mod::Foo"
+        );
+    }
+
+    #[test]
+    fn passes_through_symbol_ids() {
+        // Symbol IDs can contain "::" but never end in ":c<digits>"
+        assert_eq!(
+            strip_claim_suffix("sym-D:\\foo\\bar.rs::mod::Foo::new"),
+            "sym-D:\\foo\\bar.rs::mod::Foo::new"
+        );
+    }
+
+    #[test]
+    fn ignores_non_numeric_colon_c_suffix() {
+        // ":c" followed by a non-digit string is NOT a claim suffix
+        assert_eq!(strip_claim_suffix("something:cabcd"), "something:cabcd");
+        assert_eq!(strip_claim_suffix("foo:c"), "foo:c");
     }
 }

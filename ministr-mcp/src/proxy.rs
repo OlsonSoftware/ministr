@@ -168,9 +168,14 @@ impl ProxyServer {
             return Ok(());
         }
 
-        // Stale socket recovery: if file exists but daemon is dead, clean up.
-        if self.client.is_socket_present() {
-            warn!("daemon socket exists but is unresponsive — cleaning stale files");
+        // Stale endpoint recovery: if the endpoint is present but the
+        // daemon isn't responding, clean up whatever needs cleaning.
+        // Only Unix leaves a socket-file artifact — Windows named pipes
+        // vanish with the owning process, so the `remove_file` path
+        // doesn't apply there. PID file cleanup runs on both.
+        if self.client.is_endpoint_present() {
+            warn!("daemon endpoint is present but unresponsive — cleaning stale files");
+            #[cfg(unix)]
             let _ = std::fs::remove_file(ministr_api::daemon_socket_path());
             let _ = std::fs::remove_file(ministr_api::daemon_pid_path());
         }
@@ -195,10 +200,10 @@ impl ProxyServer {
                 )
             })?;
 
-        // Poll for the socket to appear (fast stat check).
+        // Poll for the endpoint to appear (fast stat / pipe-metadata check).
         for _ in 0..20 {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            if self.client.is_socket_present() {
+            if self.client.is_endpoint_present() {
                 break;
             }
         }

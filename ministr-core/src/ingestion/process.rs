@@ -128,13 +128,16 @@ where
         }
     }
 
-    // 9. Update file hash record
+    // 9. Update file hash record. Stamp the current extractor version
+    // so the auto-heal skip-logic in `parse_and_store_file` knows this
+    // row was produced by fresh code and is safe to short-circuit.
     if let (Some(hash_path), Some(content_hash)) = (opts.hash_path, opts.content_hash) {
         storage
             .upsert_file_hash(&FileHashRecord {
                 path: hash_path.to_string(),
                 content_hash,
                 mtime_ns: opts.mtime_ns,
+                extractor_version: super::EXTRACTOR_VERSION,
             })
             .await
             .map_err(IngestionError::from)?;

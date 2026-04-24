@@ -829,26 +829,40 @@ mod tests {
         let count = embed_document(&doc, &embedder, &index).unwrap();
 
         assert_eq!(count, 4);
-        assert_eq!(index.len(), 4);
-
-        let query = embedder
-            .embed(&["auth"])
-            .unwrap()
-            .into_iter()
-            .next()
-            .unwrap();
-        let results = index.search_knn(&query, 10).unwrap();
-        let result_ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
-
-        assert!(
-            results.len() >= 3,
-            "expected at least 3 of 4 vectors from KNN search, got {}",
-            results.len()
-        );
-        assert!(result_ids.contains(&"doc-summary::doc1"));
-        assert!(result_ids.contains(&"sec-summary::test.md#s1"));
-        assert!(result_ids.contains(&"section::test.md#s1"));
         assert_eq!(index.len(), 4, "all 4 vectors should be in the index");
+
+        // Verify membership by querying each expected ID with the
+        // exact text that was embedded to produce it. HNSW's
+        // approximate k-NN is unreliable at enumerating all entries in
+        // a 4-node graph under parallel-test CPU load, but it IS
+        // reliable at returning an exact match as top-1 — the query
+        // vector is equal to the stored vector, distance ≈ 0, so it
+        // always wins over any other node's distance.
+        let cases = [
+            ("doc-summary::doc1", "Document about authentication."),
+            ("sec-summary::test.md#s1", "Auth system overview."),
+            (
+                "section::test.md#s1",
+                "The authentication system uses JWT tokens.",
+            ),
+        ];
+        for (expected_id, text) in cases {
+            let q = embedder
+                .embed(&[text])
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap();
+            let results = index.search_knn(&q, 4).unwrap();
+            assert!(
+                !results.is_empty(),
+                "search for {expected_id} returned nothing"
+            );
+            assert_eq!(
+                results[0].id, expected_id,
+                "top-1 for '{text}' should be {expected_id}, got {results:?}"
+            );
+        }
     }
 
     // --- Integration test: coalescing reduces section count ---

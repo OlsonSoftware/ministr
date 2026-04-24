@@ -558,7 +558,17 @@ impl IngestionPipeline {
             .await
             .map_err(IngestionError::from)?;
 
-        if let Some(ref existing) = existing_hash
+        // Both skip paths below require the cached record to have been
+        // produced by the CURRENT extractor version. When the extractor
+        // logic changes (bumping `EXTRACTOR_VERSION`), the stored row
+        // compares < current, so we fall through and re-parse — the
+        // index auto-heals without a manual corpus wipe.
+        let extractor_fresh = existing_hash
+            .as_ref()
+            .is_some_and(|e| e.extractor_version >= super::EXTRACTOR_VERSION);
+
+        if extractor_fresh
+            && let Some(ref existing) = existing_hash
             && let (Some(stored_mtime), Some(current_mtime)) = (existing.mtime_ns, file_mtime_ns)
             && stored_mtime == current_mtime
         {
@@ -578,7 +588,8 @@ impl IngestionPipeline {
 
         let hash = compute_sha256(&content_str);
 
-        if let Some(ref existing) = existing_hash
+        if extractor_fresh
+            && let Some(ref existing) = existing_hash
             && existing.content_hash == hash
         {
             storage
@@ -586,6 +597,7 @@ impl IngestionPipeline {
                     path: relative_path.to_string(),
                     content_hash: hash,
                     mtime_ns: file_mtime_ns,
+                    extractor_version: super::EXTRACTOR_VERSION,
                 })
                 .await
                 .map_err(IngestionError::from)?;
@@ -1547,7 +1559,17 @@ impl IngestionPipeline {
             .await
             .map_err(IngestionError::from)?;
 
-        if let Some(ref existing) = existing_hash
+        // Both skip paths below require the cached record to have been
+        // produced by the CURRENT extractor version. When the extractor
+        // logic changes (bumping `EXTRACTOR_VERSION`), the stored row
+        // compares < current, so we fall through and re-parse — the
+        // index auto-heals without a manual corpus wipe.
+        let extractor_fresh = existing_hash
+            .as_ref()
+            .is_some_and(|e| e.extractor_version >= super::EXTRACTOR_VERSION);
+
+        if extractor_fresh
+            && let Some(ref existing) = existing_hash
             && let (Some(stored_mtime), Some(current_mtime)) = (existing.mtime_ns, file_mtime_ns)
             && stored_mtime == current_mtime
         {
@@ -1567,7 +1589,8 @@ impl IngestionPipeline {
 
         let hash = compute_sha256(&content_str);
 
-        if let Some(ref existing) = existing_hash
+        if extractor_fresh
+            && let Some(ref existing) = existing_hash
             && existing.content_hash == hash
         {
             storage
@@ -1575,6 +1598,7 @@ impl IngestionPipeline {
                     path: relative_path.to_string(),
                     content_hash: hash,
                     mtime_ns: file_mtime_ns,
+                    extractor_version: super::EXTRACTOR_VERSION,
                 })
                 .await
                 .map_err(IngestionError::from)?;

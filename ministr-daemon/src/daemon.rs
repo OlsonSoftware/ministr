@@ -1,7 +1,8 @@
-//! HTTP daemon on a Unix domain socket.
+//! HTTP daemon on the platform-native IPC transport.
 //!
-//! Exposes the ministr daemon API via axum at `~/.ministr/ministrd.sock`.
-//! All handlers delegate to [`QueryService`] via the [`CorpusRegistry`].
+//! Exposes the ministr daemon API via axum over a Unix domain socket on
+//! macOS/Linux and a named pipe on Windows. All handlers delegate to
+//! [`QueryService`] via the [`CorpusRegistry`].
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -14,8 +15,10 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_core::Stream;
-use tokio::net::UnixListener;
+use ministr_api::IpcAddr;
 use tracing::info;
+
+use crate::transport::Listener;
 
 use ministr_api::ApiError;
 use ministr_api::activity::ActivityResponse;
@@ -131,39 +134,48 @@ async fn recent_coherence_events(
     })
 }
 
-/// Start the daemon listener on the Unix domain socket.
+/// Start the daemon listener on the platform-native IPC endpoint.
 ///
-/// Writes a PID file for process liveness detection and removes stale
-/// sockets from crashed predecessors. On graceful shutdown, cleans up
-/// both the socket and PID file.
+/// Writes a PID file for process liveness detection and clears stale
+/// endpoint artifacts from a crashed predecessor (Unix only — Windows
+/// named pipes are reference-counted by the kernel and vanish with the
+/// owning process). On graceful shutdown, cleans up both the endpoint
+/// and PID file.
 ///
 /// # Errors
 ///
-/// Returns an error if the socket cannot be bound or another daemon is running.
+/// Returns an error if the endpoint cannot be bound or another daemon
+/// is running.
 pub async fn start(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
-    let socket_path = ministr_api::daemon_socket_path();
+    let addr = ministr_api::daemon_ipc_addr();
+    let data_dir = ministr_api::daemon_data_dir();
     let pid_path = ministr_api::daemon_pid_path();
 
-    if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    std::fs::create_dir_all(&data_dir)?;
 
-    // Startup resilience: detect stale socket from a crashed predecessor.
-    if socket_path.exists() {
-        if is_daemon_process_alive(&pid_path) {
+    // Startup resilience: on Unix, a leftover socket file from a crashed
+    // predecessor would make bind() fail — probe liveness and remove.
+    // On Windows, named pipes don't leave stale artifacts (they're
+    // refcounted kernel objects), and `first_pipe_instance(true)` in
+    // `Listener::bind` turns a conflicting owner into a clear error.
+    #[cfg(unix)]
+    if let IpcAddr::Unix(path) = &addr
+        && path.exists()
+    {
+        if is_daemon_alive(&addr, &pid_path).await {
             return Err("another ministr daemon is already running".into());
         }
         tracing::warn!("removing stale socket from crashed daemon");
-        let _ = std::fs::remove_file(&socket_path);
+        let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(&pid_path);
     }
 
-    let listener = UnixListener::bind(&socket_path)?;
+    let listener = Listener::bind(&addr)?;
 
     // Write PID file for liveness detection by proxies and future launches.
     let pid = std::process::id();
     std::fs::write(&pid_path, pid.to_string())?;
-    info!(path = %socket_path.display(), pid, "daemon listening on UDS");
+    info!(endpoint = %addr, pid, "daemon listening");
 
     // Graceful shutdown on ctrl-c or SIGTERM.
     let shutdown = shutdown_signal();
@@ -172,7 +184,7 @@ pub async fn start(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     info!("daemon shutting down gracefully");
-    let _ = std::fs::remove_file(&socket_path);
+    cleanup_endpoint(&addr);
     let _ = std::fs::remove_file(&pid_path);
     Ok(())
 }
@@ -187,24 +199,35 @@ pub async fn start(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
 /// Returns an error if the axum server fails.
 pub async fn serve(
     state: AppState,
-    listener: UnixListener,
+    listener: Listener,
 ) -> Result<(), Box<dyn std::error::Error>> {
     axum::serve(listener, router(state)).await?;
     Ok(())
 }
 
-/// Check if a daemon is actually listening on the socket.
+/// Remove any persistent artifact left behind by the endpoint.
 ///
-/// Attempts a TCP-level connect to the UDS. If it succeeds, a live daemon
-/// owns the socket. This avoids `unsafe` process checks via `kill(pid, 0)`.
-fn is_daemon_process_alive(pid_path: &std::path::Path) -> bool {
-    // If no PID file exists, the socket is certainly stale.
+/// Unix: delete the socket file. Windows: named pipes are torn down
+/// automatically when the last handle is closed, so this is a no-op.
+fn cleanup_endpoint(addr: &IpcAddr) {
+    if let IpcAddr::Unix(path) = addr {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Check whether a live daemon is listening at the endpoint.
+///
+/// Used during startup to distinguish "socket file from crashed process"
+/// from "another daemon is running". On Unix we require a PID file so
+/// we don't mistake a dangling client-side socket for a real daemon.
+/// On Windows this path isn't exercised by [`start`] because
+/// `first_pipe_instance(true)` already handles the conflict.
+#[cfg(unix)]
+async fn is_daemon_alive(addr: &IpcAddr, pid_path: &std::path::Path) -> bool {
     if !pid_path.exists() {
         return false;
     }
-    // Try connecting to the socket — if it succeeds, a daemon is alive.
-    let socket_path = ministr_api::daemon_socket_path();
-    std::os::unix::net::UnixStream::connect(socket_path).is_ok()
+    ministr_api::transport::connect(addr).await.is_ok()
 }
 
 /// Wait for ctrl-c or SIGTERM (Unix) to initiate graceful shutdown.

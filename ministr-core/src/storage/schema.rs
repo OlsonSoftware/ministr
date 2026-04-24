@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 18;
+pub const CURRENT_SCHEMA_VERSION: usize = 19;
 
 /// Returns the migration set for the content database.
 ///
@@ -333,6 +333,18 @@ fn migrations() -> Migrations<'static> {
             ALTER TABLE session_deliveries ADD COLUMN compressed_summary TEXT;
             ALTER TABLE sessions ADD COLUMN metrics_json TEXT;
             ALTER TABLE sessions ADD COLUMN recent_queries_json TEXT;
+            ",
+        ),
+        // V19: Auto-heal for extractor version drift. `file_hashes` now
+        // carries the extractor version that produced its cached refs /
+        // symbols, compared against `ingestion::EXTRACTOR_VERSION` on
+        // re-ingest. Rows written before this migration get 0, which is
+        // below any real version, so they're naturally re-parsed on the
+        // first run after upgrade — no manual corpus wipe needed when
+        // the symbol-ref extractor logic changes.
+        M::up(
+            "
+            ALTER TABLE file_hashes ADD COLUMN extractor_version INTEGER NOT NULL DEFAULT 0;
             ",
         ),
     ])

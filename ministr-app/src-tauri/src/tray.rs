@@ -87,6 +87,10 @@ pub fn handle_event(app: &AppHandle, event_id: &str) {
             });
         }
         "quit" => {
+            // Best-effort cleanup — the socket file only exists on Unix;
+            // Windows named pipes are torn down automatically when the
+            // owning process exits.
+            #[cfg(unix)]
             let _ = std::fs::remove_file(ministr_api::daemon_socket_path());
             let _ = std::fs::remove_file(ministr_api::daemon_pid_path());
             app.exit(0);

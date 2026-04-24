@@ -1,13 +1,13 @@
-//! HTTP client for communicating with the ministr daemon over Unix domain socket.
+//! HTTP client for communicating with the ministr daemon over its native
+//! IPC transport (Unix domain socket on macOS/Linux, named pipe on Windows).
 //!
 //! [`DaemonClient`] provides typed methods for all daemon API endpoints.
 //! Used by `ministr-mcp` (MCP proxy) and `ministr-cli` (CLI tool).
 
-use std::path::PathBuf;
-
 use serde::de::DeserializeOwned;
 
-use crate::ApiError;
+use crate::transport;
+use crate::{ApiError, IpcAddr};
 use crate::activity::ActivityResponse;
 use crate::coherence::CoherenceEventsResponse;
 use crate::corpus::{
@@ -86,36 +86,39 @@ const CONNECT_RETRY_BACKOFFS: [std::time::Duration; 3] = [
     std::time::Duration::from_secs(1),
 ];
 
-/// HTTP client for the ministr daemon API over Unix domain socket.
+/// HTTP client for the ministr daemon API over its native IPC transport.
 ///
-/// All methods are async and return typed responses. The client holds
-/// a connection to `~/.ministr/ministrd.sock`.
+/// All methods are async and return typed responses. The client is bound
+/// to a single [`IpcAddr`] (the default platform endpoint from
+/// [`crate::daemon_ipc_addr`] unless overridden).
 pub struct DaemonClient {
-    socket_path: PathBuf,
+    addr: IpcAddr,
 }
 
 impl DaemonClient {
-    /// Create a new client connecting to the default daemon socket.
+    /// Create a new client connecting to the default platform daemon endpoint.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            socket_path: crate::daemon_socket_path(),
+            addr: crate::daemon_ipc_addr(),
         }
     }
 
-    /// Create a client connecting to a specific socket path.
+    /// Create a client bound to a specific IPC endpoint. Primarily used by
+    /// tests that spin up an in-process daemon on a temp endpoint.
     #[must_use]
-    pub fn with_socket(path: PathBuf) -> Self {
-        Self { socket_path: path }
+    pub fn with_addr(addr: IpcAddr) -> Self {
+        Self { addr }
     }
 
-    /// Check if the daemon socket file exists (fast, no I/O beyond stat).
+    /// Advisory check for whether the endpoint is currently reachable
+    /// (fast stat on Unix, pipe-metadata lookup on Windows).
     ///
     /// Use this for polling during startup. For a definitive health check,
     /// call [`is_healthy`](Self::is_healthy) instead.
     #[must_use]
-    pub fn is_socket_present(&self) -> bool {
-        self.socket_path.exists()
+    pub fn is_endpoint_present(&self) -> bool {
+        self.addr.exists()
     }
 
     /// Check if the daemon is actually running and responding.
@@ -123,7 +126,7 @@ impl DaemonClient {
     /// Attempts a real HTTP request to `/api/v1/status`. Returns `true`
     /// only if the daemon responds successfully within 2 seconds.
     pub async fn is_healthy(&self) -> bool {
-        if !self.socket_path.exists() {
+        if !self.addr.exists() {
             return false;
         }
         tokio::time::timeout(std::time::Duration::from_secs(2), self.status())
@@ -131,18 +134,18 @@ impl DaemonClient {
             .is_ok_and(|r| r.is_ok())
     }
 
-    /// Alias for [`is_socket_present`] — quick file-existence check.
-    ///
-    /// Prefer [`is_healthy`] when you need to confirm the daemon is responsive.
+    /// Alias for [`is_endpoint_present`](Self::is_endpoint_present) — cheap
+    /// reachability probe. Prefer [`is_healthy`](Self::is_healthy) when you
+    /// need to confirm the daemon is responsive.
     #[must_use]
     pub fn is_available(&self) -> bool {
-        self.is_socket_present()
+        self.is_endpoint_present()
     }
 
-    /// The socket path this client connects to.
+    /// The IPC endpoint this client connects to.
     #[must_use]
-    pub fn socket_path(&self) -> &std::path::Path {
-        &self.socket_path
+    pub fn endpoint(&self) -> &IpcAddr {
+        &self.addr
     }
 
     // -- Corpus management --
@@ -650,8 +653,8 @@ impl DaemonClient {
     ///
     /// 1. Runs under a single [`REQUEST_TIMEOUT`] so a hung daemon can't
     ///    stall the caller indefinitely.
-    /// 2. Retries `UnixStream::connect` with [`CONNECT_RETRY_BACKOFFS`]
-    ///    so a daemon-restart window (brief socket unavailability)
+    /// 2. Retries [`transport::connect`] with [`CONNECT_RETRY_BACKOFFS`]
+    ///    so a daemon-restart window (brief endpoint unavailability)
     ///    doesn't fail every concurrent tool call. Retries only before
     ///    any bytes are written — non-idempotent requests are never
     ///    replayed.
@@ -732,8 +735,7 @@ impl DaemonClient {
     }
 
     /// Connect with small retry/backoff to ride out a daemon-restart window.
-    #[cfg(unix)]
-    async fn connect_with_retry(&self) -> Result<tokio::net::UnixStream, ClientError> {
+    async fn connect_with_retry(&self) -> Result<transport::Stream, ClientError> {
         let mut last_err: Option<std::io::Error> = None;
         for (attempt, delay) in std::iter::once(None)
             .chain(CONNECT_RETRY_BACKOFFS.iter().copied().map(Some))
@@ -742,7 +744,7 @@ impl DaemonClient {
             if let Some(d) = delay {
                 tokio::time::sleep(d).await;
             }
-            match tokio::net::UnixStream::connect(&self.socket_path).await {
+            match transport::connect(&self.addr).await {
                 Ok(s) => return Ok(s),
                 Err(e) => {
                     // ministr-api has no tracing dependency by design — the
@@ -755,7 +757,7 @@ impl DaemonClient {
         }
         Err(ClientError::Connect(format!(
             "{}: {}",
-            self.socket_path.display(),
+            self.addr,
             last_err.map_or_else(|| "unknown".to_string(), |e| e.to_string()),
         )))
     }

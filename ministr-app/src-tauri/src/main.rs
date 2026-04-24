@@ -21,10 +21,7 @@ use tracing::info;
 
 fn main() {
     // Initialize tracing to stderr + log file for the LogViewer tab.
-    let log_path = ministr_api::daemon_socket_path()
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("/tmp"))
-        .join("ministr.log");
+    let log_path = ministr_api::daemon_data_dir().join("ministr.log");
     ministr_core::tracing::init_tracing_with_file(&log_path);
 
     tauri::Builder::default()
@@ -133,10 +130,7 @@ fn main() {
 
 /// Scan common project directories for `.ministr.toml` files on first launch.
 async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
-    let sentinel = ministr_api::daemon_socket_path()
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("/tmp"))
-        .join("first_launch_done");
+    let sentinel = ministr_api::daemon_data_dir().join("first_launch_done");
 
     if sentinel.exists() {
         return;

@@ -305,9 +305,7 @@ async fn test_ingestion_progress_sse() {
     let daemon = TestDaemon::start().await;
 
     // Connect raw HTTP to the SSE endpoint and read the first event.
-    let mut stream = tokio::net::UnixStream::connect(&daemon.socket_path)
-        .await
-        .unwrap();
+    let mut stream = ministr_api::transport::connect(&daemon.addr).await.unwrap();
 
     let request = format!(
         "GET /api/v1/corpora/{}/progress HTTP/1.1\r\n\
@@ -406,9 +404,7 @@ async fn test_rate_limiting_concurrent_surveys() {
 async fn test_coherence_sse_endpoint() {
     let daemon = TestDaemon::start().await;
 
-    let mut stream = tokio::net::UnixStream::connect(&daemon.socket_path)
-        .await
-        .unwrap();
+    let mut stream = ministr_api::transport::connect(&daemon.addr).await.unwrap();
 
     let request = format!(
         "GET /api/v1/corpora/{}/coherence HTTP/1.1\r\n\

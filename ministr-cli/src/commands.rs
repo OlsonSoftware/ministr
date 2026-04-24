@@ -831,8 +831,8 @@ pub(crate) async fn cmd_daemon_search(
     let client = ministr_api::client::DaemonClient::new();
     if !client.is_available() {
         miette::bail!(
-            "ministr daemon is not running (no socket at {:?})",
-            client.socket_path()
+            "ministr daemon is not running (no endpoint at {})",
+            client.endpoint()
         );
     }
 

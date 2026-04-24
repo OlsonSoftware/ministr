@@ -36,6 +36,11 @@ notify.workspace = true
 toml.workspace = true
 dialoguer.workspace = true
 
+[features]
+# Opt-in DirectML GPU acceleration for Windows (no-op elsewhere).
+# Forwarded to ministr-core, which in turn enables fastembed/directml.
+directml = ["ministr-core/directml"]
+
 # macOS: enable the candle Metal backend on top of the default fastembed path.
 [target.'cfg(target_os = "macos")'.dependencies]
 ministr-core = { workspace = true, features = ["candle"] }

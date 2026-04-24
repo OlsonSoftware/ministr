@@ -55,3 +55,6 @@ ministr-core = { workspace = true }
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+# Opt-in DirectML GPU acceleration for Windows (no-op elsewhere). Forwards
+# to the ministr-core feature, which in turn enables fastembed/directml.
+directml = ["ministr-core/directml", "ministr-daemon/directml"]

@@ -463,12 +463,19 @@ fn walk_for_calls(
     }
 }
 
-/// Extract a single call reference from a `call_expression` node.
+/// Extract one or more call references from a `call_expression` node.
 ///
 /// Handles three callee patterns:
-/// - `identifier` → direct function call (`bar()`)
-/// - `scoped_identifier` → qualified call (`MyType::new()`)
-/// - `field_expression` → method call (`x.baz()`)
+/// - `identifier` → direct function call (`bar()`) — emits `Calls(bar)`.
+/// - `scoped_identifier` → qualified call (`MyType::new()`) — emits both
+///   `Calls(new)` and `Uses(MyType)` so references on the parent type
+///   (or module) surface the call site. Without the `Uses` ref a query
+///   like `ministr_references(MyType)` would miss every `MyType::new()`
+///   or `MyType::bind(...)` call site in the corpus.
+/// - `field_expression` → method call (`x.baz()`) — emits `Calls(baz)`.
+///   We can't recover the receiver's type here without full name
+///   resolution, so cross-ref from method call → receiver type is
+///   intentionally out of scope.
 fn extract_call_ref(
     node: &tree_sitter::Node<'_>,
     source: &[u8],
@@ -482,7 +489,26 @@ fn extract_call_ref(
     let callee_name = match func_node.kind() {
         "identifier" => func_node.utf8_text(source).ok(),
         "scoped_identifier" => {
-            // Extract the final `name` segment (e.g., `new` from `MyType::new`).
+            // For `Parent::method(...)` emit a Uses ref on `Parent` *in
+            // addition to* the regular Calls(method) below. `Parent` is
+            // the immediate parent segment of the callee path — i.e. the
+            // name field of the path for nested scopes like
+            // `foo::Bar::baz` (→ Uses(Bar)), or the path itself when it's
+            // a leaf identifier like `Listener::bind` (→ Uses(Listener)).
+            if let Some(parent_name) =
+                immediate_scope_parent(&func_node, source)
+                && !is_primitive_type(parent_name)
+            {
+                refs.push(RawRef {
+                    target_name: parent_name.to_string(),
+                    kind: RefKind::Uses,
+                    line: node_line(node),
+                    from_context: fn_context.map(String::from),
+                    target_crate: None,
+                });
+            }
+
+            // Final `name` segment (e.g., `new` from `MyType::new`).
             func_node
                 .child_by_field_name("name")
                 .and_then(|n| n.utf8_text(source).ok())
@@ -505,6 +531,39 @@ fn extract_call_ref(
             target_crate: None,
         });
     }
+}
+
+/// Given a `scoped_identifier` node, return the name of the segment
+/// immediately to the left of the final `::` — the type or module whose
+/// item is being called.
+///
+/// For `Listener::bind` → `Some("Listener")`.
+/// For `foo::bar::Baz::qux` → `Some("Baz")`.
+/// For `crate::baz` → `Some("crate")` (filtered out downstream by the
+/// primitive / keyword guard in the caller).
+fn immediate_scope_parent<'a>(
+    scoped: &tree_sitter::Node<'_>,
+    source: &'a [u8],
+) -> Option<&'a str> {
+    let path = scoped.child_by_field_name("path")?;
+    match path.kind() {
+        "identifier" | "type_identifier" => path.utf8_text(source).ok(),
+        "scoped_identifier" => path
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source).ok()),
+        _ => None,
+    }
+}
+
+/// Rust primitive type names we don't want to emit ref rows for.
+///
+/// Used in call-site extraction so `i32::MAX`, `u64::from_ne_bytes(...)`,
+/// etc. don't generate noisy refs against non-existent primitive symbols.
+fn is_primitive_type(name: &str) -> bool {
+    PRIMITIVE_TYPES.contains(&name)
+        // Path keywords that show up as the left-most segment in scoped
+        // calls but should never resolve to a user-defined symbol.
+        || matches!(name, "self" | "Self" | "crate" | "super")
 }
 
 /// Recursively collect `type_identifier` names from a type annotation subtree.
@@ -1672,5 +1731,106 @@ fn process(config: Config) {}
                 .any(|r| r.target_name == "helper" && r.from_context == Some("main".into())),
             "call should have enclosing function as from_context: {calls:?}"
         );
+    }
+
+    // --- Scoped-call type-of-parent refs (the "Listener::bind" fix) ---
+    //
+    // Prior to this change, `Listener::bind(...)` recorded only
+    // `Calls(bind)`, so `ministr_references(Listener)` missed every call
+    // site. These tests lock in that `Type::method(...)` emits a
+    // `Uses(Type)` ref alongside `Calls(method)` so the parent type's
+    // reference list picks up the call.
+
+    #[test]
+    fn scoped_call_emits_uses_ref_for_parent_type() {
+        let source = r"
+            fn build() {
+                let cfg = Config::new();
+            }
+        ";
+        let refs = parse_and_extract(source);
+        let uses: Vec<_> = refs
+            .iter()
+            .filter(|r| r.kind == RefKind::Uses && r.target_name == "Config")
+            .collect();
+        assert_eq!(
+            uses.len(),
+            1,
+            "expected exactly one Uses(Config) from Config::new(): {refs:?}"
+        );
+        assert_eq!(uses[0].from_context.as_deref(), Some("build"));
+    }
+
+    #[test]
+    fn scoped_call_uses_immediate_parent_for_nested_paths() {
+        // For `foo::Bar::baz()` the Uses ref should target `Bar`, not
+        // `foo` — it's the immediate type/module whose method is called.
+        let source = r"
+            fn work() {
+                foo::Bar::baz();
+            }
+        ";
+        let refs = parse_and_extract(source);
+        let uses_targets: Vec<&str> = refs
+            .iter()
+            .filter(|r| r.kind == RefKind::Uses)
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            uses_targets.contains(&"Bar"),
+            "expected Uses(Bar) from foo::Bar::baz(): {uses_targets:?}"
+        );
+        assert!(
+            !uses_targets.contains(&"foo"),
+            "should not emit Uses(foo) for the outer module: {uses_targets:?}"
+        );
+    }
+
+    #[test]
+    fn scoped_call_skips_primitive_and_keyword_parents() {
+        // Parents like `i32`, `Self`, `crate`, `super` should never
+        // produce a Uses ref — they can't resolve to a user-defined
+        // symbol and would just be noise for the resolver.
+        let source = r"
+            fn nope() {
+                let _ = i32::MAX;
+                let _ = Self::helper();
+                crate::util::reset();
+                super::parent::tick();
+            }
+        ";
+        let refs = parse_and_extract(source);
+        let uses_targets: Vec<&str> = refs
+            .iter()
+            .filter(|r| r.kind == RefKind::Uses)
+            .map(|r| r.target_name.as_str())
+            .collect();
+        for bad in ["i32", "Self", "crate", "super"] {
+            assert!(
+                !uses_targets.contains(&bad),
+                "should not emit Uses({bad}) from primitive/keyword scope: {uses_targets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scoped_call_still_emits_method_calls_ref() {
+        // Regression guard: adding the Uses ref must NOT replace the
+        // Calls ref — both need to land so direct-method-name queries
+        // keep working.
+        let source = r"
+            fn go() {
+                Listener::bind(&addr);
+            }
+        ";
+        let refs = parse_and_extract(source);
+        let has_calls_bind = refs
+            .iter()
+            .any(|r| r.kind == RefKind::Calls && r.target_name == "bind");
+        let has_uses_listener = refs
+            .iter()
+            .any(|r| r.kind == RefKind::Uses && r.target_name == "Listener");
+        assert!(has_calls_bind, "missing Calls(bind): {refs:?}");
+        assert!(has_uses_listener, "missing Uses(Listener): {refs:?}");
     }
 }

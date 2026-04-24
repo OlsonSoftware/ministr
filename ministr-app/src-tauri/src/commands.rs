@@ -56,9 +56,7 @@ pub async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonStatus, S
     let rss = ministr_core::mem_profile::rss_mb().unwrap_or(0.0);
     let total_sessions: usize = corpora.iter().map(|c| c.active_sessions).sum();
 
-    let log_path = ministr_api::daemon_socket_path()
-        .parent()
-        .map(|p| p.join("ministr.log"))
+    let log_path = Some(ministr_api::daemon_data_dir().join("ministr.log"))
         .filter(|p| p.exists())
         .map(|p| p.display().to_string());
 
@@ -198,11 +196,7 @@ pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> 
 #[tauri::command]
 pub async fn read_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
     let max_lines = lines.unwrap_or(200);
-    let log_dir = ministr_api::daemon_socket_path()
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("/tmp"))
-        .to_path_buf();
-    let log_path = log_dir.join("ministr.log");
+    let log_path = ministr_api::daemon_data_dir().join("ministr.log");
 
     if !log_path.exists() {
         return Ok(vec!["No log file found.".to_string()]);
@@ -217,30 +211,21 @@ pub async fn read_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
 /// Check if first-run onboarding should be shown.
 #[tauri::command]
 pub async fn should_show_onboarding() -> Result<bool, String> {
-    let sentinel = ministr_api::daemon_socket_path()
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("/tmp"))
-        .join("onboarding_done");
+    let sentinel = ministr_api::daemon_data_dir().join("onboarding_done");
     Ok(!sentinel.exists())
 }
 
 /// Dismiss the onboarding screen.
 #[tauri::command]
 pub async fn dismiss_onboarding() -> Result<(), String> {
-    let sentinel = ministr_api::daemon_socket_path()
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("/tmp"))
-        .join("onboarding_done");
+    let sentinel = ministr_api::daemon_data_dir().join("onboarding_done");
     std::fs::write(&sentinel, "").map_err(|e| e.to_string())
 }
 
 /// Reset onboarding so it shows again on next visit.
 #[tauri::command]
 pub async fn reset_onboarding() -> Result<(), String> {
-    let sentinel = ministr_api::daemon_socket_path()
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("/tmp"))
-        .join("onboarding_done");
+    let sentinel = ministr_api::daemon_data_dir().join("onboarding_done");
     if sentinel.exists() {
         std::fs::remove_file(&sentinel).map_err(|e| e.to_string())?;
     }

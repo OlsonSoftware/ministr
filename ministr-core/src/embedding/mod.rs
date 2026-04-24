@@ -202,15 +202,22 @@ pub fn suggest_quantized_model(model_name: &str) -> Option<&'static str> {
 ///
 /// Checks environment variables in order:
 /// - `MINISTR_BACKEND`: `"candle"` | `"onnx"` | `"fastembed"` | empty (auto-detect)
-/// - `MINISTR_DEVICE`: `"cpu"` — force CPU even on Metal-capable machines
+/// - `MINISTR_DEVICE`: `"cpu"` — force CPU even on GPU-capable machines
+///   (applies to Metal on macOS and DirectML on Windows)
 /// - `MINISTR_PREFER_QUANTIZED`: `"1"` — auto-select quantized `-q` variant if available
 ///
-/// Auto-detect on macOS: prefers Candle Metal when the model is supported.
-/// In debug builds, Candle is preferred more aggressively to avoid the
-/// ONNX Runtime + macOS XProtect scanning delay (5-15s on first inference).
-///
-/// On Linux/Windows without GPU: logs a suggestion to use quantized models
-/// for better CPU performance.
+/// Auto-detect behavior:
+/// - **macOS**: prefers Candle Metal when the model is supported; otherwise
+///   FastEmbed + CoreML (CPU+GPU compute units, ANE disabled by default to
+///   avoid a CoreML/ANE memory leak). In debug builds, Candle is preferred
+///   more aggressively to sidestep ONNX Runtime + XProtect scanning delays
+///   (5–15s on first inference).
+/// - **Windows** (with the `directml` cargo feature): FastEmbed + DirectML
+///   Execution Provider — runs on any DirectX 12 GPU (NVIDIA / AMD / Intel /
+///   Qualcomm). Silently falls back to CPU ONNX on init failure, with a
+///   warning log so the regression is visible.
+/// - **Linux and feature-less Windows**: FastEmbed + plain CPU ONNX; logs a
+///   suggestion to use quantized models for 2–3× CPU speedup.
 ///
 /// # Errors
 ///
@@ -302,8 +309,14 @@ pub fn create_embedder(
                 );
             }
 
-            // On non-macOS, suggest quantized models for CPU performance.
-            #[cfg(not(target_os = "macos"))]
+            // On targets without a GPU execution provider compiled in,
+            // suggest quantized models for a CPU speedup. Suppressed on
+            // Windows when the `directml` feature is active, because the
+            // GPU path is the expected default there.
+            #[cfg(not(any(
+                target_os = "macos",
+                all(target_os = "windows", feature = "directml"),
+            )))]
             if let Some(q) = suggest_quantized_model(model_name) {
                 tracing::info!(
                     model = %model_name,
@@ -332,12 +345,15 @@ pub fn create_embedder(
         }
     }
 
-    // Default: FastEmbed/ONNX Runtime.
+    // Default: FastEmbed/ONNX Runtime. The actual execution provider
+    // (CoreML / DirectML / plain CPU) is decided inside `FastEmbedder::new`
+    // based on platform, cargo features, and env overrides; we mirror the
+    // decision into `BackendInfo.device` so status reporting tells the truth.
     let embedder = FastEmbedder::with_data_dir(model_name, data_dir)?;
     let info = BackendInfo {
         format: ModelFormat::Onnx,
         model_name: model_name.to_owned(),
-        device: "onnx-cpu".into(),
+        device: embedder.active_provider().into(),
     };
     Ok((std::sync::Arc::new(embedder), info))
 }

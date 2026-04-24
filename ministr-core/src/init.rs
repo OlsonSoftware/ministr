@@ -567,11 +567,21 @@ fn default_ignore_patterns(has_rust: bool, has_node: bool, has_python: bool) -> 
 
 /// Compute a relative path from `base` to `target`, returning `None` if
 /// `target` is not under `base`.
+///
+/// Separators are always normalized to `/` so the emitted paths land in
+/// `.ministr.toml` as portable cross-platform strings — a config
+/// committed on Windows should round-trip cleanly on macOS / Linux.
+/// Windows filesystem APIs accept `/` as a separator, so nothing
+/// downstream needs to reverse this normalization.
 fn relative_path(base: &Path, target: &Path) -> Option<String> {
-    target
-        .strip_prefix(base)
-        .ok()
-        .map(|rel| rel.to_string_lossy().to_string())
+    target.strip_prefix(base).ok().map(|rel| {
+        let s = rel.to_string_lossy();
+        if std::path::MAIN_SEPARATOR == '/' {
+            s.into_owned()
+        } else {
+            s.replace(std::path::MAIN_SEPARATOR, "/")
+        }
+    })
 }
 
 /// Classify the project type from detected signals.
