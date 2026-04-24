@@ -265,12 +265,17 @@ This is included in **every response** as `budget_status`:
 
 ## The Prefetch Engine
 
-After each `ministr_read`, the prefetch engine speculatively pre-warms sections the agent is likely to request next. Five strategies:
+After each `ministr_read`, the prefetch engine predictively pre-warms sections the agent is likely to request next. **Three strategies fire today**, and two more are written but not yet wired up post-read:
+
+**Live (run after every read):**
 
 1. **Sequential** (cache line prefetch) — pre-warm section N+1, N+2 in same document
 2. **Topical** (branch prediction) — query HNSW with running EMA topic vector
 3. **Structural** (spatial locality) — pre-warm sibling sections at same depth
-4. **Cross-Session** (shared cache) — pre-warm frequently co-accessed sections
+
+**In code but not yet triggered post-read:**
+
+4. **Cross-Session** (shared cache) — pre-warm frequently co-accessed sections. Needs per-section co-access analytics in the storage layer first
 5. **Survey Expand** (TLB prefetch) — pre-warm parent sections of claim hits
 
 ### The Topic Tracker
@@ -341,7 +346,7 @@ ministr doesn't just search text. It builds a rich code model via tree-sitter:
 
 - **Symbols** — structs, fns, traits, enums, impls — with name, kind, visibility, module, signature, docs
 - **References** — callers, callees, implementors, importers
-- **Language refinements** — per-language post-processing: Rust, TypeScript, Python, Go, Java, C, C++, Swift, Kotlin
+- **Languages** — twelve grammars parse to AST today: Rust, TypeScript, JavaScript, Python, Go, Java, C, C++, Ruby, C#, Swift, Kotlin. Per-language post-processing (refined symbol/refs extraction beyond what the raw AST gives you) currently covers nine of those: Rust, TypeScript, Python, Go, Java, C, C++, Swift, Kotlin
 
 ### Cross-Language Bridges
 

@@ -48,7 +48,7 @@ LLM agents waste most of their context window. ministr fixes the three root caus
 
 **Blind retrieval** — ministr indexes your codebase at multiple resolutions (documents, sections, claims, symbols) and returns precisely what's relevant — not entire files.
 
-**No lookahead** — ministr predicts what the agent will need next and pre-warms it. Sequential, structural, and topical prefetch strategies mean cache hits instead of cold reads.
+**No lookahead** — ministr predicts what the agent will need next and pre-warms it. Three prefetch strategies (sequential, structural, topical) mean cache hits instead of cold reads.
 
 ## Setup
 

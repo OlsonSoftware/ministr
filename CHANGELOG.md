@@ -132,7 +132,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-resolution indexing** — documents, section summaries, section text, and atomic claims are embedded and indexed separately
 - **Session shadow** — tracks what content has been delivered to the agent, deduplicates repeat deliveries, and detects fault-based evictions
 - **Budget tracker** — estimates context window token usage, reports pressure levels, and ranks eviction candidates
-- **Prefetch engine** — sequential, structural, topical, and cross-session prefetch strategies with LRU cache
+- **Prefetch engine** — three prefetch strategies fire today (sequential, structural, topical), backed by an LRU cache. Two more (cross-session, survey-expand) exist in code but aren't yet triggered after a read
 - **Coherence subsystem** — file watcher triggers re-indexing and invalidates stale session entries
 - **Cross-session analytics** — tracks section access patterns and feeds co-access data into prefetch
 - **Session persistence** — session state survives server restarts via SQLite storage
