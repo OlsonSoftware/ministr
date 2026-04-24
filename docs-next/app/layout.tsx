@@ -12,6 +12,7 @@ const inter = Inter({
 // and the sitemap absolute URLs.
 export const metadata: Metadata = {
   metadataBase: new URL('https://ministr.ai'),
+  robots: { index: false, follow: false },
 };
 
 export default function Layout({ children }: LayoutProps<'/'>) {
