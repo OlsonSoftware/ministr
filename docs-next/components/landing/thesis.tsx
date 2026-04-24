@@ -183,14 +183,6 @@ const WALL = 0.8 * BUDGET; // 80% pressure line
 const STEP_MS = 900;     // playback cadence
 const TOTAL_STEPS = Math.max(WITHOUT_MINISTR.length, WITH_MINISTR.length);
 
-// Rough Claude Sonnet 4 pricing as of early 2026: $3/1M input tokens.
-// Shown only as a subtle "at scale, across a 10k-session week" multiplier
-// so the hero metric lands emotionally.
-const USD_PER_MTOK = 3;
-const SESSIONS_PER_WEEK = 10_000;
-const usd = (tokens: number) => (tokens / 1_000_000) * USD_PER_MTOK;
-const weeklyUsd = (tokens: number) => usd(tokens) * SESSIONS_PER_WEEK;
-
 /**
  * cumulative(steps, upto) — cumulative token/signal totals AFTER the
  * step at index `upto` has landed (inclusive). upto=-1 means no
@@ -581,12 +573,7 @@ function CumulativeBar({
           80%
         </div>
       </div>
-      <div className="mt-1 flex items-baseline justify-between font-mono text-[10px] uppercase tracking-[0.18em]">
-        <span className="ministr-body-quiet">
-          {'$'}
-          {usd(total).toFixed(4)} this session · {'$'}
-          {Math.round(weeklyUsd(total)).toLocaleString()}/wk @ 10k sessions
-        </span>
+      <div className="mt-1 flex items-baseline justify-end font-mono text-[10px] uppercase tracking-[0.18em]">
         <motion.span
           style={{ color: accentVar }}
           animate={past && !reduced ? { opacity: [1, 0.4, 1] } : { opacity: 1 }}
@@ -818,7 +805,6 @@ function Verdict({
 }) {
   const multiple = Math.round(blind / Math.max(ministr, 1));
   const reduction = Math.round((1 - ministr / blind) * 100);
-  const weeklySaved = Math.round(weeklyUsd(blind - ministr));
   return (
     <motion.div
       initial={reduced ? false : { opacity: 0, y: 12, scale: 0.98 }}
@@ -826,7 +812,6 @@ function Verdict({
       transition={{ duration: 0.55, ease: [0.2, 0.8, 0.2, 1] }}
       className="relative mt-5 overflow-hidden rounded-lg border border-[color-mix(in_oklch,var(--color-ministr-400)_32%,transparent)] bg-gradient-to-br from-[color-mix(in_oklch,var(--color-ministr-500)_14%,transparent)] via-[color-mix(in_oklch,var(--color-violet-500)_10%,transparent)] to-[color-mix(in_oklch,var(--color-fuchsia-400)_10%,transparent)] px-4 py-4"
     >
-      {/* Spectrum hairline */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-px"
@@ -836,26 +821,14 @@ function Verdict({
           opacity: 0.8,
         }}
       />
-      <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <span className="ministr-eyebrow">Verdict</span>
-          <div className="mt-1 flex items-baseline gap-3">
-            <span className="font-mono text-[clamp(2rem,4vw,3rem)] font-semibold leading-none tabular-nums text-fd-foreground">
-              {multiple}×
-            </span>
-            <span className="ministr-body font-mono text-[12px] uppercase tracking-[0.18em]">
-              fewer tokens · −{reduction}%
-            </span>
-          </div>
-        </div>
-        <div className="flex flex-col items-end text-right">
-          <span className="font-mono text-[clamp(1.1rem,2vw,1.45rem)] font-semibold tabular-nums text-[var(--color-success)]">
-            ${weeklySaved.toLocaleString()}
-          </span>
-          <span className="ministr-body-quiet font-mono text-[10.5px] uppercase tracking-[0.18em]">
-            saved per week @ 10k sessions
-          </span>
-        </div>
+      <div className="flex items-baseline gap-3">
+        <span className="ministr-eyebrow">Verdict</span>
+        <span className="font-mono text-[clamp(2rem,4vw,3rem)] font-semibold leading-none tabular-nums text-fd-foreground">
+          {multiple}×
+        </span>
+        <span className="ministr-body font-mono text-[12px] uppercase tracking-[0.18em]">
+          fewer tokens · −{reduction}%
+        </span>
       </div>
       <p className="ministr-body-quiet mt-3 font-mono text-[11px] leading-relaxed">
         same task, same agent, same model — just the retrieval layer changed. the saved budget
