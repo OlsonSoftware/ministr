@@ -81,6 +81,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `https://ministr.ai/install.sh` also resolves. `ministr.app` is served by
   a Cloudflare Single Redirect ruleset (no separate hosting project) that
   301s every path to `https://ministr.ai$path`
+- GitHub source repo moved from `AlrikOlson/ministr-rs` to
+  `OlsonSoftware/ministr`; CI badges, clone/cargo-install commands, and
+  issue links now point at the new location. The original public release
+  under the old name stays referenced historically in the `[0.1.0]`
+  changelog footer
+- Release assets served via Cloudflare Worker at `dl.ministr.app`
+  (`workers/release-proxy/`). The Worker fronts the now-private source
+  repo's GitHub Releases using a read-only fine-grained PAT, so
+  unauthenticated `curl` downloads still work:
+  `https://dl.ministr.app/v<tag>/<filename>` → 302 → GitHub CDN. When
+  `OlsonSoftware/ministr` is made public the Worker can be deleted and
+  `install.sh` rewired straight at
+  `github.com/OlsonSoftware/ministr/releases/download/...` — one-file change
 - **Breaking:** Tauri bundle identifier changed from `com.ministr.desktop`
   to `ai.ministr.desktop` (reverse-DNS of the primary domain). macOS
   treats existing installs as a separate app — auto-updater won't see

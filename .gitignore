@@ -28,6 +28,9 @@ docs/research/*.pdf
 node_modules/
 ministr-app/dist/
 
+# Cloudflare Workers build state (wrangler build cache + deploy metadata)
+.wrangler/
+
 # IDE and editor configs
 .claude/
 .continue/

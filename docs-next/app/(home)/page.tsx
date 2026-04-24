@@ -125,7 +125,7 @@ export default function HomePage() {
               <FooterLink href="/docs/tools">Tool reference</FooterLink>
               <FooterLink href="/docs/architecture">Architecture</FooterLink>
               <FooterLink href="/docs/concepts">Concepts</FooterLink>
-              <FooterLink href="https://github.com/AlrikOlson/ministr-rs">GitHub</FooterLink>
+              <FooterLink href="https://github.com/OlsonSoftware/ministr">GitHub</FooterLink>
             </nav>
           </div>
         </div>

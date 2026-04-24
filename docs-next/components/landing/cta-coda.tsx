@@ -33,7 +33,7 @@ export function CtaCoda() {
               <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
             </Link>
             <Link
-              href="https://github.com/AlrikOlson/ministr-rs"
+              href="https://github.com/OlsonSoftware/ministr"
               className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border/70 bg-[color-mix(in_oklch,var(--ministr-surface)_55%,transparent)] px-5 py-3 text-[15px] font-medium text-fd-foreground backdrop-blur transition hover:bg-[color-mix(in_oklch,var(--ministr-surface)_78%,transparent)]"
             >
               <GithubGlyph className="size-4" />

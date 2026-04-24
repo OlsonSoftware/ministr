@@ -214,7 +214,7 @@ release version:
         sed -i.bak -e "/^## \[/r /dev/stdin" CHANGELOG.md
     rm -f CHANGELOG.md.bak
     # Add link reference at bottom
-    echo "[{{version}}]: https://github.com/AlrikOlson/ministr-rs/releases/tag/v{{version}}" >> CHANGELOG.md
+    echo "[{{version}}]: https://github.com/OlsonSoftware/ministr/releases/tag/v{{version}}" >> CHANGELOG.md
     # Validate the workspace compiles
     cargo check --workspace
     # Commit and tag
