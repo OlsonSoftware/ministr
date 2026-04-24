@@ -65,7 +65,7 @@ No layer may skip a level. Transport calls service; service calls storage.
 | Subsystem | Location | Purpose |
 |-----------|----------|---------|
 | Session Shadow | `ministr-core/src/session/` | Tracks delivered content, deduplicates, detects evictions |
-| Prefetch Engine | `ministr-core/src/session/prefetch/` | Predicts next reads. Three strategies fire today (sequential, structural, topical); two more (cross-session, survey-expand) exist in code but aren't yet triggered after a read |
+| Prefetch Engine | `ministr-core/src/session/prefetch/` | Six prefetch strategies. Post-read: sequential, structural, topical (always) plus cross-session (monolithic mode only — daemon-proxy path has it scaffolded, not yet wired). Post-survey: survey-expand, agent-plan (intent-based). |
 | Budget Manager | `ministr-core/src/session/budget.rs` | Estimates token usage, recommends evictions |
 | Coherence | `ministr-core/src/coherence/` | Watches filesystem, invalidates stale content |
 | Bridge Linker | `ministr-core/src/bridge/` | Detects cross-language bindings (napi, pyo3, tauri, wasm-bindgen) |

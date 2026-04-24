@@ -9,7 +9,7 @@ Coherence is ministr's equivalent of a CPU cache coherence protocol. When the un
 
 ### File Watching
 
-When `watch = true` in the corpus config, ministr monitors source directories for changes using the `notify` crate. When a file is modified:
+When ministr runs as a server (`ministr serve`), it monitors every registered corpus's source directories for changes using the `notify` crate. When a file is modified:
 
 1. The file is re-parsed and re-indexed. Only changed sections are re-embedded and re-inserted.
 2. The session shadow is consulted — if any active session references a changed section, a coherence alert is generated.
@@ -48,14 +48,8 @@ ministr tracks file hashes to enable incremental updates:
 
 This makes re-indexing fast even for large corpora — proportional to the size of the change, not the size of the corpus.
 
-## Configuration
+## When Does Watching Run?
 
-File watching is controlled per corpus in your project's `.ministr.toml`:
+File watching is on by default whenever `ministr serve` is running. If you just want a one-shot index (no watcher, no MCP server), use `ministr index` instead — it runs ingestion synchronously and exits.
 
-```toml
-[corpus]
-paths = ["src", "docs"]
-watch = true       # default — enable the file watcher
-```
-
-When `watch = false`, coherence is passive — ministr only detects changes when the corpus is explicitly re-indexed (e.g. via `ministr index`).
+Each registered corpus gets its own daemon-generated metadata file at `~/.ministr/corpora/<corpus-id>/meta.toml` with a `watch: bool` flag (defaults to `true`). This is daemon-managed internal state — you don't usually edit it directly.

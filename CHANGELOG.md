@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Code navigation
 - `ministr_symbols`, `ministr_definition`, `ministr_references` — code symbol index across 12 languages via tree-sitter
-- `ministr_bridge` — cross-language bridge detection for Tauri, napi, PyO3, wasm-bindgen, and HTTP routes
+- `ministr_bridge` — cross-language bridge detection across seven kinds: Tauri commands and events, napi-rs, PyO3, wasm-bindgen, HTTP routes (actix-web / axum / rocket), and raw FFI
 
 #### Retrieval
 - Two-stage Matryoshka retrieval with adaptive dimension selection
@@ -130,7 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-resolution indexing** — documents, section summaries, section text, and atomic claims are embedded and indexed separately
 - **Session shadow** — tracks what content has been delivered to the agent, deduplicates repeat deliveries, and detects fault-based evictions
 - **Budget tracker** — estimates context window token usage, reports pressure levels, and ranks eviction candidates
-- **Prefetch engine** — three prefetch strategies fire today (sequential, structural, topical), backed by an LRU cache. Two more (cross-session, survey-expand) exist in code but aren't yet triggered after a read
+- **Prefetch engine** — six prefetch strategies backed by an LRU cache. Post-read: sequential, structural, topical, cross-session (four strategies in default single-process mode; the daemon-proxy path has cross-session scaffolded but not yet triggered). Post-survey: survey-expand, agent-plan (intent-based)
 - **Coherence subsystem** — file watcher triggers re-indexing and invalidates stale session entries
 - **Cross-session analytics** — tracks section access patterns and feeds co-access data into prefetch
 - **Session persistence** — session state survives server restarts via SQLite storage

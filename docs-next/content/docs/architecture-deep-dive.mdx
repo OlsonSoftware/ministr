@@ -265,18 +265,21 @@ This is included in **every response** as `budget_status`:
 
 ## The Prefetch Engine
 
-After each `ministr_read`, the prefetch engine predictively pre-warms sections the agent is likely to request next. **Three strategies fire today**, and two more are written but not yet wired up post-read:
+The prefetch engine has **six strategies**, running at two different moments in the agent's workflow:
 
-**Live (run after every read):**
+**After every `ministr_read`:**
 
 1. **Sequential** (cache line prefetch) — pre-warm section N+1, N+2 in same document
-2. **Topical** (branch prediction) — query HNSW with running EMA topic vector
-3. **Structural** (spatial locality) — pre-warm sibling sections at same depth
+2. **Structural** (spatial locality) — pre-warm sibling sections at same depth
+3. **Topical** (branch prediction) — query HNSW with running EMA topic vector
+4. **Cross-Session** (shared cache) — pre-warm frequently co-accessed sections from analytics. Runs in ministr's default single-process mode; the daemon-proxy mode has this scaffolded but not yet wired (pending per-section co-access analytics in the storage layer).
 
-**In code but not yet triggered post-read:**
+**After every `ministr_survey`:**
 
-4. **Cross-Session** (shared cache) — pre-warm frequently co-accessed sections. Needs per-section co-access analytics in the storage layer first
-5. **Survey Expand** (TLB prefetch) — pre-warm parent sections of claim hits
+5. **Survey Expand** (TLB prefetch) — pre-warm parent sections of claim-level survey hits, so a follow-up `ministr_read` for any hit is warm.
+6. **Agent Plan** (intent-based) — analyse the agent's apparent plan from the survey query + results and pre-warm sections it's likely to read next. Capped at a small item budget so the cache doesn't thrash.
+
+In daemon-proxy mode, five fire today; in the default single-process mode, all six.
 
 ### The Topic Tracker
 
@@ -314,12 +317,15 @@ And `ministr_read` on a stale section delivers only the **delta** (what changed)
 
 ## Content Resolution
 
-ministr indexes content at multiple granularity levels and delivers at the appropriate resolution based on context budget pressure:
+The `Resolution` enum (`ministr-core/src/types.rs`) has **five variants** — three for prose content, two for code:
 
-- **Document** — "Here's the entire file"
-- **Section** — "Here's the #login function section" (default)
-- **Claim** — "login() validates JWT tokens and returns a User struct" (elevated pressure)
-- **Summary** — "Auth module: handles JWT validation, session management" (critical pressure)
+- **Summary** — 50-400 token compressed summary of a document or section (served under critical budget pressure, or as a document-level hit)
+- **Section** — full section text with structural context, 200-2000 tokens (default delivery)
+- **Claim** — a single atomic factual statement pulled from a section, 10-50 tokens (served under elevated pressure, or as a claim-level survey hit)
+- **SymbolStub** — code symbol signature + doc comment, 20-100 tokens
+- **SymbolFull** — full source of a code symbol, 50-500 tokens
+
+Which one the agent gets depends on the request (survey vs read vs definition) and on current budget pressure.
 
 ### Delta Delivery
 
@@ -355,7 +361,7 @@ ministr detects and links cross-language bindings via a two-pass pipeline:
 1. **Extract** endpoints from all source files (`#[napi]`, `#[pyfunction]`, `#[tauri::command]`, `#[wasm_bindgen]`, HTTP route attributes)
 2. **Link** export↔import pairs by binding key (exact match → case-normalized → semantic fallback)
 
-Supported bridges: napi-rs, PyO3, Tauri commands, wasm-bindgen, HTTP routes.
+Supported bridge kinds: Tauri commands and events, napi-rs, PyO3, wasm-bindgen, HTTP routes (actix-web / axum / rocket), and raw FFI (seven total, per `BridgeKind` in `ministr-core/src/code/bridge/mod.rs`).
 
 ## The MCP Server: How Tools Map to Code
 
@@ -381,6 +387,8 @@ Each ministr MCP tool maps to a method chain:
 
 Every response wraps the result data with `budget_status`, so the agent always knows how much context budget it has remaining.
 
+> **Note:** A sixteenth tool, `ministr_task`, is still registered for backward compatibility (poll-a-background-task status). It's automatically hidden when neither `ministr_fetch`, `ministr_clone`, nor `ministr_refresh` is enabled — which, for most users, means it never shows up in `tools/list`.
+
 ## Key Design Decisions
 
 ### Why "Like a CPU Cache"?
@@ -388,7 +396,7 @@ Every response wraps the result data with `budget_status`, so the agent always k
 | CPU Cache Concept | ministr Equivalent |
 |---|---|
 | Cache line | Section (a heading-delimited chunk of content) |
-| L1/L2/L3 hierarchy | Claim → Section → Document resolution levels |
+| L1/L2/L3 hierarchy | Claim → Section → Summary delivery granularity (plus SymbolStub / SymbolFull for code) |
 | Cache hit | Content already in session → skip/delta delivery |
 | Cache miss | Cold read → full retrieval from storage + embedding |
 | Prefetch | Speculative pre-warming of predicted next reads |

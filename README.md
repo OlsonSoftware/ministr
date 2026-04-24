@@ -48,7 +48,7 @@ LLM agents waste a lot of their context window. ministr fixes three of them:
 
 **Blind retrieval** — ministr indexes your codebase at multiple resolutions (documents, sections, claims, symbols) and returns precisely what's relevant — not entire files.
 
-**No lookahead** — ministr predicts what the agent will need next and pre-warms it. Three prefetch strategies (sequential, structural, topical) mean cache hits instead of cold reads.
+**No lookahead** — ministr predicts what the agent will need next and pre-warms it. Six prefetch strategies across reads (sequential, structural, topical, cross-session) and surveys (expand + intent) mean cache hits instead of cold reads.
 
 ## Setup
 
@@ -73,9 +73,9 @@ claude mcp add ministr -- ministr                                    # Claude Co
 
 ## Features
 
-- **Semantic search** across docs and code at four levels of detail — whole document, section, single claim (one-sentence fact), or summary
+- **Semantic search** across docs and code at the granularity the agent needs — summary, section, or single claim (a one-sentence fact pulled from a section). Code gets two extra levels: symbol stub (signature + doc) and full source.
 - **Code symbol navigation** — find and trace structs, functions, traits across 12 languages via tree-sitter
-- **Cross-language bridge detection** — Tauri commands, napi bindings, PyO3 functions, wasm-bindgen exports, HTTP routes
+- **Cross-language bridge detection** — Tauri commands and events, napi-rs, PyO3, wasm-bindgen exports, HTTP routes (actix-web / axum / rocket), and raw FFI
 - **Session tracking** with predictive prefetch, deduplication, and delta delivery
 - **Budget management** — token usage monitoring, eviction recommendations, compressed summaries under pressure
 - **Local embeddings** — FastEmbed + ONNX (~5ms/embed), optional Metal GPU acceleration on Apple Silicon
