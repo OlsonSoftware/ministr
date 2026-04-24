@@ -76,9 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `https://ministr.ai`. Docs now deploy at the site root via
   `docs-next/public/CNAME`; the `DOCS_BASE_PATH=/ministr` env var is
   no longer set by the deploy workflow
-- Install-script URL shortened to `curl -fsSL https://ministr.app/install.sh | bash`
-  (mirror of the canonical `install.sh` lives in `docs-next/public/` so
-  `https://ministr.ai/install.sh` also resolves)
+- Install-script URL shortened to `curl -fsSL https://ministr.app/install.sh | bash`.
+  The canonical `install.sh` lives in `docs-next/public/` so
+  `https://ministr.ai/install.sh` also resolves. `ministr.app` is served by
+  a Cloudflare Single Redirect ruleset (no separate hosting project) that
+  301s every path to `https://ministr.ai$path`
 - **Breaking:** Tauri bundle identifier changed from `com.ministr.desktop`
   to `ai.ministr.desktop` (reverse-DNS of the primary domain). macOS
   treats existing installs as a separate app — auto-updater won't see
