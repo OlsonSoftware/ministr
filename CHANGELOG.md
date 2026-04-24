@@ -52,23 +52,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retrieval evaluation suite with MRR/nDCG and CI regression gate
 
 #### Desktop app
-- **Cache observatory overhaul** — Overview home with aggregate budget ring, cache-hit history, and live turn stream
+- **Dashboard overhaul** — Overview home with aggregate budget ring, cache-hit history, and live turn stream
 - `BudgetRing`, `TurnBlock`, `CorpusChip`, `StatusDot`, and `ActivityFeed` UI primitives
 - Command palette (`⌘K`) with corpus navigation and theme/tab actions
 - Keyboard shortcut sheet (`?`) and theme toggle (System / Dark / Light) in the TopBar
 - Tray submenus for active sessions, recent corpora, and quick actions
 - Live tool-call **activity stream** — every `ministr_*` MCP call is recorded in a 500-event in-memory ring buffer on the daemon, exposed via `GET /activity` and surfaced in the app Overview
 - **Coherence feed** — rich per-file `CoherenceEvent` (kind + path + affected sections) broadcast from the per-corpus watcher, mirrored in a 500-event daemon-wide ring buffer, exposed via `GET /coherence-events` + `CoherenceFeed` UI primitive replacing the Overview placeholder
-- Onboarding "observatory preview" tile so users see the dashboard aesthetic before reaching the dense dashboard
+- Onboarding "dashboard preview" tile so users see the dashboard aesthetic before reaching the dense dashboard
 - `CorpusTreemap` re-themed with OKLCH language colors that share the ministr design tokens
 
 #### Documentation
-- New documentation site built with Material for MkDocs, hosted on GitHub Pages
-- Tailwind v4 design tokens (`docs/styles/tokens.css`) compiled into Material's theme
-- Inline Phosphor icon sprite via a build-time MkDocs hook (`docs/hooks/inline_icons.py`)
-- D2 diagrams throughout the architecture docs (replacing ASCII art)
-- Animated Chart.js benchmarks, Cmd+K search, reading-progress indicator, and keyboard shortcuts on the docs site
-- VHS terminal demo on the landing page
+- New documentation site built with Fumadocs on Next.js 16, deployed to Cloudflare Pages
+- Mermaid diagrams throughout the architecture docs (replacing ASCII art)
+- ⌘K search, reading-progress indicator, and keyboard shortcuts on the docs site
+- Asciinema terminal demo on the landing page
 
 ### Changed
 
@@ -106,7 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prefetch engine overhauled — `PriorityCache`, adaptive alpha, cache invalidation
 - Ingestion pipeline split into focused submodules
 - Session budget tracking integrated into daemon for cross-session awareness
-- Documentation site migrated from mdBook to Material for MkDocs
+- Documentation site rebuilt on Fumadocs/Next.js (replaced earlier mdBook prototype)
 - User-facing copy clarified: ministr manages what it sends into context, it does
   not edit the agent's context window
 

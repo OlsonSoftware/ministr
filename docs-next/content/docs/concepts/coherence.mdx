@@ -50,11 +50,12 @@ This makes re-indexing fast even for large corpora — proportional to the size 
 
 ## Configuration
 
-File watching is controlled per corpus:
+File watching is controlled per corpus in your project's `.ministr.toml`:
 
 ```toml
-# In ~/.ministr/corpora/<name>/meta.toml
-watch = true
+[corpus]
+paths = ["src", "docs"]
+watch = true       # default — enable the file watcher
 ```
 
-When disabled, coherence is passive — ministr only detects changes when the corpus is explicitly re-indexed.
+When `watch = false`, coherence is passive — ministr only detects changes when the corpus is explicitly re-indexed (e.g. via `ministr index`).

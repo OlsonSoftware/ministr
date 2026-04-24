@@ -77,6 +77,7 @@ Once connected, your agent has access to these tools:
 | `ministr_read` | Read a section by ID (with deduplication & delta delivery) |
 | `ministr_extract` | Get atomic claims from a section |
 | `ministr_related` | Follow dependency chains between claims |
+| `ministr_toc` | Structural overview of the indexed corpus |
 | `ministr_symbols` | Search the code symbol index |
 | `ministr_definition` | Get full source of a symbol |
 | `ministr_references` | Find callers, implementors, importers |
@@ -84,6 +85,11 @@ Once connected, your agent has access to these tools:
 | `ministr_budget` | Check context budget and get eviction advice |
 | `ministr_compress` | Generate compressed summaries for eviction |
 | `ministr_evicted` | Signal that content has been dropped |
+| `ministr_fetch` | Fetch a web URL into the corpus |
+| `ministr_clone` | Clone and index a git repository |
+| `ministr_refresh` | Re-fetch sources that have changed upstream |
+
+See the [tool reference](/docs/tools) for parameter schemas and response formats.
 
 ### Typical Workflow
 

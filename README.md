@@ -73,13 +73,13 @@ claude mcp add ministr -- ministr                                    # Claude Co
 
 ## Features
 
-- **Semantic search** across docs and code at document, section, and claim resolution
+- **Semantic search** across docs and code at four levels of detail — whole document, section, single claim (one-sentence fact), or summary
 - **Code symbol navigation** — find and trace structs, functions, traits across 12 languages via tree-sitter
 - **Cross-language bridge detection** — Tauri commands, napi bindings, PyO3 functions, wasm-bindgen exports, HTTP routes
 - **Session tracking** with predictive prefetch, deduplication, and delta delivery
 - **Budget management** — token usage monitoring, eviction recommendations, compressed summaries under pressure
 - **Local embeddings** — FastEmbed + ONNX (~5ms/embed), optional Metal GPU acceleration on Apple Silicon
-- **Desktop app** — cache observatory dashboard, live tool-call activity stream, `⌘K` command palette, `?` shortcut sheet, and system-tray submenus (Tauri v2, macOS/Linux/Windows)
+- **Desktop app** — dashboard, live tool-call activity stream, `⌘K` command palette, `?` shortcut sheet, and system-tray submenus (Tauri v2, macOS/Linux/Windows)
 
 ## Cross-language bridges
 

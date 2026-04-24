@@ -23,7 +23,7 @@ log_format = "pretty"
 default_context_budget = 100000
 
 [prefetch]
-# Whether speculative prefetching is enabled
+# Whether predictive prefetching is enabled
 enabled = true
 
 # Maximum items in the prefetch cache
@@ -41,7 +41,7 @@ topic_window = 5
 | `default_model` | string | `"all-MiniLM-L6-v2"` | Embedding model for new corpora (see [supported models](#supported-embedding-models)) |
 | `log_format` | string | `"pretty"` | Log format: `"pretty"` or `"json"` |
 | `default_context_budget` | integer | `100000` | Token budget for new sessions |
-| `prefetch.enabled` | boolean | `true` | Enable speculative prefetching |
+| `prefetch.enabled` | boolean | `true` | Enable predictive prefetching |
 | `prefetch.cache_size` | integer | `50` | Max prefetch cache entries |
 | `prefetch.topic_window` | integer | `5` | Recent sections for topic vector |
 
@@ -87,20 +87,7 @@ ministr detects the parser from file extensions:
 
 ## CLI
 
-```text
-ministr [OPTIONS] [COMMAND]
-
-Commands:
-  serve   Start the MCP server over stdio (default)
-  index   Run ingestion synchronously and exit
-  init    Initialize .ministr.toml and MCP client configs
-
-Options:
-  -c, --corpus <PATH>   Corpus sources (repeatable)
-  -C, --config <PATH>   Path to config file (default: .ministr.toml)
-  -h, --help            Print help
-  -V, --version         Print version
-```
+See the [CLI reference](/docs/cli) for all commands and flags, including OAuth, HTTP transport, search, and the import/export pipeline.
 
 ## Supported Embedding Models
 

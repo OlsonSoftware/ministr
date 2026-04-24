@@ -30,16 +30,18 @@ flowchart TB
     query --> prefetch
   end
 
-  proxy -->|"HTTP/1.1 over UDS<br/>~/.ministr/ministrd.sock"| router
+  proxy -->|"HTTP/1.1 over local socket<br/>(UDS or named pipe)"| router
   dashboard -->|"Direct Rust API"| router
 ```
+
+The daemon uses the platform's local-socket primitive: a Unix domain socket (UDS, `~/.ministr/ministrd.sock`) on macOS and Linux, and a named pipe on Windows. Either way the channel never leaves the machine.
 
 ## Component Responsibilities
 
 | Component | Crate | Role |
 |-----------|-------|------|
 | **MCP Proxy** | `ministr-mcp` | Thin proxy: translates MCP tool calls to daemon HTTP API |
-| **Daemon** | `ministr-daemon` | Axum HTTP server on UDS: corpus management, queries, sessions |
+| **Daemon** | `ministr-daemon` | Axum HTTP server on a local socket: corpus management, queries, sessions |
 | **Tray App** | `ministr-app` | Tauri GUI: project management, dashboard, system tray |
 | **Core** | `ministr-core` | Domain logic: ingestion, search, embeddings, storage |
 | **API** | `ministr-api` | Shared wire types + `DaemonClient` for UDS communication |
@@ -54,7 +56,7 @@ flowchart TB
 
 ## Socket & PID Files
 
-- **Socket**: `~/.ministr/ministrd.sock` (Unix domain socket)
+- **Socket**: `~/.ministr/ministrd.sock` on macOS / Linux (Unix domain socket); a Windows named pipe at the equivalent path
 - **PID file**: `~/.ministr/ministrd.pid` (for stale socket detection)
 - **Data**: `~/.ministr/corpora/<corpus-id>/` (SQLite + HNSW per corpus)
 - **Config**: `~/.ministr/config.toml` (global settings)

@@ -9,7 +9,7 @@
  * conflict and lets the diagram do the quantitative work.
  */
 const STATS = [
-  { k: '0', u: 'API calls', sub: 'embeddings, index, and storage stay on your machine' },
+  { k: '0', u: 'API calls', sub: 'embeddings, index, and storage stay on your machine; the fetch and clone tools call out only when you ask them to' },
   { k: 'once', u: 'per section', sub: 'ministr ships each chunk once; your agent gets a pointer next turn' },
 ] as const;
 

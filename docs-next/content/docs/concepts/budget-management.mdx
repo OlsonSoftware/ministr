@@ -36,7 +36,7 @@ The agent can use this to make informed decisions about what to read next.
 
 When estimated usage exceeds a threshold (default: 80% of budget), ministr enters pressure mode:
 
-- **Responses are automatically compressed** — claim-level extracts instead of full sections, reducing tokens by 60-80%
+- **Responses are automatically compressed** — instead of returning the whole section, ministr returns just the relevant **claims** (single-sentence facts pulled from the section). Each response is typically 60-80% smaller than the equivalent full-section response
 - **Eviction recommendations are attached** — ranked by recency, relevance decay, and dependency analysis
 - **Replacement summaries are provided** — compressed summaries (10-20% of original) that can substitute for evicted content
 
