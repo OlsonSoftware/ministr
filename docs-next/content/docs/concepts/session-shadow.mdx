@@ -33,7 +33,7 @@ Based on the agent's declared context budget and cumulative token delivery, mini
 
 ministr does not have direct access to the agent's actual context window (MCP does not expose this). Instead, it maintains an estimate based on:
 
-1. **Cumulative token count** — when delivery exceeds the budget, older items are assumed evicted (FIFO by default, configurable to LRU)
+1. **Cumulative token count** — when delivery exceeds the budget, older items are assumed evicted (FIFO by default, or FSRS-based when a `MemoryTracker` is wired in and sessions record with retrievability scores)
 2. **Fault-based correction** — if the agent re-requests content ministr already delivered, this is treated as an eviction signal. The window estimate is corrected and the content is re-delivered.
 3. **Explicit signals** — the agent can call `ministr_evicted` to tell ministr what it dropped, improving accuracy
 
