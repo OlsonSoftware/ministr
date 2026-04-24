@@ -31,7 +31,7 @@ jobs:
       run:
         working-directory: docs-next
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node
         uses: actions/setup-node@v4

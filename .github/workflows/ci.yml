@@ -56,7 +56,7 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Sticky disk — rustup toolchain
         uses: useblacksmith/stickydisk@v1
         with:
@@ -84,7 +84,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Tauri + ministr-app system deps
         run: |
@@ -200,7 +200,7 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Sticky disk — rustup toolchain
         uses: useblacksmith/stickydisk@v1
         with:
@@ -228,7 +228,7 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: useblacksmith/setup-docker-builder@v1
       - uses: useblacksmith/build-push-action@v2
         with:
