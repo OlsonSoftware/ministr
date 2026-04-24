@@ -65,7 +65,7 @@ For the parser, embedding, and index internals, see the [architecture deep dive]
 ~/.ministr/
 ├── config.toml                     # Global configuration
 ├── corpora.json                    # Daemon's registered-corpus manifest
-├── ministrd.sock                      # Daemon Unix domain socket
+├── ministrd.sock                      # Daemon local socket (UDS on macOS/Linux; named pipe on Windows)
 ├── ministrd.pid                       # Daemon PID file
 └── corpora/
     └── <corpus-id>/                # Stable hash derived from corpus paths

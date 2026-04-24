@@ -1,55 +1,51 @@
 ---
 title: Predictive Prefetch
-description: How ministr predicts what the agent will need next using sequential, topical, and structural locality heuristics.
+description: The six prefetch strategies ministr uses to have the agent's likely next tool call ready in cache — three for reads, two for surveys, one for cross-session learning.
 ---
 
-The **predictive prefetch** engine — what ministr does after every read to have the agent's likely next call ready in cache — predicts what the agent will need next and pre-computes it, so cached results are served without re-embedding and re-searching on every call.
+The **predictive prefetch** engine predicts what the agent will ask for next and pre-computes it, so follow-up calls hit a warm cache instead of a fresh search.
 
 ## Why Prefetch Matters
 
-Every tool call round-trip costs latency, tokens, and money. If ministr can predict what the agent will ask for next and have it ready, the interaction feels instantaneous.
+Every tool call round-trip costs latency, tokens, and money. If ministr can guess what the agent will ask for next and have it ready, the interaction feels instantaneous — and the next response can skip an embed-and-search cycle entirely.
 
-## Prediction Strategies
+No LLM is in the loop for prediction itself. If guessing what to prefetch took 500ms of inference, it would defeat the purpose.
 
-The prefetch engine uses three deliberately simple heuristics. No LLM is in the loop — if prediction took 500ms of inference, it would defeat the purpose.
+## The Six Strategies
 
-### Sequential Locality
+Prefetch runs at two distinct moments in the agent's workflow. Three strategies fire after every `ministr_read`, two fire after every `ministr_survey`, and a sixth uses cross-session analytics on reads.
 
-When the agent reads section N of a document, pre-warm section N+1. Also pre-warm the parent document's summary (for navigation) and any sections that the current section cross-references.
+### After a read
 
-This is the same principle as hardware prefetch streaming.
+**Sequential locality.** When the agent reads section N of a document, pre-warm section N+1 (and a short window beyond). This mirrors hardware prefetch streaming.
 
-### Topical Locality
+**Structural locality.** Pre-warm sibling sections at the same depth around the current read position, so "read through a doc" and "look at the next thing in the outline" both serve warm.
 
-Maintain a running "topic vector" — a weighted average of the embedding vectors of the last K sections the agent accessed. Use this topic vector to find the nearest un-accessed sections and pre-warm them.
+**Topical locality.** Keep a running "topic vector" — a weighted average of the embedding vectors of the last K sections the agent accessed — and query HNSW for its nearest un-read neighbours. Analogous to stride-based prefetching, generalised to a high-dimensional embedding space.
 
-This is analogous to stride-based prefetching generalized to a high-dimensional embedding space.
+**Cross-session analytics.** Pull sections that, across previous sessions, have often been read together with the one the agent just read. Only runs in ministr's default single-process mode today; the daemon-proxy path has this scaffolded but not yet wired.
 
-### Structural Locality
+### After a survey
 
-If the agent accessed a claim within a section, pre-warm other claims in the same section. If the agent accessed a section within a document, pre-warm sibling sections. Walk up and sideways in the document tree.
+**Survey expand.** When a survey returns claim-level hits, pre-warm each hit's parent section — so the typical `survey → read` follow-up is already in cache.
+
+**Agent plan (intent-based).** Cheaply analyse the query plus the top survey hits to infer what the agent is likely to ask for next, and pre-warm a small capped list. Capped to avoid cache thrashing.
 
 ## Cache
 
-Pre-warmed results are stored in an in-memory LRU cache with a configurable size limit (default: 50 items). Each item includes the pre-computed text, token count, and relevance score.
+Pre-warmed results live in an in-memory LRU cache (default size: 128 items). Each entry holds the pre-computed text, token count, relevance score, and a tag recording which strategy warmed it — so hit-rate metrics break down per strategy and you can see which predictions actually pay off.
 
 ## Configuration
 
 ```toml
 [prefetch]
-enabled = true      # Toggle prefetching on/off
-cache_size = 50     # Max items in the prefetch cache
-topic_window = 5    # Recent sections for topic vector
+enabled = true                   # Toggle prefetching on/off
+cache_size = 128                 # Max items in the prefetch cache
+topic_window = 5                 # Recent sections used for the topic vector
+alpha = 0.3                      # EMA weight on the most recent section (optional)
+adaptive_alpha = true            # Auto-tune alpha when the topic stabilises (optional)
+speculative = false              # Run prefetch proactively during agent idle (optional)
+max_candidates_per_strategy = 5  # Cap per strategy per cycle (optional)
 ```
 
-Prefetching can be disabled entirely with `enabled = false`. The cache size controls memory usage — each cached item holds the full text of a section or claim.
-
-## Cross-Session Learning
-
-Over time, ministr accumulates data about access patterns:
-
-- **Frequently accessed sections** get priority in prefetch caches
-- **Sections consistently delivered together** are pre-bundled
-- **Sections delivered but never referenced again** are deprioritized
-
-This data is stored locally per corpus, fed by cross-session analytics.
+Prefetching can be disabled entirely with `enabled = false`. `cache_size` controls memory usage (each cached item holds a full section or claim). The optional fields are fine-tuning knobs — most users never touch them.

@@ -27,10 +27,16 @@ default_context_budget = 100000
 enabled = true
 
 # Maximum items in the prefetch cache
-cache_size = 50
+cache_size = 128
 
 # Number of recent sections for topical prefetch vector
 topic_window = 5
+
+# Fine-tuning knobs (all optional — defaults are sensible)
+# alpha = 0.3                     # EMA weight on the most recent section
+# adaptive_alpha = true            # Auto-tune alpha when the topic stabilises
+# speculative = false              # Run prefetch proactively during agent idle
+# max_candidates_per_strategy = 5  # Cap per strategy per cycle
 ```
 
 ### Fields
@@ -42,8 +48,12 @@ topic_window = 5
 | `log_format` | string | `"pretty"` | Log format: `"pretty"` or `"json"` |
 | `default_context_budget` | integer | `100000` | Token budget for new sessions |
 | `prefetch.enabled` | boolean | `true` | Enable predictive prefetching |
-| `prefetch.cache_size` | integer | `50` | Max prefetch cache entries |
+| `prefetch.cache_size` | integer | `128` | Max prefetch cache entries |
 | `prefetch.topic_window` | integer | `5` | Recent sections for topic vector |
+| `prefetch.alpha` | float (optional) | auto | EMA weight on the most recent section (0.0-1.0) |
+| `prefetch.adaptive_alpha` | boolean (optional) | auto | Auto-tune alpha based on topical hit rate |
+| `prefetch.speculative` | boolean (optional) | auto | Run prefetch proactively during agent idle |
+| `prefetch.max_candidates_per_strategy` | integer (optional) | auto | Cap per strategy per cycle |
 
 ## Project Configuration (`.ministr.toml`)
 
