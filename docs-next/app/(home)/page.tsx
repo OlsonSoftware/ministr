@@ -28,7 +28,7 @@ export default function HomePage() {
             Install in 30 seconds.
           </h2>
           <p className="ministr-body mt-4 text-[15.5px]">
-            Three commands. Any MCP client. Fully local.
+            Three commands. Any MCP client. 100% local.
           </p>
         </div>
         <div className="mt-10">

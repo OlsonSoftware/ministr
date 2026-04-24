@@ -13,7 +13,7 @@ export function Mechanisms() {
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
         <p className="ministr-eyebrow">What ministr does</p>
         <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
-          Five jobs, done for your agent, automatically.
+          Six jobs, done for your agent, automatically.
         </h2>
         <p className="ministr-body mt-4 max-w-[60ch] text-[15.5px]">
           Each one fixes a specific way AI coding agents waste their context
@@ -21,22 +21,46 @@ export function Mechanisms() {
         </p>
 
         <div className="mt-12 grid grid-cols-1 gap-5 md:grid-cols-2">
-          <MechanismTile title="Session Shadow" copy="A per-session timeline of every section, claim, and symbol ministr has delivered — so it knows what your agent already has.">
+          <MechanismTile
+            title="Remembers what was sent"
+            technical="Session Shadow"
+            copy="Keeps a per-session log of every chunk of code your agent has seen, so it can return a pointer on the next turn instead of the same text."
+          >
             <TimelineVisual />
           </MechanismTile>
-          <MechanismTile title="Delta Delivery" copy="Changed sections ship as line-level deltas. Unchanged lines stay off the wire.">
+          <MechanismTile
+            title="Ships only the diff"
+            technical="Delta Delivery"
+            copy="When a file has changed since the agent last saw it, ministr sends just the changed lines — not the whole file again."
+          >
             <DeltaVisual />
           </MechanismTile>
-          <MechanismTile title="Predictive Prefetch" copy="Sequential, structural, and topical prefetch warm the likely next read — before the agent asks.">
+          <MechanismTile
+            title="Warms the next likely read"
+            technical="Predictive Prefetch"
+            copy="Pre-loads neighbouring functions, called symbols, and referenced docs so the next tool call is a cache hit instead of a fresh search."
+          >
             <PrefetchVisual />
           </MechanismTile>
-          <MechanismTile title="Budget & Pressure Mode" copy="Live token accounting. At ~80% ministr auto-compresses responses and ranks eviction candidates.">
+          <MechanismTile
+            title="Watches the token budget"
+            technical="Budget & Pressure"
+            copy="Tracks how much context your agent has used. As it fills up, ministr auto-compresses responses and picks what to drop first."
+          >
             <BudgetVisual />
           </MechanismTile>
-          <MechanismTile title="Coherence" copy="When a file changes, ministr flags the delivered content as stale. No silently rotten context.">
+          <MechanismTile
+            title="Flags stale content"
+            technical="Coherence Watcher"
+            copy="If a file changes on disk after your agent read it, ministr marks that content stale so the agent re-reads the new version instead of reasoning off rot."
+          >
             <CoherenceVisual />
           </MechanismTile>
-          <MechanismTile title="Hybrid Search" copy="Dense embeddings + SPLADE sparse retrieval. Keyword + meaning, fused at rank-time.">
+          <MechanismTile
+            title="Keyword + meaning search"
+            technical="Hybrid Search"
+            copy="Pairs semantic embeddings with traditional keyword search and fuses the rankings — so you find the function whether you search by what it does or what it's called."
+          >
             <HybridVisual />
           </MechanismTile>
         </div>
@@ -47,10 +71,16 @@ export function Mechanisms() {
 
 function MechanismTile({
   title,
+  technical,
   copy,
   children,
 }: {
+  /** Plain-English tile headline. */
   title: string;
+  /** Internal/technical name for the same concept. Shown as a small
+   *  subtitle so a reader who then sees the technical label in the
+   *  Architecture diagram below can connect the two. */
+  technical: string;
   copy: string;
   children: React.ReactNode;
 }) {
@@ -59,6 +89,9 @@ function MechanismTile({
       <h3 className="text-[clamp(1.25rem,2vw,1.5rem)] font-semibold tracking-tight text-fd-foreground">
         {title}
       </h3>
+      <p className="mt-1 font-mono text-[10.5px] uppercase tracking-[0.18em] text-fd-muted-foreground">
+        {technical}
+      </p>
       <p className="ministr-body mt-3 text-[14.5px] leading-relaxed">{copy}</p>
       <div className="mt-5">{children}</div>
     </div>
@@ -80,10 +113,11 @@ function PanelShell({
   children: React.ReactNode;
   className?: string;
 }) {
-  // Was a mock-terminal frame with traffic-light dots. The macOS-window
-  // chrome on a pretend-terminal "visual" is a decade-old illustration
-  // cliche — it tells the eye "we made a graphic" rather than what the
-  // panel actually is. Replaced with a plain labelled border.
+  // Plain labelled border.  Used to carry a mock-terminal frame with
+  // traffic-light dots — that macOS-window chrome on a pretend-terminal
+  // "visual" is a decade-old illustration cliche. The "example" pill
+  // makes the fabricated content in the panel unambiguous: this is an
+  // illustration, not live app output.
   return (
     <div
       className={
@@ -91,9 +125,15 @@ function PanelShell({
         className
       }
     >
-      <div className="border-b border-fd-border/40 px-3 py-1.5">
+      <div className="flex items-center justify-between border-b border-fd-border/40 px-3 py-1.5">
         <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--ministr-accent-text)]">
           {label}
+        </span>
+        <span
+          className="rounded border border-fd-border/50 px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.18em] text-fd-muted-foreground/80"
+          title="Illustration — not live data"
+        >
+          example
         </span>
       </div>
       <div className="p-3">{children}</div>

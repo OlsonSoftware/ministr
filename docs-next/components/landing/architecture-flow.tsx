@@ -414,30 +414,15 @@ function FlowLayer({
           >
             {kicker}
           </span>
-          {isFeatured && (
-            <span className="rounded bg-[color-mix(in_oklch,var(--color-ministr-500)_18%,transparent)] px-1.5 py-px text-[9.5px] uppercase tracking-wider text-[var(--ministr-accent-text)]">
-              core
-            </span>
-          )}
           {active && (
-            <motion.span
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="rounded-full border border-[color-mix(in_oklch,var(--color-ministr-400)_60%,transparent)] bg-[color-mix(in_oklch,var(--color-ministr-500)_18%,transparent)] px-1.5 py-px text-[9.5px] uppercase tracking-wider text-[var(--ministr-accent-text)]"
-            >
+            <span className="rounded bg-[color-mix(in_oklch,var(--color-ministr-500)_18%,transparent)] px-1.5 py-px text-[9.5px] uppercase tracking-wider text-[var(--ministr-accent-text)]">
               active
-            </motion.span>
+            </span>
           )}
         </div>
         <span className="text-[10px] text-fd-muted-foreground/80">{meta}</span>
       </div>
       {children}
-      {!terminal && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute left-1/2 -bottom-px h-px w-12 -translate-x-1/2 bg-gradient-to-r from-transparent via-[color-mix(in_oklch,var(--color-ministr-400)_60%,transparent)] to-transparent"
-        />
-      )}
     </motion.div>
   );
 }
@@ -613,7 +598,7 @@ function StepDots({
             className="group relative h-1 flex-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_75%,transparent)] transition-all hover:h-1.5"
           >
             <span
-              className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[var(--color-ministr-500)] via-[var(--color-violet-500)] to-[var(--color-fuchsia-400)] transition-all"
+              className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-ministr-500)] transition-all"
               style={{
                 width: current ? `${Math.max(fill * 100, 8)}%` : `${fill * 100}%`,
                 transitionDuration: current ? '60ms' : '300ms',

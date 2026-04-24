@@ -1,10 +1,16 @@
 /**
- * StatsStrip — horizontal band under the hero. Two concrete,
- * verifiable facts. Symmetric hairlines above and below.
+ * StatsStrip — horizontal band under the hero. Two concrete claims
+ * about what ministr does, not estimated percentages.
+ *
+ * The earlier "60–80% fewer tokens" headline ran straight into the
+ * Thesis WasteDiagram below, which computes a ~96% / 22× reduction
+ * from its worked example; the reader would see two different
+ * numbers for the same claim. Dropping the percentage avoids the
+ * conflict and lets the diagram do the quantitative work.
  */
 const STATS = [
   { k: '0', u: 'API calls', sub: 'embeddings, index, and storage stay on your machine' },
-  { k: '60–80%', u: 'fewer tokens', sub: 'your agent stops re-reading what it already has' },
+  { k: 'once', u: 'per section', sub: 'ministr ships each chunk once; your agent gets a pointer next turn' },
 ] as const;
 
 export function StatsStrip() {

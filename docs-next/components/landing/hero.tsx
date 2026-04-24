@@ -52,12 +52,12 @@ export function Hero() {
               {...stagger(3)}
               className="ministr-body mt-4 max-w-[52ch] text-[14.5px] leading-relaxed"
             >
-              Claude Code, Cursor, and Copilot waste most of their context
-              window re-grepping and re-reading code they already saw.
-              ministr gives them a local index that ships the exact section
-              once, tracks what&rsquo;s been delivered, and skips it on the
-              next turn. Your agent finishes tasks faster and actually
-              remembers what it&rsquo;s looked at.
+              Claude Code, Cursor, and Copilot burn through a large chunk
+              of their context window re-grepping and re-reading code they
+              already saw. ministr gives them a local index that ships the
+              exact section once, tracks what&rsquo;s been delivered, and
+              skips it on the next turn &mdash; so your agent uses fewer
+              tokens per turn and actually remembers what it&rsquo;s looked at.
             </motion.p>
 
             <motion.div {...stagger(4)} className="mt-8">
