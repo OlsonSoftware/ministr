@@ -97,7 +97,12 @@ impl axum::serve::Listener for Listener {
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
         let Inner::Unix(listener) = &mut self.inner;
         loop {
-            match listener.accept().await {
+            // UFCS: `tokio::net::UnixListener` also implements
+            // `axum::serve::Listener` (on Linux/macOS), so `listener.accept()`
+            // would resolve to the trait method and return the tuple directly.
+            // We want the inherent `io::Result<_>` version so we can log and
+            // retry on errors instead of panicking.
+            match tokio::net::UnixListener::accept(listener).await {
                 Ok(tup) => return tup,
                 Err(e) => {
                     tracing::warn!(error = %e, "UDS accept error — retrying");
@@ -109,7 +114,7 @@ impl axum::serve::Listener for Listener {
 
     fn local_addr(&self) -> io::Result<Self::Addr> {
         let Inner::Unix(listener) = &self.inner;
-        listener.local_addr()
+        tokio::net::UnixListener::local_addr(listener)
     }
 }
 
