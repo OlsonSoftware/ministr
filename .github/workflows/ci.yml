@@ -32,11 +32,19 @@ env:
 
 # Runner topology: Blacksmith-hosted ephemeral Linux runners.
 #
+#   changes       → blacksmith-2vcpu-ubuntu-2404 (path-filter, sub-10s)
 #   fmt           → blacksmith-2vcpu-ubuntu-2404 (instant feedback, no compile)
 #   rust          → blacksmith-4vcpu-ubuntu-2404 (16 GB RAM — linker needs it)
 #   security      → blacksmith-2vcpu-ubuntu-2404
 #   docker-build  → blacksmith-2vcpu-ubuntu-2404
 #   ci-complete   → gate job, required check for branch protection
+#
+# Path-filtering: a `changes` job classifies the PR/push and every
+# expensive downstream job is `if`-gated on it. A docs-only PR (one
+# that only touches docs-next/, README, CHANGELOG, etc.) will skip the
+# Rust matrix, cargo-deny, and the Docker build entirely — only `fmt`
+# still runs as a sanity check (it's already a 5s job on sticky disks).
+# Editing this workflow itself forces every gate back on.
 #
 # Sticky disks (NVMe-backed, ~3s mount vs ~1m6s for GitHub Actions
 # cache) hydrate every piece of per-runner state that's expensive to
@@ -48,11 +56,130 @@ env:
 
 jobs:
   # ────────────────────────────────────────────────────────────────
+  # changes: classify which file groups the PR/push touched.
+  # Every downstream gate reads these outputs to decide whether to
+  # run. Cheap (< 10s), so effectively free overhead on every run.
+  # ────────────────────────────────────────────────────────────────
+  changes:
+    name: detect changed paths
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 3
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      security: ${{ steps.filter.outputs.security }}
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      # Need full history — actions/checkout defaults to depth 1, but we
+      # diff the PR/push range and both endpoints must be reachable.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Plain `git diff --name-only <base> <head>` — no third-party
+      # action. The job emits three booleans consumed by the downstream
+      # `if:` gates. Any failure mode falls back to "assume everything
+      # changed" so we never silently skip CI on a pathological diff.
+      - id: filter
+        shell: bash
+        env:
+          GH_EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Regex groups — extended POSIX, matched against the start of
+          # each changed-file path. Editing ci.yml itself or the
+          # composite rust-setup action force-runs the relevant gates,
+          # so we can't skip CI by accident when changing CI.
+          RUST_RE='^(Cargo\.(toml|lock)|rust-toolchain\.toml|deny\.toml|ministr-[^/]+/|\.config/nextest\.toml|justfile|eval/|\.github/workflows/ci\.yml$|\.github/actions/)'
+          SECURITY_RE='^(Cargo\.(toml|lock)|deny\.toml|ministr-[^/]+/|\.github/workflows/ci\.yml$|\.github/actions/)'
+          DOCKER_RE='^(Dockerfile|\.dockerignore|Cargo\.(toml|lock)|ministr-[^/]+/|\.github/workflows/ci\.yml$)'
+
+          # Fall-through: emit all three as "true" and exit 0. Used when
+          # we can't determine a clean diff range (first push to a new
+          # branch, force-push dropping the old tip, etc.).
+          assume_all_changed() {
+            echo "reason: $1 — running every gate"
+            {
+              echo "rust=true"
+              echo "security=true"
+              echo "docker=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          # Resolve the diff endpoints per event type.
+          if [ "$GH_EVENT" = "pull_request" ]; then
+            BASE="$PR_BASE"
+            HEAD="$PR_HEAD"
+          elif [ "$GH_EVENT" = "push" ]; then
+            BASE="$PUSH_BEFORE"
+            HEAD="$PUSH_AFTER"
+            # First push to a branch ⇒ "before" is all zeros.
+            if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              assume_all_changed "initial push (no prior commit)"
+            fi
+          else
+            assume_all_changed "unhandled event: $GH_EVENT"
+          fi
+
+          # Both endpoints must exist in the local clone. Force-push can
+          # orphan BASE; fetch-depth:0 above makes this rare but not
+          # impossible on very old refs.
+          if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            assume_all_changed "base commit $BASE not in local history"
+          fi
+          if ! git cat-file -e "$HEAD^{commit}" 2>/dev/null; then
+            assume_all_changed "head commit $HEAD not in local history"
+          fi
+
+          # The actual diff. `...` gives us files changed on the PR/branch
+          # relative to the merge-base — robust against main moving forward
+          # under us.
+          echo "diff: $BASE...$HEAD"
+          CHANGED=$(git diff --name-only "$BASE...$HEAD")
+
+          if [ -z "$CHANGED" ]; then
+            # No files changed (empty commit, edge case). Skip everything
+            # — if nothing changed there's nothing to test.
+            echo "no files changed"
+            {
+              echo "rust=false"
+              echo "security=false"
+              echo "docker=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "$CHANGED" | sed 's/^/  /'
+
+          matches() { printf '%s\n' "$CHANGED" | grep -Eq "$1"; }
+
+          RUST=false
+          SECURITY=false
+          DOCKER=false
+          if matches "$RUST_RE";     then RUST=true;     fi
+          if matches "$SECURITY_RE"; then SECURITY=true; fi
+          if matches "$DOCKER_RE";   then DOCKER=true;   fi
+
+          echo "verdict: rust=$RUST security=$SECURITY docker=$DOCKER"
+          {
+            echo "rust=$RUST"
+            echo "security=$SECURITY"
+            echo "docker=$DOCKER"
+          } >> "$GITHUB_OUTPUT"
+
+  # ────────────────────────────────────────────────────────────────
   # fmt: instant feedback, no compile. Gates `rust` below — if fmt
   # fails there's no point burning 10 min of Rust CI on whitespace.
   # ────────────────────────────────────────────────────────────────
   fmt:
     name: fmt
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
@@ -80,7 +207,8 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   rust:
     name: rust (clippy → test → doc → smoke → eval)
-    needs: [fmt]
+    needs: [changes, fmt]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
@@ -197,6 +325,8 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   security:
     name: security (deny + audit)
+    needs: [changes]
+    if: needs.changes.outputs.security == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -225,6 +355,8 @@ jobs:
 
   docker-build:
     name: docker build
+    needs: [changes]
+    if: needs.changes.outputs.docker == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
@@ -238,33 +370,43 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────
   # Gate job — single required status check for branch protection.
-  # `if: always()` ensures we evaluate even when upstream jobs
-  # failed/cancelled/skipped (otherwise this job would be "skipped"
-  # and branch protection wouldn't see a failure).
+  # `if: always()` ensures we evaluate even when upstream jobs were
+  # skipped (so branch protection can see a deterministic pass/fail).
+  # Accepts `success` or `skipped` for each upstream — skipped means
+  # the path filter determined the job wasn't needed for this diff.
   # ────────────────────────────────────────────────────────────────
   ci-complete:
     name: ci complete
-    needs: [fmt, rust, security, docker-build]
+    needs: [changes, fmt, rust, security, docker-build]
     if: always()
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 2
     steps:
-      - name: Verify all required jobs succeeded
+      - name: Verify all required jobs succeeded or were intentionally skipped
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
           FMT_RESULT: ${{ needs.fmt.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           DOCKER_RESULT: ${{ needs.docker-build.result }}
         run: |
+          echo "changes:      $CHANGES_RESULT"
           echo "fmt:          $FMT_RESULT"
           echo "rust:         $RUST_RESULT"
           echo "security:     $SECURITY_RESULT"
           echo "docker-build: $DOCKER_RESULT"
-          if [ "$FMT_RESULT" != "success" ] \
-             || [ "$RUST_RESULT" != "success" ] \
-             || [ "$SECURITY_RESULT" != "success" ] \
-             || [ "$DOCKER_RESULT" != "success" ]; then
-            echo "::error::One or more required jobs failed."
+
+          # The `changes` job MUST have succeeded — it drives gating.
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::paths-filter job did not succeed; can't trust the gates."
             exit 1
           fi
-          echo "✓ all required jobs passed"
+
+          ok() { [ "$1" = "success" ] || [ "$1" = "skipped" ]; }
+          fail=0
+          ok "$FMT_RESULT"      || { echo "::error::fmt $FMT_RESULT";           fail=1; }
+          ok "$RUST_RESULT"     || { echo "::error::rust $RUST_RESULT";         fail=1; }
+          ok "$SECURITY_RESULT" || { echo "::error::security $SECURITY_RESULT"; fail=1; }
+          ok "$DOCKER_RESULT"   || { echo "::error::docker-build $DOCKER_RESULT"; fail=1; }
+          [ $fail -eq 0 ] || exit 1
+          echo "✓ all required jobs passed or were intentionally skipped"

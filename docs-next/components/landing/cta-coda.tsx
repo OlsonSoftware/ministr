@@ -1,12 +1,10 @@
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
-import { GithubGlyph } from '@/components/landing/github-glyph';
 import { Reveal } from '@/components/landing/reveal';
 
 /**
- * CtaCoda — big closing coda. Last thing a visitor sees before the
- * footer; the whole page funnels into it. Ambient comes from the
- * page-wide chromatic-flow shader — no local backdrop.
+ * CtaCoda — closing CTA. Single primary action; ambient from the
+ * page-wide chromatic-flow shader.
  */
 export function CtaCoda() {
   return (
@@ -19,12 +17,11 @@ export function CtaCoda() {
         </Reveal>
         <Reveal delay={0.12}>
           <p className="ministr-body mx-auto mt-6 max-w-[52ch] text-[17px]">
-            Install ministr in 30 seconds. It works with any MCP client, runs
-            100% locally, and leaves no trace on the wire.
+            Install in 30 seconds. Any MCP client. 100% local.
           </p>
         </Reveal>
         <Reveal delay={0.2}>
-          <div className="mt-10 flex flex-wrap justify-center gap-3">
+          <div className="mt-10 flex justify-center">
             <Link
               href="/docs/getting-started"
               className="ministr-cta-primary group inline-flex items-center gap-1.5 rounded-lg px-5 py-3 text-[15px] font-medium"
@@ -32,20 +29,7 @@ export function CtaCoda() {
               Install ministr
               <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
             </Link>
-            <Link
-              href="https://github.com/OlsonSoftware/ministr"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border/70 bg-[color-mix(in_oklch,var(--ministr-surface)_55%,transparent)] px-5 py-3 text-[15px] font-medium text-fd-foreground backdrop-blur transition hover:bg-[color-mix(in_oklch,var(--ministr-surface)_78%,transparent)]"
-            >
-              <GithubGlyph className="size-4" />
-              Star on GitHub
-            </Link>
           </div>
-        </Reveal>
-        <Reveal delay={0.3}>
-          <p className="ministr-body-quiet mt-10 inline-flex items-center gap-2 text-[12.5px]">
-            <span aria-hidden className="ministr-mark-dot" />
-            Made by Alrik · MIT license · Rust, zero unsafe.
-          </p>
         </Reveal>
       </div>
     </section>

@@ -56,24 +56,20 @@ function FlowQuad({ reduced }: { reduced: boolean }) {
   const { size, viewport } = useThree();
 
   const [sections, setSections] = useState<Element[]>([]);
+  // Cached section centres in document coordinates, plus the latest
+  // scrollY. Updating these on scroll/resize instead of in the render
+  // loop saves ~660 layout reads/sec at 60fps with 11 sections.
+  const centersDoc = useRef<number[]>([]);
+  const scrollYRef = useRef(0);
   const phaseSmooth   = useRef(0);
   const phaseVel      = useRef(0);
   const phasePrev     = useRef(0);
   const themeSmooth   = useRef(0);
-  const mouseTarget   = useRef<[number, number]>([0.5, 0.5]);
-  const mouseSmooth   = useRef<[number, number]>([0.5, 0.5]);
 
-  // Mouse tracking for reactive light source.
-  useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      mouseTarget.current = [
-        e.clientX / window.innerWidth,
-        1 - e.clientY / window.innerHeight,
-      ];
-    };
-    window.addEventListener('pointermove', onMove, { passive: true });
-    return () => window.removeEventListener('pointermove', onMove);
-  }, []);
+  // Mouse tracking was removed: the pointermove listener prevented the
+  // render loop from ever settling, and the reactive light it drove was
+  // a subtle effect that didn't justify the continuous CPU cost. The
+  // uMouse uniform is left pinned to centre (0.5, 0.5) for shader compat.
 
   // Discover sections once on mount, re-discover on resize so layout
   // shifts (fonts loaded, media loaded) are picked up.
@@ -83,6 +79,13 @@ function FlowQuad({ reduced }: { reduced: boolean }) {
         document.querySelectorAll<HTMLElement>('.ministr-landing > section'),
       );
       setSections(list);
+      // Pre-compute document-coordinate centres so the render loop
+      // doesn't have to call getBoundingClientRect each frame.
+      const sy = window.scrollY || window.pageYOffset || 0;
+      centersDoc.current = list.map((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top + sy + r.height * 0.5;
+      });
     };
     discover();
     const raf = requestAnimationFrame(discover);
@@ -91,6 +94,17 @@ function FlowQuad({ reduced }: { reduced: boolean }) {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', discover);
     };
+  }, []);
+
+  // Track scrollY cheaply. `passive: true` so we don't block scroll,
+  // and we just write a number — the render loop reads it.
+  useEffect(() => {
+    const onScroll = () => {
+      scrollYRef.current = window.scrollY || window.pageYOffset || 0;
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
   const uniforms = useMemo(
@@ -134,32 +148,27 @@ function FlowQuad({ reduced }: { reduced: boolean }) {
     themeSmooth.current += (themeTarget - themeSmooth.current) * kTheme;
     u.uTheme.value = themeSmooth.current;
 
-    const nSections = sections.length;
+    const nSections = centersDoc.current.length;
     if (nSections > 0) {
-      const vpCenter = window.innerHeight * 0.5;
+      // Viewport centre in document coordinates, using the cached
+      // scroll offset instead of a fresh layout read per frame.
+      const vpCenterDoc = scrollYRef.current + window.innerHeight * 0.5;
+      const centers = centersDoc.current;
 
       // Find the fractional section index at the viewport center by
-      // interpolating between consecutive section midpoints.
+      // interpolating between consecutive cached section midpoints.
       let target = 0;
-      const centers: number[] = [];
-      for (let i = 0; i < nSections; i++) {
-        const r = sections[i].getBoundingClientRect();
-        centers.push(r.top + r.height * 0.5);
-      }
-
-      if (vpCenter <= centers[0]) {
+      if (vpCenterDoc <= centers[0]) {
         target = 0;
-      } else if (vpCenter >= centers[nSections - 1]) {
+      } else if (vpCenterDoc >= centers[nSections - 1]) {
         target = nSections - 1;
       } else {
         for (let i = 0; i < nSections - 1; i++) {
-          if (vpCenter >= centers[i] && vpCenter < centers[i + 1]) {
+          if (vpCenterDoc >= centers[i] && vpCenterDoc < centers[i + 1]) {
             const span = Math.max(1, centers[i + 1] - centers[i]);
-            // Linear, not S-curve: the S-curve made the phase dwell
-            // at section centres and rush across boundaries, which
-            // read as jarring "clicks". Linear + soft damping gives
-            // a continuous drift that feels like wind through smoke.
-            target = i + (vpCenter - centers[i]) / span;
+            // Linear + soft damping — continuous drift rather than the
+            // S-curve's "click at section centres" feel.
+            target = i + (vpCenterDoc - centers[i]) / span;
             break;
           }
         }
@@ -180,16 +189,7 @@ function FlowQuad({ reduced }: { reduced: boolean }) {
       u.uVelocity.value = Math.abs(phaseVel.current);
     }
 
-    // Smoothed mouse — lags the cursor so the reactive light feels
-    // like an inertial glow rather than a hard tracker.
-    const [mx, my] = mouseTarget.current;
-    const [sx, sy] = mouseSmooth.current;
-    const km = 1 - Math.pow(0.001, delta * 1.5);
-    mouseSmooth.current = [sx + (mx - sx) * km, sy + (my - sy) * km];
-    (u.uMouse.value as THREE.Vector2).set(
-      mouseSmooth.current[0],
-      mouseSmooth.current[1],
-    );
+    // uMouse stays pinned to centre — see the cfg comment above.
   });
 
   const scale: [number, number, number] = [viewport.width, viewport.height, 1];
