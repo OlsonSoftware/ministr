@@ -6,8 +6,6 @@ import { StatsStrip } from '@/components/landing/stats-strip';
 import { Thesis } from '@/components/landing/thesis';
 import { Mechanisms } from '@/components/landing/mechanisms';
 import { ArchitectureFlow } from '@/components/landing/architecture-flow';
-import { WhatMinistrIsnt } from '@/components/landing/what-ministr-isnt';
-import { WorkflowComparison } from '@/components/landing/workflow-comparison';
 import { InstallTabs } from '@/components/landing/install-tabs';
 import { ToolList } from '@/components/landing/tool-list';
 import { CtaCoda } from '@/components/landing/cta-coda';
@@ -17,18 +15,16 @@ import { Reveal } from '@/components/landing/reveal';
 /**
  * Landing — the ministr "Observatory" composition.
  *
- * Flow (Z→F scan path, research-informed):
- *   1. Hero composite (aurora + lens + wordmark + live asciinema)
- *   2. Stats strip  (trust signals, F-bar)
- *   3. Thesis       (what agents waste)
- *   4. Workflow cmp (real casts, same task, two tool loadouts)
- *   5. Mechanisms   (5 mechanisms + hybrid search, bento)
- *   6. Architecture (how it wires up)
- *   7. What ministr isn't (differentiation strikethroughs)
- *   8. Install      (30-second path)
- *   9. Tool ref     (twelve tools your agent already speaks)
- *  10. CTA coda     (stop re-reading the same files)
- *  11. Footer       (retained, tightened)
+ * Flow:
+ *   1. Hero           (aurora + lens + wordmark + live asciinema)
+ *   2. Stats strip    (two real trust signals)
+ *   3. Thesis         (grep+read vs ministr, interactive playback)
+ *   4. Mechanisms     (how it works — bento)
+ *   5. Architecture   (how it wires up)
+ *   6. Install        (30-second path)
+ *   7. Tool ref       (the MCP tools agents already speak)
+ *   8. CTA coda       (stop re-reading the same files)
+ *   9. Footer         (docs pointers)
  */
 export default function HomePage() {
   return (
@@ -44,20 +40,8 @@ export default function HomePage() {
       <StatsStrip />
       <Thesis />
 
-      <Section belowFold>
-        {/*
-         * Real asciinema recordings side-by-side — same prompt, two
-         * tool loadouts. `hasBaseline` flips to true once
-         * assets/launch-baseline.cast is recorded (see
-         * scripts/demo-record-baseline-cast.sh); until then only the
-         * ministr side renders.
-         */}
-        <WorkflowComparison hasBaseline={false} />
-      </Section>
-
       <Mechanisms />
       <ArchitectureFlow />
-      <WhatMinistrIsnt />
 
       <Section belowFold>
         <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
@@ -111,7 +95,6 @@ export default function HomePage() {
       <Section tight belowFold>
         <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
           <div className="flex flex-col items-center gap-4 pt-10 text-center">
-            {/* Spectrum hairline separator — ties into the brand material set */}
             <div className="ministr-spectrum-rule-major w-full max-w-md" />
             <p className="ministr-body-quiet inline-flex items-center gap-2 text-[13px]">
               <span aria-hidden className="ministr-mark-dot" />
@@ -125,7 +108,6 @@ export default function HomePage() {
               <FooterLink href="/docs/tools">Tool reference</FooterLink>
               <FooterLink href="/docs/architecture">Architecture</FooterLink>
               <FooterLink href="/docs/concepts">Concepts</FooterLink>
-              <FooterLink href="https://github.com/OlsonSoftware/ministr">GitHub</FooterLink>
             </nav>
           </div>
         </div>

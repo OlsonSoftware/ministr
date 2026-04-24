@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { ArrowRight, Box } from 'lucide-react';
-import { GithubGlyph } from '@/components/landing/github-glyph';
 import { motion, useReducedMotion } from 'motion/react';
 import { HeroPlayer } from '@/components/landing/hero-player';
 import { GlassCard } from '@/components/landing/glass-card';
@@ -87,13 +86,6 @@ export function Hero() {
                 className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border/70 bg-[color-mix(in_oklch,var(--ministr-surface)_55%,transparent)] px-4 py-2.5 text-sm font-medium text-fd-foreground backdrop-blur transition hover:bg-[color-mix(in_oklch,var(--ministr-surface)_75%,transparent)]"
               >
                 Read the architecture
-              </Link>
-              <Link
-                href="https://github.com/OlsonSoftware/ministr"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-fd-muted-foreground transition hover:text-[var(--ministr-accent-text)]"
-              >
-                <GithubGlyph className="size-4" />
-                GitHub
               </Link>
             </motion.div>
           </div>
