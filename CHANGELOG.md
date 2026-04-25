@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ministr_bridge` — cross-language bridge detection across seven kinds: Tauri commands and events, napi-rs, PyO3, wasm-bindgen, HTTP routes (actix-web / axum / rocket), and raw FFI
 
 #### Retrieval
-- Two-stage Matryoshka retrieval with adaptive dimension selection
+- Two-stage Matryoshka retrieval — corpus-configurable target dimension (`corpus.dimension`) with full-dimension HNSW rescoring (`corpus.rerank_depth`)
 - SPLADE sparse embeddings + dense vectors with reciprocal rank fusion
 - Cross-encoder reranking with configurable pipeline depth
 - Candle Metal GPU embedding backend (optional, Apple Silicon)

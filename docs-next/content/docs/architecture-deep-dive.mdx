@@ -130,8 +130,13 @@ main()
   │
   ├─ 4. init_infrastructure()
   │     ├─ Open/create SQLite database
-  │     ├─ Load FastEmbedder (ONNX model: all-MiniLM-L6-v2)
-  │     │     └─ With CoreML execution provider on Apple Silicon
+  │     ├─ Load embedding backend via `create_embedder` (auto-detects):
+  │     │     ├─ macOS + Apple Silicon: Candle on Metal (when the model
+  │     │     │    is Candle-supported, e.g. all-MiniLM-L6-v2)
+  │     │     ├─ macOS fallback: FastEmbed + CoreML (CPU+GPU compute units)
+  │     │     ├─ Windows + `directml` feature: FastEmbed + DirectML
+  │     │     ├─ Linux / feature-less Windows: FastEmbed + CPU ONNX
+  │     │     └─ Override via MINISTR_BACKEND / MINISTR_DEVICE env vars
   │     └─ Load/create HnswIndex (384-dim, cosine similarity)
   │
   ├─ 5. build_server()
@@ -404,4 +409,5 @@ See the [Query Path](#the-query-path) section above for an end-to-end trace of a
 - **Cost** — zero marginal cost per embedding vs per-token API pricing
 - **Privacy** — code never leaves the machine
 - **Offline** — works without internet
-- **CoreML** — Apple Neural Engine acceleration on Apple Silicon
+- **Apple Silicon GPU acceleration** — Candle on Metal by default for supported models (typically 7-12× faster than the ONNX path for batch embedding); FastEmbed + CoreML on CPU+GPU compute units for the rest. Neural Engine is opt-in via `MINISTR_COMPUTE_UNITS=cpu_and_ane` — disabled by default because the CoreML/ANE bridge has a known ~12 GB/batch memory leak ([onnxruntime#14455](https://github.com/microsoft/onnxruntime/issues/14455))
+- **Windows DirectML** — when built with the `directml` cargo feature, FastEmbed runs on any DirectX 12 GPU (NVIDIA / AMD / Intel / Qualcomm), with graceful CPU fallback on init failure
