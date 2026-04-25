@@ -25,14 +25,16 @@ Search the code symbol index for structs, functions, traits, enums, and other de
       "id": "sym-src/auth.rs::auth::validate_token",
       "name": "validate_token",
       "kind": "function",
-      "visibility": "pub",
+      "file": "src/auth.rs",
+      "line": 42,
       "signature": "pub fn validate_token(token: &str) -> Result<Claims>",
-      "file_path": "src/auth.rs",
-      "line_start": 42,
-      "line_end": 67,
-      "heading_path": ["src/auth.rs", "function validate_token"]
+      "doc_preview": "Validates a JWT token against the configured public key.",
+      "complexity": 4,
+      "caller_count": 12
     }
   ],
+  "total": 8,
+  "offset": 0,
   "budget_status": { ... }
 }
 ```
@@ -41,18 +43,22 @@ Search the code symbol index for structs, functions, traits, enums, and other de
 
 | Field | Description |
 |---|---|
-| `symbols[].id` | Symbol ID for use with `ministr_definition` and `ministr_references` |
+| `symbols[].id` | Symbol ID — use with `ministr_definition` and `ministr_references` |
 | `symbols[].name` | Declared name |
-| `symbols[].kind` | Symbol kind (struct, function, trait, etc.) |
-| `symbols[].visibility` | Visibility modifier |
-| `symbols[].signature` | Full declaration signature |
-| `symbols[].file_path` | Source file path |
-| `symbols[].line_start` / `line_end` | Line range in the source file |
+| `symbols[].kind` | Symbol kind (`function`, `struct`, `trait`, `enum`, `impl`, `const`, `static`, `type`, `mod`) |
+| `symbols[].file` | Source file path |
+| `symbols[].line` | 1-based start line in the source file |
+| `symbols[].signature` | Declaration signature |
+| `symbols[].doc_preview` | Optional — first line of the symbol's doc comment |
+| `symbols[].complexity` | Optional — cyclomatic complexity (functions only) |
+| `symbols[].caller_count` | Optional — transitive caller count for impact analysis |
+| `total` | Total matches before pagination |
+| `offset` | Offset of the first returned entry within the full result list |
+| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ## Behavior
 
-- Supports exact-name, substring, and semantic embedding match
-- Multi-word queries are tokenized and matched against symbol names
-- Results are ranked by name similarity with kind and visibility boosts
-- Use `ministr_definition` to get the full source of a symbol
-- Use `ministr_references` to find callers, implementors, and importers
+- The query is tokenized with CamelCase + snake_case splitting (`ToolRouter` → `["tool", "router"]`, `list_symbols` → `["list", "symbols"]`); tokens shorter than two characters are dropped.
+- All tokens must match (AND); if AND yields nothing on a multi-token query, ministr falls back to OR.
+- Use `ministr_definition` to get the full source of a symbol.
+- Use `ministr_references` to find callers, implementors, and importers.

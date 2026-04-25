@@ -51,11 +51,21 @@ Call `ministr_budget` to get current status and eviction candidates:
       "content_id": "docs/setup.md#prerequisites",
       "reason": "low relevance, delivered 8 turns ago",
       "tokens_recoverable": 450,
-      "replacement_summary": "Prerequisites: Rust 1.85+, SQLite 3.35+"
+      "score": 0.78,
+      "factors": {
+        "recency": 0.62,
+        "token_weight": 0.41,
+        "position": 0.55,
+        "resolution": 0.30,
+        "salience": 0.18,
+        "contiguity": 0.05
+      }
     }
   ]
 }
 ```
+
+`score` is the composite eviction score (higher = better candidate to drop). `factors` is an optional breakdown for explainability. To get a compressed summary you can keep in place of the evicted content, call [`ministr_compress`](/docs/tools/compress) with the same `content_id`.
 
 ### Compression on Demand
 

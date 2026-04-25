@@ -17,25 +17,26 @@ Get a structural overview of the indexed corpus — documents, section counts, a
 
 ```json
 {
+  "corpus_stats": {
+    "documents": 17,
+    "sections": 219,
+    "claims": 1842,
+    "offset": 0,
+    "returned": 100,
+    "ingestion_status": "running"
+  },
+  "roots": [ /* CorpusRoot per registered source, when no document_id filter */ ],
   "entries": [
     {
-      "id": "src/auth.rs",
-      "title": "src/auth.rs",
-      "kind": "document",
-      "depth": 0,
-      "children": 12,
-      "source_path": "src/auth.rs"
-    },
-    {
-      "id": "src/auth.rs#validate_token",
-      "title": "validate_token",
-      "kind": "section",
+      "document_id": "src/auth.rs",
+      "section_id": "src/auth.rs#validate_token",
+      "heading_path": ["src/auth.rs", "fn validate_token"],
       "depth": 1,
-      "children": 0,
-      "source_path": "src/auth.rs"
+      "claims_available": 4,
+      "token_count": 312
     }
   ],
-  "total": 219
+  "budget_status": { ... }
 }
 ```
 
@@ -43,13 +44,22 @@ Get a structural overview of the indexed corpus — documents, section counts, a
 
 | Field | Description |
 |---|---|
-| `entries[].id` | Content ID — pass to `ministr_read` (sections) or `ministr_toc` with `document_id` for deeper drill-down |
-| `entries[].title` | Display title or heading |
-| `entries[].kind` | `"document"`, `"section"`, or `"symbol"` |
-| `entries[].depth` | Nesting depth (0 = top-level document) |
-| `entries[].children` | Number of child sections directly under this entry |
-| `entries[].source_path` | Optional — source file path, omitted when not applicable |
-| `total` | Total number of entries — useful for paginating with `offset` / `limit` |
+| `corpus_stats.documents` | Total indexed documents |
+| `corpus_stats.sections` | Total sections across all documents |
+| `corpus_stats.claims` | Total atomic claims extractable across the corpus |
+| `corpus_stats.offset` | The `offset` echoed back from the request |
+| `corpus_stats.returned` | Number of entries actually returned in this page |
+| `corpus_stats.ingestion_status` | Optional — `"pending"` or `"running"` while the corpus is still being indexed; omitted once ingestion completes |
+| `roots` | Registered corpus roots with per-directory metadata. Omitted when filtering to a single `document_id`. |
+| `entries[].document_id` | Parent document ID — pass to `ministr_toc` with `document_id` to drill into one document |
+| `entries[].section_id` | Section identifier — pass to `ministr_read` |
+| `entries[].heading_path` | Heading hierarchy from the document root to this section |
+| `entries[].depth` | Heading depth (1 = top-level) |
+| `entries[].claims_available` | Number of claims extractable from this section via `ministr_extract` |
+| `entries[].token_count` | Approximate token count of the section text |
+| `budget_status` | Budget snapshot — present when `session_id` was provided |
+
+> **Daemon-proxy mode.** When ministr runs via `ministr serve --proxy` (or behind the desktop app's daemon), `ministr_toc` returns a flatter `{ entries, total }` shape with `id, title, kind, depth, children, source_path` per entry. This is a known schema divergence between the standalone and proxy code paths and will be unified in a follow-up.
 
 ## Behavior
 
