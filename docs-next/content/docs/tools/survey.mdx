@@ -14,30 +14,34 @@ Semantic search across the indexed corpus — documents, sections, claims, and c
 
 ## Response
 
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
 ```json
 {
-  "results": [
-    {
-      "content_id": "src/auth.rs#validate_token",
-      "resolution": "section",
-      "score": 0.87,
-      "text": "Validates a JWT token against the configured public key...",
-      "heading_path": ["src/auth.rs", "fn validate_token"]
-    },
-    {
-      "content_id": "sym-src/auth.rs::auth::Claims",
-      "resolution": "symbol_stub",
-      "score": 0.82,
-      "text": "pub struct Claims { sub: String, exp: i64, ... }",
-      "heading_path": ["src/auth.rs", "struct Claims"]
-    }
-  ],
-  "deduplicated_count": 2,
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "results": [
+      {
+        "content_id": "src/auth.rs#validate_token",
+        "resolution": "section",
+        "score": 0.87,
+        "text": "Validates a JWT token against the configured public key...",
+        "heading_path": ["src/auth.rs", "fn validate_token"]
+      },
+      {
+        "content_id": "sym-src/auth.rs::auth::Claims",
+        "resolution": "symbol_stub",
+        "score": 0.82,
+        "text": "pub struct Claims { sub: String, exp: i64, ... }",
+        "heading_path": ["src/auth.rs", "struct Claims"]
+      }
+    ],
+    "deduplicated_count": 2
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|
@@ -48,7 +52,6 @@ Semantic search across the indexed corpus — documents, sections, claims, and c
 | `results[].text` | Content text at the match's resolution level |
 | `results[].heading_path` | Heading hierarchy or symbol path (optional; present on section- and symbol-level hits) |
 | `deduplicated_count` | Number of results filtered out (already delivered this session) |
-| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ## Behavior
 

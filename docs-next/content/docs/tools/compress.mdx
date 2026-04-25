@@ -13,25 +13,29 @@ Generate compressed summaries for sections the agent wants to evict from context
 
 ## Response
 
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
 ```json
 {
-  "summaries": [
-    {
-      "original_id": "docs/auth.md#jwt-validation",
-      "summary": "JWT validation uses RS256 signing with 1-hour expiry. Tokens are verified against the public key from the JWKS endpoint.",
-      "original_tokens": 847,
-      "compressed_tokens": 95,
-      "method": "extractive"
-    }
-  ],
-  "total_original_tokens": 847,
-  "total_compressed_tokens": 95,
-  "compression_ratio": 0.112,
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "summaries": [
+      {
+        "original_id": "docs/auth.md#jwt-validation",
+        "summary": "JWT validation uses RS256 signing with 1-hour expiry. Tokens are verified against the public key from the JWKS endpoint.",
+        "original_tokens": 847,
+        "compressed_tokens": 95,
+        "method": "extractive"
+      }
+    ],
+    "total_original_tokens": 847,
+    "total_compressed_tokens": 95,
+    "compression_ratio": 0.112
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|
