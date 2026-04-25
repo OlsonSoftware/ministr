@@ -11,10 +11,12 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Principle of least privilege — no write access anywhere by default.
-# The `ci-image` job elevates to `packages: write` to push to GHCR.
+# Principle of least privilege — read-only by default. The `ci-image`
+# job elevates to `packages: write` to push to GHCR. Every other job
+# needs `packages: read` so `container:` can pull the CI image.
 permissions:
   contents: read
+  packages: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -315,18 +317,13 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       # `--privileged` lets the stickydisk action mount block devices
-      # from inside the container. The env: block propagates the
-      # blacksmith-injected tokens the action uses to authenticate
-      # with the control plane; without them the mount step returns
-      # 401 Unauthenticated. Docs:
-      # https://docs.blacksmith.sh/blacksmith-caching/dependencies-sticky-disks#using-sticky-disks-inside-a-container
+      # from inside the container. Blacksmith auto-inherits the
+      # BLACKSMITH_*, GITHUB_REPO_NAME, and VM_ID host env vars its
+      # control plane needs — see "Inheriting BLACKSMITH_ host
+      # environment variables into job container" in the runner log.
+      # Don't redeclare them with `env:` here: ${{ env.X }} resolves
+      # to empty at workflow-parse time and clobbers the auto-inherit.
       options: --privileged
-      env:
-        VM_ID: ${{ env.VM_ID }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
-        BLACKSMITH_STICKYDISK_TOKEN: ${{ env.BLACKSMITH_STICKYDISK_TOKEN }}
-        BLACKSMITH_INSTALLATION_MODEL_ID: ${{ env.BLACKSMITH_INSTALLATION_MODEL_ID }}
-        BLACKSMITH_REGION: ${{ env.BLACKSMITH_REGION }}
     steps:
       - uses: actions/checkout@v4
 
@@ -403,12 +400,6 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: --privileged
-      env:
-        VM_ID: ${{ env.VM_ID }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
-        BLACKSMITH_STICKYDISK_TOKEN: ${{ env.BLACKSMITH_STICKYDISK_TOKEN }}
-        BLACKSMITH_INSTALLATION_MODEL_ID: ${{ env.BLACKSMITH_INSTALLATION_MODEL_ID }}
-        BLACKSMITH_REGION: ${{ env.BLACKSMITH_REGION }}
     steps:
       - uses: actions/checkout@v4
 
@@ -474,12 +465,6 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: --privileged
-      env:
-        VM_ID: ${{ env.VM_ID }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
-        BLACKSMITH_STICKYDISK_TOKEN: ${{ env.BLACKSMITH_STICKYDISK_TOKEN }}
-        BLACKSMITH_INSTALLATION_MODEL_ID: ${{ env.BLACKSMITH_INSTALLATION_MODEL_ID }}
-        BLACKSMITH_REGION: ${{ env.BLACKSMITH_REGION }}
     steps:
       - uses: actions/checkout@v4
       - name: Sticky disk — cargo registry
