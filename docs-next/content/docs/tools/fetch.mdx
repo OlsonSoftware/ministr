@@ -16,18 +16,22 @@ Fetch a web URL and add its content to the corpus. Supports single pages, sitema
 
 ## Response
 
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
 ```json
 {
-  "pages_fetched": 14,
-  "sections_indexed": 62,
-  "claims_extracted": 148,
-  "tokens_added": 18420,
-  "strategy_used": "sitemap",
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "pages_fetched": 14,
+    "sections_indexed": 62,
+    "claims_extracted": 148,
+    "tokens_added": 18420,
+    "strategy_used": "sitemap"
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|

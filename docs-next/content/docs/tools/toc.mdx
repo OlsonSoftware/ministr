@@ -15,32 +15,36 @@ Get a structural overview of the indexed corpus — documents, section counts, a
 
 ## Response
 
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
 ```json
 {
-  "corpus_stats": {
-    "documents": 17,
-    "sections": 219,
-    "claims": 1842,
-    "offset": 0,
-    "returned": 100,
-    "ingestion_status": "running"
-  },
-  "roots": [ /* CorpusRoot per registered source, when no document_id filter */ ],
-  "entries": [
-    {
-      "document_id": "src/auth.rs",
-      "section_id": "src/auth.rs#validate_token",
-      "heading_path": ["src/auth.rs", "fn validate_token"],
-      "depth": 1,
-      "claims_available": 4,
-      "token_count": 312
-    }
-  ],
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "corpus_stats": {
+      "documents": 17,
+      "sections": 219,
+      "claims": 1842,
+      "offset": 0,
+      "returned": 100,
+      "ingestion_status": "running"
+    },
+    "roots": [ /* CorpusRoot per registered source, when no document_id filter */ ],
+    "entries": [
+      {
+        "document_id": "src/auth.rs",
+        "section_id": "src/auth.rs#validate_token",
+        "heading_path": ["src/auth.rs", "fn validate_token"],
+        "depth": 1,
+        "claims_available": 4,
+        "token_count": 312
+      }
+    ]
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|
@@ -57,7 +61,6 @@ Get a structural overview of the indexed corpus — documents, section counts, a
 | `entries[].depth` | Heading depth (1 = top-level) |
 | `entries[].claims_available` | Number of claims extractable from this section via `ministr_extract` |
 | `entries[].token_count` | Approximate token count of the section text |
-| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 > **Daemon-proxy mode.** When ministr runs via `ministr serve --proxy` (or behind the desktop app's daemon), `ministr_toc` returns a flatter `{ entries, total }` shape with `id, title, kind, depth, children, source_path` per entry. This is a known schema divergence between the standalone and proxy code paths and will be unified in a follow-up.
 

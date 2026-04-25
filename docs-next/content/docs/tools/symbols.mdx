@@ -18,28 +18,32 @@ Search the code symbol index for structs, functions, traits, enums, and other de
 
 ## Response
 
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
 ```json
 {
-  "symbols": [
-    {
-      "id": "sym-src/auth.rs::auth::validate_token",
-      "name": "validate_token",
-      "kind": "function",
-      "file": "src/auth.rs",
-      "line": 42,
-      "signature": "pub fn validate_token(token: &str) -> Result<Claims>",
-      "doc_preview": "Validates a JWT token against the configured public key.",
-      "complexity": 4,
-      "caller_count": 12
-    }
-  ],
-  "total": 8,
-  "offset": 0,
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "symbols": [
+      {
+        "id": "sym-src/auth.rs::auth::validate_token",
+        "name": "validate_token",
+        "kind": "function",
+        "file": "src/auth.rs",
+        "line": 42,
+        "signature": "pub fn validate_token(token: &str) -> Result<Claims>",
+        "doc_preview": "Validates a JWT token against the configured public key.",
+        "complexity": 4,
+        "caller_count": 12
+      }
+    ],
+    "total": 8,
+    "offset": 0
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|
@@ -54,7 +58,6 @@ Search the code symbol index for structs, functions, traits, enums, and other de
 | `symbols[].caller_count` | Optional — transitive caller count for impact analysis |
 | `total` | Total matches before pagination |
 | `offset` | Offset of the first returned entry within the full result list |
-| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ## Behavior
 

@@ -16,34 +16,38 @@ Query cross-language binding links between exported symbols and their consumers 
 
 ## Response
 
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
 ```json
 {
-  "links": [
-    {
-      "kind": "tauri_command",
-      "confidence": 1.0,
-      "export": {
-        "binding_key": "open_file",
-        "symbol_name": "open_file",
-        "file": "src-tauri/src/commands.rs",
-        "line": 42,
-        "language": "rust"
-      },
-      "import": {
-        "binding_key": "open_file",
-        "symbol_name": "invoke",
-        "file": "src/lib/api.ts",
-        "line": 15,
-        "language": "typescript"
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "links": [
+      {
+        "kind": "tauri_command",
+        "confidence": 1.0,
+        "export": {
+          "binding_key": "open_file",
+          "symbol_name": "open_file",
+          "file": "src-tauri/src/commands.rs",
+          "line": 42,
+          "language": "rust"
+        },
+        "import": {
+          "binding_key": "open_file",
+          "symbol_name": "invoke",
+          "file": "src/lib/api.ts",
+          "line": 15,
+          "language": "typescript"
+        }
       }
-    }
-  ],
-  "total": 1,
-  "budget_status": { ... }
+    ],
+    "total": 1
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|
@@ -52,7 +56,6 @@ Query cross-language binding links between exported symbols and their consumers 
 | `links[].export` | Producing side — see endpoint fields below |
 | `links[].import` | Consuming side — same endpoint shape |
 | `total` | Total matched links returned |
-| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 #### Endpoint fields (`export` and `import`)
 

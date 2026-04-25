@@ -11,6 +11,8 @@ None.
 
 ## Response
 
+> **Note.** Unlike other tools, `ministr_budget` does **not** wrap its response in the standard [response envelope](/docs/tools#response-envelope). The reply is the `BudgetResponse` directly — the budget tool already exists to surface budget state, so adding another envelope around it would duplicate fields. `budget_status` from the envelope is omitted; the equivalent fields (`total_budget`, `estimated_used`, `pressure_level`, `eviction_candidates`) are top-level here.
+
 ```json
 {
   "total_budget": 100000,
