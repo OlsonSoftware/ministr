@@ -72,7 +72,7 @@ Generates `.ministr.toml` with auto-detected corpus paths and scaffolds agent co
 
 ```sh
 ministr init                  # non-interactive, auto-detected
-ministr init --interactive    # wizard with prompts
+ministr init --interactive    # wizard with prompts (short: -i)
 ministr init --force          # overwrite existing .ministr.toml
 ```
 
@@ -86,6 +86,7 @@ One-shot search against the daemon without going through the MCP protocol. Usefu
 
 ```sh
 ministr search "authentication" --top-k 5
+ministr search "authentication" -k 5     # short form
 ```
 
 ## `ministr export` / `ministr import`
@@ -112,4 +113,10 @@ ministr hooks test
 | Variable | Description |
 |---|---|
 | `RUST_LOG` | Log verbosity (`ministr=debug`, `ministr_core=trace`, etc.) |
-| `MINISTR_DATA_DIR` | Override the data directory (default: `~/.ministr`) |
+| `MINISTR_BACKEND` | Force embedding backend: `candle`, `onnx`, `fastembed`, or empty (auto-detect) |
+| `MINISTR_DEVICE` | Force CPU even on GPU-capable machines (`cpu`). Applies to Metal on macOS and DirectML on Windows. |
+| `MINISTR_PREFER_QUANTIZED` | Auto-select the quantized `-q` model variant when one exists (`1` / `true`) |
+| `MINISTR_COMPUTE_UNITS` | macOS CoreML compute units: `cpu_only`, `cpu_and_gpu` (default), `cpu_and_ane`, or `all`. ANE is opt-in due to a known ~12 GB/batch leak. |
+| `MINISTR_COREML` | Set to `0` or `false` to disable CoreML on macOS and fall back to plain CPU ONNX |
+
+To override the data directory, set `data_dir` in `~/.ministr/config.toml` (see [Configuration](/docs/configuration)) or pass `-C, --config <PATH>` to point at an alternate config file.

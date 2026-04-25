@@ -105,7 +105,7 @@ cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli
 
 **Pre-built binaries** — download from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases) for macOS, Linux, and Windows.
 
-A Homebrew tap (`AlrikOlson/homebrew-tap`) and a crates.io publish land with 1.0.
+A Homebrew tap (`OlsonSoftware/homebrew-tap`) and a crates.io publish land with 1.0.
 
 ## Documentation
 

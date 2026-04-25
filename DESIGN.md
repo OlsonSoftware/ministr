@@ -5,6 +5,8 @@
 
 Version 0.1 | March 2026
 
+> **This is a frozen design document, not a current reference.** It captures the original research and design rationale behind ministr. The implementation has evolved since v0.1: mechanism counts, prefetch strategy names, MCP tool surface, and resolution levels have all moved on. **For the current state of the system, read [the docs site](https://ministr.ai/docs)** — specifically [`/docs/architecture`](https://ministr.ai/docs/architecture), [`/docs/architecture-deep-dive`](https://ministr.ai/docs/architecture-deep-dive), and [`/docs/concepts`](https://ministr.ai/docs/concepts). This spec stays unchanged because it's the audit trail for *why* the system was built this way.
+
 ---
 
 ## How to read this document
