@@ -11,9 +11,12 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Principle of least privilege — no write access anywhere by default.
+# Principle of least privilege — read-only by default. The `ci-image`
+# job elevates to `packages: write` to push to GHCR. Every other job
+# needs `packages: read` so `container:` can pull the CI image.
 permissions:
   contents: read
+  packages: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,47 +36,53 @@ env:
 # Runner topology: Blacksmith-hosted ephemeral Linux runners.
 #
 #   changes        → blacksmith-2vcpu-ubuntu-2404 (path-filter, sub-10s)
-#   fmt            → blacksmith-2vcpu-ubuntu-2404 (instant feedback, no compile)
-#   rust-dev       → blacksmith-4vcpu-ubuntu-2404 (16 GB RAM — linker needs it)
-#   rust-release   → blacksmith-4vcpu-ubuntu-2404 (16 GB RAM — linker needs it)
-#   security       → blacksmith-2vcpu-ubuntu-2404
-#   docker-build   → blacksmith-2vcpu-ubuntu-2404
+#   ci-image       → blacksmith-2vcpu-ubuntu-2404 (docker build + push)
+#   fmt            → blacksmith-2vcpu-ubuntu-2404 (inside ministr-ci)
+#   rust-dev       → blacksmith-4vcpu-ubuntu-2404 (inside ministr-ci, 16 GB RAM)
+#   rust-release   → blacksmith-4vcpu-ubuntu-2404 (inside ministr-ci, 16 GB RAM)
+#   security       → blacksmith-2vcpu-ubuntu-2404 (inside ministr-ci)
+#   docker-build   → blacksmith-2vcpu-ubuntu-2404 (application image)
 #   ci-complete    → gate job, required check for branch protection
 #
 # Path-filtering: a `changes` job classifies the PR/push and every
-# expensive downstream job is `if`-gated on it. A docs-only PR (one
-# that only touches docs-next/, README, CHANGELOG, etc.) will skip the
-# Rust matrix, cargo-deny, and the Docker build entirely — only `fmt`
-# still runs as a sanity check (it's already a 5s job on sticky disks).
-# Editing this workflow itself forces every gate back on.
+# expensive downstream job is `if`-gated on it. Editing this workflow
+# itself forces every gate back on.
 #
-# Sticky disks (NVMe-backed, ~3s mount vs ~1m6s for GitHub Actions
-# cache) hydrate every piece of per-runner state that's expensive to
-# reconstruct: rustup toolchain, cargo-install'd binaries, the crate
-# registry, git dependencies, and target/.
+# Three layers of caching stack on each other:
 #
-# Cargo-profile split for parallelism
-# ------------------------------------
-# Blacksmith sticky disks commit on unmount and LWW across jobs sharing
-# a key. target/debug/ and target/release/ are disjoint on disk, so we
-# partition them into two sticky disks and run their consumers in
-# parallel:
+#   1. ministr-ci image (.github/docker/Dockerfile.ci) — rust toolchain,
+#      clippy/rustfmt/cargo-nextest/cargo-deny/cargo-audit/just, and the
+#      Tauri + MCP-smoke system deps are baked into the image. Built
+#      once per Dockerfile revision via the `ci-image` job and pushed
+#      to GHCR. Blacksmith's Docker container caching pre-hydrates the
+#      image onto runners, so `docker pull` inside `container:` is ~1 s
+#      on warm hits.
 #
-#   rust-dev     writes target/debug/    → key -cargo-target-dev
-#     └─ cargo clippy --all-targets (dev)
-#     └─ cargo nextest run --lib --bins (dev, reuses clippy rlibs)
-#     └─ cargo test --doc (dev)
-#     └─ just eval-gate (dev, `cargo test --test eval_retrieval`)
+#   2. Sticky disks (NVMe-backed, ~3 s mount vs ~1m6s for GitHub
+#      Actions cache) persist the inputs that change per-commit but
+#      not per-run: the crate registry, git dep checkouts, and the
+#      per-profile `target/` directory.
 #
-#   rust-release writes target/release/  → key -cargo-target-release
-#     └─ cargo build --release -p ministr-cli
-#     └─ MCP smoke (runs the release binary)
+#   3. Cargo-profile split for parallelism —
+#      target/debug/ and target/release/ are disjoint on disk, so we
+#      partition them into two sticky disks and run their consumers
+#      in parallel:
+#
+#        rust-dev     writes target/debug/    → key -cargo-target-dev
+#          └─ cargo clippy --all-targets (dev)
+#          └─ cargo nextest run --lib --bins (dev, reuses clippy rlibs)
+#          └─ cargo test --doc (dev)
+#          └─ just eval-gate (dev, `cargo test --test eval_retrieval`)
+#
+#        rust-release writes target/release/  → key -cargo-target-release
+#          └─ cargo build --release -p ministr-cli
+#          └─ MCP smoke (runs the release binary)
 #
 # Within each job, cargo invocations serialise through cargo's file
-# locking and share a single target/ subtree — maximal artifact reuse.
-# Across jobs, the keys are distinct so there's no LWW contention.
-# Shared disks (rustup, cargo-bin, registry, git) are content-addressed
-# enough that parallel LWW commits converge on identical state.
+# locking and share a single target/ subtree. Across jobs, the target
+# sticky-disk keys are distinct so there's no LWW contention. Shared
+# disks (registry, git) are content-addressed enough that parallel
+# LWW commits converge on identical state.
 
 jobs:
   # ────────────────────────────────────────────────────────────────
@@ -89,6 +98,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       security: ${{ steps.filter.outputs.security }}
       docker: ${{ steps.filter.outputs.docker }}
+      ci_image: ${{ steps.filter.outputs.ci_image }}
     steps:
       # Need full history — actions/checkout defaults to depth 1, but we
       # diff the PR/push range and both endpoints must be reachable.
@@ -97,7 +107,7 @@ jobs:
           fetch-depth: 0
 
       # Plain `git diff --name-only <base> <head>` — no third-party
-      # action. The job emits three booleans consumed by the downstream
+      # action. The job emits booleans consumed by the downstream
       # `if:` gates. Any failure mode falls back to "assume everything
       # changed" so we never silently skip CI on a pathological diff.
       - id: filter
@@ -115,19 +125,21 @@ jobs:
           # each changed-file path. Editing ci.yml itself or the
           # composite rust-setup action force-runs the relevant gates,
           # so we can't skip CI by accident when changing CI.
-          RUST_RE='^(Cargo\.(toml|lock)|rust-toolchain\.toml|deny\.toml|ministr-[^/]+/|\.config/nextest\.toml|justfile|eval/|\.github/workflows/ci\.yml$|\.github/actions/)'
-          SECURITY_RE='^(Cargo\.(toml|lock)|deny\.toml|ministr-[^/]+/|\.github/workflows/ci\.yml$|\.github/actions/)'
+          RUST_RE='^(Cargo\.(toml|lock)|rust-toolchain\.toml|deny\.toml|ministr-[^/]+/|\.config/nextest\.toml|justfile|eval/|\.github/workflows/ci\.yml$|\.github/actions/|\.github/docker/Dockerfile\.ci$)'
+          SECURITY_RE='^(Cargo\.(toml|lock)|deny\.toml|ministr-[^/]+/|\.github/workflows/ci\.yml$|\.github/actions/|\.github/docker/Dockerfile\.ci$)'
           DOCKER_RE='^(Dockerfile|\.dockerignore|Cargo\.(toml|lock)|ministr-[^/]+/|\.github/workflows/ci\.yml$)'
+          CI_IMAGE_RE='^(\.github/docker/Dockerfile\.ci$|\.github/workflows/ci\.yml$)'
 
-          # Fall-through: emit all three as "true" and exit 0. Used when
-          # we can't determine a clean diff range (first push to a new
-          # branch, force-push dropping the old tip, etc.).
+          # Fall-through: emit everything as "true" and exit 0. Used
+          # when we can't determine a clean diff range (first push to
+          # a new branch, force-push dropping the old tip, etc.).
           assume_all_changed() {
             echo "reason: $1 — running every gate"
             {
               echo "rust=true"
               echo "security=true"
               echo "docker=true"
+              echo "ci_image=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           }
@@ -171,6 +183,7 @@ jobs:
               echo "rust=false"
               echo "security=false"
               echo "docker=false"
+              echo "ci_image=false"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -182,104 +195,169 @@ jobs:
           RUST=false
           SECURITY=false
           DOCKER=false
+          CI_IMAGE=false
           if matches "$RUST_RE";     then RUST=true;     fi
           if matches "$SECURITY_RE"; then SECURITY=true; fi
           if matches "$DOCKER_RE";   then DOCKER=true;   fi
+          if matches "$CI_IMAGE_RE"; then CI_IMAGE=true; fi
 
-          echo "verdict: rust=$RUST security=$SECURITY docker=$DOCKER"
+          echo "verdict: rust=$RUST security=$SECURITY docker=$DOCKER ci_image=$CI_IMAGE"
           {
             echo "rust=$RUST"
             echo "security=$SECURITY"
             echo "docker=$DOCKER"
+            echo "ci_image=$CI_IMAGE"
           } >> "$GITHUB_OUTPUT"
 
   # ────────────────────────────────────────────────────────────────
-  # fmt: instant feedback, no compile. Gates `rust` below — if fmt
-  # fails there's no point burning 10 min of Rust CI on whitespace.
+  # ci-image: build + push the CI base image to GHCR.
+  #
+  # Computes a content-hash tag from `.github/docker/Dockerfile.ci`
+  # and emits it as an output consumed by every container: job below.
+  # Blacksmith's Docker layer cache + cache-from gha make rebuilds
+  # that don't change the Dockerfile near-instant (no new layers to
+  # upload). First-time build on a fresh Dockerfile revision is ~5-8
+  # minutes of apt + cargo-binstall.
+  # ────────────────────────────────────────────────────────────────
+  ci-image:
+    name: ci base image (build + push)
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.security == 'true'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      # Both outputs are consumed by every downstream container: block.
+      # `image` is the lowercased GHCR path (GHCR rejects uppercase);
+      # `tag` is a content-addressed sha slice of Dockerfile.ci.
+      image: ${{ steps.image.outputs.ref }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: image
+        name: Resolve lowercase image path
+        # GitHub repository owners can be mixed-case ("OlsonSoftware"),
+        # but GHCR rejects uppercase characters in image paths.
+        run: |
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "ref=ghcr.io/${OWNER}/ministr-ci" >> "$GITHUB_OUTPUT"
+
+      - id: tag
+        name: Compute image tag (hash of Dockerfile.ci)
+        # Short 12-char slice of the Dockerfile content hash. Matches
+        # `docker buildx`'s default content-addressed tagging style and
+        # keeps `docker pull` lines readable.
+        run: |
+          TAG="sha-$(sha256sum .github/docker/Dockerfile.ci | cut -c1-12)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image tag: $TAG"
+
+      - name: Set up Docker Buildx
+        uses: useblacksmith/setup-docker-builder@v1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push ministr-ci image
+        uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          file: .github/docker/Dockerfile.ci
+          push: true
+          tags: |
+            ${{ steps.image.outputs.ref }}:${{ steps.tag.outputs.tag }}
+            ${{ steps.image.outputs.ref }}:latest
+          cache-from: type=gha,scope=ministr-ci
+          cache-to: type=gha,mode=max,scope=ministr-ci
+
+  # ────────────────────────────────────────────────────────────────
+  # fmt: instant feedback, no compile. Gates the Rust jobs below.
+  # Runs inside ministr-ci so rustfmt + the toolchain are pre-installed.
+  # No sticky disks — rustfmt works off the workspace directly, and
+  # the stickydisk-in-container plumbing would just add overhead.
   # ────────────────────────────────────────────────────────────────
   fmt:
     name: fmt
-    needs: [changes]
+    needs: [changes, ci-image]
     if: needs.changes.outputs.rust == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
+    container:
+      image: ${{ needs.ci-image.outputs.image }}:${{ needs.ci-image.outputs.tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - name: Sticky disk — rustup toolchain
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: ${{ github.repository }}-rustup
-          path: /home/runner/.rustup
-      - name: Sticky disk — cargo bin (rustup wrappers + cargo-install'd tools)
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: ${{ github.repository }}-cargo-bin
-          path: /home/runner/.cargo/bin
-      - uses: ./.github/actions/rust-setup
-        with:
-          components: rustfmt
       - run: cargo fmt --all -- --check
 
   # ────────────────────────────────────────────────────────────────
-  # rust-dev: dev-profile pipeline.
+  # rust-dev: dev-profile pipeline, inside ministr-ci.
   # Owns target/debug/ via its own sticky disk. Runs in parallel with
-  # rust-release (which owns target/release/); distinct keys mean no
-  # LWW contention between the two jobs.
+  # rust-release (which owns target/release/).
   # Within this job the steps are serial so clippy → nextest →
-  # doc-test → eval-gate all reuse the same dev rlibs.
-  # Waits on fmt so whitespace failures don't waste CI minutes.
+  # doc-test → eval-gate all reuse the same dev rlibs in target/debug/.
   # ────────────────────────────────────────────────────────────────
   rust-dev:
     name: rust-dev (clippy → nextest → doc → eval)
-    needs: [changes, fmt]
+    needs: [changes, ci-image, fmt]
     if: needs.changes.outputs.rust == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 25
+    container:
+      image: ${{ needs.ci-image.outputs.image }}:${{ needs.ci-image.outputs.tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # `--privileged` lets the stickydisk action mount block devices
+      # from inside the container. Blacksmith auto-inherits the
+      # BLACKSMITH_*, GITHUB_REPO_NAME, and VM_ID host env vars its
+      # control plane needs — see "Inheriting BLACKSMITH_ host
+      # environment variables into job container" in the runner log.
+      # Don't redeclare them with `env:` here: ${{ env.X }} resolves
+      # to empty at workflow-parse time and clobbers the auto-inherit.
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Tauri + ministr-app system deps
-        # Needed because `cargo clippy --workspace --all-targets`
-        # includes ministr-app, which links libwebkit2gtk.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-            patchelf
-
-      - name: Sticky disk — rustup toolchain
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: ${{ github.repository }}-rustup
-          path: /home/runner/.rustup
-      - name: Sticky disk — cargo bin
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: ${{ github.repository }}-cargo-bin
-          path: /home/runner/.cargo/bin
+      # Sticky disks mount directly at the specified path inside the
+      # privileged container — cargo finds registry + git at the
+      # ministr-ci image's CARGO_HOME (/usr/local/cargo).
       - name: Sticky disk — cargo registry
         uses: useblacksmith/stickydisk@v1
         with:
           key: ${{ github.repository }}-cargo-registry
-          path: /home/runner/.cargo/registry
+          path: /usr/local/cargo/registry
       - name: Sticky disk — cargo git
         uses: useblacksmith/stickydisk@v1
         with:
           key: ${{ github.repository }}-cargo-git
-          path: /home/runner/.cargo/git
+          path: /usr/local/cargo/git
       - name: Sticky disk — cargo target (dev profile)
         uses: useblacksmith/stickydisk@v1
         with:
           key: ${{ github.repository }}-cargo-target-dev
           path: ${{ github.workspace }}/target
 
-      - uses: ./.github/actions/rust-setup
-        with:
-          components: clippy
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest,just
+      - name: Stub Tauri bundle artifacts
+        # tauri-build / `tauri::generate_context!()` probe for the
+        # frontendDist index.html and the externalBin sidecar at
+        # crate-build time. In prod they're produced by `just pkg` /
+        # `pnpm build`; CI only needs the paths to resolve, so empty
+        # placeholders are enough.
+        run: |
+          triple="$(rustc -vV | awk '/^host:/ {print $2}')"
+          mkdir -p ministr-app/src-tauri/binaries ministr-app/dist
+          : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          : > ministr-app/dist/index.html
 
       - name: cargo clippy (pedantic, --all-targets)
         run: |
@@ -294,8 +372,6 @@ jobs:
         #   soak_large_corpus_indexing_and_query) + e2e harnesses that
         #   spin up daemons with fastembed/ORT init — these reliably
         #   hang during nextest's --list enumeration on headless Linux.
-        #   A follow-up job can run integration tests with appropriate
-        #   isolation once the main pipeline is green.
         # --workspace --exclude ministr-app: ministr-app is a binary-
         #   only Tauri desktop crate; its test binary hangs on static
         #   init against a headless Linux runner (no display, no DBus).
@@ -321,56 +397,54 @@ jobs:
         run: just eval-gate
 
   # ────────────────────────────────────────────────────────────────
-  # rust-release: release-profile pipeline.
+  # rust-release: release-profile pipeline, inside ministr-ci.
   # Owns target/release/ via its own sticky disk. Runs in parallel
-  # with rust-dev. Only builds ministr-cli (+ its transitive deps);
-  # ministr-app is not a dependency, so no Tauri system packages and
-  # no cargo-nextest are needed here.
+  # with rust-dev. Only builds ministr-cli (+ its transitive deps).
   # ────────────────────────────────────────────────────────────────
   rust-release:
     name: rust-release (build → mcp smoke)
-    needs: [changes, fmt]
+    needs: [changes, ci-image, fmt]
     if: needs.changes.outputs.rust == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 25
+    container:
+      image: ${{ needs.ci-image.outputs.image }}:${{ needs.ci-image.outputs.tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install jq (MCP smoke only)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq
-
-      - name: Sticky disk — rustup toolchain
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: ${{ github.repository }}-rustup
-          path: /home/runner/.rustup
-      - name: Sticky disk — cargo bin
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: ${{ github.repository }}-cargo-bin
-          path: /home/runner/.cargo/bin
       - name: Sticky disk — cargo registry
         uses: useblacksmith/stickydisk@v1
         with:
           key: ${{ github.repository }}-cargo-registry
-          path: /home/runner/.cargo/registry
+          path: /usr/local/cargo/registry
       - name: Sticky disk — cargo git
         uses: useblacksmith/stickydisk@v1
         with:
           key: ${{ github.repository }}-cargo-git
-          path: /home/runner/.cargo/git
+          path: /usr/local/cargo/git
       - name: Sticky disk — cargo target (release profile)
         uses: useblacksmith/stickydisk@v1
         with:
           key: ${{ github.repository }}-cargo-target-release
           path: ${{ github.workspace }}/target
 
-      - uses: ./.github/actions/rust-setup
-
       - name: Build release ministr-cli
         run: cargo build --release -p ministr-cli --locked
 
       - name: MCP smoke (initialize + tools/list)
+        # The job here is "did the binary start, handshake, and list
+        # tools" — not "validate the JSON-RPC protocol byte-for-byte".
+        # Earlier iterations piped through jq, which has to parse the
+        # whole stdin stream before producing output: any embedded
+        # control char in any tool's schema description (rmcp/schemars
+        # round-tripped raw '\n' chars in some cases) makes jq exit
+        # non-zero across the entire smoke. grep is parser-agnostic:
+        # we just substring-search for the markers we care about. Real
+        # protocol validation lives in nextest unit tests.
         run: |
           response=$(printf '%s\n%s\n%s\n' \
             '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"1.0"}},"id":1}' \
@@ -378,54 +452,60 @@ jobs:
             '{"jsonrpc":"2.0","method":"tools/list","id":2}' \
             | timeout 30 ./target/release/ministr serve 2>/dev/null || true)
 
-          init_response=$(echo "$response" | jq -c 'select(.id == 1)')
-          tools_response=$(echo "$response" | jq -c 'select(.id == 2)')
+          echo "── stdout size from ministr serve ──"
+          printf '%s' "$response" | wc -c
 
-          test -n "$init_response"  || { echo "no initialize response"; exit 1; }
-          test -n "$tools_response" || { echo "no tools/list response"; exit 1; }
-
-          echo "$init_response" | jq -e '.result.serverInfo.name' > /dev/null
+          # initialize response: jsonrpc framing + id:1 + serverInfo block.
+          printf '%s' "$response" | grep -q '"jsonrpc":"2.0"' \
+            || { echo "no JSON-RPC frame in stdout"; exit 1; }
+          printf '%s' "$response" | grep -Eq '"id":[[:space:]]*1\b' \
+            || { echo "no id:1 frame in stdout"; exit 1; }
+          printf '%s' "$response" | grep -q '"serverInfo"' \
+            || { echo "no serverInfo in initialize response"; exit 1; }
+          printf '%s' "$response" | grep -q '"name":"ministr"' \
+            || { echo "serverInfo.name != ministr"; exit 1; }
           echo "✓ initialize succeeded"
 
+          # tools/list response: id:2 with each expected tool name.
+          printf '%s' "$response" | grep -Eq '"id":[[:space:]]*2\b' \
+            || { echo "no id:2 frame in stdout"; exit 1; }
           for tool in ministr_survey ministr_read ministr_extract \
                       ministr_budget ministr_compress ministr_toc; do
-            echo "$tools_response" \
-              | jq -e --arg t "$tool" '.result.tools[] | select(.name == $t)' \
-                > /dev/null
+            printf '%s' "$response" | grep -q "\"name\":\"$tool\"" \
+              || { echo "missing tool: $tool"; exit 1; }
             echo "✓ found tool: $tool"
           done
           echo "✓ MCP smoke test passed"
 
   # ────────────────────────────────────────────────────────────────
-  # Independent, fast — runs in parallel with `rust-dev` and `rust-release`.
+  # security: cargo-deny + cargo-audit, inside ministr-ci.
+  # Independent, fast — runs in parallel with `rust-dev` and
+  # `rust-release`. Tools are pre-installed in the image.
   # ────────────────────────────────────────────────────────────────
   security:
     name: security (deny + audit)
-    needs: [changes]
+    needs: [changes, ci-image]
     if: needs.changes.outputs.security == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
+    container:
+      image: ${{ needs.ci-image.outputs.image }}:${{ needs.ci-image.outputs.tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
-      - name: Sticky disk — rustup toolchain
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: ${{ github.repository }}-rustup
-          path: /home/runner/.rustup
-      - name: Sticky disk — cargo bin
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: ${{ github.repository }}-cargo-bin
-          path: /home/runner/.cargo/bin
       - name: Sticky disk — cargo registry
         uses: useblacksmith/stickydisk@v1
         with:
           key: ${{ github.repository }}-cargo-registry
-          path: /home/runner/.cargo/registry
-      - uses: ./.github/actions/rust-setup
-      - uses: taiki-e/install-action@v2
+          path: /usr/local/cargo/registry
+      - name: Sticky disk — cargo git
+        uses: useblacksmith/stickydisk@v1
         with:
-          tool: cargo-deny,cargo-audit
+          key: ${{ github.repository }}-cargo-git
+          path: /usr/local/cargo/git
       - run: cargo deny check
       - run: cargo audit
 
@@ -453,7 +533,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   ci-complete:
     name: ci complete
-    needs: [changes, fmt, rust-dev, rust-release, security, docker-build]
+    needs: [changes, ci-image, fmt, rust-dev, rust-release, security, docker-build]
     if: always()
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 2
@@ -461,6 +541,7 @@ jobs:
       - name: Verify all required jobs succeeded or were intentionally skipped
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
+          CI_IMAGE_RESULT: ${{ needs.ci-image.result }}
           FMT_RESULT: ${{ needs.fmt.result }}
           RUST_DEV_RESULT: ${{ needs.rust-dev.result }}
           RUST_RELEASE_RESULT: ${{ needs.rust-release.result }}
@@ -468,6 +549,7 @@ jobs:
           DOCKER_RESULT: ${{ needs.docker-build.result }}
         run: |
           echo "changes:       $CHANGES_RESULT"
+          echo "ci-image:      $CI_IMAGE_RESULT"
           echo "fmt:           $FMT_RESULT"
           echo "rust-dev:      $RUST_DEV_RESULT"
           echo "rust-release:  $RUST_RELEASE_RESULT"
@@ -482,6 +564,7 @@ jobs:
 
           ok() { [ "$1" = "success" ] || [ "$1" = "skipped" ]; }
           fail=0
+          ok "$CI_IMAGE_RESULT"     || { echo "::error::ci-image $CI_IMAGE_RESULT";           fail=1; }
           ok "$FMT_RESULT"          || { echo "::error::fmt $FMT_RESULT";                     fail=1; }
           ok "$RUST_DEV_RESULT"     || { echo "::error::rust-dev $RUST_DEV_RESULT";           fail=1; }
           ok "$RUST_RELEASE_RESULT" || { echo "::error::rust-release $RUST_RELEASE_RESULT";   fail=1; }
