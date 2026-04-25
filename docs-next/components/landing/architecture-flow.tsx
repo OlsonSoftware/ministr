@@ -35,7 +35,7 @@ const STEPS: Step[] = [
     label: 'agent sends tool call',
     caption: 'Claude Code → ministr_read("src/auth.rs#login")',
     detail:
-      'The agent — Claude Code, Cursor, Copilot, any MCP client — wants a section of your code. It issues a JSON-RPC call over stdio to the ministr daemon spawned as a subprocess. No network hop. The whole conversation will stay on this one machine.',
+      'The agent — Claude Code, Cursor, Copilot, any MCP client — wants a section of your code. It issues a JSON-RPC call over stdio to ministr, spawned as a subprocess. No network hop. The whole conversation will stay on this one machine.',
     activeLayers: ['agent'],
     activeMechs: [],
     mcp: 'down', query: 'idle', corpus: 'idle',
@@ -105,7 +105,7 @@ const STEPS: Step[] = [
     label: 'coherence watch',
     caption: 'files change on disk → delivered content flagged stale',
     detail:
-      'A file watcher is always running. If any file referenced in the session shadow changes on disk, ministr flags the earlier delivery as stale. Next time the agent references that content, ministr ships a delta against the new version instead of silently serving rot.',
+      'A file watcher is always running. If any file referenced in the session shadow changes on disk, ministr flags the earlier delivery as stale. Next time the agent references that content, ministr ships a delta against the new version instead of silently serving stale data.',
     activeLayers: ['daemon', 'corpus'],
     activeMechs: ['coherence'],
     mcp: 'idle', query: 'idle', corpus: 'up',
@@ -305,7 +305,7 @@ function FlowDiagram({
       <Channel label="MCP · stdio" sub="tool call ↓   context delta ↑" direction={step.mcp} />
 
       <FlowLayer
-        kicker="ministr daemon"
+        kicker="ministr"
         meta="Rust · single local process"
         tone="featured"
         active={isActiveLayer('daemon')}
@@ -328,10 +328,9 @@ function FlowDiagram({
         tone="muted"
         active={isActiveLayer('index')}
       >
-        <div className="grid grid-cols-3 gap-2">
-          <StorageBox name="SQLite"      detail="shadow · symbols" />
-          <StorageBox name="HNSW"        detail="dense vectors · ANN" />
-          <StorageBox name="tree-sitter" detail="per-language parsers" />
+        <div className="grid grid-cols-2 gap-2">
+          <StorageBox name="SQLite" detail="shadow · symbols" />
+          <StorageBox name="HNSW"   detail="dense vectors · ANN" />
         </div>
       </FlowLayer>
 
