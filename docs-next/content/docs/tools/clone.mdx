@@ -15,20 +15,24 @@ Clone a git repository and index it into the corpus.
 
 ## Response
 
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
 ```json
 {
-  "files_discovered": 312,
-  "files_indexed": 298,
-  "sections_extracted": 1204,
-  "clone_time_ms": 2740,
-  "index_time_ms": 8190,
-  "from_cache": false,
-  "dependency_refs_linked": 46,
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "files_discovered": 312,
+    "files_indexed": 298,
+    "sections_extracted": 1204,
+    "clone_time_ms": 2740,
+    "index_time_ms": 8190,
+    "from_cache": false,
+    "dependency_refs_linked": 46
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|

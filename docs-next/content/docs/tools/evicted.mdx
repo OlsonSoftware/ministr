@@ -13,15 +13,19 @@ Signal that content IDs have been evicted from the agent's context window. Updat
 
 ## Response
 
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
 ```json
 {
-  "evicted": ["docs/setup.md#prerequisites", "docs/intro.md#overview"],
-  "not_found": ["unknown-id"],
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "evicted": ["docs/setup.md#prerequisites", "docs/intro.md#overview"],
+    "not_found": ["unknown-id"]
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|

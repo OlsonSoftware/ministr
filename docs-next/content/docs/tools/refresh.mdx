@@ -15,28 +15,32 @@ If omitted, checks all cached web and git sources.
 
 ## Response
 
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
 ```json
 {
-  "urls_checked": 2,
-  "urls_refreshed": 1,
-  "urls_unchanged": 1,
-  "urls_failed": 0,
-  "details": [
-    { "url": "https://example.com/docs/guide", "status": "updated" },
-    { "url": "https://example.com/docs/api", "status": "unchanged" }
-  ],
-  "git_repos_checked": 1,
-  "git_repos_refreshed": 0,
-  "git_repos_unchanged": 1,
-  "git_repos_failed": 0,
-  "git_details": [
-    { "repo_url": "https://github.com/serde-rs/serde.git", "status": "unchanged" }
-  ],
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "urls_checked": 2,
+    "urls_refreshed": 1,
+    "urls_unchanged": 1,
+    "urls_failed": 0,
+    "details": [
+      { "url": "https://example.com/docs/guide", "status": "updated" },
+      { "url": "https://example.com/docs/api", "status": "unchanged" }
+    ],
+    "git_repos_checked": 1,
+    "git_repos_refreshed": 0,
+    "git_repos_unchanged": 1,
+    "git_repos_failed": 0,
+    "git_details": [
+      { "repo_url": "https://github.com/serde-rs/serde.git", "status": "unchanged" }
+    ]
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|

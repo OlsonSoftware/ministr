@@ -14,23 +14,27 @@ Extract atomic claims from a section, optionally filtered by relevance to a quer
 
 ## Response
 
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
 ### With `query` — ranked by relevance
 
 ```json
 {
-  "claims": [
-    {
-      "claim_id": "docs/auth.md#jwt-validation:c1",
-      "text": "JWT tokens use RS256 signing algorithm.",
-      "relevance": 0.92
-    },
-    {
-      "claim_id": "docs/auth.md#jwt-validation:c2",
-      "text": "Token expiry is set to 1 hour by default.",
-      "relevance": 0.85
-    }
-  ],
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "claims": [
+      {
+        "claim_id": "docs/auth.md#jwt-validation:c1",
+        "text": "JWT tokens use RS256 signing algorithm.",
+        "relevance": 0.92
+      },
+      {
+        "claim_id": "docs/auth.md#jwt-validation:c2",
+        "text": "Token expiry is set to 1 hour by default.",
+        "relevance": 0.85
+      }
+    ]
+  }
 }
 ```
 
@@ -38,15 +42,17 @@ Extract atomic claims from a section, optionally filtered by relevance to a quer
 
 ```json
 {
-  "claims": [
-    { "claim_id": "docs/auth.md#jwt-validation:c1", "text": "JWT tokens use RS256 signing algorithm." },
-    { "claim_id": "docs/auth.md#jwt-validation:c2", "text": "Token expiry is set to 1 hour by default." }
-  ],
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "claims": [
+      { "claim_id": "docs/auth.md#jwt-validation:c1", "text": "JWT tokens use RS256 signing algorithm." },
+      { "claim_id": "docs/auth.md#jwt-validation:c2", "text": "Token expiry is set to 1 hour by default." }
+    ]
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|
@@ -54,7 +60,6 @@ Extract atomic claims from a section, optionally filtered by relevance to a quer
 | `claims[].claim_id` | Claim ID for use with `ministr_related` |
 | `claims[].text` | The atomic factual statement |
 | `claims[].relevance` | Optional — relevance to the query (0.0-1.0). Present only when a `query` was supplied; omitted otherwise. |
-| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ## Behavior
 

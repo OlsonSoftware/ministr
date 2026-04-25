@@ -13,38 +13,52 @@ Read the full text of a section by its hierarchical ID. Returns content with hea
 
 ## Response
 
-### New Content
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload varies across three cases:
+
+### New content
 
 ```json
 {
-  "section_id": "docs/auth.md#error-handling",
-  "heading_path": ["Authentication", "Error Handling"],
-  "text": "Full section text...",
-  "summary": "How the API surfaces auth failures to the client.",
-  "claims_available": 5,
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "section_id": "docs/auth.md#error-handling",
+    "heading_path": ["Authentication", "Error Handling"],
+    "text": "Full section text...",
+    "summary": "How the API surfaces auth failures to the client.",
+    "claims_available": 5
+  }
 }
 ```
 
-### Already Delivered (unchanged)
+### Already delivered (unchanged)
 
-If the section was already delivered and has not changed, ministr returns the same envelope with `status: "already_delivered"` instead of re-delivering the full text. This is treated as a **fault-based eviction signal** — ministr infers the agent's context window dropped the content and corrects the window estimate.
+If the section was already delivered and has not changed, ministr returns a **minimal `result`** — just the section ID, `status: "already_delivered"`, and the available-claims count. The text, heading path, and summary are **not** re-shipped. Treat the call as a fault-based eviction signal: ministr infers the agent's context window dropped the content, corrects the window estimate, and lets the agent decide whether to do anything about it.
 
-### Already Delivered (changed)
+```json
+{
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "section_id": "docs/auth.md#error-handling",
+    "status": "already_delivered",
+    "claims_available": 5
+  }
+}
+```
+
+### Already delivered (changed)
 
 If the section was delivered but the underlying document changed, ministr returns a line-level delta showing what was added, removed, or modified.
 
-## Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|
 | `section_id` | The requested section ID |
-| `heading_path` | Heading hierarchy (e.g. `["Chapter 3", "Section 3.2"]`) |
-| `text` | Full section content |
-| `summary` | Optional — pre-computed section summary when one is available |
+| `heading_path` | Heading hierarchy (e.g. `["Chapter 3", "Section 3.2"]`). Absent on `already_delivered` fault responses. |
+| `text` | Full section content. Absent on `already_delivered` fault responses (the agent already has it). |
+| `summary` | Optional — pre-computed section summary when one is available. Absent on `already_delivered` fault responses. |
 | `claims_available` | Number of claims that can be extracted with `ministr_extract` |
 | `status` | Optional — present as `"already_delivered"` on a re-read fault; absent on a fresh delivery |
-| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ## Behavior
 

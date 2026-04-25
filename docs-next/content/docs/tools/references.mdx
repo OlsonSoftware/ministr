@@ -16,41 +16,43 @@ Find all references to a symbol — callers, implementors, importers, and cross-
 
 ## Response
 
-Each reference is a directed edge: `from_*` is the symbol making the reference, `to_*` is the symbol being referenced.
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). Each reference is a directed edge: `from_*` is the symbol making the reference, `to_*` is the symbol being referenced. The `result` payload:
 
 ```json
 {
-  "references": [
-    {
-      "from_symbol_id": "sym-src/handlers.rs::handlers::login_handler",
-      "from_name": "login_handler",
-      "from_file": "src/handlers.rs",
-      "from_line": 28,
-      "to_symbol_id": "sym-src/auth.rs::auth::validate_token",
-      "to_name": "validate_token",
-      "to_file": "src/auth.rs",
-      "to_line": 42,
-      "ref_kind": "calls"
-    },
-    {
-      "from_symbol_id": "sym-tests/auth_test.rs::tests::rejects_expired",
-      "from_name": "rejects_expired",
-      "from_file": "tests/auth_test.rs",
-      "from_line": 15,
-      "to_symbol_id": "sym-src/auth.rs::auth::validate_token",
-      "to_name": "validate_token",
-      "to_file": "src/auth.rs",
-      "to_line": 42,
-      "ref_kind": "calls"
-    }
-  ],
-  "total": 2,
-  "offset": 0,
-  "budget_status": { ... }
+  "budget_status": { /* see envelope */ },
+  "result": {
+    "references": [
+      {
+        "from_symbol_id": "sym-src/handlers.rs::handlers::login_handler",
+        "from_name": "login_handler",
+        "from_file": "src/handlers.rs",
+        "from_line": 28,
+        "to_symbol_id": "sym-src/auth.rs::auth::validate_token",
+        "to_name": "validate_token",
+        "to_file": "src/auth.rs",
+        "to_line": 42,
+        "ref_kind": "calls"
+      },
+      {
+        "from_symbol_id": "sym-tests/auth_test.rs::tests::rejects_expired",
+        "from_name": "rejects_expired",
+        "from_file": "tests/auth_test.rs",
+        "from_line": 15,
+        "to_symbol_id": "sym-src/auth.rs::auth::validate_token",
+        "to_name": "validate_token",
+        "to_file": "src/auth.rs",
+        "to_line": 42,
+        "ref_kind": "calls"
+      }
+    ],
+    "total": 2,
+    "offset": 0
+  }
 }
 ```
 
-### Response Fields
+### `result` fields
 
 | Field | Description |
 |---|---|
@@ -65,7 +67,6 @@ Each reference is a directed edge: `from_*` is the symbol making the reference, 
 | `references[].ref_kind` | How it's referenced — see table below |
 | `total` | Total references before pagination |
 | `offset` | Offset of the first returned entry within the full result list |
-| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ### Reference Kinds
 

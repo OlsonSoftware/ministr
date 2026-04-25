@@ -40,12 +40,38 @@ ministr exposes MCP tools that give the agent explicit control over context retr
 | [`ministr_clone`](/docs/tools/clone) | Clone and index a git repo | 50-200 | seconds to minutes |
 | [`ministr_refresh`](/docs/tools/refresh) | Re-fetch changed sources | 50-200 | seconds (network) |
 
-## Common Response Fields
+## Response envelope
 
-Every tool response includes:
+Every MCP tool returns a `ToolResponse<T>` envelope. The tool-specific payload lives under `result`; everything else is wrapper metadata that the agent can use to track session state without re-querying.
 
-- **`budget_status`** — current token budget snapshot with `tokens_used`, `tokens_remaining`, `pressure_level`, and `utilization`
-- **`coherence_alerts`** — (when present) notifications about changed underlying documents
+```json
+{
+  "budget_status": {
+    "tokens_used": 34500,
+    "tokens_remaining": 65500,
+    "pressure_level": "normal",
+    "utilization": 0.345
+  },
+  "coherence_alerts": [ /* present only when underlying content has changed */ ],
+  "indexing_in_progress": true,
+  "indexing_message": "Checking 12/42 files",
+  "eviction_recommendations": [ /* present when budget pressure is elevated or critical */ ],
+  "result": {
+    /* tool-specific payload — shape varies per tool */
+  }
+}
+```
+
+| Wrapper field | Always present? | Description |
+|---|---|---|
+| `budget_status` | ✅ always | Current token-budget snapshot (`tokens_used`, `tokens_remaining`, `pressure_level`, `utilization`) |
+| `coherence_alerts` | only when non-empty | Notifications for sections whose underlying content changed since last delivery |
+| `indexing_in_progress` | only when `true` | Background corpus ingestion is still running |
+| `indexing_message` | only when present | Human-readable ingestion status (e.g. `"Checking 12/42 files"`) |
+| `eviction_recommendations` | only when budget is elevated/critical | Proactive eviction candidates — same shape as the `eviction_candidates` field in [`ministr_budget`](/docs/tools/budget) |
+| `result` | ✅ always | Tool-specific payload — see each tool's reference page for its shape |
+
+The per-tool reference pages below show the full envelope in their `Response` examples for clarity. Field tables describe the `result` payload (shape varies per tool) and reference this envelope for the wrapper fields.
 
 ## Typical Workflow
 
