@@ -109,9 +109,11 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 \
 
 # GitHub Actions' checkout action drops the workspace at a path owned
 # by `runner:runner` on the host; inside a non-matching container Git
-# refuses to operate ("detected dubious ownership"). Whitelist every
-# workspace so cargo + git work identically to the native path.
-RUN git config --global --add safe.directory '*'
+# refuses to operate ("detected dubious ownership"). Writing to
+# /etc/gitconfig via `--system` makes the whitelist apply to every
+# user and every $HOME — including git subprocesses spawned by tests
+# that may not see /root/.gitconfig (what `--global` writes).
+RUN git config --system --add safe.directory '*'
 
 # Default to bash for RUN/step shells — matches native-runner behaviour
 # (`shell: bash` in the workflow file) so scripts don't need rewriting.
