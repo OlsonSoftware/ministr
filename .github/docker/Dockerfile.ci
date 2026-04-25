@@ -79,10 +79,15 @@ RUN apt-get update \
       sudo \
  && rm -rf /var/lib/apt/lists/*
 
-# Install rustup + stable toolchain + components.
+# Install rustup + stable toolchain, then add clippy + rustfmt.
+# Note: rustup-init's `--component` takes a comma-separated list; passing
+# multiple values space-separated makes the second one a positional arg.
+# Using `rustup component add` after install is clearer and immune to
+# that footgun.
 ARG RUST_TOOLCHAIN=stable
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}" --profile minimal --component rustfmt clippy \
+    | sh -s -- -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}" --profile minimal \
+ && rustup component add clippy rustfmt \
  && chmod -R a+w "${RUSTUP_HOME}" "${CARGO_HOME}"
 
 # cargo-binstall fetches prebuilt Rust CLIs from crate release
