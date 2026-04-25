@@ -57,7 +57,7 @@ topic_window = 5
 
 ## Project Configuration (`.ministr.toml`)
 
-Create `.ministr.toml` in your project root (or run `ministr init` to generate one):
+Create `.ministr.toml` in your project root (or run `ministr init` to generate one). Minimal config:
 
 ```toml
 [corpus]
@@ -77,12 +77,55 @@ ignore = [
 
 ministr auto-discovers `.ministr.toml` by walking up from the working directory.
 
-### Fields
+### `[corpus]` fields
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `corpus.paths` | list of paths | `[]` | Files and directories to index |
-| `corpus.ignore` | list of globs | `[]` | Patterns to exclude from indexing |
+| `corpus.ignore` | list of globs | `[]` | Patterns to exclude from indexing (on top of built-in always-ignore lists) |
+| `corpus.include` | list of sub-tables | `[]` | External local directories to include — see [Multi-source corpora](#multi-source-corpora) |
+| `corpus.git` | list of sub-tables | `[]` | Git repositories to clone and index alongside local paths |
+| `corpus.cloud` | list of sub-tables | `[]` | Pre-built `.ministr-index` bundles to fetch instead of re-indexing locally |
+| `corpus.model` | string (optional) | — | Per-repo embedding-model override (falls back to global `default_model`) |
+| `corpus.dimension` | integer (optional) | — | Target embedding dimension for Matryoshka truncation. Only effective with Matryoshka-capable models like `nomic-embed-text-v1.5` |
+| `corpus.rerank_depth` | integer (optional) | `100` | Number of coarse HNSW candidates fetched for full-dimension rescoring during two-stage Matryoshka retrieval. `0` disables second-stage rerank. |
+
+### Multi-source corpora
+
+ministr can index more than your project's own files. Three ways to bring in extra sources:
+
+```toml
+[corpus]
+paths = ["src", "docs"]
+
+# External local directory — e.g., a shared types repo you have checked out elsewhere
+[[corpus.include]]
+path = "~/Code/shared-types/src"
+
+# Git repository to clone and index
+[[corpus.git]]
+repo = "https://github.com/owner/repo.git"
+branch = "main"                    # optional; defaults to repository default
+paths = ["src", "docs"]            # optional sparse-checkout paths
+
+# Pre-built cloud index bundle
+[[corpus.cloud]]
+url = "https://releases.example.com/my-project.ministr-index"
+name = "my-project"                # optional; defaults to URL filename stem
+pin_version = "abc123def456"       # optional; skips staleness checks if set
+```
+
+### `[agent]` — custom agent rules
+
+Rules listed under `[agent]` are appended to every generated advisory file (`.claude/rules/`, `.cursor/rules/ministr.mdc`, `.github/copilot-instructions.md`, `AGENTS.md`, etc.) when you run `ministr init`:
+
+```toml
+[agent]
+rules = [
+    "Always run ministr_references before modifying any shared API",
+    "Prefer ministr_survey over ad-hoc grep for cross-cutting concerns",
+]
+```
 
 ### Parser Auto-Detection
 

@@ -45,7 +45,7 @@ const STEPS: Step[] = [
     label: 'session-shadow lookup',
     caption: 'shadow: has this agent already seen this section?',
     detail:
-      'Before doing any work, ministr asks Session Shadow: “has this agent already received this section in this turn?” The shadow is a per-session ledger keyed by content hash. If yes, ministr can return a trivial pointer instead of re-serving text the agent already paid budget for.',
+      'Before doing any work, ministr asks Session Shadow: “has this agent already received this section in this turn?” The shadow is a per-session ledger keyed by content ID — section, claim, or symbol — with a content hash stored alongside so ministr can tell if the underlying content has changed since last delivery. If the agent already has it and it is unchanged, ministr returns a trivial pointer instead of re-serving text the agent already paid budget for.',
     activeLayers: ['daemon'],
     activeMechs: ['shadow', 'budget'],
     mcp: 'idle', query: 'idle', corpus: 'idle',
@@ -63,9 +63,9 @@ const STEPS: Step[] = [
   {
     id: 'read',
     label: 'corpus read',
-    caption: 'tree-sitter slices the section from disk',
+    caption: 'stored section text fetched from SQLite',
     detail:
-      'The index points at a precise byte range. tree-sitter parses the file and returns the exact symbol, function, or markdown section — not the whole file. Reads are fully read-only; ministr never mutates your repo.',
+      'The index resolves the hit to a content ID. ministr fetches the pre-parsed section text from SQLite — no re-parsing at read time. Tree-sitter only ran at ingestion time to split files into sections and extract symbols. Reads are fully read-only; ministr never mutates your repo.',
     activeLayers: ['index', 'corpus'],
     activeMechs: [],
     mcp: 'idle', query: 'idle', corpus: 'down',
@@ -95,7 +95,7 @@ const STEPS: Step[] = [
     label: 'predictive prefetch',
     caption: 'warming likely next reads: #logout, #refresh, #revoke',
     detail:
-      'While the agent thinks, ministr uses sequential, structural, and topical heuristics to guess the next read. Neighboring functions, called symbols, referenced docs — it warms them into the index cache. When the agent asks next turn, that read is already hot.',
+      'While the agent thinks, ministr uses sequential, structural, and topical heuristics to guess the next read. The next section in the document, neighbouring siblings at the same depth, topically similar sections from anywhere in the corpus — it pre-warms them into the index cache. When the agent asks next turn, that read is already hot.',
     activeLayers: ['daemon', 'index'],
     activeMechs: ['prefetch'],
     mcp: 'idle', query: 'down', corpus: 'idle',
