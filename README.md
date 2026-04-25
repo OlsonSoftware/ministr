@@ -37,7 +37,7 @@ claude mcp add ministr -- ministr
 </p>
 
 <p align="center">
-  <sub>Prefer an interactive version with selectable text and timeline scrubbing? <a href="https://ministr.ai/#live-demo">Watch it on the docs site</a>.</sub>
+  <sub>Prefer an interactive version with selectable text and timeline scrubbing? <a href="https://ministr.ai/">Watch it on the docs site</a>.</sub>
 </p>
 
 ## Why ministr
@@ -115,7 +115,6 @@ A Homebrew tap (`OlsonSoftware/homebrew-tap`) and a crates.io publish land with 
 | [Tool reference](https://ministr.ai/docs/tools/) | All MCP tools with parameters and examples |
 | [Architecture](https://ministr.ai/docs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
 | [Configuration](https://ministr.ai/docs/configuration/) | `.ministr.toml` options and CLI flags |
-| [Design specification](DESIGN.md) | Research references and design rationale |
 | [Deployment](deploy/README.md) | Docker, Fly.io, Railway, nginx/Caddy reverse proxy |
 | [Example configs](examples/) | `.ministr.toml` templates for Rust, Tauri, PyO3, React |
 

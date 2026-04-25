@@ -63,14 +63,17 @@ export function Hero() {
             <motion.div {...stagger(4)} className="mt-8">
               <GlassCard padded={false} className="inline-flex items-center gap-3 pl-4 pr-2 py-2 font-mono text-sm">
                 <span className="text-[var(--color-ministr-400)] select-none">$</span>
-                <span>claude mcp add ministr -- ministr</span>
+                <span>curl -fsSL https://ministr.app/install.sh | bash</span>
                 <CopyButton
-                  value="claude mcp add ministr -- ministr"
+                  value="curl -fsSL https://ministr.app/install.sh | bash"
                   label="Copy install command"
                   size="sm"
                   className="ml-1"
                 />
               </GlassCard>
+              <p className="ministr-body-quiet mt-2 font-mono text-[11px]">
+                then <span className="text-fd-foreground">ministr init</span> in your project — wires up Claude Code, Cursor, and Copilot.
+              </p>
             </motion.div>
 
             <motion.div {...stagger(5)} className="mt-6 flex flex-wrap items-center gap-3">

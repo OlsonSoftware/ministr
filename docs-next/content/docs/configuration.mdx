@@ -144,25 +144,97 @@ See the [CLI reference](/docs/cli) for all commands and flags, including OAuth, 
 
 ## Supported Embedding Models
 
-ministr supports the following embedding models via `fastembed`. Quantized variants (suffix `-q`) use INT8 quantization for faster inference and smaller model files at a slight quality trade-off.
+ministr supports the following embedding models via `fastembed`. Quantized variants (suffix `-q`) use INT8 quantization for faster inference and smaller model files at a slight quality trade-off. The authoritative list lives at `SUPPORTED_MODELS` in `ministr-core/src/embedding/fastembed_impl.rs`.
+
+### General-purpose
 
 | Model Name | Dimensions | Notes |
 |---|---|---|
 | `all-MiniLM-L6-v2` | 384 | Default — fast, general-purpose |
-| `all-MiniLM-L6-v2-q` | 384 | Quantized variant |
-| `all-MiniLM-L12-v2` | 384 | Slightly higher quality |
-| `all-MiniLM-L12-v2-q` | 384 | Quantized variant |
-| `bge-small-en-v1.5` | 384 | BAAI small English |
-| `bge-small-en-v1.5-q` | 384 | Quantized variant |
-| `bge-base-en-v1.5` | 768 | BAAI base English |
-| `bge-base-en-v1.5-q` | 768 | Quantized variant |
-| `bge-large-en-v1.5` | 1024 | BAAI large English |
-| `bge-large-en-v1.5-q` | 1024 | Quantized variant |
+| `all-MiniLM-L6-v2-q` | 384 | Quantized L6 |
+| `all-MiniLM-L12-v2` | 384 | Slightly higher quality than L6 |
+| `all-MiniLM-L12-v2-q` | 384 | Quantized L12 |
+| `all-mpnet-base-v2` | 768 | Higher quality than MiniLM, slower |
 
-To use a quantized model, set `default_model` in `config.toml`:
+### Code-optimized
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `jina-embeddings-v2-base-code` | 768 | Jina code-specialized, 8192-token context |
+| `jina-embeddings-v2-base-en` | 768 | Jina English prose, 8192-token context |
+
+### Multilingual / paraphrase
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `paraphrase-ml-MiniLM-L12-v2` | 384 | Multilingual paraphrase MiniLM |
+| `paraphrase-ml-MiniLM-L12-v2-q` | 384 | Quantized |
+| `paraphrase-ml-mpnet-base-v2` | 768 | Multilingual paraphrase MPNet |
+| `multilingual-e5-small` | 384 | Multilingual E5 small |
+| `multilingual-e5-base` | 768 | Multilingual E5 base |
+| `multilingual-e5-large` | 1024 | Multilingual E5 large |
+
+### BAAI BGE
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `bge-small-en-v1.5` | 384 | BGE small English |
+| `bge-small-en-v1.5-q` | 384 | Quantized |
+| `bge-base-en-v1.5` | 768 | BGE base English |
+| `bge-base-en-v1.5-q` | 768 | Quantized |
+| `bge-large-en-v1.5` | 1024 | BGE large English |
+| `bge-large-en-v1.5-q` | 1024 | Quantized |
+| `bge-small-zh-v1.5` | 512 | BGE small Chinese |
+| `bge-large-zh-v1.5` | 1024 | BGE large Chinese |
+| `bge-m3` | 1024 | Multilingual, high quality |
+
+### Nomic (Matryoshka)
+
+Only `nomic-embed-text-v1.5` (and its quantized variant) are Matryoshka-capable, so these are the models to pair with the `corpus.dimension` truncation field documented above.
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `nomic-embed-text-v1` | 768 | Nomic open text embeddings |
+| `nomic-embed-text-v1.5` | 768 | Nomic v1.5 with Matryoshka support |
+| `nomic-embed-text-v1.5-q` | 768 | Quantized Nomic v1.5 |
+
+### GTE
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `gte-base-en-v1.5` | 768 | GTE base English |
+| `gte-base-en-v1.5-q` | 768 | Quantized |
+| `gte-large-en-v1.5` | 1024 | GTE large English |
+| `gte-large-en-v1.5-q` | 1024 | Quantized |
+
+### Snowflake Arctic
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `snowflake-arctic-embed-xs` | 384 | Arctic extra-small |
+| `snowflake-arctic-embed-xs-q` | 384 | Quantized |
+| `snowflake-arctic-embed-s` | 384 | Arctic small |
+| `snowflake-arctic-embed-s-q` | 384 | Quantized |
+| `snowflake-arctic-embed-m` | 768 | Arctic medium |
+| `snowflake-arctic-embed-m-q` | 768 | Quantized |
+| `snowflake-arctic-embed-m-long` | 768 | Medium with long context |
+| `snowflake-arctic-embed-m-long-q` | 768 | Quantized |
+| `snowflake-arctic-embed-l` | 1024 | Arctic large |
+| `snowflake-arctic-embed-l-q` | 1024 | Quantized |
+
+### Other
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `mxbai-embed-large-v1` | 1024 | MixedBread large |
+| `mxbai-embed-large-v1-q` | 1024 | Quantized |
+| `modern-bert-embed-large` | 1024 | ModernBERT large |
+| `embedding-gemma-300m` | 768 | Gemma 300M embedding |
+
+To switch models, set `default_model` in `~/.ministr/config.toml` (or per-corpus `corpus.model` in `.ministr.toml`):
 
 ```toml
-default_model = "all-MiniLM-L6-v2-q"
+default_model = "jina-embeddings-v2-base-code"
 ```
 
 ## Environment Variables

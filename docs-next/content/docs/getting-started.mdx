@@ -5,11 +5,11 @@ description: Install ministr, initialize .ministr.toml in your project, and wire
 
 ## Installation
 
-The easiest path is the [Download page](https://github.com/OlsonSoftware/ministr/releases) — the signed `.pkg` installs both `ministr.app` (the desktop dashboard) and the `ministr` CLI with `PATH` wiring done automatically. Alternatives below.
+The quickest path today is the install script. A signed `.pkg` that bundles `ministr.app` (the desktop dashboard) alongside the CLI is planned for the 1.0 release; until then, grab the CLI via one of the options below.
 
 ### Install script (macOS & Linux)
 
-CLI-only; detects your platform, verifies SHA-256, installs to `/usr/local/bin` (or `~/.local/bin` without sudo).
+CLI-only; detects your platform and installs `ministr` to `$HOME/.ministr/bin` (override with the `INSTALL_DIR` env var). The script prints the `export PATH=…` line for your shell profile if the bin dir isn't already on `PATH`.
 
 ```sh
 curl -fsSL https://ministr.app/install.sh | bash

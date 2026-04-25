@@ -28,7 +28,7 @@ pub struct SurveyResult {
     /// Content identifier from the vector index.
     pub content_id: String,
     /// Resolution level: `"summary"`, `"section"`, `"claim"`, `"symbol_stub"`, or `"symbol_full"`.
-    /// Matches `Resolution`'s snake_case serialization in `ministr-core/src/types.rs`.
+    /// Matches `Resolution`'s `snake_case` serialization in `ministr-core/src/types.rs`.
     pub resolution: String,
     /// Relevance score (higher is better, 0.0-1.0).
     pub score: f32,

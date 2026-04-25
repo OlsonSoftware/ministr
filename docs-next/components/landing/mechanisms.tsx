@@ -59,7 +59,7 @@ export function Mechanisms() {
           <MechanismTile
             title="Keyword + meaning search"
             technical="Hybrid Search"
-            copy="Pairs semantic embeddings with traditional keyword search and fuses the rankings — so you find the function whether you search by what it does or what it's called."
+            copy="Pairs semantic embeddings with token-level keyword matching and fuses the rankings — so you find the function whether you search by what it does or what it's called."
           >
             <HybridVisual />
           </MechanismTile>
