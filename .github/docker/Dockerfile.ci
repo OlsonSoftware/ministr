@@ -56,6 +56,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # - build-essential / pkg-config / cmake: ONNX Runtime + tree-sitter
 #   build scripts link native C/C++ code and need these at compile
 #   time even though ORT ships prebuilts.
+# - libssl-dev: openssl-sys (pulled in transitively via reqwest /
+#   rustls-native-certs chains) refuses to build without OpenSSL
+#   development headers.
 # - libwebkit2gtk-4.1-dev + libappindicator3-dev + librsvg2-dev +
 #   patchelf: Tauri (ministr-app) pulls these through wry/tao.
 # - jq: the MCP smoke step parses the tools/list JSON-RPC response.
@@ -68,6 +71,7 @@ RUN apt-get update \
       pkg-config \
       cmake \
       g++ \
+      libssl-dev \
       libwebkit2gtk-4.1-dev \
       libappindicator3-dev \
       librsvg2-dev \
