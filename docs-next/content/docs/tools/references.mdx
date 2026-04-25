@@ -44,6 +44,8 @@ Each reference is a directed edge: `from_*` is the symbol making the reference, 
       "ref_kind": "calls"
     }
   ],
+  "total": 2,
+  "offset": 0,
   "budget_status": { ... }
 }
 ```
@@ -61,6 +63,8 @@ Each reference is a directed edge: `from_*` is the symbol making the reference, 
 | `references[].to_file` | File containing the referenced symbol |
 | `references[].to_line` | Line where the referenced symbol is defined |
 | `references[].ref_kind` | How it's referenced — see table below |
+| `total` | Total references before pagination |
+| `offset` | Offset of the first returned entry within the full result list |
 | `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ### Reference Kinds

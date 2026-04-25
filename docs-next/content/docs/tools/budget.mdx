@@ -25,12 +25,14 @@ None.
     }
   ],
   "prefetch_metrics": {
+    "hits": 6,
+    "misses": 7,
     "sequential_hits": 3,
-    "sequential_misses": 1,
     "topical_hits": 2,
-    "topical_misses": 4,
     "structural_hits": 1,
-    "structural_misses": 2
+    "cross_session_hits": 0,
+    "survey_expand_hits": 0,
+    "agent_plan_hits": 0
   },
   "session_metrics": { "turn_count": 24, "tokens_delivered": 78500 },
   "schema_tokens": 3120,
@@ -49,7 +51,7 @@ None.
 | `estimated_remaining` | Estimated tokens available |
 | `pressure_level` | `"normal"`, `"elevated"`, or `"critical"` |
 | `eviction_candidates` | Ranked list of content safe to drop (populated under pressure) |
-| `prefetch_metrics` | Hit/miss counts per prefetch strategy |
+| `prefetch_metrics` | Overall `hits`/`misses` totals plus per-strategy hit counts (`sequential_hits`, `topical_hits`, `structural_hits`, `cross_session_hits`, `survey_expand_hits`, `agent_plan_hits`) |
 | `session_metrics` | Cumulative token economics for the session (turns, delivered totals) |
 | `schema_tokens` | Tokens consumed by MCP tool schemas (descriptions + parameters) |
 | `tool_count` | Number of registered MCP tools |

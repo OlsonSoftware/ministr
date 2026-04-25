@@ -1,6 +1,6 @@
 ---
 title: Predictive Prefetch
-description: The six prefetch strategies ministr uses to have the agent's likely next tool call ready in cache — three for reads, two for surveys, one for cross-session learning.
+description: The six prefetch strategies ministr uses to have the agent's likely next tool call ready in cache — four after every read, two after every survey.
 ---
 
 The **predictive prefetch** engine predicts what the agent will ask for next and pre-computes it, so follow-up calls hit a warm cache instead of a fresh search.
@@ -13,7 +13,7 @@ No LLM is in the loop for prediction itself. If guessing what to prefetch took 5
 
 ## The Six Strategies
 
-Prefetch runs at two distinct moments in the agent's workflow. Three strategies fire after every `ministr_read`, two fire after every `ministr_survey`, and a sixth uses cross-session analytics on reads.
+Prefetch runs at two distinct moments in the agent's workflow. Four strategies fire after every `ministr_read` (sequential, structural, topical, cross-session); two fire after every `ministr_survey` (survey-expand, agent-plan).
 
 ### After a read
 
