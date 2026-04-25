@@ -451,9 +451,13 @@ jobs:
             | timeout 30 ./target/release/ministr serve 2>/dev/null || true)
 
           # Dump the raw response so future failures are diagnosable.
-          # `cat -v` makes control chars visible (ESC → `^[`, etc.).
-          echo "── raw stdout from ministr serve ──"
-          printf '%s\n' "$response" | cat -v | head -80
+          # `od -c` shows every byte (tabs, newlines, ESC) by name —
+          # cat -v silently passes TAB and LF through, which is exactly
+          # what jq trips on (control chars 0x00-0x1F in JSON strings).
+          echo "── raw stdout from ministr serve (byte count) ──"
+          printf '%s' "$response" | wc -c
+          echo "── first 1500 bytes (od -c) ──"
+          printf '%s' "$response" | od -c | head -120
           echo "── end raw stdout ──"
 
           init_response=$(echo "$response" | jq -c 'select(.id == 1)')
