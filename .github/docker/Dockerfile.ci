@@ -5,26 +5,35 @@
 # Used as the execution environment for every Rust-touching CI job
 # (fmt, rust-dev, rust-release, security) in .github/workflows/ci.yml.
 #
+# Why Ubuntu 24.04, not rust:1-bookworm
+# -------------------------------------
+# ort-sys ships prebuilt ONNX Runtime object files compiled against
+# glibc 2.38+ — they reference `__isoc23_strtol{,l,ul,ull}`, the
+# locale-aware strtol variants introduced in glibc 2.38 (Aug 2023).
+# Debian 12 (bookworm) ships glibc 2.36, so linking ORT into a
+# bookworm-based image fails with `rust-lld: error: undefined symbol:
+# __isoc23_strtoll`. Ubuntu 24.04 (noble) ships glibc 2.39 and matches
+# the blacksmith runner, so binaries built in the container are ABI-
+# compatible with the host. The repo's production Dockerfile makes
+# the same choice for the same reason.
+#
 # Why a pre-built image
 # ---------------------
-# The native runner path paid ~30-45 s per job on:
+# The native-runner path paid ~30-45 s per job on:
 #   - `apt-get install libwebkit2gtk-4.1-dev …` (Tauri system deps)
 #   - `taiki-e/install-action` for cargo-nextest / just / cargo-deny /
 #     cargo-audit
-# Baked into this image, those become 0 s per run. Combined with
-# Blacksmith's Docker container caching pre-hydrating the image onto
-# runners, the `docker pull` is also a near-no-op on warm hits.
+# Baked into this image, those become 0 s per run. Blacksmith's Docker
+# container caching pre-hydrates the image onto runners, so the
+# `docker pull` inside `container:` is ~1 s on warm hits.
 #
 # What's inside
 # -------------
-# Upstream `rust:1-bookworm` already provides:
-#   - rustup + latest stable toolchain + clippy + rustfmt
-#   - CARGO_HOME=/usr/local/cargo, RUSTUP_HOME=/usr/local/rustup
-#   - PATH includes /usr/local/cargo/bin
-#
-# We add on top:
+#   - Rust stable toolchain via rustup (CARGO_HOME=/usr/local/cargo,
+#     RUSTUP_HOME=/usr/local/rustup), with clippy + rustfmt components
 #   - Tauri / ministr-app system libraries (webkit, appindicator, rsvg)
-#   - jq (used by the MCP smoke test's JSON-RPC parsing)
+#   - jq (MCP smoke test parses JSON-RPC responses)
+#   - sudo (stickydisk action shells out to `sudo mount` / `sudo mkfs`)
 #   - cargo-nextest, cargo-deny, cargo-audit, just (prebuilt via
 #     cargo-binstall — no from-source compile)
 #
@@ -33,39 +42,52 @@
 # The image tag in ci.yml is derived from a hash of THIS file. Edit
 # the Dockerfile → new tag → ci-image job rebuilds + pushes.
 
-FROM rust:1-bookworm
+FROM ubuntu:24.04
 
-# System deps. Pinned by Debian bookworm's apt repo versions; explicit
-# list so that a `rust:1-bookworm` image update can't silently pull in
-# new transitive build-deps we didn't mean to depend on.
+ENV DEBIAN_FRONTEND=noninteractive \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# System deps. Explicit list so that an Ubuntu image bump can't
+# silently pull in new transitive build-deps we didn't mean to
+# depend on.
 #
-# `sudo` is required for Blacksmith's stickydisk action when run
-# inside a privileged container — it calls `sudo mount` / `sudo mkfs`
-# to attach the hot-loaded block device, even when the container
-# already runs as root.
+# - build-essential / pkg-config / cmake: ONNX Runtime + tree-sitter
+#   build scripts link native C/C++ code and need these at compile
+#   time even though ORT ships prebuilts.
+# - libwebkit2gtk-4.1-dev + libappindicator3-dev + librsvg2-dev +
+#   patchelf: Tauri (ministr-app) pulls these through wry/tao.
+# - jq: the MCP smoke step parses the tools/list JSON-RPC response.
+# - sudo: required by blacksmith's stickydisk action when run inside
+#   a privileged container — it shells out to `sudo mount` / `sudo
+#   mkfs` even as root.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
+      build-essential \
+      pkg-config \
+      cmake \
+      g++ \
       libwebkit2gtk-4.1-dev \
       libappindicator3-dev \
       librsvg2-dev \
       patchelf \
       jq \
-      pkg-config \
-      build-essential \
-      cmake \
       ca-certificates \
       curl \
+      git \
       sudo \
  && rm -rf /var/lib/apt/lists/*
 
-# Rustup components — rust:1-bookworm already bundles clippy + rustfmt,
-# but re-adding is idempotent and shields us from upstream image tweaks.
-RUN rustup component add rustfmt clippy
+# Install rustup + stable toolchain + components.
+ARG RUST_TOOLCHAIN=stable
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}" --profile minimal --component rustfmt clippy \
+ && chmod -R a+w "${RUSTUP_HOME}" "${CARGO_HOME}"
 
-# cargo-binstall: fetches prebuilt Rust CLIs from crate release
-# artifacts without compiling from source. Installed into the rust
-# image's CARGO_HOME (/usr/local/cargo/bin), so every downstream
-# tool is immediately on PATH.
+# cargo-binstall fetches prebuilt Rust CLIs from crate release
+# artifacts without a from-source compile. Installed into CARGO_HOME
+# so every downstream tool is immediately on PATH.
 ARG BINSTALL_VERSION=1.10.19
 RUN curl -fsSL --proto '=https' --tlsv1.2 \
       "https://github.com/cargo-bins/cargo-binstall/releases/download/v${BINSTALL_VERSION}/cargo-binstall-x86_64-unknown-linux-gnu.tgz" \
@@ -77,9 +99,9 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 \
       just
 
 # GitHub Actions' checkout action drops the workspace at a path owned
-# by `runner:runner` on the host; inside a non-matching container,
-# Git refuses to operate ("detected dubious ownership"). Whitelist
-# every workspace so cargo + git work identically to the native path.
+# by `runner:runner` on the host; inside a non-matching container Git
+# refuses to operate ("detected dubious ownership"). Whitelist every
+# workspace so cargo + git work identically to the native path.
 RUN git config --global --add safe.directory '*'
 
 # Default to bash for RUN/step shells — matches native-runner behaviour
