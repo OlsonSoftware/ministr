@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Pause, Play, RotateCcw } from 'lucide-react';
-import { Reveal } from '@/components/landing/reveal';
 
 /**
  * Thesis — "What agents waste."
@@ -19,36 +18,29 @@ export function Thesis() {
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
         <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-end lg:gap-16">
           <div>
-            <Reveal>
-              <p className="ministr-eyebrow">The problem</p>
-            </Reveal>
+            <p className="ministr-eyebrow">The problem</p>
             <h2 className="mt-5 space-y-2 text-[clamp(2rem,4.4vw,3.5rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
-              <Reveal as="div" delay={0.0}>Grep finds lines. Read dumps files.</Reveal>
-              <Reveal as="div" delay={0.12}>
-                <span className="text-fd-foreground/75">Most of what comes back is noise.</span>
-              </Reveal>
-              <Reveal as="div" delay={0.24}>
-                <span className="text-fd-foreground/55">Then the agent re-reads it.</span>
-              </Reveal>
+              <span className="block">Grep finds lines. Read dumps files.</span>
+              <span className="block text-fd-foreground/75">Most of what comes back is noise.</span>
+              <span className="block text-fd-foreground/55">Then the agent re-reads it.</span>
             </h2>
           </div>
-          <Reveal delay={0.4}>
-            <p className="ministr-body max-w-[56ch] text-[17px] leading-relaxed">
-              Claude Code&rsquo;s default tools are <span className="font-mono">Glob</span>,{' '}
-              <span className="font-mono">Grep</span>, and{' '}
-              <span className="font-mono">Read</span>: coarse text matching plus full-file dumps.
-              Agents pay for every line, get no session memory, and re-read the same files
-              turn after turn.{' '}
-              <span className="font-medium text-fd-foreground">
-                ministr replaces all three with a semantic index that ships the exact section, once.
-              </span>
-            </p>
-          </Reveal>
+          <p className="ministr-body max-w-[56ch] text-[17px] leading-relaxed">
+            Ask Claude Code to find one function and it <span className="font-mono">Glob</span>s
+            the repo, <span className="font-mono">Grep</span>s for a keyword, then{' '}
+            <span className="font-mono">Read</span>s whole files to see the match in context.
+            You pay for every line it touches — and on the next turn it does it again,
+            because it doesn&rsquo;t remember what it already saw.{' '}
+            <span className="font-medium text-fd-foreground">
+              ministr replaces those three tools with a semantic index that ships the exact
+              section your agent needs, once.
+            </span>
+          </p>
         </div>
 
-        <Reveal delay={0.3} className="relative mt-14">
+        <div className="relative mt-14">
           <WasteDiagram />
-        </Reveal>
+        </div>
       </div>
     </section>
   );
@@ -441,7 +433,7 @@ function WasteDiagram() {
                 text={
                   activePreview
                     ? activePreview.preview
-                    : 'Press Play to watch both workflows execute in real time.\nHover any step to preview what that tool call returned.'
+                    : 'Press Play, or hover any step to see what that tool call returned.'
                 }
                 reduced={!!reduced}
               />
@@ -475,52 +467,20 @@ function CumulativeBar({
   const pct = Math.min((total / budget) * 100, 100);
   const accentVar = accent === 'warning' ? 'var(--color-warning)' : 'var(--color-success)';
 
-  // Detect wall crossing to trigger a one-shot shockwave pulse.
-  const [justCrossed, setJustCrossed] = useState(false);
-  const wasPast = useRef(past);
-  useEffect(() => {
-    if (!wasPast.current && past) {
-      setJustCrossed(true);
-      const t = window.setTimeout(() => setJustCrossed(false), 900);
-      return () => window.clearTimeout(t);
-    }
-    wasPast.current = past;
-  }, [past]);
+  // Earlier version played a shockwave shake + scanline sweep + striped
+  // pulse when the bar crossed 80%. All three were decoration — the
+  // `past 80% · pressure` caption already says it; the bar itself
+  // already colours red. Motion-for-its-own-sake is slop.
 
   return (
-    <motion.div
-      animate={
-        justCrossed && !reduced
-          ? { x: [0, -3, 3, -2, 2, 0], boxShadow: [
-              '0 0 0 0 color-mix(in oklch, var(--color-warning) 0%, transparent)',
-              '0 0 0 10px color-mix(in oklch, var(--color-warning) 40%, transparent)',
-              '0 0 0 20px color-mix(in oklch, var(--color-warning) 0%, transparent)',
-            ] }
-          : { x: 0 }
-      }
-      transition={{ duration: 0.6, ease: [0.2, 0.8, 0.2, 1] }}
+    <div
       className={
-        'relative overflow-hidden rounded-lg border px-4 py-3 transition-colors ' +
+        'relative overflow-hidden rounded-lg border px-4 py-3 ' +
         (accent === 'warning'
           ? 'border-[color-mix(in_oklch,var(--color-warning)_25%,transparent)] bg-[color-mix(in_oklch,var(--color-warning)_7%,transparent)]'
           : 'border-[color-mix(in_oklch,var(--color-success)_28%,transparent)] bg-[color-mix(in_oklch,var(--color-success)_7%,transparent)]')
       }
     >
-      {/* Alert scanline that sweeps across the bar on wall-crossing */}
-      {justCrossed && !reduced && (
-        <motion.div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          initial={{ x: '-100%' }}
-          animate={{ x: '100%' }}
-          transition={{ duration: 0.7, ease: 'easeOut' }}
-          style={{
-            background:
-              'linear-gradient(90deg, transparent 0%, color-mix(in oklch, var(--color-warning) 35%, transparent) 50%, transparent 100%)',
-          }}
-        />
-      )}
-
       <div className="relative flex items-baseline justify-between">
         <span className="font-mono text-[11px] uppercase tracking-[0.18em]">
           <span style={{ color: accentVar }}>{label}</span>
@@ -537,30 +497,10 @@ function CumulativeBar({
       <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_65%,transparent)]">
         <motion.span
           className="absolute inset-y-0 left-0 rounded-full"
-          style={{
-            background: accentVar,
-            boxShadow: past
-              ? '0 0 12px color-mix(in oklch, var(--color-warning) 55%, transparent)'
-              : 'none',
-          }}
+          style={{ background: accentVar }}
           animate={{ width: `${pct}%` }}
           transition={{ duration: reduced ? 0 : 0.5, ease: [0.2, 0.8, 0.2, 1] }}
         />
-        {/* Past-the-wall pulsing overlay — when grep+read crosses 80%
-            a pressure-warning stripes animation plays over the bar. */}
-        {past && !reduced && (
-          <motion.span
-            aria-hidden
-            className="absolute inset-y-0 left-0 rounded-full"
-            style={{
-              width: `${pct}%`,
-              background:
-                'repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in oklch, var(--color-warning) 40%, transparent) 6px 10px)',
-            }}
-            animate={{ backgroundPositionX: ['0px', '40px'] }}
-            transition={{ duration: 0.9, repeat: Infinity, ease: 'linear' }}
-          />
-        )}
         {/* 80% pressure wall */}
         <div
           aria-hidden
@@ -574,15 +514,11 @@ function CumulativeBar({
         </div>
       </div>
       <div className="mt-1 flex items-baseline justify-end font-mono text-[10px] uppercase tracking-[0.18em]">
-        <motion.span
-          style={{ color: accentVar }}
-          animate={past && !reduced ? { opacity: [1, 0.4, 1] } : { opacity: 1 }}
-          transition={{ duration: 1.1, repeat: past ? Infinity : 0, ease: 'easeInOut' }}
-        >
+        <span style={{ color: accentVar }}>
           {past ? 'past 80% · pressure' : accent === 'warning' ? 'climbing' : 'healthy'}
-        </motion.span>
+        </span>
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -790,9 +726,8 @@ function TypewriterBlock({ text, reduced }: { text: string; reduced: boolean }) 
 }
 
 /**
- * Verdict — hero metric card that slides up when playback finishes.
- * Shows the multiplier in a huge number, with sublines for tokens
- * saved and dollar-per-week impact at 10k sessions.
+ * Verdict — summary card that slides up when playback finishes.
+ * Multiplier + token reduction percentage, nothing extrapolated.
  */
 function Verdict({
   blind,
@@ -810,17 +745,8 @@ function Verdict({
       initial={reduced ? false : { opacity: 0, y: 12, scale: 0.98 }}
       animate={reduced ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.55, ease: [0.2, 0.8, 0.2, 1] }}
-      className="relative mt-5 overflow-hidden rounded-lg border border-[color-mix(in_oklch,var(--color-ministr-400)_32%,transparent)] bg-gradient-to-br from-[color-mix(in_oklch,var(--color-ministr-500)_14%,transparent)] via-[color-mix(in_oklch,var(--color-violet-500)_10%,transparent)] to-[color-mix(in_oklch,var(--color-fuchsia-400)_10%,transparent)] px-4 py-4"
+      className="relative mt-5 overflow-hidden rounded-lg border border-[color-mix(in_oklch,var(--color-ministr-400)_28%,transparent)] bg-[color-mix(in_oklch,var(--color-ministr-500)_10%,transparent)] px-4 py-4"
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-px"
-        style={{
-          background:
-            'linear-gradient(90deg in oklch, transparent 0%, var(--color-ministr-500) 25%, var(--color-violet-500) 55%, var(--color-fuchsia-400) 80%, transparent 100%)',
-          opacity: 0.8,
-        }}
-      />
       <div className="flex items-baseline gap-3">
         <span className="ministr-eyebrow">Verdict</span>
         <span className="font-mono text-[clamp(2rem,4vw,3rem)] font-semibold leading-none tabular-nums text-fd-foreground">
@@ -831,8 +757,8 @@ function Verdict({
         </span>
       </div>
       <p className="ministr-body-quiet mt-3 font-mono text-[11px] leading-relaxed">
-        same task, same agent, same model — just the retrieval layer changed. the saved budget
-        becomes reasoning room for the <span className="text-fd-foreground">next</span> question.
+        Same task, same agent, same model — only the retrieval layer changed. The tokens
+        ministr saved are budget the agent still has for the <span className="text-fd-foreground">next</span> turn.
       </p>
     </motion.div>
   );

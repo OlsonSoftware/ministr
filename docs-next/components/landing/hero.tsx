@@ -9,11 +9,9 @@ import { CopyButton } from '@/components/landing/copy-button';
 import { EASE_OUT } from '@/lib/motion';
 
 /**
- * Hero — headline + live asciinema recording of ministr + Claude Code,
- * layered over the page-wide chromatic-flow shader. The player wears
- * the same Shell as the old SessionTrace simulation (traffic-light
- * dots, ministr-tinted surface, glow shadow) — asciinema's own chrome
- * is suppressed via `app/global.css` overrides.
+ * Hero — headline + live asciinema recording of ministr + Claude Code.
+ * The player wears a plain panel (traffic-light dots, ministr-tinted
+ * surface) — asciinema's own chrome is suppressed via `app/global.css`.
  */
 export function Hero() {
   const reduced = useReducedMotion();
@@ -40,37 +38,42 @@ export function Hero() {
               {...stagger(1)}
               className="ministr-hero-mark mt-6 text-[clamp(3.25rem,9vw,6.75rem)] font-semibold leading-[0.9] text-fd-foreground"
             >
-              ministr<span className="ministr-gradient-text">.</span>
+              ministr<span className="text-[var(--color-ministr-500)]">.</span>
             </motion.h1>
 
             <motion.p
               {...stagger(2)}
               className="mt-6 max-w-[48ch] text-[clamp(1.125rem,1.6vw,1.375rem)] leading-snug font-medium text-fd-foreground/95"
             >
-              An L1 cache for your agent&rsquo;s context.
+              Stop your AI agent from re-reading the same files needlessly.
             </motion.p>
 
             <motion.p
               {...stagger(3)}
               className="ministr-body mt-4 max-w-[52ch] text-[14.5px] leading-relaxed"
             >
-              Serve what&rsquo;s needed. Remember what&rsquo;s been sent.
-              Predict what comes next. Semantic search, symbol navigation,
-              and cross-language bridges over your files — running as a
-              single local process, state in a SQLite file.
+              Claude Code, Cursor, and Copilot burn through a large chunk
+              of their context window re-grepping and re-reading code they
+              already saw. ministr gives them a local index that ships the
+              exact section once, tracks what&rsquo;s been delivered, and
+              skips it on the next turn &mdash; so your agent uses fewer
+              tokens per turn and remembers what it&rsquo;s looked at.
             </motion.p>
 
             <motion.div {...stagger(4)} className="mt-8">
               <GlassCard padded={false} className="inline-flex items-center gap-3 pl-4 pr-2 py-2 font-mono text-sm">
                 <span className="text-[var(--color-ministr-400)] select-none">$</span>
-                <span>claude mcp add ministr -- ministr</span>
+                <span>curl -fsSL https://ministr.app/install.sh | bash</span>
                 <CopyButton
-                  value="claude mcp add ministr -- ministr"
+                  value="curl -fsSL https://ministr.app/install.sh | bash"
                   label="Copy install command"
                   size="sm"
                   className="ml-1"
                 />
               </GlassCard>
+              <p className="ministr-body-quiet mt-2 font-mono text-[11px]">
+                then <span className="text-fd-foreground">ministr init</span> in your project — wires up Claude Code, Cursor, and Copilot.
+              </p>
             </motion.div>
 
             <motion.div {...stagger(5)} className="mt-6 flex flex-wrap items-center gap-3">

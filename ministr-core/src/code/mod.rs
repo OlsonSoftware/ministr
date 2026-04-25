@@ -10,9 +10,11 @@
 //! [`SymbolTable`] collects symbols and provides query methods.
 //!
 //! The [`GrammarRegistry`] maps file extensions to tree-sitter language
-//! grammars, supporting 30+ languages via cargo feature flags. The
-//! [`generic_extract_symbols`] function provides language-agnostic symbol
-//! extraction using node kind heuristics common across grammars.
+//! grammars, supporting 12 languages via cargo feature flags (Rust is
+//! always on; Python, JavaScript, TypeScript/TSX, Go, Java, C, C++, Ruby,
+//! C#, Swift, and Kotlin are feature-gated). The [`generic_extract_symbols`]
+//! function provides language-agnostic symbol extraction using node kind
+//! heuristics common across grammars.
 
 pub(crate) mod ast_parser;
 pub mod bridge;

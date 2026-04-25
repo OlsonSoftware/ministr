@@ -135,7 +135,7 @@ pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
 ///
 /// let paths = vec![
 ///     PathBuf::from("docs/"),
-///     PathBuf::from("DESIGN.md"),
+///     PathBuf::from("README.md"),
 ///     PathBuf::from("*.md"),
 /// ];
 /// let files = discover_paths(&paths).unwrap();

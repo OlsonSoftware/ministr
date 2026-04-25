@@ -15,9 +15,9 @@ The signed `.pkg` installer (coming with the 1.0 release) drops both `ministr.ap
 curl -fsSL https://ministr.app/install.sh | bash
 ```
 
-The script detects your platform, downloads the matching archive from GitHub Releases, verifies the SHA-256 checksum, and installs `ministr` to `/usr/local/bin` (or `$HOME/.local/bin` without sudo).
+The script detects your platform, downloads the matching archive, and installs `ministr` to `$HOME/.ministr/bin` (override with the `INSTALL_DIR` env var). If that directory isn't already on your `PATH`, the script prints the `export PATH=…` line to add to your shell profile — it doesn't edit the profile for you.
 
-### Cargo (from source, requires Rust 1.85+)
+### Cargo (from source, requires Rust 1.88+)
 
 Install the latest `main` directly from the repository:
 
@@ -27,10 +27,10 @@ cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli
 
 ### Homebrew (macOS) — coming with 1.0
 
-A formula lives in the `homebrew/` directory of this repo. Once the `AlrikOlson/homebrew-tap` repo is published, install with:
+A formula lives in the `homebrew/` directory of this repo. Once the `OlsonSoftware/homebrew-tap` repo is published, install with:
 
 ```sh
-brew install AlrikOlson/tap/ministr
+brew install OlsonSoftware/tap/ministr
 ```
 
 ### crates.io — coming with 1.0

@@ -324,11 +324,12 @@ pub fn write_config(root: &Path, force: bool) -> Result<ProjectDetection, InitEr
     Ok(detection)
 }
 
-/// Write MCP client configuration files for Claude Code and GitHub Copilot.
+/// Write MCP client configuration files for Claude Code, GitHub Copilot, and Cursor.
 ///
-/// Creates `.mcp.json` (Claude Code) and `.vscode/mcp.json` (Copilot) if
-/// they don't already contain an ministr entry. Existing files are merged
-/// non-destructively — only the `ministr` key is added.
+/// Creates `.mcp.json` (Claude Code), `.vscode/mcp.json` (VS Code / GitHub
+/// Copilot), and `.cursor/mcp.json` (Cursor) if they don't already contain
+/// a ministr entry. Existing files are merged non-destructively — only the
+/// `ministr` key is added.
 ///
 /// # Errors
 ///

@@ -1,15 +1,17 @@
 ---
 title: Core Concepts
-description: The five mechanisms ministr borrows from CPU cache controller architecture — session shadow, prefetch engine, budget management, coherence.
+description: The six mechanisms ministr uses — session shadow, delta delivery, predictive prefetch, budget management, coherence, and hybrid search.
 ---
 
-ministr is built around five mechanisms drawn from CPU cache controller architecture. Each addresses a specific failure mode in how LLM agents consume context.
+ministr is built around six mechanisms — each one fixes a specific way LLM agents waste their context window. They map onto concepts from CPU cache controller design, but you don't need any of that background to use ministr.
 
-| Mechanism | CPU Analogy | Problem Solved |
+| Mechanism | What it does | CPU analogy |
 |---|---|---|
-| [Session Shadow](/docs/concepts/session-shadow) | Cache directory | Re-delivering identical context every turn |
-| [Prefetch Engine](/docs/concepts/prefetch-engine) | Hardware prefetcher | High-latency cold retrievals |
-| [Budget Management](/docs/concepts/budget-management) | Replacement policy | Silent context eviction and thrashing |
-| [Coherence](/docs/concepts/coherence) | Cache coherence protocol | Stale context from changed documents |
+| [Session Shadow](/docs/concepts/session-shadow) | Tracks what your agent has already been sent this session | Cache directory |
+| [Delta Delivery](/docs/concepts/coherence#delta-delivery) | Sends only the changed lines when a file the agent already saw has been edited | Write-back |
+| [Predictive Prefetch](/docs/concepts/prefetch-engine) | Guesses the agent's next read and has it ready in cache | Hardware prefetcher |
+| [Budget & Pressure](/docs/concepts/budget-management) | Tracks context-window fill and auto-compresses responses as it fills up | Replacement policy |
+| [Coherence Watcher](/docs/concepts/coherence) | Notices file changes on disk and flags cached content as stale | Cache-coherence protocol |
+| [Hybrid Search](/docs/architecture-deep-dive#the-embedding-stack) | Combines semantic ("meaning") search with keyword search and fuses the rankings | Lookup with multiple index types |
 
-These mechanisms work together. The session shadow feeds the prefetch engine (knowing what was delivered informs what to pre-warm). Budget management uses the shadow to estimate window pressure. Coherence checks the shadow to determine which sessions hold stale content.
+These mechanisms compose. The session shadow feeds the prefetch engine (knowing what was already delivered informs what to pre-warm), budget pressure decides how much to compress, and the coherence watcher uses the shadow to figure out which sessions hold stale content after a file changes.

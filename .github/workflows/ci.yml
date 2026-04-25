@@ -32,12 +32,13 @@ env:
 
 # Runner topology: Blacksmith-hosted ephemeral Linux runners.
 #
-#   changes       → blacksmith-2vcpu-ubuntu-2404 (path-filter, sub-10s)
-#   fmt           → blacksmith-2vcpu-ubuntu-2404 (instant feedback, no compile)
-#   rust          → blacksmith-4vcpu-ubuntu-2404 (16 GB RAM — linker needs it)
-#   security      → blacksmith-2vcpu-ubuntu-2404
-#   docker-build  → blacksmith-2vcpu-ubuntu-2404
-#   ci-complete   → gate job, required check for branch protection
+#   changes        → blacksmith-2vcpu-ubuntu-2404 (path-filter, sub-10s)
+#   fmt            → blacksmith-2vcpu-ubuntu-2404 (instant feedback, no compile)
+#   rust-dev       → blacksmith-4vcpu-ubuntu-2404 (16 GB RAM — linker needs it)
+#   rust-release   → blacksmith-4vcpu-ubuntu-2404 (16 GB RAM — linker needs it)
+#   security       → blacksmith-2vcpu-ubuntu-2404
+#   docker-build   → blacksmith-2vcpu-ubuntu-2404
+#   ci-complete    → gate job, required check for branch protection
 #
 # Path-filtering: a `changes` job classifies the PR/push and every
 # expensive downstream job is `if`-gated on it. A docs-only PR (one
@@ -49,10 +50,30 @@ env:
 # Sticky disks (NVMe-backed, ~3s mount vs ~1m6s for GitHub Actions
 # cache) hydrate every piece of per-runner state that's expensive to
 # reconstruct: rustup toolchain, cargo-install'd binaries, the crate
-# registry, git dependencies, and target/. Shared disks (rustup, cargo
-# bin, registry, git) use one key per repo; target/ is the only one
-# with contention, and we keep the Rust pipeline serial in one job so
-# there's no concurrent-write LWW problem.
+# registry, git dependencies, and target/.
+#
+# Cargo-profile split for parallelism
+# ------------------------------------
+# Blacksmith sticky disks commit on unmount and LWW across jobs sharing
+# a key. target/debug/ and target/release/ are disjoint on disk, so we
+# partition them into two sticky disks and run their consumers in
+# parallel:
+#
+#   rust-dev     writes target/debug/    → key -cargo-target-dev
+#     └─ cargo clippy --all-targets (dev)
+#     └─ cargo nextest run --lib --bins (dev, reuses clippy rlibs)
+#     └─ cargo test --doc (dev)
+#     └─ just eval-gate (dev, `cargo test --test eval_retrieval`)
+#
+#   rust-release writes target/release/  → key -cargo-target-release
+#     └─ cargo build --release -p ministr-cli
+#     └─ MCP smoke (runs the release binary)
+#
+# Within each job, cargo invocations serialise through cargo's file
+# locking and share a single target/ subtree — maximal artifact reuse.
+# Across jobs, the keys are distinct so there's no LWW contention.
+# Shared disks (rustup, cargo-bin, registry, git) are content-addressed
+# enough that parallel LWW commits converge on identical state.
 
 jobs:
   # ────────────────────────────────────────────────────────────────
@@ -200,26 +221,31 @@ jobs:
       - run: cargo fmt --all -- --check
 
   # ────────────────────────────────────────────────────────────────
-  # The big Rust pipeline: one runner, one target/ sticky disk,
-  # every Rust gate. Kept serial so clippy→test→doc→release→smoke
-  # all reuse the same in-job target/ dir without LWW contention.
-  # Waits on fmt so whitespace failures don't waste 10 min of CI.
+  # rust-dev: dev-profile pipeline.
+  # Owns target/debug/ via its own sticky disk. Runs in parallel with
+  # rust-release (which owns target/release/); distinct keys mean no
+  # LWW contention between the two jobs.
+  # Within this job the steps are serial so clippy → nextest →
+  # doc-test → eval-gate all reuse the same dev rlibs.
+  # Waits on fmt so whitespace failures don't waste CI minutes.
   # ────────────────────────────────────────────────────────────────
-  rust:
-    name: rust (clippy → test → doc → smoke → eval)
+  rust-dev:
+    name: rust-dev (clippy → nextest → doc → eval)
     needs: [changes, fmt]
     if: needs.changes.outputs.rust == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Tauri + ministr-app system deps
+        # Needed because `cargo clippy --workspace --all-targets`
+        # includes ministr-app, which links libwebkit2gtk.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-            patchelf jq
+            patchelf
 
       - name: Sticky disk — rustup toolchain
         uses: useblacksmith/stickydisk@v1
@@ -241,10 +267,10 @@ jobs:
         with:
           key: ${{ github.repository }}-cargo-git
           path: /home/runner/.cargo/git
-      - name: Sticky disk — cargo target
+      - name: Sticky disk — cargo target (dev profile)
         uses: useblacksmith/stickydisk@v1
         with:
-          key: ${{ github.repository }}-cargo-target
+          key: ${{ github.repository }}-cargo-target-dev
           path: ${{ github.workspace }}/target
 
       - uses: ./.github/actions/rust-setup
@@ -288,6 +314,59 @@ jobs:
       - name: cargo test --doc
         run: cargo test --workspace --doc --locked
 
+      - name: Retrieval quality gate
+        # `just eval-gate` runs `cargo test --test eval_retrieval …`
+        # on the dev profile, so it reuses the rlibs built by clippy
+        # and nextest above.
+        run: just eval-gate
+
+  # ────────────────────────────────────────────────────────────────
+  # rust-release: release-profile pipeline.
+  # Owns target/release/ via its own sticky disk. Runs in parallel
+  # with rust-dev. Only builds ministr-cli (+ its transitive deps);
+  # ministr-app is not a dependency, so no Tauri system packages and
+  # no cargo-nextest are needed here.
+  # ────────────────────────────────────────────────────────────────
+  rust-release:
+    name: rust-release (build → mcp smoke)
+    needs: [changes, fmt]
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq (MCP smoke only)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq
+
+      - name: Sticky disk — rustup toolchain
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-rustup
+          path: /home/runner/.rustup
+      - name: Sticky disk — cargo bin
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-bin
+          path: /home/runner/.cargo/bin
+      - name: Sticky disk — cargo registry
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-registry
+          path: /home/runner/.cargo/registry
+      - name: Sticky disk — cargo git
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-git
+          path: /home/runner/.cargo/git
+      - name: Sticky disk — cargo target (release profile)
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-target-release
+          path: ${{ github.workspace }}/target
+
+      - uses: ./.github/actions/rust-setup
+
       - name: Build release ministr-cli
         run: cargo build --release -p ministr-cli --locked
 
@@ -317,11 +396,8 @@ jobs:
           done
           echo "✓ MCP smoke test passed"
 
-      - name: Retrieval quality gate
-        run: just eval-gate
-
   # ────────────────────────────────────────────────────────────────
-  # Independent, fast — runs in parallel with `rust`.
+  # Independent, fast — runs in parallel with `rust-dev` and `rust-release`.
   # ────────────────────────────────────────────────────────────────
   security:
     name: security (deny + audit)
@@ -377,7 +453,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   ci-complete:
     name: ci complete
-    needs: [changes, fmt, rust, security, docker-build]
+    needs: [changes, fmt, rust-dev, rust-release, security, docker-build]
     if: always()
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 2
@@ -386,15 +462,17 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           FMT_RESULT: ${{ needs.fmt.result }}
-          RUST_RESULT: ${{ needs.rust.result }}
+          RUST_DEV_RESULT: ${{ needs.rust-dev.result }}
+          RUST_RELEASE_RESULT: ${{ needs.rust-release.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           DOCKER_RESULT: ${{ needs.docker-build.result }}
         run: |
-          echo "changes:      $CHANGES_RESULT"
-          echo "fmt:          $FMT_RESULT"
-          echo "rust:         $RUST_RESULT"
-          echo "security:     $SECURITY_RESULT"
-          echo "docker-build: $DOCKER_RESULT"
+          echo "changes:       $CHANGES_RESULT"
+          echo "fmt:           $FMT_RESULT"
+          echo "rust-dev:      $RUST_DEV_RESULT"
+          echo "rust-release:  $RUST_RELEASE_RESULT"
+          echo "security:      $SECURITY_RESULT"
+          echo "docker-build:  $DOCKER_RESULT"
 
           # The `changes` job MUST have succeeded — it drives gating.
           if [ "$CHANGES_RESULT" != "success" ]; then
@@ -404,9 +482,10 @@ jobs:
 
           ok() { [ "$1" = "success" ] || [ "$1" = "skipped" ]; }
           fail=0
-          ok "$FMT_RESULT"      || { echo "::error::fmt $FMT_RESULT";           fail=1; }
-          ok "$RUST_RESULT"     || { echo "::error::rust $RUST_RESULT";         fail=1; }
-          ok "$SECURITY_RESULT" || { echo "::error::security $SECURITY_RESULT"; fail=1; }
-          ok "$DOCKER_RESULT"   || { echo "::error::docker-build $DOCKER_RESULT"; fail=1; }
+          ok "$FMT_RESULT"          || { echo "::error::fmt $FMT_RESULT";                     fail=1; }
+          ok "$RUST_DEV_RESULT"     || { echo "::error::rust-dev $RUST_DEV_RESULT";           fail=1; }
+          ok "$RUST_RELEASE_RESULT" || { echo "::error::rust-release $RUST_RELEASE_RESULT";   fail=1; }
+          ok "$SECURITY_RESULT"     || { echo "::error::security $SECURITY_RESULT";           fail=1; }
+          ok "$DOCKER_RESULT"       || { echo "::error::docker-build $DOCKER_RESULT";         fail=1; }
           [ $fail -eq 0 ] || exit 1
           echo "✓ all required jobs passed or were intentionally skipped"

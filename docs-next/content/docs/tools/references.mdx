@@ -16,6 +16,8 @@ Find all references to a symbol — callers, implementors, importers, and cross-
 
 ## Response
 
+Each reference is a directed edge: `from_*` is the symbol making the reference, `to_*` is the symbol being referenced.
+
 ```json
 {
   "references": [
@@ -23,17 +25,23 @@ Find all references to a symbol — callers, implementors, importers, and cross-
       "from_symbol_id": "sym-src/handlers.rs::handlers::login_handler",
       "from_name": "login_handler",
       "from_file": "src/handlers.rs",
-      "ref_kind": "calls",
-      "line": 28,
-      "context": "let claims = validate_token(&token)?;"
+      "from_line": 28,
+      "to_symbol_id": "sym-src/auth.rs::auth::validate_token",
+      "to_name": "validate_token",
+      "to_file": "src/auth.rs",
+      "to_line": 42,
+      "ref_kind": "calls"
     },
     {
       "from_symbol_id": "sym-tests/auth_test.rs::tests::rejects_expired",
       "from_name": "rejects_expired",
       "from_file": "tests/auth_test.rs",
-      "ref_kind": "calls",
-      "line": 15,
-      "context": "let result = validate_token(\"expired.token.here\");"
+      "from_line": 15,
+      "to_symbol_id": "sym-src/auth.rs::auth::validate_token",
+      "to_name": "validate_token",
+      "to_file": "src/auth.rs",
+      "to_line": 42,
+      "ref_kind": "calls"
     }
   ],
   "budget_status": { ... }
@@ -44,10 +52,16 @@ Find all references to a symbol — callers, implementors, importers, and cross-
 
 | Field | Description |
 |---|---|
-| `references[].from_symbol_id` | The symbol making the reference |
-| `references[].ref_kind` | How the symbol is referenced (calls, implements, etc.) |
-| `references[].line` | Line number of the reference |
-| `references[].context` | The line of code containing the reference |
+| `references[].from_symbol_id` | Symbol making the reference |
+| `references[].from_name` | Its declared name |
+| `references[].from_file` | File containing the reference |
+| `references[].from_line` | Line of the reference (1-based) |
+| `references[].to_symbol_id` | Symbol being referenced |
+| `references[].to_name` | Its declared name |
+| `references[].to_file` | File containing the referenced symbol |
+| `references[].to_line` | Line where the referenced symbol is defined |
+| `references[].ref_kind` | How it's referenced — see table below |
+| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ### Reference Kinds
 

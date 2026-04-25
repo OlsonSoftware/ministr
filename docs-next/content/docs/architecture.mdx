@@ -28,24 +28,36 @@ ministr-app/src-tauri/ — Tauri v2 desktop app, depends on ministr-core + minis
 
 **ministr-app** is the Tauri v2 desktop application that wraps the daemon with a GUI dashboard and system tray icon.
 
-## The Five Mechanisms
+## The Six Mechanisms
 
-ministr combines five mechanisms that map directly to CPU cache controller concepts:
+ministr combines six mechanisms — each fixes a specific way LLM agents waste their context window. They map directly to CPU cache controller concepts, but you don't need to know any of that to use them.
 
 ### 1. Session Shadow
-Tracks exactly what context has been delivered to the agent, enabling deduplication, delta updates, and eviction estimation.
+A per-session record of every chunk of code or docs ministr has already sent the agent. Lets ministr deduplicate, send a pointer instead of the same text, or compute a delta when something changes.
 
-### 2. Multi-Resolution Index
-Documents are indexed at three simultaneous levels — summaries, sections, and claims — preserving the author's original structure rather than destroying it with fixed-size chunking.
+### 2. Delta Delivery
+When the agent re-reads a file that has changed since it last saw it, ministr sends only the changed lines — not the whole file again. Built on top of the Session Shadow.
 
-### 3. Progressive Disclosure
-Four MCP tools (`survey` → `read` → `extract` → `related`) give the agent explicit control over retrieval depth, mirroring how a human researcher navigates a knowledge base.
+### 3. Predictive Prefetch
+After every read, ministr guesses what the agent will look up next (sequentially, by topic, or by document structure) and pre-computes those results. The next call hits a warm cache instead of running a fresh search.
 
-### 4. Speculative Prefetch
-Predicts what the agent will need next based on sequential, topical, and structural locality. Pre-computes results so warm responses are served from cache instead of re-embedded and re-searched.
+### 4. Budget & Pressure
+ministr tracks how full the agent's context window is getting. As it fills, ministr automatically compresses responses (claim-level extracts instead of full sections) and recommends what to drop first.
 
-### 5. Context Budget Management
-Tracks cumulative token usage, detects pressure, and provides eviction recommendations with compressed replacement summaries.
+### 5. Coherence Watcher
+A file watcher that notices when files change on disk after the agent has read them, marks the cached content stale, and surfaces alerts on the next tool call so the agent doesn't reason off rotted context.
+
+### 6. Hybrid Search
+Semantic ("meaning") search and keyword search run together, with their rankings fused — so the agent finds the right function whether it searches by what the function does or what it's called.
+
+### Retrieval Pipeline (how the search above works)
+
+The first five mechanisms sit on top of a retrieval pipeline that powers `ministr_survey` and `ministr_read`:
+
+- **Multi-resolution indexing** — every document is indexed at three levels at once: summary, section, and atomic claim (a one-sentence fact pulled from a section). The agent can pick the level it needs.
+- **Progressive disclosure** — the tool surface (`survey` → `read` → `extract` → `related`) lets the agent zoom in only as far as it actually needs to, instead of pulling whole files up-front.
+
+For the parser, embedding, and index internals, see the [architecture deep dive](/docs/architecture-deep-dive).
 
 ## On-Disk Layout
 
@@ -53,7 +65,7 @@ Tracks cumulative token usage, detects pressure, and provides eviction recommend
 ~/.ministr/
 ├── config.toml                     # Global configuration
 ├── corpora.json                    # Daemon's registered-corpus manifest
-├── ministrd.sock                      # Daemon Unix domain socket
+├── ministrd.sock                      # Daemon local socket (UDS on macOS/Linux; named pipe on Windows)
 ├── ministrd.pid                       # Daemon PID file
 └── corpora/
     └── <corpus-id>/                # Stable hash derived from corpus paths

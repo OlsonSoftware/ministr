@@ -14,19 +14,33 @@ Extract atomic claims from a section, optionally filtered by relevance to a quer
 
 ## Response
 
+### With `query` — ranked by relevance
+
 ```json
 {
   "claims": [
     {
-      "id": "docs/auth.md#jwt-validation/claim-1",
+      "claim_id": "docs/auth.md#jwt-validation:c1",
       "text": "JWT tokens use RS256 signing algorithm.",
-      "relevance_score": 0.92
+      "relevance": 0.92
     },
     {
-      "id": "docs/auth.md#jwt-validation/claim-2",
+      "claim_id": "docs/auth.md#jwt-validation:c2",
       "text": "Token expiry is set to 1 hour by default.",
-      "relevance_score": 0.85
+      "relevance": 0.85
     }
+  ],
+  "budget_status": { ... }
+}
+```
+
+### Without `query` — document order, no relevance field
+
+```json
+{
+  "claims": [
+    { "claim_id": "docs/auth.md#jwt-validation:c1", "text": "JWT tokens use RS256 signing algorithm." },
+    { "claim_id": "docs/auth.md#jwt-validation:c2", "text": "Token expiry is set to 1 hour by default." }
   ],
   "budget_status": { ... }
 }
@@ -37,9 +51,10 @@ Extract atomic claims from a section, optionally filtered by relevance to a quer
 | Field | Description |
 |---|---|
 | `claims` | List of extracted claims |
-| `claims[].id` | Claim ID for use with `ministr_related` |
+| `claims[].claim_id` | Claim ID for use with `ministr_related` |
 | `claims[].text` | The atomic factual statement |
-| `claims[].relevance_score` | Relevance to the query (1.0 if no query provided) |
+| `claims[].relevance` | Optional — relevance to the query (0.0-1.0). Present only when a `query` was supplied; omitted otherwise. |
+| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ## Behavior
 

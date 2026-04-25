@@ -5,7 +5,6 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Reveal } from '@/components/landing/reveal';
 import { GlassCard } from '@/components/landing/glass-card';
 
 /* ---------------------------------------------------------------
@@ -36,7 +35,7 @@ const STEPS: Step[] = [
     label: 'agent sends tool call',
     caption: 'Claude Code → ministr_read("src/auth.rs#login")',
     detail:
-      'The agent — Claude Code, Cursor, Copilot, any MCP client — wants a section of your code. It fires a JSON-RPC call over stdio to the ministr daemon spawned as a subprocess. No network hop. The whole conversation will stay on this one machine.',
+      'The agent — Claude Code, Cursor, Copilot, any MCP client — wants a section of your code. It issues a JSON-RPC call over stdio to the ministr daemon spawned as a subprocess. No network hop. The whole conversation will stay on this one machine.',
     activeLayers: ['agent'],
     activeMechs: [],
     mcp: 'down', query: 'idle', corpus: 'idle',
@@ -46,7 +45,7 @@ const STEPS: Step[] = [
     label: 'session-shadow lookup',
     caption: 'shadow: has this agent already seen this section?',
     detail:
-      'Before doing any work, ministr asks Session Shadow: “has this agent already received this section in this turn?” The shadow is a per-session ledger keyed by content hash. If yes, ministr can return a trivial pointer instead of re-serving text the agent already paid budget for.',
+      'Before doing any work, ministr asks Session Shadow: “has this agent already received this section in this turn?” The shadow is a per-session ledger keyed by content ID — section, claim, or symbol — with a content hash stored alongside so ministr can tell if the underlying content has changed since last delivery. If the agent already has it and it is unchanged, ministr returns a trivial pointer instead of re-serving text the agent already paid budget for.',
     activeLayers: ['daemon'],
     activeMechs: ['shadow', 'budget'],
     mcp: 'idle', query: 'idle', corpus: 'idle',
@@ -64,9 +63,9 @@ const STEPS: Step[] = [
   {
     id: 'read',
     label: 'corpus read',
-    caption: 'tree-sitter slices the section from disk',
+    caption: 'stored section text fetched from SQLite',
     detail:
-      'The index points at a precise byte range. tree-sitter parses the file and returns the exact symbol, function, or markdown section — not the whole file. Reads are fully read-only; ministr never mutates your repo.',
+      'The index resolves the hit to a content ID. ministr fetches the pre-parsed section text from SQLite — no re-parsing at read time. Tree-sitter only ran at ingestion time to split files into sections and extract symbols. Reads are fully read-only; ministr never mutates your repo.',
     activeLayers: ['index', 'corpus'],
     activeMechs: [],
     mcp: 'idle', query: 'idle', corpus: 'down',
@@ -86,7 +85,7 @@ const STEPS: Step[] = [
     label: 'response delivered',
     caption: '← 420 tokens · 3 changed lines · shadow updated',
     detail:
-      'The delta flies back up the MCP pipe to the agent. In the same atomic step, ministr writes what it just delivered into Session Shadow, so the next turn’s lookup is a hit. The agent sees the content; ministr remembers what it sent.',
+      'The delta returns to the agent over MCP. In the same atomic step, ministr writes what it just delivered into Session Shadow, so the next turn’s lookup is a hit. The agent sees the content; ministr remembers what it sent.',
     activeLayers: ['daemon', 'agent'],
     activeMechs: ['delta', 'shadow'],
     mcp: 'up', query: 'idle', corpus: 'idle',
@@ -96,7 +95,7 @@ const STEPS: Step[] = [
     label: 'predictive prefetch',
     caption: 'warming likely next reads: #logout, #refresh, #revoke',
     detail:
-      'While the agent thinks, ministr uses sequential, structural, and topical heuristics to guess the next read. Neighboring functions, called symbols, referenced docs — it warms them into the index cache. When the agent asks next turn, that read is already hot.',
+      'While the agent thinks, ministr uses sequential, structural, and topical heuristics to guess the next read. The next section in the document, neighbouring siblings at the same depth, topically similar sections from anywhere in the corpus — it pre-warms them into the index cache. When the agent asks next turn, that read is already hot.',
     activeLayers: ['daemon', 'index'],
     activeMechs: ['prefetch'],
     mcp: 'idle', query: 'down', corpus: 'idle',
@@ -166,14 +165,10 @@ export function ArchitectureFlow() {
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] lg:gap-16 lg:items-start">
           <div className="lg:sticky lg:top-24">
-            <Reveal>
-              <p className="ministr-eyebrow">How it wires up</p>
-            </Reveal>
-            <Reveal delay={0.08}>
-              <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
-                A single local process between your agent and your files.
-              </h2>
-            </Reveal>
+            <p className="ministr-eyebrow">How it wires up</p>
+            <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
+              A single local process between your agent and your files.
+            </h2>
 
             {/* Step narration — updates per active step */}
             <div className="mt-8 min-h-[220px]">
@@ -181,7 +176,7 @@ export function ArchitectureFlow() {
                 <span className="ministr-eyebrow-sm tabular-nums">
                   step {String(stepIndex + 1).padStart(2, '0')} / {String(STEPS.length).padStart(2, '0')}
                 </span>
-                <span className="h-px flex-1 bg-gradient-to-r from-[color-mix(in_oklch,var(--color-ministr-400)_50%,transparent)] to-transparent" />
+                <span className="h-px flex-1 bg-[color-mix(in_oklch,var(--color-ministr-400)_25%,transparent)]" />
               </div>
 
               <AnimatePresence mode="wait">
@@ -249,27 +244,23 @@ export function ArchitectureFlow() {
               </span>
             </div>
 
-            <Reveal delay={0.2}>
-              <Link
-                href="/docs/architecture"
-                className="mt-8 inline-flex items-center gap-1.5 text-[14px] font-medium text-[var(--ministr-accent-text)] transition hover:text-[var(--color-ministr-500)]"
-              >
-                Read the full architecture
-                <ArrowRight className="size-4" aria-hidden />
-              </Link>
-            </Reveal>
+            <Link
+              href="/docs/architecture"
+              className="mt-8 inline-flex items-center gap-1.5 text-[14px] font-medium text-[var(--ministr-accent-text)] transition hover:text-[var(--color-ministr-500)]"
+            >
+              Read the full architecture
+              <ArrowRight className="size-4" aria-hidden />
+            </Link>
           </div>
 
-          <Reveal delay={0.2}>
-            <GlassCard padded={false} className="overflow-hidden p-5 sm:p-6">
-              <FlowDiagram
-                step={step}
-                stepIndex={stepIndex}
-                progress={progress}
-                onJump={jumpTo}
-              />
-            </GlassCard>
-          </Reveal>
+          <GlassCard padded={false} className="overflow-hidden p-5 sm:p-6">
+            <FlowDiagram
+              step={step}
+              stepIndex={stepIndex}
+              progress={progress}
+              onJump={jumpTo}
+            />
+          </GlassCard>
         </div>
       </div>
     </section>
@@ -423,30 +414,15 @@ function FlowLayer({
           >
             {kicker}
           </span>
-          {isFeatured && (
-            <span className="rounded bg-[color-mix(in_oklch,var(--color-ministr-500)_18%,transparent)] px-1.5 py-px text-[9.5px] uppercase tracking-wider text-[var(--ministr-accent-text)]">
-              core
-            </span>
-          )}
           {active && (
-            <motion.span
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="rounded-full border border-[color-mix(in_oklch,var(--color-ministr-400)_60%,transparent)] bg-[color-mix(in_oklch,var(--color-ministr-500)_18%,transparent)] px-1.5 py-px text-[9.5px] uppercase tracking-wider text-[var(--ministr-accent-text)]"
-            >
+            <span className="rounded bg-[color-mix(in_oklch,var(--color-ministr-500)_18%,transparent)] px-1.5 py-px text-[9.5px] uppercase tracking-wider text-[var(--ministr-accent-text)]">
               active
-            </motion.span>
+            </span>
           )}
         </div>
         <span className="text-[10px] text-fd-muted-foreground/80">{meta}</span>
       </div>
       {children}
-      {!terminal && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute left-1/2 -bottom-px h-px w-12 -translate-x-1/2 bg-gradient-to-r from-transparent via-[color-mix(in_oklch,var(--color-ministr-400)_60%,transparent)] to-transparent"
-        />
-      )}
     </motion.div>
   );
 }
@@ -470,7 +446,7 @@ function Channel({
         className={
           'absolute left-1/2 top-2 bottom-2 w-px -translate-x-1/2 transition-opacity duration-500 ' +
           (active
-            ? 'bg-gradient-to-b from-[color-mix(in_oklch,var(--color-ministr-400)_70%,transparent)] via-[color-mix(in_oklch,var(--color-violet-400)_80%,transparent)] to-[color-mix(in_oklch,var(--color-fuchsia-400)_70%,transparent)] opacity-100'
+            ? 'bg-[color-mix(in_oklch,var(--color-ministr-400)_75%,transparent)] opacity-100'
             : 'bg-[color-mix(in_oklch,var(--color-ministr-400)_22%,transparent)] opacity-60')
         }
       />
@@ -564,7 +540,7 @@ function MechanismRow({
         aria-hidden
         className={
           'shrink-0 transition-colors ' +
-          (active ? 'text-[var(--color-fuchsia-400)]' : 'text-[var(--ministr-accent-text)]')
+          (active ? 'text-[var(--color-ministr-400)]' : 'text-[var(--ministr-accent-text)]')
         }
       >
         ◇
@@ -574,7 +550,7 @@ function MechanismRow({
       {active && (
         <span
           aria-hidden
-          className="ml-auto size-1.5 shrink-0 rounded-full bg-[var(--color-fuchsia-400)] shadow-[0_0_8px_var(--color-fuchsia-400)] motion-safe:animate-pulse"
+          className="ml-auto size-1.5 shrink-0 rounded-full bg-[var(--color-ministr-400)]"
         />
       )}
     </motion.div>
@@ -622,7 +598,7 @@ function StepDots({
             className="group relative h-1 flex-1 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_75%,transparent)] transition-all hover:h-1.5"
           >
             <span
-              className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[var(--color-ministr-500)] via-[var(--color-violet-500)] to-[var(--color-fuchsia-400)] transition-all"
+              className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-ministr-500)] transition-all"
               style={{
                 width: current ? `${Math.max(fill * 100, 8)}%` : `${fill * 100}%`,
                 transitionDuration: current ? '60ms' : '300ms',

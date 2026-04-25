@@ -1,11 +1,15 @@
 import type { ReactNode } from 'react';
 
 /**
- * GlassCard — frosted glass panel with spectrum hairline.
+ * GlassCard — labelled panel surface. Styling lives in
+ * `global.css` (`.glass-card`); the component just applies the class
+ * so the surface treatment stays consistent wherever it's used.
  *
- * Panel styling lives in global.css (.glass-card). The component just
- * slaps the class on a div so the visual is consistent across the
- * hero terminal wrap, bento tiles, install block, and CTA coda.
+ * Historical note: this used to be a frosted-glass panel with a
+ * rainbow gradient halo and a white sheen gradient overlay — the
+ * whole glassmorphism slop package. It's now a flat tinted surface
+ * with a plain border; the `.glass-card` class name is retained to
+ * avoid churning every call-site for a cosmetic refactor.
  */
 export function GlassCard({
   children,

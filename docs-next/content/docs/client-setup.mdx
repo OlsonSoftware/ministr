@@ -5,6 +5,8 @@ description: Wire ministr into Claude Code, Cursor, or any MCP-compatible client
 
 ministr communicates over **stdio** using the Model Context Protocol (MCP). Any MCP-compatible client can connect by spawning the `ministr` binary as a subprocess.
 
+This page shows configs for **Claude Code** and **Cursor**; the same JSON-RPC pattern (a `command` plus optional `args` and `env`) works for **Copilot**, **Continue**, and any other MCP-aware client — see the [Generic JSON-RPC Client](#generic-json-rpc-client) section below.
+
 ministr auto-discovers `.ministr.toml` by walking up from the working directory, so no flags are needed in most configurations.
 
 ## Claude Code
