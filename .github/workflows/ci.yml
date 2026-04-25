@@ -346,6 +346,19 @@ jobs:
           key: ${{ github.repository }}-cargo-target-dev
           path: ${{ github.workspace }}/target
 
+      - name: Stub Tauri bundle artifacts
+        # tauri-build / `tauri::generate_context!()` probe for the
+        # frontendDist index.html and the externalBin sidecar at
+        # crate-build time. In prod they're produced by `just pkg` /
+        # `pnpm build`; CI only needs the paths to resolve, so empty
+        # placeholders are enough.
+        run: |
+          triple="$(rustc -vV | awk '/^host:/ {print $2}')"
+          mkdir -p ministr-app/src-tauri/binaries ministr-app/dist
+          : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
+          : > ministr-app/dist/index.html
+
       - name: cargo clippy (pedantic, --all-targets)
         run: |
           cargo clippy --workspace --all-targets --locked \
