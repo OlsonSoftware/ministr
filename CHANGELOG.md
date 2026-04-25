@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Retrieval
 - Two-stage Matryoshka retrieval — corpus-configurable target dimension (`corpus.dimension`) with full-dimension HNSW rescoring (`corpus.rerank_depth`)
 - SPLADE sparse embeddings + dense vectors with reciprocal rank fusion
-- Cross-encoder reranking with configurable pipeline depth
+- Optional cross-encoder reranking — when enabled, rescores the top vector-search candidates and blends the cross-encoder score with the upstream retrieval score (`RERANK_BLEND = 0.8`) before truncation to `top_k`
 - Candle Metal GPU embedding backend (optional, Apple Silicon)
 
 #### Session & eviction
@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fly.io and Railway deployment configs with Caddy/nginx templates
 - Signed and notarized macOS `.pkg` installer
 - `ministr init` — project scaffolding with `.ministr.toml` and MCP client configs
-- Hot-reload on `.ministr.toml` changes
+- Hot-add of new corpus paths in `.ministr.toml` — newly-added entries under `[corpus] paths` are ingested without restarting the MCP session. Other config changes (path removals, model swaps, `[agent]` rule edits) still require a restart.
 - Retrieval evaluation suite with MRR/nDCG and CI regression gate
 
 #### Desktop app
