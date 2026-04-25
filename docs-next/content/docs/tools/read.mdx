@@ -28,7 +28,16 @@ Read the full text of a section by its hierarchical ID. Returns content with hea
 
 ### Already Delivered (unchanged)
 
-If the section was already delivered and has not changed, ministr returns the same envelope with `status: "already_delivered"` instead of re-delivering the full text. This is treated as a **fault-based eviction signal** — ministr infers the agent's context window dropped the content and corrects the window estimate.
+If the section was already delivered and has not changed, ministr returns a **minimal envelope** — just the section ID, `status: "already_delivered"`, and the available-claims count. The text, heading path, and summary are **not** re-shipped. Treat the call as a fault-based eviction signal: ministr infers the agent's context window dropped the content, corrects the window estimate, and lets the agent decide whether to do anything about it.
+
+```json
+{
+  "section_id": "docs/auth.md#error-handling",
+  "status": "already_delivered",
+  "claims_available": 5,
+  "budget_status": { ... }
+}
+```
 
 ### Already Delivered (changed)
 
@@ -39,9 +48,9 @@ If the section was delivered but the underlying document changed, ministr return
 | Field | Description |
 |---|---|
 | `section_id` | The requested section ID |
-| `heading_path` | Heading hierarchy (e.g. `["Chapter 3", "Section 3.2"]`) |
-| `text` | Full section content |
-| `summary` | Optional — pre-computed section summary when one is available |
+| `heading_path` | Heading hierarchy (e.g. `["Chapter 3", "Section 3.2"]`). Absent on `already_delivered` fault responses. |
+| `text` | Full section content. Absent on `already_delivered` fault responses (the agent already has it). |
+| `summary` | Optional — pre-computed section summary when one is available. Absent on `already_delivered` fault responses. |
 | `claims_available` | Number of claims that can be extracted with `ministr_extract` |
 | `status` | Optional — present as `"already_delivered"` on a re-read fault; absent on a fresh delivery |
 | `budget_status` | Budget snapshot — present when `session_id` was provided |

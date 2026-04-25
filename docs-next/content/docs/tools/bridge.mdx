@@ -18,16 +18,27 @@ Query cross-language binding links between exported symbols and their consumers 
 
 ```json
 {
-  "bridges": [
+  "links": [
     {
       "kind": "tauri_command",
-      "source": "open_file",
-      "source_language": "rust",
-      "target": "invoke('open_file', { path })",
-      "target_language": "typescript",
-      "confidence": 1.0
+      "confidence": 1.0,
+      "export": {
+        "binding_key": "open_file",
+        "symbol_name": "open_file",
+        "file": "src-tauri/src/commands.rs",
+        "line": 42,
+        "language": "rust"
+      },
+      "import": {
+        "binding_key": "open_file",
+        "symbol_name": "invoke",
+        "file": "src/lib/api.ts",
+        "line": 15,
+        "language": "typescript"
+      }
     }
   ],
+  "total": 1,
   "budget_status": { ... }
 }
 ```
@@ -36,13 +47,22 @@ Query cross-language binding links between exported symbols and their consumers 
 
 | Field | Description |
 |---|---|
-| `bridges[].kind` | Binding mechanism (`tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi`) |
-| `bridges[].source` | Producing-side symbol or identifier (e.g., the Rust function name for a Tauri command) |
-| `bridges[].source_language` | Language of the producing side (e.g. `rust`) |
-| `bridges[].target` | Consuming-side symbol or call site (e.g., the JS `invoke('…')` call) |
-| `bridges[].target_language` | Language of the consuming side (e.g. `typescript`) |
-| `bridges[].confidence` | Link confidence score (1.0 = exact match; lower values are case-normalized or semantic fallbacks) |
+| `links[].kind` | Binding mechanism (`tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi`) |
+| `links[].confidence` | Combined link confidence (1.0 = exact match; lower values are case-normalized or semantic fallbacks) |
+| `links[].export` | Producing side — see endpoint fields below |
+| `links[].import` | Consuming side — same endpoint shape |
+| `total` | Total matched links returned |
 | `budget_status` | Budget snapshot — present when `session_id` was provided |
+
+#### Endpoint fields (`export` and `import`)
+
+| Field | Description |
+|---|---|
+| `binding_key` | The shared key that pairs export with import (e.g. the Tauri command name) |
+| `symbol_name` | Local symbol name on this side (e.g. the Rust function for the export, the JS `invoke` callsite for the import) |
+| `file` | Source file containing this endpoint |
+| `line` | 1-based line number of the endpoint in `file` |
+| `language` | Source language (e.g. `rust`, `typescript`, `javascript`, `python`) |
 
 ### Supported Frameworks
 
