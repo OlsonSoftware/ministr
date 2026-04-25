@@ -23,14 +23,20 @@ log_format = "pretty"
 default_context_budget = 100000
 
 [prefetch]
-# Whether speculative prefetching is enabled
+# Whether predictive prefetching is enabled
 enabled = true
 
 # Maximum items in the prefetch cache
-cache_size = 50
+cache_size = 128
 
 # Number of recent sections for topical prefetch vector
 topic_window = 5
+
+# Fine-tuning knobs (all optional — defaults are sensible)
+# alpha = 0.3                     # EMA weight on the most recent section
+# adaptive_alpha = true            # Auto-tune alpha when the topic stabilises
+# speculative = false              # Run prefetch proactively during agent idle
+# max_candidates_per_strategy = 5  # Cap per strategy per cycle
 ```
 
 ### Fields
@@ -41,13 +47,17 @@ topic_window = 5
 | `default_model` | string | `"all-MiniLM-L6-v2"` | Embedding model for new corpora (see [supported models](#supported-embedding-models)) |
 | `log_format` | string | `"pretty"` | Log format: `"pretty"` or `"json"` |
 | `default_context_budget` | integer | `100000` | Token budget for new sessions |
-| `prefetch.enabled` | boolean | `true` | Enable speculative prefetching |
-| `prefetch.cache_size` | integer | `50` | Max prefetch cache entries |
+| `prefetch.enabled` | boolean | `true` | Enable predictive prefetching |
+| `prefetch.cache_size` | integer | `128` | Max prefetch cache entries |
 | `prefetch.topic_window` | integer | `5` | Recent sections for topic vector |
+| `prefetch.alpha` | float (optional) | auto | EMA weight on the most recent section (0.0-1.0) |
+| `prefetch.adaptive_alpha` | boolean (optional) | auto | Auto-tune alpha based on topical hit rate |
+| `prefetch.speculative` | boolean (optional) | auto | Run prefetch proactively during agent idle |
+| `prefetch.max_candidates_per_strategy` | integer (optional) | auto | Cap per strategy per cycle |
 
 ## Project Configuration (`.ministr.toml`)
 
-Create `.ministr.toml` in your project root (or run `ministr init` to generate one):
+Create `.ministr.toml` in your project root (or run `ministr init` to generate one). Minimal config:
 
 ```toml
 [corpus]
@@ -67,12 +77,55 @@ ignore = [
 
 ministr auto-discovers `.ministr.toml` by walking up from the working directory.
 
-### Fields
+### `[corpus]` fields
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `corpus.paths` | list of paths | `[]` | Files and directories to index |
-| `corpus.ignore` | list of globs | `[]` | Patterns to exclude from indexing |
+| `corpus.ignore` | list of globs | `[]` | Patterns to exclude from indexing (on top of built-in always-ignore lists) |
+| `corpus.include` | list of sub-tables | `[]` | External local directories to include — see [Multi-source corpora](#multi-source-corpora) |
+| `corpus.git` | list of sub-tables | `[]` | Git repositories to clone and index alongside local paths |
+| `corpus.cloud` | list of sub-tables | `[]` | Pre-built `.ministr-index` bundles to fetch instead of re-indexing locally |
+| `corpus.model` | string (optional) | — | Per-repo embedding-model override (falls back to global `default_model`) |
+| `corpus.dimension` | integer (optional) | — | Target embedding dimension for Matryoshka truncation. Only effective with Matryoshka-capable models like `nomic-embed-text-v1.5` |
+| `corpus.rerank_depth` | integer (optional) | `100` | Number of coarse HNSW candidates fetched for full-dimension rescoring during two-stage Matryoshka retrieval. `0` disables second-stage rerank. |
+
+### Multi-source corpora
+
+ministr can index more than your project's own files. Three ways to bring in extra sources:
+
+```toml
+[corpus]
+paths = ["src", "docs"]
+
+# External local directory — e.g., a shared types repo you have checked out elsewhere
+[[corpus.include]]
+path = "~/Code/shared-types/src"
+
+# Git repository to clone and index
+[[corpus.git]]
+repo = "https://github.com/owner/repo.git"
+branch = "main"                    # optional; defaults to repository default
+paths = ["src", "docs"]            # optional sparse-checkout paths
+
+# Pre-built cloud index bundle
+[[corpus.cloud]]
+url = "https://releases.example.com/my-project.ministr-index"
+name = "my-project"                # optional; defaults to URL filename stem
+pin_version = "abc123def456"       # optional; skips staleness checks if set
+```
+
+### `[agent]` — custom agent rules
+
+Rules listed under `[agent]` are appended to every generated advisory file (`.claude/rules/`, `.cursor/rules/ministr.mdc`, `.github/copilot-instructions.md`, `AGENTS.md`, etc.) when you run `ministr init`:
+
+```toml
+[agent]
+rules = [
+    "Always run ministr_references before modifying any shared API",
+    "Prefer ministr_survey over ad-hoc grep for cross-cutting concerns",
+]
+```
 
 ### Parser Auto-Detection
 
@@ -87,42 +140,101 @@ ministr detects the parser from file extensions:
 
 ## CLI
 
-```text
-ministr [OPTIONS] [COMMAND]
-
-Commands:
-  serve   Start the MCP server over stdio (default)
-  index   Run ingestion synchronously and exit
-  init    Initialize .ministr.toml and MCP client configs
-
-Options:
-  -c, --corpus <PATH>   Corpus sources (repeatable)
-  -C, --config <PATH>   Path to config file (default: .ministr.toml)
-  -h, --help            Print help
-  -V, --version         Print version
-```
+See the [CLI reference](/docs/cli) for all commands and flags, including OAuth, HTTP transport, search, and the import/export pipeline.
 
 ## Supported Embedding Models
 
-ministr supports the following embedding models via `fastembed`. Quantized variants (suffix `-q`) use INT8 quantization for faster inference and smaller model files at a slight quality trade-off.
+ministr supports the following embedding models via `fastembed`. Quantized variants (suffix `-q`) use INT8 quantization for faster inference and smaller model files at a slight quality trade-off. The authoritative list lives at `SUPPORTED_MODELS` in `ministr-core/src/embedding/fastembed_impl.rs`.
+
+### General-purpose
 
 | Model Name | Dimensions | Notes |
 |---|---|---|
 | `all-MiniLM-L6-v2` | 384 | Default — fast, general-purpose |
-| `all-MiniLM-L6-v2-q` | 384 | Quantized variant |
-| `all-MiniLM-L12-v2` | 384 | Slightly higher quality |
-| `all-MiniLM-L12-v2-q` | 384 | Quantized variant |
-| `bge-small-en-v1.5` | 384 | BAAI small English |
-| `bge-small-en-v1.5-q` | 384 | Quantized variant |
-| `bge-base-en-v1.5` | 768 | BAAI base English |
-| `bge-base-en-v1.5-q` | 768 | Quantized variant |
-| `bge-large-en-v1.5` | 1024 | BAAI large English |
-| `bge-large-en-v1.5-q` | 1024 | Quantized variant |
+| `all-MiniLM-L6-v2-q` | 384 | Quantized L6 |
+| `all-MiniLM-L12-v2` | 384 | Slightly higher quality than L6 |
+| `all-MiniLM-L12-v2-q` | 384 | Quantized L12 |
+| `all-mpnet-base-v2` | 768 | Higher quality than MiniLM, slower |
 
-To use a quantized model, set `default_model` in `config.toml`:
+### Code-optimized
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `jina-embeddings-v2-base-code` | 768 | Jina code-specialized, 8192-token context |
+| `jina-embeddings-v2-base-en` | 768 | Jina English prose, 8192-token context |
+
+### Multilingual / paraphrase
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `paraphrase-ml-MiniLM-L12-v2` | 384 | Multilingual paraphrase MiniLM |
+| `paraphrase-ml-MiniLM-L12-v2-q` | 384 | Quantized |
+| `paraphrase-ml-mpnet-base-v2` | 768 | Multilingual paraphrase MPNet |
+| `multilingual-e5-small` | 384 | Multilingual E5 small |
+| `multilingual-e5-base` | 768 | Multilingual E5 base |
+| `multilingual-e5-large` | 1024 | Multilingual E5 large |
+
+### BAAI BGE
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `bge-small-en-v1.5` | 384 | BGE small English |
+| `bge-small-en-v1.5-q` | 384 | Quantized |
+| `bge-base-en-v1.5` | 768 | BGE base English |
+| `bge-base-en-v1.5-q` | 768 | Quantized |
+| `bge-large-en-v1.5` | 1024 | BGE large English |
+| `bge-large-en-v1.5-q` | 1024 | Quantized |
+| `bge-small-zh-v1.5` | 512 | BGE small Chinese |
+| `bge-large-zh-v1.5` | 1024 | BGE large Chinese |
+| `bge-m3` | 1024 | Multilingual, high quality |
+
+### Nomic (Matryoshka)
+
+Only `nomic-embed-text-v1.5` (and its quantized variant) are Matryoshka-capable, so these are the models to pair with the `corpus.dimension` truncation field documented above.
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `nomic-embed-text-v1` | 768 | Nomic open text embeddings |
+| `nomic-embed-text-v1.5` | 768 | Nomic v1.5 with Matryoshka support |
+| `nomic-embed-text-v1.5-q` | 768 | Quantized Nomic v1.5 |
+
+### GTE
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `gte-base-en-v1.5` | 768 | GTE base English |
+| `gte-base-en-v1.5-q` | 768 | Quantized |
+| `gte-large-en-v1.5` | 1024 | GTE large English |
+| `gte-large-en-v1.5-q` | 1024 | Quantized |
+
+### Snowflake Arctic
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `snowflake-arctic-embed-xs` | 384 | Arctic extra-small |
+| `snowflake-arctic-embed-xs-q` | 384 | Quantized |
+| `snowflake-arctic-embed-s` | 384 | Arctic small |
+| `snowflake-arctic-embed-s-q` | 384 | Quantized |
+| `snowflake-arctic-embed-m` | 768 | Arctic medium |
+| `snowflake-arctic-embed-m-q` | 768 | Quantized |
+| `snowflake-arctic-embed-m-long` | 768 | Medium with long context |
+| `snowflake-arctic-embed-m-long-q` | 768 | Quantized |
+| `snowflake-arctic-embed-l` | 1024 | Arctic large |
+| `snowflake-arctic-embed-l-q` | 1024 | Quantized |
+
+### Other
+
+| Model Name | Dimensions | Notes |
+|---|---|---|
+| `mxbai-embed-large-v1` | 1024 | MixedBread large |
+| `mxbai-embed-large-v1-q` | 1024 | Quantized |
+| `modern-bert-embed-large` | 1024 | ModernBERT large |
+| `embedding-gemma-300m` | 768 | Gemma 300M embedding |
+
+To switch models, set `default_model` in `~/.ministr/config.toml` (or per-corpus `corpus.model` in `.ministr.toml`):
 
 ```toml
-default_model = "all-MiniLM-L6-v2-q"
+default_model = "jina-embeddings-v2-base-code"
 ```
 
 ## Environment Variables

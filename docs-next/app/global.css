@@ -7,36 +7,50 @@
    ===================================================== */
 
 @theme {
-  /* Ministr brand scale (indigo/violet) */
-  --color-ministr-50:  oklch(0.96 0.02 285);
-  --color-ministr-100: oklch(0.93 0.04 285);
-  --color-ministr-200: oklch(0.87 0.07 280);
-  --color-ministr-300: oklch(0.79 0.11 280);
-  --color-ministr-400: oklch(0.70 0.16 278);
-  --color-ministr-500: #6366f1;
-  --color-ministr-600: #4f46e5;
-  --color-ministr-700: #4338ca;
-  --color-ministr-800: #3730a3;
-  --color-ministr-900: #312e81;
-  --color-ministr-950: #1e1b4b;
+  /* Ministr brand scale — amber.
+   *
+   * Picked as the anti-AI-slop accent: every metric says 2025/2026
+   * AI-generated landing pages default to purple/violet/indigo
+   * gradients ("The AI Purple Problem"). We moved the whole palette
+   * to the opposite warm end of the wheel. Amber has dev heritage
+   * (amber-phosphor terminals) that fits a context-cache CLI, and a
+   * single warm accent on warm ink reads as intentional rather than
+   * templated. Scale follows Tailwind's amber family so midtones
+   * land on familiar accessibility points. */
+  --color-ministr-50:  #fffbeb;
+  --color-ministr-100: #fef3c7;
+  --color-ministr-200: #fde68a;
+  --color-ministr-300: #fcd34d;
+  --color-ministr-400: #fbbf24;
+  --color-ministr-500: #f59e0b;
+  --color-ministr-600: #d97706;
+  --color-ministr-700: #b45309;
+  --color-ministr-800: #92400e;
+  --color-ministr-900: #78350f;
+  --color-ministr-950: #451a03;
 
-  /* Extra iridescent accents */
-  --color-violet-400: #a78bfa;
-  --color-violet-500: #8b5cf6;
-  --color-fuchsia-400: #e879f9;
+  /* Legacy violet/fuchsia aliases kept so any stray reference still
+     compiles; they all point at the amber scale now so nothing can
+     slip through and render purple. */
+  --color-violet-400: #fbbf24;
+  --color-violet-500: #f59e0b;
+  --color-fuchsia-400: #d97706;
 
-  /* Custom dark surface scale — cool-tinted so ministr accent pops */
-  --color-ink-50:  #f5f5fa;
-  --color-ink-100: #e6e7f0;
-  --color-ink-200: #b9bacc;
-  --color-ink-300: #7c7e9a;
-  --color-ink-400: #4a4d6e;
-  --color-ink-500: #32344f;
-  --color-ink-600: #23253d;
-  --color-ink-700: #191b2f;
-  --color-ink-800: #111224;
-  --color-ink-900: #0a0b14;
-  --color-ink-950: #05060e;
+  /* Dark surface scale — warm near-blacks. Previously cool, slightly
+     blue-tinted (#05060e etc.) to make a purple accent pop; a cool
+     ground next to a purple accent is textbook AI-slop. Warm charcoal
+     next to amber reads as ink on lit paper. */
+  --color-ink-50:  #f7f2e3;
+  --color-ink-100: #eae3cd;
+  --color-ink-200: #c9c0a7;
+  --color-ink-300: #8b8575;
+  --color-ink-400: #5c5648;
+  --color-ink-500: #3a352b;
+  --color-ink-600: #2a261e;
+  --color-ink-700: #211f1a;
+  --color-ink-800: #171613;
+  --color-ink-900: #110f0c;
+  --color-ink-950: #0d0c0a;
 
   /* Traffic-light swatches — macOS chrome reference colors */
   --color-traffic-close: #ff5f57;
@@ -187,46 +201,13 @@ html > body[data-scroll-locked] {
    (b) an explicit -webkit-animation, (c) will-change to hint the GPU path.
    Without those, the text renders correctly on first paint but the
    animation never commits in Safari. */
+/* Brand accent — solid ministr-500. Was an animated purple→violet→ministr
+   shimmer rainbow; the animation + tri-color gradient were a classic
+   AI-slop tell. One accent colour reads as intentional. */
 .ministr-gradient-text,
 h1.ministr-gradient-text,
 .md-typeset .ministr-gradient-text {
-  background-image: linear-gradient(
-    90deg,
-    var(--color-ministr-600) 0%,
-    var(--color-ministr-500) 25%,
-    var(--color-violet-400) 50%,
-    var(--color-ministr-500) 75%,
-    var(--color-ministr-600) 100%
-  );
-  background-size: 220% 100%;
-  background-position: 0% 50%;
-  background-repeat: no-repeat;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-  will-change: background-position;
-  -webkit-animation: ministr-shimmer 14s ease-in-out infinite;
-  animation: ministr-shimmer 14s ease-in-out infinite;
-}
-
-@-webkit-keyframes ministr-shimmer {
-  0%   { background-position: 0% 50%; }
-  50%  { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-@keyframes ministr-shimmer {
-  0%   { background-position: 0% 50%; }
-  50%  { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ministr-gradient-text {
-    -webkit-animation: none;
-    animation: none;
-  }
+  color: var(--color-ministr-500);
 }
 
 /* Session-trace keyframes (hero terminal replay). Defined at the top
@@ -245,12 +226,13 @@ h1.ministr-gradient-text,
 }
 
 /* =====================================================
-   ministr 2026 landing system — "Observatory"
+   ministr landing system — warm ink + amber accent
    -----------------------------------------------------
-   Paired dark + light treatments. The observatory metaphor drives dark
-   (deep ink, aurora spectrum, glass). Light flips to a clean white-paper
-   observatory: softer ministr-tinted aurora on bright ground, darker text,
-   lighter glass, dimmer noise.
+   Dark: deep warm charcoal ground, cream-leaning text, amber accents.
+   Light: warm paper ground, ink text, deeper-amber accents for AA.
+   The earlier "observatory" theming (aurora backdrop, scrim tints,
+   lens pupil) is gone with the shader; the vars are retained but
+   no longer drive any layer.
    ===================================================== */
 
 .ministr-landing {
@@ -263,28 +245,20 @@ h1.ministr-gradient-text,
   --ministr-landing-bg: var(--color-ink-950);
   --ministr-surface: var(--color-ink-900);
   --ministr-surface-strong: var(--color-ink-800);
-  --ministr-aurora-opacity: 1;
-  --ministr-noise-opacity: 0.028;
-  --ministr-noise-blend: overlay;
-  --ministr-lens-pupil: var(--color-ink-950);
-  --ministr-scrim-tint: color-mix(in oklch, var(--color-ink-950) 65%, transparent);
-  --ministr-accent-text: var(--color-ministr-300);
-  --ministr-hairline: color-mix(in oklch, var(--color-ministr-300) 30%, transparent);
+  --ministr-accent-text: var(--color-ministr-400);
+  --ministr-hairline: color-mix(in oklch, var(--color-ministr-400) 28%, transparent);
 }
 
-/* Light override — cleaner, paper-white ground with a soft ministr-tinted
-   aurora wash. Pairs with fumadocs light tokens. */
+/* Light override — warm cream ground. Fumadocs's default white is
+   cool-tinted; we override with our ink-50 (warm cream) so amber
+   accents sit on paper, not on a cool surface that would make the
+   accent read as a mismatch. */
 :root:not(.dark) .ministr-landing {
-  --ministr-landing-bg: color-mix(in oklch, white 82%, var(--color-ministr-50) 18%);
-  --ministr-surface: white;
-  --ministr-surface-strong: color-mix(in oklch, white 80%, var(--color-ministr-100));
-  --ministr-aurora-opacity: 0.55;
-  --ministr-noise-opacity: 0.045;
-  --ministr-noise-blend: multiply;
-  --ministr-lens-pupil: color-mix(in oklch, var(--color-ministr-900) 70%, white);
-  --ministr-scrim-tint: color-mix(in oklch, white 55%, transparent);
+  --ministr-landing-bg: var(--color-ink-50);
+  --ministr-surface: #ffffff;
+  --ministr-surface-strong: #f0e9d4;
   --ministr-accent-text: var(--color-ministr-700);
-  --ministr-hairline: color-mix(in oklch, var(--color-ministr-500) 35%, transparent);
+  --ministr-hairline: color-mix(in oklch, var(--color-ministr-700) 28%, transparent);
 }
 
 /* =====================================================
@@ -329,10 +303,7 @@ h1.ministr-gradient-text,
     width: 6px;
     height: 6px;
     border-radius: 1px;
-    background: linear-gradient(135deg in oklch,
-      var(--color-ministr-500),
-      var(--color-fuchsia-400));
-    box-shadow: 0 0 8px color-mix(in oklch, var(--color-ministr-400) 60%, transparent);
+    background: var(--color-ministr-500);
   }
 
   /* Sub-eyebrow — same colour and tracking as the main eyebrow but
@@ -348,164 +319,66 @@ h1.ministr-gradient-text,
     color: var(--ministr-accent-text);
   }
 
-  /* Primary ministr CTA — bold ministr-600 pill with an animated spectrum
-     rim glow on hover. Pairs with the hero install button and any
-     other conversion surface that wants the "primary" treatment. */
+  /* Primary ministr CTA — amber pill with dark ink text. White-on-amber
+     is a contrast trap; dark text on the brand colour sits cleanly at
+     ~8:1 and matches how amber buttons read in print. */
   .ministr-cta-primary {
     position: relative;
     isolation: isolate;
-    background: var(--color-ministr-600);
-    color: white;
+    background: var(--color-ministr-500);
+    color: var(--color-ink-950);
+    font-weight: 600;
     box-shadow:
-      0 8px 30px -10px color-mix(in oklch, var(--color-ministr-500) 70%, transparent);
+      0 6px 24px -10px color-mix(in oklch, var(--color-ministr-500) 60%, transparent);
     transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
                 box-shadow 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
                 background-color 220ms ease;
   }
   .ministr-cta-primary:hover {
-    background: var(--color-ministr-700);
+    background: var(--color-ministr-400);
     transform: translateY(-1px);
     box-shadow:
-      0 14px 40px -12px color-mix(in oklch, var(--color-ministr-500) 85%, transparent),
-      0 0 0 1px color-mix(in oklch, var(--color-fuchsia-400) 40%, transparent);
+      0 10px 32px -12px color-mix(in oklch, var(--color-ministr-500) 75%, transparent);
   }
-  .ministr-cta-primary::after {
-    content: '';
-    position: absolute;
-    inset: -1px;
-    border-radius: inherit;
-    padding: 1px;
-    background: linear-gradient(135deg in oklch,
-      var(--color-ministr-400) 0%,
-      var(--color-violet-500) 50%,
-      var(--color-fuchsia-400) 100%);
-    -webkit-mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-    mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    mask-composite: exclude;
-    opacity: 0;
-    transition: opacity 260ms ease;
-    pointer-events: none;
-  }
-  .ministr-cta-primary:hover::after { opacity: 0.85; }
+  /* Hover rim removed — was a ministr→violet→fuchsia gradient border
+     that animated in on hover. Solid box-shadow handles emphasis now. */
 
-  /* Spectrum divider variants for section beats — a thicker
-     "major" rule for decisive boundaries and a "minor" hairline
-     for softer separations. Already had ministr-spectrum-rule above;
-     these are light-touch variations. */
+  /* Plain 1px rule — was a ministr→violet→fuchsia spectrum gradient;
+     flat border reads as intentional rather than decorative. */
   .ministr-spectrum-rule-major {
     height: 1px;
-    background-image: linear-gradient(
-      90deg in oklch,
-      transparent 0%,
-      var(--color-ministr-500) 22%,
-      var(--color-violet-500) 50%,
-      var(--color-fuchsia-400) 78%,
-      transparent 100%
-    );
-    opacity: 0.8;
+    background: color-mix(in oklch, var(--color-ministr-400) 35%, transparent);
+    opacity: 1;
   }
 
-  /* Tiny spectrum glyph — the brand period. A 0.5em dot rendered
-     with the ministr spectrum, for inline use in the footer signature
-     and anywhere the "ministr." wordmark is referenced in copy. */
+  /* Small accent square — was a tri-color gradient glyph. Solid
+     ministr-500 is the accent; the dot still reads as the wordmark
+     period without the rainbow. */
   .ministr-mark-dot {
     display: inline-block;
     width: 0.48em;
     height: 0.48em;
     border-radius: 2px;
-    background: linear-gradient(135deg in oklch,
-      var(--color-ministr-500),
-      var(--color-violet-500),
-      var(--color-fuchsia-400));
-    box-shadow: 0 0 6px color-mix(in oklch, var(--color-ministr-400) 50%, transparent);
+    background: var(--color-ministr-500);
     vertical-align: 0.05em;
   }
 }
 
-/* Signature brand spectrum used on headings, rules, and backdrops.
-   OKLCH colours interpolated smoothly in oklch colour space. */
+/* Retained for back-compat; solid accent, no gradient. */
 .ministr-spectrum {
-  background-image: linear-gradient(
-    90deg in oklch,
-    var(--color-ministr-600) 0%,
-    var(--color-ministr-500) 28%,
-    var(--color-violet-500) 62%,
-    var(--color-fuchsia-400) 100%
-  );
+  background: var(--color-ministr-500);
 }
 
-/* Thin horizontal rule painted with the spectrum — used as section
-   dividers and accent under stats strip. */
+/* Thin horizontal rule — plain hairline, was a spectrum gradient. */
 .ministr-spectrum-rule {
   height: 1px;
-  background-image: linear-gradient(
-    90deg in oklch,
-    transparent 0%,
-    var(--color-ministr-500) 28%,
-    var(--color-violet-500) 62%,
-    transparent 100%
-  );
-  opacity: 0.55;
+  background: color-mix(in oklch, var(--color-ministr-400) 20%, transparent);
+  opacity: 1;
 }
 
-/* Aurora backdrop — layered radial gradients over the ministr spectrum.
-   One static base layer + one slow drifting highlight. Drift is GPU-
-   composited via transform so it never reflows. Disabled under
-   prefers-reduced-motion. */
-.aurora-layer {
-  position: absolute;
-  inset: -20%;
-  pointer-events: none;
-  filter: blur(64px);
-  opacity: var(--ministr-aurora-opacity, 1);
-  will-change: transform, opacity;
-  transform: translateZ(0);
-  background:
-    radial-gradient(40% 45% at 18% 24%, color-mix(in oklch, var(--color-ministr-500) 55%, transparent), transparent 72%),
-    radial-gradient(38% 38% at 82% 18%, color-mix(in oklch, var(--color-violet-500) 50%, transparent), transparent 70%),
-    radial-gradient(45% 42% at 62% 78%, color-mix(in oklch, var(--color-fuchsia-400) 42%, transparent), transparent 74%),
-    radial-gradient(32% 32% at 22% 86%, color-mix(in oklch, var(--color-ministr-400) 45%, transparent), transparent 70%);
-}
-
-/* Light mode: softer, lower-saturation aurora so dark text stays legible. */
-:root:not(.dark) .aurora-layer {
-  background:
-    radial-gradient(42% 48% at 18% 24%, color-mix(in oklch, var(--color-ministr-300) 70%, transparent), transparent 72%),
-    radial-gradient(38% 40% at 82% 18%, color-mix(in oklch, var(--color-violet-400) 55%, transparent), transparent 70%),
-    radial-gradient(45% 44% at 62% 78%, color-mix(in oklch, var(--color-fuchsia-400) 45%, transparent), transparent 74%),
-    radial-gradient(32% 34% at 22% 86%, color-mix(in oklch, var(--color-ministr-200) 70%, transparent), transparent 70%);
-  filter: blur(80px);
-}
-
-.aurora-layer--drift {
-  animation: aurora-drift 28s ease-in-out infinite alternate;
-}
-
-@keyframes aurora-drift {
-  0%   { transform: translate3d(-2%, -1%, 0) scale(1); }
-  50%  { transform: translate3d(3%, 2%, 0) scale(1.06); }
-  100% { transform: translate3d(-1%, 3%, 0) scale(1.02); }
-}
-
-/* Tight scrim to keep text readable over aurora. Dark scrim in dark,
-   light scrim in light — tone driven by --ministr-scrim-tint. */
-.aurora-scrim {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(80% 60% at 50% 40%, transparent, var(--ministr-scrim-tint) 85%),
-    linear-gradient(180deg, transparent 0%, var(--ministr-scrim-tint) 100%);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .aurora-layer--drift { animation: none; }
-}
+/* aurora-layer / aurora-scrim CSS removed with the orphaned Aurora
+   component — the multi-colour radial-gradient + drift animation was
+   pure decorative slop. */
 
 /* Glass card — frosted panel with spectrum hairline + inner highlight.
    Designed to let the page-wide chromatic smoke shader through in both
@@ -514,114 +387,29 @@ h1.ministr-gradient-text,
    In dark mode the substrate is ink with an ministr tint; in light mode
    it's paper-white with a violet tint — paired so each mode reads as
    "glass resting on the same smoke." */
+/* Plain surface card — flat fill, flat border, no rainbow halo. The
+   previous version layered a tri-color ::after ring + a white sheen
+   ::before + a gradient fill, which together were the single most
+   obvious glassmorphism-slop tell. A solid surface + 1px border reads
+   as a functional panel. */
 .glass-card {
   position: relative;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--color-ink-800) 55%, transparent) 0%,
-      color-mix(in oklch, var(--color-ink-900) 62%, transparent) 100%
-    );
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
-  border: 1px solid color-mix(in oklch, var(--color-ministr-300) 22%, transparent);
-  border-radius: 18px;
-  box-shadow:
-    0 28px 90px -30px color-mix(in oklch, var(--color-ministr-700) 55%, transparent),
-    0 1px 0 color-mix(in oklch, var(--color-ministr-200) 18%, transparent) inset,
-    0 0 0 1px color-mix(in oklch, var(--color-ministr-500) 8%, transparent) inset;
-}
-
-.glass-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    color-mix(in oklch, white 12%, transparent) 0%,
-    transparent 32%
-  );
-  mask: linear-gradient(180deg, black 0%, transparent 55%);
-  -webkit-mask: linear-gradient(180deg, black 0%, transparent 55%);
-}
-
-/* Subtle outer bleed — a warm ministr aura around the card so it reads as
-   a physical glass object catching light from the scene behind it. */
-.glass-card::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  pointer-events: none;
-  padding: 1px;
-  background: linear-gradient(
-    135deg in oklch,
-    color-mix(in oklch, var(--color-ministr-400) 35%, transparent) 0%,
-    transparent 45%,
-    color-mix(in oklch, var(--color-fuchsia-400) 28%, transparent) 100%
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  opacity: 0.8;
+  background: color-mix(in oklch, var(--color-ink-800) 72%, transparent);
+  border: 1px solid color-mix(in oklch, var(--color-ministr-300) 18%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 2px 12px -4px rgb(0 0 0 / 0.25);
 }
 
 :root:not(.dark) .glass-card {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, white 68%, transparent) 0%,
-      color-mix(in oklch, white 55%, transparent) 100%
-    );
-  border-color: color-mix(in oklch, var(--color-ministr-600) 20%, transparent);
-  box-shadow:
-    0 28px 90px -30px color-mix(in oklch, var(--color-ministr-700) 22%, transparent),
-    0 1px 0 color-mix(in oklch, white 90%, transparent) inset,
-    0 0 0 1px color-mix(in oklch, var(--color-ministr-500) 6%, transparent) inset;
-}
-
-:root:not(.dark) .glass-card::after {
-  background: linear-gradient(
-    135deg in oklch,
-    color-mix(in oklch, var(--color-ministr-500) 28%, transparent) 0%,
-    transparent 45%,
-    color-mix(in oklch, var(--color-fuchsia-400) 22%, transparent) 100%
-  );
-  opacity: 0.6;
+  background: color-mix(in oklch, white 82%, transparent);
+  border-color: color-mix(in oklch, var(--color-ministr-600) 14%, transparent);
+  box-shadow: 0 2px 12px -4px rgb(0 0 0 / 0.08);
 }
 
 
-/* Chromatic-flow shader mount — theme-aware blend mode so the same
-   shader output composites sensibly over both backgrounds.
-   Dark: `screen` brightens the ink-950 ground with ministr peaks.
-   Light: `multiply` darkens the paper with deep ministr ink, which
-   avoids the washed-out pastel look of translucent purple on white. */
-.chromatic-flow-mount {
-  mix-blend-mode: screen;
-}
-:root:not(.dark) .chromatic-flow-mount {
-  mix-blend-mode: multiply;
-  opacity: 1;
-}
-
-/* Noise overlay — static SVG turbulence, theme-responsive opacity and
-   blend mode (overlay in dark, multiply in light). */
-.noise-overlay {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 1;
-  opacity: var(--ministr-noise-opacity, 0.028);
-  mix-blend-mode: var(--ministr-noise-blend, overlay);
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-}
+/* chromatic-flow-mount + noise-overlay CSS removed — the shader and
+   noise grain components they styled are gone. Page background is a
+   flat ink ground in dark mode, flat paper in light. */
 
 /* Lens — concentric SVG rings get a breathing dilation & slow spin.
    JS scroll-driven dilation layers on top via inline style when the
@@ -640,72 +428,9 @@ h1.ministr-gradient-text,
   .lens-ring { animation: none; }
 }
 
-/* Bento tile base + hover tilt custom props.
-   Tilt angle is computed in JS via --mx / --my pointer-relative
-   values; CSS uses them to rotate and shift a sheen layer. */
-.bento-tile {
-  position: relative;
-  isolation: isolate;
-  transform-style: preserve-3d;
-  transition: transform 400ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.bento-tile__sheen {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: radial-gradient(
-    220px 140px at calc(var(--mx, 50%) * 1%) calc(var(--my, 30%) * 1%),
-    color-mix(in oklch, white 14%, transparent),
-    transparent 60%
-  );
-  opacity: 0;
-  transition: opacity 300ms ease;
-}
-
-.bento-tile:hover .bento-tile__sheen { opacity: 1; }
-
-/* Bento tiles size to their content — the grid lets row heights vary
-   so a ledger + a compact score card don't force each other to match. */
-.bento-tile { align-self: start; }
-
-/* Bento responsive spans driven by data-attributes (avoids Tailwind
-   JIT + dynamic-class issues). Base span applies at all breakpoints;
-   md/lg spans override when the viewport is wide enough. */
-.bento-tile[data-span-base='1']  { grid-column: span 1 / span 1; }
-.bento-tile[data-span-base='2']  { grid-column: span 2 / span 2; }
-.bento-tile[data-span-base='3']  { grid-column: span 3 / span 3; }
-.bento-tile[data-span-base='4']  { grid-column: span 4 / span 4; }
-
-@media (width >= 48rem) {
-  .bento-tile[data-span-md='1']  { grid-column: span 1 / span 1; }
-  .bento-tile[data-span-md='2']  { grid-column: span 2 / span 2; }
-  .bento-tile[data-span-md='3']  { grid-column: span 3 / span 3; }
-  .bento-tile[data-span-md='4']  { grid-column: span 4 / span 4; }
-  .bento-tile[data-span-md='5']  { grid-column: span 5 / span 5; }
-  .bento-tile[data-span-md='6']  { grid-column: span 6 / span 6; }
-  .bento-tile[data-rows-md='1']  { grid-row: span 1 / span 1; }
-  .bento-tile[data-rows-md='2']  { grid-row: span 2 / span 2; }
-  .bento-tile[data-rows-md='3']  { grid-row: span 3 / span 3; }
-}
-@media (width >= 64rem) {
-  .bento-tile[data-span-lg='1']  { grid-column: span 1  / span 1; }
-  .bento-tile[data-span-lg='2']  { grid-column: span 2  / span 2; }
-  .bento-tile[data-span-lg='3']  { grid-column: span 3  / span 3; }
-  .bento-tile[data-span-lg='4']  { grid-column: span 4  / span 4; }
-  .bento-tile[data-span-lg='5']  { grid-column: span 5  / span 5; }
-  .bento-tile[data-span-lg='6']  { grid-column: span 6  / span 6; }
-  .bento-tile[data-span-lg='7']  { grid-column: span 7  / span 7; }
-  .bento-tile[data-span-lg='8']  { grid-column: span 8  / span 8; }
-  .bento-tile[data-span-lg='9']  { grid-column: span 9  / span 9; }
-  .bento-tile[data-span-lg='10'] { grid-column: span 10 / span 10; }
-  .bento-tile[data-span-lg='11'] { grid-column: span 11 / span 11; }
-  .bento-tile[data-span-lg='12'] { grid-column: span 12 / span 12; }
-  .bento-tile[data-rows-lg='1']  { grid-row: span 1 / span 1; }
-  .bento-tile[data-rows-lg='2']  { grid-row: span 2 / span 2; }
-  .bento-tile[data-rows-lg='3']  { grid-row: span 3 / span 3; }
-}
+/* bento-tile CSS removed with components/landing/bento.tsx — the
+   asymmetric bento grid was an explicit 2026 design cliche.
+   Mechanisms now renders as a uniform 2-column feature grid. */
 
 /* Architecture-flow channel pulse — small bead travels along each
    connective pipe. Two variants for data direction. Transform keeps
@@ -728,46 +453,8 @@ h1.ministr-gradient-text,
   .channel-pulse-down, .channel-pulse-up { animation: none; transform: translate(-50%, 28px); }
 }
 
-/* Strikethrough differentiator — attention hotspot. The struck text
-   uses a muted brand-tinted tone (readable but clearly dismissed),
-   and the line itself is the ministr spectrum so it reads as the brand
-   *crossing out* the wrong answer. */
-.strike-claim {
-  position: relative;
-  display: inline-block;
-  color: color-mix(in oklch, var(--color-ministr-300) 72%, var(--color-ink-300));
-}
-:root:not(.dark) .strike-claim {
-  color: color-mix(in oklch, var(--color-ministr-700) 68%, var(--color-ink-400));
-}
-.strike-claim::after {
-  content: '';
-  position: absolute;
-  left: -3%;
-  right: -3%;
-  top: 54%;
-  height: 3px;
-  border-radius: 3px;
-  background: linear-gradient(
-    90deg in oklch,
-    color-mix(in oklch, var(--color-ministr-500) 90%, transparent) 0%,
-    color-mix(in oklch, var(--color-violet-500) 95%, transparent) 50%,
-    color-mix(in oklch, var(--color-fuchsia-400) 95%, transparent) 100%
-  );
-  box-shadow: 0 0 12px color-mix(in oklch, var(--color-fuchsia-400) 45%, transparent);
-  transform-origin: left center;
-  transform: scaleX(0);
-  animation: strike-in 900ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-}
-:root:not(.dark) .strike-claim::after {
-  box-shadow: 0 0 10px color-mix(in oklch, var(--color-ministr-500) 35%, transparent);
-}
-@keyframes strike-in {
-  to { transform: scaleX(1); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .strike-claim::after { transform: scaleX(1); animation: none; }
-}
+/* strike-claim CSS removed — WhatMinistrIsnt component (the only
+   consumer) was deleted as part of the landing-fluff trim. */
 
 /* =====================================================
    asciinema-player — custom "ministr" theme + hero chrome

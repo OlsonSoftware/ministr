@@ -11,12 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Code navigation
 - `ministr_symbols`, `ministr_definition`, `ministr_references` — code symbol index across 12 languages via tree-sitter
-- `ministr_bridge` — cross-language bridge detection for Tauri, napi, PyO3, wasm-bindgen, and HTTP routes
+- `ministr_bridge` — cross-language bridge detection across seven kinds: Tauri commands and events, napi-rs, PyO3, wasm-bindgen, HTTP routes (actix-web / axum / rocket), and raw FFI
 
 #### Retrieval
-- Two-stage Matryoshka retrieval with adaptive dimension selection
+- Two-stage Matryoshka retrieval — corpus-configurable target dimension (`corpus.dimension`) with full-dimension HNSW rescoring (`corpus.rerank_depth`)
 - SPLADE sparse embeddings + dense vectors with reciprocal rank fusion
-- Cross-encoder reranking with configurable pipeline depth
+- Optional cross-encoder reranking — when enabled, rescores the top vector-search candidates and blends the cross-encoder score with the upstream retrieval score (`RERANK_BLEND = 0.8`) before truncation to `top_k`
 - Candle Metal GPU embedding backend (optional, Apple Silicon)
 
 #### Session & eviction
@@ -48,27 +48,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fly.io and Railway deployment configs with Caddy/nginx templates
 - Signed and notarized macOS `.pkg` installer
 - `ministr init` — project scaffolding with `.ministr.toml` and MCP client configs
-- Hot-reload on `.ministr.toml` changes
+- Hot-add of new corpus paths in `.ministr.toml` — newly-added entries under `[corpus] paths` are ingested without restarting the MCP session. Other config changes (path removals, model swaps, `[agent]` rule edits) still require a restart.
 - Retrieval evaluation suite with MRR/nDCG and CI regression gate
 
 #### Desktop app
-- **Cache observatory overhaul** — Overview home with aggregate budget ring, cache-hit history, and live turn stream
+- **Dashboard overhaul** — Overview home with aggregate budget ring, cache-hit history, and live turn stream
 - `BudgetRing`, `TurnBlock`, `CorpusChip`, `StatusDot`, and `ActivityFeed` UI primitives
 - Command palette (`⌘K`) with corpus navigation and theme/tab actions
 - Keyboard shortcut sheet (`?`) and theme toggle (System / Dark / Light) in the TopBar
 - Tray submenus for active sessions, recent corpora, and quick actions
 - Live tool-call **activity stream** — every `ministr_*` MCP call is recorded in a 500-event in-memory ring buffer on the daemon, exposed via `GET /activity` and surfaced in the app Overview
 - **Coherence feed** — rich per-file `CoherenceEvent` (kind + path + affected sections) broadcast from the per-corpus watcher, mirrored in a 500-event daemon-wide ring buffer, exposed via `GET /coherence-events` + `CoherenceFeed` UI primitive replacing the Overview placeholder
-- Onboarding "observatory preview" tile so users see the dashboard aesthetic before reaching the dense dashboard
+- Onboarding "dashboard preview" tile so users see the dashboard aesthetic before reaching the dense dashboard
 - `CorpusTreemap` re-themed with OKLCH language colors that share the ministr design tokens
 
 #### Documentation
-- New documentation site built with Material for MkDocs, hosted on GitHub Pages
-- Tailwind v4 design tokens (`docs/styles/tokens.css`) compiled into Material's theme
-- Inline Phosphor icon sprite via a build-time MkDocs hook (`docs/hooks/inline_icons.py`)
-- D2 diagrams throughout the architecture docs (replacing ASCII art)
-- Animated Chart.js benchmarks, Cmd+K search, reading-progress indicator, and keyboard shortcuts on the docs site
-- VHS terminal demo on the landing page
+- New documentation site built with Fumadocs on Next.js 16, deployed to Cloudflare Pages
+- Mermaid diagrams throughout the architecture docs (replacing ASCII art)
+- ⌘K search, reading-progress indicator, and keyboard shortcuts on the docs site
+- Asciinema terminal demo on the landing page
 
 ### Changed
 
@@ -106,7 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prefetch engine overhauled — `PriorityCache`, adaptive alpha, cache invalidation
 - Ingestion pipeline split into focused submodules
 - Session budget tracking integrated into daemon for cross-session awareness
-- Documentation site migrated from mdBook to Material for MkDocs
+- Documentation site rebuilt on Fumadocs/Next.js (replaced earlier mdBook prototype)
 - User-facing copy clarified: ministr manages what it sends into context, it does
   not edit the agent's context window
 
@@ -132,7 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-resolution indexing** — documents, section summaries, section text, and atomic claims are embedded and indexed separately
 - **Session shadow** — tracks what content has been delivered to the agent, deduplicates repeat deliveries, and detects fault-based evictions
 - **Budget tracker** — estimates context window token usage, reports pressure levels, and ranks eviction candidates
-- **Prefetch engine** — sequential, structural, topical, and cross-session prefetch strategies with LRU cache
+- **Prefetch engine** — six prefetch strategies backed by an LRU cache. Post-read: sequential, structural, topical, cross-session (four strategies in default single-process mode; the daemon-proxy path has cross-session scaffolded but not yet triggered). Post-survey: survey-expand, agent-plan (intent-based)
 - **Coherence subsystem** — file watcher triggers re-indexing and invalidates stale session entries
 - **Cross-session analytics** — tracks section access patterns and feeds co-access data into prefetch
 - **Session persistence** — session state survives server restarts via SQLite storage

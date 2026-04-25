@@ -27,10 +27,11 @@ Follow dependency chains between claims. Given a claim ID, returns other claims 
 {
   "related": [
     {
-      "claim_id": "docs/auth.md#refresh-tokens/claim-3",
+      "claim_id": "docs/auth.md#refresh-tokens:c3",
       "text": "Refresh tokens have a 30-day expiry.",
       "relation_type": "references",
-      "source_section": "docs/auth.md#refresh-tokens"
+      "source_section": "docs/auth.md#refresh-tokens",
+      "confidence": 0.82
     }
   ],
   "budget_status": { ... }
@@ -46,6 +47,8 @@ Follow dependency chains between claims. Given a claim ID, returns other claims 
 | `related[].text` | The related claim's text |
 | `related[].relation_type` | How this claim relates to the queried claim |
 | `related[].source_section` | Section containing the related claim |
+| `related[].confidence` | Detector confidence score (0.0-1.0). Values below ~0.7 are fuzzy matches worth verifying. |
+| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ## Behavior
 

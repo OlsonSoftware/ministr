@@ -20,7 +20,7 @@ Read the full text of a section by its hierarchical ID. Returns content with hea
   "section_id": "docs/auth.md#error-handling",
   "heading_path": ["Authentication", "Error Handling"],
   "text": "Full section text...",
-  "token_count": 847,
+  "summary": "How the API surfaces auth failures to the client.",
   "claims_available": 5,
   "budget_status": { ... }
 }
@@ -28,7 +28,7 @@ Read the full text of a section by its hierarchical ID. Returns content with hea
 
 ### Already Delivered (unchanged)
 
-If the section was already delivered and has not changed, ministr returns a short acknowledgment instead of re-delivering the full text. This is treated as a **fault-based eviction signal** — ministr infers the agent's context window dropped the content and corrects the window estimate.
+If the section was already delivered and has not changed, ministr returns the same envelope with `status: "already_delivered"` instead of re-delivering the full text. This is treated as a **fault-based eviction signal** — ministr infers the agent's context window dropped the content and corrects the window estimate.
 
 ### Already Delivered (changed)
 
@@ -41,8 +41,10 @@ If the section was delivered but the underlying document changed, ministr return
 | `section_id` | The requested section ID |
 | `heading_path` | Heading hierarchy (e.g. `["Chapter 3", "Section 3.2"]`) |
 | `text` | Full section content |
-| `token_count` | Token count of the delivered text |
+| `summary` | Optional — pre-computed section summary when one is available |
 | `claims_available` | Number of claims that can be extracted with `ministr_extract` |
+| `status` | Optional — present as `"already_delivered"` on a re-read fault; absent on a fresh delivery |
+| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ## Behavior
 

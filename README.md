@@ -37,18 +37,18 @@ claude mcp add ministr -- ministr
 </p>
 
 <p align="center">
-  <sub>Prefer an interactive version with selectable text and timeline scrubbing? <a href="https://ministr.ai/#live-demo">Watch it on the docs site</a>.</sub>
+  <sub>Prefer an interactive version with selectable text and timeline scrubbing? <a href="https://ministr.ai/">Watch it on the docs site</a>.</sub>
 </p>
 
 ## Why ministr
 
-LLM agents waste most of their context window. ministr fixes the three root causes:
+LLM agents waste a lot of their context window. ministr fixes three of them:
 
 **Re-reading** — ministr tracks what the agent has already seen and deduplicates. When a section changes, it delivers only the delta.
 
 **Blind retrieval** — ministr indexes your codebase at multiple resolutions (documents, sections, claims, symbols) and returns precisely what's relevant — not entire files.
 
-**No lookahead** — ministr predicts what the agent will need next and pre-warms it. Sequential, structural, and topical prefetch strategies mean cache hits instead of cold reads.
+**No lookahead** — ministr predicts what the agent will need next and pre-warms it. Six prefetch strategies across reads (sequential, structural, topical, cross-session) and surveys (expand + intent) mean cache hits instead of cold reads.
 
 ## Setup
 
@@ -73,13 +73,13 @@ claude mcp add ministr -- ministr                                    # Claude Co
 
 ## Features
 
-- **Semantic search** across docs and code at document, section, and claim resolution
+- **Semantic search** across docs and code at the granularity the agent needs — summary, section, or single claim (a one-sentence fact pulled from a section). Code gets two extra levels: symbol stub (signature + doc) and full source.
 - **Code symbol navigation** — find and trace structs, functions, traits across 12 languages via tree-sitter
-- **Cross-language bridge detection** — Tauri commands, napi bindings, PyO3 functions, wasm-bindgen exports, HTTP routes
+- **Cross-language bridge detection** — Tauri commands and events, napi-rs, PyO3, wasm-bindgen exports, HTTP routes (actix-web / axum / rocket), and raw FFI
 - **Session tracking** with predictive prefetch, deduplication, and delta delivery
 - **Budget management** — token usage monitoring, eviction recommendations, compressed summaries under pressure
-- **Local embeddings** — FastEmbed + ONNX (~5ms/embed), optional Metal GPU acceleration on Apple Silicon
-- **Desktop app** — cache observatory dashboard, live tool-call activity stream, `⌘K` command palette, `?` shortcut sheet, and system-tray submenus (Tauri v2, macOS/Linux/Windows)
+- **Local embeddings** — Candle with Metal GPU on Apple Silicon by default (7-12× faster than the ONNX path for batch embedding); FastEmbed + DirectML on Windows DirectX 12 GPUs (with the `directml` cargo feature); FastEmbed + CPU ONNX on Linux and feature-less Windows
+- **Desktop app** — dashboard, live tool-call activity stream, `⌘K` command palette, `?` shortcut sheet, and system-tray submenus (Tauri v2, macOS/Linux/Windows)
 
 ## Cross-language bridges
 
@@ -105,7 +105,7 @@ cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli
 
 **Pre-built binaries** — download from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases) for macOS, Linux, and Windows.
 
-A Homebrew tap (`AlrikOlson/homebrew-tap`) and a crates.io publish land with 1.0.
+A Homebrew tap (`OlsonSoftware/homebrew-tap`) and a crates.io publish land with 1.0.
 
 ## Documentation
 
@@ -115,7 +115,6 @@ A Homebrew tap (`AlrikOlson/homebrew-tap`) and a crates.io publish land with 1.0
 | [Tool reference](https://ministr.ai/docs/tools/) | All MCP tools with parameters and examples |
 | [Architecture](https://ministr.ai/docs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
 | [Configuration](https://ministr.ai/docs/configuration/) | `.ministr.toml` options and CLI flags |
-| [Design specification](DESIGN.md) | Research references and design rationale |
 | [Deployment](deploy/README.md) | Docker, Fly.io, Railway, nginx/Caddy reverse proxy |
 | [Example configs](examples/) | `.ministr.toml` templates for Rust, Tauri, PyO3, React |
 

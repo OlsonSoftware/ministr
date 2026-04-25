@@ -1,9 +1,9 @@
-# Formula for the AlrikOlson/tap homebrew tap.
+# Formula for the OlsonSoftware/tap homebrew tap.
 # To set up the tap:
-#   1. Create a new GitHub repo: AlrikOlson/homebrew-tap
+#   1. Create a new GitHub repo: OlsonSoftware/homebrew-tap
 #   2. Copy this file to Formula/ministr.rb in that repo
 #   3. Update SHA256 hashes after each release (from .sha256 files in GitHub Release assets)
-#   4. Users install with: brew install AlrikOlson/tap/ministr
+#   4. Users install with: brew install OlsonSoftware/tap/ministr
 #
 # To update after a release:
 #   1. Download the new .sha256 files from the GitHub Release

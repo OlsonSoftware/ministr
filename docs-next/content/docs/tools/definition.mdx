@@ -20,9 +20,11 @@ Get the full source code of a symbol by ID. Returns the complete declaration inc
   "kind": "function",
   "visibility": "pub",
   "signature": "pub fn validate_token(token: &str) -> Result<Claims>",
+  "doc_comment": "Validates a JWT token against the configured public key.",
   "file_path": "src/auth.rs",
   "line_start": 42,
   "line_end": 67,
+  "heading_path": ["src/auth.rs", "fn validate_token"],
   "source_context": "/// Validates a JWT token against the configured public key.\n///\n/// Returns the decoded claims on success, or an error if the\n/// signature is invalid or the token has expired.\npub fn validate_token(token: &str) -> Result<Claims> {\n    let decoding_key = config.jwks().decoding_key()?;\n    let validation = Validation::new(Algorithm::RS256);\n    let token_data = jsonwebtoken::decode::<Claims>(token, &decoding_key, &validation)?;\n    Ok(token_data.claims)\n}",
   "budget_status": { ... }
 }
@@ -32,9 +34,17 @@ Get the full source code of a symbol by ID. Returns the complete declaration inc
 
 | Field | Description |
 |---|---|
-| `source_context` | Full source code of the symbol including doc comments |
+| `id` | Symbol ID — the same one accepted by `ministr_definition` and `ministr_references` |
+| `name` | Declared name |
+| `kind` | Symbol kind (function, struct, trait, impl, enum, const, static, type, mod) |
+| `visibility` | Visibility modifier (`pub`, `pub(crate)`, `pub(super)`, or `""` for private) |
 | `signature` | One-line declaration signature |
-| `file_path`, `line_start`, `line_end` | Source location |
+| `doc_comment` | Optional — extracted doc comment text with `///` / `/** */` markers stripped |
+| `file_path` | Source file path |
+| `line_start`, `line_end` | 1-based line range in the source file |
+| `heading_path` | Module-hierarchy breadcrumbs for navigation |
+| `source_context` | Full source code of the symbol including doc comments |
+| `budget_status` | Budget snapshot — present when `session_id` was provided |
 
 ## Behavior
 

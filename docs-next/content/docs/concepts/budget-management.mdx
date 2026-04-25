@@ -36,7 +36,7 @@ The agent can use this to make informed decisions about what to read next.
 
 When estimated usage exceeds a threshold (default: 80% of budget), ministr enters pressure mode:
 
-- **Responses are automatically compressed** — claim-level extracts instead of full sections, reducing tokens by 60-80%
+- **Responses are automatically compressed** — instead of returning the whole section, ministr returns just the relevant **claims** (single-sentence facts pulled from the section). Each response is typically 60-80% smaller than the equivalent full-section response
 - **Eviction recommendations are attached** — ranked by recency, relevance decay, and dependency analysis
 - **Replacement summaries are provided** — compressed summaries (10-20% of original) that can substitute for evicted content
 
@@ -76,7 +76,7 @@ Call `ministr_compress` with content IDs to get compressed summaries before evic
 
 ## Eviction Policies
 
-The window estimator supports two policies:
+The window estimator supports two real strategies:
 
-- **FIFO** (default) — oldest delivered content is assumed evicted first
-- **LRU** — least recently accessed content is assumed evicted first
+- **FIFO** (default) — oldest delivered content is evicted first. Fast and allocation-free; reasonable approximation of how many LLM context windows behave when they overflow.
+- **FSRS** — evict the entry with the lowest predicted recall probability, using stability/difficulty scores from the [FSRS](https://github.com/open-spaced-repetition/fsrs4anki) spaced-repetition memory model. Requires a companion `MemoryTracker`; enable by calling `BudgetTracker::record_tokens_with_memory` with retrievability scores instead of `record_tokens`.

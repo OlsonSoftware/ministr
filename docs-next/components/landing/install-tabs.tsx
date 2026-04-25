@@ -3,12 +3,12 @@
 import { useState } from 'react';
 import { CopyButton } from '@/components/landing/copy-button';
 
-// Step 2's command bundle — copying grabs all three lines so the
-// reader can paste the entire wire-up in one go.
+// Step 2's command bundle. `ministr init` already writes .mcp.json
+// (Claude Code), .cursor/mcp.json, and .vscode/mcp.json — so the
+// canonical wire-up is just the two commands, not three.
 const STEP_2_COMMANDS = [
   'cd your-project',
   'ministr init',
-  'claude mcp add ministr -- ministr',
 ].join('\n');
 
 const TABS = [
@@ -87,14 +87,11 @@ export function InstallTabs() {
             <span className="select-none text-[var(--color-ministr-400)]">$ </span>
             cd your-project{'\n'}
             <span className="select-none text-[var(--color-ministr-400)]">$ </span>
-            ministr init                          <span className="ministr-body-quiet"># creates .ministr.toml + .mcp.json</span>
-            {'\n'}
-            <span className="select-none text-[var(--color-ministr-400)]">$ </span>
-            claude mcp add ministr -- ministr        <span className="ministr-body-quiet"># Claude Code</span>
+            ministr init                          <span className="ministr-body-quiet"># writes .ministr.toml + MCP configs for Claude Code, Cursor, Copilot</span>
           </pre>
           <CopyButton
             value={STEP_2_COMMANDS}
-            label="Copy all three setup commands"
+            label="Copy setup commands"
             size="sm"
             className="absolute right-3 top-3"
           />

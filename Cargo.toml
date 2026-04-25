@@ -6,7 +6,7 @@ resolver = "3"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/AlrikOlson/ministr-rs"
+repository = "https://github.com/OlsonSoftware/ministr"
 homepage = "https://ministr.ai"
 
 [workspace.lints.rust]
