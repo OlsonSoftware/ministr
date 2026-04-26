@@ -147,6 +147,24 @@ enum Command {
         #[command(subcommand)]
         action: HooksAction,
     },
+
+    /// Add the `ministr` binary's directory to the user's PATH.
+    ///
+    /// Detects installed shells (bash, zsh, fish, nushell, `PowerShell`, tcsh,
+    /// xonsh) and writes the appropriate rc file edits via the `onpath` crate.
+    /// On Windows, writes the per-user `HKCU\Environment\PATH` registry entry.
+    ///
+    /// Idempotent — re-running won't duplicate entries. Used by `install.sh`
+    /// and the Tauri desktop app's first-run setup.
+    Setup {
+        /// Directory to add to PATH (default: parent of the running `ministr` binary).
+        #[arg(long)]
+        bin_dir: Option<PathBuf>,
+
+        /// Print what would be edited, don't write.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// Subcommands for `ministr hooks`.
@@ -387,5 +405,6 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 Ok(())
             }
         },
+        Command::Setup { bin_dir, dry_run } => commands::cmd_setup(bin_dir.as_deref(), dry_run),
     }
 }

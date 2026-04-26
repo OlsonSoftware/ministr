@@ -1034,6 +1034,57 @@ pub(crate) fn cmd_hooks_test(root: &Path) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ministr setup
+// ---------------------------------------------------------------------------
+
+/// `ministr setup` — add the `ministr` binary's directory to the user's PATH.
+///
+/// Wraps the `onpath` crate so installer scripts (`install.sh`, the Tauri
+/// first-run flow) don't have to hand-roll cross-shell rc-file edits. On
+/// Unix, writes to bash / zsh / fish / nushell / `PowerShell` / tcsh / xonsh
+/// rc files for shells the user actually has installed. On Windows, writes
+/// the per-user `HKCU\Environment\PATH` registry entry — same surface
+/// `install.ps1` and the Tauri NSIS installer hook target, so re-running is
+/// idempotent regardless of how the user got here.
+///
+/// `bin_dir` defaults to the parent of the running `ministr` binary so a
+/// fresh `~/.ministr/bin/ministr setup` after `install.sh` Just Works
+/// without the user having to know the path.
+pub(crate) fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool) -> Result<()> {
+    let bin_dir = if let Some(p) = bin_dir {
+        p.to_path_buf()
+    } else {
+        let exe = std::env::current_exe()
+            .into_diagnostic()
+            .wrap_err("failed to resolve current executable for default --bin-dir")?;
+        exe.parent()
+            .ok_or_else(|| miette::miette!("running binary has no parent dir; pass --bin-dir"))?
+            .to_path_buf()
+    };
+
+    let report = onpath::PathManager::new(&bin_dir, "ministr")
+        .dry_run(dry_run)
+        .add()
+        .into_diagnostic()
+        .wrap_err_with(|| format!("onpath failed to add {} to PATH", bin_dir.display()))?;
+
+    // Report (which shells / files were edited) goes to stdout so callers
+    // like install.sh can capture it; user-facing reminders go to stderr.
+    println!("{report}");
+
+    if dry_run {
+        eprintln!("(dry-run — nothing was written)");
+    } else {
+        eprintln!();
+        eprintln!(
+            "Open a new shell (or `source` the modified rc file) for the change to take effect."
+        );
+    }
+
+    Ok(())
+}
+
 /// Check if the Claude Code hooks would block a given tool/args combination.
 ///
 /// This simulates the `PreToolUse` hook logic from `.claude/settings.json`.

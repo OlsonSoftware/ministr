@@ -55,11 +55,15 @@ chmod +x "${INSTALL_DIR}/ministr"
 
 info "Installed ministr to ${INSTALL_DIR}/ministr"
 
-# PATH instructions
-if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
+# Hand off PATH wiring to `ministr setup`, which uses the onpath crate to
+# detect installed shells (bash, zsh, fish, nushell, PowerShell, tcsh,
+# xonsh) and write the right rc-file edits. Idempotent — re-running won't
+# duplicate entries. Falls back to printing manual export instructions if
+# the subcommand exits non-zero (e.g. no detected shell rc files).
+if "${INSTALL_DIR}/ministr" setup --bin-dir "${INSTALL_DIR}" 2>&1; then
+    :
+else
     echo ""
-    info "Add ministr to your PATH:"
+    info "Could not auto-configure PATH — add this to your shell profile:"
     echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
-    echo ""
-    echo "Add this line to your shell profile (~/.bashrc, ~/.zshrc, etc.)"
 fi
