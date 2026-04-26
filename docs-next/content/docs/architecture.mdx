@@ -22,7 +22,7 @@ ministr-app/src-tauri/ — Tauri v2 desktop app, depends on ministr-core + minis
 
 **ministr-daemon** is the long-running background service that owns the heavy resources (ONNX model, HNSW indexes, SQLite). It exposes an HTTP API over UDS for corpus management and querying.
 
-**ministr-mcp** adapts ministr-core's service layer to the MCP protocol using the `rmcp` crate. It implements tool handlers, request routing, and response formatting. Transitioning to a thin proxy that delegates storage/embedding/indexing to the daemon.
+**ministr-mcp** adapts ministr-core's service layer to the MCP protocol using the `rmcp` crate. It implements tool handlers, request routing, and response formatting. Ships in two flavours: the standalone `MinistrServer` that owns its own storage/embedder/index, and a `ProxyServer` that delegates to the daemon over UDS so a second client doesn't have to load a second ONNX model into RAM.
 
 **ministr-cli** is the binary entry point. It parses CLI arguments, loads configuration, and starts the MCP server over stdio transport.
 
@@ -63,18 +63,19 @@ For the parser, embedding, and index internals, see the [architecture deep dive]
 
 ```text
 ~/.ministr/
-├── config.toml                     # Global configuration
-├── corpora.json                    # Daemon's registered-corpus manifest
-├── ministrd.sock                      # Daemon local socket (UDS on macOS/Linux; named pipe on Windows)
-├── ministrd.pid                       # Daemon PID file
+├── config.toml                       # Global configuration
+├── corpora.json                      # Daemon's registered-corpus manifest
+├── ministrd.sock                     # Daemon socket (UDS on macOS/Linux; named pipe on Windows)
+├── ministrd.pid                      # Daemon PID file
 └── corpora/
-    └── <corpus-id>/                # Stable hash derived from corpus paths
-        ├── content.db              # SQLite: sections, claims, summaries,
-        │                           # file hashes, and session shadows
+    └── <corpus-id>/                  # Stable hash derived from corpus paths
+        ├── meta.toml                 # Per-corpus configuration (name, model, watch flag, ...)
+        ├── content.db                # SQLite: sections, claims, summaries, file hashes
+        ├── sessions/                 # Persisted session shadows
         └── index/
-            ├── ministr_hnsw.hnsw.data # HNSW vector dump
+            ├── ministr_hnsw.hnsw.data  # HNSW vector dump
             ├── ministr_hnsw.hnsw.graph
-            └── id_map.json         # Section ID ↔ vector slot mapping
+            └── id_map.json           # Section ID ↔ vector slot mapping
 ```
 
 ## Key Dependencies

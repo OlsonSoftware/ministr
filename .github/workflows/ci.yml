@@ -445,6 +445,16 @@ jobs:
         # non-zero across the entire smoke. grep is parser-agnostic:
         # we just substring-search for the markers we care about. Real
         # protocol validation lives in nextest unit tests.
+        #
+        # TODO(rmcp-raw-newline): track down the actual source of the
+        # raw '\n' in tools/list output and fix it upstream. Suspected
+        # culprits: multi-line `///` doc comments on nested response
+        # types under `ministr-mcp/src/server/types.rs` (e.g.
+        # `ToolResponse`, `BudgetResponse`, `CompressResponse`) being
+        # picked up by schemars and round-tripped through rmcp's
+        # tool-schema generator without escaping. Once fixed, swap the
+        # grep block below back to a single jq pipeline asserting on
+        # `.result.tools[].name`.
         run: |
           response=$(printf '%s\n%s\n%s\n' \
             '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"1.0"}},"id":1}' \

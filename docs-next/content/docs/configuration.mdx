@@ -242,3 +242,7 @@ default_model = "jina-embeddings-v2-base-code"
 | Variable | Description |
 |---|---|
 | `RUST_LOG` | Controls log verbosity via `tracing-subscriber::EnvFilter`. Example: `RUST_LOG=ministr_core=debug,ministr_mcp=info` |
+| `MINISTR_BACKEND` | Force the embedding backend: `candle` (Metal GPU on Apple Silicon), `onnx` / `fastembed` (ONNX Runtime). Empty/unset = auto-detect per platform. |
+| `MINISTR_DEVICE` | Set to `cpu` to force CPU execution even on a GPU-capable machine (Metal on macOS, DirectML on Windows). |
+| `MINISTR_PREFER_QUANTIZED` | `1` to auto-select the `-q` quantized variant of the configured model when one exists. |
+| `INSTALL_DIR` | Used by the install script only — overrides the default install location (`$HOME/.ministr/bin`). |

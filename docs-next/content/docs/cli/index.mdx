@@ -116,7 +116,7 @@ ministr hooks test
 | `MINISTR_BACKEND` | Force embedding backend: `candle`, `onnx`, `fastembed`, or empty (auto-detect) |
 | `MINISTR_DEVICE` | Force CPU even on GPU-capable machines (`cpu`). Applies to Metal on macOS and DirectML on Windows. |
 | `MINISTR_PREFER_QUANTIZED` | Auto-select the quantized `-q` model variant when one exists (`1` / `true`) |
-| `MINISTR_COMPUTE_UNITS` | macOS CoreML compute units: `cpu_only`, `cpu_and_gpu` (default), `cpu_and_ane`, or `all`. ANE is opt-in due to a known ~12 GB/batch leak. |
-| `MINISTR_COREML` | Set to `0` or `false` to disable CoreML on macOS and fall back to plain CPU ONNX |
+
+On macOS, when the FastEmbed/ONNX path is selected, ministr always pins the CoreML execution provider to CPU+GPU compute units. Routing to the Apple Neural Engine is intentionally disabled because of a known ~12 GB/batch CoreML/ANE memory leak ([onnxruntime#14455](https://github.com/microsoft/onnxruntime/issues/14455)); there is no env-var knob to enable it.
 
 To override the data directory, set `data_dir` in `~/.ministr/config.toml` (see [Configuration](/docs/configuration)) or pass `-C, --config <PATH>` to point at an alternate config file.
