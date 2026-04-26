@@ -157,13 +157,22 @@ enum Command {
     /// Idempotent — re-running won't duplicate entries. Used by `install.sh`
     /// and the Tauri desktop app's first-run setup.
     Setup {
-        /// Directory to add to PATH (default: parent of the running `ministr` binary).
+        /// Directory to add to (or remove from) PATH.
+        ///
+        /// Default: parent of the running `ministr` binary.
         #[arg(long)]
         bin_dir: Option<PathBuf>,
 
         /// Print what would be edited, don't write.
         #[arg(long)]
         dry_run: bool,
+
+        /// Remove the directory from PATH instead of adding it.
+        ///
+        /// Used by the NSIS uninstaller hook before tearing down the
+        /// install dir. Idempotent — no-op if the dir isn't on PATH.
+        #[arg(long)]
+        uninstall: bool,
     },
 }
 
@@ -304,8 +313,13 @@ async fn main() -> Result<()> {
     // gets `ministr` on PATH. Setup needs no corpus paths, no model
     // resolution, no repo config — it just edits shell rc files /
     // HKCU\Environment\PATH.
-    if let Command::Setup { bin_dir, dry_run } = command {
-        return commands::cmd_setup(bin_dir.as_deref(), dry_run);
+    if let Command::Setup {
+        bin_dir,
+        dry_run,
+        uninstall,
+    } = command
+    {
+        return commands::cmd_setup(bin_dir.as_deref(), dry_run, uninstall);
     }
 
     let rc = resolve_config(&cli)?;
