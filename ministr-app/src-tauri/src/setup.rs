@@ -2,7 +2,6 @@
 //! the launchd agent so everything "just works" after opening the .app.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
@@ -118,37 +117,51 @@ fn install_cli_binary(app: &tauri::App, bin_dir: &Path) -> Result<(), Box<dyn st
     Ok(())
 }
 
-/// Append `~/.ministr/bin` to PATH in the user's shell profile if not already present.
+/// Add `~/.ministr/bin` to the user's PATH by shelling out to the freshly
+/// staged CLI's `setup` subcommand.
+///
+/// The CLI uses the `onpath` crate, which detects installed shells (bash,
+/// zsh, fish, nushell, `PowerShell`, tcsh, xonsh) and writes the right rc
+/// file edits. On Windows it writes `HKCU\Environment\PATH` directly. This
+/// replaced an earlier hand-rolled patcher that only knew about
+/// `.zshrc/.bashrc/.bash_profile/.profile` and missed fish + nushell.
 fn ensure_path(bin_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let bin_str = bin_dir.to_string_lossy();
+    // On Windows, probe both names: the NSIS installer hook stages as
+    // `ministr.exe`, but install_cli_binary above stages as `ministr`
+    // (no extension). Either is fine — Windows can spawn extensionless
+    // PE files via CreateProcess. On Unix only the bare name is valid.
+    let cli_path = if cfg!(windows) {
+        let exe = bin_dir.join("ministr.exe");
+        if exe.exists() {
+            exe
+        } else {
+            bin_dir.join("ministr")
+        }
+    } else {
+        bin_dir.join("ministr")
+    };
 
-    // Check if already on PATH.
-    if let Ok(path) = std::env::var("PATH")
-        && path.split(':').any(|p| p == bin_str.as_ref())
-    {
+    if !cli_path.exists() {
+        info!(
+            path = %cli_path.display(),
+            "CLI binary not staged yet — skipping PATH setup"
+        );
         return Ok(());
     }
 
-    let home = home_dir()?;
-    let export_line = format!("\n# Added by ministr installer\nexport PATH=\"{bin_str}:$PATH\"\n");
+    let output = std::process::Command::new(&cli_path)
+        .arg("setup")
+        .arg("--bin-dir")
+        .arg(bin_dir)
+        .output()?;
 
-    // Patch whichever shell profiles exist.
-    for profile in &[".zshrc", ".bashrc", ".bash_profile", ".profile"] {
-        let path = home.join(profile);
-        if !path.exists() {
-            continue;
-        }
-
-        let content = fs::read_to_string(&path)?;
-        if content.contains(&*bin_str) {
-            continue;
-        }
-
-        let mut file = fs::OpenOptions::new().append(true).open(&path)?;
-        file.write_all(export_line.as_bytes())?;
-        info!(profile = profile, "added ~/.ministr/bin to PATH");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("`ministr setup` exited non-zero: {}", stderr.trim()).into());
     }
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    info!(report = %stdout.trim(), "PATH setup complete via `ministr setup`");
     Ok(())
 }
 
