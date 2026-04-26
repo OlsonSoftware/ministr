@@ -106,18 +106,18 @@ crates. Fix the failing one and resume.
 ## 6. Update the Homebrew tap
 
 The formula lives at `homebrew/` in this repo. Copy it to the tap repo
-and bump version + SHA-256:
+(`OlsonSoftware/homebrew-tap`) and bump version + SHA-256:
 
 ```sh
-# In AlrikOlson/homebrew-tap
-cp ~/Code/ministr-rs/homebrew/ministr.rb Formula/ministr.rb
+# In OlsonSoftware/homebrew-tap
+cp ~/Code/ministr/homebrew/ministr.rb Formula/ministr.rb
 # Update version, URL, and sha256 to match the vX.Y.Z release tarball
 brew audit --strict --online ministr
 git commit -am "ministr X.Y.Z"
 git push
 ```
 
-Verify with `brew install AlrikOlson/tap/ministr` on a clean machine.
+Verify with `brew install OlsonSoftware/tap/ministr` on a clean machine.
 
 ## 7. Announce
 

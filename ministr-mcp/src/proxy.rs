@@ -539,6 +539,16 @@ impl ProxyServer {
         Self::json_result(&resp)
     }
 
+    // TODO(toc-schema-convergence): the standalone `MinistrServer::toc` emits
+    // `ToolResponse<TocResponse>` with `{ corpus_stats, roots, entries }` and the
+    // rich per-entry shape from `ministr_core::types::TocEntry`. This proxy path
+    // forwards `ministr_api::query::TocResponse`'s flatter `{ entries, total }`
+    // with the lossy `{ id, title, kind, depth, children, source_path }` entry
+    // shape. To unify: extend `ministr_api::query::{TocEntry, TocResponse}` with
+    // the rich fields, update `ministr_daemon::convert::toc_entry` to preserve
+    // them, compute `corpus_stats`/`roots` in the daemon's `toc` handler, and
+    // wrap the response here in the same envelope `MinistrServer` builds.
+    // Tracked alongside the doc note in `docs-next/content/docs/tools/toc.mdx`.
     #[tool(
         name = "ministr_toc",
         description = "Get a structural overview (table of contents) of the indexed corpus."

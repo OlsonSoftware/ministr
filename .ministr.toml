@@ -18,7 +18,6 @@ paths = [
     # Documentation
     "README.md",
     "CHANGELOG.md",
-    "DESIGN.md",
     "CONTRIBUTING.md",
     "RELEASE.md",
     "SECURITY.md",

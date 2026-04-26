@@ -3,8 +3,6 @@ title: ministr_toc
 description: Structural overview of the indexed corpus — documents, section counts, and ingestion state.
 ---
 
-Get a structural overview of the indexed corpus — documents, section counts, and ingestion state.
-
 ## Parameters
 
 | Parameter | Type | Required | Default | Description |
@@ -62,7 +60,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 | `entries[].claims_available` | Number of claims extractable from this section via `ministr_extract` |
 | `entries[].token_count` | Approximate token count of the section text |
 
-> **Daemon-proxy mode.** When ministr runs via `ministr serve --proxy` (or behind the desktop app's daemon), `ministr_toc` returns a flatter `{ entries, total }` shape with `id, title, kind, depth, children, source_path` per entry. This is a known schema divergence between the standalone and proxy code paths and will be unified in a follow-up.
+> **Daemon-proxy mode.** Behind the desktop app or `ministr serve --proxy`, the proxy forwards the daemon's `ministr-api` shape unchanged. That shape is flatter: a top-level `{ entries, total }` (no `ToolResponse` envelope, no `corpus_stats`, no `roots`) with `{ id, title, kind, depth, children, source_path }` per entry. The schema and envelope above describe the **standalone** server only; the proxy/daemon path is a known divergence that will be unified by lifting the rich shape into `ministr-api` and having the proxy emit the same envelope as standalone.
 
 ## Behavior
 
