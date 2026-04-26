@@ -4432,6 +4432,7 @@ dependencies = [
  "ministr-core",
  "ministr-mcp",
  "notify",
+ "onpath",
  "reqwest 0.13.2",
  "rmcp",
  "serde_json",
@@ -5137,6 +5138,19 @@ checksum = "c7f86c6eef3d6df15f23bcfb6af487cbd2fed4e5581d58d5bf1f5f8b7f6727dc"
 dependencies = [
  "cc",
  "pkg-config",
+]
+
+[[package]]
+name = "onpath"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f084bbf526e85aec226c38dc0121808fd3ca4411e058e019c018a40cbb7f566e"
+dependencies = [
+ "dirs 6.0.0",
+ "libc",
+ "thiserror 2.0.18",
+ "windows-sys 0.59.0",
+ "winreg 0.55.0",
 ]
 
 [[package]]
