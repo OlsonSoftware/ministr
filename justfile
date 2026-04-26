@@ -142,18 +142,16 @@ reinstall:
     rm -f /usr/local/bin/ministr 2>/dev/null || true
     mkdir -p ~/.ministr/bin
     cp target/release/ministr ~/.ministr/bin/ministr
-    # PATH sanity: warn if ~/.ministr/bin isn't on PATH so the user knows
-    # they need to source their shell rc or restart their terminal /
-    # Claude Code session before the `ministr` command resolves.
-    case ":$PATH:" in
-        *":$HOME/.ministr/bin:"*) : ;;
-        *)
-            echo "   WARNING: ~/.ministr/bin is not on PATH for this shell." >&2
-            echo "   Add this to ~/.zshrc or ~/.profile:" >&2
-            echo "     export PATH=\"\$HOME/.ministr/bin:\$PATH\"" >&2
-            echo "   Then restart your shell / Claude Code session." >&2
-            ;;
-    esac
+    # Hand off PATH wiring to `ministr setup` (onpath crate). Detects
+    # installed shells and writes the right rc-file edits. Idempotent
+    # — re-runs of this dev recipe won't duplicate entries. Non-fatal:
+    # the binary is at ~/.ministr/bin/ministr regardless, so PATH-wiring
+    # trouble shouldn't abort the rest of the reinstall.
+    echo "==> Adding ministr to PATH via \`ministr setup\`..."
+    if ! ~/.ministr/bin/ministr setup --bin-dir ~/.ministr/bin; then
+        echo "   ministr setup failed — add manually with:" >&2
+        echo "     export PATH=\"\$HOME/.ministr/bin:\$PATH\"" >&2
+    fi
     echo "==> Installing Tauri app..."
     if [ ! -d /Applications/ministr.app/Contents/MacOS ]; then
         echo "   ministr.app bundle not found at /Applications/ministr.app." >&2

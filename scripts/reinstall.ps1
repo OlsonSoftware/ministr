@@ -73,19 +73,20 @@ Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:USERPROFILE '.c
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 Copy-Item -Force -Path 'target\release\ministr.exe' -Destination $binPath
 
-# PATH sanity: warn if the bin dir isn't on PATH for this shell so the user
-# knows they need to restart their terminal / Claude Code session before
-# the `ministr` command resolves. Plain string compare — deliberately not
-# GetFullPath-ing PATH entries because one malformed entry would throw and
-# skip the warning entirely.
-$normalizedTarget = $binDir.TrimEnd('\', '/').ToLowerInvariant()
-$onPath = ($env:Path -split [IO.Path]::PathSeparator) |
-    Where-Object { $_ -and ($_.TrimEnd('\', '/').ToLowerInvariant() -eq $normalizedTarget) }
-if (-not $onPath) {
-    Write-Warning "$binDir is not on PATH for this shell."
-    Write-Host '   Add it to your User PATH (persistent):' -ForegroundColor Yellow
-    Write-Host "     [Environment]::SetEnvironmentVariable('Path', `"$binDir;`" + [Environment]::GetEnvironmentVariable('Path','User'), 'User')" -ForegroundColor Yellow
-    Write-Host '   Then restart your shell / Claude Code session.' -ForegroundColor Yellow
+# Hand off PATH wiring to `ministr setup`, which uses the onpath crate to
+# write HKCU\Environment\PATH and broadcast WM_SETTINGCHANGE. Idempotent —
+# re-runs of this dev recipe won't duplicate the entry. Existing shells
+# still need to be restarted to pick up the change (Win32 env-block copy
+# semantics — no API can change that for already-running processes).
+#
+# Non-fatal: the binary is already at $binPath either way, so PATH-wiring
+# trouble shouldn't abort the rest of the reinstall (Tauri app build,
+# tray launch, etc.). Just warn and continue.
+Write-Host '==> Adding ministr to PATH via `ministr setup`...'
+& $binPath setup --bin-dir $binDir
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "ministr setup exited $LASTEXITCODE — PATH not updated."
+    Write-Host "   Add manually with: [Environment]::SetEnvironmentVariable('Path', `"$binDir;`" + [Environment]::GetEnvironmentVariable('Path','User'), 'User')" -ForegroundColor Yellow
 }
 
 # ---- Tauri desktop app ------------------------------------------------------
