@@ -288,7 +288,7 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
 
     miette::set_hook(Box::new(|_| {
         Box::new(miette::MietteHandlerOpts::new().build())
@@ -297,9 +297,20 @@ async fn main() -> Result<()> {
 
     ministr_core::tracing::init_tracing();
 
+    let command = cli.command.take().unwrap_or_default();
+
+    // `ministr setup` runs *before* resolve_config() so a malformed
+    // .ministr.toml in cwd can't lock the user out of the subcommand that
+    // gets `ministr` on PATH. Setup needs no corpus paths, no model
+    // resolution, no repo config — it just edits shell rc files /
+    // HKCU\Environment\PATH.
+    if let Command::Setup { bin_dir, dry_run } = command {
+        return commands::cmd_setup(bin_dir.as_deref(), dry_run);
+    }
+
     let rc = resolve_config(&cli)?;
 
-    dispatch(cli.command.unwrap_or_default(), rc).await
+    dispatch(command, rc).await
 }
 
 #[allow(clippy::too_many_lines)]
@@ -405,6 +416,8 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 Ok(())
             }
         },
-        Command::Setup { bin_dir, dry_run } => commands::cmd_setup(bin_dir.as_deref(), dry_run),
+        Command::Setup { .. } => {
+            unreachable!("ministr setup is dispatched before resolve_config in main()")
+        }
     }
 }

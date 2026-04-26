@@ -60,9 +60,7 @@ info "Installed ministr to ${INSTALL_DIR}/ministr"
 # xonsh) and write the right rc-file edits. Idempotent — re-running won't
 # duplicate entries. Falls back to printing manual export instructions if
 # the subcommand exits non-zero (e.g. no detected shell rc files).
-if "${INSTALL_DIR}/ministr" setup --bin-dir "${INSTALL_DIR}" 2>&1; then
-    :
-else
+if ! "${INSTALL_DIR}/ministr" setup --bin-dir "${INSTALL_DIR}"; then
     echo ""
     info "Could not auto-configure PATH — add this to your shell profile:"
     echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""

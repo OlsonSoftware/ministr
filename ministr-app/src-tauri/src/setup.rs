@@ -126,12 +126,20 @@ fn install_cli_binary(app: &tauri::App, bin_dir: &Path) -> Result<(), Box<dyn st
 /// replaced an earlier hand-rolled patcher that only knew about
 /// `.zshrc/.bashrc/.bash_profile/.profile` and missed fish + nushell.
 fn ensure_path(bin_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let cli_name = if cfg!(windows) {
-        "ministr.exe"
+    // On Windows, probe both names: the NSIS installer hook stages as
+    // `ministr.exe`, but install_cli_binary above stages as `ministr`
+    // (no extension). Either is fine — Windows can spawn extensionless
+    // PE files via CreateProcess. On Unix only the bare name is valid.
+    let cli_path = if cfg!(windows) {
+        let exe = bin_dir.join("ministr.exe");
+        if exe.exists() {
+            exe
+        } else {
+            bin_dir.join("ministr")
+        }
     } else {
-        "ministr"
+        bin_dir.join("ministr")
     };
-    let cli_path = bin_dir.join(cli_name);
 
     if !cli_path.exists() {
         info!(
