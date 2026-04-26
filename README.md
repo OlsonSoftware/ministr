@@ -97,6 +97,14 @@ ministr detects and links cross-language bindings automatically:
 curl -fsSL https://ministr.app/install.sh | bash
 ```
 
+**Install script** (Windows, PowerShell)
+
+```powershell
+iwr -useb https://ministr.app/install.ps1 | iex
+```
+
+**Desktop app** (Windows) — download `ministr-desktop-x86_64-pc-windows-msvc-setup.exe` from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases). The installer ships unsigned in this release, so SmartScreen will show "Windows protected your PC" on first run — click **More info** → **Run anyway**. The installer puts the tray app at `%LOCALAPPDATA%\ministr\` and adds the `ministr` CLI to your User PATH automatically.
+
 **Cargo** (latest `main`)
 
 ```sh
