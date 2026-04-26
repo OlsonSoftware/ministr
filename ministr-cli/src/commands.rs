@@ -1068,9 +1068,10 @@ pub(crate) fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool, uninstall: bool) 
 
     let manager = onpath::PathManager::new(&bin_dir, "ministr").dry_run(dry_run);
     let (verb, report) = if uninstall {
-        let r = manager.remove().into_diagnostic().wrap_err_with(|| {
-            format!("onpath failed to remove {} from PATH", bin_dir.display())
-        })?;
+        let r = manager
+            .remove()
+            .into_diagnostic()
+            .wrap_err_with(|| format!("onpath failed to remove {} from PATH", bin_dir.display()))?;
         ("remove", r)
     } else {
         let r = manager

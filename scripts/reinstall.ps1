@@ -81,11 +81,24 @@ Copy-Item -Force -Path 'target\release\ministr.exe' -Destination $binPath
 #
 # Non-fatal: the binary is already at $binPath either way, so PATH-wiring
 # trouble shouldn't abort the rest of the reinstall (Tauri app build,
-# tray launch, etc.). Just warn and continue.
+# tray launch, etc.). Wrapped in try/catch because `$ErrorActionPreference
+# = 'Stop'` at the top of this script would otherwise throw on a launch
+# failure (missing runtime, AV quarantine, etc.) and skip the fallback
+# message entirely. We want both non-zero exits AND launch failures to
+# fall through to the manual hint.
 Write-Host '==> Adding ministr to PATH via `ministr setup`...'
-& $binPath setup --bin-dir $binDir
-if ($LASTEXITCODE -ne 0) {
-    Write-Warning "ministr setup exited $LASTEXITCODE — PATH not updated."
+$setupLaunchError = $null
+try {
+    & $binPath setup --bin-dir $binDir
+} catch {
+    $setupLaunchError = $_.Exception.Message
+}
+if ($setupLaunchError -or $LASTEXITCODE -ne 0) {
+    if ($setupLaunchError) {
+        Write-Warning "ministr setup failed to launch: $setupLaunchError — PATH not updated."
+    } else {
+        Write-Warning "ministr setup exited $LASTEXITCODE — PATH not updated."
+    }
     Write-Host "   Add manually with: [Environment]::SetEnvironmentVariable('Path', `"$binDir;`" + [Environment]::GetEnvironmentVariable('Path','User'), 'User')" -ForegroundColor Yellow
 }
 
