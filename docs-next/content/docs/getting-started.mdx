@@ -5,7 +5,7 @@ description: Install ministr, initialize .ministr.toml in your project, and wire
 
 ## Installation
 
-The quickest path today is the install script. A signed `.pkg` that bundles `ministr.app` (the desktop dashboard) alongside the CLI is planned for the 1.0 release; until then, grab the CLI via one of the options below.
+Pick the install path that matches what you need: a one-liner for the CLI, or a Windows desktop installer that bundles the tray app and wires PATH automatically.
 
 ### Install script (macOS & Linux)
 
@@ -14,6 +14,26 @@ CLI-only; detects your platform and installs `ministr` to `$HOME/.ministr/bin` (
 ```sh
 curl -fsSL https://ministr.app/install.sh | bash
 ```
+
+### Install script (Windows, PowerShell)
+
+CLI-only. Installs `ministr.exe` to `%USERPROFILE%\.ministr\bin` (override with the `INSTALL_DIR` env var) and adds that directory to your User PATH. Open a new terminal after install for the PATH change to take effect.
+
+```powershell
+iwr -useb https://ministr.app/install.ps1 | iex
+```
+
+### Windows desktop installer (NSIS)
+
+Download `ministr-desktop-x86_64-pc-windows-msvc-setup.exe` from the [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases) page and run it. The installer puts the tray app at `%LOCALAPPDATA%\ministr\` and adds `ministr` to your PATH automatically.
+
+<Callout type="warn" title="SmartScreen warning">
+The installer is **unsigned** in this release, so on first launch Windows SmartScreen will block it with a "Windows protected your PC" dialog. Click **More info** → **Run anyway** to proceed. A signed installer is planned for 1.0.
+</Callout>
+
+### macOS desktop `.pkg` (signed + notarized)
+
+Download the `.pkg` from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases). Installs `ministr.app` to `/Applications` and `ministr` to `/usr/local/bin`.
 
 ### Cargo (from source, requires Rust 1.88+)
 

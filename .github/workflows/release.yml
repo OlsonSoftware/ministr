@@ -92,9 +92,78 @@ jobs:
             ${{ matrix.archive }}
             ${{ matrix.archive }}.sha256
 
+  # Windows desktop installer (Tauri NSIS bundle). Produces the .exe
+  # users actually want — tray app + bundled CLI + PATH wired up via
+  # installer-hooks.nsh. The bare CLI .zip from the matrix above is
+  # kept for headless / scripted installs (`install.ps1`).
+  bundle-windows:
+    name: Bundle Windows desktop installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bundle-windows
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: ministr-app/pnpm-lock.yaml
+
+      - name: Install frontend deps
+        working-directory: ministr-app
+        run: pnpm install --frozen-lockfile
+
+      # Build the CLI first so we can stage it as the Tauri sidecar.
+      # `--features directml` enables fastembed's DirectML execution
+      # provider so embedding runs on any DX12 GPU at runtime; matches
+      # what scripts/reinstall.ps1 ships locally.
+      - name: Build CLI sidecar (with directml)
+        run: cargo build --release -p ministr-cli --features directml
+
+      - name: Stage sidecar for Tauri externalBin
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "ministr-app/src-tauri/binaries" | Out-Null
+          Copy-Item -Force "target/release/ministr.exe" "ministr-app/src-tauri/binaries/ministr-cli-x86_64-pc-windows-msvc.exe"
+
+      # NSIS only for v0 — MSI needs WiX and is enterprise-flavoured;
+      # we can layer it on later without breaking anyone.
+      - name: Build Tauri app + NSIS installer
+        working-directory: ministr-app
+        run: pnpm tauri build --bundles nsis
+
+      - name: Stage release assets
+        shell: pwsh
+        run: |
+          $version = (Get-Content ministr-app/src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $src = "target/release/bundle/nsis/ministr_${version}_x64-setup.exe"
+          if (-not (Test-Path $src)) { throw "expected NSIS bundle at $src — Tauri output layout may have changed" }
+          $dst = "ministr-desktop-x86_64-pc-windows-msvc-setup.exe"
+          Copy-Item -Force $src $dst
+          $hash = (Get-FileHash -Algorithm SHA256 $dst).Hash.ToLower()
+          "$hash  $dst" | Out-File -Encoding ascii "$dst.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ministr-desktop-x86_64-pc-windows-msvc-setup.exe
+          path: |
+            ministr-desktop-x86_64-pc-windows-msvc-setup.exe
+            ministr-desktop-x86_64-pc-windows-msvc-setup.exe.sha256
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, bundle-windows]
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     # Only this job needs write access to create the GitHub Release.
