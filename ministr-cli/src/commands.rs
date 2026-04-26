@@ -1051,7 +1051,10 @@ pub(crate) fn cmd_hooks_test(root: &Path) {
 /// `bin_dir` defaults to the parent of the running `ministr` binary so a
 /// fresh `~/.ministr/bin/ministr setup` after `install.sh` Just Works
 /// without the user having to know the path.
-pub(crate) fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool) -> Result<()> {
+///
+/// `uninstall=true` calls `onpath::remove` instead of `add` — used by the
+/// NSIS uninstaller hook before tearing down the install dir.
+pub(crate) fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool, uninstall: bool) -> Result<()> {
     let bin_dir = if let Some(p) = bin_dir {
         p.to_path_buf()
     } else {
@@ -1063,11 +1066,19 @@ pub(crate) fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool) -> Result<()> {
             .to_path_buf()
     };
 
-    let report = onpath::PathManager::new(&bin_dir, "ministr")
-        .dry_run(dry_run)
-        .add()
-        .into_diagnostic()
-        .wrap_err_with(|| format!("onpath failed to add {} to PATH", bin_dir.display()))?;
+    let manager = onpath::PathManager::new(&bin_dir, "ministr").dry_run(dry_run);
+    let (verb, report) = if uninstall {
+        let r = manager.remove().into_diagnostic().wrap_err_with(|| {
+            format!("onpath failed to remove {} from PATH", bin_dir.display())
+        })?;
+        ("remove", r)
+    } else {
+        let r = manager
+            .add()
+            .into_diagnostic()
+            .wrap_err_with(|| format!("onpath failed to add {} to PATH", bin_dir.display()))?;
+        ("add", r)
+    };
 
     // Report (which shells / files were edited) goes to stdout so callers
     // like install.sh can capture it; user-facing reminders go to stderr.
@@ -1075,7 +1086,7 @@ pub(crate) fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool) -> Result<()> {
 
     if dry_run {
         eprintln!("(dry-run — nothing was written)");
-    } else {
+    } else if verb == "add" {
         eprintln!();
         eprintln!(
             "Open a new shell (or `source` the modified rc file) for the change to take effect."
