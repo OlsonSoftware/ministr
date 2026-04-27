@@ -20,12 +20,14 @@
 //! which bridge frameworks are present in a project.
 
 pub mod detector;
+pub mod ffi;
 pub mod http_route;
 pub mod linker;
 pub mod napi;
 pub mod pyo3;
 pub mod semantic;
 pub mod tauri;
+mod util;
 pub mod wasm_bindgen;
 
 use std::fmt;
@@ -393,7 +395,7 @@ pub fn create_linker_for_kinds(kinds: &[BridgeKind]) -> Option<linker::BridgeLin
                 linker.register(Box::new(wasm_bindgen::WasmBindgenExtractor));
             }
             BridgeKind::HttpRoute => linker.register(Box::new(http_route::HttpRouteExtractor)),
-            BridgeKind::Ffi => {} // No extractor yet
+            BridgeKind::Ffi => linker.register(Box::new(ffi::FfiExtractor)),
         }
     }
     Some(linker)

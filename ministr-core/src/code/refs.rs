@@ -108,7 +108,8 @@ fn extract_imports(
 ///
 /// Dispatches to language-specific extractors based on the `language` name.
 /// Supported languages: `"rust"`, `"python"`, `"javascript"`, `"typescript"`,
-/// `"tsx"`, `"go"`. For unrecognized languages, returns an empty vec.
+/// `"tsx"`, `"go"`, `"c"`, `"cpp"`. For unrecognized languages, returns an
+/// empty vec.
 ///
 /// Returns unresolved references that must be matched against the symbol
 /// table to produce `SymbolRefRecord` values.
@@ -119,6 +120,7 @@ pub fn extract_refs(tree: &tree_sitter::Tree, source: &[u8], language: &str) -> 
         "python" => extract_refs_python(tree, source),
         "javascript" | "typescript" | "tsx" => extract_refs_js_ts(tree, source),
         "go" => extract_refs_go(tree, source),
+        "c" | "cpp" => extract_refs_c_cpp(tree, source),
         _ => Vec::new(),
     }
 }
@@ -987,6 +989,51 @@ fn extract_go_package_name(node: &tree_sitter::Node<'_>, source: &[u8]) -> Optio
     Some(name.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// C / C++
+// ---------------------------------------------------------------------------
+
+/// Extract `#include` references from C / C++ source.
+///
+/// Walks the tree recursively (includes can sit inside `preproc_ifdef`
+/// header guards or `extern "C"` linkage_specification blocks) looking for
+/// `preproc_include` nodes. The reference target is the include path with
+/// brackets/quotes stripped — e.g. `<stdio.h>` → `stdio.h`,
+/// `"foo/bar.h"` → `foo/bar.h`.
+fn extract_refs_c_cpp(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    let mut refs = Vec::new();
+    walk_c_includes(&tree.root_node(), source, &mut refs);
+    refs
+}
+
+fn walk_c_includes(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "preproc_include" {
+            if let Some(path) = extract_c_include_path(&child, source) {
+                refs.push(import_ref(path, node_line(&child)));
+            }
+        } else {
+            // Recurse into preproc guards, linkage_specification, namespaces, etc.
+            walk_c_includes(&child, source, refs);
+        }
+    }
+}
+
+fn extract_c_include_path(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
+    let path_node = node.child_by_field_name("path")?;
+    let raw = path_node.utf8_text(source).ok()?.trim();
+    let stripped = raw
+        .strip_prefix('<')
+        .and_then(|s| s.strip_suffix('>'))
+        .or_else(|| raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')))?;
+    if stripped.is_empty() {
+        None
+    } else {
+        Some(stripped.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1486,6 +1533,75 @@ fn process(config: Config) {}
             assert!(names.contains(&"fmt"));
             assert!(names.contains(&"os"));
             assert!(names.contains(&"filepath"));
+        }
+    }
+
+    // --- C / C++ #include extraction ---
+
+    #[cfg(feature = "lang-c")]
+    mod c_tests {
+        use super::*;
+
+        fn parse_c(source: &str) -> Vec<RawRef> {
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&tree_sitter_c::LANGUAGE.into())
+                .unwrap();
+            let tree = parser.parse(source.as_bytes(), None).unwrap();
+            extract_refs(&tree, source.as_bytes(), "c")
+        }
+
+        #[test]
+        fn system_include() {
+            let refs = parse_c("#include <stdio.h>\n");
+            assert_eq!(refs.len(), 1);
+            assert_eq!(refs[0].target_name, "stdio.h");
+            assert_eq!(refs[0].kind, RefKind::Imports);
+        }
+
+        #[test]
+        fn quoted_include() {
+            let refs = parse_c("#include \"local.h\"\n");
+            assert_eq!(refs.len(), 1);
+            assert_eq!(refs[0].target_name, "local.h");
+        }
+
+        #[test]
+        fn nested_path_include() {
+            let refs = parse_c("#include \"sub/dir/foo.h\"\n");
+            assert_eq!(refs.len(), 1);
+            assert_eq!(refs[0].target_name, "sub/dir/foo.h");
+        }
+
+        #[test]
+        fn includes_inside_header_guard() {
+            let refs = parse_c(
+                "#ifndef HELLO_H\n#define HELLO_H\n#include <stdio.h>\n#include \"foo.h\"\n#endif\n",
+            );
+            let names: Vec<&str> = refs.iter().map(|r| r.target_name.as_str()).collect();
+            assert!(names.contains(&"stdio.h"), "got: {names:?}");
+            assert!(names.contains(&"foo.h"), "got: {names:?}");
+        }
+    }
+
+    #[cfg(feature = "lang-cpp")]
+    mod cpp_tests {
+        use super::*;
+
+        fn parse_cpp(source: &str) -> Vec<RawRef> {
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&tree_sitter_cpp::LANGUAGE.into())
+                .unwrap();
+            let tree = parser.parse(source.as_bytes(), None).unwrap();
+            extract_refs(&tree, source.as_bytes(), "cpp")
+        }
+
+        #[test]
+        fn extern_c_block_includes() {
+            let refs = parse_cpp("extern \"C\" {\n#include <string.h>\n}\n");
+            assert_eq!(refs.len(), 1);
+            assert_eq!(refs[0].target_name, "string.h");
         }
     }
 
