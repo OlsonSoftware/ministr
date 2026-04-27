@@ -129,6 +129,25 @@ impl MinistrServer {
         }
     }
 
+    /// Fork this server for a new MCP connection.
+    ///
+    /// Clones every Arc-shared field (registry, prefetch, storage, peer,
+    /// etc.) so the new server observes the same daemon state, but assigns
+    /// a fresh `active_session_id`. Without this, two MCP clients hitting
+    /// the same primary's HTTP listener would share one session shadow —
+    /// the parent's deduplication state would silently filter content from
+    /// the subagent.
+    ///
+    /// Stays sync because rmcp's service factory is sync and the registry
+    /// uses `tokio::sync::Mutex`. The fresh session is registered lazily
+    /// on the first tool call via [`Self::ensure_session_mut`].
+    #[must_use]
+    pub fn fork_for_new_session(&self) -> Self {
+        let mut forked = self.clone();
+        forked.active_session_id = uuid_v4();
+        forked
+    }
+
     /// Get a clone of the ingestion progress tracker for use by background tasks.
     #[must_use]
     pub fn ingestion_progress_arc(&self) -> Arc<IngestionProgress> {

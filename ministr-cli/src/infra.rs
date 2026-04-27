@@ -330,7 +330,12 @@ pub(crate) fn spawn_http_listener(server: ministr_mcp::server::MinistrServer, po
     };
 
     tokio::spawn(async move {
-        let server_factory = move || Ok(server.clone());
+        // Each new MCP HTTP session gets a forked server with a fresh
+        // `active_session_id`. Without this, parent and subagent clients
+        // (both Claude Code MCP connections to the same primary) would
+        // share one session shadow — the parent's deduplication state
+        // would silently filter content from the subagent.
+        let server_factory = move || Ok(server.fork_for_new_session());
         let session_manager = Arc::new(LocalSessionManager::default());
         let http_service = StreamableHttpService::new(
             server_factory,

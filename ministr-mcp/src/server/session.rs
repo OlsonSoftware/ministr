@@ -6,12 +6,33 @@
 
 use serde::Serialize;
 
-use ministr_core::session::{BudgetStatus, CompressionTier, PressureLevel};
+use ministr_core::session::{
+    AccessMode, BudgetStatus, CompressionTier, PressureLevel, SessionEntry, SessionRegistry,
+};
 use ministr_core::token::count_tokens;
 use ministr_core::types::{ContentId, Resolution};
 
 use super::MinistrServer;
 use super::types::ToolResponse;
+
+impl MinistrServer {
+    /// Resolve the active session entry, bootstrapping it lazily if missing.
+    ///
+    /// Tool handlers used to call
+    /// `reg.get_session_mut(&self.active_session_id).expect("active session exists")`,
+    /// which assumed the session was eagerly registered at server
+    /// construction. After [`Self::fork_for_new_session`] (which runs
+    /// inside the sync rmcp factory closure and so cannot lock the
+    /// async-mutex'd registry), the session id exists on the server but
+    /// no entry has been inserted yet. This helper bridges that gap by
+    /// using `get_or_create`, which is idempotent for the existing case.
+    pub(super) fn ensure_session_mut<'a>(
+        &self,
+        reg: &'a mut SessionRegistry,
+    ) -> &'a mut SessionEntry {
+        reg.get_or_create(&self.active_session_id, None, AccessMode::ReadWrite)
+    }
+}
 
 impl MinistrServer {
     /// Record a section delivery in the session shadow and budget tracker.
@@ -30,9 +51,7 @@ impl MinistrServer {
         let token_count = count_tokens(text);
         let content_id = ContentId(section_id.to_string());
         let mut reg = self.registry.lock().await;
-        let entry = reg
-            .get_session_mut(&self.active_session_id)
-            .expect("active session exists");
+        let entry = self.ensure_session_mut(&mut reg);
         let turn = entry.session.current_turn() + 1;
         entry.session.record_delivery(
             &content_id,
@@ -101,9 +120,7 @@ impl MinistrServer {
         budget_status: BudgetStatus,
     ) -> ToolResponse<T> {
         let mut reg = self.registry.lock().await;
-        let entry = reg
-            .get_session_mut(&self.active_session_id)
-            .expect("active session exists");
+        let entry = self.ensure_session_mut(&mut reg);
         let alerts = entry.session.drain_alerts();
 
         // Compute eviction recommendations when under pressure
