@@ -234,9 +234,7 @@ pub fn spawn_refresh_loop(handle: AppHandle, state: AppState) {
             // user can spot subagent activity without opening the
             // dashboard. Otherwise keep the line compact.
             let session_part = if subagent_count > 0 {
-                format!(
-                    "{total_sessions} sessions ({parent_count} parent · {subagent_count} sub)"
-                )
+                format!("{total_sessions} sessions ({parent_count} parent · {subagent_count} sub)")
             } else {
                 format!("{total_sessions} sessions")
             };

@@ -43,7 +43,12 @@ impl MinistrServer {
             if let Some(parent) = self.parent_session_id_hint.as_deref() {
                 entry.parent_session_id = Some(SessionId::from(parent.to_string()));
             }
-            if let Some(name) = self.client_name_hint.try_lock().ok().and_then(|g| g.clone()) {
+            if let Some(name) = self
+                .client_name_hint
+                .try_lock()
+                .ok()
+                .and_then(|g| g.clone())
+            {
                 entry.client_name = Some(name);
             }
         }
