@@ -1,14 +1,27 @@
+import { type Tone, toneBgClass } from "../../lib/status";
 import { cn } from "../../lib/utils";
 
 interface ProgressProps {
   value: number; // 0-100
   className?: string;
-  /** Show the value as a dim track + accent fill with a subtle glow. */
+  /** Color of the fill. Defaults to `accent`. Pass `warning`/`danger`
+   *  for threshold-state bars; only those tones get the glow. */
+  tone?: Tone;
+  /** Force a glow even on the default tone. Reserve for moments where
+   *  you actually want to draw the eye (e.g. a critical-pressure
+   *  indicator). The bar is solid otherwise so idle progress doesn't
+   *  scream for attention. */
   glow?: boolean;
 }
 
-export function Progress({ value, className, glow = false }: ProgressProps) {
+export function Progress({
+  value,
+  className,
+  tone = "accent",
+  glow = false,
+}: ProgressProps) {
   const pct = Math.min(100, Math.max(0, value));
+  const showGlow = glow || tone === "warning" || tone === "danger";
   return (
     <div
       className={cn(
@@ -19,9 +32,8 @@ export function Progress({ value, className, glow = false }: ProgressProps) {
       <div
         className={cn(
           "h-full rounded-full transition-all duration-300 ease-out",
-          "bg-gradient-to-r from-accent to-[color-mix(in_srgb,var(--color-accent)_60%,#c4b5fd)]",
-          glow &&
-            "shadow-[0_0_8px_var(--color-accent-ring)]",
+          toneBgClass(tone),
+          showGlow && "shadow-[0_0_8px_var(--color-accent-ring)]",
         )}
         style={{ width: `${pct}%` }}
       />

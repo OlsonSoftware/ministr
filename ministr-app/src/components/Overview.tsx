@@ -14,6 +14,7 @@ import {
   Eye,
 } from "lucide-react";
 import type {
+  CorpusInfo,
   DaemonStatus,
   SessionDetail,
   IngestionProgressInfo,
@@ -25,11 +26,19 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { BudgetRing } from "./ui/budget-ring";
 import { CorpusChip } from "./ui/corpus-chip";
+import { EmptyState } from "./ui/empty-state";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
 import { ActivityFeed, computeHitRateBuckets } from "./ui/activity-feed";
 import { CoherenceFeed } from "./ui/coherence-feed";
 import { cn } from "../lib/utils";
+import { corpusLabelById } from "../lib/corpus";
+
+/// Cap on the Live turn stream preview. Past this we render an
+/// overflow link rather than re-rendering every session — the full
+/// table lives in SessionDashboard. Picked so the stream stays
+/// glanceable without competing with the side panels for height.
+const OVERVIEW_STREAM_LIMIT = 3;
 
 interface OverviewProps {
   status: DaemonStatus;
@@ -136,6 +145,19 @@ export function Overview({
     };
   }, []);
 
+  // Parent/subagent breakdown for the page subtitle and live-stream
+  // header. A "subagent" is any session with a `parent_session_id`;
+  // a "parent" is any session without one.
+  const lineage = useMemo(() => {
+    let parents = 0;
+    let subagents = 0;
+    for (const s of sessions) {
+      if (s.parent_session_id) subagents++;
+      else parents++;
+    }
+    return { parents, subagents };
+  }, [sessions]);
+
   // Vitals aggregates
   const vitals = useMemo(() => {
     const sessionCount = sessions.length;
@@ -207,7 +229,10 @@ export function Overview({
           <p className="text-xs text-text-dim mt-0.5">
             Live telemetry for the ministr context cache —{" "}
             <span className="font-mono">
-              {status.corpora.length} corpora · {vitals.sessionCount} sessions
+              {status.corpora.length} corpora ·{" "}
+              {lineage.subagents > 0
+                ? `${vitals.sessionCount} sessions (${lineage.parents} parent · ${lineage.subagents} sub)`
+                : `${vitals.sessionCount} sessions`}
             </span>
           </p>
         </div>
@@ -300,7 +325,11 @@ export function Overview({
           {activeIngestion.length > 0 && (
             <div className="mt-3 space-y-1.5">
               {activeIngestion.slice(0, 2).map((p) => (
-                <IngestionTicker key={p.corpus_id} progress={p} />
+                <IngestionTicker
+                  key={p.corpus_id}
+                  progress={p}
+                  corpora={status.corpora}
+                />
               ))}
             </div>
           )}
@@ -362,7 +391,7 @@ export function Overview({
               Live turn stream
               {sessions.length > 0 && (
                 <span className="inline-flex items-center gap-1 ml-2 text-[10px] text-accent normal-case font-sans font-medium">
-                  <StatusDot tone="accent" pulse />
+                  <StatusDot tone="accent" pulse="live" />
                   streaming
                 </span>
               )}
@@ -376,31 +405,36 @@ export function Overview({
           </div>
 
           {sessions.length === 0 ? (
-            <Card className="flex flex-col items-center gap-3 py-10 text-center">
-              <div className="grid h-12 w-12 place-items-center rounded-xl bg-surface-overlay text-text-dim">
-                <Radio className="h-5 w-5" />
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-text">
-                  Nothing streaming yet
-                </p>
-                <p className="max-w-sm text-xs text-text-dim">
+            <EmptyState
+              icon={Radio}
+              title="Nothing streaming yet"
+              hint={
+                <>
                   Connect Claude Code, Cursor, or any MCP client pointed at{" "}
-                  <span className="font-mono">~/.ministr/ministrd.sock</span> — tool
-                  calls will stream here in real time.
-                </p>
-              </div>
-            </Card>
+                  <span className="font-mono">~/.ministr/ministrd.sock</span> —
+                  tool calls will stream here in real time.
+                </>
+              }
+            />
           ) : (
             <div className="space-y-2">
-              {sessions.map((s) => (
+              {sessions.slice(0, OVERVIEW_STREAM_LIMIT).map((s) => (
                 <TurnBlock
                   key={s.session_id}
                   session={s}
+                  corpora={status.corpora}
                   fresh={freshSessions.has(s.session_id)}
                   onClick={onOpenSessions}
                 />
               ))}
+              {sessions.length > OVERVIEW_STREAM_LIMIT && (
+                <button
+                  onClick={onOpenSessions}
+                  className="w-full rounded-xl border border-dashed border-border/50 bg-surface-raised/30 px-3 py-2.5 text-[11px] text-text-dim hover:text-text hover:border-border-hover cursor-pointer transition-colors"
+                >
+                  + {sessions.length - OVERVIEW_STREAM_LIMIT} more in dashboard →
+                </button>
+              )}
             </div>
           )}
         </section>
@@ -413,7 +447,7 @@ export function Overview({
             right={
               activity.length > 0 ? (
                 <span className="inline-flex items-center gap-1 text-[10px] text-accent font-medium">
-                  <StatusDot tone="accent" pulse />
+                  <StatusDot tone="accent" pulse="live" />
                   live
                 </span>
               ) : undefined
@@ -432,7 +466,7 @@ export function Overview({
             right={
               coherence.length > 0 ? (
                 <span className="inline-flex items-center gap-1 text-[10px] text-success font-medium">
-                  <StatusDot tone="success" pulse />
+                  <StatusDot tone="success" pulse="live" />
                   watching
                 </span>
               ) : undefined
@@ -577,12 +611,18 @@ function StatCell({ label, value }: { label: string; value: number }) {
   );
 }
 
-function IngestionTicker({ progress }: { progress: IngestionProgressInfo }) {
+function IngestionTicker({
+  progress,
+  corpora,
+}: {
+  progress: IngestionProgressInfo;
+  corpora: readonly CorpusInfo[];
+}) {
   const pct =
     progress.files_total > 0
       ? (progress.files_done / progress.files_total) * 100
       : 0;
-  const label = progress.corpus_id.slice(0, 12);
+  const label = corpusLabelById(corpora, progress.corpus_id);
   return (
     <div className="text-[10px] font-mono">
       <div className="flex items-center justify-between">

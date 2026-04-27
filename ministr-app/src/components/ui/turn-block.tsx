@@ -5,12 +5,18 @@ import {
   TrendingDown,
   AlertTriangle,
 } from "lucide-react";
-import type { SessionDetail } from "../../lib/types";
+import type { CorpusInfo, SessionDetail } from "../../lib/types";
+import { corpusLabelById } from "../../lib/corpus";
+import { pressureTone, toneTextClass } from "../../lib/status";
 import { cn } from "../../lib/utils";
+import { MetricTile } from "./metric-tile";
 import { StatusDot } from "./status-dot";
 
 interface TurnBlockProps {
   session: SessionDetail;
+  /** Optional corpora list so the footer can render the corpus's
+   *  human-readable name instead of its raw `multi-…` id. */
+  corpora?: readonly CorpusInfo[] | null;
   /** True if this session just ticked a new turn (drives the flash). */
   fresh?: boolean;
   onClick?: () => void;
@@ -23,23 +29,9 @@ function formatTokens(n: number): string {
   return n.toString();
 }
 
-export function TurnBlock({ session, fresh, onClick, className }: TurnBlockProps) {
-  const pressureTone = {
-    none: "muted",
-    low: "success",
-    medium: "accent",
-    high: "warning",
-    critical: "danger",
-  }[session.pressure_level] as "muted" | "success" | "accent" | "warning" | "danger";
-
-  const pressureColor = {
-    none: "text-text-dim",
-    low: "text-success",
-    medium: "text-accent",
-    high: "text-warning",
-    critical: "text-danger",
-  }[session.pressure_level];
-
+export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnBlockProps) {
+  const tone = pressureTone(session.pressure_level);
+  const pressureColor = toneTextClass(tone);
   const utilPct = (session.utilization * 100).toFixed(0);
   const sessionShort = session.session_id.slice(0, 8);
 
@@ -55,7 +47,7 @@ export function TurnBlock({ session, fresh, onClick, className }: TurnBlockProps
     >
       {/* Header row: session glyph + id + turn + pressure */}
       <div className="flex items-center gap-2 mb-2">
-        <StatusDot tone={pressureTone} pulse={fresh} size="md" />
+        <StatusDot tone={tone} pulse={fresh ? "live" : "off"} size="md" />
         <span className="font-mono text-[11px] text-text-muted truncate">
           {sessionShort}
         </span>
@@ -63,6 +55,20 @@ export function TurnBlock({ session, fresh, onClick, className }: TurnBlockProps
         <span className="font-mono text-[11px] text-text truncate">
           turn {session.current_turn}
         </span>
+        {session.parent_session_id && (
+          <span
+            className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-surface-overlay/40 px-1.5 py-0.5 text-[10px] font-mono text-text-muted"
+            title={`Subagent of ${session.parent_session_id.slice(0, 8)}`}
+          >
+            <span aria-hidden="true">↳</span>
+            sub
+          </span>
+        )}
+        {session.client_name && (
+          <span className="font-mono text-[10px] text-text-dim truncate max-w-[120px]">
+            {session.client_name}
+          </span>
+        )}
         <div className="flex-1" />
         <span className={cn("font-mono text-[11px] font-semibold uppercase tracking-wider", pressureColor)}>
           {session.pressure_level}
@@ -71,25 +77,17 @@ export function TurnBlock({ session, fresh, onClick, className }: TurnBlockProps
 
       {/* Metrics row: budget gauge inline + delivered + saved + dedup */}
       <div className="grid grid-cols-4 gap-2 text-[11px]">
-        <InlineMetric
-          icon={Gauge}
-          value={`${utilPct}%`}
-          label="budget"
-          tone="text"
-        />
-        <InlineMetric
-          icon={Zap}
-          value={formatTokens(session.tokens_used)}
-          label="tokens"
-          tone="text"
-        />
-        <InlineMetric
+        <MetricTile variant="compact" icon={Gauge} value={`${utilPct}%`} label="budget" />
+        <MetricTile variant="compact" icon={Zap} value={formatTokens(session.tokens_used)} label="tokens" />
+        <MetricTile
+          variant="compact"
           icon={TrendingDown}
           value={formatTokens(session.total_tokens_saved)}
           label="saved"
           tone="success"
         />
-        <InlineMetric
+        <MetricTile
+          variant="compact"
           icon={Copy}
           value={session.dedup_hits.toString()}
           label="dedup"
@@ -104,19 +102,19 @@ export function TurnBlock({ session, fresh, onClick, className }: TurnBlockProps
             "h-full rounded-full transition-all duration-400",
             session.pressure_level === "critical" && "bg-danger",
             session.pressure_level === "high" && "bg-warning",
-            session.pressure_level === "medium" && "bg-accent",
-            (session.pressure_level === "low" || session.pressure_level === "none") &&
-              "bg-gradient-to-r from-accent to-[color-mix(in_srgb,var(--color-accent)_60%,#c4b5fd)]",
+            (session.pressure_level === "medium"
+              || session.pressure_level === "low"
+              || session.pressure_level === "none") && "bg-accent",
           )}
           style={{ width: `${utilPct}%` }}
         />
       </div>
 
-      {/* Footer: corpus id */}
+      {/* Footer: corpus name (resolved from id via the parent's corpora list). */}
       <div className="mt-2 flex items-center gap-1.5 text-[10px] font-mono text-text-dim truncate">
         <span>corpus</span>
         <span className="text-text-muted truncate">
-          {session.corpus_id}
+          {corpusLabelById(corpora, session.corpus_id)}
         </span>
         {session.pressure_level === "critical" && (
           <span className="inline-flex items-center gap-1 ml-auto text-danger">
@@ -129,33 +127,3 @@ export function TurnBlock({ session, fresh, onClick, className }: TurnBlockProps
   );
 }
 
-function InlineMetric({
-  icon: Icon,
-  value,
-  label,
-  tone,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  value: string;
-  label: string;
-  tone: "text" | "success" | "accent";
-}) {
-  return (
-    <div className="flex flex-col">
-      <div
-        className={cn(
-          "flex items-center gap-1 font-mono font-semibold tabular-nums",
-          tone === "success" && "text-success",
-          tone === "accent" && "text-accent",
-          tone === "text" && "text-text",
-        )}
-      >
-        <Icon className="h-3 w-3 opacity-70" />
-        <span>{value}</span>
-      </div>
-      <span className="text-[9px] uppercase tracking-wider text-text-dim mt-0.5">
-        {label}
-      </span>
-    </div>
-  );
-}

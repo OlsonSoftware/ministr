@@ -38,11 +38,31 @@ pub struct RegisterCorpusResponse {
     pub indexing_started: bool,
 }
 
+/// Request to update an existing corpus's path set without dropping its
+/// in-memory session state.
+///
+/// The new path set must canonicalise to the same `corpus_id` as the
+/// existing corpus — identity is derived from canonical paths, so a
+/// different canonical id means the caller is changing identity, not
+/// just the path expression. In that case the daemon returns 400 and
+/// the client should `unregister` + `register` instead.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct UpdateCorpusPathsRequest {
+    /// The new path set for the corpus.
+    pub paths: Vec<String>,
+}
+
 /// Summary information about a registered corpus.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CorpusInfo {
     /// Corpus identifier.
     pub id: String,
+    /// Human-readable label derived from the path set's longest common
+    /// ancestor (typically the directory containing `.ministr.toml`).
+    /// Computed once at registration; clients display this instead of
+    /// rolling their own basename heuristic.
+    #[serde(default)]
+    pub display_name: String,
     /// Source paths that make up this corpus.
     pub paths: Vec<String>,
     /// Current indexing status.

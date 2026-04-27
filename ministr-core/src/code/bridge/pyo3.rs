@@ -9,6 +9,7 @@
 //! Implements [`BridgeExtractor`] and can be registered with a
 //! [`BridgeLinker`](super::linker::BridgeLinker).
 
+use super::util::{has_rust_attribute_before, node_line, node_text, rust_item_name};
 use super::{BridgeEndpoint, BridgeExtractor, BridgeKind, ConfidenceLevel, EndpointRole};
 
 // ---------------------------------------------------------------------------
@@ -98,11 +99,10 @@ fn walk_rust_pyo3_items(
 
         match kind {
             "function_item" | "function_definition" => {
-                if has_attribute_before(&node, source, PYO3_FUNCTION_ATTRS)
+                if has_rust_attribute_before(&node, source, PYO3_FUNCTION_ATTRS)
                     && let Some(name) = rust_item_name(&node, source)
                 {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let line = node.start_position().row as u32 + 1;
+                    let line = node_line(&node);
                     endpoints.push(BridgeEndpoint {
                         binding_key: name.clone(),
                         kind: BridgeKind::PyO3,
@@ -116,11 +116,10 @@ fn walk_rust_pyo3_items(
                 }
             }
             "struct_item" | "enum_item" => {
-                if has_attribute_before(&node, source, PYO3_CLASS_ATTRS)
+                if has_rust_attribute_before(&node, source, PYO3_CLASS_ATTRS)
                     && let Some(name) = rust_item_name(&node, source)
                 {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let line = node.start_position().row as u32 + 1;
+                    let line = node_line(&node);
                     endpoints.push(BridgeEndpoint {
                         binding_key: name.clone(),
                         kind: BridgeKind::PyO3,
@@ -134,7 +133,7 @@ fn walk_rust_pyo3_items(
                 }
             }
             // #[pymethods] impl blocks — extract method names.
-            "impl_item" if has_attribute_before(&node, source, PYO3_METHODS_ATTRS) => {
+            "impl_item" if has_rust_attribute_before(&node, source, PYO3_METHODS_ATTRS) => {
                 walk_pymethods_impl(cursor, source, file_path, endpoints);
             }
             _ => {}
@@ -169,8 +168,7 @@ fn walk_pymethods_impl(
         if (node.kind() == "function_item" || node.kind() == "function_definition")
             && let Some(name) = rust_item_name(&node, source)
         {
-            #[allow(clippy::cast_possible_truncation)]
-            let line = node.start_position().row as u32 + 1;
+            let line = node_line(&node);
             endpoints.push(BridgeEndpoint {
                 binding_key: name.clone(),
                 kind: BridgeKind::PyO3,
@@ -192,28 +190,6 @@ fn walk_pymethods_impl(
         }
     }
     cursor.goto_parent();
-}
-
-/// Check whether preceding siblings contain any of the specified attributes.
-fn has_attribute_before(node: &tree_sitter::Node<'_>, source: &[u8], attr_names: &[&str]) -> bool {
-    let mut prev = node.prev_sibling();
-    while let Some(sibling) = prev {
-        if sibling.kind() == "attribute_item" {
-            let text = node_text(&sibling, source);
-            for attr in attr_names {
-                if text.contains(attr) {
-                    return true;
-                }
-            }
-        } else if sibling.kind() != "attribute_item"
-            && sibling.kind() != "line_comment"
-            && sibling.kind() != "block_comment"
-        {
-            break;
-        }
-        prev = sibling.prev_sibling();
-    }
-    false
 }
 
 // ---------------------------------------------------------------------------
@@ -323,38 +299,6 @@ fn collect_python_import_names(
             break;
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-/// Extract UTF-8 text from a tree-sitter node.
-fn node_text(node: &tree_sitter::Node<'_>, source: &[u8]) -> String {
-    node.utf8_text(source).unwrap_or("").to_string()
-}
-
-/// Extract the name identifier from a function, struct, or enum item.
-fn rust_item_name(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "identifier"
-            && (cursor.field_name() == Some("name") || cursor.field_name() == Some("type"))
-        {
-            return Some(node_text(&child, source));
-        }
-        if child.kind() == "type_identifier" && cursor.field_name() == Some("name") {
-            return Some(node_text(&child, source));
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    None
 }
 
 // ---------------------------------------------------------------------------

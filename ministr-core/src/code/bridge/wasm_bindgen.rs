@@ -8,6 +8,9 @@
 //! Implements [`BridgeExtractor`] and can be registered with a
 //! [`BridgeLinker`](super::linker::BridgeLinker).
 
+use super::util::{
+    has_rust_attribute_before, import_module_path, import_specifier_name, node_line, rust_item_name,
+};
 use super::{BridgeEndpoint, BridgeExtractor, BridgeKind, ConfidenceLevel, EndpointRole};
 
 // ---------------------------------------------------------------------------
@@ -90,7 +93,7 @@ fn walk_rust_wasm_items(
 
         match kind {
             "function_item" | "function_definition" | "struct_item" => {
-                if has_wasm_bindgen_attribute_before(&node, source)
+                if has_rust_attribute_before(&node, source, WASM_BINDGEN_ATTRS)
                     && let Some(name) = rust_item_name(&node, source)
                 {
                     #[allow(clippy::cast_possible_truncation)]
@@ -108,7 +111,7 @@ fn walk_rust_wasm_items(
                 }
             }
             // Walk into #[wasm_bindgen] impl blocks and extract their methods.
-            "impl_item" if has_wasm_bindgen_attribute_before(&node, source) => {
+            "impl_item" if has_rust_attribute_before(&node, source, WASM_BINDGEN_ATTRS) => {
                 walk_wasm_impl_methods(cursor, source, file_path, endpoints);
             }
             _ => {}
@@ -138,11 +141,10 @@ fn walk_wasm_impl_methods(
     loop {
         let node = cursor.node();
         if (node.kind() == "function_item" || node.kind() == "function_definition")
-            && has_wasm_bindgen_attribute_before(&node, source)
+            && has_rust_attribute_before(&node, source, WASM_BINDGEN_ATTRS)
             && let Some(name) = rust_item_name(&node, source)
         {
-            #[allow(clippy::cast_possible_truncation)]
-            let line = node.start_position().row as u32 + 1;
+            let line = node_line(&node);
             endpoints.push(BridgeEndpoint {
                 binding_key: name.clone(),
                 kind: BridgeKind::WasmBindgen,
@@ -166,25 +168,8 @@ fn walk_wasm_impl_methods(
     cursor.goto_parent();
 }
 
-/// Check whether preceding siblings contain a `#[wasm_bindgen]` attribute.
-fn has_wasm_bindgen_attribute_before(node: &tree_sitter::Node<'_>, source: &[u8]) -> bool {
-    let mut prev = node.prev_sibling();
-    while let Some(sibling) = prev {
-        if sibling.kind() == "attribute_item" {
-            let text = node_text(&sibling, source);
-            if text.contains("wasm_bindgen") {
-                return true;
-            }
-        } else if sibling.kind() != "attribute_item"
-            && sibling.kind() != "line_comment"
-            && sibling.kind() != "block_comment"
-        {
-            break;
-        }
-        prev = sibling.prev_sibling();
-    }
-    false
-}
+/// Substrings checked against `attribute_item` text to detect `#[wasm_bindgen]`.
+const WASM_BINDGEN_ATTRS: &[&str] = &["wasm_bindgen"];
 
 // ---------------------------------------------------------------------------
 // JS/TS import extraction
@@ -242,24 +227,6 @@ fn is_wasm_module_path(path: &str) -> bool {
         .any(|indicator| path.contains(indicator))
 }
 
-/// Extract the module specifier string from an import statement.
-fn import_module_path(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "string" || child.kind() == "string_literal" {
-            return Some(strip_quotes(&node_text(&child, source)));
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    None
-}
-
 /// Collect named import specifiers from an import statement.
 fn collect_import_names(
     node: &tree_sitter::Node<'_>,
@@ -285,8 +252,7 @@ fn collect_import_names_recursive(
         if node.kind() == "import_specifier"
             && let Some(name) = import_specifier_name(&node, source)
         {
-            #[allow(clippy::cast_possible_truncation)]
-            let line = node.start_position().row as u32 + 1;
+            let line = node_line(&node);
             endpoints.push(BridgeEndpoint {
                 binding_key: name.clone(),
                 kind: BridgeKind::WasmBindgen,
@@ -307,69 +273,6 @@ fn collect_import_names_recursive(
         if !cursor.goto_next_sibling() {
             break;
         }
-    }
-}
-
-/// Extract the name from an import specifier node.
-fn import_specifier_name(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "identifier" {
-            return Some(node_text(&child, source));
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    None
-}
-
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-/// Extract UTF-8 text from a tree-sitter node.
-fn node_text(node: &tree_sitter::Node<'_>, source: &[u8]) -> String {
-    node.utf8_text(source).unwrap_or("").to_string()
-}
-
-/// Extract the name identifier from a function or struct item.
-fn rust_item_name(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "identifier"
-            && (cursor.field_name() == Some("name") || cursor.field_name() == Some("type"))
-        {
-            return Some(node_text(&child, source));
-        }
-        if child.kind() == "type_identifier" && cursor.field_name() == Some("name") {
-            return Some(node_text(&child, source));
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    None
-}
-
-/// Strip surrounding quotes from a string literal.
-fn strip_quotes(s: &str) -> String {
-    let s = s.trim();
-    if (s.starts_with('"') && s.ends_with('"'))
-        || (s.starts_with('\'') && s.ends_with('\''))
-        || (s.starts_with('`') && s.ends_with('`'))
-    {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
     }
 }
 

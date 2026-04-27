@@ -25,6 +25,19 @@ use super::NegotiatedExtensions;
 use super::helpers::{build_instructions, has_code_files_in_dir, uuid_v4};
 use crate::task::McpTaskManager;
 
+/// Read `MINISTR_PARENT_SESSION_ID` from the environment.
+///
+/// Set by a parent agent when spawning a subagent's `ministr serve`
+/// process so the daemon can render the resulting session as nested
+/// under its parent (rather than a flat sibling). Returns `None` when
+/// unset or empty.
+fn read_parent_session_env() -> Option<String> {
+    std::env::var("MINISTR_PARENT_SESSION_ID")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 impl MinistrServer {
     /// Create a new ministr MCP server instance backed by the given query service.
     ///
@@ -62,6 +75,8 @@ impl MinistrServer {
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
             custom_instructions: None,
+            parent_session_id_hint: read_parent_session_env(),
+            client_name_hint: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -126,7 +141,28 @@ impl MinistrServer {
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
             custom_instructions: None,
+            parent_session_id_hint: read_parent_session_env(),
+            client_name_hint: Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    /// Fork this server for a new MCP connection.
+    ///
+    /// Clones every Arc-shared field (registry, prefetch, storage, peer,
+    /// etc.) so the new server observes the same daemon state, but assigns
+    /// a fresh `active_session_id`. Without this, two MCP clients hitting
+    /// the same primary's HTTP listener would share one session shadow —
+    /// the parent's deduplication state would silently filter content from
+    /// the subagent.
+    ///
+    /// Stays sync because rmcp's service factory is sync and the registry
+    /// uses `tokio::sync::Mutex`. The fresh session is registered lazily
+    /// on the first tool call via [`Self::ensure_session_mut`].
+    #[must_use]
+    pub fn fork_for_new_session(&self) -> Self {
+        let mut forked = self.clone();
+        forked.active_session_id = uuid_v4();
+        forked
     }
 
     /// Get a clone of the ingestion progress tracker for use by background tasks.

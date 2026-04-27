@@ -603,6 +603,226 @@ fn internal_helper() {}
         );
     }
 
+    // === C / C++ integration tests ===
+    //
+    // These mirror the parse_python_source / parse_typescript_source style
+    // and assert that real-world C/C++ shapes (header forward decls, in-class
+    // methods, namespaces, templates, out-of-class definitions, unions)
+    // produce non-empty symbol sections at the parser/code.rs level.
+
+    #[cfg(feature = "lang-c")]
+    #[test]
+    fn parse_c_source() {
+        let parser = CodeParser::new();
+        let source = "// Greet someone.\nint hello(const char *name) {\n    return 0;\n}\n\nstruct Greeter {\n    char *name;\n};\n";
+        let tree = parser.parse(Path::new("hello.c"), source).unwrap();
+        let root = &tree.sections[0];
+
+        let names: Vec<&str> = root
+            .children
+            .iter()
+            .filter_map(|c| c.heading_path.last().map(String::as_str))
+            .collect();
+        assert!(
+            names.iter().any(|h| h.contains("hello")),
+            "expected hello fn section, got: {names:?}"
+        );
+        assert!(
+            names.iter().any(|h| h.contains("Greeter")),
+            "expected Greeter struct section, got: {names:?}"
+        );
+    }
+
+    #[cfg(feature = "lang-c")]
+    #[test]
+    fn parse_c_header_declarations() {
+        // Header file: only forward declarations + struct decl.
+        // Without `declaration` handling, this produces zero function symbols.
+        let parser = CodeParser::new();
+        let source = "#ifndef HELLO_H\n#define HELLO_H\n\nstruct Greeter;\n\nint hello(const char *name);\nvoid farewell(void);\n\n#endif\n";
+        let tree = parser.parse(Path::new("hello.h"), source).unwrap();
+        let root = &tree.sections[0];
+
+        let names: Vec<&str> = root
+            .children
+            .iter()
+            .filter_map(|c| c.heading_path.last().map(String::as_str))
+            .collect();
+        assert!(
+            names.iter().any(|h| h.contains("hello")),
+            "expected hello declaration, got: {names:?}"
+        );
+        assert!(
+            names.iter().any(|h| h.contains("farewell")),
+            "expected farewell declaration, got: {names:?}"
+        );
+    }
+
+    #[cfg(feature = "lang-c")]
+    #[test]
+    fn parse_c_union() {
+        let parser = CodeParser::new();
+        let source = "union Tagged {\n    int i;\n    float f;\n};\n";
+        let tree = parser.parse(Path::new("tagged.c"), source).unwrap();
+        let root = &tree.sections[0];
+
+        let names: Vec<&str> = root
+            .children
+            .iter()
+            .filter_map(|c| c.heading_path.last().map(String::as_str))
+            .collect();
+        assert!(
+            names.iter().any(|h| h.contains("Tagged")),
+            "expected Tagged union section, got: {names:?}"
+        );
+    }
+
+    #[cfg(feature = "lang-cpp")]
+    #[test]
+    fn parse_cpp_source() {
+        let parser = CodeParser::new();
+        let source = "// A greeting.\nint hello(const char *name) {\n    return 0;\n}\n\nclass Greeter {\npublic:\n    void greet();\n};\n";
+        let tree = parser.parse(Path::new("hello.cpp"), source).unwrap();
+        let root = &tree.sections[0];
+
+        let names: Vec<&str> = root
+            .children
+            .iter()
+            .filter_map(|c| c.heading_path.last().map(String::as_str))
+            .collect();
+        assert!(
+            names.iter().any(|h| h.contains("hello")),
+            "expected hello fn section, got: {names:?}"
+        );
+        assert!(
+            names.iter().any(|h| h.contains("Greeter")),
+            "expected Greeter class section, got: {names:?}"
+        );
+    }
+
+    #[cfg(feature = "lang-cpp")]
+    #[test]
+    fn parse_cpp_class_methods() {
+        // In-class method declarations are field_declaration nodes.
+        // Must extract `greet` and `farewell` as nested members of Greeter.
+        let parser = CodeParser::new();
+        let source = "class Greeter {\npublic:\n    void greet(const char *name);\n    int farewell();\nprivate:\n    int counter;\n};\n";
+        let tree = parser.parse(Path::new("greeter.hpp"), source).unwrap();
+        let root = &tree.sections[0];
+
+        let names: Vec<&str> = root
+            .children
+            .iter()
+            .filter_map(|c| c.heading_path.last().map(String::as_str))
+            .collect();
+        assert!(
+            names.iter().any(|h| h.contains("Greeter")),
+            "expected Greeter class section, got: {names:?}"
+        );
+        assert!(
+            names.iter().any(|h| h.contains("greet")),
+            "expected greet method section, got: {names:?}"
+        );
+        assert!(
+            names.iter().any(|h| h.contains("farewell")),
+            "expected farewell method section, got: {names:?}"
+        );
+    }
+
+    #[cfg(feature = "lang-cpp")]
+    #[test]
+    fn parse_cpp_namespace_members() {
+        let parser = CodeParser::new();
+        let source = "namespace mylib {\n\nint compute(int x) { return x * 2; }\n\nclass Helper {\npublic:\n    void run();\n};\n\n}\n";
+        let tree = parser.parse(Path::new("mylib.cpp"), source).unwrap();
+        let root = &tree.sections[0];
+
+        let names: Vec<&str> = root
+            .children
+            .iter()
+            .filter_map(|c| c.heading_path.last().map(String::as_str))
+            .collect();
+        assert!(
+            names.iter().any(|h| h.contains("mylib")),
+            "expected mylib namespace, got: {names:?}"
+        );
+        assert!(
+            names.iter().any(|h| h.contains("compute")),
+            "expected compute fn inside namespace, got: {names:?}"
+        );
+        assert!(
+            names.iter().any(|h| h.contains("Helper")),
+            "expected Helper class inside namespace, got: {names:?}"
+        );
+    }
+
+    #[cfg(feature = "lang-cpp")]
+    #[test]
+    fn parse_cpp_out_of_class_definition() {
+        // void Foo::bar() {} should preserve the Foo:: qualifier in the symbol name.
+        let parser = CodeParser::new();
+        let source =
+            "class Foo {\npublic:\n    void bar();\n};\n\nvoid Foo::bar() {\n    // body\n}\n";
+        let tree = parser.parse(Path::new("foo.cpp"), source).unwrap();
+        let root = &tree.sections[0];
+
+        let names: Vec<&str> = root
+            .children
+            .iter()
+            .filter_map(|c| c.heading_path.last().map(String::as_str))
+            .collect();
+        assert!(
+            names.iter().any(|h| h.contains("Foo::bar")),
+            "expected qualified Foo::bar definition, got: {names:?}"
+        );
+    }
+
+    #[cfg(feature = "lang-cpp")]
+    #[test]
+    fn parse_cpp_function_template() {
+        let parser = CodeParser::new();
+        let source = "template <typename T>\nT max(T a, T b) {\n    return a > b ? a : b;\n}\n";
+        let tree = parser.parse(Path::new("max.hpp"), source).unwrap();
+        let root = &tree.sections[0];
+
+        let max_section = root
+            .children
+            .iter()
+            .find(|c| c.heading_path.last().is_some_and(|h| h.contains("max")))
+            .unwrap_or_else(|| {
+                let names: Vec<_> = root.children.iter().map(|c| &c.heading_path).collect();
+                panic!("expected max template fn, got: {names:?}");
+            });
+        assert!(
+            max_section
+                .heading_path
+                .last()
+                .unwrap()
+                .contains("function"),
+            "function template should be classified as function, got heading: {:?}",
+            max_section.heading_path
+        );
+    }
+
+    #[cfg(feature = "lang-cpp")]
+    #[test]
+    fn parse_cpp_alias_template() {
+        let parser = CodeParser::new();
+        let source = "template <typename T>\nusing Vec = std::vector<T>;\n";
+        let tree = parser.parse(Path::new("alias.hpp"), source).unwrap();
+        let root = &tree.sections[0];
+
+        let names: Vec<&str> = root
+            .children
+            .iter()
+            .filter_map(|c| c.heading_path.last().map(String::as_str))
+            .collect();
+        assert!(
+            names.iter().any(|h| h.contains("Vec")),
+            "expected Vec alias template, got: {names:?}"
+        );
+    }
+
     #[test]
     fn parse_unknown_extension_produces_fallback() {
         let parser = CodeParser::new();

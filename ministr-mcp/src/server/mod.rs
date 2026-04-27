@@ -206,6 +206,22 @@ pub struct MinistrServer {
     /// Dynamic instructions string, updated by `prune_tools()` to only
     /// mention tools that are actually registered.
     custom_instructions: Option<String>,
+    /// Parent session id captured at startup from
+    /// `MINISTR_PARENT_SESSION_ID`. Stamped onto the
+    /// [`SessionEntry::parent_session_id`] when the session is first
+    /// resolved via [`Self::ensure_session_mut`]. Used by the tray and
+    /// `SessionDashboard` to render subagent rows nested under their
+    /// parent.
+    parent_session_id_hint: Option<String>,
+    /// MCP `clientInfo.name` captured during the `initialize`
+    /// handshake. Stamped onto [`SessionEntry::client_name`] the first
+    /// time a session entry is resolved with the field still empty.
+    ///
+    /// `std::sync::Mutex` (not `tokio::sync::Mutex`) so
+    /// `ensure_session_mut` can read it without yielding inside the
+    /// registry's tokio mutex hold — the lock is brief and never held
+    /// across an `.await`.
+    client_name_hint: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 #[tool_handler]
@@ -270,6 +286,17 @@ impl ServerHandler for MinistrServer {
             "extension negotiation complete"
         );
         *self.negotiated_extensions.lock().await = negotiated;
+
+        // Capture clientInfo.name for the tray / SessionDashboard so the
+        // user can tell e.g. claude-code from claude-subagent from
+        // mcp-inspector apart. Hint is stamped onto the session entry on
+        // first tool call via `ensure_session_mut`.
+        let client_name = request.client_info.name.clone();
+        if !client_name.is_empty()
+            && let Ok(mut guard) = self.client_name_hint.lock()
+        {
+            *guard = Some(client_name);
+        }
 
         // Preserve the default rmcp behavior: store peer info for later access.
         if context.peer.peer_info().is_none() {
@@ -720,9 +747,7 @@ impl MinistrServer {
 
                     // Record delivered content in session and budget
                     let mut reg = self.registry.lock().await;
-                    let entry = reg
-                        .get_session_mut(&self.active_session_id)
-                        .expect("active session exists");
+                    let entry = self.ensure_session_mut(&mut reg);
                     let turn = entry.session.current_turn() + 1;
 
                     // Track query for task-aware salience scoring
@@ -893,9 +918,7 @@ impl MinistrServer {
 
                     // Check deduplication against session shadow
                     let mut reg = self.registry.lock().await;
-                    let entry = reg
-                        .get_session_mut(&self.active_session_id)
-                        .expect("active session exists");
+                    let entry = self.ensure_session_mut(&mut reg);
                     let already_delivered = entry.session.is_delivered(&content_id);
                     let has_changed = entry.session.has_changed(&content_id, &current_hash);
                     let is_re_request = entry.session.is_re_request(&content_id, &current_hash);
@@ -996,9 +1019,7 @@ impl MinistrServer {
 
                     // Record each claim delivery in session and budget
                     let mut reg = self.registry.lock().await;
-                    let entry = reg
-                        .get_session_mut(&self.active_session_id)
-                        .expect("active session exists");
+                    let entry = self.ensure_session_mut(&mut reg);
                     let turn = entry.session.current_turn() + 1;
                     for c in &claims {
                         let token_count = count_tokens(&c.text);
@@ -1077,9 +1098,7 @@ impl MinistrServer {
 
                     // Record each related claim delivery in session and budget
                     let mut reg = self.registry.lock().await;
-                    let entry = reg
-                        .get_session_mut(&self.active_session_id)
-                        .expect("active session exists");
+                    let entry = self.ensure_session_mut(&mut reg);
                     let turn = entry.session.current_turn() + 1;
                     for r in &related {
                         let token_count = count_tokens(&r.text);
@@ -1139,9 +1158,7 @@ impl MinistrServer {
             let mut not_found = Vec::new();
 
             let mut reg = self.registry.lock().await;
-            let entry = reg
-                .get_session_mut(&self.active_session_id)
-                .expect("active session exists");
+            let entry = self.ensure_session_mut(&mut reg);
 
             for id_str in &params.content_ids {
                 let content_id = ContentId(id_str.clone());
@@ -1191,9 +1208,7 @@ impl MinistrServer {
             debug!("ministr_budget request");
 
             let mut reg = self.registry.lock().await;
-            let entry = reg
-                .get_session_mut(&self.active_session_id)
-                .expect("active session exists");
+            let entry = self.ensure_session_mut(&mut reg);
             let prefetch = self.prefetch.lock().await;
 
             let status = entry.budget.budget_status();
@@ -1339,12 +1354,8 @@ impl MinistrServer {
                         0.0
                     };
 
-                    let reg = self.registry.lock().await;
-                    let budget_status = reg
-                        .get_session(&self.active_session_id)
-                        .expect("active session exists")
-                        .budget
-                        .budget_status();
+                    let mut reg = self.registry.lock().await;
+                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
                     drop(reg);
 
                     let compress_resp = CompressResponse {
@@ -1411,12 +1422,8 @@ impl MinistrServer {
                         total_sections, total_claims, offset, returned, "ministr_toc success"
                     );
 
-                    let reg = self.registry.lock().await;
-                    let budget_status = reg
-                        .get_session(&self.active_session_id)
-                        .expect("active session exists")
-                        .budget
-                        .budget_status();
+                    let mut reg = self.registry.lock().await;
+                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
                     drop(reg);
 
                     // Report ingestion status when corpus is empty to help
@@ -1544,12 +1551,8 @@ impl MinistrServer {
                         "ministr_fetch success"
                     );
 
-                    let reg = self.registry.lock().await;
-                    let budget_status = reg
-                        .get_session(&self.active_session_id)
-                        .expect("active session exists")
-                        .budget
-                        .budget_status();
+                    let mut reg = self.registry.lock().await;
+                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
                     drop(reg);
 
                     let response = self
@@ -1802,12 +1805,8 @@ impl MinistrServer {
 
                     debug!(total, offset, returned = paginated.len(), "ministr_symbols success");
 
-                    let reg = self.registry.lock().await;
-                    let budget_status = reg
-                        .get_session(&self.active_session_id)
-                        .expect("active session exists")
-                        .budget
-                        .budget_status();
+                    let mut reg = self.registry.lock().await;
+                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
                     drop(reg);
 
                     let response = self
@@ -1850,9 +1849,7 @@ impl MinistrServer {
                 Ok(def) => {
                     let token_count = count_tokens(&def.source_context);
                     let mut reg = self.registry.lock().await;
-                    let entry = reg
-                        .get_session_mut(&self.active_session_id)
-                        .expect("active session exists");
+                    let entry = self.ensure_session_mut(&mut reg);
                     let _ = entry.budget.record_tokens(&params.symbol_id, token_count);
                     let budget_status = entry.budget.budget_status();
                     drop(reg);
@@ -1914,12 +1911,8 @@ impl MinistrServer {
 
                     debug!(symbol_id = %params.symbol_id, total, offset, returned = paginated.len(), "ministr_references success");
 
-                    let reg = self.registry.lock().await;
-                    let budget_status = reg
-                        .get_session(&self.active_session_id)
-                        .expect("active session exists")
-                        .budget
-                        .budget_status();
+                    let mut reg = self.registry.lock().await;
+                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
                     drop(reg);
 
                     let response = self
@@ -2001,12 +1994,8 @@ impl MinistrServer {
 
                     debug!(total, "ministr_bridge success");
 
-                    let reg = self.registry.lock().await;
-                    let budget_status = reg
-                        .get_session(&self.active_session_id)
-                        .expect("active session exists")
-                        .budget
-                        .budget_status();
+                    let mut reg = self.registry.lock().await;
+                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
                     drop(reg);
 
                     let response = self
@@ -2399,6 +2388,27 @@ mod tests {
         let storage = SqliteStorage::open_in_memory().unwrap();
         let service = Arc::new(QueryService::new(storage, embedder, index));
         MinistrServer::new(service)
+    }
+
+    // --- Session isolation tests (subagent collision fix) ---
+
+    /// Two HTTP-facing forks of the same primary `MinistrServer` MUST get
+    /// distinct session ids. This is the core property that prevents the
+    /// subagent dedup-leak: if Claude Code's parent and subagent both
+    /// reach the same primary daemon's HTTP listener, the registry must
+    /// see them as two separate sessions, not one shared shadow.
+    #[test]
+    fn fork_for_new_session_assigns_distinct_session_ids() {
+        let primary = setup_server_sync();
+        let original_id = primary.active_session_id().to_string();
+        let fork_a = primary.fork_for_new_session();
+        let fork_b = primary.fork_for_new_session();
+
+        assert_ne!(fork_a.active_session_id(), original_id);
+        assert_ne!(fork_b.active_session_id(), original_id);
+        assert_ne!(fork_a.active_session_id(), fork_b.active_session_id());
+        // Forks share the registry Arc so the daemon sees all sessions.
+        assert!(Arc::ptr_eq(&fork_a.registry_arc(), &fork_b.registry_arc()));
     }
 
     // --- ServerInfo tests ---

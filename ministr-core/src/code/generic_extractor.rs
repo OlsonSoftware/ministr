@@ -61,7 +61,15 @@ fn extract_from_node(
     if is_wrapper_node(node_kind) {
         let mut inner_cursor = node.walk();
         for inner in node.children(&mut inner_cursor) {
-            if classify_node_kind(inner.kind()).is_some() {
+            // For wrapper unwrapping, we recurse into any classifiable child,
+            // OR any child that itself is a wrapper / function-decl candidate
+            // (e.g. template_declaration -> alias_declaration, or
+            //  field_declaration_list -> field_declaration).
+            let inner_kind = inner.kind();
+            let recurse = classify_node_kind(inner_kind).is_some()
+                || is_wrapper_node(inner_kind)
+                || is_function_decl_node(&inner);
+            if recurse {
                 // Inherit visibility from the wrapper (e.g. export_statement)
                 let mut inner_symbols = Vec::new();
                 extract_from_node(&inner, source, file_path, module_path, &mut inner_symbols);
@@ -77,6 +85,35 @@ fn extract_from_node(
                 }
                 symbols.extend(inner_symbols);
             }
+        }
+        return;
+    }
+
+    // C/C++: forward function declarations are `declaration` nodes whose
+    // `declarator` field is a function_declarator. In-class member methods
+    // are the same shape but wrapped in `field_declaration`. Both should
+    // produce a Function symbol; pure data declarations are skipped.
+    if (node_kind == "declaration" || node_kind == "field_declaration")
+        && is_function_decl_node(node)
+    {
+        if let Some(name) = extract_c_decl_name(node, source) {
+            let visibility = detect_visibility_generic(node, source);
+            let signature = extract_signature_generic(node, source);
+            let doc_comment = extract_doc_comment_generic(node, source);
+            let annotations = extract_annotations_generic(node, source);
+            let byte_start =
+                doc_comment_start_byte_generic(node, source).unwrap_or(node.start_byte());
+            symbols.push(Symbol {
+                name,
+                kind: ItemKind::Function,
+                visibility,
+                signature,
+                doc_comment,
+                annotations,
+                file_path: file_path.to_string(),
+                byte_range: byte_start..node.end_byte(),
+                module_path: module_path.iter().map(|s| (*s).to_string()).collect(),
+            });
         }
         return;
     }
@@ -111,18 +148,80 @@ fn extract_from_node(
         module_path: module_path.iter().map(|s| (*s).to_string()).collect(),
     });
 
-    // Recurse into class/struct bodies to extract nested types and methods
-    if item_kind == ItemKind::Struct || item_kind == ItemKind::Trait {
+    // Recurse into class/struct bodies to extract nested types and methods.
+    // Module covers C++ namespaces, Java packages, Python module-blocks, etc.
+    if item_kind == ItemKind::Struct
+        || item_kind == ItemKind::Trait
+        || item_kind == ItemKind::Module
+    {
         extract_nested_members(node, source, file_path, module_path, &sym_name, symbols);
     }
 }
 
 /// Whether a node kind is a wrapper that should be unwrapped to find declarations.
+///
+/// `template_declaration` wraps the actual function/class/alias being templated
+/// (tree-sitter-cpp). `field_declaration_list` wraps in-class members
+/// (access_specifier, field_declaration, …). The `preproc_*` group wraps
+/// declarations behind C/C++ header guards and conditional compilation,
+/// which is where most public APIs live in real-world headers.
+/// `linkage_specification` is `extern "C" { ... }`.
 fn is_wrapper_node(kind: &str) -> bool {
     matches!(
         kind,
-        "export_statement" | "export_declaration" | "declaration_list"
+        "export_statement"
+            | "export_declaration"
+            | "declaration_list"
+            | "template_declaration"
+            | "field_declaration_list"
+            | "preproc_ifdef"
+            | "preproc_ifndef"
+            | "preproc_if"
+            | "preproc_else"
+            | "preproc_elif"
+            | "linkage_specification"
     )
+}
+
+/// Whether a `declaration` / `field_declaration` node is actually a function
+/// declaration (its declarator chain contains a `function_declarator`).
+///
+/// Used to decide whether a C/C++ `declaration` should emit a Function symbol
+/// (for forward decls in headers and in-class member declarations) or be
+/// skipped (for plain data declarations like `int x;`).
+fn is_function_decl_node(node: &tree_sitter::Node<'_>) -> bool {
+    let Some(decl) = node.child_by_field_name("declarator") else {
+        return false;
+    };
+    declarator_contains_function(&decl)
+}
+
+fn declarator_contains_function(node: &tree_sitter::Node<'_>) -> bool {
+    if node.kind() == "function_declarator" {
+        return true;
+    }
+    if let Some(inner) = node.child_by_field_name("declarator") {
+        return declarator_contains_function(&inner);
+    }
+    false
+}
+
+/// Extract the name from a C/C++ `declaration` / `field_declaration` node
+/// whose declarator chain ends in a `function_declarator`. Preserves
+/// qualified names like `Foo::bar` by returning the function_declarator's
+/// inner declarator's full text.
+fn extract_c_decl_name(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
+    let mut current = node.child_by_field_name("declarator")?;
+    while current.kind() != "function_declarator" {
+        current = current.child_by_field_name("declarator")?;
+    }
+    let inner = current.child_by_field_name("declarator")?;
+    let text = inner.utf8_text(source).ok()?.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
 }
 
 /// Classify a tree-sitter node kind into an [`ItemKind`] using heuristic patterns.
@@ -151,7 +250,9 @@ pub fn classify_node_kind(kind: &str) -> Option<ItemKind> {
         | "generator_function_declaration"
         | "func_literal" => Some(ItemKind::Function),
 
-        "struct_item" | "struct_specifier" => Some(ItemKind::Struct),
+        // C union has no dedicated ItemKind variant; we group it with structs
+        // as the closest record-type analogue.
+        "struct_item" | "struct_specifier" | "union_specifier" => Some(ItemKind::Struct),
 
         "enum_item" | "enum_specifier" | "enum_declaration" => Some(ItemKind::Enum),
 
@@ -167,9 +268,11 @@ pub fn classify_node_kind(kind: &str) -> Option<ItemKind> {
             Some(ItemKind::Module)
         }
 
-        "type_item" | "type_alias_declaration" | "type_declaration" | "type_spec" => {
-            Some(ItemKind::Type)
-        }
+        "type_item"
+        | "type_alias_declaration"
+        | "type_declaration"
+        | "type_spec"
+        | "alias_declaration" => Some(ItemKind::Type),
 
         "const_item" | "const_declaration" | "const_spec" | "lexical_declaration" => {
             Some(ItemKind::Const)

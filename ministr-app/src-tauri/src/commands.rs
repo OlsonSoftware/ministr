@@ -294,6 +294,10 @@ pub async fn detect_projects() -> Result<Vec<DetectedProject>, String> {
 }
 
 /// Register multiple projects at once (for onboarding batch import).
+///
+/// `register` is idempotent on canonical identity and never touches an
+/// unrelated corpus's state, so registering a sibling project will never
+/// destroy a neighbour's sessions. Per-path errors are warned and skipped.
 #[tauri::command]
 pub async fn register_projects_batch(
     state: State<'_, AppState>,
@@ -367,6 +371,15 @@ pub struct SessionDetail {
     pub total_compressions: u64,
     pub dedup_hits: u64,
     pub compression_ratio: f64,
+    /// Parent session id when this session was created on behalf of a
+    /// subagent (e.g. Claude Code's Task tool spawning a sub-claude).
+    /// `None` for top-level sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
+    /// MCP `clientInfo.name` captured at initialize (e.g. "claude-code",
+    /// "mcp-inspector"). `None` until the handshake completes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_name: Option<String>,
 }
 
 /// List all active sessions across all corpora.
@@ -408,6 +421,11 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDeta
                     total_compressions: metrics.total_compressions,
                     dedup_hits: metrics.dedup_hits,
                     compression_ratio,
+                    parent_session_id: entry
+                        .parent_session_id
+                        .as_ref()
+                        .map(std::string::ToString::to_string),
+                    client_name: entry.client_name.clone(),
                 });
             }
         }

@@ -1,19 +1,10 @@
 import { cn } from "../../lib/utils";
-
-type Tone = "success" | "warning" | "danger" | "accent" | "muted";
-
-const colors: Record<Tone, string> = {
-  success: "bg-success",
-  warning: "bg-warning",
-  danger: "bg-danger",
-  accent: "bg-accent",
-  muted: "bg-text-dim",
-};
+import { type Tone, toneBgClass } from "../../lib/status";
 
 interface StatusDotProps {
   tone?: Tone;
-  /** Pulse animation on/off. */
-  pulse?: boolean;
+  /** Pulse animation. `"live"` runs the ping; `"off"` is static. */
+  pulse?: "live" | "off";
   /** Bigger dot for headers. */
   size?: "sm" | "md";
   className?: string;
@@ -21,28 +12,23 @@ interface StatusDotProps {
 
 export function StatusDot({
   tone = "muted",
-  pulse = false,
+  pulse = "off",
   size = "sm",
   className,
 }: StatusDotProps) {
   const dim = size === "md" ? "h-2 w-2" : "h-1.5 w-1.5";
+  const bg = toneBgClass(tone);
   return (
     <span className={cn("relative inline-flex", dim, className)}>
-      {pulse && (
+      {pulse === "live" && (
         <span
           className={cn(
             "absolute inset-0 rounded-full opacity-70 animate-ping",
-            colors[tone],
+            bg,
           )}
         />
       )}
-      <span
-        className={cn(
-          "relative inline-flex rounded-full",
-          dim,
-          colors[tone],
-        )}
-      />
+      <span className={cn("relative inline-flex rounded-full", dim, bg)} />
     </span>
   );
 }

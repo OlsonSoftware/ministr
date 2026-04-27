@@ -12,9 +12,11 @@ import {
 } from "lucide-react";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
+import { EmptyState } from "./ui/empty-state";
 import { Progress } from "./ui/progress";
 import { cn } from "../lib/utils";
-import type { DaemonStatus, IngestionProgressInfo } from "../lib/types";
+import type { CorpusInfo, DaemonStatus, IngestionProgressInfo } from "../lib/types";
+import { corpusLabel } from "../lib/corpus";
 
 interface Props {
   status: DaemonStatus;
@@ -72,15 +74,11 @@ export function IngestionTimeline({ status }: Props) {
       </header>
 
       {progress.length === 0 ? (
-        <Card className="flex flex-col items-center justify-center gap-2 py-10 text-center">
-          <div className="grid h-12 w-12 place-items-center rounded-xl bg-surface-overlay text-text-dim">
-            <Timer className="h-5 w-5" />
-          </div>
-          <p className="text-sm font-medium text-text">No corpora registered</p>
-          <p className="text-xs text-text-dim">
-            Add a project to see ingestion progress stream in.
-          </p>
-        </Card>
+        <EmptyState
+          icon={Timer}
+          title="No corpora registered"
+          hint="Add a project to see ingestion progress stream in."
+        />
       ) : (
         <div className="grid gap-3">
           {progress.map((p) => {
@@ -89,6 +87,7 @@ export function IngestionTimeline({ status }: Props) {
               <IngestionCard
                 key={p.corpus_id}
                 progress={p}
+                corpus={corpusInfo}
                 totalSections={corpusInfo?.sections_count}
               />
             );
@@ -101,9 +100,11 @@ export function IngestionTimeline({ status }: Props) {
 
 function IngestionCard({
   progress: p,
+  corpus,
   totalSections,
 }: {
   progress: IngestionProgressInfo;
+  corpus?: CorpusInfo;
   totalSections?: number;
 }) {
   const isActive = p.status === 1;
@@ -114,8 +115,8 @@ function IngestionCard({
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-[11px] text-text-muted truncate max-w-[280px]">
-              {p.corpus_id}
+            <span className="font-semibold text-sm text-text truncate max-w-[280px]">
+              {corpusLabel(corpus)}
             </span>
             {isActive ? (
               <Badge variant="warning" dot>

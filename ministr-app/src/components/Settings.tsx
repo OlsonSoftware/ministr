@@ -77,7 +77,7 @@ export function Settings({
                 className={cn(
                   "flex-1 inline-flex flex-col items-center gap-1.5 rounded-lg border px-3 py-3 text-xs font-medium cursor-pointer transition-all duration-120",
                   active
-                    ? "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] text-accent shadow-[0_0_0_3px_var(--color-accent-soft)]"
+                    ? "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] text-accent"
                     : "border-border/70 bg-surface-raised text-text-muted hover:border-border-hover hover:text-text",
                 )}
               >
@@ -223,7 +223,7 @@ function ToggleRow({
         className={cn(
           "relative h-6 w-10 shrink-0 rounded-full transition-colors duration-150 cursor-pointer",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-ring)]",
-          enabled ? "bg-accent shadow-[inset_0_1px_0_rgb(255_255_255/0.2)]" : "bg-surface-overlay",
+          enabled ? "bg-accent" : "bg-surface-overlay",
           enabled === null && "opacity-50 cursor-wait",
         )}
       >

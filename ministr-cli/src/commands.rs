@@ -717,9 +717,15 @@ pub(crate) async fn cmd_daemon_status() -> Result<()> {
         );
         eprintln!("  Corpora:   {}", status.corpora.len());
         for c in &status.corpora {
+            // Show the human-readable display name; fall back to the id
+            // only if the daemon predates the `display_name` field.
+            let label = if c.display_name.is_empty() {
+                c.id.as_str()
+            } else {
+                c.display_name.as_str()
+            };
             eprintln!(
-                "    {} — {} files, {} sections, {} embeddings [{}]",
-                c.id,
+                "    {label} — {} files, {} sections, {} embeddings [{}]",
                 c.files_indexed,
                 c.sections_count,
                 c.embeddings_count,
