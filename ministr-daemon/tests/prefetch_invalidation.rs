@@ -68,7 +68,7 @@ fn build_handle(
     paths: Vec<String>,
 ) -> CorpusHandle {
     CorpusHandle {
-        info: RwLock::new(CorpusInfo {
+        info: Arc::new(RwLock::new(CorpusInfo {
             id: corpus_id.to_string(),
             display_name: corpus_id.to_string(),
             paths,
@@ -79,7 +79,7 @@ fn build_handle(
             active_sessions: 0,
             last_indexed: None,
             symbols_count: 0,
-        }),
+        })),
         storage,
         index,
         service,

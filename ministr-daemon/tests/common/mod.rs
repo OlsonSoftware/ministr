@@ -259,7 +259,7 @@ fn build_corpus_handle(
     data_dir: PathBuf,
 ) -> CorpusHandle {
     CorpusHandle {
-        info: RwLock::new(CorpusInfo {
+        info: Arc::new(RwLock::new(CorpusInfo {
             id: corpus_id.clone(),
             display_name: corpus_id,
             paths: vec!["/test/corpus".into()],
@@ -270,7 +270,7 @@ fn build_corpus_handle(
             active_sessions: 0,
             last_indexed: None,
             symbols_count: 0,
-        }),
+        })),
         storage,
         index,
         service,

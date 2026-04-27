@@ -254,15 +254,22 @@ pub fn spawn_refresh_loop(handle: AppHandle, state: AppState) {
 /// Count active sessions across all corpora, split by whether the
 /// session has a parent (subagent) or not (top-level).
 ///
-/// Walks the corpus registry and locks each corpus's session registry
-/// briefly; the call is O(corpora · sessions) but session counts are
-/// small in practice and the lock duration is tiny.
+/// The whole loop runs without crossing an `.await` once the corpora
+/// map guard is taken: we use `try_lock` on each per-corpus session
+/// registry and skip any that's contended this tick. That keeps the
+/// registry-map read lifetime bounded by sync work (O(corpora · sessions))
+/// instead of tokio scheduler interleavings, so concurrent
+/// register/unregister writers don't block on us. The tooltip is
+/// informational and refreshes every 10s — missing one tick on a
+/// briefly-busy corpus self-heals on the next.
 async fn count_sessions_by_lineage(state: &AppState) -> (usize, usize) {
     let mut parents = 0usize;
     let mut subagents = 0usize;
     let guard = state.registry.corpora().read().await;
     for handle in guard.values() {
-        let reg = handle.sessions.lock().await;
+        let Ok(reg) = handle.sessions.try_lock() else {
+            continue;
+        };
         for sid in reg.session_ids() {
             if let Some(entry) = reg.get_session(&sid) {
                 if entry.parent_session_id.is_some() {

@@ -12,9 +12,19 @@
 
 use tree_sitter::Node;
 
-/// Extract UTF-8 text from a tree-sitter node, lossless on bad UTF-8.
+/// Extract text from a tree-sitter node.
+///
+/// Tree-sitter normally hands back valid UTF-8 (it tracks byte offsets in
+/// the original source), but if a byte range straddles invalid UTF-8 we
+/// fall back to a lossy decode of the underlying byte slice rather than
+/// dropping the text entirely. The previous `unwrap_or("")` would silently
+/// erase the node — bad on its own, and surprising given the doc-string.
 pub(super) fn node_text(node: &Node<'_>, source: &[u8]) -> String {
-    node.utf8_text(source).unwrap_or("").to_string()
+    if let Ok(s) = node.utf8_text(source) {
+        return s.to_string();
+    }
+    let bytes = source.get(node.byte_range()).unwrap_or(&[]);
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 /// Strip surrounding `"`, `'`, or `` ` `` quotes from a string literal.

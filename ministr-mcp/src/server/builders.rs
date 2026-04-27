@@ -76,7 +76,7 @@ impl MinistrServer {
             prompt_router: Self::prompt_router(),
             custom_instructions: None,
             parent_session_id_hint: read_parent_session_env(),
-            client_name_hint: Arc::new(Mutex::new(None)),
+            client_name_hint: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -142,7 +142,7 @@ impl MinistrServer {
             prompt_router: Self::prompt_router(),
             custom_instructions: None,
             parent_session_id_hint: read_parent_session_env(),
-            client_name_hint: Arc::new(Mutex::new(None)),
+            client_name_hint: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 

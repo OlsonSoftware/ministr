@@ -66,7 +66,12 @@ pub struct CorpusRegistry {
 
 /// A single managed corpus with its resources.
 pub struct CorpusHandle {
-    pub info: RwLock<CorpusInfo>,
+    /// Wrapped in `Arc` so callers can extract a reference, drop the
+    /// outer `corpora` map guard, and *then* await on `info.write()` /
+    /// `info.read()`. Without the `Arc`, the only way to reach `info`
+    /// is through the map guard, which would force the registry-map
+    /// lock to be held across every per-corpus `info` await.
+    pub info: Arc<RwLock<CorpusInfo>>,
     pub storage: Arc<SqliteStorage>,
     pub index: Arc<dyn VectorIndex>,
     pub service: QueryService,
@@ -199,37 +204,51 @@ impl CorpusRegistry {
         // picks up the existing data instead of orphaning it. On collision
         // (both dirs exist) we leave the old dir in place — better to keep
         // a stale orphan than overwrite live data.
+        //
+        // Run on the blocking pool so the rename / metadata syscalls don't
+        // park the async runtime thread during startup. The migration is
+        // sequential because the entry list is small (one entry per
+        // registered corpus) and the renames don't benefit from parallelism.
         let corpora_dir = self.config.data_dir.join("corpora");
-        for entry in &entries {
-            let new_id = corpus_id_from_paths(&entry.paths);
-            if new_id == entry.id {
-                continue;
-            }
-            let old_dir = corpora_dir.join(&entry.id);
-            let new_dir = corpora_dir.join(&new_id);
-            if !old_dir.exists() {
-                continue;
-            }
-            if new_dir.exists() {
-                warn!(
-                    old_id = %entry.id,
-                    new_id = %new_id,
-                    "canonical-id collision on migration — leaving old dir as orphan"
-                );
-                continue;
-            }
-            match std::fs::rename(&old_dir, &new_dir) {
-                Ok(()) => info!(
-                    old_id = %entry.id,
-                    new_id = %new_id,
-                    "migrated corpus dir to canonical id"
-                ),
-                Err(e) => warn!(
-                    error = %e,
-                    old_id = %entry.id,
-                    "failed to migrate corpus dir"
-                ),
-            }
+        let migration_entries: Vec<(String, String)> = entries
+            .iter()
+            .filter_map(|e| {
+                let new_id = corpus_id_from_paths(&e.paths);
+                (new_id != e.id).then_some((e.id.clone(), new_id))
+            })
+            .collect();
+        if !migration_entries.is_empty() {
+            let migration_dir = corpora_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                for (old_id, new_id) in migration_entries {
+                    let old_dir = migration_dir.join(&old_id);
+                    let new_dir = migration_dir.join(&new_id);
+                    if !old_dir.exists() {
+                        continue;
+                    }
+                    if new_dir.exists() {
+                        warn!(
+                            old_id = %old_id,
+                            new_id = %new_id,
+                            "canonical-id collision on migration — leaving old dir as orphan"
+                        );
+                        continue;
+                    }
+                    match std::fs::rename(&old_dir, &new_dir) {
+                        Ok(()) => info!(
+                            old_id = %old_id,
+                            new_id = %new_id,
+                            "migrated corpus dir to canonical id"
+                        ),
+                        Err(e) => warn!(
+                            error = %e,
+                            old_id = %old_id,
+                            "failed to migrate corpus dir"
+                        ),
+                    }
+                }
+            })
+            .await;
         }
 
         for entry in &entries {
@@ -352,14 +371,23 @@ impl CorpusRegistry {
 
         let new_display_name = display_name_from_paths(new_paths);
 
-        let added: Vec<String> = {
+        // Extract a clone of the info Arc under the corpora-map read
+        // guard, then drop the guard before awaiting the per-handle
+        // info write. Holding `corpora.read()` across `info.write().await`
+        // would block concurrent register/unregister writers for the
+        // duration of the info write.
+        let info_lock = {
             let corpora = self.corpora.read().await;
             let handle = corpora
                 .get(corpus_id)
                 .ok_or_else(|| RegistryError::NotFound {
                     id: corpus_id.to_string(),
                 })?;
-            let mut info = handle.info.write().await;
+            Arc::clone(&handle.info)
+        };
+
+        let added: Vec<String> = {
+            let mut info = info_lock.write().await;
             let prior: std::collections::HashSet<String> = info.paths.iter().cloned().collect();
             let added: Vec<String> = canonical
                 .iter()
@@ -536,7 +564,7 @@ impl CorpusRegistry {
         );
 
         Ok(CorpusHandle {
-            info: RwLock::new(CorpusInfo {
+            info: Arc::new(RwLock::new(CorpusInfo {
                 id: corpus_id.to_string(),
                 display_name,
                 paths: paths.to_vec(),
@@ -547,7 +575,7 @@ impl CorpusRegistry {
                 active_sessions: 0,
                 last_indexed: None,
                 symbols_count: 0,
-            }),
+            })),
             storage,
             index,
             service,

@@ -214,9 +214,14 @@ pub struct MinistrServer {
     /// parent.
     parent_session_id_hint: Option<String>,
     /// MCP `clientInfo.name` captured during the `initialize`
-    /// handshake. Stamped onto [`SessionEntry::client_name`] when the
-    /// session is first resolved.
-    client_name_hint: Arc<Mutex<Option<String>>>,
+    /// handshake. Stamped onto [`SessionEntry::client_name`] the first
+    /// time a session entry is resolved with the field still empty.
+    ///
+    /// `std::sync::Mutex` (not `tokio::sync::Mutex`) so
+    /// `ensure_session_mut` can read it without yielding inside the
+    /// registry's tokio mutex hold — the lock is brief and never held
+    /// across an `.await`.
+    client_name_hint: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 #[tool_handler]
@@ -287,8 +292,10 @@ impl ServerHandler for MinistrServer {
         // mcp-inspector apart. Hint is stamped onto the session entry on
         // first tool call via `ensure_session_mut`.
         let client_name = request.client_info.name.clone();
-        if !client_name.is_empty() {
-            *self.client_name_hint.lock().await = Some(client_name);
+        if !client_name.is_empty()
+            && let Ok(mut guard) = self.client_name_hint.lock()
+        {
+            *guard = Some(client_name);
         }
 
         // Preserve the default rmcp behavior: store peer info for later access.

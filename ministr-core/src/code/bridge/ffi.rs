@@ -2,8 +2,10 @@
 //!
 //! Detects native interop spanning Rust ↔ C/C++ ↔ Python ↔ Java:
 //!
-//! - **Rust** — `#[no_mangle] pub extern "C" fn` exports and `extern "C" { fn … }`
-//!   foreign-block declarations (the import/consumer side of native symbols).
+//! - **Rust** — `pub extern "C" fn` exports gated by `#[no_mangle]` or
+//!   `#[export_name = "…"]` (so the linker symbol matches the source-level
+//!   identifier), plus `extern "C" { fn … }` foreign-block declarations
+//!   (the import/consumer side of native symbols).
 //! - **C / C++** — function definitions in `linkage_specification` blocks
 //!   (`extern "C" { … }`), plus any function whose name matches the JNI
 //!   `Java_<pkg>_<class>_<method>` mangling convention.
@@ -25,8 +27,16 @@
 //! pairing is by exact symbol name (C-ABI has no name mangling), so the
 //! linker doesn't need to fall through to its `CaseTransformed` pass.
 
-use super::util::{node_line, node_text};
+use super::util::{has_rust_attribute_before, node_line, node_text};
 use super::{BridgeEndpoint, BridgeExtractor, BridgeKind, ConfidenceLevel, EndpointRole};
+
+/// Attributes that suppress Rust's name-mangling and so allow a function's
+/// source-level identifier to appear unchanged in the linker symbol table.
+/// The FFI linker pairs by exact symbol name, so an `extern "C" fn` without
+/// one of these would not actually be discoverable by a foreign consumer
+/// looking up the bare name — emitting it as an Export would lead to
+/// false-positive cross-language pairings.
+const RUST_FFI_EXPORT_ATTRS: &[&str] = &["no_mangle", "export_name", "unsafe(no_mangle)"];
 
 /// FFI bridge extractor — see module docs for supported patterns.
 pub struct FfiExtractor;
@@ -83,7 +93,13 @@ fn walk_rust_ffi(
         let node = cursor.node();
         match node.kind() {
             "function_item" => {
+                // An `extern "C" fn` is only an FFI export when the
+                // compiler is told NOT to mangle its name — otherwise a
+                // C/C++/Python consumer looking up the bare identifier
+                // won't find it, and we'd emit a false cross-language
+                // pair. Require `#[no_mangle]` (or `#[export_name = …]`).
                 if rust_is_extern_c_fn(&node, source)
+                    && has_rust_attribute_before(&node, source, RUST_FFI_EXPORT_ATTRS)
                     && let Some(name) = rust_fn_name(&node, source)
                 {
                     endpoints.push(make_endpoint(
@@ -627,16 +643,31 @@ mod tests {
     // -- Rust --
 
     #[test]
-    fn rust_extern_c_fn_export() {
+    fn rust_extern_c_fn_without_no_mangle_is_not_exported() {
+        // Bare `extern "C" fn` without `#[no_mangle]` is NOT an FFI export:
+        // the compiler still mangles its symbol name, so a foreign consumer
+        // looking up `add` would not find it in the linker symbol table.
+        // Emitting it as an Export would produce false cross-language pairs.
         let source = r#"
 pub extern "C" fn add(a: i32, b: i32) -> i32 { a + b }
 "#;
         let tree = parse_rust(source);
         let endpoints = FfiExtractor.extract_endpoints(&tree, source.as_bytes(), "lib.rs", "rust");
+        assert!(endpoints.is_empty(), "got {endpoints:#?}");
+    }
+
+    #[test]
+    fn rust_export_name_extern_c_export() {
+        // `#[export_name = "..."]` also suppresses mangling and should
+        // count as an FFI export.
+        let source = r#"
+#[export_name = "add"]
+pub extern "C" fn rust_add(a: i32, b: i32) -> i32 { a + b }
+"#;
+        let tree = parse_rust(source);
+        let endpoints = FfiExtractor.extract_endpoints(&tree, source.as_bytes(), "lib.rs", "rust");
         assert_eq!(endpoints.len(), 1, "got {endpoints:#?}");
-        assert_eq!(endpoints[0].binding_key, "add");
         assert_eq!(endpoints[0].role, EndpointRole::Export);
-        assert_eq!(endpoints[0].kind, BridgeKind::Ffi);
     }
 
     #[test]
@@ -815,7 +846,7 @@ class Foo {
     fn rust_export_links_python_ctypes_import() {
         use crate::code::bridge::linker::{BridgeLinker, SourceFile};
 
-        let rust_src = "pub extern \"C\" fn add(a: i32, b: i32) -> i32 { a + b }\n";
+        let rust_src = "#[no_mangle]\npub extern \"C\" fn add(a: i32, b: i32) -> i32 { a + b }\n";
         let py_src = "import ctypes\nlib = ctypes.CDLL(\"./libfoo.so\")\nlib.add(1, 2)\n";
 
         let rust_tree = parse_rust(rust_src);

@@ -28,29 +28,28 @@ impl MinistrServer {
     /// no entry has been inserted yet. This helper bridges that gap by
     /// using `get_or_create`.
     ///
-    /// On *first* resolution (i.e. the entry was just created), stamps
-    /// the captured `parent_session_id` and `client_name` hints onto
-    /// the entry so the tray / `SessionDashboard` can render lineage.
-    /// On subsequent calls the stamps are skipped (the entry already
-    /// carries them).
+    /// Stamps the captured `parent_session_id` / `client_name` hints
+    /// onto the entry whenever the entry's corresponding field is still
+    /// empty — *not* only on first resolution. The `initialize`
+    /// handshake (which sets `client_name_hint`) and the first tool
+    /// call can race; gating on creation alone meant a name set after
+    /// the entry existed would never be stamped. The hint→entry copy
+    /// is per-field idempotent, so re-checking on every resolution is
+    /// cheap and self-healing.
     pub(super) fn ensure_session_mut<'a>(
         &self,
         reg: &'a mut SessionRegistry,
     ) -> &'a mut SessionEntry {
-        let was_missing = !reg.contains(&self.active_session_id);
         let entry = reg.get_or_create(&self.active_session_id, None, AccessMode::ReadWrite);
-        if was_missing {
-            if let Some(parent) = self.parent_session_id_hint.as_deref() {
-                entry.parent_session_id = Some(SessionId::from(parent.to_string()));
-            }
-            if let Some(name) = self
-                .client_name_hint
-                .try_lock()
-                .ok()
-                .and_then(|g| g.clone())
-            {
-                entry.client_name = Some(name);
-            }
+        if entry.parent_session_id.is_none()
+            && let Some(parent) = self.parent_session_id_hint.as_deref()
+        {
+            entry.parent_session_id = Some(SessionId::from(parent.to_string()));
+        }
+        if entry.client_name.is_none()
+            && let Some(name) = self.client_name_hint.lock().ok().and_then(|g| g.clone())
+        {
+            entry.client_name = Some(name);
         }
         entry
     }
