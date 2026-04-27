@@ -217,11 +217,11 @@ fn walk_c_cpp_ffi(
     loop {
         let node = cursor.node();
         match node.kind() {
-            "linkage_specification" => {
-                if c_is_extern_c_linkage(&node, source) && cursor.goto_first_child() {
-                    walk_c_cpp_ffi(cursor, source, file_path, language, true, endpoints);
-                    cursor.goto_parent();
-                }
+            "linkage_specification"
+                if c_is_extern_c_linkage(&node, source) && cursor.goto_first_child() =>
+            {
+                walk_c_cpp_ffi(cursor, source, file_path, language, true, endpoints);
+                cursor.goto_parent();
             }
             "function_definition" => {
                 if let Some(name) = c_fn_name(&node, source) {
