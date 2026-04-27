@@ -6,12 +6,54 @@
 
 use serde::Serialize;
 
-use ministr_core::session::{BudgetStatus, CompressionTier, PressureLevel};
+use ministr_core::session::{
+    AccessMode, BudgetStatus, CompressionTier, PressureLevel, SessionEntry, SessionId,
+    SessionRegistry,
+};
 use ministr_core::token::count_tokens;
 use ministr_core::types::{ContentId, Resolution};
 
 use super::MinistrServer;
 use super::types::ToolResponse;
+
+impl MinistrServer {
+    /// Resolve the active session entry, bootstrapping it lazily if missing.
+    ///
+    /// Tool handlers used to call
+    /// `reg.get_session_mut(&self.active_session_id).expect("active session exists")`,
+    /// which assumed the session was eagerly registered at server
+    /// construction. After [`Self::fork_for_new_session`] (which runs
+    /// inside the sync rmcp factory closure and so cannot lock the
+    /// async-mutex'd registry), the session id exists on the server but
+    /// no entry has been inserted yet. This helper bridges that gap by
+    /// using `get_or_create`.
+    ///
+    /// Stamps the captured `parent_session_id` / `client_name` hints
+    /// onto the entry whenever the entry's corresponding field is still
+    /// empty — *not* only on first resolution. The `initialize`
+    /// handshake (which sets `client_name_hint`) and the first tool
+    /// call can race; gating on creation alone meant a name set after
+    /// the entry existed would never be stamped. The hint→entry copy
+    /// is per-field idempotent, so re-checking on every resolution is
+    /// cheap and self-healing.
+    pub(super) fn ensure_session_mut<'a>(
+        &self,
+        reg: &'a mut SessionRegistry,
+    ) -> &'a mut SessionEntry {
+        let entry = reg.get_or_create(&self.active_session_id, None, AccessMode::ReadWrite);
+        if entry.parent_session_id.is_none()
+            && let Some(parent) = self.parent_session_id_hint.as_deref()
+        {
+            entry.parent_session_id = Some(SessionId::from(parent.to_string()));
+        }
+        if entry.client_name.is_none()
+            && let Some(name) = self.client_name_hint.lock().ok().and_then(|g| g.clone())
+        {
+            entry.client_name = Some(name);
+        }
+        entry
+    }
+}
 
 impl MinistrServer {
     /// Record a section delivery in the session shadow and budget tracker.
@@ -30,9 +72,7 @@ impl MinistrServer {
         let token_count = count_tokens(text);
         let content_id = ContentId(section_id.to_string());
         let mut reg = self.registry.lock().await;
-        let entry = reg
-            .get_session_mut(&self.active_session_id)
-            .expect("active session exists");
+        let entry = self.ensure_session_mut(&mut reg);
         let turn = entry.session.current_turn() + 1;
         entry.session.record_delivery(
             &content_id,
@@ -101,9 +141,7 @@ impl MinistrServer {
         budget_status: BudgetStatus,
     ) -> ToolResponse<T> {
         let mut reg = self.registry.lock().await;
-        let entry = reg
-            .get_session_mut(&self.active_session_id)
-            .expect("active session exists");
+        let entry = self.ensure_session_mut(&mut reg);
         let alerts = entry.session.drain_alerts();
 
         // Compute eviction recommendations when under pressure

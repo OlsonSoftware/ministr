@@ -309,20 +309,16 @@ function TopBar({
     <header className="flex items-center justify-between gap-4 border-b border-border/70 bg-surface/50 backdrop-blur-sm px-5 py-2.5 shrink-0">
       <div className="flex items-center gap-3">
         <Logo />
-        <div className="flex items-center gap-2">
+        <div
+          className="flex items-center gap-2"
+          title={status ? `ministr v${status.version}` : "ministr"}
+        >
           <span className="ministr-wordmark">ministr</span>
-          <StatusDot tone={status ? "success" : "muted"} pulse={!!status} />
-          {status && (
-            <span className="text-[10px] font-mono text-text-dim uppercase tracking-wider">
-              live
-            </span>
-          )}
+          <StatusDot
+            tone={status ? "success" : "muted"}
+            pulse={status ? "live" : "off"}
+          />
         </div>
-        {status && (
-          <Badge variant="muted" className="font-mono ml-1">
-            v{status.version}
-          </Badge>
-        )}
       </div>
 
       {status && (
@@ -378,7 +374,7 @@ function TopBar({
 
 function Logo() {
   return (
-    <div className="relative grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-accent to-[color-mix(in_srgb,var(--color-accent)_50%,#c4b5fd)] text-[var(--color-accent-fg-on)] shadow-[0_4px_14px_var(--color-accent-ring),inset_0_1px_0_rgb(255_255_255/0.2)]">
+    <div className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-[var(--color-accent-fg-on)]">
       <CircleDot className="h-4 w-4" strokeWidth={2.5} />
     </div>
   );

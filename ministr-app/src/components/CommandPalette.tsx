@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { DaemonStatus } from "../lib/types";
 import { cn } from "../lib/utils";
+import { corpusLabel } from "../lib/corpus";
 
 type Tab =
   | "overview"
@@ -200,11 +201,7 @@ export function CommandPalette({
 
     // Corpus-specific commands
     const corpusCmds: Cmd[] = (status?.corpora ?? []).flatMap((c) => {
-      const name = (() => {
-        const p = c.paths[0] ?? "";
-        const parts = p.split("/");
-        return parts[parts.length - 1] || p;
-      })();
+      const name = corpusLabel(c);
       return [
         {
           id: `corpus:open:${c.id}`,

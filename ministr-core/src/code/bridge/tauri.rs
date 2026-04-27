@@ -15,6 +15,9 @@
 //! invocations, and [`boost_registered_commands`] promotes matching command
 //! endpoints to [`ConfidenceLevel::RegistrationValidated`].
 
+use super::util::{
+    first_string_arg, has_rust_attribute_before, node_line, node_text, rust_item_name,
+};
 use super::{BridgeEndpoint, BridgeExtractor, BridgeKind, ConfidenceLevel, EndpointRole};
 
 // ---------------------------------------------------------------------------
@@ -139,11 +142,10 @@ fn walk_rust_commands(
         let node = cursor.node();
 
         if (node.kind() == "function_item" || node.kind() == "function_definition")
-            && has_tauri_command_attribute_before(&node, source)
-            && let Some(name) = rust_function_name(&node, source)
+            && has_rust_attribute_before(&node, source, TAURI_COMMAND_ATTRS)
+            && let Some(name) = rust_item_name(&node, source)
         {
-            #[allow(clippy::cast_possible_truncation)]
-            let line = node.start_position().row as u32 + 1;
+            let line = node_line(&node);
             endpoints.push(BridgeEndpoint {
                 binding_key: name.clone(),
                 kind: BridgeKind::TauriCommand,
@@ -168,45 +170,8 @@ fn walk_rust_commands(
     }
 }
 
-/// Check whether the preceding sibling(s) of a function node contain
-/// a `#[tauri::command]` attribute.
-fn has_tauri_command_attribute_before(node: &tree_sitter::Node<'_>, source: &[u8]) -> bool {
-    let mut prev = node.prev_sibling();
-    while let Some(sibling) = prev {
-        if sibling.kind() == "attribute_item" {
-            let text = node_text(&sibling, source);
-            if text.contains("tauri::command") {
-                return true;
-            }
-        } else if sibling.kind() != "attribute_item"
-            && sibling.kind() != "line_comment"
-            && sibling.kind() != "block_comment"
-        {
-            // Stop searching once we hit a non-attribute, non-comment node
-            break;
-        }
-        prev = sibling.prev_sibling();
-    }
-    false
-}
-
-/// Extract the function name from a `function_item` node.
-fn rust_function_name(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "identifier" && cursor.field_name() == Some("name") {
-            return Some(node_text(&child, source));
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    None
-}
+/// Substrings checked against `attribute_item` text to detect `#[tauri::command]`.
+const TAURI_COMMAND_ATTRS: &[&str] = &["tauri::command"];
 
 // ---------------------------------------------------------------------------
 // JS/TS command extraction
@@ -275,8 +240,7 @@ fn try_extract_invoke_call(
     let args_node = node.child_by_field_name("arguments")?;
     let first_arg = first_string_arg(&args_node, source)?;
 
-    #[allow(clippy::cast_possible_truncation)]
-    let line = node.start_position().row as u32 + 1;
+    let line = node_line(node);
 
     Some(BridgeEndpoint {
         binding_key: first_arg.clone(),
@@ -362,10 +326,9 @@ fn try_extract_rust_event_call(
     };
 
     let args_node = node.child_by_field_name("arguments")?;
-    let event_name = first_rust_string_arg(&args_node, source)?;
+    let event_name = first_string_arg(&args_node, source)?;
 
-    #[allow(clippy::cast_possible_truncation)]
-    let line = node.start_position().row as u32 + 1;
+    let line = node_line(node);
 
     Some(BridgeEndpoint {
         binding_key: event_name.clone(),
@@ -450,8 +413,7 @@ fn try_extract_js_event_call(
     let args_node = node.child_by_field_name("arguments")?;
     let event_name = first_string_arg(&args_node, source)?;
 
-    #[allow(clippy::cast_possible_truncation)]
-    let line = node.start_position().row as u32 + 1;
+    let line = node_line(node);
 
     Some(BridgeEndpoint {
         binding_key: event_name.clone(),
@@ -648,88 +610,22 @@ pub fn boost_registered_commands(endpoints: &mut [BridgeEndpoint], registered: &
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Tauri-specific helpers
 // ---------------------------------------------------------------------------
-
-/// Extract UTF-8 text from a tree-sitter node.
-fn node_text(node: &tree_sitter::Node<'_>, source: &[u8]) -> String {
-    node.utf8_text(source).unwrap_or("").to_string()
-}
 
 /// Get the callable name from a function node in a call expression.
 ///
 /// Handles both plain identifiers (`emit`) and member expressions
-/// (`appWindow.emit`, `event.listen`).
+/// (`appWindow.emit`, `event.listen`). Tauri-specific because no other
+/// detector needs to disambiguate JS member-expression callees.
 fn callable_name(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
     match node.kind() {
         "identifier" => Some(node_text(node, source)),
         "member_expression" => {
-            // `obj.method` — return the method name
             let property = node.child_by_field_name("property")?;
             Some(node_text(&property, source))
         }
         _ => None,
-    }
-}
-
-/// Extract the first string literal argument from an arguments node (JS/TS).
-///
-/// Handles `"string"` and `'string'` by stripping quotes.
-fn first_string_arg(args_node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
-    let mut cursor = args_node.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "string" || child.kind() == "string_literal" {
-            return Some(strip_quotes(&node_text(&child, source)));
-        }
-        // In tree-sitter-typescript, string fragments may differ
-        if child.kind() == "template_string" {
-            let text = node_text(&child, source);
-            // Only handle simple template strings without interpolation
-            if !text.contains("${") {
-                return Some(strip_quotes(&text));
-            }
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    None
-}
-
-/// Extract the first string literal argument from an arguments node (Rust).
-///
-/// Handles `"string"` by stripping quotes from `string_literal` nodes.
-fn first_rust_string_arg(args_node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
-    let mut cursor = args_node.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "string_literal" {
-            return Some(strip_quotes(&node_text(&child, source)));
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    None
-}
-
-/// Strip surrounding quotes from a string literal.
-fn strip_quotes(s: &str) -> String {
-    let s = s.trim();
-    if (s.starts_with('"') && s.ends_with('"'))
-        || (s.starts_with('\'') && s.ends_with('\''))
-        || (s.starts_with('`') && s.ends_with('`'))
-    {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
     }
 }
 
@@ -1299,13 +1195,7 @@ await listen("download-progress", (event) => {
         assert_eq!(links[0].import.language, "javascript");
     }
 
-    #[test]
-    fn strip_quotes_variants() {
-        assert_eq!(strip_quotes("\"hello\""), "hello");
-        assert_eq!(strip_quotes("'hello'"), "hello");
-        assert_eq!(strip_quotes("`hello`"), "hello");
-        assert_eq!(strip_quotes("noquotes"), "noquotes");
-    }
+    // (strip_quotes coverage moved to bridge/util.rs alongside the helper.)
 
     // -- Edge cases: rename_all, async, command modules, v1/v2 patterns --
 

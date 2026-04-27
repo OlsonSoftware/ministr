@@ -232,12 +232,6 @@ body {
    Keyframes
    ------------------------------------------------------------------ */
 
-@keyframes ministr-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @keyframes ministr-pulse {
   0%, 100% {
     opacity: 1;
@@ -269,15 +263,6 @@ body {
   }
 }
 
-@keyframes ministr-ring-sweep {
-  from {
-    stroke-dashoffset: var(--ministr-ring-sweep-from, 1000);
-  }
-  to {
-    stroke-dashoffset: var(--ministr-ring-sweep-to, 0);
-  }
-}
-
 .ministr-fade-in {
   animation: ministr-fade-in 200ms cubic-bezier(0.2, 0, 0, 1) both;
 }
@@ -286,18 +271,14 @@ body {
   animation: ministr-flash 1.2s ease-out both;
 }
 
-.ministr-spin {
-  animation: ministr-spin 800ms linear infinite;
-}
-
 .ministr-pulse {
   animation: ministr-pulse 1.8s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ministr-spin,
   .ministr-pulse,
-  .ministr-fade-in {
+  .ministr-fade-in,
+  .ministr-flash {
     animation: none !important;
   }
 }

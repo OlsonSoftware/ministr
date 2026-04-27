@@ -170,12 +170,8 @@ impl MinistrServer {
                     "ministr_clone success"
                 );
 
-                let reg = self.registry.lock().await;
-                let budget_status = reg
-                    .get_session(&self.active_session_id)
-                    .expect("active session exists")
-                    .budget
-                    .budget_status();
+                let mut reg = self.registry.lock().await;
+                let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
                 drop(reg);
 
                 let response = self
@@ -241,12 +237,8 @@ impl MinistrServer {
             "ministr_refresh success"
         );
 
-        let reg = self.registry.lock().await;
-        let budget_status = reg
-            .get_session(&self.active_session_id)
-            .expect("active session exists")
-            .budget
-            .budget_status();
+        let mut reg = self.registry.lock().await;
+        let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
         drop(reg);
 
         let response = self

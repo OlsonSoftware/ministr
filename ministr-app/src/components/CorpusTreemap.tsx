@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { TreePine, FileCode, File as FileIcon, Layers } from "lucide-react";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
+import { CorpusSelect } from "./ui/corpus-select";
 import { cn } from "../lib/utils";
 import type { DaemonStatus, FileInfo } from "../lib/types";
 
@@ -76,17 +77,12 @@ export function CorpusTreemap({ status }: Props) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <select
+          <CorpusSelect
             value={corpusId}
-            onChange={(e) => setCorpusId(e.target.value)}
-            className="h-8 rounded-md border border-border/70 bg-surface-raised px-2.5 text-xs font-mono text-text cursor-pointer focus:outline-none focus:border-[var(--color-accent-ring)] focus:shadow-[0_0_0_3px_var(--color-accent-soft)]"
-          >
-            {status.corpora.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.id}
-              </option>
-            ))}
-          </select>
+            onChange={setCorpusId}
+            corpora={status.corpora}
+            ariaLabel="Treemap corpus"
+          />
           <Badge variant="muted">
             {files.length} files · {totalSections.toLocaleString()} sections
           </Badge>

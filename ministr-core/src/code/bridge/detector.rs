@@ -38,6 +38,12 @@ const CARGO_MARKERS: &[(&str, &[BridgeKind])] = &[
     ("actix-web", &[BridgeKind::HttpRoute]),
     ("axum", &[BridgeKind::HttpRoute]),
     ("rocket", &[BridgeKind::HttpRoute]),
+    // FFI: native interop — function loaders, JNI, and C-bindings generators.
+    ("libloading", &[BridgeKind::Ffi]),
+    ("libffi", &[BridgeKind::Ffi]),
+    ("jni", &[BridgeKind::Ffi]),
+    ("bindgen", &[BridgeKind::Ffi]),
+    ("cbindgen", &[BridgeKind::Ffi]),
 ];
 
 /// `package.json` dependency markers.
@@ -49,6 +55,10 @@ const NPM_MARKERS: &[(&str, &[BridgeKind])] = &[
     ("express", &[BridgeKind::HttpRoute]),
     ("fastify", &[BridgeKind::HttpRoute]),
     ("@napi-rs/cli", &[BridgeKind::Napi]),
+    // FFI: Node/Deno C-call libraries.
+    ("ffi-napi", &[BridgeKind::Ffi]),
+    ("koffi", &[BridgeKind::Ffi]),
+    ("node-ffi", &[BridgeKind::Ffi]),
 ];
 
 /// `pyproject.toml` dependency markers.
@@ -58,6 +68,10 @@ const PYTHON_MARKERS: &[(&str, &[BridgeKind])] = &[
     ("fastapi", &[BridgeKind::HttpRoute]),
     ("flask", &[BridgeKind::HttpRoute]),
     ("django", &[BridgeKind::HttpRoute]),
+    // FFI: cffi is the only manifest-visible signal.  Note that ctypes is in
+    // the stdlib and won't appear here; bare ctypes-only projects are picked
+    // up by the C/C++ source-presence fallback in `detect()` instead.
+    ("cffi", &[BridgeKind::Ffi]),
 ];
 
 impl FrameworkDetector {
@@ -87,7 +101,37 @@ impl FrameworkDetector {
             }
         }
 
+        // Filesystem fallback for FFI: a project containing C/C++ source files
+        // is almost certainly going to interop with someone via C ABI even when
+        // there's no manifest signal (kernel modules, embedded firmware, lone
+        // single-file libraries). This is the only place detection becomes
+        // filesystem-driven rather than manifest-driven.
+        if Self::has_c_or_cpp_sources(start_dir) {
+            kinds.insert(BridgeKind::Ffi);
+        }
+
         kinds.into_iter().collect()
+    }
+
+    /// Whether `dir` contains any C/C++ source files at the top level.
+    ///
+    /// Cheap one-level glob — does not recurse. Adequate because most
+    /// C/C++ projects place at least one `.c`/`.cpp`/`.h` at or near the
+    /// corpus root, and recursing the whole tree would dominate detection
+    /// time on large projects.
+    fn has_c_or_cpp_sources(dir: &Path) -> bool {
+        const C_LIKE_EXTS: &[&str] = &["c", "cpp", "cc", "cxx", "h", "hpp", "hh", "hxx"];
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            if let Some(ext) = entry.path().extension().and_then(|e| e.to_str())
+                && C_LIKE_EXTS.contains(&ext)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Scan `Cargo.toml` for bridge-related dependencies.
@@ -330,6 +374,81 @@ napi-derive = "2"
         assert!(
             !kinds.contains(&BridgeKind::TauriCommand),
             "taurine should not match tauri"
+        );
+    }
+
+    #[test]
+    fn detect_ffi_from_cargo_libloading() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[dependencies]\nlibloading = \"0.8\"\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::Ffi));
+    }
+
+    #[test]
+    fn detect_ffi_from_cargo_jni() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[dependencies]\njni = \"0.21\"\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::Ffi));
+    }
+
+    #[test]
+    fn detect_ffi_from_npm_ffi_napi() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("package.json"),
+            r#"{"dependencies": {"ffi-napi": "^4.0.3"}}"#,
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::Ffi));
+    }
+
+    #[test]
+    fn detect_ffi_from_python_cffi() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("pyproject.toml"),
+            "[project]\ndependencies = [\"cffi >= 1.16\"]\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::Ffi));
+    }
+
+    #[test]
+    fn detect_ffi_from_bare_c_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No manifests at all — just a single .c file.
+        std::fs::write(tmp.path().join("hello.c"), "int main(void) { return 0; }\n").unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(
+            kinds.contains(&BridgeKind::Ffi),
+            "bare C source should trigger FFI detection, got: {kinds:?}"
+        );
+    }
+
+    #[test]
+    fn detect_ffi_from_bare_cpp_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("greet.hpp"),
+            "void greet(const char *name);\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(
+            kinds.contains(&BridgeKind::Ffi),
+            "bare C++ header should trigger FFI detection, got: {kinds:?}"
         );
     }
 

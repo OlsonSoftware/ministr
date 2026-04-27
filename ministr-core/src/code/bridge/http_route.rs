@@ -12,6 +12,7 @@
 //! Implements [`BridgeExtractor`] and can be registered with a
 //! [`BridgeLinker`](super::linker::BridgeLinker).
 
+use super::util::{node_text, rust_item_name};
 use super::{BridgeEndpoint, BridgeExtractor, BridgeKind, ConfidenceLevel, EndpointRole};
 
 // ---------------------------------------------------------------------------
@@ -598,29 +599,6 @@ fn extract_fetch_method(s: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-/// Extract UTF-8 text from a tree-sitter node.
-fn node_text(node: &tree_sitter::Node<'_>, source: &[u8]) -> String {
-    node.utf8_text(source).unwrap_or("").to_string()
-}
-
-/// Extract the name identifier from a Rust function item.
-fn rust_item_name(node: &tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "identifier" && cursor.field_name() == Some("name") {
-            return Some(node_text(&child, source));
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    None
-}
 
 // ---------------------------------------------------------------------------
 // Tests

@@ -172,14 +172,20 @@ fn build_menu(
 }
 
 fn corpus_menu_label(corpus: &CorpusInfo) -> String {
-    // Favor the deepest path component so "my-app" wins over the full
-    // home-directory-rooted path.
-    let primary = corpus.paths.first().cloned().unwrap_or_default();
-    let name = std::path::Path::new(&primary)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(&primary)
-        .to_string();
+    // The daemon computes `display_name` from the LCA of the registered
+    // paths (typically the directory containing `.ministr.toml`), so
+    // it's already the right thing to show. Fall back to the basename
+    // of the first path only if an older daemon left it empty.
+    let name = if corpus.display_name.is_empty() {
+        let primary = corpus.paths.first().cloned().unwrap_or_default();
+        std::path::Path::new(&primary)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&primary)
+            .to_string()
+    } else {
+        corpus.display_name.clone()
+    };
     truncate(&name, MENU_LABEL_MAX)
 }
 
@@ -221,12 +227,21 @@ pub fn spawn_refresh_loop(handle: AppHandle, state: AppState) {
             rebuild_menu(&handle, &corpora);
 
             // Tooltip (kept here so the loop has a single source of truth).
-            let total_sessions: usize = corpora.iter().map(|c| c.active_sessions).sum();
+            let (parent_count, subagent_count) = count_sessions_by_lineage(&state).await;
+            let total_sessions = parent_count + subagent_count;
             let rss = ministr_core::mem_profile::rss_mb().unwrap_or(0.0);
+            // When subagents are attached, surface the breakdown so the
+            // user can spot subagent activity without opening the
+            // dashboard. Otherwise keep the line compact.
+            let session_part = if subagent_count > 0 {
+                format!("{total_sessions} sessions ({parent_count} parent · {subagent_count} sub)")
+            } else {
+                format!("{total_sessions} sessions")
+            };
             let tooltip = format!(
-                "ministr — {} corpora · {} sessions · {:.0} MB",
+                "ministr — {} corpora · {} · {:.0} MB",
                 corpora.len(),
-                total_sessions,
+                session_part,
                 rss,
             );
             if let Some(tray) = handle.tray_by_id(TRAY_ID) {
@@ -234,4 +249,36 @@ pub fn spawn_refresh_loop(handle: AppHandle, state: AppState) {
             }
         }
     });
+}
+
+/// Count active sessions across all corpora, split by whether the
+/// session has a parent (subagent) or not (top-level).
+///
+/// The whole loop runs without crossing an `.await` once the corpora
+/// map guard is taken: we use `try_lock` on each per-corpus session
+/// registry and skip any that's contended this tick. That keeps the
+/// registry-map read lifetime bounded by sync work (O(corpora · sessions))
+/// instead of tokio scheduler interleavings, so concurrent
+/// register/unregister writers don't block on us. The tooltip is
+/// informational and refreshes every 10s — missing one tick on a
+/// briefly-busy corpus self-heals on the next.
+async fn count_sessions_by_lineage(state: &AppState) -> (usize, usize) {
+    let mut parents = 0usize;
+    let mut subagents = 0usize;
+    let guard = state.registry.corpora().read().await;
+    for handle in guard.values() {
+        let Ok(reg) = handle.sessions.try_lock() else {
+            continue;
+        };
+        for sid in reg.session_ids() {
+            if let Some(entry) = reg.get_session(&sid) {
+                if entry.parent_session_id.is_some() {
+                    subagents += 1;
+                } else {
+                    parents += 1;
+                }
+            }
+        }
+    }
+    (parents, subagents)
 }

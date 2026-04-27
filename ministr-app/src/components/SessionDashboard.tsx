@@ -16,6 +16,7 @@ import { BudgetRing } from "./ui/budget-ring";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
 import { cn } from "../lib/utils";
+import { corpusLabelById } from "../lib/corpus";
 import type { SessionDetail, DaemonStatus } from "../lib/types";
 
 type PressureFilter = "all" | "elevated" | "critical";
@@ -101,11 +102,67 @@ export function SessionDashboard({ status }: Props) {
     const q = query.trim().toLowerCase();
     if (q) {
       list = list.filter((s) =>
-        [s.session_id, s.corpus_id].some((f) => f.toLowerCase().includes(q)),
+        [
+          s.session_id,
+          s.corpus_id,
+          corpusLabelById(status.corpora, s.corpus_id),
+          s.client_name ?? "",
+        ].some((f) => f.toLowerCase().includes(q)),
       );
     }
     return list;
-  }, [sessions, pressureFilter, query]);
+  }, [sessions, pressureFilter, query, status.corpora]);
+
+  // Group filtered sessions into a parent/subagent tree. A subagent
+  // whose parent dropped out of `filtered` (e.g. via a query that
+  // matched only the child) gets re-attached to the full sessions list
+  // by id; if the parent really is missing (different corpus, etc.)
+  // the subagent is rendered as an "orphan" top-level entry. This
+  // keeps the hierarchy coherent under filtering instead of having
+  // children appear floating without context.
+  const tree = useMemo(() => {
+    type Node = { session: SessionDetail; subagents: SessionDetail[] };
+    const byId = new Map(sessions.map((s) => [s.session_id, s]));
+    const filteredIds = new Set(filtered.map((s) => s.session_id));
+    const nodes = new Map<string, Node>();
+    const orphans: Node[] = [];
+
+    for (const s of filtered) {
+      if (!s.parent_session_id) {
+        if (!nodes.has(s.session_id)) {
+          nodes.set(s.session_id, { session: s, subagents: [] });
+        } else {
+          nodes.get(s.session_id)!.session = s;
+        }
+      }
+    }
+    for (const s of filtered) {
+      if (s.parent_session_id) {
+        const existing = nodes.get(s.parent_session_id);
+        if (existing) {
+          existing.subagents.push(s);
+        } else if (filteredIds.has(s.parent_session_id)) {
+          // Parent is in the filtered list but hasn't been added yet —
+          // shouldn't happen with the loops above, but guard anyway.
+          continue;
+        } else {
+          // Parent dropped out of the filter — re-attach if we can.
+          const parent = byId.get(s.parent_session_id);
+          if (parent) {
+            const node = nodes.get(parent.session_id) ?? {
+              session: parent,
+              subagents: [],
+            };
+            node.subagents.push(s);
+            nodes.set(parent.session_id, node);
+          } else {
+            orphans.push({ session: s, subagents: [] });
+          }
+        }
+      }
+    }
+    return [...nodes.values(), ...orphans];
+  }, [filtered, sessions]);
 
   return (
     <div className="space-y-4 ministr-fade-in">
@@ -207,7 +264,7 @@ export function SessionDashboard({ status }: Props) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter by session or corpus…"
-              className="h-8 w-full pl-8 pr-2.5 text-xs rounded-lg border border-border/70 bg-surface-raised text-text placeholder:text-text-dim font-mono focus:outline-none focus:border-[var(--color-accent-ring)] focus:shadow-[0_0_0_3px_var(--color-accent-soft)]"
+              className="h-8 w-full pl-8 pr-2.5 text-xs rounded-lg border border-border/70 bg-surface-raised text-text placeholder:text-text-dim font-mono focus:outline-none focus:border-[var(--color-accent-ring)]"
             />
           </div>
           <div className="flex items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised p-0.5">
@@ -245,7 +302,7 @@ export function SessionDashboard({ status }: Props) {
             Active sessions
             {vitals.total > 0 && (
               <span className="inline-flex items-center gap-1 ml-2 text-[10px] text-accent normal-case font-sans font-medium">
-                <StatusDot tone="accent" pulse />
+                <StatusDot tone="accent" pulse="live" />
                 streaming
               </span>
             )}
@@ -254,7 +311,7 @@ export function SessionDashboard({ status }: Props) {
 
         {!loaded ? (
           <div className="flex items-center justify-center py-12">
-            <div className="ministr-spin h-7 w-7 rounded-full border-2 border-border border-t-accent" />
+            <div className="animate-spin h-7 w-7 rounded-full border-2 border-border border-t-accent" />
           </div>
         ) : sessions.length === 0 ? (
           <EmptyState />
@@ -281,12 +338,26 @@ export function SessionDashboard({ status }: Props) {
           </Card>
         ) : (
           <div className="space-y-2">
-            {filtered.map((s) => (
-              <TurnBlock
-                key={s.session_id}
-                session={s}
-                fresh={freshSessions.has(s.session_id)}
-              />
+            {tree.map((node) => (
+              <div key={node.session.session_id} className="space-y-1.5">
+                <TurnBlock
+                  session={node.session}
+                  corpora={status.corpora}
+                  fresh={freshSessions.has(node.session.session_id)}
+                />
+                {node.subagents.length > 0 && (
+                  <div className="ml-4 border-l border-border/50 pl-3 space-y-1.5">
+                    {node.subagents.map((sub) => (
+                      <TurnBlock
+                        key={sub.session_id}
+                        session={sub}
+                        corpora={status.corpora}
+                        fresh={freshSessions.has(sub.session_id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -339,7 +410,7 @@ function FilterPill({
       className={cn(
         "inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all duration-120 cursor-pointer",
         active
-          ? "bg-[var(--color-accent-soft)] text-accent shadow-[inset_0_0_0_1px_var(--color-accent-ring)]"
+          ? "bg-[var(--color-accent-soft)] text-accent"
           : "text-text-muted hover:text-text hover:bg-surface-overlay/60",
       )}
     >

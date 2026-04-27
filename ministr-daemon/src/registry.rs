@@ -48,6 +48,8 @@ pub enum RegistryError {
     Index(String),
     #[error("corpus not found: {id}")]
     NotFound { id: String },
+    #[error("identity changed: paths canonicalise to {actual}, expected {expected}")]
+    IdentityChanged { expected: String, actual: String },
 }
 
 /// Central registry managing all indexed corpora.
@@ -64,7 +66,12 @@ pub struct CorpusRegistry {
 
 /// A single managed corpus with its resources.
 pub struct CorpusHandle {
-    pub info: RwLock<CorpusInfo>,
+    /// Wrapped in `Arc` so callers can extract a reference, drop the
+    /// outer `corpora` map guard, and *then* await on `info.write()` /
+    /// `info.read()`. Without the `Arc`, the only way to reach `info`
+    /// is through the map guard, which would force the registry-map
+    /// lock to be held across every per-corpus `info` await.
+    pub info: Arc<RwLock<CorpusInfo>>,
     pub storage: Arc<SqliteStorage>,
     pub index: Arc<dyn VectorIndex>,
     pub service: QueryService,
@@ -190,6 +197,60 @@ impl CorpusRegistry {
         };
 
         info!(count = entries.len(), "restoring corpora from manifest");
+
+        // One-time on-disk migration from un-canonicalised ids: if an
+        // entry's stored id doesn't match the canonical id of its paths,
+        // rename `corpora/{old_id}` → `corpora/{new_id}` so the new code
+        // picks up the existing data instead of orphaning it. On collision
+        // (both dirs exist) we leave the old dir in place — better to keep
+        // a stale orphan than overwrite live data.
+        //
+        // Run on the blocking pool so the rename / metadata syscalls don't
+        // park the async runtime thread during startup. The migration is
+        // sequential because the entry list is small (one entry per
+        // registered corpus) and the renames don't benefit from parallelism.
+        let corpora_dir = self.config.data_dir.join("corpora");
+        let migration_entries: Vec<(String, String)> = entries
+            .iter()
+            .filter_map(|e| {
+                let new_id = corpus_id_from_paths(&e.paths);
+                (new_id != e.id).then_some((e.id.clone(), new_id))
+            })
+            .collect();
+        if !migration_entries.is_empty() {
+            let migration_dir = corpora_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                for (old_id, new_id) in migration_entries {
+                    let old_dir = migration_dir.join(&old_id);
+                    let new_dir = migration_dir.join(&new_id);
+                    if !old_dir.exists() {
+                        continue;
+                    }
+                    if new_dir.exists() {
+                        warn!(
+                            old_id = %old_id,
+                            new_id = %new_id,
+                            "canonical-id collision on migration — leaving old dir as orphan"
+                        );
+                        continue;
+                    }
+                    match std::fs::rename(&old_dir, &new_dir) {
+                        Ok(()) => info!(
+                            old_id = %old_id,
+                            new_id = %new_id,
+                            "migrated corpus dir to canonical id"
+                        ),
+                        Err(e) => warn!(
+                            error = %e,
+                            old_id = %old_id,
+                            "failed to migrate corpus dir"
+                        ),
+                    }
+                }
+            })
+            .await;
+        }
+
         for entry in &entries {
             if let Err(e) = self.register(&entry.paths).await {
                 warn!(corpus_id = %entry.id, error = %e, "failed to restore corpus");
@@ -199,9 +260,12 @@ impl CorpusRegistry {
 
     /// Register a corpus, initialize its resources, and spawn background indexing.
     ///
-    /// If an existing corpus shares the same project root (common ancestor
-    /// directory) but has a different path set, the stale entry is replaced.
-    /// This prevents duplicate registrations when `.ministr.toml` paths change.
+    /// Strictly idempotent on canonical identity: re-registering the same
+    /// path set (in any equivalent form — case, separators, trailing slash)
+    /// returns the existing `corpus_id` with `indexing_started = false` and
+    /// touches no other corpus's state. To change the paths of an existing
+    /// corpus without dropping its sessions, use
+    /// [`Self::update_corpus_paths`].
     ///
     /// # Errors
     ///
@@ -210,34 +274,19 @@ impl CorpusRegistry {
         self: &Arc<Self>,
         paths: &[String],
     ) -> Result<(String, bool), RegistryError> {
-        let corpus_id = corpus_id_from_paths(paths);
+        let canonical = canonical_corpus_paths(paths);
+        let corpus_id = corpus_id_from_paths(&canonical);
 
         if self.corpora.read().await.contains_key(&corpus_id) {
             return Ok((corpus_id, false));
         }
 
-        // Check for an existing corpus with the same project root but different
-        // paths (e.g. user added a path in .ministr.toml). Replace it.
-        let new_root = project_root_from_paths(paths);
-        let stale_id = {
-            let corpora = self.corpora.read().await;
-            let mut found = None;
-            for (id, handle) in corpora.iter() {
-                let info = handle.info.read().await;
-                if project_root_from_paths(&info.paths) == new_root {
-                    found = Some(id.clone());
-                    break;
-                }
-            }
-            found
-        };
-        if let Some(old_id) = stale_id {
-            info!(old_id = %old_id, new_id = %corpus_id, "replacing stale corpus (paths changed)");
-            // Best-effort unregister — ignore NotFound race.
-            let _ = self.unregister(&old_id).await;
-        }
-
-        let handle = self.create_handle(&corpus_id, paths)?;
+        // Display name is derived from the *original* paths so we
+        // preserve the user's casing — `canonical` is lowercased on
+        // Windows for identity stability, but humans want to see
+        // "Ministr", not "ministr".
+        let display_name = display_name_from_paths(paths);
+        let handle = self.create_handle(&corpus_id, &canonical, display_name)?;
 
         // Subscribe to coherence broadcasts for answer cache invalidation
         // BEFORE inserting the handle (the tx is on the handle).
@@ -278,7 +327,7 @@ impl CorpusRegistry {
         // Spawn background indexing (delegated to indexer module).
         let registry = Arc::clone(self);
         let cid = corpus_id.clone();
-        let owned_paths = paths.to_vec();
+        let owned_paths = canonical.clone();
         tokio::spawn(async move {
             indexer::run(&registry, &cid, &owned_paths).await;
             // After initial indexing, start watching for file changes.
@@ -286,6 +335,81 @@ impl CorpusRegistry {
         });
 
         Ok((corpus_id, true))
+    }
+
+    /// Update the registered paths for an existing corpus without dropping
+    /// its [`CorpusHandle`] or in-memory session state.
+    ///
+    /// Use this when `.ministr.toml` paths change. Active MCP sessions, the
+    /// running indexer, the file watcher, and the SQLite/HNSW state all
+    /// survive — only `info.paths` is mutated, the manifest is re-saved,
+    /// and ingestion is queued for any genuinely new paths.
+    ///
+    /// `new_paths` must canonicalise to the same `corpus_id` as the existing
+    /// corpus. Identity is derived from canonical paths, so a different
+    /// canonical id means the caller is changing identity, not just the
+    /// path expression — they should `unregister` + `register` instead.
+    ///
+    /// # Errors
+    ///
+    /// - [`RegistryError::NotFound`] if `corpus_id` is not registered.
+    /// - [`RegistryError::IdentityChanged`] if `new_paths` canonicalise to a
+    ///   different id.
+    pub async fn update_corpus_paths(
+        self: &Arc<Self>,
+        corpus_id: &str,
+        new_paths: &[String],
+    ) -> Result<(), RegistryError> {
+        let canonical = canonical_corpus_paths(new_paths);
+        let new_id = corpus_id_from_paths(&canonical);
+        if new_id != corpus_id {
+            return Err(RegistryError::IdentityChanged {
+                expected: corpus_id.to_string(),
+                actual: new_id,
+            });
+        }
+
+        let new_display_name = display_name_from_paths(new_paths);
+
+        // Extract a clone of the info Arc under the corpora-map read
+        // guard, then drop the guard before awaiting the per-handle
+        // info write. Holding `corpora.read()` across `info.write().await`
+        // would block concurrent register/unregister writers for the
+        // duration of the info write.
+        let info_lock = {
+            let corpora = self.corpora.read().await;
+            let handle = corpora
+                .get(corpus_id)
+                .ok_or_else(|| RegistryError::NotFound {
+                    id: corpus_id.to_string(),
+                })?;
+            Arc::clone(&handle.info)
+        };
+
+        let added: Vec<String> = {
+            let mut info = info_lock.write().await;
+            let prior: std::collections::HashSet<String> = info.paths.iter().cloned().collect();
+            let added: Vec<String> = canonical
+                .iter()
+                .filter(|p| !prior.contains(p.as_str()))
+                .cloned()
+                .collect();
+            info.paths = canonical;
+            info.display_name = new_display_name;
+            added
+        };
+
+        self.save_manifest().await;
+
+        if !added.is_empty() {
+            let registry = Arc::clone(self);
+            let cid = corpus_id.to_string();
+            tokio::spawn(async move {
+                indexer::run(&registry, &cid, &added).await;
+            });
+        }
+
+        Ok(())
     }
 
     /// Unregister a corpus, cancelling any background work.
@@ -414,6 +538,7 @@ impl CorpusRegistry {
         &self,
         corpus_id: &str,
         paths: &[String],
+        display_name: String,
     ) -> Result<CorpusHandle, RegistryError> {
         let corpus_dir = self.config.data_dir.join("corpora").join(corpus_id);
         let db_path = corpus_dir.join("content.db");
@@ -439,8 +564,9 @@ impl CorpusRegistry {
         );
 
         Ok(CorpusHandle {
-            info: RwLock::new(CorpusInfo {
+            info: Arc::new(RwLock::new(CorpusInfo {
                 id: corpus_id.to_string(),
+                display_name,
                 paths: paths.to_vec(),
                 status: IndexingStatus::Idle,
                 files_indexed: 0,
@@ -449,7 +575,7 @@ impl CorpusRegistry {
                 active_sessions: 0,
                 last_indexed: None,
                 symbols_count: 0,
-            }),
+            })),
             storage,
             index,
             service,
@@ -555,13 +681,105 @@ fn load_or_create_index(
     ))
 }
 
-/// Derive a deterministic corpus ID from sorted paths.
+/// Derive a human-readable label for a corpus from its path set.
+///
+/// Returns the basename of the longest common ancestor of all paths —
+/// i.e. for a `.ministr.toml` whose `[corpus] paths` resolve to
+/// `["…/foo/src", "…/foo/docs", "…/foo/README.md"]` this returns
+/// `"foo"` regardless of how the paths get sorted later. For a
+/// single-path corpus, returns the basename of that path.
+///
+/// Operates on the original (un-canonicalised) paths to preserve the
+/// case the user typed — the canonical form is for identity, not
+/// display.
+#[must_use]
+pub fn display_name_from_paths(paths: &[String]) -> String {
+    if paths.is_empty() {
+        return String::new();
+    }
+
+    // Normalise separators only, preserving case.
+    let normalised: Vec<String> = paths.iter().map(|p| p.replace('\\', "/")).collect();
+
+    let root: String = if normalised.len() == 1 {
+        normalised[0].trim_end_matches('/').to_string()
+    } else {
+        let segments: Vec<Vec<&str>> = normalised.iter().map(|p| p.split('/').collect()).collect();
+        let first = &segments[0];
+        let mut common = 0usize;
+        for (i, s0) in first.iter().enumerate() {
+            if segments[1..].iter().all(|seg| seg.get(i) == Some(s0)) {
+                common = i + 1;
+            } else {
+                break;
+            }
+        }
+        first[..common].join("/")
+    };
+
+    let basename = std::path::Path::new(&root)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(std::string::ToString::to_string);
+    basename.unwrap_or(root)
+}
+
+/// Lexically canonicalise a single corpus path string.
+///
+/// For paths classified as [`CorpusSource::Local`](ministr_core::config::CorpusSource):
+///
+/// - `\` becomes `/` so Windows and Unix forms hash identically.
+/// - Trailing `/` is stripped (but the lone `/` root is preserved).
+/// - On Windows, the result is lowercased — NTFS is case-insensitive,
+///   and we don't want `D:/Code/foo` and `d:/code/foo` to be treated as
+///   different corpora.
+///
+/// Non-local paths (HTTP, git, github://) pass through unchanged so
+/// remote-URL identity isn't accidentally rewritten.
+fn canonical_corpus_path(raw: &str) -> String {
+    use ministr_core::config::{CorpusSource, classify_corpus_path};
+
+    if !matches!(classify_corpus_path(raw), CorpusSource::Local(_)) {
+        return raw.to_owned();
+    }
+
+    let mut s = raw.replace('\\', "/");
+
+    while s.len() > 1 && s.ends_with('/') {
+        s.pop();
+    }
+
+    #[cfg(windows)]
+    {
+        s = s.to_lowercase();
+    }
+
+    s
+}
+
+/// Canonicalise, sort, and dedup a corpus path set.
+///
+/// The result is the input both to [`corpus_id_from_paths`] and to the
+/// stored `CorpusInfo.paths` — so two equivalent path sets produce
+/// identical ids, identical on-disk dirs, and identical manifest entries.
+#[must_use]
+pub fn canonical_corpus_paths(paths: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = paths.iter().map(|p| canonical_corpus_path(p)).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Derive a deterministic corpus ID from a path set.
+///
+/// Paths are canonicalised first via [`canonical_corpus_paths`] so that
+/// equivalent inputs (case, separator, trailing-slash variants) hash to
+/// the same id.
 #[must_use]
 pub fn corpus_id_from_paths(paths: &[String]) -> String {
     use std::fmt::Write;
-    let mut sorted = paths.to_vec();
-    sorted.sort();
-    let hash = Sha256::digest(sorted.join("\n").as_bytes());
+    let canonical = canonical_corpus_paths(paths);
+    let hash = Sha256::digest(canonical.join("\n").as_bytes());
     let hex = hash.iter().fold(String::new(), |mut acc, b| {
         let _ = write!(acc, "{b:02x}");
         acc
@@ -569,77 +787,9 @@ pub fn corpus_id_from_paths(paths: &[String]) -> String {
     format!("multi-{}", &hex[..8])
 }
 
-/// Derive the project root directory from corpus paths.
-///
-/// Computes the longest common ancestor of all paths. For single-path
-/// corpora like `["/Users/x/project/src"]`, returns the parent
-/// (`/Users/x/project`). For multi-path corpora, returns the deepest
-/// shared directory.
-#[must_use]
-pub fn project_root_from_paths(paths: &[String]) -> std::path::PathBuf {
-    if paths.is_empty() {
-        return std::path::PathBuf::new();
-    }
-    if paths.len() == 1 {
-        // Single path: go up one level (src → project root).
-        let p = std::path::Path::new(&paths[0]);
-        return p.parent().unwrap_or(p).to_path_buf();
-    }
-    // Multi-path: find common ancestor.
-    let segments: Vec<Vec<&str>> = paths
-        .iter()
-        .map(|p| p.split('/').collect::<Vec<_>>())
-        .collect();
-    let mut common = 0;
-    'outer: for i in 0..segments[0].len() {
-        for seg in &segments[1..] {
-            if i >= seg.len() || seg[i] != segments[0][i] {
-                break 'outer;
-            }
-        }
-        common = i + 1;
-    }
-    std::path::PathBuf::from(segments[0][..common].join("/"))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
-
-    #[test]
-    fn project_root_single_path() {
-        let paths = vec!["/Users/x/Code/pretext/src".to_string()];
-        assert_eq!(
-            project_root_from_paths(&paths),
-            Path::new("/Users/x/Code/pretext")
-        );
-    }
-
-    #[test]
-    fn project_root_multi_path() {
-        let paths = vec![
-            "/Users/x/Code/pretext/src".to_string(),
-            "/Users/x/Code/pretext/docs".to_string(),
-        ];
-        assert_eq!(
-            project_root_from_paths(&paths),
-            Path::new("/Users/x/Code/pretext")
-        );
-    }
-
-    #[test]
-    fn project_root_empty() {
-        let paths: Vec<String> = vec![];
-        assert_eq!(project_root_from_paths(&paths), Path::new(""));
-    }
-
-    #[test]
-    fn project_root_deeply_nested() {
-        let paths = vec!["/a/b/c/src/lib".to_string(), "/a/b/c/src/bin".to_string()];
-        assert_eq!(project_root_from_paths(&paths), Path::new("/a/b/c/src"));
-    }
 
     #[test]
     fn corpus_id_deterministic() {
@@ -656,39 +806,96 @@ mod tests {
     }
 
     #[test]
-    fn project_root_mixed_depth_paths() {
-        // ministr-rs case: mix of /*/src dirs and top-level files like README.md
-        let paths = vec![
-            "/Users/x/Code/ministr-rs/ministr-api/src".to_string(),
-            "/Users/x/Code/ministr-rs/ministr-core/src".to_string(),
-            "/Users/x/Code/ministr-rs/README.md".to_string(),
-            "/Users/x/Code/ministr-rs/docs".to_string(),
-        ];
-        assert_eq!(
-            project_root_from_paths(&paths),
-            Path::new("/Users/x/Code/ministr-rs")
+    fn canonical_strips_trailing_slash() {
+        // Use a lowercase fixture so the assertion holds on both case-
+        // sensitive and case-insensitive (Windows) builds.
+        assert_eq!(canonical_corpus_path("/users/x/foo/"), "/users/x/foo");
+        assert_eq!(canonical_corpus_path("/users/x/foo"), "/users/x/foo");
+        // Lone root preserved.
+        assert_eq!(canonical_corpus_path("/"), "/");
+    }
+
+    #[test]
+    fn canonical_normalises_separators() {
+        // Backslash → forward slash on every platform; the canonical hash
+        // input must be cross-platform-stable so a project committed on
+        // Windows resolves to the same id on macOS / Linux.
+        assert!(
+            canonical_corpus_path("D:\\Code\\ministr").ends_with("d:/code/ministr")
+                || canonical_corpus_path("D:\\Code\\ministr") == "D:/Code/ministr"
         );
     }
 
     #[test]
-    fn project_roots_distinct_projects() {
-        let a = project_root_from_paths(&["/Users/x/Code/shader-art/src".into()]);
-        let b = project_root_from_paths(&[
-            "/Users/x/Code/pretext/src".into(),
-            "/Users/x/Code/pretext/README.md".into(),
-        ]);
-        let c = project_root_from_paths(&[
-            "/Users/x/Code/ministr-rs/ministr-api/src".into(),
-            "/Users/x/Code/ministr-rs/README.md".into(),
-        ]);
+    fn canonical_passes_through_remote_urls() {
+        // `classify_corpus_path` recognises https:// as a Web source —
+        // we don't want to lowercase or rewrite it.
+        let raw = "https://Example.com/Some/Path/";
+        assert_eq!(canonical_corpus_path(raw), raw);
+        let git = "git@github.com:User/Repo.git";
+        assert_eq!(canonical_corpus_path(git), git);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn canonical_lowercases_on_windows() {
+        // NTFS is case-insensitive — ids must collapse case so users
+        // who type the drive letter or path differently land on the
+        // same corpus.
+        assert_eq!(
+            canonical_corpus_path("D:\\Code\\Ministr"),
+            "d:/code/ministr"
+        );
+    }
+
+    #[test]
+    fn corpus_id_idempotent_across_path_forms() {
+        // The whole point of the canonicalisation: every equivalent
+        // expression of the same project must hash to the same id.
+        let trailing = corpus_id_from_paths(&["/Users/x/foo/".into()]);
+        let no_trailing = corpus_id_from_paths(&["/Users/x/foo".into()]);
+        assert_eq!(trailing, no_trailing, "trailing slash should not matter");
+
+        let unsorted = corpus_id_from_paths(&["b".into(), "a".into()]);
+        let sorted = corpus_id_from_paths(&["a".into(), "b".into()]);
+        assert_eq!(unsorted, sorted, "input order should not matter");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn corpus_id_idempotent_across_windows_path_forms() {
+        let backslash = corpus_id_from_paths(&["D:\\Code\\Ministr".into()]);
+        let forward = corpus_id_from_paths(&["D:/Code/ministr".into()]);
+        let mixed = corpus_id_from_paths(&["d:\\Code/Ministr/".into()]);
+        assert_eq!(backslash, forward);
+        assert_eq!(backslash, mixed);
+    }
+
+    #[test]
+    fn corpus_id_distinct_for_sibling_projects() {
+        // Two sibling projects under the same parent dir must hash to
+        // distinct ids — registering one must never collide with another.
+        // This is the case the old `project_root_from_paths` heuristic
+        // got disastrously wrong.
+        let a = corpus_id_from_paths(&["/Users/x/Code/projectA".into()]);
+        let b = corpus_id_from_paths(&["/Users/x/Code/projectB".into()]);
         assert_ne!(a, b);
-        assert_ne!(b, c);
-        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn canonical_dedups() {
+        let out = canonical_corpus_paths(&[
+            "/users/x/foo/".into(),
+            "/users/x/foo".into(),
+            "/users/x/bar".into(),
+        ]);
+        assert_eq!(out, vec!["/users/x/bar".to_string(), "/users/x/foo".into()]);
     }
 
     fn snapshot_with(status: IndexingStatus) -> CorpusInfo {
         CorpusInfo {
             id: "test".into(),
+            display_name: "test".into(),
             paths: vec![],
             status,
             files_indexed: 1,
@@ -698,6 +905,46 @@ mod tests {
             last_indexed: None,
             symbols_count: 0,
         }
+    }
+
+    #[test]
+    fn display_name_multi_path_uses_lca_basename() {
+        // Mirrors a typical .ministr.toml resolved-paths set. After
+        // canonicalisation paths get sorted lexicographically, so a
+        // naive "first path's basename" gives "docs" or "README.md"
+        // — we want the project root's basename instead.
+        let paths = vec![
+            "D:\\Code\\Ministr\\src".into(),
+            "D:\\Code\\Ministr\\docs".into(),
+            "D:\\Code\\Ministr\\README.md".into(),
+        ];
+        assert_eq!(display_name_from_paths(&paths), "Ministr");
+    }
+
+    #[test]
+    fn display_name_preserves_case() {
+        // Display name is derived from the *original* paths so the
+        // user's casing survives — the canonical (lowercased on
+        // Windows) form is for identity only.
+        let paths = vec!["/Users/x/MyProject".into()];
+        assert_eq!(display_name_from_paths(&paths), "MyProject");
+    }
+
+    #[test]
+    fn display_name_single_path() {
+        let paths = vec!["/Users/x/Code/foo".into()];
+        assert_eq!(display_name_from_paths(&paths), "foo");
+    }
+
+    #[test]
+    fn display_name_empty() {
+        assert_eq!(display_name_from_paths(&[]), "");
+    }
+
+    #[test]
+    fn display_name_handles_trailing_slash() {
+        let paths = vec!["/Users/x/Code/foo/".into()];
+        assert_eq!(display_name_from_paths(&paths), "foo");
     }
 
     #[test]

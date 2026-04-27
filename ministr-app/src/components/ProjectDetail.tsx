@@ -10,9 +10,11 @@ import {
   Activity,
   Folder,
 } from "lucide-react";
-import type { CorpusInfo, DaemonStatus, IndexingStatus } from "../lib/types";
+import type { CorpusInfo, DaemonStatus } from "../lib/types";
+import { statusBadge } from "../lib/status";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
+import { MetricTile } from "./ui/metric-tile";
 import { cn } from "../lib/utils";
 
 interface ProjectDetailProps {
@@ -20,18 +22,8 @@ interface ProjectDetailProps {
   status: DaemonStatus;
 }
 
-function statusBadge(status: IndexingStatus) {
-  switch (status.state) {
-    case "idle":
-      return <Badge variant="success" dot>Ready</Badge>;
-    case "indexing":
-      return <Badge variant="warning" dot>Indexing</Badge>;
-    case "error":
-      return <Badge variant="danger" dot>Error</Badge>;
-  }
-}
-
 export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
+  const { variant: statusVariant, label: statusLabel } = statusBadge(corpus.status);
   return (
     <div className="space-y-4 ministr-fade-in">
       <header className="flex items-center justify-between gap-3">
@@ -41,7 +33,7 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
             Live metrics for this corpus.
           </p>
         </div>
-        {statusBadge(corpus.status)}
+        <Badge variant={statusVariant} dot>{statusLabel}</Badge>
       </header>
 
       <Section title="Index overview">
@@ -176,32 +168,6 @@ function Section({
       </div>
       <div className="space-y-1.5">{children}</div>
     </Card>
-  );
-}
-
-function MetricTile({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="flex items-center gap-2.5 rounded-lg border border-border/50 bg-surface/40 px-2.5 py-2">
-      <div className="grid h-7 w-7 place-items-center rounded-md bg-surface-overlay text-text-muted">
-        <Icon className="h-3.5 w-3.5" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-[10px] font-medium uppercase tracking-wider text-text-dim">
-          {label}
-        </p>
-        <p className="text-sm font-semibold tabular-nums text-text truncate">
-          {value}
-        </p>
-      </div>
-    </div>
   );
 }
 
