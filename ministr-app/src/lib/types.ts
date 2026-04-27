@@ -1,5 +1,9 @@
 export interface CorpusInfo {
   id: string;
+  /** Human-readable label (LCA basename of the registered paths) computed
+   *  by the daemon. Older daemons may omit this — UI should fall back to
+   *  the basename of the first path. */
+  display_name?: string;
   paths: string[];
   status: IndexingStatus;
   files_indexed: number;

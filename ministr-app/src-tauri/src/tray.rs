@@ -172,14 +172,20 @@ fn build_menu(
 }
 
 fn corpus_menu_label(corpus: &CorpusInfo) -> String {
-    // Favor the deepest path component so "my-app" wins over the full
-    // home-directory-rooted path.
-    let primary = corpus.paths.first().cloned().unwrap_or_default();
-    let name = std::path::Path::new(&primary)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(&primary)
-        .to_string();
+    // The daemon computes `display_name` from the LCA of the registered
+    // paths (typically the directory containing `.ministr.toml`), so
+    // it's already the right thing to show. Fall back to the basename
+    // of the first path only if an older daemon left it empty.
+    let name = if corpus.display_name.is_empty() {
+        let primary = corpus.paths.first().cloned().unwrap_or_default();
+        std::path::Path::new(&primary)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&primary)
+            .to_string()
+    } else {
+        corpus.display_name.clone()
+    };
     truncate(&name, MENU_LABEL_MAX)
 }
 

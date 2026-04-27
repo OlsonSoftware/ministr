@@ -1,6 +1,7 @@
 import { cn } from "../../lib/utils";
+import { type BadgeVariant, toneBgClass } from "../../lib/status";
 
-const variants = {
+const variants: Record<BadgeVariant, string> = {
   default:
     "bg-[var(--color-accent-soft)] text-accent border-[var(--color-accent-ring)]",
   success:
@@ -11,10 +12,18 @@ const variants = {
     "bg-danger/10 text-danger border-danger/30",
   muted:
     "bg-surface-overlay text-text-muted border-border",
-} as const;
+};
+
+const dotTones: Record<BadgeVariant, "accent" | "success" | "warning" | "danger" | "muted"> = {
+  default: "accent",
+  success: "success",
+  warning: "warning",
+  danger: "danger",
+  muted: "muted",
+};
 
 interface BadgeProps {
-  variant?: keyof typeof variants;
+  variant?: BadgeVariant;
   children: React.ReactNode;
   className?: string;
   /** Tiny pulsing dot for live/active states. */
@@ -39,11 +48,7 @@ export function Badge({
         <span
           className={cn(
             "ministr-pulse h-1.5 w-1.5 rounded-full",
-            variant === "default" && "bg-accent",
-            variant === "success" && "bg-success",
-            variant === "warning" && "bg-warning",
-            variant === "danger" && "bg-danger",
-            variant === "muted" && "bg-text-dim",
+            toneBgClass(dotTones[variant]),
           )}
         />
       )}

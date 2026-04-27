@@ -11,11 +11,15 @@ import {
   Code2,
   Clock,
 } from "lucide-react";
-import type { CorpusInfo, IndexingStatus } from "../lib/types";
+import type { CorpusInfo } from "../lib/types";
+import { corpusLabel, corpusRoot } from "../lib/corpus";
+import { statusBadge } from "../lib/status";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { CorpusChip } from "./ui/corpus-chip";
+import { EmptyState } from "./ui/empty-state";
+import { MetricTile } from "./ui/metric-tile";
 import { Progress } from "./ui/progress";
 import { cn } from "../lib/utils";
 import { useEffect, useRef, useState } from "react";
@@ -25,44 +29,6 @@ interface ProjectListProps {
   onRefresh: () => void;
   onSelect: (id: string) => void;
   selectedId: string | null;
-}
-
-function statusBadge(status: IndexingStatus) {
-  switch (status.state) {
-    case "idle":
-      return <Badge variant="success">Ready</Badge>;
-    case "indexing":
-      return <Badge variant="warning">Indexing</Badge>;
-    case "error":
-      return <Badge variant="danger">Error</Badge>;
-  }
-}
-
-function projectName(paths: string[]): string {
-  if (paths.length === 0) return "Unknown";
-  const root = projectRoot(paths);
-  const parts = root.split("/");
-  return parts[parts.length - 1] || root;
-}
-
-/** Derive the project root directory from corpus paths. */
-function projectRoot(paths: string[]): string {
-  if (paths.length === 0) return "";
-  if (paths.length === 1) {
-    // Single path like /Users/x/project/src → go up to /Users/x/project
-    const parts = paths[0].split("/");
-    return parts.slice(0, -1).join("/") || paths[0];
-  }
-  // Multi-path: find common ancestor directory.
-  const segments = paths.map((p) => p.split("/"));
-  let common = 0;
-  outer: for (let i = 0; i < segments[0].length; i++) {
-    for (let j = 1; j < segments.length; j++) {
-      if (i >= segments[j].length || segments[j][i] !== segments[0][i]) break outer;
-    }
-    common = i + 1;
-  }
-  return segments[0].slice(0, common).join("/");
 }
 
 export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: ProjectListProps) {
@@ -146,20 +112,24 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
       )}
 
       {corpora.length === 0 ? (
-        <Card className="flex flex-col items-center justify-center text-center py-12 px-6">
-          <div className="grid h-14 w-14 place-items-center rounded-xl bg-[var(--color-accent-soft)] text-accent mb-4">
-            <FolderOpen className="h-6 w-6" />
-          </div>
-          <p className="text-sm font-medium text-text">No projects yet</p>
-          <p className="text-xs text-text-dim mt-1 max-w-xs">
-            Add a directory containing an <span className="font-mono">.ministr.toml</span>,
-            or point ministr at any folder and it will scan for you.
-          </p>
-          <Button className="mt-5" onClick={addProject} disabled={adding}>
-            <Plus className="h-3.5 w-3.5" />
-            Add your first project
-          </Button>
-        </Card>
+        <EmptyState
+          accent
+          icon={FolderOpen}
+          title="No projects yet"
+          hint={
+            <>
+              Add a directory containing an{" "}
+              <span className="font-mono">.ministr.toml</span>, or point ministr
+              at any folder and it will scan for you.
+            </>
+          }
+          action={
+            <Button onClick={addProject} disabled={adding}>
+              <Plus className="h-3.5 w-3.5" />
+              Add your first project
+            </Button>
+          }
+        />
       ) : (
         <div className="space-y-2.5">
           {corpora.map((corpus) => {
@@ -185,9 +155,12 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-sm text-text truncate">
-                        {projectName(corpus.paths)}
+                        {corpusLabel(corpus)}
                       </span>
-                      {statusBadge(corpus.status)}
+                      {(() => {
+                        const { variant, label } = statusBadge(corpus.status);
+                        return <Badge variant={variant}>{label}</Badge>;
+                      })()}
                       {corpus.active_sessions > 0 && (
                         <Badge variant="default" dot>
                           {corpus.active_sessions}{" "}
@@ -196,7 +169,7 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
                       )}
                     </div>
                     <p className="text-xs text-text-dim font-mono truncate mt-0.5">
-                      {projectRoot(corpus.paths)}
+                      {corpusRoot(corpus.paths)}
                     </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
@@ -221,10 +194,30 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
                 </div>
 
                 <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-xs text-text-muted">
-                  <Stat icon={FileText} value={corpus.files_indexed} label="files" />
-                  <Stat icon={Layers} value={corpus.sections_count} label="sections" />
-                  <Stat icon={Code2} value={corpus.symbols_count ?? 0} label="symbols" />
-                  <Stat icon={Box} value={corpus.embeddings_count} label="vectors" />
+                  <MetricTile
+                    variant="inline"
+                    icon={FileText}
+                    value={corpus.files_indexed.toLocaleString()}
+                    label="files"
+                  />
+                  <MetricTile
+                    variant="inline"
+                    icon={Layers}
+                    value={corpus.sections_count.toLocaleString()}
+                    label="sections"
+                  />
+                  <MetricTile
+                    variant="inline"
+                    icon={Code2}
+                    value={(corpus.symbols_count ?? 0).toLocaleString()}
+                    label="symbols"
+                  />
+                  <MetricTile
+                    variant="inline"
+                    icon={Box}
+                    value={corpus.embeddings_count.toLocaleString()}
+                    label="vectors"
+                  />
                   {corpus.last_indexed && (
                     <span
                       className="flex items-center gap-1 text-text-dim"
@@ -270,24 +263,6 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
         </div>
       )}
     </div>
-  );
-}
-
-function Stat({
-  icon: Icon,
-  value,
-  label,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  value: number;
-  label: string;
-}) {
-  return (
-    <span className="flex items-center gap-1 text-text-muted">
-      <Icon className="h-3 w-3 text-text-dim" />
-      <span className="tabular-nums font-medium">{value.toLocaleString()}</span>
-      <span className="text-text-dim">{label}</span>
-    </span>
   );
 }
 

@@ -10,6 +10,7 @@ use crate::activity::ActivityResponse;
 use crate::coherence::CoherenceEventsResponse;
 use crate::corpus::{
     CorpusInfo, ListCorporaResponse, RegisterCorpusRequest, RegisterCorpusResponse,
+    UpdateCorpusPathsRequest,
 };
 use crate::query::{
     ExtractRequest, ExtractResponse, ReferencesResponse, SectionDetail, SurveyRequest,
@@ -193,6 +194,29 @@ impl DaemonClient {
     pub async fn unregister_corpus(&self, corpus_id: &str) -> Result<(), ClientError> {
         self.delete(&format!("/api/v1/corpora/{corpus_id}")).await?;
         Ok(())
+    }
+
+    /// Replace an existing corpus's path set without dropping its sessions.
+    ///
+    /// The new paths must canonicalise to the same `corpus_id` as the
+    /// existing corpus. To change identity, call [`Self::unregister_corpus`]
+    /// followed by [`Self::register_corpus`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the corpus doesn't exist (`NOT_FOUND`),
+    /// the new paths canonicalise to a different id (`BAD_REQUEST` with
+    /// code `identity_changed`), or the request fails.
+    pub async fn update_corpus_paths(
+        &self,
+        corpus_id: &str,
+        paths: &[String],
+    ) -> Result<(), ClientError> {
+        let req = UpdateCorpusPathsRequest {
+            paths: paths.to_vec(),
+        };
+        self.put_no_content(&format!("/api/v1/corpora/{corpus_id}/paths"), &req)
+            .await
     }
 
     // -- Query endpoints --
@@ -641,6 +665,19 @@ impl DaemonClient {
             return Err(err_for_status(code, &body));
         }
         Ok(body)
+    }
+
+    async fn put_no_content(
+        &self,
+        path: &str,
+        req: &impl serde::Serialize,
+    ) -> Result<(), ClientError> {
+        let json = serde_json::to_vec(req).map_err(|e| ClientError::Request(e.to_string()))?;
+        let (code, body) = self.raw_request("PUT", path, Some(json)).await?;
+        if !(200..300).contains(&code) {
+            return Err(err_for_status(code, &body));
+        }
+        Ok(())
     }
 
     /// Send a raw HTTP request over the platform IPC channel.

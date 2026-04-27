@@ -12,18 +12,21 @@ use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use futures_core::Stream;
 use ministr_api::IpcAddr;
 use tracing::info;
 
+use crate::registry::RegistryError;
 use crate::transport::Listener;
 
 use ministr_api::ApiError;
 use ministr_api::activity::ActivityResponse;
 use ministr_api::coherence::CoherenceEventsResponse;
-use ministr_api::corpus::{ListCorporaResponse, RegisterCorpusRequest, RegisterCorpusResponse};
+use ministr_api::corpus::{
+    ListCorporaResponse, RegisterCorpusRequest, RegisterCorpusResponse, UpdateCorpusPathsRequest,
+};
 use ministr_api::query;
 use ministr_api::session::{CreateSessionRequest, CreateSessionResponse};
 use ministr_api::status::DaemonStatus;
@@ -44,6 +47,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/corpora/{id}",
             get(corpus_status).delete(unregister_corpus),
         )
+        .route("/api/v1/corpora/{id}/paths", put(update_corpus_paths))
         .route("/api/v1/corpora/{id}/survey", post(survey))
         .route("/api/v1/corpora/{id}/symbols", post(symbols))
         .route("/api/v1/corpora/{id}/definition/{sym}", get(definition))
@@ -363,6 +367,26 @@ async fn unregister_corpus(
     match state.registry.unregister(&id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+    }
+}
+
+/// `PUT /api/v1/corpora/{id}/paths` — replace the corpus's path set without
+/// dropping its sessions. The new paths must canonicalise to the same id;
+/// see [`CorpusRegistry::update_corpus_paths`].
+async fn update_corpus_paths(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateCorpusPathsRequest>,
+) -> impl IntoResponse {
+    match state.registry.update_corpus_paths(&id, &req.paths).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e @ RegistryError::NotFound { .. }) => {
+            err(StatusCode::NOT_FOUND, "not_found", e).into_response()
+        }
+        Err(e @ RegistryError::IdentityChanged { .. }) => {
+            err(StatusCode::BAD_REQUEST, "identity_changed", e).into_response()
+        }
+        Err(e) => err(StatusCode::BAD_REQUEST, "update_failed", e).into_response(),
     }
 }
 

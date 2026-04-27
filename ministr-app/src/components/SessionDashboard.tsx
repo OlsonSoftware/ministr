@@ -16,6 +16,7 @@ import { BudgetRing } from "./ui/budget-ring";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
 import { cn } from "../lib/utils";
+import { corpusLabelById } from "../lib/corpus";
 import type { SessionDetail, DaemonStatus } from "../lib/types";
 
 type PressureFilter = "all" | "elevated" | "critical";
@@ -101,11 +102,15 @@ export function SessionDashboard({ status }: Props) {
     const q = query.trim().toLowerCase();
     if (q) {
       list = list.filter((s) =>
-        [s.session_id, s.corpus_id].some((f) => f.toLowerCase().includes(q)),
+        [
+          s.session_id,
+          s.corpus_id,
+          corpusLabelById(status.corpora, s.corpus_id),
+        ].some((f) => f.toLowerCase().includes(q)),
       );
     }
     return list;
-  }, [sessions, pressureFilter, query]);
+  }, [sessions, pressureFilter, query, status.corpora]);
 
   return (
     <div className="space-y-4 ministr-fade-in">
@@ -245,7 +250,7 @@ export function SessionDashboard({ status }: Props) {
             Active sessions
             {vitals.total > 0 && (
               <span className="inline-flex items-center gap-1 ml-2 text-[10px] text-accent normal-case font-sans font-medium">
-                <StatusDot tone="accent" pulse />
+                <StatusDot tone="accent" pulse="live" />
                 streaming
               </span>
             )}
@@ -285,6 +290,7 @@ export function SessionDashboard({ status }: Props) {
               <TurnBlock
                 key={s.session_id}
                 session={s}
+                corpora={status.corpora}
                 fresh={freshSessions.has(s.session_id)}
               />
             ))}

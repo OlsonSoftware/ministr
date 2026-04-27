@@ -311,7 +311,10 @@ function TopBar({
         <Logo />
         <div className="flex items-center gap-2">
           <span className="ministr-wordmark">ministr</span>
-          <StatusDot tone={status ? "success" : "muted"} pulse={!!status} />
+          <StatusDot
+            tone={status ? "success" : "muted"}
+            pulse={status ? "live" : "off"}
+          />
           {status && (
             <span className="text-[10px] font-mono text-text-dim uppercase tracking-wider">
               live

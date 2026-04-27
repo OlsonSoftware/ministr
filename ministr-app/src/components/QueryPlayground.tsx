@@ -12,6 +12,7 @@ import {
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
+import { CorpusSelect } from "./ui/corpus-select";
 import { cn } from "../lib/utils";
 import type { DaemonStatus, SearchResult, SymbolInfo } from "../lib/types";
 
@@ -73,17 +74,12 @@ export function QueryPlayground({ status }: Props) {
 
       <Card className="p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <select
+          <CorpusSelect
             value={corpusId}
-            onChange={(e) => setCorpusId(e.target.value)}
-            className="h-8 rounded-md border border-border/70 bg-surface-raised px-2.5 text-xs font-mono text-text cursor-pointer focus:outline-none focus:border-[var(--color-accent-ring)] focus:shadow-[0_0_0_3px_var(--color-accent-soft)]"
-          >
-            {status.corpora.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.id}
-              </option>
-            ))}
-          </select>
+            onChange={setCorpusId}
+            corpora={status.corpora}
+            ariaLabel="Search corpus"
+          />
 
           <div className="flex items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised p-0.5">
             {(

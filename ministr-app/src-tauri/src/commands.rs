@@ -294,6 +294,10 @@ pub async fn detect_projects() -> Result<Vec<DetectedProject>, String> {
 }
 
 /// Register multiple projects at once (for onboarding batch import).
+///
+/// `register` is idempotent on canonical identity and never touches an
+/// unrelated corpus's state, so registering a sibling project will never
+/// destroy a neighbour's sessions. Per-path errors are warned and skipped.
 #[tauri::command]
 pub async fn register_projects_batch(
     state: State<'_, AppState>,

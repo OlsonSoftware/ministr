@@ -70,6 +70,7 @@ fn build_handle(
     CorpusHandle {
         info: RwLock::new(CorpusInfo {
             id: corpus_id.to_string(),
+            display_name: corpus_id.to_string(),
             paths,
             status: IndexingStatus::Idle,
             files_indexed: 0,

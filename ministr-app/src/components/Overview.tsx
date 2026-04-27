@@ -14,6 +14,7 @@ import {
   Eye,
 } from "lucide-react";
 import type {
+  CorpusInfo,
   DaemonStatus,
   SessionDetail,
   IngestionProgressInfo,
@@ -25,11 +26,13 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { BudgetRing } from "./ui/budget-ring";
 import { CorpusChip } from "./ui/corpus-chip";
+import { EmptyState } from "./ui/empty-state";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
 import { ActivityFeed, computeHitRateBuckets } from "./ui/activity-feed";
 import { CoherenceFeed } from "./ui/coherence-feed";
 import { cn } from "../lib/utils";
+import { corpusLabelById } from "../lib/corpus";
 
 interface OverviewProps {
   status: DaemonStatus;
@@ -300,7 +303,11 @@ export function Overview({
           {activeIngestion.length > 0 && (
             <div className="mt-3 space-y-1.5">
               {activeIngestion.slice(0, 2).map((p) => (
-                <IngestionTicker key={p.corpus_id} progress={p} />
+                <IngestionTicker
+                  key={p.corpus_id}
+                  progress={p}
+                  corpora={status.corpora}
+                />
               ))}
             </div>
           )}
@@ -362,7 +369,7 @@ export function Overview({
               Live turn stream
               {sessions.length > 0 && (
                 <span className="inline-flex items-center gap-1 ml-2 text-[10px] text-accent normal-case font-sans font-medium">
-                  <StatusDot tone="accent" pulse />
+                  <StatusDot tone="accent" pulse="live" />
                   streaming
                 </span>
               )}
@@ -376,27 +383,24 @@ export function Overview({
           </div>
 
           {sessions.length === 0 ? (
-            <Card className="flex flex-col items-center gap-3 py-10 text-center">
-              <div className="grid h-12 w-12 place-items-center rounded-xl bg-surface-overlay text-text-dim">
-                <Radio className="h-5 w-5" />
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-text">
-                  Nothing streaming yet
-                </p>
-                <p className="max-w-sm text-xs text-text-dim">
+            <EmptyState
+              icon={Radio}
+              title="Nothing streaming yet"
+              hint={
+                <>
                   Connect Claude Code, Cursor, or any MCP client pointed at{" "}
-                  <span className="font-mono">~/.ministr/ministrd.sock</span> — tool
-                  calls will stream here in real time.
-                </p>
-              </div>
-            </Card>
+                  <span className="font-mono">~/.ministr/ministrd.sock</span> —
+                  tool calls will stream here in real time.
+                </>
+              }
+            />
           ) : (
             <div className="space-y-2">
               {sessions.map((s) => (
                 <TurnBlock
                   key={s.session_id}
                   session={s}
+                  corpora={status.corpora}
                   fresh={freshSessions.has(s.session_id)}
                   onClick={onOpenSessions}
                 />
@@ -413,7 +417,7 @@ export function Overview({
             right={
               activity.length > 0 ? (
                 <span className="inline-flex items-center gap-1 text-[10px] text-accent font-medium">
-                  <StatusDot tone="accent" pulse />
+                  <StatusDot tone="accent" pulse="live" />
                   live
                 </span>
               ) : undefined
@@ -432,7 +436,7 @@ export function Overview({
             right={
               coherence.length > 0 ? (
                 <span className="inline-flex items-center gap-1 text-[10px] text-success font-medium">
-                  <StatusDot tone="success" pulse />
+                  <StatusDot tone="success" pulse="live" />
                   watching
                 </span>
               ) : undefined
@@ -577,12 +581,18 @@ function StatCell({ label, value }: { label: string; value: number }) {
   );
 }
 
-function IngestionTicker({ progress }: { progress: IngestionProgressInfo }) {
+function IngestionTicker({
+  progress,
+  corpora,
+}: {
+  progress: IngestionProgressInfo;
+  corpora: readonly CorpusInfo[];
+}) {
   const pct =
     progress.files_total > 0
       ? (progress.files_done / progress.files_total) * 100
       : 0;
-  const label = progress.corpus_id.slice(0, 12);
+  const label = corpusLabelById(corpora, progress.corpus_id);
   return (
     <div className="text-[10px] font-mono">
       <div className="flex items-center justify-between">
