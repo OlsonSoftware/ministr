@@ -264,7 +264,7 @@ export function SessionDashboard({ status }: Props) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter by session or corpus…"
-              className="h-8 w-full pl-8 pr-2.5 text-xs rounded-lg border border-border/70 bg-surface-raised text-text placeholder:text-text-dim font-mono focus:outline-none focus:border-[var(--color-accent-ring)] focus:shadow-[0_0_0_3px_var(--color-accent-soft)]"
+              className="h-8 w-full pl-8 pr-2.5 text-xs rounded-lg border border-border/70 bg-surface-raised text-text placeholder:text-text-dim font-mono focus:outline-none focus:border-[var(--color-accent-ring)]"
             />
           </div>
           <div className="flex items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised p-0.5">
@@ -410,7 +410,7 @@ function FilterPill({
       className={cn(
         "inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all duration-120 cursor-pointer",
         active
-          ? "bg-[var(--color-accent-soft)] text-accent shadow-[inset_0_0_0_1px_var(--color-accent-ring)]"
+          ? "bg-[var(--color-accent-soft)] text-accent"
           : "text-text-muted hover:text-text hover:bg-surface-overlay/60",
       )}
     >

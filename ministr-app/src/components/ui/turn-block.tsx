@@ -102,9 +102,9 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
             "h-full rounded-full transition-all duration-400",
             session.pressure_level === "critical" && "bg-danger",
             session.pressure_level === "high" && "bg-warning",
-            session.pressure_level === "medium" && "bg-accent",
-            (session.pressure_level === "low" || session.pressure_level === "none") &&
-              "bg-gradient-to-r from-accent to-[color-mix(in_srgb,var(--color-accent)_60%,#c4b5fd)]",
+            (session.pressure_level === "medium"
+              || session.pressure_level === "low"
+              || session.pressure_level === "none") && "bg-accent",
           )}
           style={{ width: `${utilPct}%` }}
         />

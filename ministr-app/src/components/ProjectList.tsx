@@ -146,8 +146,7 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
                 }}
                 className={cn(
                   "cursor-pointer p-4 ministr-fade-in",
-                  isSelected &&
-                    "border-[var(--color-accent-ring)] shadow-[0_0_0_3px_var(--color-accent-soft)]",
+                  isSelected && "border-[var(--color-accent-ring)]",
                 )}
                 onClick={() => onSelect(corpus.id)}
               >
