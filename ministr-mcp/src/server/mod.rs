@@ -206,6 +206,17 @@ pub struct MinistrServer {
     /// Dynamic instructions string, updated by `prune_tools()` to only
     /// mention tools that are actually registered.
     custom_instructions: Option<String>,
+    /// Parent session id captured at startup from
+    /// `MINISTR_PARENT_SESSION_ID`. Stamped onto the
+    /// [`SessionEntry::parent_session_id`] when the session is first
+    /// resolved via [`Self::ensure_session_mut`]. Used by the tray and
+    /// SessionDashboard to render subagent rows nested under their
+    /// parent.
+    parent_session_id_hint: Option<String>,
+    /// MCP `clientInfo.name` captured during the `initialize`
+    /// handshake. Stamped onto [`SessionEntry::client_name`] when the
+    /// session is first resolved.
+    client_name_hint: Arc<Mutex<Option<String>>>,
 }
 
 #[tool_handler]
@@ -270,6 +281,15 @@ impl ServerHandler for MinistrServer {
             "extension negotiation complete"
         );
         *self.negotiated_extensions.lock().await = negotiated;
+
+        // Capture clientInfo.name for the tray / SessionDashboard so the
+        // user can tell e.g. claude-code from claude-subagent from
+        // mcp-inspector apart. Hint is stamped onto the session entry on
+        // first tool call via `ensure_session_mut`.
+        let client_name = request.client_info.name.clone();
+        if !client_name.is_empty() {
+            *self.client_name_hint.lock().await = Some(client_name);
+        }
 
         // Preserve the default rmcp behavior: store peer info for later access.
         if context.peer.peer_info().is_none() {

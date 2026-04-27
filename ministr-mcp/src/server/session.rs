@@ -7,7 +7,8 @@
 use serde::Serialize;
 
 use ministr_core::session::{
-    AccessMode, BudgetStatus, CompressionTier, PressureLevel, SessionEntry, SessionRegistry,
+    AccessMode, BudgetStatus, CompressionTier, PressureLevel, SessionEntry, SessionId,
+    SessionRegistry,
 };
 use ministr_core::token::count_tokens;
 use ministr_core::types::{ContentId, Resolution};
@@ -25,12 +26,28 @@ impl MinistrServer {
     /// inside the sync rmcp factory closure and so cannot lock the
     /// async-mutex'd registry), the session id exists on the server but
     /// no entry has been inserted yet. This helper bridges that gap by
-    /// using `get_or_create`, which is idempotent for the existing case.
+    /// using `get_or_create`.
+    ///
+    /// On *first* resolution (i.e. the entry was just created), stamps
+    /// the captured `parent_session_id` and `client_name` hints onto
+    /// the entry so the tray / SessionDashboard can render lineage. On
+    /// subsequent calls the stamps are skipped (the entry already
+    /// carries them).
     pub(super) fn ensure_session_mut<'a>(
         &self,
         reg: &'a mut SessionRegistry,
     ) -> &'a mut SessionEntry {
-        reg.get_or_create(&self.active_session_id, None, AccessMode::ReadWrite)
+        let was_missing = !reg.contains(&self.active_session_id);
+        let entry = reg.get_or_create(&self.active_session_id, None, AccessMode::ReadWrite);
+        if was_missing {
+            if let Some(parent) = self.parent_session_id_hint.as_deref() {
+                entry.parent_session_id = Some(SessionId::from(parent.to_string()));
+            }
+            if let Some(name) = self.client_name_hint.try_lock().ok().and_then(|g| g.clone()) {
+                entry.client_name = Some(name);
+            }
+        }
+        entry
     }
 }
 

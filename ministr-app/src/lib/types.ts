@@ -67,6 +67,12 @@ export interface SessionDetail {
   total_compressions: number;
   dedup_hits: number;
   compression_ratio: number;
+  /** Parent session id when this session was created on behalf of a
+   *  subagent (e.g. Claude Code's Task tool spawning a sub-claude).
+   *  Drives parent/child indenting in tray + SessionDashboard. */
+  parent_session_id?: string;
+  /** MCP clientInfo.name captured at initialize (e.g. "claude-code"). */
+  client_name?: string;
 }
 
 export interface FileInfo {

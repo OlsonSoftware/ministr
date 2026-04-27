@@ -25,6 +25,19 @@ use super::NegotiatedExtensions;
 use super::helpers::{build_instructions, has_code_files_in_dir, uuid_v4};
 use crate::task::McpTaskManager;
 
+/// Read `MINISTR_PARENT_SESSION_ID` from the environment.
+///
+/// Set by a parent agent when spawning a subagent's `ministr serve`
+/// process so the daemon can render the resulting session as nested
+/// under its parent (rather than a flat sibling). Returns `None` when
+/// unset or empty.
+fn read_parent_session_env() -> Option<String> {
+    std::env::var("MINISTR_PARENT_SESSION_ID")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 impl MinistrServer {
     /// Create a new ministr MCP server instance backed by the given query service.
     ///
@@ -62,6 +75,8 @@ impl MinistrServer {
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
             custom_instructions: None,
+            parent_session_id_hint: read_parent_session_env(),
+            client_name_hint: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -126,6 +141,8 @@ impl MinistrServer {
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
             custom_instructions: None,
+            parent_session_id_hint: read_parent_session_env(),
+            client_name_hint: Arc::new(Mutex::new(None)),
         }
     }
 

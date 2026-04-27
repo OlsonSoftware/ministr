@@ -46,6 +46,16 @@ pub struct SessionEntry {
     pub access_mode: AccessMode,
     /// FSRS-based memory tracker for importance-aware eviction.
     pub memory: super::memory::MemoryTracker,
+    /// Parent session id when this session was created on behalf of a
+    /// subagent (e.g. Claude Code's Task tool spawning a sub-claude).
+    /// Populated from `MINISTR_PARENT_SESSION_ID` at startup or from
+    /// the MCP client's metadata on `initialize`. `None` for top-level
+    /// sessions.
+    pub parent_session_id: Option<SessionId>,
+    /// MCP `clientInfo.name` captured at initialize. Helps the tray /
+    /// SessionDashboard tell e.g. `claude-code` from `claude-subagent`
+    /// from `mcp-inspector` apart. `None` until the handshake completes.
+    pub client_name: Option<String>,
 }
 
 /// Registry managing multiple named sessions that share a single corpus.
@@ -99,6 +109,8 @@ impl SessionRegistry {
                 budget,
                 access_mode,
                 memory: super::memory::MemoryTracker::new(),
+                parent_session_id: None,
+                client_name: None,
             },
         );
         self.sessions.get_mut(id).expect("just inserted")
