@@ -34,6 +34,12 @@ import { CoherenceFeed } from "./ui/coherence-feed";
 import { cn } from "../lib/utils";
 import { corpusLabelById } from "../lib/corpus";
 
+/// Cap on the Live turn stream preview. Past this we render an
+/// overflow link rather than re-rendering every session — the full
+/// table lives in SessionDashboard. Picked so the stream stays
+/// glanceable without competing with the side panels for height.
+const OVERVIEW_STREAM_LIMIT = 3;
+
 interface OverviewProps {
   status: DaemonStatus;
   selectedCorpusId: string | null;
@@ -412,7 +418,7 @@ export function Overview({
             />
           ) : (
             <div className="space-y-2">
-              {sessions.map((s) => (
+              {sessions.slice(0, OVERVIEW_STREAM_LIMIT).map((s) => (
                 <TurnBlock
                   key={s.session_id}
                   session={s}
@@ -421,6 +427,14 @@ export function Overview({
                   onClick={onOpenSessions}
                 />
               ))}
+              {sessions.length > OVERVIEW_STREAM_LIMIT && (
+                <button
+                  onClick={onOpenSessions}
+                  className="w-full rounded-xl border border-dashed border-border/50 bg-surface-raised/30 px-3 py-2.5 text-[11px] text-text-dim hover:text-text hover:border-border-hover cursor-pointer transition-colors"
+                >
+                  + {sessions.length - OVERVIEW_STREAM_LIMIT} more in dashboard →
+                </button>
+              )}
             </div>
           )}
         </section>

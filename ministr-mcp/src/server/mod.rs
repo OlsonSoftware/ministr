@@ -210,7 +210,7 @@ pub struct MinistrServer {
     /// `MINISTR_PARENT_SESSION_ID`. Stamped onto the
     /// [`SessionEntry::parent_session_id`] when the session is first
     /// resolved via [`Self::ensure_session_mut`]. Used by the tray and
-    /// SessionDashboard to render subagent rows nested under their
+    /// `SessionDashboard` to render subagent rows nested under their
     /// parent.
     parent_session_id_hint: Option<String>,
     /// MCP `clientInfo.name` captured during the `initialize`

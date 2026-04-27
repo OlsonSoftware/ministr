@@ -30,8 +30,8 @@ impl MinistrServer {
     ///
     /// On *first* resolution (i.e. the entry was just created), stamps
     /// the captured `parent_session_id` and `client_name` hints onto
-    /// the entry so the tray / SessionDashboard can render lineage. On
-    /// subsequent calls the stamps are skipped (the entry already
+    /// the entry so the tray / `SessionDashboard` can render lineage.
+    /// On subsequent calls the stamps are skipped (the entry already
     /// carries them).
     pub(super) fn ensure_session_mut<'a>(
         &self,

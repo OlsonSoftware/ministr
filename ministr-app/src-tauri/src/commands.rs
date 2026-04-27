@@ -424,7 +424,7 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDeta
                     parent_session_id: entry
                         .parent_session_id
                         .as_ref()
-                        .map(|p| p.to_string()),
+                        .map(std::string::ToString::to_string),
                     client_name: entry.client_name.clone(),
                 });
             }
