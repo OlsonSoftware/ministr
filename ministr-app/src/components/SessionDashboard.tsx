@@ -106,11 +106,63 @@ export function SessionDashboard({ status }: Props) {
           s.session_id,
           s.corpus_id,
           corpusLabelById(status.corpora, s.corpus_id),
+          s.client_name ?? "",
         ].some((f) => f.toLowerCase().includes(q)),
       );
     }
     return list;
   }, [sessions, pressureFilter, query, status.corpora]);
+
+  // Group filtered sessions into a parent/subagent tree. A subagent
+  // whose parent dropped out of `filtered` (e.g. via a query that
+  // matched only the child) gets re-attached to the full sessions list
+  // by id; if the parent really is missing (different corpus, etc.)
+  // the subagent is rendered as an "orphan" top-level entry. This
+  // keeps the hierarchy coherent under filtering instead of having
+  // children appear floating without context.
+  const tree = useMemo(() => {
+    type Node = { session: SessionDetail; subagents: SessionDetail[] };
+    const byId = new Map(sessions.map((s) => [s.session_id, s]));
+    const filteredIds = new Set(filtered.map((s) => s.session_id));
+    const nodes = new Map<string, Node>();
+    const orphans: Node[] = [];
+
+    for (const s of filtered) {
+      if (!s.parent_session_id) {
+        if (!nodes.has(s.session_id)) {
+          nodes.set(s.session_id, { session: s, subagents: [] });
+        } else {
+          nodes.get(s.session_id)!.session = s;
+        }
+      }
+    }
+    for (const s of filtered) {
+      if (s.parent_session_id) {
+        const existing = nodes.get(s.parent_session_id);
+        if (existing) {
+          existing.subagents.push(s);
+        } else if (filteredIds.has(s.parent_session_id)) {
+          // Parent is in the filtered list but hasn't been added yet —
+          // shouldn't happen with the loops above, but guard anyway.
+          continue;
+        } else {
+          // Parent dropped out of the filter — re-attach if we can.
+          const parent = byId.get(s.parent_session_id);
+          if (parent) {
+            const node = nodes.get(parent.session_id) ?? {
+              session: parent,
+              subagents: [],
+            };
+            node.subagents.push(s);
+            nodes.set(parent.session_id, node);
+          } else {
+            orphans.push({ session: s, subagents: [] });
+          }
+        }
+      }
+    }
+    return [...nodes.values(), ...orphans];
+  }, [filtered, sessions]);
 
   return (
     <div className="space-y-4 ministr-fade-in">
@@ -259,7 +311,7 @@ export function SessionDashboard({ status }: Props) {
 
         {!loaded ? (
           <div className="flex items-center justify-center py-12">
-            <div className="ministr-spin h-7 w-7 rounded-full border-2 border-border border-t-accent" />
+            <div className="animate-spin h-7 w-7 rounded-full border-2 border-border border-t-accent" />
           </div>
         ) : sessions.length === 0 ? (
           <EmptyState />
@@ -286,13 +338,26 @@ export function SessionDashboard({ status }: Props) {
           </Card>
         ) : (
           <div className="space-y-2">
-            {filtered.map((s) => (
-              <TurnBlock
-                key={s.session_id}
-                session={s}
-                corpora={status.corpora}
-                fresh={freshSessions.has(s.session_id)}
-              />
+            {tree.map((node) => (
+              <div key={node.session.session_id} className="space-y-1.5">
+                <TurnBlock
+                  session={node.session}
+                  corpora={status.corpora}
+                  fresh={freshSessions.has(node.session.session_id)}
+                />
+                {node.subagents.length > 0 && (
+                  <div className="ml-4 border-l border-border/50 pl-3 space-y-1.5">
+                    {node.subagents.map((sub) => (
+                      <TurnBlock
+                        key={sub.session_id}
+                        session={sub}
+                        corpora={status.corpora}
+                        fresh={freshSessions.has(sub.session_id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}

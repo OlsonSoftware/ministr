@@ -227,12 +227,23 @@ pub fn spawn_refresh_loop(handle: AppHandle, state: AppState) {
             rebuild_menu(&handle, &corpora);
 
             // Tooltip (kept here so the loop has a single source of truth).
-            let total_sessions: usize = corpora.iter().map(|c| c.active_sessions).sum();
+            let (parent_count, subagent_count) = count_sessions_by_lineage(&state).await;
+            let total_sessions = parent_count + subagent_count;
             let rss = ministr_core::mem_profile::rss_mb().unwrap_or(0.0);
+            // When subagents are attached, surface the breakdown so the
+            // user can spot subagent activity without opening the
+            // dashboard. Otherwise keep the line compact.
+            let session_part = if subagent_count > 0 {
+                format!(
+                    "{total_sessions} sessions ({parent_count} parent · {subagent_count} sub)"
+                )
+            } else {
+                format!("{total_sessions} sessions")
+            };
             let tooltip = format!(
-                "ministr — {} corpora · {} sessions · {:.0} MB",
+                "ministr — {} corpora · {} · {:.0} MB",
                 corpora.len(),
-                total_sessions,
+                session_part,
                 rss,
             );
             if let Some(tray) = handle.tray_by_id(TRAY_ID) {
@@ -240,4 +251,29 @@ pub fn spawn_refresh_loop(handle: AppHandle, state: AppState) {
             }
         }
     });
+}
+
+/// Count active sessions across all corpora, split by whether the
+/// session has a parent (subagent) or not (top-level).
+///
+/// Walks the corpus registry and locks each corpus's session registry
+/// briefly; the call is O(corpora · sessions) but session counts are
+/// small in practice and the lock duration is tiny.
+async fn count_sessions_by_lineage(state: &AppState) -> (usize, usize) {
+    let mut parents = 0usize;
+    let mut subagents = 0usize;
+    let guard = state.registry.corpora().read().await;
+    for handle in guard.values() {
+        let reg = handle.sessions.lock().await;
+        for sid in reg.session_ids() {
+            if let Some(entry) = reg.get_session(&sid) {
+                if entry.parent_session_id.is_some() {
+                    subagents += 1;
+                } else {
+                    parents += 1;
+                }
+            }
+        }
+    }
+    (parents, subagents)
 }

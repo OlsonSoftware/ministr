@@ -55,6 +55,20 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
         <span className="font-mono text-[11px] text-text truncate">
           turn {session.current_turn}
         </span>
+        {session.parent_session_id && (
+          <span
+            className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-surface-overlay/40 px-1.5 py-0.5 text-[10px] font-mono text-text-muted"
+            title={`Subagent of ${session.parent_session_id.slice(0, 8)}`}
+          >
+            <span aria-hidden="true">↳</span>
+            sub
+          </span>
+        )}
+        {session.client_name && (
+          <span className="font-mono text-[10px] text-text-dim truncate max-w-[120px]">
+            {session.client_name}
+          </span>
+        )}
         <div className="flex-1" />
         <span className={cn("font-mono text-[11px] font-semibold uppercase tracking-wider", pressureColor)}>
           {session.pressure_level}

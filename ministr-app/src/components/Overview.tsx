@@ -139,6 +139,19 @@ export function Overview({
     };
   }, []);
 
+  // Parent/subagent breakdown for the page subtitle and live-stream
+  // header. A "subagent" is any session with a `parent_session_id`;
+  // a "parent" is any session without one.
+  const lineage = useMemo(() => {
+    let parents = 0;
+    let subagents = 0;
+    for (const s of sessions) {
+      if (s.parent_session_id) subagents++;
+      else parents++;
+    }
+    return { parents, subagents };
+  }, [sessions]);
+
   // Vitals aggregates
   const vitals = useMemo(() => {
     const sessionCount = sessions.length;
@@ -210,7 +223,10 @@ export function Overview({
           <p className="text-xs text-text-dim mt-0.5">
             Live telemetry for the ministr context cache —{" "}
             <span className="font-mono">
-              {status.corpora.length} corpora · {vitals.sessionCount} sessions
+              {status.corpora.length} corpora ·{" "}
+              {lineage.subagents > 0
+                ? `${vitals.sessionCount} sessions (${lineage.parents} parent · ${lineage.subagents} sub)`
+                : `${vitals.sessionCount} sessions`}
             </span>
           </p>
         </div>
