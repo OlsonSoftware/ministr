@@ -79,6 +79,32 @@ pub struct CorpusHandle {
     pub coherence_tx: tokio::sync::broadcast::Sender<CoherenceEvent>,
 }
 
+impl CorpusHandle {
+    /// Current view of this corpus, merging the persisted snapshot in
+    /// `info` with live signals from `progress` and `index`.
+    ///
+    /// `info` is only written by `update_stats` / `update_symbols_count`
+    /// at end-of-run, so it lies during a long ingest (status frozen at
+    /// start, counts at zero). This is the single point where readers
+    /// (HTTP `/corpora`, the MCP status resource, the tray, the CLI)
+    /// get a coherent picture without each re-implementing the merge.
+    pub async fn current_info(&self) -> CorpusInfo {
+        let mut info = self.info.read().await.clone();
+        // HNSW is the authoritative vector count — grows as embeddings
+        // land, while the persisted field only stamps at end-of-run.
+        info.embeddings_count = self.index.len();
+        if self.progress.is_running() {
+            info.status = IndexingStatus::Indexing {
+                files_done: self.progress.files_done(),
+                files_total: self.progress.files_total(),
+            };
+            // `progress` is ahead of the persisted snapshot mid-run.
+            info.sections_count = self.progress.sections_done();
+        }
+        info
+    }
+}
+
 impl CorpusRegistry {
     pub fn new(embedder: Arc<dyn Embedder>, config: MinistrConfig) -> Self {
         Self {
@@ -259,7 +285,7 @@ impl CorpusRegistry {
         let corpora = self.corpora.read().await;
         let mut result = Vec::with_capacity(corpora.len());
         for handle in corpora.values() {
-            let mut info = handle.info.read().await.clone();
+            let mut info = handle.current_info().await;
             info.active_sessions = handle.sessions.lock().await.session_count();
             result.push(info);
         }
