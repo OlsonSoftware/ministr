@@ -80,29 +80,59 @@ pub struct CorpusHandle {
 }
 
 impl CorpusHandle {
-    /// Current view of this corpus, merging the persisted snapshot in
-    /// `info` with live signals from `progress` and `index`.
+    /// Live view of this corpus, layering on-the-fly signals (`progress`
+    /// while indexing, `index.len()` always) over the persisted `info`
+    /// record.
     ///
-    /// `info` is only written by `update_stats` / `update_symbols_count`
-    /// at end-of-run, so it lies during a long ingest (status frozen at
-    /// start, counts at zero). This is the single point where readers
-    /// (HTTP `/corpora`, the MCP status resource, the tray, the CLI)
-    /// get a coherent picture without each re-implementing the merge.
+    /// `info` is the registry's authoritative status. It changes via
+    /// [`CorpusRegistry::set_status`] (start / error / cancel),
+    /// [`CorpusRegistry::update_stats`] (post-success), and
+    /// [`CorpusRegistry::update_symbols_count`]. The per-file counts
+    /// only land at end-of-run, though, so reading `info` during a long
+    /// ingest looks frozen — this is where the merge fills the gap.
+    ///
+    /// Why the `Indexing { .. }` guard: [`IngestionProgress::is_running`]
+    /// is a one-way flag flipped by `start()` and cleared by `complete()`.
+    /// Some pipeline error paths return early without calling `complete`,
+    /// so a registry-level transition to `Error` or `Idle` can race with
+    /// a stuck progress flag. Only merging when the persisted snapshot
+    /// itself says `Indexing` keeps explicit error/cancel transitions
+    /// from being masked by the merge.
+    ///
+    /// Used by [`CorpusRegistry::list`], which feeds the daemon's HTTP
+    /// `GET /api/v1/corpora`, the Tauri `list_corpora` / `daemon_status`
+    /// commands, the tray refresh loop, and `ministr status`. The MCP
+    /// `ministr://status` resource lives in `ministr-mcp` and builds its
+    /// own server-centric shape — it does not currently consume this.
     pub async fn current_info(&self) -> CorpusInfo {
-        let mut info = self.info.read().await.clone();
-        // HNSW is the authoritative vector count — grows as embeddings
-        // land, while the persisted field only stamps at end-of-run.
-        info.embeddings_count = self.index.len();
-        if self.progress.is_running() {
-            info.status = IndexingStatus::Indexing {
-                files_done: self.progress.files_done(),
-                files_total: self.progress.files_total(),
-            };
-            // `progress` is ahead of the persisted snapshot mid-run.
-            info.sections_count = self.progress.sections_done();
-        }
-        info
+        let info = self.info.read().await.clone();
+        merge_live_info(info, &self.progress, self.index.len())
     }
+}
+
+/// Merge live signals into a persisted [`CorpusInfo`] snapshot.
+///
+/// Pulled out of [`CorpusHandle::current_info`] as a sync free function
+/// so tests can exercise the merge precedence without constructing a
+/// full handle (which would need storage, embedder, vector index, etc.).
+fn merge_live_info(
+    mut info: CorpusInfo,
+    progress: &IngestionProgress,
+    index_len: usize,
+) -> CorpusInfo {
+    // HNSW is the authoritative vector count — grows as embeddings
+    // land, while the persisted field only stamps at end-of-run.
+    info.embeddings_count = index_len;
+    // Only merge live progress when the registry already considers
+    // indexing in progress; see the `current_info` doc for why.
+    if matches!(info.status, IndexingStatus::Indexing { .. }) && progress.is_running() {
+        info.status = IndexingStatus::Indexing {
+            files_done: progress.files_done(),
+            files_total: progress.files_total(),
+        };
+        info.sections_count = progress.sections_done();
+    }
+    info
 }
 
 impl CorpusRegistry {
@@ -654,5 +684,108 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(b, c);
         assert_ne!(a, c);
+    }
+
+    fn snapshot_with(status: IndexingStatus) -> CorpusInfo {
+        CorpusInfo {
+            id: "test".into(),
+            paths: vec![],
+            status,
+            files_indexed: 1,
+            sections_count: 7,
+            embeddings_count: 0,
+            active_sessions: 0,
+            last_indexed: None,
+            symbols_count: 0,
+        }
+    }
+
+    #[test]
+    fn merge_live_overrides_indexing_with_progress() {
+        let progress = IngestionProgress::new();
+        progress.start(10);
+        progress.increment_done();
+        progress.increment_done();
+        progress.add_sections_done(5);
+
+        let merged = merge_live_info(
+            snapshot_with(IndexingStatus::Indexing {
+                files_done: 0,
+                files_total: 0,
+            }),
+            &progress,
+            42,
+        );
+
+        assert!(matches!(
+            merged.status,
+            IndexingStatus::Indexing {
+                files_done: 2,
+                files_total: 10,
+            }
+        ));
+        assert_eq!(merged.sections_count, 5);
+        assert_eq!(merged.embeddings_count, 42);
+    }
+
+    #[test]
+    fn merge_live_preserves_error_under_stuck_progress() {
+        // Some pipeline error paths return early without calling
+        // `progress.complete()`, so `is_running()` can stay true even
+        // after the registry transitions to Error. The merge must not
+        // mask that.
+        let progress = IngestionProgress::new();
+        progress.start(10);
+        progress.increment_done();
+
+        let merged = merge_live_info(
+            snapshot_with(IndexingStatus::Error {
+                message: "boom".into(),
+            }),
+            &progress,
+            42,
+        );
+
+        assert!(matches!(merged.status, IndexingStatus::Error { .. }));
+        assert_eq!(merged.sections_count, 7, "persisted snapshot preserved");
+        assert_eq!(merged.embeddings_count, 42, "index always wins");
+    }
+
+    #[test]
+    fn merge_live_preserves_idle_under_stuck_progress() {
+        // Same precedence rule for cancellation: registry sets Idle,
+        // progress flag may still read running.
+        let progress = IngestionProgress::new();
+        progress.start(10);
+        progress.increment_done();
+
+        let merged = merge_live_info(snapshot_with(IndexingStatus::Idle), &progress, 42);
+
+        assert!(matches!(merged.status, IndexingStatus::Idle));
+        assert_eq!(merged.sections_count, 7);
+        assert_eq!(merged.embeddings_count, 42);
+    }
+
+    #[test]
+    fn merge_live_skips_progress_when_not_running() {
+        // Pre-start window: registry has marked Indexing { 0, 0 } but
+        // the pipeline hasn't called `progress.start()` yet. Don't
+        // synthesize a fake live snapshot — leave the persisted one.
+        let progress = IngestionProgress::new();
+        let info = snapshot_with(IndexingStatus::Indexing {
+            files_done: 0,
+            files_total: 0,
+        });
+        let merged = merge_live_info(info, &progress, 42);
+
+        assert!(matches!(
+            merged.status,
+            IndexingStatus::Indexing {
+                files_done: 0,
+                files_total: 0,
+            }
+        ));
+        assert_eq!(merged.sections_count, 7, "persisted snapshot preserved");
+        assert_eq!(merged.embeddings_count, 42);
     }
 }
