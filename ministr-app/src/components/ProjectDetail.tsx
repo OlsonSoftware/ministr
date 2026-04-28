@@ -14,8 +14,8 @@ import type { CorpusInfo, DaemonStatus } from "../lib/types";
 import { statusBadge } from "../lib/status";
 import { Badge } from "./ui/badge";
 import { LabeledCard } from "./ui/labeled-card";
+import { LabeledRow } from "./ui/labeled-row";
 import { MetricTile } from "./ui/metric-tile";
-import { cn } from "../lib/utils";
 
 interface ProjectDetailProps {
   corpus: CorpusInfo;
@@ -101,8 +101,8 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
       </LabeledCard>
 
       <LabeledCard title="Embedding model" icon={Sparkles}>
-        <Row label="Model" value={status.model} mono />
-        <Row
+        <LabeledRow label="Model" value={status.model} mono />
+        <LabeledRow
           label="Dimension"
           value={<Badge variant="muted" className="font-mono">{status.model_dimension}d</Badge>}
         />
@@ -125,8 +125,8 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
       </LabeledCard>
 
       <LabeledCard title="Daemon" icon={Activity}>
-        <Row label="Version" value={`v${status.version}`} mono />
-        <Row
+        <LabeledRow label="Version" value={`v${status.version}`} mono />
+        <LabeledRow
           label="Uptime"
           mono
           value={
@@ -136,32 +136,13 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
             </span>
           }
         />
-        <Row label="Memory" value={`${status.memory_mb.toFixed(0)} MB RSS`} mono />
-        <Row
+        <LabeledRow label="Memory" value={`${status.memory_mb.toFixed(0)} MB RSS`} mono />
+        <LabeledRow
           label="Corpora"
           value={status.corpora.length.toString()}
           mono
         />
       </LabeledCard>
-    </div>
-  );
-}
-
-function Row({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: React.ReactNode;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between text-xs">
-      <span className="text-text-muted">{label}</span>
-      <span className={cn("text-text", mono && "font-mono tabular-nums")}>
-        {value}
-      </span>
     </div>
   );
 }

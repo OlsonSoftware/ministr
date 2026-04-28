@@ -13,6 +13,7 @@ import {
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
+import { LabeledRow } from "./ui/labeled-row";
 import { cn } from "../lib/utils";
 import type { DaemonStatus } from "../lib/types";
 
@@ -90,16 +91,17 @@ export function Settings({
       </Section>
 
       <Section icon={Cpu} title="Embedding model">
-        <Row label="Current" value={status.model} mono />
-        <Row
+        <LabeledRow bordered label="Current" value={status.model} mono />
+        <LabeledRow
+          bordered
           label="Dimension"
           value={<Badge variant="muted" className="font-mono">{status.model_dimension}d</Badge>}
         />
       </Section>
 
       <Section icon={HardDrive} title="Storage">
-        <Row label="Memory (RSS)" value={`${status.memory_mb.toFixed(0)} MB`} mono />
-        <Row label="Data directory" value="~/.ministr/" mono />
+        <LabeledRow bordered label="Memory (RSS)" value={`${status.memory_mb.toFixed(0)} MB`} mono />
+        <LabeledRow bordered label="Data directory" value="~/.ministr/" mono />
       </Section>
 
       {status.log_path && (
@@ -158,25 +160,6 @@ function Section({
       </div>
       <div className="space-y-2">{children}</div>
     </Card>
-  );
-}
-
-function Row({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: React.ReactNode;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between text-xs py-1 border-b border-border/40 last:border-0">
-      <span className="text-text-muted">{label}</span>
-      <span className={cn("text-text", mono && "font-mono tabular-nums")}>
-        {value}
-      </span>
-    </div>
   );
 }
 
