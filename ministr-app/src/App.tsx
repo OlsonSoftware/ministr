@@ -18,9 +18,6 @@ import {
   Command,
   Keyboard,
   AlertTriangle,
-  Sun,
-  Moon,
-  Monitor,
 } from "lucide-react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useTheme } from "./hooks/useTheme";
@@ -183,8 +180,6 @@ export function App() {
     <div className="flex h-screen flex-col bg-bg text-text">
       <TopBar
         status={status}
-        theme={theme}
-        onThemeChange={setTheme}
         onPaletteOpen={() => setPaletteOpen(true)}
         onShortcutsOpen={() => setShortcutsOpen(true)}
       />
@@ -257,6 +252,7 @@ export function App() {
               theme={theme}
               onThemeChange={setTheme}
               onShowOnboarding={() => setShowOnboarding(true)}
+              onRefresh={refresh}
             />
           )}
         </main>
@@ -283,28 +279,13 @@ export function App() {
 
 function TopBar({
   status,
-  theme,
-  onThemeChange,
   onPaletteOpen,
   onShortcutsOpen,
 }: {
   status: import("./lib/types").DaemonStatus | null;
-  theme: "dark" | "light" | "system";
-  onThemeChange: (t: "dark" | "light" | "system") => void;
   onPaletteOpen: () => void;
   onShortcutsOpen: () => void;
 }) {
-  const themeOrder: Array<"system" | "dark" | "light"> = [
-    "system",
-    "dark",
-    "light",
-  ];
-  const nextTheme = () => {
-    const idx = themeOrder.indexOf(theme);
-    onThemeChange(themeOrder[(idx + 1) % themeOrder.length]);
-  };
-  const ThemeIcon =
-    theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
   return (
     <header className="flex items-center justify-between gap-4 border-b border-border/70 bg-surface/50 backdrop-blur-sm px-5 py-2.5 shrink-0">
       <div className="flex items-center gap-3">
@@ -358,14 +339,6 @@ function TopBar({
           className="grid h-7 w-7 place-items-center rounded-md border border-transparent text-text-dim hover:text-text hover:bg-surface-overlay/60 cursor-pointer"
         >
           <Keyboard className="h-3.5 w-3.5" />
-        </button>
-        <button
-          onClick={nextTheme}
-          title={`Theme: ${theme} (click to cycle)`}
-          aria-label="Toggle theme"
-          className="grid h-7 w-7 place-items-center rounded-md border border-transparent text-text-dim hover:text-text hover:bg-surface-overlay/60 cursor-pointer"
-        >
-          <ThemeIcon className="h-3.5 w-3.5" />
         </button>
       </div>
     </header>

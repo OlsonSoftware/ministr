@@ -1,4 +1,3 @@
-import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Palette,
@@ -22,6 +21,7 @@ interface SettingsProps {
   theme: string;
   onThemeChange: (theme: "dark" | "light" | "system") => void;
   onShowOnboarding: () => void;
+  onRefresh: () => void;
 }
 
 export function Settings({
@@ -29,17 +29,17 @@ export function Settings({
   theme,
   onThemeChange,
   onShowOnboarding,
+  onRefresh,
 }: SettingsProps) {
-  const [autostart, setAutostart] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    invoke<boolean>("is_autostart_enabled").then(setAutostart).catch(() => {});
-  }, []);
+  // Autostart now rides on the daemon_status poll (Tauri side populates
+  // it via `autolaunch().is_enabled()`). `undefined` while the first
+  // status response is in flight; treated as a disabled-pending state.
+  const autostart = status.autostart_enabled ?? null;
 
   async function toggleAutostart() {
     const next = !autostart;
     await invoke("set_autostart", { enabled: next });
-    setAutostart(next);
+    onRefresh();
   }
 
   const themeOptions = [

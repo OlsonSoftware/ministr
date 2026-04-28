@@ -95,20 +95,8 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
   }
 
   return (
-    <div className="relative flex h-full items-center justify-center overflow-hidden bg-bg p-6">
-      {/* Ambient ministr wash */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        aria-hidden="true"
-        style={{
-          background: `
-            radial-gradient(900px 600px at 20% -10%, color-mix(in srgb, var(--color-accent) 14%, transparent), transparent 65%),
-            radial-gradient(700px 500px at 100% 100%, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 70%)
-          `,
-        }}
-      />
-
-      <div className="relative w-full max-w-xl ministr-fade-in">
+    <div className="flex h-full items-center justify-center bg-bg p-6">
+      <div className="w-full max-w-xl ministr-fade-in">
         {step === "welcome" && <Welcome onContinue={() => setStep("detect")} onManual={addManually} onSkip={dismiss} />}
         {step === "detect" && (
           <Detect
@@ -167,8 +155,8 @@ function ObservatoryPreview() {
       </div>
 
       <div className="mt-2 flex items-center gap-2 rounded-md bg-surface-raised/40 border-l-2 border-l-accent/60 pl-2 pr-2 py-1 text-[10px]">
-        <span className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-accent/15 text-accent font-mono">
-          ⏺
+        <span className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-accent/15 text-accent">
+          <CircleDot className="h-2.5 w-2.5" />
         </span>
         <span className="font-mono text-text">survey</span>
         <span className="text-text-dim truncate flex-1">
@@ -205,9 +193,7 @@ function Logo({ large = false }: { large?: boolean }) {
   return (
     <div
       className={cn(
-        "relative grid place-items-center rounded-2xl text-[var(--color-accent-fg-on)]",
-        "bg-gradient-to-br from-accent to-[color-mix(in_srgb,var(--color-accent)_50%,#c4b5fd)]",
-        "shadow-[0_8px_32px_var(--color-accent-ring),inset_0_1px_0_rgb(255_255_255/0.25)]",
+        "grid place-items-center rounded-2xl bg-accent text-[var(--color-accent-fg-on)] border border-border/40",
         large ? "h-16 w-16" : "h-12 w-12",
       )}
     >
@@ -252,12 +238,11 @@ function Welcome({
   ];
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-surface/85 backdrop-blur-sm p-8 shadow-[var(--shadow-lg)]">
+    <div className="rounded-2xl border border-border/70 bg-surface p-8 shadow-[var(--shadow-lg)]">
       <div className="flex flex-col items-center text-center">
         <Logo large />
-        <div className="mt-5 flex items-center gap-2">
+        <div className="mt-5">
           <span className="ministr-wordmark text-2xl">ministr</span>
-          <Sparkles className="h-4 w-4 text-accent opacity-80" />
         </div>
         <p className="mt-3 max-w-md text-sm leading-relaxed text-text-muted">
           A context cache for your LLM agent. ministr tracks what it has delivered,
@@ -331,7 +316,7 @@ function Detect({
   onImport: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-surface/85 backdrop-blur-sm p-7 shadow-[var(--shadow-lg)]">
+    <div className="rounded-2xl border border-border/70 bg-surface p-7 shadow-[var(--shadow-lg)]">
       <div className="flex items-start gap-3">
         <Logo />
         <div className="flex-1">
@@ -435,9 +420,9 @@ function Detect({
 
 function Done({ count, onDismiss }: { count: number; onDismiss: () => void }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-surface/85 backdrop-blur-sm p-8 shadow-[var(--shadow-lg)] text-center">
+    <div className="rounded-2xl border border-border/70 bg-surface p-8 shadow-[var(--shadow-lg)] text-center">
       <div className="flex justify-center">
-        <div className="relative grid h-16 w-16 place-items-center rounded-2xl bg-success/15 text-success shadow-[0_8px_32px_color-mix(in_srgb,#34d399_35%,transparent),inset_0_1px_0_rgb(255_255_255/0.15)]">
+        <div className="grid h-16 w-16 place-items-center rounded-2xl bg-success/15 text-success border border-success/30">
           <CheckCircle2 className="h-8 w-8" strokeWidth={2.25} />
         </div>
       </div>

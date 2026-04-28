@@ -232,7 +232,7 @@ export function ProjectList({ corpora, onRefresh, onSelect, selectedId }: Projec
                   <div className="mt-3">
                     <div className="flex justify-between text-[11px] text-warning mb-1.5">
                       <span className="flex items-center gap-1.5">
-                        <span className="ministr-pulse h-1.5 w-1.5 rounded-full bg-warning" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-warning" />
                         Indexing
                       </span>
                       <span className="font-mono tabular-nums">

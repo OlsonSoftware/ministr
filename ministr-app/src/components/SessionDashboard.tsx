@@ -15,7 +15,9 @@ import { Badge } from "./ui/badge";
 import { BudgetRing } from "./ui/budget-ring";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
+import { VitalCard } from "./ui/vital-card";
 import { cn } from "../lib/utils";
+import { labelSmallCap } from "../lib/ui-tokens";
 import { corpusLabelById } from "../lib/corpus";
 import type { SessionDetail, DaemonStatus } from "../lib/types";
 
@@ -196,6 +198,7 @@ export function SessionDashboard({ status }: Props) {
           <VitalCard
             title="Aggregate budget"
             subtitle="Tokens used across active sessions"
+            layout="center"
           >
             <BudgetRing
               utilization={vitals.util}
@@ -217,6 +220,7 @@ export function SessionDashboard({ status }: Props) {
           <VitalCard
             title="Tokens saved"
             subtitle="From dedup + delta + compression"
+            layout="center"
             right={
               <Badge variant="success" className="gap-1">
                 <TrendingDown className="h-2.5 w-2.5" />
@@ -237,7 +241,11 @@ export function SessionDashboard({ status }: Props) {
             </div>
           </VitalCard>
 
-          <VitalCard title="Dedup hits" subtitle="Sections ministr skipped resending">
+          <VitalCard
+            title="Dedup hits"
+            subtitle="Sections ministr skipped resending"
+            layout="center"
+          >
             <div className="flex items-center gap-4 h-[108px]">
               <div className="flex flex-col">
                 <span className="font-mono text-3xl font-bold tabular-nums text-accent leading-none">
@@ -297,7 +305,7 @@ export function SessionDashboard({ status }: Props) {
       {/* Session list — uses the shared TurnBlock primitive */}
       <section>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim flex items-center gap-1.5">
+          <h2 className={cn(labelSmallCap, "flex items-center gap-1.5")}>
             <Radio className="h-3 w-3" />
             Active sessions
             {vitals.total > 0 && (
@@ -363,35 +371,6 @@ export function SessionDashboard({ status }: Props) {
         )}
       </section>
     </div>
-  );
-}
-
-function VitalCard({
-  title,
-  subtitle,
-  children,
-  right,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-  right?: React.ReactNode;
-}) {
-  return (
-    <Card hover="lift" className="p-4">
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <div>
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
-            {title}
-          </h3>
-          {subtitle && (
-            <p className="text-[11px] text-text-dim mt-0.5">{subtitle}</p>
-          )}
-        </div>
-        {right}
-      </div>
-      <div className="flex items-center justify-center">{children}</div>
-    </Card>
   );
 }
 

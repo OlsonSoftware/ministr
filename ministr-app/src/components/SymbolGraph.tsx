@@ -233,25 +233,6 @@ export function SymbolGraph({ status }: Props) {
         <Card hover="lift" className="p-0 overflow-hidden">
           {selected ? (
             <svg viewBox="0 0 500 350" className="w-full h-full min-h-[340px]">
-              {/* soft grid */}
-              <defs>
-                <pattern
-                  id="sg-grid"
-                  width="24"
-                  height="24"
-                  patternUnits="userSpaceOnUse"
-                >
-                  <path
-                    d="M 24 0 L 0 0 0 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeOpacity="0.05"
-                    strokeWidth="0.5"
-                  />
-                </pattern>
-              </defs>
-              <rect width="100%" height="100%" fill="url(#sg-grid)" />
-
               {edges.map((e, i) => {
                 const from = nodes.find((n) => n.name === e.from);
                 const to = nodes.find((n) => n.name === e.to);

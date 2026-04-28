@@ -29,9 +29,12 @@ import { CorpusChip } from "./ui/corpus-chip";
 import { EmptyState } from "./ui/empty-state";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
+import { VitalCard } from "./ui/vital-card";
+import { LabeledCard } from "./ui/labeled-card";
 import { ActivityFeed, computeHitRateBuckets } from "./ui/activity-feed";
 import { CoherenceFeed } from "./ui/coherence-feed";
 import { cn } from "../lib/utils";
+import { labelSmallCap } from "../lib/ui-tokens";
 import { corpusLabelById } from "../lib/corpus";
 
 /// Cap on the Live turn stream preview. Past this we render an
@@ -339,7 +342,7 @@ export function Overview({
       {/* Corpus strip */}
       <section>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim flex items-center gap-1.5">
+          <h2 className={cn(labelSmallCap, "flex items-center gap-1.5")}>
             <FolderKanban className="h-3 w-3" />
             Corpora
           </h2>
@@ -386,7 +389,7 @@ export function Overview({
         {/* Live session stream */}
         <section>
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim flex items-center gap-1.5">
+            <h2 className={cn(labelSmallCap, "flex items-center gap-1.5")}>
               <Waves className="h-3 w-3" />
               Live turn stream
               {sessions.length > 0 && (
@@ -441,7 +444,7 @@ export function Overview({
 
         {/* Side panels: activity feed + coherence */}
         <section className="space-y-3">
-          <SidePanel
+          <LabeledCard
             icon={Activity}
             title="Tool activity"
             right={
@@ -458,9 +461,9 @@ export function Overview({
               limit={12}
               flashSince={activityFlashSince}
             />
-          </SidePanel>
+          </LabeledCard>
 
-          <SidePanel
+          <LabeledCard
             icon={Sparkles}
             title="Coherence feed"
             right={
@@ -477,9 +480,9 @@ export function Overview({
               limit={10}
               flashSince={coherenceFlashSince}
             />
-          </SidePanel>
+          </LabeledCard>
 
-          <SidePanel icon={Database} title="Daemon">
+          <LabeledCard icon={Database} title="Daemon">
             <dl className="space-y-1.5 text-xs">
               <Row label="Model" value={status.model} mono />
               <Row
@@ -490,81 +493,10 @@ export function Overview({
               <Row label="RSS" value={`${status.memory_mb.toFixed(0)} MB`} mono />
               <Row label="Version" value={`v${status.version}`} mono />
             </dl>
-          </SidePanel>
+          </LabeledCard>
         </section>
       </div>
     </div>
-  );
-}
-
-function VitalCard({
-  title,
-  subtitle,
-  children,
-  empty,
-  emptyLabel,
-  right,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-  empty?: boolean;
-  emptyLabel?: string;
-  right?: React.ReactNode;
-}) {
-  return (
-    <Card hover="lift" className="p-4">
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <div>
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
-            {title}
-          </h3>
-          {subtitle && (
-            <p className="text-[11px] text-text-dim mt-0.5">{subtitle}</p>
-          )}
-        </div>
-        {right}
-      </div>
-      {empty ? (
-        <div className="flex h-[118px] items-center justify-center">
-          <span className="text-xs text-text-dim">{emptyLabel}</span>
-        </div>
-      ) : (
-        children
-      )}
-    </Card>
-  );
-}
-
-function SidePanel({
-  icon: Icon,
-  title,
-  note,
-  right,
-  children,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  note?: string;
-  right?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card hover="lift" className="p-3">
-      <div className="flex items-center gap-1.5 mb-2">
-        <Icon className="h-3.5 w-3.5 text-text-dim" />
-        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim flex-1">
-          {title}
-        </h3>
-        {right}
-        {note && (
-          <Badge variant="muted" className="text-[9px]">
-            {note}
-          </Badge>
-        )}
-      </div>
-      {children}
-    </Card>
   );
 }
 
