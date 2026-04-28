@@ -18,6 +18,7 @@ import { TurnBlock } from "./ui/turn-block";
 import { VitalCard } from "./ui/vital-card";
 import { cn } from "../lib/utils";
 import { labelSmallCap } from "../lib/ui-tokens";
+import { formatTokens } from "../lib/format";
 import { corpusLabelById } from "../lib/corpus";
 import type { SessionDetail, DaemonStatus } from "../lib/types";
 
@@ -414,12 +415,6 @@ function EmptyState() {
       </div>
     </Card>
   );
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
 }
 
 // Hide unused-import warnings for icons used above.

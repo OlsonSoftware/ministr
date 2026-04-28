@@ -36,6 +36,7 @@ import { CoherenceFeed } from "./ui/coherence-feed";
 import { cn } from "../lib/utils";
 import { iconBox, labelSmallCap } from "../lib/ui-tokens";
 import { corpusLabelById } from "../lib/corpus";
+import { formatTokens } from "../lib/format";
 
 /// Cap on the Live turn stream preview. Past this we render an
 /// overflow link rather than re-rendering every session — the full
@@ -588,12 +589,6 @@ function Row({
       </dd>
     </div>
   );
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
 }
 
 // Hide unused imports warnings on exports.
