@@ -53,9 +53,7 @@ impl MinistrServer {
         }
         entry
     }
-}
 
-impl MinistrServer {
     /// Record a section delivery in the session shadow and budget tracker.
     ///
     /// When the delivery causes window eviction, applies bookmark compression
