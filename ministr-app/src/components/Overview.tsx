@@ -520,7 +520,7 @@ function HitRateBars({
         <div
           key={i}
           className={cn(
-            "w-1 rounded-full bg-gradient-to-t from-accent/40 to-accent",
+            "w-1 rounded-full bg-accent",
             !hasHistory && "opacity-40",
           )}
           style={{ height: `${Math.max(6, h * 100)}%` }}

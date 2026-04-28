@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   CheckCircle2,
   Search,
-  Sparkles,
   Layers,
   Gauge,
   Zap,
@@ -125,12 +124,6 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
 function ObservatoryPreview() {
   return (
     <div className="mt-5 rounded-xl border border-dashed border-border/60 bg-surface-overlay/30 p-3">
-      <div className="flex items-center gap-1.5 mb-2">
-        <Sparkles className="h-3 w-3 text-accent" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-text-dim">
-          What you'll see after adding a project
-        </span>
-      </div>
       <div className="flex items-center gap-3">
         <div className="shrink-0">
           <BudgetRing
@@ -228,7 +221,7 @@ function Welcome({
     {
       icon: Zap,
       title: "Predictive prefetch",
-      body: "Pre-warm what the agent is about to ask for next.",
+      body: "Prefetch the next sections the agent will ask for.",
     },
     {
       icon: Gauge,

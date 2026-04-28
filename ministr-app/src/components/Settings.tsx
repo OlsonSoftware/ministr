@@ -57,7 +57,7 @@ export function Settings({
         </p>
       </header>
 
-      <Section icon={Power} title="Startup" description="Launch the ministr tray app automatically at login.">
+      <Section icon={Power} title="Startup">
         <ToggleRow
           label="Start at login"
           description="Keeps the daemon running across reboots so MCP clients can attach instantly."
@@ -66,7 +66,7 @@ export function Settings({
         />
       </Section>
 
-      <Section icon={Palette} title="Appearance" description="Pick a theme that matches your system.">
+      <Section icon={Palette} title="Appearance">
         <div className="flex gap-2">
           {themeOptions.map(({ key, label, icon: Icon }) => {
             const active = theme === key;
@@ -89,11 +89,7 @@ export function Settings({
         </div>
       </Section>
 
-      <Section
-        icon={Cpu}
-        title="Embedding model"
-        description="Model used for semantic search across your corpora."
-      >
+      <Section icon={Cpu} title="Embedding model">
         <Row label="Current" value={status.model} mono />
         <Row
           label="Dimension"
@@ -101,32 +97,20 @@ export function Settings({
         />
       </Section>
 
-      <Section
-        icon={HardDrive}
-        title="Storage"
-        description="Where ministr keeps its index and session data."
-      >
+      <Section icon={HardDrive} title="Storage">
         <Row label="Memory (RSS)" value={`${status.memory_mb.toFixed(0)} MB`} mono />
         <Row label="Data directory" value="~/.ministr/" mono />
       </Section>
 
       {status.log_path && (
-        <Section
-          icon={ScrollText}
-          title="Log file"
-          description="Where runtime logs are written."
-        >
+        <Section icon={ScrollText} title="Log file">
           <div className="font-mono text-[11px] text-text-muted bg-surface-sunken border border-border/60 rounded-md px-3 py-2 break-all select-all">
             {status.log_path}
           </div>
         </Section>
       )}
 
-      <Section
-        icon={Rocket}
-        title="Onboarding"
-        description="Replay the setup wizard to add or re-scan projects."
-      >
+      <Section icon={Rocket} title="Onboarding">
         <div className="flex items-center justify-between gap-4">
           <p className="text-xs text-text-muted">
             Useful after adding <span className="font-mono">.ministr.toml</span>{" "}
