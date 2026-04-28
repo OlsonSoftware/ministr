@@ -7,6 +7,10 @@ interface LabeledCardProps {
   title: string;
   /** Optional inline icon before the title. */
   icon?: React.ComponentType<{ className?: string }>;
+  /** Tint for the inline icon. `"dim"` (default) matches Overview/ProjectDetail
+   *  side panels; `"accent"` is for surfaces like Settings where the icon is
+   *  the section's identity cue. */
+  iconTone?: "accent" | "dim";
   /** Optional content on the right side of the header (badge, live dot, etc.). */
   right?: React.ReactNode;
   /** Override the body padding (use `mono` style for compact code/ID blocks). */
@@ -25,6 +29,7 @@ interface LabeledCardProps {
 export function LabeledCard({
   title,
   icon: Icon,
+  iconTone = "dim",
   right,
   mono = false,
   children,
@@ -32,7 +37,14 @@ export function LabeledCard({
   return (
     <Card hover="lift" className={cn(mono && "p-3")}>
       <div className="flex items-center gap-1.5 mb-2.5">
-        {Icon && <Icon className="h-3.5 w-3.5 text-text-dim" />}
+        {Icon && (
+          <Icon
+            className={cn(
+              "h-3.5 w-3.5",
+              iconTone === "accent" ? "text-accent" : "text-text-dim",
+            )}
+          />
+        )}
         <h3 className={cn(labelSmallCap, "flex-1")}>{title}</h3>
         {right}
       </div>

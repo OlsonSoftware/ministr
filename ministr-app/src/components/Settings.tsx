@@ -10,10 +10,11 @@ import {
   MonitorSmartphone,
   Rocket,
 } from "lucide-react";
-import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
+import { LabeledCard } from "./ui/labeled-card";
 import { LabeledRow } from "./ui/labeled-row";
+import { ToggleRow } from "./ui/toggle";
 import { cn } from "../lib/utils";
 import type { DaemonStatus } from "../lib/types";
 
@@ -58,16 +59,16 @@ export function Settings({
         </p>
       </header>
 
-      <Section icon={Power} title="Startup">
+      <LabeledCard iconTone="accent" icon={Power} title="Startup">
         <ToggleRow
           label="Start at login"
           description="Keeps the daemon running across reboots so MCP clients can attach instantly."
           enabled={autostart}
           onToggle={toggleAutostart}
         />
-      </Section>
+      </LabeledCard>
 
-      <Section icon={Palette} title="Appearance">
+      <LabeledCard iconTone="accent" icon={Palette} title="Appearance">
         <div className="flex gap-2">
           {themeOptions.map(({ key, label, icon: Icon }) => {
             const active = theme === key;
@@ -88,31 +89,31 @@ export function Settings({
             );
           })}
         </div>
-      </Section>
+      </LabeledCard>
 
-      <Section icon={Cpu} title="Embedding model">
+      <LabeledCard iconTone="accent" icon={Cpu} title="Embedding model">
         <LabeledRow bordered label="Current" value={status.model} mono />
         <LabeledRow
           bordered
           label="Dimension"
           value={<Badge variant="muted" className="font-mono">{status.model_dimension}d</Badge>}
         />
-      </Section>
+      </LabeledCard>
 
-      <Section icon={HardDrive} title="Storage">
+      <LabeledCard iconTone="accent" icon={HardDrive} title="Storage">
         <LabeledRow bordered label="Memory (RSS)" value={`${status.memory_mb.toFixed(0)} MB`} mono />
         <LabeledRow bordered label="Data directory" value="~/.ministr/" mono />
-      </Section>
+      </LabeledCard>
 
       {status.log_path && (
-        <Section icon={ScrollText} title="Log file">
+        <LabeledCard iconTone="accent" icon={ScrollText} title="Log file">
           <div className="font-mono text-[11px] text-text-muted bg-surface-sunken border border-border/60 rounded-md px-3 py-2 break-all select-all">
             {status.log_path}
           </div>
-        </Section>
+        </LabeledCard>
       )}
 
-      <Section icon={Rocket} title="Onboarding">
+      <LabeledCard iconTone="accent" icon={Rocket} title="Onboarding">
         <div className="flex items-center justify-between gap-4">
           <p className="text-xs text-text-muted">
             Useful after adding <span className="font-mono">.ministr.toml</span>{" "}
@@ -129,78 +130,7 @@ export function Settings({
             Show setup
           </Button>
         </div>
-      </Section>
-    </div>
-  );
-}
-
-function Section({
-  icon: Icon,
-  title,
-  description,
-  children,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card hover="lift" className="p-5">
-      <div className="flex items-start gap-3 mb-4">
-        <div className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-accent shrink-0">
-          <Icon className="h-4 w-4" />
-        </div>
-        <div className="flex-1">
-          <h3 className="text-sm font-semibold text-text">{title}</h3>
-          {description && (
-            <p className="text-xs text-text-dim mt-0.5">{description}</p>
-          )}
-        </div>
-      </div>
-      <div className="space-y-2">{children}</div>
-    </Card>
-  );
-}
-
-function ToggleRow({
-  label,
-  description,
-  enabled,
-  onToggle,
-}: {
-  label: string;
-  description?: string;
-  enabled: boolean | null;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="flex-1">
-        <p className="text-sm font-medium text-text">{label}</p>
-        {description && (
-          <p className="text-xs text-text-dim mt-0.5">{description}</p>
-        )}
-      </div>
-      <button
-        onClick={onToggle}
-        disabled={enabled === null}
-        role="switch"
-        aria-checked={!!enabled}
-        className={cn(
-          "relative h-6 w-10 shrink-0 rounded-full transition-colors duration-150 cursor-pointer",
-          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-ring)]",
-          enabled ? "bg-accent" : "bg-surface-overlay",
-          enabled === null && "opacity-50 cursor-wait",
-        )}
-      >
-        <span
-          className={cn(
-            "absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-150",
-            enabled && "translate-x-4",
-          )}
-        />
-      </button>
+      </LabeledCard>
     </div>
   );
 }

@@ -244,7 +244,7 @@ export function SymbolGraph({ status }: Props) {
                     y1={from.y}
                     x2={to.x}
                     y2={to.y}
-                    stroke="rgb(129 140 248)"
+                    stroke="var(--color-accent)"
                     strokeOpacity={0.5}
                     strokeWidth={1}
                   />
@@ -260,7 +260,7 @@ export function SymbolGraph({ status }: Props) {
                         cx={n.x}
                         cy={n.y}
                         r={14}
-                        fill="rgb(129 140 248)"
+                        fill="var(--color-accent)"
                         opacity={0.15}
                       />
                     )}
@@ -268,7 +268,7 @@ export function SymbolGraph({ status }: Props) {
                       cx={n.x}
                       cy={n.y}
                       r={isCenter ? 8 : 5}
-                      fill={isCenter ? "rgb(129 140 248)" : "rgb(100 116 139)"}
+                      fill={isCenter ? "var(--color-accent)" : "rgb(100 116 139)"}
                       opacity={isCenter ? 1 : 0.7}
                     />
                     <text
