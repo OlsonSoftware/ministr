@@ -269,14 +269,14 @@ export function SymbolGraph({ status }: Props) {
                       cx={n.x}
                       cy={n.y}
                       r={isCenter ? 8 : 5}
-                      fill={isCenter ? "var(--color-accent)" : "rgb(100 116 139)"}
+                      fill={isCenter ? "var(--color-accent)" : "var(--color-text-dim)"}
                       opacity={isCenter ? 1 : 0.7}
                     />
                     <text
                       x={n.x}
                       y={n.y + (isCenter ? 22 : 17)}
                       textAnchor="middle"
-                      fill={isCenter ? "rgb(229 231 235)" : "rgb(156 163 175)"}
+                      fill={isCenter ? "var(--color-text)" : "var(--color-text-muted)"}
                       fontSize={isCenter ? 10 : 9}
                       fontFamily="var(--font-mono)"
                       fontWeight={isCenter ? 600 : 500}

@@ -13,6 +13,7 @@ import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { BudgetRing } from "./ui/budget-ring";
+import { EmptyState } from "./ui/empty-state";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
 import { VitalCard } from "./ui/vital-card";
@@ -323,28 +324,29 @@ export function SessionDashboard({ status }: Props) {
             <div className="animate-spin h-7 w-7 rounded-full border-2 border-border border-t-accent" />
           </div>
         ) : sessions.length === 0 ? (
-          <EmptyState />
+          <EmptyState
+            icon={Users}
+            title="No active sessions"
+            hint="Point Claude Code, Cursor, or any MCP client at the daemon — sessions stream in here with live budget, dedup, and compression metrics."
+          />
         ) : filtered.length === 0 ? (
-          <Card className="flex flex-col items-center gap-2 py-10 text-center">
-            <div className="grid h-10 w-10 place-items-center rounded-lg bg-surface-overlay text-text-dim">
-              <Filter className="h-4 w-4" />
-            </div>
-            <p className="text-sm font-medium text-text">No matching sessions</p>
-            <p className="text-xs text-text-dim max-w-xs">
-              Clear the filter or widen the pressure scope to see more.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setQuery("");
-                setPressureFilter("all");
-              }}
-              className="mt-1"
-            >
-              Reset filters
-            </Button>
-          </Card>
+          <EmptyState
+            icon={Filter}
+            title="No matching sessions"
+            hint="Clear the filter or widen the pressure scope to see more."
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setQuery("");
+                  setPressureFilter("all");
+                }}
+              >
+                Reset filters
+              </Button>
+            }
+          />
         ) : (
           <div className="space-y-2">
             {tree.map((node) => (
@@ -396,24 +398,6 @@ function FilterPill({
     >
       {children}
     </button>
-  );
-}
-
-function EmptyState() {
-  return (
-    <Card className="flex flex-col items-center gap-3 py-12 text-center">
-      <div className="grid h-12 w-12 place-items-center rounded-xl bg-surface-overlay text-text-dim">
-        <Users className="h-5 w-5" />
-      </div>
-      <div className="space-y-1">
-        <p className="text-sm font-medium text-text">No active sessions</p>
-        <p className="max-w-sm text-xs text-text-dim">
-          Point Claude Code, Cursor, or any MCP client at{" "}
-          <span className="font-mono">~/.ministr/ministrd.sock</span> and sessions
-          stream in here with live budget, dedup, and compression metrics.
-        </p>
-      </div>
-    </Card>
   );
 }
 
