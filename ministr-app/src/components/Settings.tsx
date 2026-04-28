@@ -54,9 +54,6 @@ export function Settings({
     <div className="space-y-4 ministr-fade-in max-w-2xl">
       <header>
         <h2 className="text-base font-semibold text-text">Settings</h2>
-        <p className="text-xs text-text-dim mt-0.5">
-          Preferences for the ministr desktop app and daemon.
-        </p>
       </header>
 
       <LabeledCard iconTone="accent" icon={Power} title="Startup">

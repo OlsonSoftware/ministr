@@ -521,12 +521,8 @@ function ConnectingState({ error }: { error: string | null }) {
         <div className="ministr-spin h-10 w-10 rounded-full border-2 border-border border-t-accent" />
         <CircleDot className="absolute inset-0 m-auto h-4 w-4 text-accent ministr-pulse" />
       </div>
-      <div className="text-center space-y-1">
+      <div className="text-center">
         <p className="text-sm font-medium text-text">Connecting to daemon…</p>
-        <p className="text-xs text-text-dim">
-          Checking the Unix socket at{" "}
-          <span className="font-mono">~/.ministr/ministrd.sock</span>
-        </p>
       </div>
       {error && (
         <p className="max-w-md text-center text-xs text-danger/80 mt-2">

@@ -27,12 +27,7 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
   return (
     <div className="space-y-4 ministr-fade-in">
       <header className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-text">Detail</h2>
-          <p className="text-xs text-text-dim mt-0.5">
-            Live metrics for this corpus.
-          </p>
-        </div>
+        <h2 className="text-base font-semibold text-text">Detail</h2>
         <Badge variant={statusVariant} dot>{statusLabel}</Badge>
       </header>
 
