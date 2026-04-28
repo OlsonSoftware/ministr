@@ -34,7 +34,7 @@ import { LabeledCard } from "./ui/labeled-card";
 import { ActivityFeed, computeHitRateBuckets } from "./ui/activity-feed";
 import { CoherenceFeed } from "./ui/coherence-feed";
 import { cn } from "../lib/utils";
-import { labelSmallCap } from "../lib/ui-tokens";
+import { iconBox, labelSmallCap } from "../lib/ui-tokens";
 import { corpusLabelById } from "../lib/corpus";
 
 /// Cap on the Live turn stream preview. Past this we render an
@@ -355,7 +355,7 @@ export function Overview({
         </div>
         {status.corpora.length === 0 ? (
           <Card className="flex flex-col items-center gap-2 py-8 text-center">
-            <div className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-accent">
+            <div className={cn(iconBox, "h-10 w-10")}>
               <FolderKanban className="h-5 w-5" />
             </div>
             <p className="text-sm font-medium text-text">No corpora yet</p>
