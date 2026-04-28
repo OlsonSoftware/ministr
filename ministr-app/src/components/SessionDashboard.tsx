@@ -17,7 +17,7 @@ import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
 import { VitalCard } from "./ui/vital-card";
 import { cn } from "../lib/utils";
-import { labelSmallCap } from "../lib/ui-tokens";
+import { accentTone, labelSmallCap } from "../lib/ui-tokens";
 import { formatTokens } from "../lib/format";
 import { corpusLabelById } from "../lib/corpus";
 import type { SessionDetail, DaemonStatus } from "../lib/types";
@@ -390,7 +390,7 @@ function FilterPill({
       className={cn(
         "inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all duration-120 cursor-pointer",
         active
-          ? "bg-[var(--color-accent-soft)] text-accent"
+          ? accentTone
           : "text-text-muted hover:text-text hover:bg-surface-overlay/60",
       )}
     >

@@ -11,6 +11,7 @@ import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/utils";
+import { labelMicro, labelSmallCap } from "../lib/ui-tokens";
 import type { DaemonStatus, SymbolInfo, SymbolRef } from "../lib/types";
 
 interface Props {
@@ -174,7 +175,7 @@ export function SymbolGraph({ status }: Props) {
       <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-3 min-h-[340px]">
         <Card hover="lift" className="p-0 overflow-hidden flex flex-col">
           <div className="px-3 py-2 border-b border-border/60">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
+            <h3 className={labelSmallCap}>
               Symbols
               {symbols.length > 0 && (
                 <span className="ml-2 text-text-muted font-mono normal-case tabular-nums">
@@ -220,7 +221,7 @@ export function SymbolGraph({ status }: Props) {
                         {s.name}
                       </span>
                     </div>
-                    <span className="mt-0.5 text-[10px] font-mono uppercase tracking-wider text-text-dim">
+                    <span className={cn(labelMicro, "mt-0.5 font-mono")}>
                       {s.kind}
                     </span>
                   </button>

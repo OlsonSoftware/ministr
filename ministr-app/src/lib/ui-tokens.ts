@@ -16,3 +16,16 @@ export const labelSmallCap =
  *  `cn(iconBox, "h-8 w-8")`. */
 export const iconBox =
   "grid place-items-center rounded-lg bg-[var(--color-accent-soft)] text-accent";
+
+/** Tinted "active state" tone fragment — the `bg-accent-soft + text-accent`
+ *  half of `iconBox`, without the layout. Use inside ternaries on
+ *  layout-bearing buttons (rail items, filter pills, theme pickers) where
+ *  you want only the color tone, not a full tinted box. */
+export const accentTone =
+  "bg-[var(--color-accent-soft)] text-accent";
+
+/** Even-smaller-caps data label (~10px, no `font-semibold`). Used inline
+ *  inside compact stat cells where `labelSmallCap`'s 11px + semibold reads
+ *  as too heavy. Sibling of `labelSmallCap`, not a replacement. */
+export const labelMicro =
+  "text-[10px] uppercase tracking-wider text-text-dim";

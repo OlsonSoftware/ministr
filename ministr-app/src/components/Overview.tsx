@@ -34,7 +34,7 @@ import { LabeledCard } from "./ui/labeled-card";
 import { ActivityFeed, computeHitRateBuckets } from "./ui/activity-feed";
 import { CoherenceFeed } from "./ui/coherence-feed";
 import { cn } from "../lib/utils";
-import { iconBox, labelSmallCap } from "../lib/ui-tokens";
+import { iconBox, labelMicro, labelSmallCap } from "../lib/ui-tokens";
 import { corpusLabelById } from "../lib/corpus";
 import { formatTokens } from "../lib/format";
 
@@ -270,7 +270,7 @@ export function Overview({
               {(vitals.util * 100).toFixed(0)}
               <span className="text-sm text-text-dim">%</span>
             </span>
-            <span className="text-[10px] uppercase tracking-wider text-text-dim mt-1">
+            <span className={cn(labelMicro, "mt-1")}>
               {formatTokens(vitals.totalTokensUsed)} /{" "}
               {formatTokens(vitals.totalCapacity)}
             </span>
@@ -284,7 +284,7 @@ export function Overview({
           emptyLabel="No deliveries yet"
           right={
             <div className="text-right">
-              <div className="text-[10px] uppercase tracking-wider text-text-dim">
+              <div className={labelMicro}>
                 saved
               </div>
               <div className="font-mono text-sm font-semibold text-success tabular-nums">
@@ -299,7 +299,7 @@ export function Overview({
                 {(vitals.hitRate * 100).toFixed(0)}
                 <span className="text-base text-text-dim">%</span>
               </span>
-              <span className="text-[10px] uppercase tracking-wider text-text-dim mt-1.5">
+              <span className={cn(labelMicro, "mt-1.5")}>
                 {vitals.totalDedup} hits · {vitals.totalDelivered} total
               </span>
             </div>
@@ -534,7 +534,7 @@ function HitRateBars({
 function StatCell({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex flex-col">
-      <span className="text-[10px] uppercase tracking-wider text-text-dim">
+      <span className={labelMicro}>
         {label}
       </span>
       <span className="font-mono text-lg font-semibold tabular-nums text-text leading-tight">

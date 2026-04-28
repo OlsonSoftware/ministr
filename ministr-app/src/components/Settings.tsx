@@ -16,6 +16,7 @@ import { LabeledCard } from "./ui/labeled-card";
 import { LabeledRow } from "./ui/labeled-row";
 import { ToggleRow } from "./ui/toggle";
 import { cn } from "../lib/utils";
+import { accentTone } from "../lib/ui-tokens";
 import type { DaemonStatus } from "../lib/types";
 
 interface SettingsProps {
@@ -76,7 +77,7 @@ export function Settings({
                 className={cn(
                   "flex-1 inline-flex flex-col items-center gap-1.5 rounded-lg border px-3 py-3 text-xs font-medium cursor-pointer transition-all duration-120",
                   active
-                    ? "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] text-accent"
+                    ? cn("border-[var(--color-accent-ring)]", accentTone)
                     : "border-border/70 bg-surface-raised text-text-muted hover:border-border-hover hover:text-text",
                 )}
               >

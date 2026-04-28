@@ -16,6 +16,8 @@ import { Badge } from "./ui/badge";
 import { LabeledCard } from "./ui/labeled-card";
 import { LabeledRow } from "./ui/labeled-row";
 import { MetricTile } from "./ui/metric-tile";
+import { cn } from "../lib/utils";
+import { iconBox } from "../lib/ui-tokens";
 
 interface ProjectDetailProps {
   corpus: CorpusInfo;
@@ -59,7 +61,7 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
       <LabeledCard title="Sessions">
         {corpus.active_sessions > 0 ? (
           <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-accent">
+            <div className={cn(iconBox, "h-9 w-9")}>
               <Users className="h-4 w-4" />
             </div>
             <div className="flex-1">

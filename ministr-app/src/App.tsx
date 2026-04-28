@@ -37,6 +37,7 @@ import { ShortcutSheet } from "./components/ShortcutSheet";
 import { Badge } from "./components/ui/badge";
 import { StatusDot } from "./components/ui/status-dot";
 import { cn } from "./lib/utils";
+import { accentTone } from "./lib/ui-tokens";
 
 type Tab =
   | "overview"
@@ -501,7 +502,7 @@ function RailItem({
         dim,
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-ring)]",
         active
-          ? "bg-[var(--color-accent-soft)] text-accent"
+          ? accentTone
           : "text-text-dim hover:text-text hover:bg-surface-overlay/70",
       )}
     >
