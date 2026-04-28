@@ -48,9 +48,18 @@ pub async fn unregister_corpus(
         .map_err(|e| e.to_string())
 }
 
-/// Get daemon status (memory, uptime, corpora).
+/// Get daemon status (memory, uptime, corpora, autostart).
+///
+/// `autostart_enabled` is populated by querying the autolaunch plugin
+/// directly so the React UI doesn't need a separate `is_autostart_enabled`
+/// round-trip on every Settings mount.
 #[tauri::command]
-pub async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonStatus, String> {
+pub async fn daemon_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DaemonStatus, String> {
+    use tauri_plugin_autostart::ManagerExt;
+
     let corpora = state.registry.list().await;
     tracing::debug!(corpora_count = corpora.len(), "daemon_status polled");
     let rss = ministr_core::mem_profile::rss_mb().unwrap_or(0.0);
@@ -59,6 +68,8 @@ pub async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonStatus, S
     let log_path = Some(ministr_api::daemon_data_dir().join("ministr.log"))
         .filter(|p| p.exists())
         .map(|p| p.display().to_string());
+
+    let autostart_enabled = app.autolaunch().is_enabled().ok();
 
     Ok(DaemonStatus {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -69,6 +80,7 @@ pub async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonStatus, S
         corpora,
         log_path,
         total_sessions,
+        autostart_enabled,
     })
 }
 
@@ -171,13 +183,6 @@ pub async fn add_project_from_tray(handle: &AppHandle) {
             tracing::warn!(error = %e, path, "failed to add project from tray");
         }
     }
-}
-
-/// Check if auto-start at login is enabled.
-#[tauri::command]
-pub async fn is_autostart_enabled(app: AppHandle) -> Result<bool, String> {
-    use tauri_plugin_autostart::ManagerExt;
-    app.autolaunch().is_enabled().map_err(|e| e.to_string())
 }
 
 /// Enable or disable auto-start at login.

@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import type { ActivityEvent } from "../../lib/types";
 import { cn } from "../../lib/utils";
+import { formatTokens } from "../../lib/format";
+import { relative } from "../../lib/time";
 
 interface ActivityFeedProps {
   events: ActivityEvent[];
@@ -37,23 +39,6 @@ const PRESSURE_BORDER: Record<string, string> = {
   elevated: "border-l-warning/70",
   critical: "border-l-danger",
 };
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
-}
-
-function relative(nowMs: number, tsMs: number): string {
-  const delta = Math.max(0, nowMs - tsMs);
-  const secs = Math.floor(delta / 1000);
-  if (secs < 1) return "now";
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ago`;
-}
 
 export function ActivityFeed({
   events,

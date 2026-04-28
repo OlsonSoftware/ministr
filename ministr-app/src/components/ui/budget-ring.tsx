@@ -42,11 +42,11 @@ export function BudgetRing({
   const cy = size / 2;
 
   const primaryColor = {
-    none: "rgb(129 140 248)",
-    low: "rgb(52 211 153)",
-    medium: "rgb(129 140 248)",
-    high: "rgb(251 191 36)",
-    critical: "rgb(248 113 113)",
+    none: "var(--color-accent)",
+    low: "var(--color-success)",
+    medium: "var(--color-accent)",
+    high: "var(--color-warning)",
+    critical: "var(--color-danger)",
   }[pressure];
 
   return (

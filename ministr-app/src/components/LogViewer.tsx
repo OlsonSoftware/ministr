@@ -12,6 +12,7 @@ import {
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/utils";
+import { accentTone } from "../lib/ui-tokens";
 
 type LogLevel = "all" | "error" | "warn" | "info";
 
@@ -109,7 +110,7 @@ export function LogViewer() {
                 className={cn(
                   "inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md transition-all duration-120 cursor-pointer",
                   level === key
-                    ? "bg-[var(--color-accent-soft)] text-accent shadow-[inset_0_0_0_1px_var(--color-accent-ring)]"
+                    ? cn(accentTone, "shadow-[inset_0_0_0_1px_var(--color-accent-ring)]")
                     : "text-text-muted hover:text-text hover:bg-surface-overlay/60",
                 )}
               >

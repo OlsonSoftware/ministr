@@ -29,10 +29,14 @@ import { CorpusChip } from "./ui/corpus-chip";
 import { EmptyState } from "./ui/empty-state";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
+import { VitalCard } from "./ui/vital-card";
+import { LabeledCard } from "./ui/labeled-card";
 import { ActivityFeed, computeHitRateBuckets } from "./ui/activity-feed";
 import { CoherenceFeed } from "./ui/coherence-feed";
 import { cn } from "../lib/utils";
+import { iconBox, labelMicro, labelSmallCap } from "../lib/ui-tokens";
 import { corpusLabelById } from "../lib/corpus";
+import { formatTokens } from "../lib/format";
 
 /// Cap on the Live turn stream preview. Past this we render an
 /// overflow link rather than re-rendering every session — the full
@@ -266,7 +270,7 @@ export function Overview({
               {(vitals.util * 100).toFixed(0)}
               <span className="text-sm text-text-dim">%</span>
             </span>
-            <span className="text-[10px] uppercase tracking-wider text-text-dim mt-1">
+            <span className={cn(labelMicro, "mt-1")}>
               {formatTokens(vitals.totalTokensUsed)} /{" "}
               {formatTokens(vitals.totalCapacity)}
             </span>
@@ -280,7 +284,7 @@ export function Overview({
           emptyLabel="No deliveries yet"
           right={
             <div className="text-right">
-              <div className="text-[10px] uppercase tracking-wider text-text-dim">
+              <div className={labelMicro}>
                 saved
               </div>
               <div className="font-mono text-sm font-semibold text-success tabular-nums">
@@ -295,7 +299,7 @@ export function Overview({
                 {(vitals.hitRate * 100).toFixed(0)}
                 <span className="text-base text-text-dim">%</span>
               </span>
-              <span className="text-[10px] uppercase tracking-wider text-text-dim mt-1.5">
+              <span className={cn(labelMicro, "mt-1.5")}>
                 {vitals.totalDedup} hits · {vitals.totalDelivered} total
               </span>
             </div>
@@ -339,7 +343,7 @@ export function Overview({
       {/* Corpus strip */}
       <section>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim flex items-center gap-1.5">
+          <h2 className={cn(labelSmallCap, "flex items-center gap-1.5")}>
             <FolderKanban className="h-3 w-3" />
             Corpora
           </h2>
@@ -352,7 +356,7 @@ export function Overview({
         </div>
         {status.corpora.length === 0 ? (
           <Card className="flex flex-col items-center gap-2 py-8 text-center">
-            <div className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-accent">
+            <div className={cn(iconBox, "h-10 w-10")}>
               <FolderKanban className="h-5 w-5" />
             </div>
             <p className="text-sm font-medium text-text">No corpora yet</p>
@@ -386,7 +390,7 @@ export function Overview({
         {/* Live session stream */}
         <section>
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim flex items-center gap-1.5">
+            <h2 className={cn(labelSmallCap, "flex items-center gap-1.5")}>
               <Waves className="h-3 w-3" />
               Live turn stream
               {sessions.length > 0 && (
@@ -441,7 +445,7 @@ export function Overview({
 
         {/* Side panels: activity feed + coherence */}
         <section className="space-y-3">
-          <SidePanel
+          <LabeledCard
             icon={Activity}
             title="Tool activity"
             right={
@@ -458,9 +462,9 @@ export function Overview({
               limit={12}
               flashSince={activityFlashSince}
             />
-          </SidePanel>
+          </LabeledCard>
 
-          <SidePanel
+          <LabeledCard
             icon={Sparkles}
             title="Coherence feed"
             right={
@@ -477,9 +481,9 @@ export function Overview({
               limit={10}
               flashSince={coherenceFlashSince}
             />
-          </SidePanel>
+          </LabeledCard>
 
-          <SidePanel icon={Database} title="Daemon">
+          <LabeledCard icon={Database} title="Daemon">
             <dl className="space-y-1.5 text-xs">
               <Row label="Model" value={status.model} mono />
               <Row
@@ -490,81 +494,10 @@ export function Overview({
               <Row label="RSS" value={`${status.memory_mb.toFixed(0)} MB`} mono />
               <Row label="Version" value={`v${status.version}`} mono />
             </dl>
-          </SidePanel>
+          </LabeledCard>
         </section>
       </div>
     </div>
-  );
-}
-
-function VitalCard({
-  title,
-  subtitle,
-  children,
-  empty,
-  emptyLabel,
-  right,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-  empty?: boolean;
-  emptyLabel?: string;
-  right?: React.ReactNode;
-}) {
-  return (
-    <Card hover="lift" className="p-4">
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <div>
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
-            {title}
-          </h3>
-          {subtitle && (
-            <p className="text-[11px] text-text-dim mt-0.5">{subtitle}</p>
-          )}
-        </div>
-        {right}
-      </div>
-      {empty ? (
-        <div className="flex h-[118px] items-center justify-center">
-          <span className="text-xs text-text-dim">{emptyLabel}</span>
-        </div>
-      ) : (
-        children
-      )}
-    </Card>
-  );
-}
-
-function SidePanel({
-  icon: Icon,
-  title,
-  note,
-  right,
-  children,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  note?: string;
-  right?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card hover="lift" className="p-3">
-      <div className="flex items-center gap-1.5 mb-2">
-        <Icon className="h-3.5 w-3.5 text-text-dim" />
-        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim flex-1">
-          {title}
-        </h3>
-        {right}
-        {note && (
-          <Badge variant="muted" className="text-[9px]">
-            {note}
-          </Badge>
-        )}
-      </div>
-      {children}
-    </Card>
   );
 }
 
@@ -588,7 +521,7 @@ function HitRateBars({
         <div
           key={i}
           className={cn(
-            "w-1 rounded-full bg-gradient-to-t from-accent/40 to-accent",
+            "w-1 rounded-full bg-accent",
             !hasHistory && "opacity-40",
           )}
           style={{ height: `${Math.max(6, h * 100)}%` }}
@@ -601,7 +534,7 @@ function HitRateBars({
 function StatCell({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex flex-col">
-      <span className="text-[10px] uppercase tracking-wider text-text-dim">
+      <span className={labelMicro}>
         {label}
       </span>
       <span className="font-mono text-lg font-semibold tabular-nums text-text leading-tight">
@@ -656,12 +589,6 @@ function Row({
       </dd>
     </div>
   );
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
 }
 
 // Hide unused imports warnings on exports.

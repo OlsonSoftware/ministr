@@ -11,6 +11,7 @@ import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/utils";
+import { labelMicro, labelSmallCap } from "../lib/ui-tokens";
 import type { DaemonStatus, SymbolInfo, SymbolRef } from "../lib/types";
 
 interface Props {
@@ -174,7 +175,7 @@ export function SymbolGraph({ status }: Props) {
       <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-3 min-h-[340px]">
         <Card hover="lift" className="p-0 overflow-hidden flex flex-col">
           <div className="px-3 py-2 border-b border-border/60">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
+            <h3 className={labelSmallCap}>
               Symbols
               {symbols.length > 0 && (
                 <span className="ml-2 text-text-muted font-mono normal-case tabular-nums">
@@ -220,7 +221,7 @@ export function SymbolGraph({ status }: Props) {
                         {s.name}
                       </span>
                     </div>
-                    <span className="mt-0.5 text-[10px] font-mono uppercase tracking-wider text-text-dim">
+                    <span className={cn(labelMicro, "mt-0.5 font-mono")}>
                       {s.kind}
                     </span>
                   </button>
@@ -233,25 +234,6 @@ export function SymbolGraph({ status }: Props) {
         <Card hover="lift" className="p-0 overflow-hidden">
           {selected ? (
             <svg viewBox="0 0 500 350" className="w-full h-full min-h-[340px]">
-              {/* soft grid */}
-              <defs>
-                <pattern
-                  id="sg-grid"
-                  width="24"
-                  height="24"
-                  patternUnits="userSpaceOnUse"
-                >
-                  <path
-                    d="M 24 0 L 0 0 0 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeOpacity="0.05"
-                    strokeWidth="0.5"
-                  />
-                </pattern>
-              </defs>
-              <rect width="100%" height="100%" fill="url(#sg-grid)" />
-
               {edges.map((e, i) => {
                 const from = nodes.find((n) => n.name === e.from);
                 const to = nodes.find((n) => n.name === e.to);
@@ -263,7 +245,7 @@ export function SymbolGraph({ status }: Props) {
                     y1={from.y}
                     x2={to.x}
                     y2={to.y}
-                    stroke="rgb(129 140 248)"
+                    stroke="var(--color-accent)"
                     strokeOpacity={0.5}
                     strokeWidth={1}
                   />
@@ -279,7 +261,7 @@ export function SymbolGraph({ status }: Props) {
                         cx={n.x}
                         cy={n.y}
                         r={14}
-                        fill="rgb(129 140 248)"
+                        fill="var(--color-accent)"
                         opacity={0.15}
                       />
                     )}
@@ -287,14 +269,14 @@ export function SymbolGraph({ status }: Props) {
                       cx={n.x}
                       cy={n.y}
                       r={isCenter ? 8 : 5}
-                      fill={isCenter ? "rgb(129 140 248)" : "rgb(100 116 139)"}
+                      fill={isCenter ? "var(--color-accent)" : "var(--color-text-dim)"}
                       opacity={isCenter ? 1 : 0.7}
                     />
                     <text
                       x={n.x}
                       y={n.y + (isCenter ? 22 : 17)}
                       textAnchor="middle"
-                      fill={isCenter ? "rgb(229 231 235)" : "rgb(156 163 175)"}
+                      fill={isCenter ? "var(--color-text)" : "var(--color-text-muted)"}
                       fontSize={isCenter ? 10 : 9}
                       fontFamily="var(--font-mono)"
                       fontWeight={isCenter ? 600 : 500}

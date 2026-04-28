@@ -26,7 +26,8 @@ interface BadgeProps {
   variant?: BadgeVariant;
   children: React.ReactNode;
   className?: string;
-  /** Tiny pulsing dot for live/active states. */
+  /** Tiny static dot to reinforce variant color. Not animated; use
+   *  `<StatusDot pulse="live" />` separately if you need a live ping. */
   dot?: boolean;
 }
 
@@ -47,7 +48,7 @@ export function Badge({
       {dot && (
         <span
           className={cn(
-            "ministr-pulse h-1.5 w-1.5 rounded-full",
+            "h-1.5 w-1.5 rounded-full",
             toneBgClass(dotTones[variant]),
           )}
         />

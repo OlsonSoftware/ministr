@@ -1,4 +1,3 @@
-import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Palette,
@@ -11,10 +10,13 @@ import {
   MonitorSmartphone,
   Rocket,
 } from "lucide-react";
-import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
+import { LabeledCard } from "./ui/labeled-card";
+import { LabeledRow } from "./ui/labeled-row";
+import { ToggleRow } from "./ui/toggle";
 import { cn } from "../lib/utils";
+import { accentTone } from "../lib/ui-tokens";
 import type { DaemonStatus } from "../lib/types";
 
 interface SettingsProps {
@@ -22,6 +24,7 @@ interface SettingsProps {
   theme: string;
   onThemeChange: (theme: "dark" | "light" | "system") => void;
   onShowOnboarding: () => void;
+  onRefresh: () => void;
 }
 
 export function Settings({
@@ -29,17 +32,17 @@ export function Settings({
   theme,
   onThemeChange,
   onShowOnboarding,
+  onRefresh,
 }: SettingsProps) {
-  const [autostart, setAutostart] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    invoke<boolean>("is_autostart_enabled").then(setAutostart).catch(() => {});
-  }, []);
+  // Autostart now rides on the daemon_status poll (Tauri side populates
+  // it via `autolaunch().is_enabled()`). `undefined` while the first
+  // status response is in flight; treated as a disabled-pending state.
+  const autostart = status.autostart_enabled ?? null;
 
   async function toggleAutostart() {
     const next = !autostart;
     await invoke("set_autostart", { enabled: next });
-    setAutostart(next);
+    onRefresh();
   }
 
   const themeOptions = [
@@ -52,21 +55,18 @@ export function Settings({
     <div className="space-y-4 ministr-fade-in max-w-2xl">
       <header>
         <h2 className="text-base font-semibold text-text">Settings</h2>
-        <p className="text-xs text-text-dim mt-0.5">
-          Preferences for the ministr desktop app and daemon.
-        </p>
       </header>
 
-      <Section icon={Power} title="Startup" description="Launch the ministr tray app automatically at login.">
+      <LabeledCard iconTone="accent" icon={Power} title="Startup">
         <ToggleRow
           label="Start at login"
           description="Keeps the daemon running across reboots so MCP clients can attach instantly."
           enabled={autostart}
           onToggle={toggleAutostart}
         />
-      </Section>
+      </LabeledCard>
 
-      <Section icon={Palette} title="Appearance" description="Pick a theme that matches your system.">
+      <LabeledCard iconTone="accent" icon={Palette} title="Appearance">
         <div className="flex gap-2">
           {themeOptions.map(({ key, label, icon: Icon }) => {
             const active = theme === key;
@@ -77,7 +77,7 @@ export function Settings({
                 className={cn(
                   "flex-1 inline-flex flex-col items-center gap-1.5 rounded-lg border px-3 py-3 text-xs font-medium cursor-pointer transition-all duration-120",
                   active
-                    ? "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] text-accent"
+                    ? cn("border-[var(--color-accent-ring)]", accentTone)
                     : "border-border/70 bg-surface-raised text-text-muted hover:border-border-hover hover:text-text",
                 )}
               >
@@ -87,46 +87,31 @@ export function Settings({
             );
           })}
         </div>
-      </Section>
+      </LabeledCard>
 
-      <Section
-        icon={Cpu}
-        title="Embedding model"
-        description="Model used for semantic search across your corpora."
-      >
-        <Row label="Current" value={status.model} mono />
-        <Row
+      <LabeledCard iconTone="accent" icon={Cpu} title="Embedding model">
+        <LabeledRow bordered label="Current" value={status.model} mono />
+        <LabeledRow
+          bordered
           label="Dimension"
           value={<Badge variant="muted" className="font-mono">{status.model_dimension}d</Badge>}
         />
-      </Section>
+      </LabeledCard>
 
-      <Section
-        icon={HardDrive}
-        title="Storage"
-        description="Where ministr keeps its index and session data."
-      >
-        <Row label="Memory (RSS)" value={`${status.memory_mb.toFixed(0)} MB`} mono />
-        <Row label="Data directory" value="~/.ministr/" mono />
-      </Section>
+      <LabeledCard iconTone="accent" icon={HardDrive} title="Storage">
+        <LabeledRow bordered label="Memory (RSS)" value={`${status.memory_mb.toFixed(0)} MB`} mono />
+        <LabeledRow bordered label="Data directory" value="~/.ministr/" mono />
+      </LabeledCard>
 
       {status.log_path && (
-        <Section
-          icon={ScrollText}
-          title="Log file"
-          description="Where runtime logs are written."
-        >
+        <LabeledCard iconTone="accent" icon={ScrollText} title="Log file">
           <div className="font-mono text-[11px] text-text-muted bg-surface-sunken border border-border/60 rounded-md px-3 py-2 break-all select-all">
             {status.log_path}
           </div>
-        </Section>
+        </LabeledCard>
       )}
 
-      <Section
-        icon={Rocket}
-        title="Onboarding"
-        description="Replay the setup wizard to add or re-scan projects."
-      >
+      <LabeledCard iconTone="accent" icon={Rocket} title="Onboarding">
         <div className="flex items-center justify-between gap-4">
           <p className="text-xs text-text-muted">
             Useful after adding <span className="font-mono">.ministr.toml</span>{" "}
@@ -143,97 +128,7 @@ export function Settings({
             Show setup
           </Button>
         </div>
-      </Section>
-    </div>
-  );
-}
-
-function Section({
-  icon: Icon,
-  title,
-  description,
-  children,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card hover="lift" className="p-5">
-      <div className="flex items-start gap-3 mb-4">
-        <div className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-accent shrink-0">
-          <Icon className="h-4 w-4" />
-        </div>
-        <div className="flex-1">
-          <h3 className="text-sm font-semibold text-text">{title}</h3>
-          {description && (
-            <p className="text-xs text-text-dim mt-0.5">{description}</p>
-          )}
-        </div>
-      </div>
-      <div className="space-y-2">{children}</div>
-    </Card>
-  );
-}
-
-function Row({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: React.ReactNode;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between text-xs py-1 border-b border-border/40 last:border-0">
-      <span className="text-text-muted">{label}</span>
-      <span className={cn("text-text", mono && "font-mono tabular-nums")}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function ToggleRow({
-  label,
-  description,
-  enabled,
-  onToggle,
-}: {
-  label: string;
-  description?: string;
-  enabled: boolean | null;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="flex-1">
-        <p className="text-sm font-medium text-text">{label}</p>
-        {description && (
-          <p className="text-xs text-text-dim mt-0.5">{description}</p>
-        )}
-      </div>
-      <button
-        onClick={onToggle}
-        disabled={enabled === null}
-        role="switch"
-        aria-checked={!!enabled}
-        className={cn(
-          "relative h-6 w-10 shrink-0 rounded-full transition-colors duration-150 cursor-pointer",
-          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-ring)]",
-          enabled ? "bg-accent" : "bg-surface-overlay",
-          enabled === null && "opacity-50 cursor-wait",
-        )}
-      >
-        <span
-          className={cn(
-            "absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-150",
-            enabled && "translate-x-4",
-          )}
-        />
-      </button>
+      </LabeledCard>
     </div>
   );
 }

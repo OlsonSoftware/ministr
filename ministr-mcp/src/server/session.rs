@@ -14,7 +14,7 @@ use ministr_core::token::count_tokens;
 use ministr_core::types::{ContentId, Resolution};
 
 use super::MinistrServer;
-use super::types::ToolResponse;
+use super::types::{NextAction, ToolResponse};
 
 impl MinistrServer {
     /// Resolve the active session entry, bootstrapping it lazily if missing.
@@ -53,9 +53,7 @@ impl MinistrServer {
         }
         entry
     }
-}
 
-impl MinistrServer {
     /// Record a section delivery in the session shadow and budget tracker.
     ///
     /// When the delivery causes window eviction, applies bookmark compression
@@ -140,6 +138,23 @@ impl MinistrServer {
         data: T,
         budget_status: BudgetStatus,
     ) -> ToolResponse<T> {
+        self.build_response_with(data, budget_status, Vec::new())
+            .await
+    }
+
+    /// Build a tool response, appending per-handler next-action hints after
+    /// the global pressure- and coherence-driven ones.
+    ///
+    /// Use this when a specific tool can suggest a concrete follow-up
+    /// (e.g. `ministr_survey` recommending `ministr_read` on the top hit).
+    /// The `extra_next_actions` are appended last so urgent global signals
+    /// (compress under pressure, re-read changed sections) appear first.
+    pub(super) async fn build_response_with<T: Serialize + rmcp::schemars::JsonSchema>(
+        &self,
+        data: T,
+        budget_status: BudgetStatus,
+        extra_next_actions: Vec<NextAction>,
+    ) -> ToolResponse<T> {
         let mut reg = self.registry.lock().await;
         let entry = self.ensure_session_mut(&mut reg);
         let alerts = entry.session.drain_alerts();
@@ -164,13 +179,169 @@ impl MinistrServer {
             None
         };
 
+        let next_actions = build_next_actions(
+            budget_status.pressure_level,
+            &eviction_recommendations,
+            &alerts,
+            extra_next_actions,
+        );
+
         ToolResponse {
             budget_status,
             coherence_alerts: alerts,
             indexing_in_progress: indexing,
             indexing_message,
             eviction_recommendations,
+            next_actions,
             result: data,
         }
+    }
+}
+
+/// Synthesize the prioritized next-action list for a tool response.
+///
+/// Order: pressure-driven (compress + evicted per candidate), then
+/// coherence-driven (re-read each changed section), then any per-handler
+/// hints supplied by the caller. Pure function — easy to unit-test.
+fn build_next_actions(
+    pressure: PressureLevel,
+    eviction_recommendations: &[ministr_core::session::eviction::EvictionCandidate],
+    coherence_alerts: &[ministr_core::session::CoherenceAlert],
+    extra: Vec<NextAction>,
+) -> Vec<NextAction> {
+    let mut actions = Vec::new();
+
+    // 1. Pressure-driven: compress then evict each recommended candidate.
+    if pressure != PressureLevel::Normal {
+        let pressure_label = match pressure {
+            PressureLevel::Elevated => "elevated",
+            PressureLevel::Critical => "critical",
+            PressureLevel::Normal => unreachable!(),
+        };
+        for candidate in eviction_recommendations {
+            let ids = vec![candidate.content_id.clone()];
+            actions.push(NextAction {
+                action: "ministr_compress".to_string(),
+                args: serde_json::json!({ "content_ids": ids }),
+                reason: format!(
+                    "Pressure {pressure_label}; compress this section before dropping it ({} tokens)",
+                    candidate.tokens_recoverable
+                ),
+            });
+            actions.push(NextAction {
+                action: "ministr_evicted".to_string(),
+                args: serde_json::json!({ "content_ids": ids }),
+                reason: format!("Pressure {pressure_label}; signal eviction after dropping"),
+            });
+        }
+    }
+
+    // 2. Coherence-driven: re-read changed sections so the agent gets a delta.
+    for alert in coherence_alerts {
+        for section_id in &alert.changed_sections {
+            actions.push(NextAction {
+                action: "ministr_read".to_string(),
+                args: serde_json::json!({ "section_id": section_id }),
+                reason: "Section changed since last delivery; re-read to get the delta".to_string(),
+            });
+        }
+    }
+
+    // 3. Per-handler hints (e.g. "read the top survey hit").
+    actions.extend(extra);
+
+    actions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ministr_core::session::eviction::EvictionCandidate;
+    use ministr_core::session::{CoherenceAlert, PressureLevel};
+
+    fn candidate(id: &str, tokens: usize) -> EvictionCandidate {
+        EvictionCandidate {
+            content_id: id.to_string(),
+            reason: "test".to_string(),
+            tokens_recoverable: tokens,
+            score: 1.0,
+            factors: None,
+        }
+    }
+
+    #[test]
+    fn no_actions_under_normal_pressure_with_no_alerts_or_extras() {
+        let actions = build_next_actions(PressureLevel::Normal, &[], &[], Vec::new());
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn elevated_pressure_emits_compress_then_evicted_per_candidate() {
+        let candidates = vec![candidate("sec-a", 500), candidate("sec-b", 300)];
+        let actions = build_next_actions(PressureLevel::Elevated, &candidates, &[], Vec::new());
+
+        assert_eq!(actions.len(), 4);
+        assert_eq!(actions[0].action, "ministr_compress");
+        assert!(actions[0].reason.contains("elevated"));
+        assert_eq!(actions[1].action, "ministr_evicted");
+        assert_eq!(actions[2].action, "ministr_compress");
+        assert_eq!(actions[3].action, "ministr_evicted");
+        // Each compress/evict pair carries the candidate's content_id.
+        assert_eq!(actions[0].args["content_ids"][0], "sec-a");
+        assert_eq!(actions[2].args["content_ids"][0], "sec-b");
+    }
+
+    #[test]
+    fn critical_pressure_label_used() {
+        let candidates = vec![candidate("sec-a", 500)];
+        let actions = build_next_actions(PressureLevel::Critical, &candidates, &[], Vec::new());
+        assert!(actions[0].reason.contains("critical"));
+    }
+
+    #[test]
+    fn coherence_alerts_emit_one_read_per_changed_section() {
+        let alerts = vec![CoherenceAlert {
+            changed_sections: vec!["docs/a.md#x".into(), "docs/b.md#y".into()],
+            stale_content_ids: vec![],
+        }];
+        let actions = build_next_actions(PressureLevel::Normal, &[], &alerts, Vec::new());
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].action, "ministr_read");
+        assert_eq!(actions[0].args["section_id"], "docs/a.md#x");
+        assert_eq!(actions[1].args["section_id"], "docs/b.md#y");
+    }
+
+    #[test]
+    fn pressure_actions_come_before_coherence_actions() {
+        let candidates = vec![candidate("sec-a", 500)];
+        let alerts = vec![CoherenceAlert {
+            changed_sections: vec!["docs/a.md#x".into()],
+            stale_content_ids: vec![],
+        }];
+        let actions = build_next_actions(PressureLevel::Elevated, &candidates, &alerts, Vec::new());
+
+        assert_eq!(actions.len(), 3);
+        assert_eq!(actions[0].action, "ministr_compress");
+        assert_eq!(actions[1].action, "ministr_evicted");
+        assert_eq!(actions[2].action, "ministr_read");
+    }
+
+    #[test]
+    fn extras_are_appended_last() {
+        let extras = vec![NextAction {
+            action: "ministr_definition".to_string(),
+            args: serde_json::json!({ "symbol_id": "sym-1" }),
+            reason: "single match".to_string(),
+        }];
+        let alerts = vec![CoherenceAlert {
+            changed_sections: vec!["docs/a.md#x".into()],
+            stale_content_ids: vec![],
+        }];
+        let actions = build_next_actions(PressureLevel::Normal, &[], &alerts, extras);
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].action, "ministr_read");
+        assert_eq!(actions[1].action, "ministr_definition");
     }
 }

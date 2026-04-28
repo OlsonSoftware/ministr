@@ -13,10 +13,15 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { cn } from "../lib/utils";
+import {
+  pressureFromUtilization,
+  PRESSURE_ELEVATED,
+  PRESSURE_CRITICAL,
+  type Pressure,
+} from "../lib/pressure";
+import { formatTokens } from "../lib/format";
 
 const DEFAULT_BUDGET = 200_000;
-const WARN_THRESHOLD = 0.7;
-const CRITICAL_THRESHOLD = 0.9;
 
 interface MockSection {
   id: string;
@@ -39,8 +44,6 @@ const SAMPLE_SECTIONS: MockSection[] = [
   { id: "s12", name: "Build script", tokens: 500 },
 ];
 
-type Pressure = "none" | "low" | "medium" | "high" | "critical";
-
 export function ContextSimulator() {
   const [budget, setBudget] = useState(DEFAULT_BUDGET);
   const [context, setContext] = useState<MockSection[]>([]);
@@ -51,7 +54,7 @@ export function ContextSimulator() {
     [context],
   );
   const utilization = budget > 0 ? tokensUsed / budget : 0;
-  const pressure = getPressure(utilization);
+  const pressure = pressureFromUtilization(utilization);
 
   function addSection(s: MockSection) {
     if (context.find((c) => c.id === s.id)) return;
@@ -63,11 +66,11 @@ export function ContextSimulator() {
   }
 
   function evictRecommendation(): string[] {
-    if (utilization < CRITICAL_THRESHOLD) return [];
+    if (utilization < PRESSURE_CRITICAL) return [];
     const sorted = [...context].sort((a, b) => b.tokens - a.tokens);
     const ids: string[] = [];
     let freed = 0;
-    const target = tokensUsed - budget * WARN_THRESHOLD;
+    const target = tokensUsed - budget * PRESSURE_ELEVATED;
     for (const s of sorted) {
       if (freed >= target) break;
       ids.push(s.id);
@@ -300,18 +303,4 @@ function PressureBadge({ level }: { level: Pressure }) {
       {level}
     </Badge>
   );
-}
-
-function getPressure(utilization: number): Pressure {
-  if (utilization >= CRITICAL_THRESHOLD) return "critical";
-  if (utilization >= WARN_THRESHOLD) return "high";
-  if (utilization >= 0.4) return "medium";
-  if (utilization > 0) return "low";
-  return "none";
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
 }

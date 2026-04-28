@@ -9,6 +9,7 @@ import type { CorpusInfo, SessionDetail } from "../../lib/types";
 import { corpusLabelById } from "../../lib/corpus";
 import { pressureTone, toneTextClass } from "../../lib/status";
 import { cn } from "../../lib/utils";
+import { formatTokens } from "../../lib/format";
 import { MetricTile } from "./metric-tile";
 import { StatusDot } from "./status-dot";
 
@@ -21,12 +22,6 @@ interface TurnBlockProps {
   fresh?: boolean;
   onClick?: () => void;
   className?: string;
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
 }
 
 export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnBlockProps) {

@@ -23,6 +23,35 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+/// Apply platform-specific flags so a spawned child runs detached, in the
+/// background, with no visible console or window of its own.
+///
+/// On Windows: `CREATE_NO_WINDOW` suppresses any console window for
+/// console-subsystem children (a no-op for `windows_subsystem = "windows"`
+/// binaries, but covers debug builds and any other console binary in the
+/// search path); `DETACHED_PROCESS` cuts the inherited console handle so
+/// the child never tries to draw on the proxy's stdio.
+///
+/// On Unix: `process_group(0)` puts the child in its own process group,
+/// so the proxy exiting (or receiving a signal) doesn't propagate.
+fn configure_detached_spawn(cmd: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW = 0x0800_0000, DETACHED_PROCESS = 0x0000_0008
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    // Other platforms (wasi, etc.): no detachment primitive needed.
+    let _ = cmd;
+}
+
 /// MCP proxy server that delegates to the ministr daemon.
 #[derive(Clone)]
 pub struct ProxyServer {
@@ -184,21 +213,27 @@ impl ProxyServer {
     }
 
     /// Spawn the daemon binary and wait for it to become responsive.
+    ///
+    /// The child is spawned fully detached from the proxy on every platform:
+    /// no console window flashes on Windows, the process is in its own
+    /// process group on Unix so the parent dying doesn't take it down, and
+    /// stdio is null so nothing leaks into the MCP transport.
     async fn launch_daemon(&self) -> Result<(), McpError> {
         let daemon_bin = Self::find_daemon_binary();
         info!(bin = %daemon_bin.display(), "launching ministr daemon");
 
-        std::process::Command::new(&daemon_bin)
-            .stdin(std::process::Stdio::null())
+        let mut cmd = std::process::Command::new(&daemon_bin);
+        cmd.stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("failed to start daemon at {}: {e}", daemon_bin.display()),
-                    None,
-                )
-            })?;
+            .stderr(std::process::Stdio::null());
+        configure_detached_spawn(&mut cmd);
+
+        cmd.spawn().map_err(|e| {
+            McpError::internal_error(
+                format!("failed to start daemon at {}: {e}", daemon_bin.display()),
+                None,
+            )
+        })?;
 
         // Poll for the endpoint to appear (fast stat / pipe-metadata check).
         for _ in 0..20 {
@@ -372,7 +407,7 @@ impl ProxyServer {
 impl ProxyServer {
     #[tool(
         name = "ministr_survey",
-        description = "Search the indexed corpus for sections relevant to a natural language query. Returns ranked results with relevance scores."
+        description = "Search the indexed corpus by natural-language query. Start here for any vague question; follow up with ministr_read (full text) or ministr_extract (atomic claims) on top results."
     )]
     async fn survey(
         &self,
@@ -395,7 +430,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_read",
-        description = "Read the full content of a section by its ID."
+        description = "Full content of a section by ID, with delta delivery for changed content and short stubs for unchanged re-requests. Call ministr_extract instead if you only need atomic claims."
     )]
     async fn read(
         &self,
@@ -426,7 +461,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_extract",
-        description = "Extract atomic claims from a section. Optionally filter by a query."
+        description = "Atomic claims from a section, optionally query-filtered. Cheaper than ministr_read when you don't need full prose."
     )]
     async fn extract(
         &self,
@@ -449,7 +484,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_symbols",
-        description = "Search for code symbols (functions, structs, traits) by name, kind, module, or visibility."
+        description = "Find code symbols (functions, structs, traits, etc.) by name, kind, module, or visibility. Pair with ministr_definition for source and ministr_references before modifying."
     )]
     async fn symbols(
         &self,
@@ -485,7 +520,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_definition",
-        description = "Get the full source definition of a code symbol by its ID."
+        description = "Full source of a code symbol by ID. Call ministr_references first if you intend to modify or delete the symbol."
     )]
     async fn definition(
         &self,
@@ -513,7 +548,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_references",
-        description = "Find all callers, implementors, and importers of a code symbol."
+        description = "All callers, implementors, and importers of a code symbol. Call before deleting or significantly modifying any non-trivial public symbol — zero references means safe to delete."
     )]
     async fn references(
         &self,
@@ -551,7 +586,7 @@ impl ProxyServer {
     // Tracked alongside the doc note in `docs-next/content/docs/tools/toc.mdx`.
     #[tool(
         name = "ministr_toc",
-        description = "Get a structural overview (table of contents) of the indexed corpus."
+        description = "Structural overview (table of contents) of the indexed corpus. Use to orient on an unfamiliar codebase before drilling in."
     )]
     async fn toc(
         &self,
@@ -575,7 +610,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_related",
-        description = "Find claims related to a given claim by relationship type (references, contradicts, depends_on, updates)."
+        description = "Follow relationship edges (references, contradicts, depends_on, updates) from a claim. Use when one claim's truth depends on another."
     )]
     async fn related(
         &self,
@@ -598,7 +633,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_bridge",
-        description = "Query cross-language bridge links (FFI, NAPI, PyO3, etc.) between source and target languages."
+        description = "Cross-language bridge links (Tauri commands, NAPI exports, PyO3 functions, FFI, HTTP routes, etc.). Call before modifying any IPC or FFI boundary so you see every cross-language call site."
     )]
     async fn bridge(
         &self,
@@ -623,7 +658,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_budget",
-        description = "Get the current context budget status: total budget, estimated usage, pressure level."
+        description = "Current context-window budget, pressure level, and eviction candidates. Call when you suspect pressure is high; then act on eviction_candidates with ministr_compress + ministr_evicted."
     )]
     async fn budget(&self) -> Result<CallToolResult, McpError> {
         // Use the local budget tracker — it reflects tokens delivered through
@@ -645,7 +680,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_compress",
-        description = "Generate compressed summaries for sections the agent wants to evict from context. Uses extractive TF-IDF compression (60-80% reduction)."
+        description = "Extractive TF-IDF summaries (60-80% reduction) for sections you intend to evict. Pair with ministr_evicted after dropping the originals from context."
     )]
     async fn compress(
         &self,
@@ -667,7 +702,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_evicted",
-        description = "Signal that content IDs have been evicted from the agent's context window. Updates session tracking for accurate budget and deduplication."
+        description = "Call immediately after dropping content from your context window. Keeps dedup and budget tracking accurate; without this, future ministr_read calls on dropped IDs return short 'already_delivered' stubs instead of the actual text."
     )]
     async fn evicted(
         &self,
@@ -722,11 +757,7 @@ impl ServerHandler for ProxyServer {
                 Implementation::new("ministr-proxy", env!("CARGO_PKG_VERSION"))
                     .with_description("Thin MCP proxy — delegates to the ministr daemon."),
             )
-            .with_instructions(
-                "ministr proxy — use ministr_survey to search, ministr_read to read sections, \
-                 ministr_extract for claims, ministr_symbols/ministr_definition/ministr_references \
-                 for code navigation.",
-            )
+            .with_instructions(crate::server::DEFAULT_INSTRUCTIONS)
     }
 
     async fn initialize(

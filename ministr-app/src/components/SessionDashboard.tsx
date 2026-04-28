@@ -13,9 +13,13 @@ import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { BudgetRing } from "./ui/budget-ring";
+import { EmptyState } from "./ui/empty-state";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
+import { VitalCard } from "./ui/vital-card";
 import { cn } from "../lib/utils";
+import { accentTone, labelSmallCap } from "../lib/ui-tokens";
+import { formatTokens } from "../lib/format";
 import { corpusLabelById } from "../lib/corpus";
 import type { SessionDetail, DaemonStatus } from "../lib/types";
 
@@ -196,6 +200,7 @@ export function SessionDashboard({ status }: Props) {
           <VitalCard
             title="Aggregate budget"
             subtitle="Tokens used across active sessions"
+            layout="center"
           >
             <BudgetRing
               utilization={vitals.util}
@@ -217,6 +222,7 @@ export function SessionDashboard({ status }: Props) {
           <VitalCard
             title="Tokens saved"
             subtitle="From dedup + delta + compression"
+            layout="center"
             right={
               <Badge variant="success" className="gap-1">
                 <TrendingDown className="h-2.5 w-2.5" />
@@ -237,7 +243,11 @@ export function SessionDashboard({ status }: Props) {
             </div>
           </VitalCard>
 
-          <VitalCard title="Dedup hits" subtitle="Sections ministr skipped resending">
+          <VitalCard
+            title="Dedup hits"
+            subtitle="Sections ministr skipped resending"
+            layout="center"
+          >
             <div className="flex items-center gap-4 h-[108px]">
               <div className="flex flex-col">
                 <span className="font-mono text-3xl font-bold tabular-nums text-accent leading-none">
@@ -297,7 +307,7 @@ export function SessionDashboard({ status }: Props) {
       {/* Session list — uses the shared TurnBlock primitive */}
       <section>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim flex items-center gap-1.5">
+          <h2 className={cn(labelSmallCap, "flex items-center gap-1.5")}>
             <Radio className="h-3 w-3" />
             Active sessions
             {vitals.total > 0 && (
@@ -314,28 +324,29 @@ export function SessionDashboard({ status }: Props) {
             <div className="animate-spin h-7 w-7 rounded-full border-2 border-border border-t-accent" />
           </div>
         ) : sessions.length === 0 ? (
-          <EmptyState />
+          <EmptyState
+            icon={Users}
+            title="No active sessions"
+            hint="Point Claude Code, Cursor, or any MCP client at the daemon — sessions stream in here with live budget, dedup, and compression metrics."
+          />
         ) : filtered.length === 0 ? (
-          <Card className="flex flex-col items-center gap-2 py-10 text-center">
-            <div className="grid h-10 w-10 place-items-center rounded-lg bg-surface-overlay text-text-dim">
-              <Filter className="h-4 w-4" />
-            </div>
-            <p className="text-sm font-medium text-text">No matching sessions</p>
-            <p className="text-xs text-text-dim max-w-xs">
-              Clear the filter or widen the pressure scope to see more.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setQuery("");
-                setPressureFilter("all");
-              }}
-              className="mt-1"
-            >
-              Reset filters
-            </Button>
-          </Card>
+          <EmptyState
+            icon={Filter}
+            title="No matching sessions"
+            hint="Clear the filter or widen the pressure scope to see more."
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setQuery("");
+                  setPressureFilter("all");
+                }}
+              >
+                Reset filters
+              </Button>
+            }
+          />
         ) : (
           <div className="space-y-2">
             {tree.map((node) => (
@@ -366,35 +377,6 @@ export function SessionDashboard({ status }: Props) {
   );
 }
 
-function VitalCard({
-  title,
-  subtitle,
-  children,
-  right,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-  right?: React.ReactNode;
-}) {
-  return (
-    <Card hover="lift" className="p-4">
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <div>
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
-            {title}
-          </h3>
-          {subtitle && (
-            <p className="text-[11px] text-text-dim mt-0.5">{subtitle}</p>
-          )}
-        </div>
-        {right}
-      </div>
-      <div className="flex items-center justify-center">{children}</div>
-    </Card>
-  );
-}
-
 function FilterPill({
   active,
   onClick,
@@ -410,37 +392,13 @@ function FilterPill({
       className={cn(
         "inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all duration-120 cursor-pointer",
         active
-          ? "bg-[var(--color-accent-soft)] text-accent"
+          ? accentTone
           : "text-text-muted hover:text-text hover:bg-surface-overlay/60",
       )}
     >
       {children}
     </button>
   );
-}
-
-function EmptyState() {
-  return (
-    <Card className="flex flex-col items-center gap-3 py-12 text-center">
-      <div className="grid h-12 w-12 place-items-center rounded-xl bg-surface-overlay text-text-dim">
-        <Users className="h-5 w-5" />
-      </div>
-      <div className="space-y-1">
-        <p className="text-sm font-medium text-text">No active sessions</p>
-        <p className="max-w-sm text-xs text-text-dim">
-          Point Claude Code, Cursor, or any MCP client at{" "}
-          <span className="font-mono">~/.ministr/ministrd.sock</span> and sessions
-          stream in here with live budget, dedup, and compression metrics.
-        </p>
-      </div>
-    </Card>
-  );
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
 }
 
 // Hide unused-import warnings for icons used above.
