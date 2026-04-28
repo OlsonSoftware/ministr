@@ -33,6 +33,10 @@ export interface DaemonStatus {
   corpora: CorpusInfo[];
   log_path?: string;
   total_sessions: number;
+  /** Whether the desktop tray is configured to launch at login. Populated
+   *  only when running inside the Tauri app; absent from the headless
+   *  daemon's HTTP response. */
+  autostart_enabled?: boolean;
 }
 
 export interface SessionInfo {

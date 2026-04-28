@@ -25,4 +25,9 @@ pub struct DaemonStatus {
     /// Total active sessions across all corpora.
     #[serde(default)]
     pub total_sessions: usize,
+    /// Whether the desktop tray app is enabled to launch at login.
+    /// `None` from the headless daemon (it has no autolaunch concept);
+    /// `Some(_)` only when populated by the Tauri `daemon_status` command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autostart_enabled: Option<bool>,
 }

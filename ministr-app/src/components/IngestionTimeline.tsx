@@ -15,6 +15,7 @@ import { Badge } from "./ui/badge";
 import { EmptyState } from "./ui/empty-state";
 import { Progress } from "./ui/progress";
 import { cn } from "../lib/utils";
+import { labelMicro } from "../lib/ui-tokens";
 import type { CorpusInfo, DaemonStatus, IngestionProgressInfo } from "../lib/types";
 import { corpusLabel } from "../lib/corpus";
 
@@ -228,7 +229,7 @@ function StatCell({
           {value !== undefined ? value.toLocaleString() : "—"}
         </span>
       </div>
-      <span className="text-[10px] uppercase tracking-wider text-text-dim">
+      <span className={labelMicro}>
         {label}
       </span>
     </div>

@@ -1434,5 +1434,8 @@ async fn daemon_status(State(state): State<AppState>) -> impl IntoResponse {
         corpora,
         log_path: None,
         total_sessions,
+        // Autostart is a desktop-only concept; the headless daemon doesn't
+        // know whether the tray app is configured to launch at login.
+        autostart_enabled: None,
     })
 }

@@ -5,6 +5,7 @@ import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { CorpusSelect } from "./ui/corpus-select";
 import { cn } from "../lib/utils";
+import { labelSmallCap } from "../lib/ui-tokens";
 import type { DaemonStatus, FileInfo } from "../lib/types";
 
 interface Props {
@@ -93,7 +94,7 @@ export function CorpusTreemap({ status }: Props) {
         <Card hover="lift" className="p-3">
           <div className="flex items-center gap-1.5 mb-2.5">
             <Layers className="h-3 w-3 text-text-dim" />
-            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
+            <h3 className={labelSmallCap}>
               Language mix
             </h3>
           </div>
@@ -172,7 +173,7 @@ export function CorpusTreemap({ status }: Props) {
 
       <Card hover="lift" className="p-0 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60">
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
+          <h3 className={labelSmallCap}>
             Top 50 files by sections
           </h3>
           <span className="text-[11px] text-text-dim font-mono tabular-nums">

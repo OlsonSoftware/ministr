@@ -77,14 +77,130 @@ use types::{
     AlreadyDeliveredResponse, BridgeEndpointSummary, BridgeLinkSummary, BridgeParams,
     BridgeResponse, BudgetResponse, CloneOutputData, CloneParams, CompressParams, CompressResponse,
     CorpusStatsHeader, DefinitionParams, EvictedParams, EvictedResponse, ExtractParams,
-    ExtractResponse, FetchOutputData, FetchParams, FetchResponse, ReadOutputData, ReadParams,
-    ReferencesParams, ReferencesResponse, RefreshParams, RefreshResponse, RelatedParams,
-    RelatedResponse, SessionMetricsResponse, SurveyParams, SurveyResponse, SymbolSummary,
-    SymbolsParams, SymbolsResponse, TaskParams, TaskStatusResponse, TocParams, TocResponse,
-    ToolResponse, tool_output_schema,
+    ExtractResponse, FetchOutputData, FetchParams, FetchResponse, NextAction, ReadOutputData,
+    ReadParams, ReferencesParams, ReferencesResponse, RefreshParams, RefreshResponse,
+    RelatedParams, RelatedResponse, SessionMetricsResponse, SurveyParams, SurveyResponse,
+    SymbolSummary, SymbolsParams, SymbolsResponse, TaskParams, TaskStatusResponse, TocParams,
+    TocResponse, ToolResponse, tool_output_schema,
 };
 
 use crate::task::{McpTaskManager, task_to_cancel_result, task_to_get_result};
+
+/// Server-level instructions surfaced to MCP clients during initialization.
+///
+/// This is loaded into the agent's system prompt by spec-compliant clients
+/// (Claude Code, mcp-inspector, etc.). It is the canonical place to teach
+/// the agent how to use ministr's tools effectively, which downstream
+/// consumers cannot get from the project's `CLAUDE.md` (that file is only
+/// loaded when editing ministr itself).
+pub(crate) const DEFAULT_INSTRUCTIONS: &str = "\
+ministr is a context cache for LLM agents — it indexes a corpus once, then \
+serves you semantic search, code navigation, and atomic claim extraction \
+without re-reading files. Prefer it over Read/Grep/Glob for any exploration: \
+ministr's responses are deduplicated against a session shadow, so re-asking \
+for content you already have is cheap, and budget-aware compression keeps \
+your context lean.
+
+# Where to start
+- Vague concept question → ministr_survey
+- Know the symbol name → ministr_symbols, then ministr_definition
+- Know the file → ministr_toc, then ministr_read (or ministr_extract for atomic claims)
+- Need project layout → ministr_toc
+- Following claim dependencies → ministr_related
+
+# Before you mutate code
+- Before deleting or significantly modifying a public symbol → ministr_references first. \
+Zero references means safe to delete; non-zero means you have to update each call site.
+- Before changing any IPC or FFI boundary (Tauri command, NAPI export, PyO3 fn, HTTP route, etc.) \
+→ ministr_bridge first to see every cross-language call site.
+
+# Read the response wrapper
+Every tool response includes metadata you should react to:
+- `coherence_alerts` non-empty → underlying file changed since last delivery; \
+re-call ministr_read on the listed sections to get the delta.
+- `indexing_in_progress: true` → results may be incomplete; consider re-running \
+search-style tools when it clears.
+- `eviction_recommendations` non-empty → budget pressure is elevated; act on these.
+- `next_actions` array → concrete suggested next tool calls with arguments and reasons. \
+Treat as advisory but high-signal; the server picked them based on session state.
+
+# Budget protocol (when pressure ≥ elevated)
+Call ministr_budget any time you want a current snapshot. When pressure rises:
+1. Call ministr_compress on large sections you no longer need full text for — \
+returns extractive summaries (~60–80% smaller).
+2. Drop the originals from your context, keeping the summaries.
+3. Call ministr_evicted with the dropped IDs so dedup and budget tracking stay accurate.
+
+If you skip step 3, future ministr_read calls on those IDs return short \
+'already_delivered' stubs instead of the actual text — the server still thinks \
+you have the content. The `next_actions` field will queue compress + evicted \
+calls for you when pressure rises; following them in order is the cheapest path.
+
+# Anti-patterns
+- Don't shell out to grep/rg/find/ag/cat for search — use ministr_survey or ministr_symbols.
+- Don't Read a file just to explore — use ministr_read so the session shadow tracks delivery \
+and dedup works on subsequent calls.
+- Don't re-request a section after dropping it from context without first calling ministr_evicted.
+";
+
+/// Minimum survey score for a top-result follow-up suggestion.
+///
+/// Below this, the top hit is too uncertain to be worth nudging the agent
+/// to read it — the survey ranking signal is already noisy in that range.
+const TOP_HIT_FOLLOWUP_THRESHOLD: f32 = 0.5;
+
+/// Suggest a follow-up read on a survey's top result when it's confidently
+/// above noise. Symbol-resolution hits route to `ministr_definition`;
+/// section/claim/summary hits route to `ministr_read` on the section ID.
+fn top_hit_next_action(results: &[ministr_core::service::SurveyResult]) -> Vec<NextAction> {
+    let Some(top) = results.first() else {
+        return Vec::new();
+    };
+    if top.score < TOP_HIT_FOLLOWUP_THRESHOLD {
+        return Vec::new();
+    }
+    if top.resolution.starts_with("symbol_") {
+        vec![NextAction {
+            action: "ministr_definition".to_string(),
+            args: serde_json::json!({ "symbol_id": top.content_id }),
+            reason: format!(
+                "Top survey match (score {:.2}) — fetch full definition",
+                top.score
+            ),
+        }]
+    } else {
+        // Claim hits use a parent section ID for the read; everything else
+        // already names a section. Fall back to the content_id directly.
+        let section_id = if top.resolution == "claim" {
+            ministr_core::types::parent_section_id(&top.content_id)
+                .map_or_else(|| top.content_id.clone(), str::to_string)
+        } else {
+            top.content_id.clone()
+        };
+        vec![NextAction {
+            action: "ministr_read".to_string(),
+            args: serde_json::json!({ "section_id": section_id }),
+            reason: format!(
+                "Top survey match (score {:.2}) — read full section",
+                top.score
+            ),
+        }]
+    }
+}
+
+/// Suggest fetching a definition when `ministr_symbols` returned exactly
+/// one match — the agent almost always wants the source next.
+fn single_symbol_next_action(symbols: &[SymbolSummary]) -> Vec<NextAction> {
+    if symbols.len() != 1 {
+        return Vec::new();
+    }
+    let only = &symbols[0];
+    vec![NextAction {
+        action: "ministr_definition".to_string(),
+        args: serde_json::json!({ "symbol_id": only.id }),
+        reason: format!("Single match for `{}` — fetch full source", only.name),
+    }]
+}
 
 // ── ministr MCP extension identifiers (SEP-1724) ──────────────────────────
 
@@ -228,26 +344,10 @@ pub struct MinistrServer {
 #[prompt_handler]
 impl ServerHandler for MinistrServer {
     fn get_info(&self) -> ServerInfo {
-        let default_instructions = "ministr is a context cache for LLM agents. Use ministr_toc to get \
-             a structural overview of the indexed corpus, ministr_survey to search for \
-             relevant content, ministr_read to retrieve full section text, ministr_extract \
-             to get atomic claims from a section, ministr_related to follow dependency \
-             chains between claims, ministr_budget to check context budget status and \
-             get eviction recommendations, ministr_compress to generate compressed \
-             summaries of content you want to evict, ministr_evicted to signal when \
-             content has been dropped from your context window, ministr_fetch to \
-             fetch web content by URL and add it to the corpus, ministr_refresh \
-             to check cached web sources for staleness and re-fetch changed content, \
-             ministr_clone to clone a git repository and index its content, \
-             ministr_task to poll background fetch/clone tasks (deprecated — prefer MCP tasks/get), \
-             ministr_symbols to search the code symbol index, \
-             ministr_definition to get the full source definition of a symbol, \
-             and ministr_references to find all references to a symbol.";
-
         let instructions = self
             .custom_instructions
             .as_deref()
-            .unwrap_or(default_instructions);
+            .unwrap_or(DEFAULT_INSTRUCTIONS);
 
         ServerInfo::new(
             ServerCapabilities::builder()
@@ -635,7 +735,7 @@ impl MinistrServer {
     /// Results that were already delivered in this session are filtered out.
     #[tool(
         name = "ministr_survey",
-        description = "Search the indexed corpus for sections relevant to a natural language query. Returns ranked results with relevance scores.",
+        description = "Search the indexed corpus by natural-language query. Start here for any vague question; follow up with ministr_read (full text) or ministr_extract (atomic claims) on top results.",
         output_schema = tool_output_schema::<ToolResponse<SurveyResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -842,13 +942,19 @@ impl MinistrServer {
 
                     self.persist_session().await;
 
+                    // Suggest a follow-up on the top hit when it's confidently above noise.
+                    // Symbol-resolution hits route to ministr_definition; everything else
+                    // (section / claim / summary) routes to ministr_read on the section.
+                    let extra_actions = top_hit_next_action(&results);
+
                     let response = self
-                        .build_response(
+                        .build_response_with(
                             SurveyResponse {
                                 results,
                                 deduplicated_count,
                             },
                             budget_status,
+                            extra_actions,
                         )
                         .await;
                     structured_result(&response)
@@ -877,7 +983,7 @@ impl MinistrServer {
     ///    of re-delivering the full text.
     #[tool(
         name = "ministr_read",
-        description = "Read the full content of a section by ID. Returns deltas for changed content and skips re-delivery of unchanged content.",
+        description = "Full content of a section by ID, with delta delivery for changed content and short stubs for unchanged re-requests. Call ministr_extract instead if you only need atomic claims.",
         output_schema = tool_output_schema::<ToolResponse<ReadOutputData>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -984,7 +1090,7 @@ impl MinistrServer {
     /// by relevance to a query.
     #[tool(
         name = "ministr_extract",
-        description = "Extract atomic claims from a section, optionally filtered by relevance to a query.",
+        description = "Atomic claims from a section, optionally query-filtered. Cheaper than ministr_read when you don't need full prose.",
         output_schema = tool_output_schema::<ToolResponse<ExtractResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1062,7 +1168,7 @@ impl MinistrServer {
     /// across documents.
     #[tool(
         name = "ministr_related",
-        description = "Find claims related to a given claim by relationship type (references, contradicts, depends_on, updates).",
+        description = "Follow relationship edges (references, contradicts, depends_on, updates) from a claim. Use when one claim's truth depends on another.",
         output_schema = tool_output_schema::<ToolResponse<RelatedResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1141,7 +1247,7 @@ impl MinistrServer {
     /// of budget tracking and deduplication for subsequent requests.
     #[tool(
         name = "ministr_evicted",
-        description = "Signal that content IDs have been evicted from the agent's context window. Updates session tracking for accurate budget and deduplication.",
+        description = "Call immediately after dropping content from your context window. Keeps dedup and budget tracking accurate; without this, future ministr_read calls on dropped IDs return short 'already_delivered' stubs instead of the actual text.",
         output_schema = tool_output_schema::<ToolResponse<EvictedResponse>>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1197,7 +1303,7 @@ impl MinistrServer {
     /// to understand budget health and decide what to evict.
     #[tool(
         name = "ministr_budget",
-        description = "Get the current context budget status: total budget, estimated usage, pressure level.",
+        description = "Current context-window budget, pressure level, and eviction candidates. Call when you suspect pressure is high; then act on eviction_candidates with ministr_compress + ministr_evicted.",
         output_schema = tool_output_schema::<BudgetResponse>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1324,7 +1430,7 @@ impl MinistrServer {
     /// with no extra cost.
     #[tool(
         name = "ministr_compress",
-        description = "Generate compressed summaries for sections the agent wants to evict from context. Uses extractive TF-IDF compression (60-80% reduction).",
+        description = "Extractive TF-IDF summaries (60-80% reduction) for sections you intend to evict. Pair with ministr_evicted after dropping the originals from context.",
         output_schema = tool_output_schema::<ToolResponse<CompressResponse>>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]
@@ -1386,7 +1492,7 @@ impl MinistrServer {
     /// orientation. Optionally filtered to a single document.
     #[tool(
         name = "ministr_toc",
-        description = "Get a structural overview (table of contents) of the indexed corpus.",
+        description = "Structural overview (table of contents) of the indexed corpus. Use to orient on an unfamiliar codebase before drilling in.",
         output_schema = tool_output_schema::<ToolResponse<TocResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1735,7 +1841,7 @@ impl MinistrServer {
     /// and `ministr_references`.
     #[tool(
         name = "ministr_symbols",
-        description = "Search for code symbols (functions, structs, traits) by name, kind, module, or visibility.",
+        description = "Find code symbols (functions, structs, traits, etc.) by name, kind, module, or visibility. Pair with ministr_definition for source and ministr_references before modifying.",
         output_schema = tool_output_schema::<ToolResponse<SymbolsResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1809,8 +1915,16 @@ impl MinistrServer {
                     let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
                     drop(reg);
 
+                    // When there's exactly one match, suggest fetching its definition —
+                    // the agent almost always wants the source next.
+                    let extra_actions = single_symbol_next_action(&paginated);
+
                     let response = self
-                        .build_response(SymbolsResponse { symbols: paginated, total, offset }, budget_status)
+                        .build_response_with(
+                            SymbolsResponse { symbols: paginated, total, offset },
+                            budget_status,
+                            extra_actions,
+                        )
                         .await;
                     structured_result(&response)
                 }
@@ -1832,7 +1946,7 @@ impl MinistrServer {
     /// module hierarchy, and all metadata.
     #[tool(
         name = "ministr_definition",
-        description = "Get the full source definition of a code symbol by its ID.",
+        description = "Full source of a code symbol by ID. Call ministr_references first if you intend to modify or delete the symbol.",
         output_schema = tool_output_schema::<ToolResponse<ministr_core::service::SymbolDefinition>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1877,7 +1991,7 @@ impl MinistrServer {
     /// with source locations.
     #[tool(
         name = "ministr_references",
-        description = "Find all callers, implementors, and importers of a code symbol.",
+        description = "All callers, implementors, and importers of a code symbol. Call before deleting or significantly modifying any non-trivial public symbol — zero references means safe to delete.",
         output_schema = tool_output_schema::<ToolResponse<ReferencesResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1944,7 +2058,7 @@ impl MinistrServer {
     /// search query, bridge kind, language, or file path.
     #[tool(
         name = "ministr_bridge",
-        description = "Query cross-language bridge links (FFI, NAPI, PyO3, etc.) between source and target languages.",
+        description = "Cross-language bridge links (Tauri commands, NAPI exports, PyO3 functions, FFI, HTTP routes, etc.). Call before modifying any IPC or FFI boundary so you see every cross-language call site.",
         output_schema = tool_output_schema::<ToolResponse<BridgeResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2265,6 +2379,140 @@ mod tests {
             .expect("expected text content")
             .text
             .as_str()
+    }
+
+    // ── Steering surface: instructions + next_action helpers ──────────
+
+    #[test]
+    fn default_instructions_covers_eviction_protocol() {
+        // Smoke test: the playbook must mention the budget protocol so agents
+        // know to call ministr_evicted after dropping content.
+        assert!(DEFAULT_INSTRUCTIONS.contains("ministr_evicted"));
+        assert!(DEFAULT_INSTRUCTIONS.contains("ministr_compress"));
+        assert!(DEFAULT_INSTRUCTIONS.contains("already_delivered"));
+    }
+
+    #[test]
+    fn default_instructions_covers_pre_mutation_checks() {
+        assert!(DEFAULT_INSTRUCTIONS.contains("ministr_references"));
+        assert!(DEFAULT_INSTRUCTIONS.contains("ministr_bridge"));
+    }
+
+    #[test]
+    fn default_instructions_lists_decision_tree_entry_points() {
+        // Every starting point in the workflow tree must be reachable.
+        for tool in [
+            "ministr_survey",
+            "ministr_symbols",
+            "ministr_definition",
+            "ministr_toc",
+            "ministr_read",
+        ] {
+            assert!(
+                DEFAULT_INSTRUCTIONS.contains(tool),
+                "instructions missing entry-point reference to {tool}"
+            );
+        }
+    }
+
+    #[test]
+    fn top_hit_next_action_empty_when_no_results() {
+        let actions = top_hit_next_action(&[]);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn top_hit_next_action_empty_when_top_score_below_threshold() {
+        let results = vec![ministr_core::service::SurveyResult {
+            content_id: "docs/a.md#x".into(),
+            resolution: "section".into(),
+            score: 0.3,
+            text: "noisy match".into(),
+            heading_path: None,
+        }];
+        let actions = top_hit_next_action(&results);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn top_hit_next_action_section_resolution_emits_read() {
+        let results = vec![ministr_core::service::SurveyResult {
+            content_id: "docs/a.md#x".into(),
+            resolution: "section".into(),
+            score: 0.85,
+            text: "confident match".into(),
+            heading_path: None,
+        }];
+        let actions = top_hit_next_action(&results);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action, "ministr_read");
+        assert_eq!(actions[0].args["section_id"], "docs/a.md#x");
+    }
+
+    #[test]
+    fn top_hit_next_action_symbol_resolution_emits_definition() {
+        let results = vec![ministr_core::service::SurveyResult {
+            content_id: "sym-foo::bar".into(),
+            resolution: "symbol_full".into(),
+            score: 0.9,
+            text: "sym".into(),
+            heading_path: None,
+        }];
+        let actions = top_hit_next_action(&results);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action, "ministr_definition");
+        assert_eq!(actions[0].args["symbol_id"], "sym-foo::bar");
+    }
+
+    #[test]
+    fn single_symbol_next_action_emits_definition_for_lone_match() {
+        let symbols = vec![SymbolSummary {
+            id: "sym-foo".into(),
+            name: "foo".into(),
+            kind: "function".into(),
+            file: "src/lib.rs".into(),
+            line: 10,
+            signature: "fn foo()".into(),
+            doc_preview: None,
+            complexity: None,
+            caller_count: None,
+        }];
+        let actions = single_symbol_next_action(&symbols);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action, "ministr_definition");
+        assert_eq!(actions[0].args["symbol_id"], "sym-foo");
+        assert!(actions[0].reason.contains("foo"));
+    }
+
+    #[test]
+    fn single_symbol_next_action_empty_when_zero_or_many() {
+        assert!(single_symbol_next_action(&[]).is_empty());
+
+        let two = vec![
+            SymbolSummary {
+                id: "sym-a".into(),
+                name: "a".into(),
+                kind: "function".into(),
+                file: "src/a.rs".into(),
+                line: 1,
+                signature: String::new(),
+                doc_preview: None,
+                complexity: None,
+                caller_count: None,
+            },
+            SymbolSummary {
+                id: "sym-b".into(),
+                name: "b".into(),
+                kind: "function".into(),
+                file: "src/b.rs".into(),
+                line: 1,
+                signature: String::new(),
+                doc_preview: None,
+                complexity: None,
+                caller_count: None,
+            },
+        ];
+        assert!(single_symbol_next_action(&two).is_empty());
     }
 
     /// Deterministic mock embedder for testing.
@@ -4677,6 +4925,7 @@ mod tests {
             indexing_in_progress: false,
             indexing_message: None,
             eviction_recommendations: Vec::new(),
+            next_actions: Vec::new(),
             result: serde_json::json!({"results": [1, 2, 3]}),
         };
         let resp_b = ToolResponse {
@@ -4685,6 +4934,7 @@ mod tests {
             indexing_in_progress: false,
             indexing_message: None,
             eviction_recommendations: Vec::new(),
+            next_actions: Vec::new(),
             result: serde_json::json!({"symbols": ["foo", "bar"]}),
         };
 
@@ -4715,6 +4965,7 @@ mod tests {
             indexing_in_progress: false,
             indexing_message: None,
             eviction_recommendations: Vec::new(),
+            next_actions: Vec::new(),
             result: serde_json::json!({"items": [1]}),
         };
 
@@ -4749,6 +5000,7 @@ mod tests {
             indexing_in_progress: false,
             indexing_message: None,
             eviction_recommendations: Vec::new(),
+            next_actions: Vec::new(),
             result: serde_json::json!({}),
         };
 

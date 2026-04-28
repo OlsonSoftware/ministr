@@ -13,6 +13,7 @@ import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { CorpusSelect } from "./ui/corpus-select";
+import { EmptyState } from "./ui/empty-state";
 import { cn } from "../lib/utils";
 import type { DaemonStatus, SearchResult, SymbolInfo } from "../lib/types";
 
@@ -222,16 +223,11 @@ export function QueryPlayground({ status }: Props) {
       )}
 
       {!hasResults && !loading && query && (
-        <Card className="flex flex-col items-center gap-2 py-8 text-center">
-          <div className="grid h-10 w-10 place-items-center rounded-lg bg-surface-overlay text-text-dim">
-            <Search className="h-4 w-4" />
-          </div>
-          <p className="text-sm font-medium text-text">No results</p>
-          <p className="text-xs text-text-dim max-w-xs">
-            Try different wording for a semantic query, or switch to Symbols
-            for an exact name match.
-          </p>
-        </Card>
+        <EmptyState
+          icon={Search}
+          title="No results"
+          hint="Try different wording for a semantic query, or switch to Symbols for an exact name match."
+        />
       )}
     </div>
   );

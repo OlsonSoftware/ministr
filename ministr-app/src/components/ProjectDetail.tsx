@@ -12,10 +12,12 @@ import {
 } from "lucide-react";
 import type { CorpusInfo, DaemonStatus } from "../lib/types";
 import { statusBadge } from "../lib/status";
-import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
+import { LabeledCard } from "./ui/labeled-card";
+import { LabeledRow } from "./ui/labeled-row";
 import { MetricTile } from "./ui/metric-tile";
 import { cn } from "../lib/utils";
+import { iconBox } from "../lib/ui-tokens";
 
 interface ProjectDetailProps {
   corpus: CorpusInfo;
@@ -27,16 +29,11 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
   return (
     <div className="space-y-4 ministr-fade-in">
       <header className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-text">Detail</h2>
-          <p className="text-xs text-text-dim mt-0.5">
-            Live metrics for this corpus.
-          </p>
-        </div>
+        <h2 className="text-base font-semibold text-text">Detail</h2>
         <Badge variant={statusVariant} dot>{statusLabel}</Badge>
       </header>
 
-      <Section title="Index overview">
+      <LabeledCard title="Index overview">
         <div className="grid grid-cols-2 gap-2.5">
           <MetricTile
             icon={FileText}
@@ -59,17 +56,17 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
             value={(corpus.symbols_count ?? 0).toLocaleString()}
           />
         </div>
-      </Section>
+      </LabeledCard>
 
-      <Section title="Sessions">
+      <LabeledCard title="Sessions">
         {corpus.active_sessions > 0 ? (
           <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-accent">
+            <div className={cn(iconBox, "h-9 w-9")}>
               <Users className="h-4 w-4" />
             </div>
             <div className="flex-1">
               <p className="text-sm font-semibold text-accent flex items-center gap-1.5">
-                <span className="ministr-pulse h-1.5 w-1.5 rounded-full bg-accent" />
+                <span className="h-1.5 w-1.5 rounded-full bg-accent" />
                 {corpus.active_sessions} active
               </p>
               <p className="text-xs text-text-dim">
@@ -92,23 +89,23 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
             </div>
           </div>
         )}
-      </Section>
+      </LabeledCard>
 
-      <Section title="Corpus ID" mono>
+      <LabeledCard title="Corpus ID" mono>
         <div className="font-mono text-[11px] leading-relaxed text-text-muted bg-surface-sunken border border-border/60 rounded-md px-3 py-2 break-all select-all">
           {corpus.id}
         </div>
-      </Section>
+      </LabeledCard>
 
-      <Section title="Embedding model" icon={Sparkles}>
-        <Row label="Model" value={status.model} mono />
-        <Row
+      <LabeledCard title="Embedding model" icon={Sparkles}>
+        <LabeledRow label="Model" value={status.model} mono />
+        <LabeledRow
           label="Dimension"
           value={<Badge variant="muted" className="font-mono">{status.model_dimension}d</Badge>}
         />
-      </Section>
+      </LabeledCard>
 
-      <Section title="Source paths" icon={Folder}>
+      <LabeledCard title="Source paths" icon={Folder}>
         <ul className="space-y-1">
           {corpus.paths.map((path) => (
             <li
@@ -122,11 +119,11 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
             </li>
           ))}
         </ul>
-      </Section>
+      </LabeledCard>
 
-      <Section title="Daemon" icon={Activity}>
-        <Row label="Version" value={`v${status.version}`} mono />
-        <Row
+      <LabeledCard title="Daemon" icon={Activity}>
+        <LabeledRow label="Version" value={`v${status.version}`} mono />
+        <LabeledRow
           label="Uptime"
           mono
           value={
@@ -136,56 +133,13 @@ export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
             </span>
           }
         />
-        <Row label="Memory" value={`${status.memory_mb.toFixed(0)} MB RSS`} mono />
-        <Row
+        <LabeledRow label="Memory" value={`${status.memory_mb.toFixed(0)} MB RSS`} mono />
+        <LabeledRow
           label="Corpora"
           value={status.corpora.length.toString()}
           mono
         />
-      </Section>
-    </div>
-  );
-}
-
-function Section({
-  title,
-  children,
-  mono = false,
-  icon: Icon,
-}: {
-  title: string;
-  children: React.ReactNode;
-  mono?: boolean;
-  icon?: React.ComponentType<{ className?: string }>;
-}) {
-  return (
-    <Card hover="lift" className={cn(mono && "p-3")}>
-      <div className="flex items-center gap-1.5 mb-2.5">
-        {Icon && <Icon className="h-3.5 w-3.5 text-text-dim" />}
-        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">
-          {title}
-        </h3>
-      </div>
-      <div className="space-y-1.5">{children}</div>
-    </Card>
-  );
-}
-
-function Row({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: React.ReactNode;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between text-xs">
-      <span className="text-text-muted">{label}</span>
-      <span className={cn("text-text", mono && "font-mono tabular-nums")}>
-        {value}
-      </span>
+      </LabeledCard>
     </div>
   );
 }

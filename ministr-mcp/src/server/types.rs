@@ -41,8 +41,33 @@ pub(crate) struct ToolResponse<T: Serialize + schemars::JsonSchema> {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     #[schemars(default)]
     pub(crate) eviction_recommendations: Vec<EvictionCandidate>,
+    /// Concrete next-tool-call suggestions, in priority order.
+    ///
+    /// Populated by `build_response` from session state (pressure level,
+    /// coherence alerts) and optionally by per-handler hints (e.g. survey's
+    /// top-result follow-up). Empty under normal pressure with no alerts
+    /// and no per-handler hints.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[schemars(default)]
+    pub(crate) next_actions: Vec<NextAction>,
     /// The tool-specific result data (varying — placed last for prefix stability).
     pub(crate) result: T,
+}
+
+/// A concrete suggested next tool call the agent should consider making.
+///
+/// The server uses these to surface the playbook in-band: pressure-driven
+/// (compress + evicted), coherence-driven (re-read changed sections), or
+/// chain-driven (read top survey hit, fetch definition for a single symbol
+/// match, etc.). Cooperative — agents that ignore these still work.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct NextAction {
+    /// Tool name to call (e.g. `"ministr_evicted"`, `"ministr_read"`).
+    pub(crate) action: String,
+    /// Suggested arguments as a JSON object matching the tool's input schema.
+    pub(crate) args: serde_json::Value,
+    /// One-sentence reason this action is being suggested.
+    pub(crate) reason: String,
 }
 
 /// Wrapper for survey responses that includes both results and dedup metadata.
