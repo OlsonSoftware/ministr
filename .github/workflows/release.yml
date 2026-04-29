@@ -155,7 +155,7 @@ jobs:
             sidecar_bin: ministr
             sidecar_name: ministr-cli-aarch64-apple-darwin
             tauri_args: "--target aarch64-apple-darwin"
-            target_dir: ministr-app/src-tauri/target/aarch64-apple-darwin/release/bundle
+            target_dir: target/aarch64-apple-darwin/release/bundle
             triple: aarch64-apple-darwin
 
           # Windows builds the CLI sidecar with `--features directml` so the
@@ -170,7 +170,7 @@ jobs:
             sidecar_bin: ministr.exe
             sidecar_name: ministr-cli-x86_64-pc-windows-msvc.exe
             tauri_args: "--bundles nsis"
-            target_dir: ministr-app/src-tauri/target/release/bundle
+            target_dir: target/release/bundle
             triple: x86_64-pc-windows-msvc
 
           - platform: linux-x86_64
@@ -180,7 +180,7 @@ jobs:
             sidecar_bin: ministr
             sidecar_name: ministr-cli-x86_64-unknown-linux-gnu
             tauri_args: ""
-            target_dir: ministr-app/src-tauri/target/release/bundle
+            target_dir: target/release/bundle
             triple: x86_64-unknown-linux-gnu
 
     steps:
