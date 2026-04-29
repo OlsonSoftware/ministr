@@ -98,14 +98,6 @@ jobs:
           Add-MpPreference -ExclusionProcess "link.exe"
           Add-MpPreference -ExclusionProcess "lld-link.exe"
 
-      - uses: mozilla-actions/sccache-action@v0.0.7
-      - name: Configure sccache
-        shell: bash
-        run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
-          echo "CARGO_INCREMENTAL=0" >> $GITHUB_ENV
-
       - name: Use lld linker on Windows
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: bash
@@ -217,17 +209,6 @@ jobs:
           Add-MpPreference -ExclusionProcess "cargo.exe"
           Add-MpPreference -ExclusionProcess "link.exe"
           Add-MpPreference -ExclusionProcess "lld-link.exe"
-
-      # sccache caches per-rustc-invocation outputs in the GH Actions cache,
-      # so unchanged crates are pulled from cache instead of recompiled.
-      # Especially impactful on Windows where each compile is ~30% slower.
-      - uses: mozilla-actions/sccache-action@v0.0.7
-      - name: Configure sccache
-        shell: bash
-        run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
-          echo "CARGO_INCREMENTAL=0" >> $GITHUB_ENV
 
       # Use rust-lld instead of MSVC link.exe on Windows. Faster final-link
       # phase, no quality difference for our binaries.
