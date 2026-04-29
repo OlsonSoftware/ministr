@@ -48,21 +48,22 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: blacksmith-4vcpu-ubuntu-2404
+            os: warp-ubuntu-latest-x64-4x
             binary: ministr
             archive: ministr-x86_64-unknown-linux-gnu.tar.gz
 
           # Native ARM runner — no QEMU emulation via `cross` needed.
-          # Ubuntu 24.04 (glibc 2.39) matches the ort-sys 2.0.0-rc.11
-          # prebuilt's glibc 2.38+ requirement; 22.04 (glibc 2.35) breaks
-          # the link with `undefined reference to __isoc23_strtol` etc.
+          # WarpBuild's Ubuntu 24.04 ARM image ships current glibc, which
+          # ort-sys 2.0.0-rc.11 prebuilts require (glibc 2.38+).
           - target: aarch64-unknown-linux-gnu
-            os: blacksmith-4vcpu-ubuntu-2404-arm
+            os: warp-ubuntu-latest-arm64-4x
             binary: ministr
             archive: ministr-aarch64-unknown-linux-gnu.tar.gz
 
+          # M4 Pro Apple Silicon (6 vCPU / 22 GB) — significantly faster
+          # than github-hosted macos-latest (M1) for Rust + Tauri builds.
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: warp-macos-latest-arm64-6x
             binary: ministr
             archive: ministr-aarch64-apple-darwin.tar.gz
 
@@ -73,7 +74,7 @@ jobs:
           # source.
 
           - target: x86_64-pc-windows-msvc
-            os: windows-latest
+            os: warp-windows-latest-x64-4x
             binary: ministr.exe
             archive: ministr-x86_64-pc-windows-msvc.zip
 
@@ -128,7 +129,7 @@ jobs:
       matrix:
         include:
           - platform: macos-aarch64
-            os: macos-latest
+            os: warp-macos-latest-arm64-6x
             cli_target: aarch64-apple-darwin
             cli_features: ""
             sidecar_bin: ministr
@@ -140,8 +141,10 @@ jobs:
           # Windows builds the CLI sidecar with `--features directml` so the
           # bundled binary uses DirectX 12 GPU embedding. The bare CLI .zip
           # from the `cli` job stays non-DirectML (CI/server-friendly).
+          # 8x sized to absorb the pnpm install + Rust compile + NSIS pack
+          # combined load — finishes ~2x faster than a 4x for ~$0.032/min.
           - platform: windows-x86_64
-            os: windows-latest
+            os: warp-windows-latest-x64-8x
             cli_target: x86_64-pc-windows-msvc
             cli_features: "directml"
             sidecar_bin: ministr.exe
@@ -151,7 +154,7 @@ jobs:
             triple: x86_64-pc-windows-msvc
 
           - platform: linux-x86_64
-            os: blacksmith-4vcpu-ubuntu-2404
+            os: warp-ubuntu-latest-x64-4x
             cli_target: x86_64-unknown-linux-gnu
             cli_features: ""
             sidecar_bin: ministr
@@ -253,7 +256,7 @@ jobs:
   release:
     name: Create GitHub Release
     needs: [cli, desktop]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: warp-ubuntu-latest-x64-2x
     timeout-minutes: 10
     permissions:
       contents: write
