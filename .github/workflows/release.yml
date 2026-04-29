@@ -53,8 +53,11 @@ jobs:
             archive: ministr-x86_64-unknown-linux-gnu.tar.gz
 
           # Native ARM runner — no QEMU emulation via `cross` needed.
+          # Ubuntu 24.04 (glibc 2.39) matches the ort-sys 2.0.0-rc.11
+          # prebuilt's glibc 2.38+ requirement; 22.04 (glibc 2.35) breaks
+          # the link with `undefined reference to __isoc23_strtol` etc.
           - target: aarch64-unknown-linux-gnu
-            os: blacksmith-4vcpu-ubuntu-2204-arm
+            os: blacksmith-4vcpu-ubuntu-2404-arm
             binary: ministr
             archive: ministr-aarch64-unknown-linux-gnu.tar.gz
 
