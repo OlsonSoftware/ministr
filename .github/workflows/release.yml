@@ -1,14 +1,31 @@
 name: Release
 
+# Single workflow → single GitHub Release per version tag.
+#
+# Triggered by `vX.Y.Z` (or `vX.Y.Z-rc.N`) tags. Builds and publishes
+# every artifact a user could want for that version, on every supported
+# platform, in one Release:
+#
+#   - CLI tarballs / zip:    ministr-<target>.tar.gz / .zip
+#   - Desktop installers:    ministr-desktop-<target>.<dmg|exe|deb|AppImage>
+#   - Aggregated checksums:  SHA256SUMS
+#
+# The `cli` and `desktop` matrices run in parallel; the final `release`
+# job downloads everything and creates the GitHub Release exactly once
+# (parallel calls to action-gh-release race each other on same-tag
+# uploads — see softprops/action-gh-release issues #445 and #767).
+
 on:
   push:
+    # Match v0.2.0, v0.2.0-rc.1, v1.0.0+nightly etc.
+    # Reject accidental tags like `vfoo` or pre-existing `v*-app`.
     tags:
-      - "v*"
+      - "v[0-9]+.[0-9]+.[0-9]+*"
 
-# Don't cancel in-flight releases — they upload artifacts; killing
-# mid-upload leaves a half-published release.
 concurrency:
   group: release-${{ github.ref }}
+  # Don't cancel in-flight releases — they upload artifacts; killing
+  # mid-upload leaves a half-published Release.
   cancel-in-progress: false
 
 # Default to read-only; the `release` job below elevates to write.
@@ -19,8 +36,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }}
+  # ──────────────────────────────────────────────────────────────────────
+  # CLI tarballs (headless installs, install.sh, Docker, scripted setups)
+  # ──────────────────────────────────────────────────────────────────────
+  cli:
+    name: CLI ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -45,9 +65,9 @@ jobs:
 
           # x86_64-apple-darwin intentionally omitted: ort-sys 2.0.0-rc.11
           # dropped prebuilt binaries for that target, and macOS 26 dropped
-          # Intel x86_64 support repo-wide. Apple Silicon (aarch64) is the
-          # supported Mac target; Intel users can run via Rosetta 2 or build
-          # from source.
+          # Intel x86_64 support repo-wide. Apple Silicon is the supported
+          # Mac target; Intel users can run via Rosetta 2 or build from
+          # source.
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -63,7 +83,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: cli-${{ matrix.target }}
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} -p ministr-cli
@@ -88,35 +108,73 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.archive }}
+          name: cli-${{ matrix.target }}
           path: |
             ${{ matrix.archive }}
             ${{ matrix.archive }}.sha256
 
-  # Windows desktop installer (Tauri NSIS bundle). Produces the .exe
-  # users actually want — tray app + bundled CLI + PATH wired up via
-  # installer-hooks.nsh. The bare CLI .zip from the matrix above is
-  # kept for headless / scripted installs (`install.ps1`).
-  bundle-windows:
-    name: Bundle Windows desktop installer
-    runs-on: windows-latest
+  # ──────────────────────────────────────────────────────────────────────
+  # Desktop installers (Tauri bundles: .dmg / NSIS .exe / .deb / AppImage)
+  # ──────────────────────────────────────────────────────────────────────
+  desktop:
+    name: Desktop ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-aarch64
+            os: macos-latest
+            cli_target: aarch64-apple-darwin
+            cli_features: ""
+            sidecar_bin: ministr
+            sidecar_name: ministr-cli-aarch64-apple-darwin
+            tauri_args: "--target aarch64-apple-darwin"
+            target_dir: ministr-app/src-tauri/target/aarch64-apple-darwin/release/bundle
+            triple: aarch64-apple-darwin
+
+          # Windows builds the CLI sidecar with `--features directml` so the
+          # bundled binary uses DirectX 12 GPU embedding. The bare CLI .zip
+          # from the `cli` job stays non-DirectML (CI/server-friendly).
+          - platform: windows-x86_64
+            os: windows-latest
+            cli_target: x86_64-pc-windows-msvc
+            cli_features: "directml"
+            sidecar_bin: ministr.exe
+            sidecar_name: ministr-cli-x86_64-pc-windows-msvc.exe
+            tauri_args: ""
+            target_dir: ministr-app/src-tauri/target/release/bundle
+            triple: x86_64-pc-windows-msvc
+
+          - platform: linux-x86_64
+            os: blacksmith-4vcpu-ubuntu-2404
+            cli_target: x86_64-unknown-linux-gnu
+            cli_features: ""
+            sidecar_bin: ministr
+            sidecar_name: ministr-cli-x86_64-unknown-linux-gnu
+            tauri_args: ""
+            target_dir: ministr-app/src-tauri/target/release/bundle
+            triple: x86_64-unknown-linux-gnu
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.cli_target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: bundle-windows
+          key: desktop-${{ matrix.platform }}
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           cache-dependency-path: ministr-app/pnpm-lock.yaml
 
@@ -124,50 +182,76 @@ jobs:
         working-directory: ministr-app
         run: pnpm install --frozen-lockfile
 
-      # Build the CLI first so we can stage it as the Tauri sidecar.
-      # `--features directml` enables fastembed's DirectML execution
-      # provider so embedding runs on any DX12 GPU at runtime; matches
-      # what scripts/reinstall.ps1 ships locally.
-      - name: Build CLI sidecar (with directml)
-        run: cargo build --release -p ministr-cli --features directml
+      - name: Install Linux deps
+        if: matrix.platform == 'linux-x86_64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      # Tauri's externalBin sidecar must exist at build time, named
+      # `binaries/ministr-cli-<target-triple>` (with `.exe` on Windows).
+      # We compile per-platform with the right --features set.
+      - name: Build CLI sidecar
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.cli_features }}" ]; then
+            cargo build --release --target ${{ matrix.cli_target }} -p ministr-cli --features ${{ matrix.cli_features }}
+          else
+            cargo build --release --target ${{ matrix.cli_target }} -p ministr-cli
+          fi
 
       - name: Stage sidecar for Tauri externalBin
-        shell: pwsh
+        shell: bash
         run: |
-          New-Item -ItemType Directory -Force -Path "ministr-app/src-tauri/binaries" | Out-Null
-          Copy-Item -Force "target/release/ministr.exe" "ministr-app/src-tauri/binaries/ministr-cli-x86_64-pc-windows-msvc.exe"
+          mkdir -p ministr-app/src-tauri/binaries
+          cp "target/${{ matrix.cli_target }}/release/${{ matrix.sidecar_bin }}" "ministr-app/src-tauri/binaries/${{ matrix.sidecar_name }}"
 
-      # NSIS only for v0 — MSI needs WiX and is enterprise-flavoured;
-      # we can layer it on later without breaking anyone.
-      - name: Build Tauri app + NSIS installer
-        working-directory: ministr-app
-        run: pnpm tauri build --bundles nsis
+      # Build-only mode: no tagName / releaseName / releaseId means
+      # tauri-action will NOT touch the GitHub Release. We aggregate
+      # everything in the final `release` job below.
+      - name: Build Tauri bundles
+        uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: ministr-app
+          tauriScript: pnpm tauri
+          args: ${{ matrix.tauri_args }}
 
-      - name: Stage release assets
-        shell: pwsh
+      # Rename Tauri's `<productName>_<version>_<arch>.<ext>` outputs to
+      # our `ministr-desktop-<target-triple>.<ext>` convention. Predictable
+      # URLs for the dl.ministr.app Worker and install scripts.
+      - name: Collect and rename desktop bundles
+        shell: bash
         run: |
-          $version = (Get-Content ministr-app/src-tauri/tauri.conf.json | ConvertFrom-Json).version
-          $src = "target/release/bundle/nsis/ministr_${version}_x64-setup.exe"
-          if (-not (Test-Path $src)) { throw "expected NSIS bundle at $src — Tauri output layout may have changed" }
-          $dst = "ministr-desktop-x86_64-pc-windows-msvc-setup.exe"
-          Copy-Item -Force $src $dst
-          $hash = (Get-FileHash -Algorithm SHA256 $dst).Hash.ToLower()
-          "$hash  $dst" | Out-File -Encoding ascii "$dst.sha256"
+          set -euo pipefail
+          mkdir -p _bundles
+          shopt -s globstar nullglob
+          for src in ${{ matrix.target_dir }}/**/*.{dmg,exe,deb,AppImage}; do
+            ext="${src##*.}"
+            case "$ext" in
+              exe)      dst="_bundles/ministr-desktop-${{ matrix.triple }}-setup.exe" ;;
+              dmg)      dst="_bundles/ministr-desktop-${{ matrix.triple }}.dmg" ;;
+              deb)      dst="_bundles/ministr-desktop-${{ matrix.triple }}.deb" ;;
+              AppImage) dst="_bundles/ministr-desktop-${{ matrix.triple }}.AppImage" ;;
+            esac
+            cp "$src" "$dst"
+            shasum -a 256 "$dst" > "$dst.sha256"
+          done
+          ls -la _bundles
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ministr-desktop-x86_64-pc-windows-msvc-setup.exe
-          path: |
-            ministr-desktop-x86_64-pc-windows-msvc-setup.exe
-            ministr-desktop-x86_64-pc-windows-msvc-setup.exe.sha256
+          name: desktop-${{ matrix.platform }}
+          path: _bundles/*
 
+  # ──────────────────────────────────────────────────────────────────────
+  # Single GitHub Release with all artifacts
+  # ──────────────────────────────────────────────────────────────────────
   release:
-    name: Create Release
-    needs: [build, bundle-windows]
+    name: Create GitHub Release
+    needs: [cli, desktop]
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
-    # Only this job needs write access to create the GitHub Release.
     permissions:
       contents: write
     steps:
@@ -179,9 +263,25 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # One unified SHA256SUMS over every release artifact, so users can
+      # verify the whole drop with `shasum -a 256 -c SHA256SUMS`. The
+      # per-file `.sha256` companions stay alongside for users who only
+      # download one file.
+      - name: Aggregate SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd artifacts
+          : > SHA256SUMS
+          for f in *.tar.gz *.zip *.dmg *.exe *.deb *.AppImage; do
+            [ -f "$f" ] || continue
+            shasum -a 256 "$f" >> SHA256SUMS
+          done
+          cat SHA256SUMS
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: |
-            artifacts/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: artifacts/*

@@ -78,6 +78,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Release pipeline consolidated to a single workflow on a single tag.
+  `vX.Y.Z` now produces one GitHub Release containing every artifact
+  for that version: CLI tarballs (`ministr-<target>.tar.gz` / `.zip`)
+  for headless installs, plus desktop installers
+  (`ministr-desktop-<target>.<dmg|exe|deb|AppImage>`) for macOS aarch64,
+  Windows x86_64, and Linux x86_64. The previous two-tag dance
+  (`vX.Y.Z` for CLI + `vX.Y.Z-app` for the Tauri app) is gone — the
+  separate `app-release.yml` workflow has been deleted, the
+  `bundle-windows` duplication in `release.yml` is folded into the
+  unified `desktop` matrix, and `tauri.conf.json` no longer carries a
+  separate `version` field (Tauri reads `ministr-app/src-tauri/Cargo.toml`
+  directly, so `just release X.Y.Z` only bumps one source of truth).
+- `x86_64-apple-darwin` dropped from the build matrix. `ort-sys`
+  2.0.0-rc.11 stopped shipping prebuilts for the target, and macOS 26
+  dropped Intel x86_64 entirely. Apple Silicon (`aarch64-apple-darwin`)
+  is the supported Mac target; Intel Macs on older macOS can run via
+  Rosetta 2 or build from source.
 - Primary brand domain migrated from `AlrikOlson.github.io/ministr-rs` to
   `https://ministr.ai`. Docs now deploy at the site root via
   `docs-next/public/CNAME`; the `DOCS_BASE_PATH=/ministr` env var is
