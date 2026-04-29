@@ -1,13 +1,10 @@
 # Releasing ministr
 
-End-to-end checklist for cutting a release. The repo publishes to four
-surfaces: GitHub Releases (CLI binaries), GitHub Releases again (Tauri
-app installers), crates.io (library crates), and the Homebrew tap.
-
-Prerequisites: the signing env vars described in
-[ministr-app/SIGNING.md](ministr-app/SIGNING.md) must be set before `just pkg`
-is run, and a crates.io API token must be in `~/.cargo/credentials`
-(`cargo login <token>`).
+End-to-end checklist for cutting a release. The repo is private and
+distribution is intentionally limited to a single GitHub Release per
+version, fronted by the `dl.ministr.app` Cloudflare Worker. crates.io
+publishing and the Homebrew tap are explicitly disabled — those would
+require making the source repo public again.
 
 ## 1. Pre-flight
 
@@ -30,7 +27,10 @@ just release X.Y.Z
 
 This recipe:
 - Updates `version = ...` in all six workspace crates (ministr-api,
-  ministr-core, ministr-daemon, ministr-mcp, ministr-cli, ministr-app/src-tauri).
+  ministr-core, ministr-daemon, ministr-mcp, ministr-cli,
+  ministr-app/src-tauri). Tauri reads its bundle version straight from
+  `ministr-app/src-tauri/Cargo.toml` (no `version` field in
+  `tauri.conf.json`), so this single bump is enough.
 - Prepends a `## [X.Y.Z] — YYYY-MM-DD` section to `CHANGELOG.md` with
   empty `### Added / Changed / Fixed` subsections.
 - Runs `cargo check --workspace` so the bump compiles.
@@ -41,85 +41,63 @@ items from the `[Unreleased]` section into the new `[X.Y.Z]` section,
 and fill in anything the auto-generated template missed. Amend the
 release commit if you edit it.
 
-## 3. Trigger the CLI release
+## 3. Trigger the unified release
 
 ```sh
 git push origin main vX.Y.Z
 ```
 
-`.github/workflows/release.yml` fires on `v*` tags. It builds
-`ministr-cli` on the five-target matrix (Linux x86_64/aarch64, macOS
-x86_64/aarch64, Windows x86_64) and publishes a GitHub Release with
-tarballs plus SHA-256 sums.
+`.github/workflows/release.yml` fires on `vX.Y.Z` tags. One workflow,
+three job groups, one GitHub Release:
 
-Watch the Actions tab until all matrix jobs are green.
+- **`cli` matrix** — Linux x86_64, Linux aarch64, macOS aarch64, Windows
+  x86_64 → `ministr-<target>.tar.gz` (or `.zip` for Windows) plus
+  per-file `.sha256` companions.
+- **`desktop` matrix** — macOS aarch64, Windows x86_64, Linux x86_64 →
+  Tauri bundles renamed to
+  `ministr-desktop-<target>.<dmg|exe|deb|AppImage>`. The Windows shard
+  builds the CLI sidecar with `--features directml` so the bundled
+  binary uses DirectX 12 GPU embedding; the bare CLI `.zip` from the
+  `cli` job stays non-DirectML for headless installs.
+- **`release` job** — depends on both matrices. Downloads every
+  artifact, generates a unified `SHA256SUMS`, and creates the GitHub
+  Release with `softprops/action-gh-release` (auto-published; tags
+  containing `-` are marked prerelease automatically).
 
-## 4. Trigger the Tauri app release
+Watch the Actions tab until the `release` job goes green. The Cloudflare
+Worker at `dl.ministr.app` will start serving the new tag's assets as
+soon as the Release is published — no manual sync step.
 
-```sh
-git tag vX.Y.Z-app
-git push origin vX.Y.Z-app
-```
+`x86_64-apple-darwin` is intentionally omitted from both matrices.
+`ort-sys` 2.0.0-rc.11 dropped prebuilt binaries for that target, and
+macOS 26 dropped Intel x86_64 support. Apple Silicon is the supported
+Mac target; Intel users on older macOS can run via Rosetta 2 or build
+from source.
 
-`.github/workflows/app-release.yml` fires on `v*-app` tags and runs
-`tauri-apps/tauri-action` on macOS (ARM64 + x86_64), Windows, and Linux.
-This produces signed `.dmg`s (if the Apple secrets are set on the
-repo — see SIGNING.md), NSIS installers, and Linux `.deb` / AppImage
-bundles.
+### macOS code signing
 
-The action creates a **draft** release; review the artifacts and
-publish it manually.
+`tauri-action` produces an unsigned `.dmg` unless Apple Developer ID
+secrets are bound on the repo (`APPLE_CERTIFICATE`,
+`APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,
+`APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`). Configure them once on
+the repo settings; they wire through the workflow automatically. See
+[ministr-app/SIGNING.md](ministr-app/SIGNING.md) for details.
 
-### macOS .pkg (optional)
+### macOS .pkg (optional, local-only)
 
-The `just pkg` recipe is local-only — CI does not yet build the signed
-`.pkg` installer. If you need one for this release, run it manually
-from a signed-in macOS machine:
+The `just pkg` recipe is local-only — CI does not build the signed
+`.pkg` installer. If you need one for a specific release, run it
+manually from a signed-in macOS machine:
 
 ```sh
 source .env.signing
 just pkg
 ```
 
-Upload `target/pkg/ministr-X.Y.Z.pkg` to the GitHub Release as an extra
-asset.
+Then upload `target/pkg/ministr-X.Y.Z.pkg` to the GitHub Release as an
+extra asset.
 
-## 5. Publish to crates.io
-
-Publish in dependency order. Each command blocks for ~30 seconds while
-the index updates; do not skip ahead:
-
-```sh
-cargo publish -p ministr-api
-cargo publish -p ministr-core
-cargo publish -p ministr-daemon
-cargo publish -p ministr-mcp
-cargo publish -p ministr-cli
-```
-
-`ministr-app` is `publish = false` — it ships as an installer, not a
-library.
-
-If a `cargo publish` fails partway through, do not re-run earlier
-crates. Fix the failing one and resume.
-
-## 6. Update the Homebrew tap
-
-The formula lives at `homebrew/` in this repo. Copy it to the tap repo
-(`OlsonSoftware/homebrew-tap`) and bump version + SHA-256:
-
-```sh
-# In OlsonSoftware/homebrew-tap
-cp ~/Code/ministr/homebrew/ministr.rb Formula/ministr.rb
-# Update version, URL, and sha256 to match the vX.Y.Z release tarball
-brew audit --strict --online ministr
-git commit -am "ministr X.Y.Z"
-git push
-```
-
-Verify with `brew install OlsonSoftware/tap/ministr` on a clean machine.
-
-## 7. Announce
+## 4. Announce
 
 - Update the docs-next landing hero copy if anything changed.
 - Post the release notes summary to the project README's "What's new"
@@ -128,9 +106,9 @@ Verify with `brew install OlsonSoftware/tap/ministr` on a clean machine.
 ## Rolling back
 
 - A botched `vX.Y.Z` tag can be deleted: `git tag -d vX.Y.Z && git push
-  origin :refs/tags/vX.Y.Z`. Also delete the GitHub Release draft.
-- crates.io does **not** support deleting a published version — only
-  `cargo yank -p <crate>@X.Y.Z`. Yanking keeps the version in the
-  index but prevents new Cargo.lock files from resolving to it. If
-  yank is needed, yank every crate in the release.
-- Homebrew tap rollback: revert the formula commit and push.
+  origin :refs/tags/vX.Y.Z`. Also delete the GitHub Release.
+- A bad asset can be replaced by force-pushing the tag to a new commit
+  and letting the workflow recreate the Release. The Cloudflare Worker
+  caches release metadata for 7 days for immutable tags — replacing a
+  tag's assets in place is fine, but if you actually need an older
+  asset to disappear, also call the cache-purge endpoint on the Worker.
