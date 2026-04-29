@@ -210,7 +210,7 @@ jobs:
       # tauri-action will NOT touch the GitHub Release. We aggregate
       # everything in the final `release` job below.
       - name: Build Tauri bundles
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@action-v0.6.2
         with:
           projectPath: ministr-app
           tauriScript: pnpm tauri
