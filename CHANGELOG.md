@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.2.0] - 2026-04-28
+
+### Added
+
 #### Code navigation
 - `ministr_symbols`, `ministr_definition`, `ministr_references` — code symbol index across 12 languages via tree-sitter
 - `ministr_bridge` — cross-language bridge detection across seven kinds: Tauri commands and events, napi-rs, PyO3, wasm-bindgen, HTTP routes (actix-web / axum / rocket), and raw FFI
@@ -145,4 +153,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Quality gates** — clippy pedantic, cargo-audit, cargo-deny, and full test suite in CI
 - **mdBook documentation** — architecture guide, MCP client setup, and API reference
 
+[Unreleased]: https://github.com/OlsonSoftware/ministr/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/OlsonSoftware/ministr/releases/tag/v0.2.0
 [0.1.0]: https://github.com/AlrikOlson/ministr-rs/releases/tag/v0.1.0

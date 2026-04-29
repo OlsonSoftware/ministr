@@ -4389,7 +4389,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "ministr-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "schemars 1.2.1",
  "serde",
@@ -4399,7 +4399,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fastembed",
  "ministr-api",
@@ -4422,7 +4422,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "clap",
@@ -4446,7 +4446,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -4504,7 +4504,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-daemon"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-stream",
  "axum",
@@ -4528,7 +4528,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "miette",
