@@ -32,13 +32,13 @@ claude mcp add ministr -- ministr
 
 ## Why ministr
 
-LLM agents waste a lot of their context window. ministr fixes three of them:
+AI coding agents waste a lot of their context window. ministr fixes three of those wastes:
 
 **Re-reading** — ministr tracks what the agent has already seen and deduplicates. When a section changes, it delivers only the delta.
 
 **Blind retrieval** — ministr indexes your codebase at multiple resolutions (documents, sections, claims, symbols) and returns precisely what's relevant — not entire files.
 
-**No lookahead** — ministr predicts what the agent will need next and pre-warms it. Six prefetch strategies across reads (sequential, structural, topical, cross-session) and surveys (expand + intent) mean cache hits instead of cold reads.
+**No lookahead** — ministr predicts what the agent will need next and pre-warms it. Six prefetch strategies across reads (sequential, structural, topical, cross-session) and surveys (expand + intent) mean the next tool call is already warm instead of cold.
 
 ## Setup
 
@@ -94,16 +94,7 @@ curl -fsSL https://ministr.app/install.sh | bash
 | | |
 |---|---|
 | [Docs home](https://ministr.ai/) | Landing page with full overview |
+| [Install](https://ministr.ai/install) | Desktop installers and CLI install scripts |
 | [Tool reference](https://ministr.ai/docs/tools/) | All MCP tools with parameters and examples |
-| [Architecture](https://ministr.ai/docs/architecture-deep-dive/) | Crate structure, layering, and subsystem deep dive |
+| [Architecture](https://ministr.ai/docs/architecture-deep-dive/) | System architecture and subsystem deep dive |
 | [Configuration](https://ministr.ai/docs/configuration/) | `.ministr.toml` options and CLI flags |
-| [Deployment](deploy/README.md) | Docker, Fly.io, Railway, nginx/Caddy reverse proxy |
-| [Example configs](examples/) | `.ministr.toml` templates for Rust, Tauri, PyO3, React |
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
-
-## License
-
-MIT OR Apache-2.0. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).

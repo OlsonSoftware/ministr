@@ -38,7 +38,7 @@ export function Mechanisms() {
           <MechanismTile
             title="Warms the next likely read"
             technical="Predictive Prefetch"
-            copy="Pre-warms the next likely sections — the next one in the document, neighbouring siblings, and others on the same topic — so your agent&rsquo;s next tool call hits a warm cache instead of running a fresh search."
+            copy="Pre-warms the next likely sections — the next one in the document, neighbouring siblings, and others on the same topic — so your agent&rsquo;s next tool call is already ready instead of running a fresh search."
           >
             <PrefetchVisual />
           </MechanismTile>
@@ -162,7 +162,7 @@ function TimelineVisual() {
             <span className="ml-auto flex shrink-0 items-center gap-3 tabular-nums text-fd-muted-foreground">
               <span>{r.tokens} tok</span>
               <span className="w-16 text-right text-[9.5px] uppercase tracking-wider text-[var(--ministr-accent-text)]">
-                {r.state === 'hit' ? 'cache hit' : r.state === 'warm' ? 'warming' : 'sent'}
+                {r.state === 'hit' ? 'skip · sent' : r.state === 'warm' ? 'warming' : 'sent'}
               </span>
             </span>
           </div>

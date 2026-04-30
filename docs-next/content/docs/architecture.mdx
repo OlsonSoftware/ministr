@@ -1,6 +1,6 @@
 ---
 title: Architecture Overview
-description: Workspace layout, layered architecture, daemon topology, and on-disk format for the ministr context cache.
+description: System layout, layered architecture, daemon topology, and on-disk format for ministr's codebase intelligence engine.
 ---
 
 ## Workspace Structure
@@ -30,7 +30,7 @@ ministr-app/src-tauri/ — Tauri v2 desktop app, depends on ministr-core + minis
 
 ## The Six Mechanisms
 
-ministr combines six mechanisms — each fixes a specific way LLM agents waste their context window. They map directly to CPU cache controller concepts, but you don't need to know any of that to use them.
+ministr combines six mechanisms — each fixes a specific way AI coding agents waste their context window. The first four track and predict what the agent has already seen so the same content isn't re-fetched; the last two handle freshness and search quality.
 
 ### 1. Session Shadow
 A per-session record of every chunk of code or docs ministr has already sent the agent. Lets ministr deduplicate, send a pointer instead of the same text, or compute a delta when something changes.
