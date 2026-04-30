@@ -1,77 +1,23 @@
 ---
 title: Installation
-description: How to install the ministr CLI and desktop app — install script, Cargo, Homebrew (post-1.0), and pre-built binaries for macOS / Linux / Windows.
+description: Pick your platform on ministr.ai/install — desktop installers for macOS / Windows / Linux, plus a one-line CLI install. This docs page links there.
 ---
 
-<Callout type="info" title="CLI vs desktop app">
-Two install surfaces. The CLI (`ministr` binary) is what your agent talks to; install via the script for unattended setup. The desktop app (tray UI + dashboard + bundled CLI) ships as a `.dmg` / NSIS `.exe` / `.deb` / AppImage — see [Desktop App](#desktop-app) below.
-</Callout>
+## Install ministr
 
-## CLI
+The canonical install page lives on the marketing site at **[ministr.ai/install](/install)**. It auto-detects your platform, shows the matching desktop installer first, and exposes a one-line CLI install in a tab below.
 
-### Install script (macOS & Linux)
+This docs page used to hold a static install table; that table drifted out of sync with what we actually ship. The `/install` page reads its asset list dynamically from the release proxy, so it always matches the latest release.
 
-```sh
-curl -fsSL https://ministr.app/install.sh | bash
-```
+## Building from source
 
-The script detects your platform, downloads the matching archive, and installs `ministr` to `$HOME/.ministr/bin` (override with the `INSTALL_DIR` env var). If that directory isn't already on your `PATH`, the script prints the `export PATH=…` line to add to your shell profile — it doesn't edit the profile for you.
-
-### Cargo (from source, requires Rust 1.88+)
-
-Install the latest `main` directly from the repository:
+For developers who want to build off `main` instead of downloading a release:
 
 ```sh
 cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli
 ```
 
-### Homebrew (macOS) — coming with 1.0
-
-A formula lives in the `homebrew/` directory of this repo. Once the `OlsonSoftware/homebrew-tap` repo is published, install with:
-
-```sh
-brew install OlsonSoftware/tap/ministr
-```
-
-### crates.io — coming with 1.0
-
-When the workspace is published to crates.io, install with:
-
-```sh
-cargo install ministr-cli
-```
-
-### Pre-built binaries
-
-Download from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases) — CLI archives for:
-
-| Platform | Archive |
-|----------|---------|
-| macOS (Apple Silicon) | `ministr-aarch64-apple-darwin.tar.gz` |
-| Linux (x86_64) | `ministr-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux (aarch64) | `ministr-aarch64-unknown-linux-gnu.tar.gz` |
-| Windows (x86_64) | `ministr-x86_64-pc-windows-msvc.zip` |
-
-Each archive has a corresponding `.sha256` checksum file, and a unified `SHA256SUMS` lives alongside.
-
-Intel Macs are not currently supported by the pre-built CLI binary — `ort-sys` 2.0.0-rc.11 dropped `x86_64-apple-darwin` prebuilts and macOS 26 dropped Intel support repo-wide. Build from source via the [Cargo](#cargo-from-source-requires-rust-188) path above, or run on Apple Silicon.
-
-## Desktop App
-
-The Tauri desktop app bundles a tray UI, the live dashboard, and the `ministr` CLI as a sidecar. Pick the installer for your platform from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases):
-
-| Platform | Installer | Notes |
-|----------|-----------|-------|
-| macOS (Apple Silicon) | `ministr-desktop-aarch64-apple-darwin.dmg` | Drag `ministr.app` into `/Applications`. |
-| Windows (x86_64) | `ministr-desktop-x86_64-pc-windows-msvc-setup.exe` | NSIS installer. Adds CLI to PATH automatically. |
-| Linux Debian/Ubuntu (x86_64) | `ministr-desktop-x86_64-unknown-linux-gnu.deb` | `sudo dpkg -i ministr-desktop-*.deb` |
-| Linux universal (x86_64) | `ministr-desktop-x86_64-unknown-linux-gnu.AppImage` | `chmod +x` and run. |
-
-<Callout type="warn" title="Unsigned in this release">
-Windows SmartScreen and macOS Gatekeeper will warn on first launch — installers are unsigned in v0.2.x.
-On macOS, right-click the app → **Open** → **Open** to bypass Gatekeeper. On Windows, **More info** → **Run anyway**.
-A signed/notarized release is planned for 1.0.
-</Callout>
+Requires Rust 1.88+. Useful on Intel Mac (no pre-built binary) and Windows ARM (no pre-built binary). See [Contributing](https://github.com/OlsonSoftware/ministr/blob/main/CONTRIBUTING.md) for the full dev setup.
 
 ## Configuration
 

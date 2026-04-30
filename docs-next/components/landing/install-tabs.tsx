@@ -1,7 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
+import { ArrowRight } from 'lucide-react';
 import { CopyButton } from '@/components/landing/copy-button';
+import { INSTALL_COMMANDS, type CliCommandId } from '@/lib/install';
 
 // Step 2's command bundle. `ministr init` already writes .mcp.json
 // (Claude Code), .cursor/mcp.json, and .vscode/mcp.json — so the
@@ -11,27 +14,10 @@ const STEP_2_COMMANDS = [
   'ministr init',
 ].join('\n');
 
-const TABS = [
-  {
-    id: 'macos',
-    label: 'macOS',
-    body: 'curl -fsSL https://ministr.app/install.sh | bash',
-  },
-  {
-    id: 'linux',
-    label: 'Linux',
-    body: 'curl -fsSL https://ministr.app/install.sh | bash',
-  },
-  {
-    id: 'cargo',
-    label: 'Cargo',
-    body: 'cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli',
-  },
-] as const;
-
 export function InstallTabs() {
-  const [active, setActive] = useState<(typeof TABS)[number]['id']>('macos');
-  const current = TABS.find((t) => t.id === active) ?? TABS[0];
+  const [active, setActive] = useState<CliCommandId>('macos');
+  const current =
+    INSTALL_COMMANDS.find((t) => t.id === active) ?? INSTALL_COMMANDS[0];
 
   return (
     <div className="relative mx-auto w-full max-w-3xl px-4 sm:px-6">
@@ -44,7 +30,7 @@ export function InstallTabs() {
             <span className="ministr-body-quiet text-xs font-mono">install the CLI</span>
           </div>
           <div className="inline-flex rounded-md border border-[color-mix(in_oklch,var(--color-ministr-400)_20%,transparent)] bg-[color-mix(in_oklch,var(--ministr-surface)_50%,transparent)] p-0.5 backdrop-blur">
-            {TABS.map((tab) => (
+            {INSTALL_COMMANDS.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
@@ -64,10 +50,10 @@ export function InstallTabs() {
         <div className="relative">
           <pre className="overflow-x-auto px-5 py-4 pr-14 font-mono text-sm text-fd-foreground/90">
             <span className="select-none text-[var(--color-ministr-400)]">$ </span>
-            {current.body}
+            {current.command}
           </pre>
           <CopyButton
-            value={current.body}
+            value={current.copyText}
             label={`Copy ${current.label} install command`}
             size="sm"
             className="absolute right-3 top-3"
@@ -100,6 +86,16 @@ export function InstallTabs() {
 
       <p className="ministr-body-quiet mt-4 text-center text-xs">
         ministr auto-discovers <code className="font-mono text-[var(--color-ministr-400)]">.ministr.toml</code> from the working directory. No flags needed.
+      </p>
+
+      <p className="mt-4 text-center text-xs">
+        <Link
+          href="/install"
+          className="inline-flex items-center gap-1.5 text-fd-muted-foreground transition hover:text-[var(--ministr-accent-text)]"
+        >
+          Desktop installers and other download methods
+          <ArrowRight className="size-3.5" aria-hidden />
+        </Link>
       </p>
     </div>
   );
