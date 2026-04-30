@@ -122,6 +122,8 @@ function banner() {
     [
       'ministr release proxy',
       '',
+      'Install:  https://ministr.ai/install',
+      '',
       'GET /latest              → JSON metadata for the latest release',
       'GET /latest/<filename>   → 302 to asset bytes (latest release)',
       'GET /<tag>/<filename>    → 302 to asset bytes (explicit tag, e.g. v0.1.0)',

@@ -6,7 +6,12 @@ import { motion, useReducedMotion } from 'motion/react';
 import { HeroPlayer } from '@/components/landing/hero-player';
 import { GlassCard } from '@/components/landing/glass-card';
 import { CopyButton } from '@/components/landing/copy-button';
+import { INSTALL_COMMANDS } from '@/lib/install';
 import { EASE_OUT } from '@/lib/motion';
+
+// Hero shows the macOS one-liner (also valid on Linux). Full install
+// matrix lives on /install — keep this hero terse.
+const HERO_INSTALL = INSTALL_COMMANDS.find((c) => c.id === 'macos')!.command;
 
 /**
  * Hero — headline + live asciinema recording of ministr + Claude Code.
@@ -63,9 +68,9 @@ export function Hero() {
             <motion.div {...stagger(4)} className="mt-8">
               <GlassCard padded={false} className="inline-flex items-center gap-3 pl-4 pr-2 py-2 font-mono text-sm">
                 <span className="text-[var(--color-ministr-400)] select-none">$</span>
-                <span>curl -fsSL https://ministr.app/install.sh | bash</span>
+                <span>{HERO_INSTALL}</span>
                 <CopyButton
-                  value="curl -fsSL https://ministr.app/install.sh | bash"
+                  value={HERO_INSTALL}
                   label="Copy install command"
                   size="sm"
                   className="ml-1"
@@ -78,7 +83,7 @@ export function Hero() {
 
             <motion.div {...stagger(5)} className="mt-6 flex flex-wrap items-center gap-3">
               <Link
-                href="/docs/getting-started"
+                href="/install"
                 className="ministr-cta-primary group inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-medium"
               >
                 Install ministr

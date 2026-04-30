@@ -3,59 +3,13 @@ title: Getting Started
 description: Install ministr, initialize .ministr.toml in your project, and wire it into Claude Code or Cursor.
 ---
 
-## Installation
-
-Pick the install path that matches what you need: a one-liner for the CLI, or a Windows desktop installer that bundles the tray app and wires PATH automatically.
-
-### Install script (macOS & Linux)
-
-CLI-only; detects your platform and installs `ministr` to `$HOME/.ministr/bin` (override with the `INSTALL_DIR` env var). The script prints the `export PATH=…` line for your shell profile if the bin dir isn't already on `PATH`.
-
-```sh
-curl -fsSL https://ministr.app/install.sh | bash
-```
-
-### Install script (Windows, PowerShell)
-
-CLI-only. Installs `ministr.exe` to `%USERPROFILE%\.ministr\bin` (override with the `INSTALL_DIR` env var) and adds that directory to your User PATH. Open a new terminal after install for the PATH change to take effect.
-
-```powershell
-iwr -useb https://ministr.app/install.ps1 | iex
-```
-
-### Windows desktop installer (NSIS)
-
-Download `ministr-desktop-x86_64-pc-windows-msvc-setup.exe` from the [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases) page and run it. The installer puts the tray app at `%LOCALAPPDATA%\ministr\` and adds `ministr` to your PATH automatically.
-
-<Callout type="warn" title="SmartScreen warning">
-The installer is **unsigned** in this release, so on first launch Windows SmartScreen will block it with a "Windows protected your PC" dialog. Click **More info** → **Run anyway** to proceed. A signed installer is planned for 1.0.
-</Callout>
-
-### macOS desktop installer (`.dmg`)
-
-Download `ministr-desktop-aarch64-apple-darwin.dmg` from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases) and drag `ministr.app` into `/Applications`. The bundled CLI sidecar is invoked by the app at runtime; for a `ministr` shell command, also run the [install script](#install-script-macos--linux) above.
-
-<Callout type="warn" title="Gatekeeper warning">
-The `.dmg` is unsigned in this release. On first launch, right-click `ministr.app` → **Open** → **Open** to bypass Gatekeeper. A signed/notarized build is planned for 1.0.
-</Callout>
-
-### Linux desktop installer (`.deb` / AppImage)
-
-Download `ministr-desktop-x86_64-unknown-linux-gnu.deb` (`sudo dpkg -i …`) or `…AppImage` (`chmod +x` and run) from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases).
-
-### Cargo (from source, requires Rust 1.88+)
-
-```sh
-cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli
-```
-
-### Pre-built binaries
-
-Download from the [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases) page.
-
 ## Quick Start
 
-### 1. Initialize ministr in your project
+### 1. Install ministr
+
+Pick your platform on **[ministr.ai/install](/install)** — desktop installers for macOS / Windows / Linux, plus a one-line CLI install. The page auto-detects your OS, leads with the matching desktop installer, and offers a CLI tab for headless installs.
+
+### 2. Initialize ministr in your project (`ministr init`)
 
 ```sh
 cd your-project
@@ -85,7 +39,7 @@ paths = ["src", "docs", "README.md"]
 ignore = ["*.snap", "node_modules"]
 ```
 
-### 2. Configure your MCP client (manual — only if you skipped `ministr init`)
+### 3. Configure your MCP client (manual — only if you skipped `ministr init`)
 
 `ministr init` writes the MCP configs for Claude Code, Cursor, and VS Code / Copilot automatically. If you skipped that step or want to add ministr to a client manually, use one of these snippets:
 
@@ -110,7 +64,7 @@ claude mcp add ministr -- ministr
 
 ministr auto-discovers `.ministr.toml` by walking up from the working directory — no flags needed.
 
-### 3. Use the tools
+### 4. Use the tools
 
 Once connected, your agent has access to these tools:
 
