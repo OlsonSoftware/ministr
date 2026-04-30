@@ -1,9 +1,9 @@
 ---
 title: Coherence
-description: How ministr detects underlying document changes and notifies active sessions holding stale content — the CPU cache-coherence analog.
+description: How ministr detects underlying document changes and notifies active sessions holding stale content so the agent doesn't reason off rotted context.
 ---
 
-Coherence is ministr's equivalent of a CPU cache coherence protocol. When the underlying documents change, ministr detects the change and notifies active sessions that hold stale content.
+Coherence keeps the agent's view of your codebase in sync with what's actually on disk. When the underlying documents change, ministr detects the change and notifies active sessions that hold stale content.
 
 ## How It Works
 
