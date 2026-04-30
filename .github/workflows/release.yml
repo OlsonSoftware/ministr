@@ -265,6 +265,10 @@ jobs:
       # tauri-action will NOT touch the GitHub Release. We aggregate
       # everything in the final `release` job below.
       #
+      # Split into macOS vs. non-macOS steps so the APPLE_* secrets
+      # are only materialized in the macOS runner's process env.
+      # Windows/Linux shards run an identical step minus the env block.
+      #
       # macOS code-signing + notarization: tauri-action reads the six
       # APPLE_* env vars below. If they're unset (no secret bound), the
       # action skips signing gracefully and ships an unsigned .dmg. Bind
@@ -276,7 +280,8 @@ jobs:
       #   APPLE_ID                   — Apple Developer account email
       #   APPLE_PASSWORD             — app-specific password (NOT login)
       #   APPLE_TEAM_ID              — 10-char team ID
-      - name: Build Tauri bundles
+      - name: Build Tauri bundles (macOS, signed)
+        if: matrix.platform == 'macos-aarch64'
         uses: tauri-apps/tauri-action@action-v0.6.2
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -285,6 +290,14 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: ministr-app
+          tauriScript: pnpm tauri
+          args: ${{ matrix.tauri_args }}
+
+      - name: Build Tauri bundles (Windows/Linux)
+        if: matrix.platform != 'macos-aarch64'
+        uses: tauri-apps/tauri-action@action-v0.6.2
         with:
           projectPath: ministr-app
           tauriScript: pnpm tauri
