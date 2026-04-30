@@ -1,9 +1,9 @@
 ---
 title: Session Shadow
-description: ministr's equivalent of a CPU cache directory — tracks exactly what context was delivered, enabling deduplication, delta updates, and eviction estimation.
+description: A per-session ledger of every chunk of context ministr has delivered to the agent — enabling deduplication, delta updates, and eviction estimation.
 ---
 
-The session shadow is ministr's equivalent of a CPU cache directory. It tracks exactly what context has been delivered to the agent, enabling three capabilities that no existing retrieval system provides.
+The session shadow is a per-session ledger of everything ministr has delivered to the agent. It tracks exactly what context has been sent, enabling three capabilities that no existing retrieval system provides.
 
 ## What It Tracks
 

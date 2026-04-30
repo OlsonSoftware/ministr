@@ -3,13 +3,13 @@ title: Budget Management
 description: How ministr tracks cumulative token usage, enters pressure mode, and provides eviction recommendations to prevent context-window thrashing.
 ---
 
-Context budget management is ministr's equivalent of a CPU cache replacement policy. It tracks cumulative token usage and provides active guidance to prevent context thrashing.
+Context budget management tracks cumulative token usage and provides active guidance to keep the agent's context window healthy as a conversation grows.
 
 ## The Problem
 
 The most pernicious issue in multi-turn agent workflows is invisible context eviction. As the agent accumulates context, older content silently falls out of the window. The agent may hallucinate "remembered" facts, ask for repeated information, or produce contradictory outputs because it lost earlier constraints.
 
-This is the AI equivalent of cache thrashing.
+Without a budget signal the agent has no way to know it's already at the threshold and needs to compress or drop content before adding more.
 
 ## How It Works
 

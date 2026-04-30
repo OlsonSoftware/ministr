@@ -3,9 +3,10 @@ title: Architecture — The Deep Dive
 description: In-depth walk through the ministr workspace, ingestion pipeline, session shadow, prefetch engine, and embedding backends.
 ---
 
-> **ministr** is a Rust-native MCP server that serves context to LLM agents the way
-> an L1 cache serves the CPU — with session tracking, predictive prefetching,
-> budget awareness, and coherence.
+> **ministr** is a Rust-native MCP server that gives AI coding agents real codebase
+> intelligence — semantic search across code and docs, symbol-level navigation,
+> cross-language bridge detection — paired with session tracking, predictive
+> prefetching, budget awareness, and coherence.
 >
 > ministr does not (and can't) edit the agent's context window directly. It manages
 > *its own output* — what it sends, when, and at what resolution — so the window
