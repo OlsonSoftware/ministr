@@ -17,9 +17,6 @@ export const INSTALL_HOST = 'https://ministr.ai';
 /** Cloudflare Worker proxy that fronts GitHub Releases. */
 export const DOWNLOAD_HOST = 'https://dl.ministr.app';
 
-/** GitHub Releases page (private repo; requires auth to browse). */
-export const RELEASES_URL = 'https://github.com/OlsonSoftware/ministr/releases';
-
 /** Returns the URL the Worker exposes for `latest` release metadata. */
 export function latestReleaseUrl(): string {
   return `${DOWNLOAD_HOST}/latest`;
@@ -61,7 +58,7 @@ export function detectOsFamily(userAgent: string | undefined | null): OsFamily {
 
 // ─── CLI install commands ───────────────────────────────────────────────
 
-export type CliCommandId = 'macos' | 'linux' | 'windows' | 'cargo';
+export type CliCommandId = 'macos' | 'linux' | 'windows';
 
 export interface CliCommand {
   id: CliCommandId;
@@ -101,16 +98,6 @@ export const INSTALL_COMMANDS: readonly CliCommand[] = [
     command: 'iwr -useb https://ministr.app/install.ps1 | iex',
     copyText: 'iwr -useb https://ministr.app/install.ps1 | iex',
     note: 'Adds %USERPROFILE%\\.ministr\\bin to your User PATH. Open a new terminal after install.',
-  },
-  {
-    id: 'cargo',
-    label: 'Cargo',
-    shell: 'sh',
-    command:
-      'cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli',
-    copyText:
-      'cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli',
-    note: 'Requires Rust 1.88+. Useful on Intel Mac and Windows ARM.',
   },
 ] as const;
 

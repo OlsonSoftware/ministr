@@ -50,19 +50,20 @@ export function Hero() {
               {...stagger(2)}
               className="mt-6 max-w-[48ch] text-[clamp(1.125rem,1.6vw,1.375rem)] leading-snug font-medium text-fd-foreground/95"
             >
-              Stop your AI agent from re-reading the same files needlessly.
+              Codebase intelligence for AI agents.
             </motion.p>
 
             <motion.p
               {...stagger(3)}
               className="ministr-body mt-4 max-w-[52ch] text-[14.5px] leading-relaxed"
             >
-              Claude Code, Cursor, and Copilot burn through a large chunk
-              of their context window re-grepping and re-reading code they
-              already saw. ministr gives them a local index that ships the
-              exact section once, tracks what&rsquo;s been delivered, and
-              skips it on the next turn &mdash; so your agent uses fewer
-              tokens per turn and remembers what it&rsquo;s looked at.
+              Claude Code, Cursor, and Copilot burn through their context
+              window re-grepping and re-reading code they already saw.
+              ministr replaces grep+read with a local semantic index over
+              your codebase &mdash; symbol-level navigation, cross-language
+              bridge detection, exact-section delivery &mdash; and remembers
+              what the agent has seen so the next turn isn&rsquo;t a cold
+              re-fetch.
             </motion.p>
 
             <motion.div {...stagger(4)} className="mt-8">

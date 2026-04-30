@@ -16,7 +16,7 @@ export function CtaCoda() {
         </p>
         <div className="mt-10 flex justify-center">
           <Link
-            href="/docs/getting-started"
+            href="/install"
             className="ministr-cta-primary group inline-flex items-center gap-1.5 rounded-lg px-5 py-3 text-[15px] font-medium"
           >
             Install ministr
