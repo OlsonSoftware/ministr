@@ -264,27 +264,8 @@ jobs:
       # Build-only mode: no tagName / releaseName / releaseId means
       # tauri-action will NOT touch the GitHub Release. We aggregate
       # everything in the final `release` job below.
-      #
-      # macOS code-signing + notarization: tauri-action reads the six
-      # APPLE_* env vars below. If they're unset (no secret bound), the
-      # action skips signing gracefully and ships an unsigned .dmg. Bind
-      # the secrets on the repo (Settings → Secrets and variables →
-      # Actions) and the next release auto-signs without further edits.
-      #   APPLE_CERTIFICATE          — base64 of the Developer ID .p12
-      #   APPLE_CERTIFICATE_PASSWORD — password used when exporting
-      #   APPLE_SIGNING_IDENTITY     — e.g. "Developer ID Application: …"
-      #   APPLE_ID                   — Apple Developer account email
-      #   APPLE_PASSWORD             — app-specific password (NOT login)
-      #   APPLE_TEAM_ID              — 10-char team ID
       - name: Build Tauri bundles
         uses: tauri-apps/tauri-action@action-v0.6.2
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: ministr-app
           tauriScript: pnpm tauri
