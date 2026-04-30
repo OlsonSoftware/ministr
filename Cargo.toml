@@ -63,7 +63,7 @@ candle-core = { version = "0.10", features = ["metal", "accelerate"] }
 candle-nn = "0.10"
 candle-transformers = "0.10"
 hf-hub = "0.5"
-tokenizers = "0.22"
+tokenizers = "0.23"
 
 # Vector index
 hnsw_rs = "0.3"
