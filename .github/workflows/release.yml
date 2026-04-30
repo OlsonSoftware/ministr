@@ -283,6 +283,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _bundles
+          # Cross-platform sha256: macOS has shasum, Linux + Git-Bash on
+          # Windows have sha256sum. Pick whichever is on PATH.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256() { sha256sum "$1"; }
+          else
+            sha256() { shasum -a 256 "$1"; }
+          fi
           while IFS= read -r src; do
             [ -n "$src" ] || continue
             ext="${src##*.}"
@@ -294,7 +301,7 @@ jobs:
               *) continue ;;
             esac
             cp "$src" "$dst"
-            shasum -a 256 "$dst" > "$dst.sha256"
+            sha256 "$dst" > "$dst.sha256"
           done < <(find "${{ matrix.target_dir }}" -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) 2>/dev/null)
           ls -la _bundles
 
