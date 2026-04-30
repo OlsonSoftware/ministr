@@ -27,6 +27,13 @@ case "$(uname -m)" in
     *)             err "unsupported architecture: $(uname -m)" ;;
 esac
 
+# Intel Macs intentionally unsupported: ort-sys 2.0.0-rc.11 dropped
+# x86_64-apple-darwin prebuilts and macOS 26 dropped Intel support.
+# Apple Silicon is the supported Mac target.
+if [ "$os" = "apple-darwin" ] && [ "$arch" = "x86_64" ]; then
+    err "Intel Mac binaries aren't published. Build from source with: cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli"
+fi
+
 target="${arch}-${os}"
 archive="ministr-${target}.tar.gz"
 

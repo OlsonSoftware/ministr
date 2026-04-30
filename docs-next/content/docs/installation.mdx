@@ -3,8 +3,8 @@ title: Installation
 description: How to install the ministr CLI and desktop app — install script, Cargo, Homebrew (post-1.0), and pre-built binaries for macOS / Linux / Windows.
 ---
 
-<Callout type="info" title="Want the desktop app too?">
-The signed `.pkg` installer (coming with the 1.0 release) drops both `ministr.app` and the `ministr` CLI in one go on macOS. This page covers the CLI-only and dev-build paths.
+<Callout type="info" title="CLI vs desktop app">
+Two install surfaces. The CLI (`ministr` binary) is what your agent talks to; install via the script for unattended setup. The desktop app (tray UI + dashboard + bundled CLI) ships as a `.dmg` / NSIS `.exe` / `.deb` / AppImage — see [Desktop App](#desktop-app) below.
 </Callout>
 
 ## CLI
@@ -43,30 +43,35 @@ cargo install ministr-cli
 
 ### Pre-built binaries
 
-Download from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases) — builds available for:
+Download from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases) — CLI archives for:
 
 | Platform | Archive |
 |----------|---------|
 | macOS (Apple Silicon) | `ministr-aarch64-apple-darwin.tar.gz` |
-| macOS (Intel) | `ministr-x86_64-apple-darwin.tar.gz` |
 | Linux (x86_64) | `ministr-x86_64-unknown-linux-gnu.tar.gz` |
 | Linux (aarch64) | `ministr-aarch64-unknown-linux-gnu.tar.gz` |
 | Windows (x86_64) | `ministr-x86_64-pc-windows-msvc.zip` |
 
-Each archive has a corresponding `.sha256` checksum file.
+Each archive has a corresponding `.sha256` checksum file, and a unified `SHA256SUMS` lives alongside.
 
-## Desktop App (macOS)
+Intel Macs are not currently supported by the pre-built CLI binary — `ort-sys` 2.0.0-rc.11 dropped `x86_64-apple-darwin` prebuilts and macOS 26 dropped Intel support repo-wide. Build from source via the [Cargo](#cargo-from-source-requires-rust-188) path above, or run on Apple Silicon.
 
-End users should grab the pre-built `.pkg` from the releases page — it's signed, notarized, and installs both `ministr.app` and the `ministr` CLI with `PATH` wiring done for you.
+## Desktop App
 
-Building locally from source (for maintainers):
+The Tauri desktop app bundles a tray UI, the live dashboard, and the `ministr` CLI as a sidecar. Pick the installer for your platform from [GitHub Releases](https://github.com/OlsonSoftware/ministr/releases):
 
-```sh
-just pkg       # signed + notarized build (requires Apple Developer ID)
-just pkg-dev   # local testing (no notarization)
-```
+| Platform | Installer | Notes |
+|----------|-----------|-------|
+| macOS (Apple Silicon) | `ministr-desktop-aarch64-apple-darwin.dmg` | Drag `ministr.app` into `/Applications`. |
+| Windows (x86_64) | `ministr-desktop-x86_64-pc-windows-msvc-setup.exe` | NSIS installer. Adds CLI to PATH automatically. |
+| Linux Debian/Ubuntu (x86_64) | `ministr-desktop-x86_64-unknown-linux-gnu.deb` | `sudo dpkg -i ministr-desktop-*.deb` |
+| Linux universal (x86_64) | `ministr-desktop-x86_64-unknown-linux-gnu.AppImage` | `chmod +x` and run. |
 
-See `installer/SIGNING-GUIDE.md` for code signing setup.
+<Callout type="warn" title="Unsigned in this release">
+Windows SmartScreen and macOS Gatekeeper will warn on first launch — installers are unsigned in v0.2.x.
+On macOS, right-click the app → **Open** → **Open** to bypass Gatekeeper. On Windows, **More info** → **Run anyway**.
+A signed/notarized release is planned for 1.0.
+</Callout>
 
 ## Configuration
 
