@@ -9,16 +9,6 @@ The canonical install page lives on the marketing site at **[ministr.ai/install]
 
 This docs page used to hold a static install table; that table drifted out of sync with what we actually ship. The `/install` page reads its asset list dynamically from the release proxy, so it always matches the latest release.
 
-## Building from source
-
-For developers who want to build off `main` instead of downloading a release:
-
-```sh
-cargo install --git https://github.com/OlsonSoftware/ministr ministr-cli
-```
-
-Requires Rust 1.88+. Useful on Intel Mac (no pre-built binary) and Windows ARM (no pre-built binary). See [Contributing](https://github.com/OlsonSoftware/ministr/blob/main/CONTRIBUTING.md) for the full dev setup.
-
 ## Configuration
 
 Per-project config: `.ministr.toml` in the project root (created by `ministr init`):

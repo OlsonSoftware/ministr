@@ -3,41 +3,31 @@
 </p>
 
 <p align="center">
-  <strong>Context cache for LLM agents</strong>
+  <strong>Codebase intelligence for AI agents</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/OlsonSoftware/ministr/actions/workflows/ci.yml"><img src="https://github.com/OlsonSoftware/ministr/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.88%2B-orange.svg" alt="Rust"></a>
 </p>
 
 <p align="center">
-  <a href="https://ministr.ai">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
+  <a href="https://ministr.ai">Docs</a> · <a href="https://ministr.ai/install">Install</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 ---
 
-ministr is an [MCP server](https://modelcontextprotocol.io) that serves your agent's context the way an L1 cache serves the CPU — tracking what it has delivered, pre-warming what's likely next, and flagging budget pressure. Your agent still owns its context window; ministr just keeps its own output lean. Runs locally, embeds locally, works with any MCP client.
+ministr is an [MCP server](https://modelcontextprotocol.io) that gives Claude Code, Cursor, and Copilot real codebase intelligence — semantic search across your code and docs, symbol-level navigation, and cross-language bridge detection — and it remembers what it has already shown the agent so the same context isn't re-fetched on every turn. Runs locally, embeds locally, works with any MCP client.
 
 ```sh
 claude mcp add ministr -- ministr
 ```
 
 <p align="center">
-  <video
-    src="https://github.com/OlsonSoftware/ministr/raw/main/assets/launch.mp4"
-    poster="https://github.com/OlsonSoftware/ministr/raw/main/assets/launch.gif"
-    alt="ministr CLI demo — ministr init, claude mcp add ministr, and an agent trace with a cache hit"
-    width="860"
-    controls
-    muted
-    preload="metadata">
-  </video>
+  <a href="https://ministr.ai/"><img src="assets/launch.gif" alt="ministr demo — ministr init, claude mcp add ministr, and an agent trace with semantic search results" width="860"></a>
 </p>
 
 <p align="center">
-  <sub>Prefer an interactive version with selectable text and timeline scrubbing? <a href="https://ministr.ai/">Watch it on the docs site</a>.</sub>
+  <sub>Watch the interactive version with selectable text and timeline scrubbing on <a href="https://ministr.ai/">ministr.ai</a>.</sub>
 </p>
 
 ## Why ministr

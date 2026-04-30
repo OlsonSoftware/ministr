@@ -8,7 +8,6 @@ import { GlassCard } from '@/components/landing/glass-card';
 import {
   DESKTOP_INSTALLERS,
   INSTALL_COMMANDS,
-  RELEASES_URL,
   SHA256SUMS_FILENAME,
   detectOsFamily,
   downloadUrl,
@@ -282,12 +281,6 @@ export function InstallClient() {
           </div>
 
           <div className="mt-10 flex flex-wrap justify-center gap-x-6 gap-y-2 text-[13px]">
-            <a
-              href={RELEASES_URL}
-              className="text-fd-muted-foreground transition hover:text-[var(--ministr-accent-text)]"
-            >
-              All releases on GitHub
-            </a>
             <Link
               href="/docs/architecture"
               className="text-fd-muted-foreground transition hover:text-[var(--ministr-accent-text)]"
