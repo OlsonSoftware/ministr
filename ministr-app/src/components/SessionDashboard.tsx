@@ -1,51 +1,152 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  Users,
-  TrendingDown,
-  Copy,
-  Search,
-  Filter,
-  Radio,
-  Gauge,
-} from "lucide-react";
-import { Card } from "./ui/card";
+import { AlertTriangle, ChevronLeft, ChevronRight, Filter, Users } from "lucide-react";
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
-import { BudgetRing } from "./ui/budget-ring";
+import { useEntityPanel } from "../hooks/useEntityPanel";
 import { EmptyState } from "./ui/empty-state";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
-import { VitalCard } from "./ui/vital-card";
+import { ActivityFeed } from "./ui/activity-feed";
+import { CoherenceFeed } from "./ui/coherence-feed";
 import { cn } from "../lib/utils";
-import { accentTone, labelSmallCap } from "../lib/ui-tokens";
 import { formatTokens } from "../lib/format";
 import { corpusLabelById } from "../lib/corpus";
-import type { SessionDetail, DaemonStatus } from "../lib/types";
+import {
+  pressureTone,
+  toneTextClass,
+  type Tone,
+} from "../lib/status";
+import type {
+  ActivityEvent,
+  CoherenceEvent,
+  CorpusInfo,
+  DaemonStatus,
+  SessionDetail,
+} from "../lib/types";
 
 type PressureFilter = "all" | "elevated" | "critical";
+type View = "live" | "history";
 
 const PRESSURE_ORDER = ["none", "low", "medium", "high", "critical"] as const;
 type Pressure = (typeof PRESSURE_ORDER)[number];
+
+const HISTORY_WINDOW_MS = 24 * 3600 * 1000;
+const DRAWER_KEY = "ministr-sessions-drawer-open";
+/** Versioned localStorage key for ended-session history. Bump the suffix
+ *  when SessionDetail's wire shape changes so we discard incompatible
+ *  cached entries instead of crashing the dashboard. */
+const HISTORY_KEY = "ministr-sessions-history-v1";
 
 interface Props {
   status: DaemonStatus;
 }
 
+interface HistoryEntry {
+  endedAt: number;
+  session: SessionDetail;
+}
+
+/** Load persisted ended-session history, dropping entries older than the
+ *  24h window. Returns [] on any read/parse failure — bad cached state
+ *  must never block the dashboard from rendering. */
+function loadPersistedHistory(): HistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const now = Date.now();
+    return parsed.filter(
+      (e): e is HistoryEntry =>
+        e &&
+        typeof e === "object" &&
+        typeof e.endedAt === "number" &&
+        e.session &&
+        typeof e.session.session_id === "string" &&
+        now - e.endedAt < HISTORY_WINDOW_MS,
+    );
+  } catch {
+    return [];
+  }
+}
+
 export function SessionDashboard({ status }: Props) {
+  const { openEntity } = useEntityPanel();
   const [sessions, setSessions] = useState<SessionDetail[]>([]);
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
+  const [coherence, setCoherence] = useState<CoherenceEvent[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
   const [pressureFilter, setPressureFilter] = useState<PressureFilter>("all");
+  const [view, setView] = useState<View>("live");
+  const [compact, setCompact] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(DRAWER_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [history, setHistory] = useState<HistoryEntry[]>(loadPersistedHistory);
   const [freshSessions, setFreshSessions] = useState<Set<string>>(new Set());
+  const [flashSince, setFlashSince] = useState<number | undefined>(undefined);
+  const [heartbeat, setHeartbeat] = useState(false);
   const prevTurns = useRef<Map<string, number>>(new Map());
+  const prevSessions = useRef<Map<string, SessionDetail>>(new Map());
+  const prevSnap = useRef<number>(Date.now());
+  const focusRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DRAWER_KEY, drawerOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [drawerOpen]);
+
+  // Persist ended-session history across reloads. We write on every change;
+  // the array is bounded by the 24h window so it stays small. Wrap in a
+  // try because Tauri's webview may have storage quotas in some configs.
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    } catch {
+      /* ignore */
+    }
+  }, [history]);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const s = await invoke<SessionDetail[]>("list_sessions");
+        const [s, a, c] = await Promise.all([
+          invoke<SessionDetail[]>("list_sessions"),
+          invoke<ActivityEvent[]>("recent_activity", { limit: 30 }).catch(
+            () => [] as ActivityEvent[],
+          ),
+          invoke<CoherenceEvent[]>("recent_coherence_events", {
+            limit: 20,
+          }).catch(() => [] as CoherenceEvent[]),
+        ]);
         if (cancelled) return;
+
+        // Detect ended sessions and push them into history.
+        const newIds = new Set(s.map((x) => x.session_id));
+        const now = Date.now();
+        const ended: HistoryEntry[] = [];
+        for (const [id, prev] of prevSessions.current.entries()) {
+          if (!newIds.has(id)) {
+            ended.push({ endedAt: now, session: prev });
+          }
+        }
+        if (ended.length > 0) {
+          setHistory((h) =>
+            [...ended, ...h].filter(
+              (e) => now - e.endedAt < HISTORY_WINDOW_MS,
+            ),
+          );
+        }
+        prevSessions.current = new Map(s.map((x) => [x.session_id, x]));
 
         const fresh = new Set<string>();
         for (const sess of s) {
@@ -55,8 +156,20 @@ export function SessionDashboard({ status }: Props) {
           }
           prevTurns.current.set(sess.session_id, sess.current_turn);
         }
+
         setSessions(s);
+        setActivity(a);
+        setCoherence(c);
+        setFlashSince(prevSnap.current);
+        prevSnap.current = now;
         setLoaded(true);
+
+        // Heartbeat — hard-blink on each tick.
+        setHeartbeat(true);
+        setTimeout(() => {
+          if (!cancelled) setHeartbeat(false);
+        }, 250);
+
         if (fresh.size) {
           setFreshSessions(fresh);
           setTimeout(() => {
@@ -87,15 +200,20 @@ export function SessionDashboard({ status }: Props) {
     const dedup = sessions.reduce((s, x) => s + x.dedup_hits, 0);
     const pressure = sessions.reduce<Pressure>((max, x) => {
       const p = (x.pressure_level as Pressure) ?? "none";
-      return PRESSURE_ORDER.indexOf(p) > PRESSURE_ORDER.indexOf(max)
-        ? p
-        : max;
+      return PRESSURE_ORDER.indexOf(p) > PRESSURE_ORDER.indexOf(max) ? p : max;
     }, "none");
     return { total, tokensUsed, capacity, util, saved, dedup, pressure };
   }, [sessions]);
 
+  const criticalSession = sessions.find((s) => s.pressure_level === "critical");
+
+  const sourceList: SessionDetail[] = useMemo(() => {
+    if (view === "live") return sessions;
+    return history.map((h) => h.session);
+  }, [view, sessions, history]);
+
   const filtered = useMemo(() => {
-    let list = sessions;
+    let list = sourceList;
     if (pressureFilter === "elevated") {
       list = list.filter((s) =>
         ["medium", "high", "critical"].includes(s.pressure_level),
@@ -115,264 +233,460 @@ export function SessionDashboard({ status }: Props) {
       );
     }
     return list;
-  }, [sessions, pressureFilter, query, status.corpora]);
+  }, [sourceList, pressureFilter, query, status.corpora]);
 
-  // Group filtered sessions into a parent/subagent tree. A subagent
-  // whose parent dropped out of `filtered` (e.g. via a query that
-  // matched only the child) gets re-attached to the full sessions list
-  // by id; if the parent really is missing (different corpus, etc.)
-  // the subagent is rendered as an "orphan" top-level entry. This
-  // keeps the hierarchy coherent under filtering instead of having
-  // children appear floating without context.
-  const tree = useMemo(() => {
-    type Node = { session: SessionDetail; subagents: SessionDetail[] };
-    const byId = new Map(sessions.map((s) => [s.session_id, s]));
-    const filteredIds = new Set(filtered.map((s) => s.session_id));
-    const nodes = new Map<string, Node>();
-    const orphans: Node[] = [];
-
-    for (const s of filtered) {
-      if (!s.parent_session_id) {
-        if (!nodes.has(s.session_id)) {
-          nodes.set(s.session_id, { session: s, subagents: [] });
-        } else {
-          nodes.get(s.session_id)!.session = s;
-        }
-      }
-    }
-    for (const s of filtered) {
-      if (s.parent_session_id) {
-        const existing = nodes.get(s.parent_session_id);
-        if (existing) {
-          existing.subagents.push(s);
-        } else if (filteredIds.has(s.parent_session_id)) {
-          // Parent is in the filtered list but hasn't been added yet —
-          // shouldn't happen with the loops above, but guard anyway.
-          continue;
-        } else {
-          // Parent dropped out of the filter — re-attach if we can.
-          const parent = byId.get(s.parent_session_id);
-          if (parent) {
-            const node = nodes.get(parent.session_id) ?? {
-              session: parent,
-              subagents: [],
-            };
-            node.subagents.push(s);
-            nodes.set(parent.session_id, node);
-          } else {
-            orphans.push({ session: s, subagents: [] });
-          }
-        }
-      }
-    }
-    return [...nodes.values(), ...orphans];
-  }, [filtered, sessions]);
+  function inspectCritical() {
+    if (!criticalSession) return;
+    setPressureFilter("critical");
+    setTimeout(() => {
+      focusRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+    }, 30);
+  }
 
   return (
-    <div className="space-y-4 ministr-fade-in">
-      <header className="flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-lg font-semibold text-text flex items-center gap-2">
-            <Users className="h-4 w-4 text-accent" />
-            Sessions
-          </h1>
-          <p className="text-xs text-text-dim mt-0.5">
-            Every MCP agent attached to the daemon — live.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="@container/page flex h-full gap-3 min-h-0">
+      {/* MAIN */}
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-3">
+        {/* Critical banner */}
+        {criticalSession && (
+          <button
+            onClick={inspectCritical}
+            className="flex items-center gap-3 border-[3px] border-danger bg-surface px-4 py-3 cursor-pointer transition-none hover:bg-danger hover:text-[var(--color-accent-fg-on)] shrink-0"
+          >
+            <span className="grid h-6 w-6 place-items-center bg-danger text-[var(--color-accent-fg-on)] shrink-0">
+              <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
+            </span>
+            <span className="flex flex-col items-start min-w-0 flex-1 text-left">
+              <span className="font-sans text-[0.6875rem] font-bold tracking-[0.05em] text-danger">
+                Critical · 1 session over budget
+              </span>
+              <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim truncate">
+                {criticalSession.session_id.slice(0, 8)} ·{" "}
+                {corpusLabelById(status.corpora, criticalSession.corpus_id)}
+              </span>
+            </span>
+            <span className="font-sans text-xs font-bold tracking-[0.05em] text-danger shrink-0">
+              Click to inspect →
+            </span>
+          </button>
+        )}
+
+        {/* Header */}
+        <header className="flex items-center justify-between gap-4 shrink-0">
+          <div>
+            <h1 className="font-serif text-2xl font-normal text-text leading-tight ">
+              Sessions
+            </h1>
+            <p className="font-serif text-sm italic text-text-dim mt-1">
+              Live MCP agents · cache observability
+            </p>
+          </div>
           {vitals.total > 0 && (
-            <Badge variant="success" dot>
-              {vitals.total} active
-            </Badge>
-          )}
-          {vitals.pressure === "critical" && (
-            <Badge variant="danger" dot>
-              critical pressure
-            </Badge>
-          )}
-        </div>
-      </header>
-
-      {/* Vitals row — aligns with Overview vitals */}
-      {vitals.total > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <VitalCard
-            title="Aggregate budget"
-            subtitle="Tokens used across active sessions"
-            layout="center"
-          >
-            <BudgetRing
-              utilization={vitals.util}
-              pressure={vitals.pressure}
-              size={108}
-              stroke={8}
+            <span
+              className="inline-flex items-center gap-2 border border-success bg-surface px-2 py-0.5 font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-success"
+              style={{ borderRadius: "var(--radius-pill)" }}
             >
-              <span className="font-mono text-xl font-bold tabular-nums text-text leading-none">
-                {(vitals.util * 100).toFixed(0)}
-                <span className="text-sm text-text-dim">%</span>
-              </span>
-              <span className="text-[10px] uppercase tracking-wider text-text-dim mt-1">
-                {formatTokens(vitals.tokensUsed)} /{" "}
-                {formatTokens(vitals.capacity)}
-              </span>
-            </BudgetRing>
-          </VitalCard>
+              <StatusDot tone="success" pulse="live" />
+              {vitals.total} live
+            </span>
+          )}
+        </header>
 
-          <VitalCard
-            title="Tokens saved"
-            subtitle="From dedup + delta + compression"
-            layout="center"
-            right={
-              <Badge variant="success" className="gap-1">
-                <TrendingDown className="h-2.5 w-2.5" />
-                {formatTokens(vitals.saved)}
-              </Badge>
-            }
-          >
-            <div className="flex items-center gap-4 h-[108px]">
-              <div className="flex flex-col">
-                <span className="font-mono text-3xl font-bold tabular-nums text-success leading-none">
-                  {formatTokens(vitals.saved)}
-                </span>
-                <span className="text-[10px] uppercase tracking-wider text-text-dim mt-1.5">
-                  across {vitals.total}{" "}
-                  {vitals.total === 1 ? "session" : "sessions"}
-                </span>
-              </div>
-            </div>
-          </VitalCard>
-
-          <VitalCard
-            title="Dedup hits"
-            subtitle="Sections ministr skipped resending"
-            layout="center"
-          >
-            <div className="flex items-center gap-4 h-[108px]">
-              <div className="flex flex-col">
-                <span className="font-mono text-3xl font-bold tabular-nums text-accent leading-none">
-                  {vitals.dedup.toLocaleString()}
-                </span>
-                <span className="text-[10px] uppercase tracking-wider text-text-dim mt-1.5">
-                  cache hits on re-read
-                </span>
-              </div>
-              <div className="grid h-14 w-14 place-items-center rounded-xl bg-[var(--color-accent-soft)] text-accent">
-                <Copy className="h-6 w-6" />
-              </div>
-            </div>
-          </VitalCard>
-        </div>
-      )}
-
-      {/* Filter bar */}
-      {sessions.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="relative flex-1 min-w-[200px] max-w-xs">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-dim" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter by session or corpus…"
-              className="h-8 w-full pl-8 pr-2.5 text-xs rounded-lg border border-border/70 bg-surface-raised text-text placeholder:text-text-dim font-mono focus:outline-none focus:border-[var(--color-accent-ring)]"
+        {/* Slim vitals strip */}
+        {vitals.total > 0 && (
+          <div className="border border-border-soft bg-surface flex items-stretch h-9 shrink-0">
+            <VStat label="Budget" value={`${(vitals.util * 100).toFixed(0)}%`} />
+            <VStat
+              label="Tokens"
+              value={`${formatTokens(vitals.tokensUsed)} / ${formatTokens(vitals.capacity)}`}
+            />
+            <VStat
+              label="Saved"
+              value={formatTokens(vitals.saved)}
+              tone="success"
+            />
+            <VStat
+              label="Dedup"
+              value={vitals.dedup.toLocaleString()}
+              tone="accent"
+            />
+            <VStat
+              label="Pressure"
+              value={vitals.pressure.toUpperCase()}
+              tone={pressureTone(vitals.pressure)}
             />
           </div>
-          <div className="flex items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised p-0.5">
-            <FilterPill
-              active={pressureFilter === "all"}
-              onClick={() => setPressureFilter("all")}
-            >
-              <Filter className="h-3 w-3" />
-              All
-            </FilterPill>
-            <FilterPill
-              active={pressureFilter === "elevated"}
-              onClick={() => setPressureFilter("elevated")}
-            >
-              Elevated+
-            </FilterPill>
-            <FilterPill
-              active={pressureFilter === "critical"}
-              onClick={() => setPressureFilter("critical")}
-            >
-              Critical
-            </FilterPill>
-          </div>
-          <span className="text-[11px] text-text-dim font-mono ml-auto">
-            {filtered.length} / {sessions.length}
-          </span>
-        </div>
-      )}
+        )}
 
-      {/* Session list — uses the shared TurnBlock primitive */}
-      <section>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className={cn(labelSmallCap, "flex items-center gap-1.5")}>
-            <Radio className="h-3 w-3" />
-            Active sessions
-            {vitals.total > 0 && (
-              <span className="inline-flex items-center gap-1 ml-2 text-[10px] text-accent normal-case font-sans font-medium">
-                <StatusDot tone="accent" pulse="live" />
-                streaming
-              </span>
-            )}
-          </h2>
-        </div>
-
-        {!loaded ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-spin h-7 w-7 rounded-full border-2 border-border border-t-accent" />
-          </div>
-        ) : sessions.length === 0 ? (
-          <EmptyState
-            icon={Users}
-            title="No active sessions"
-            hint="Point Claude Code, Cursor, or any MCP client at the daemon — sessions stream in here with live budget, dedup, and compression metrics."
-          />
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={Filter}
-            title="No matching sessions"
-            hint="Clear the filter or widen the pressure scope to see more."
-            action={
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setQuery("");
-                  setPressureFilter("all");
-                }}
-              >
-                Reset filters
-              </Button>
-            }
-          />
-        ) : (
-          <div className="space-y-2">
-            {tree.map((node) => (
-              <div key={node.session.session_id} className="space-y-1.5">
-                <TurnBlock
-                  session={node.session}
-                  corpora={status.corpora}
-                  fresh={freshSessions.has(node.session.session_id)}
-                />
-                {node.subagents.length > 0 && (
-                  <div className="ml-4 border-l border-border/50 pl-3 space-y-1.5">
-                    {node.subagents.map((sub) => (
-                      <TurnBlock
-                        key={sub.session_id}
-                        session={sub}
-                        corpora={status.corpora}
-                        fresh={freshSessions.has(sub.session_id)}
-                      />
-                    ))}
-                  </div>
+        {/* Filter / view bar */}
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
+          {/* Live / History toggle */}
+          <div className="flex items-stretch gap-0">
+            {(
+              [
+                { key: "live" as const, label: "Live" },
+                { key: "history" as const, label: "History" },
+              ]
+            ).map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setView(key)}
+                className={cn(
+                  "border border-border-soft px-2.5 py-1 font-sans text-sm font-medium cursor-pointer transition-none -ml-[1px] first:ml-0",
+                  view === key
+                    ? "border-accent bg-surface-overlay text-text z-10 relative"
+                    : "bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
                 )}
-              </div>
+              >
+                {label}
+                {key === "history" && history.length > 0 && (
+                  <span className="ml-1 font-mono text-xs tabular-nums opacity-70">
+                    {history.length}
+                  </span>
+                )}
+              </button>
             ))}
           </div>
+
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="filter by session or corpus"
+            className="h-7 flex-1 max-w-xs border border-border-soft bg-surface px-2 text-sm font-sans text-text placeholder:text-text-dim focus:outline-none focus:border-accent transition-none"
+          />
+          <FilterPill
+            active={pressureFilter === "all"}
+            onClick={() => setPressureFilter("all")}
+          >
+            All
+          </FilterPill>
+          <FilterPill
+            active={pressureFilter === "elevated"}
+            onClick={() => setPressureFilter("elevated")}
+          >
+            Elevated+
+          </FilterPill>
+          <FilterPill
+            active={pressureFilter === "critical"}
+            onClick={() => setPressureFilter("critical")}
+          >
+            Critical
+          </FilterPill>
+          <FilterPill active={compact} onClick={() => setCompact((v) => !v)}>
+            Compact
+          </FilterPill>
+          <span className="font-mono text-xs tabular-nums text-text-dim ml-auto">
+            {filtered.length} / {sourceList.length}
+          </span>
+        </div>
+
+        {/* Session list */}
+        <section
+          ref={focusRef}
+          className="flex-1 min-h-0 overflow-y-auto"
+        >
+          {!loaded && view === "live" ? (
+            <div className="font-serif text-base italic text-text-dim py-6">
+              Loading<span className="ministr-blink">_</span>
+            </div>
+          ) : sourceList.length === 0 ? (
+            view === "history" ? (
+              <EmptyState
+                icon={Users}
+                title="No history yet"
+                hint="Sessions that end while this page is open will appear here."
+              />
+            ) : (
+              <SessionsEmpty />
+            )
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              icon={Filter}
+              title="No matches"
+              hint="Clear the filter or widen the scope."
+              action={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setQuery("");
+                    setPressureFilter("all");
+                  }}
+                >
+                  Reset
+                </Button>
+              }
+            />
+          ) : compact ? (
+            <div className="border border-border-soft bg-surface">
+              {filtered.map((sess) => (
+                <CompactSessionRow
+                  key={sess.session_id}
+                  session={sess}
+                  corpora={status.corpora}
+                  fresh={freshSessions.has(sess.session_id)}
+                  resolved={view === "history"}
+                  onClick={() =>
+                    openEntity({
+                      kind: "session",
+                      corpusId: sess.corpus_id,
+                      sessionId: sess.session_id,
+                    })
+                  }
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map((sess) => (
+                <div
+                  key={sess.session_id}
+                  className={cn(view === "history" && "opacity-70")}
+                >
+                  <TurnBlock
+                    session={sess}
+                    corpora={status.corpora}
+                    fresh={freshSessions.has(sess.session_id)}
+                    onClick={() =>
+                      openEntity({
+                        kind: "session",
+                        corpusId: sess.corpus_id,
+                        sessionId: sess.session_id,
+                      })
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Heartbeat dot */}
+        <div className="flex items-center justify-end gap-2 shrink-0">
+          <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim">
+            POLL
+          </span>
+          <span
+            className={cn(
+              "h-1.5 w-1.5",
+              heartbeat ? "bg-accent" : "bg-border",
+            )}
+            aria-label="Polling heartbeat"
+          />
+        </div>
+      </div>
+
+      {/* RIGHT DRAWER — collapsible to 32px handle */}
+      <aside
+        className={cn(
+          "hidden @min-[1024px]/page:flex shrink-0 transition-none border border-border-soft min-h-0",
+          drawerOpen
+            ? "w-[clamp(280px,30%,380px)] flex-col"
+            : "w-8 flex-col items-stretch",
         )}
-      </section>
+      >
+        {drawerOpen ? (
+          <>
+            <div className="flex items-center justify-between border-b border-border-soft bg-surface-overlay px-3 py-2 shrink-0">
+              <h3 className="font-serif text-base font-bold text-text">
+                Observability
+              </h3>
+              <button
+                onClick={() => setDrawerOpen(false)}
+                aria-label="Collapse drawer"
+                title="Collapse drawer"
+                className="grid h-5 w-5 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
+                style={{ borderRadius: "var(--radius-button)" }}
+              >
+                <ChevronRight className="h-2.5 w-2.5" strokeWidth={2} />
+              </button>
+            </div>
+            <section className="flex flex-col min-h-0 flex-1 overflow-hidden">
+              <div className="flex items-baseline gap-3 border-b border-border-soft bg-surface-overlay px-3 py-1.5 shrink-0">
+                <span className="font-serif text-sm font-normal text-text-dim tabular-nums shrink-0 w-5">
+                  §1
+                </span>
+                <h4 className="font-serif text-sm font-bold text-text">
+                  Activity
+                </h4>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <ActivityFeed
+                  events={activity}
+                  limit={20}
+                  flashSince={flashSince}
+                />
+              </div>
+            </section>
+            <section className="flex flex-col min-h-0 flex-1 overflow-hidden border-t border-border-soft">
+              <div className="flex items-baseline gap-3 border-b border-border-soft bg-surface-overlay px-3 py-1.5 shrink-0">
+                <span className="font-serif text-sm font-normal text-text-dim tabular-nums shrink-0 w-5">
+                  §2
+                </span>
+                <h4 className="font-serif text-sm font-bold text-text">
+                  Changes
+                </h4>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <CoherenceFeed
+                  events={coherence}
+                  limit={12}
+                  flashSince={flashSince}
+                />
+              </div>
+            </section>
+          </>
+        ) : (
+          <button
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Expand drawer"
+            title="Expand observability drawer"
+            className="flex flex-col items-center justify-start gap-2 py-2 bg-surface text-text-muted hover:bg-surface-overlay hover:text-text cursor-pointer transition-none flex-1"
+          >
+            <ChevronLeft className="h-3 w-3" strokeWidth={2} />
+            <span
+              className="font-serif text-base font-normal"
+              style={{ writingMode: "vertical-rl", textOrientation: "mixed" }}
+            >
+              Observability
+            </span>
+          </button>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+// ─── COMPACT SESSION STRIP ─────────────────────────────────────────────────
+
+function CompactSessionRow({
+  session,
+  corpora,
+  fresh,
+  resolved,
+  onClick,
+}: {
+  session: SessionDetail;
+  corpora: readonly CorpusInfo[];
+  fresh?: boolean;
+  resolved?: boolean;
+  onClick?: () => void;
+}) {
+  const tone = pressureTone(session.pressure_level);
+  const utilPct = (session.utilization * 100).toFixed(0);
+  const sessionShort = session.session_id.slice(0, 8);
+  return (
+    <button
+      onClick={onClick}
+      disabled={!onClick}
+      className={cn(
+        "w-full text-left flex items-center gap-2 border-b-2 border-border last:border-b-0 px-2 py-1.5 transition-none",
+        onClick && "cursor-pointer hover:bg-surface-overlay",
+        fresh && "ministr-flash",
+        resolved && "opacity-60",
+      )}
+    >
+      <StatusDot tone={tone} pulse={fresh ? "live" : "off"} size="md" />
+      <span className="font-mono text-[0.6875rem] text-text-muted shrink-0 w-20 truncate">
+        {sessionShort}
+      </span>
+      <span className="font-mono text-xs text-text-dim shrink-0">
+        T{session.current_turn}
+      </span>
+      <span
+        className={cn(
+          "font-mono text-xs font-bold uppercase tracking-[0.05em] w-16 shrink-0",
+          toneTextClass(tone),
+        )}
+      >
+        {session.pressure_level}
+      </span>
+      <div className="w-20 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">
+        <div
+          className={cn(
+            "h-full",
+            session.pressure_level === "critical" && "bg-danger",
+            session.pressure_level === "high" && "bg-warning",
+            (session.pressure_level === "medium" ||
+              session.pressure_level === "low" ||
+              session.pressure_level === "none") &&
+              "bg-accent",
+          )}
+          style={{ width: `${utilPct}%` }}
+        />
+      </div>
+      <span className="font-mono text-xs tabular-nums w-10 text-right shrink-0">
+        {utilPct}%
+      </span>
+      <span className="font-mono text-xs tabular-nums text-text-dim w-20 text-right shrink-0">
+        {formatTokens(session.tokens_used)}
+      </span>
+      <span className="font-mono text-xs text-text-dim truncate flex-1">
+        {corpusLabelById(corpora, session.corpus_id)}
+      </span>
+    </button>
+  );
+}
+
+// ─── EMPTY STATE WITH MCP HINT ─────────────────────────────────────────────
+
+function SessionsEmpty() {
+  const cmd = "npx @modelcontextprotocol/inspector ministr stdio";
+  return (
+    <div className="border border-border-soft bg-surface p-8 text-center max-w-2xl mx-auto">
+      <div className="grid h-12 w-12 mx-auto place-items-center border border-border-soft bg-surface-overlay text-text mb-4">
+        <Users className="h-5 w-5" strokeWidth={2.5} />
+      </div>
+      <h3 className="font-serif text-2xl font-normal text-text leading-tight">
+        No active sessions
+      </h3>
+      <p className="font-serif text-base italic text-text-dim mt-2 max-w-md mx-auto">
+        Point Claude Code, Cursor, or any MCP client at the daemon — sessions
+        appear here live with budget, pressure, and dedup metrics.
+      </p>
+      <div className="mt-5 text-left">
+        <p className="font-sans text-sm font-semibold text-text-muted mb-1">
+          How to start a session
+        </p>
+        <button
+          onClick={() => navigator.clipboard.writeText(cmd)}
+          title="Click to copy"
+          className="block w-full text-left border border-border-soft bg-surface-sunken px-3 py-2 font-mono text-[0.8125rem] leading-[1.5] text-text break-all cursor-pointer hover:border-border hover:bg-surface-overlay transition-none"
+        >
+          {`> ${cmd}`}
+        </button>
+        <p className="font-serif text-xs italic text-text-dim mt-1">
+          Click to copy.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── PRIMITIVES ────────────────────────────────────────────────────────────
+
+function VStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: Tone;
+}) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-1 border-r border-border-soft last:border-r-0 min-w-0">
+      <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim shrink-0">
+        {label}
+      </span>
+      <span
+        className={cn(
+          "font-mono text-sm font-semibold tabular-nums truncate",
+          tone ? toneTextClass(tone) : "text-text",
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }
@@ -390,16 +704,14 @@ function FilterPill({
     <button
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all duration-120 cursor-pointer",
+        "border px-2 py-0.5 text-sm font-sans font-medium cursor-pointer transition-none",
         active
-          ? accentTone
-          : "text-text-muted hover:text-text hover:bg-surface-overlay/60",
+          ? "border-accent bg-surface-overlay text-text"
+          : "border-border-soft bg-surface text-text-muted hover:border-border hover:text-text",
       )}
+      style={{ borderRadius: "var(--radius-pill)" }}
     >
       {children}
     </button>
   );
 }
-
-// Hide unused-import warnings for icons used above.
-export const __icons = { Gauge };

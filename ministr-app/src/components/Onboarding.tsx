@@ -1,20 +1,13 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  CircleDot,
-  FolderOpen,
-  ArrowRight,
   ArrowLeft,
-  CheckCircle2,
-  Search,
-  Layers,
-  Gauge,
-  Zap,
+  ArrowRight,
+  FolderOpen,
+  Plus,
   X,
 } from "lucide-react";
 import { Button } from "./ui/button";
-import { BudgetRing } from "./ui/budget-ring";
-import { StatusDot } from "./ui/status-dot";
 import { cn } from "../lib/utils";
 import type { DetectedProject } from "../lib/types";
 
@@ -24,17 +17,41 @@ interface OnboardingProps {
 
 type Step = "welcome" | "detect" | "done";
 
+const STEPS: { key: Step; n: number }[] = [
+  { key: "welcome", n: 1 },
+  { key: "detect", n: 2 },
+  { key: "done", n: 3 },
+];
+
 export function Onboarding({ onDismiss }: OnboardingProps) {
   const [step, setStep] = useState<Step>("welcome");
   const [detected, setDetected] = useState<DetectedProject[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scanning, setScanning] = useState(false);
+  const [showScanning, setShowScanning] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importedCount, setImportedCount] = useState(0);
+  const scanTimer = useRef<number | null>(null);
 
   useEffect(() => {
     if (step === "detect") scanProjects();
   }, [step]);
+
+  // Debounce the SCANNING_ indicator: only show after 300ms of waiting.
+  useEffect(() => {
+    if (scanning) {
+      scanTimer.current = window.setTimeout(() => setShowScanning(true), 300);
+    } else {
+      if (scanTimer.current !== null) {
+        clearTimeout(scanTimer.current);
+        scanTimer.current = null;
+      }
+      setShowScanning(false);
+    }
+    return () => {
+      if (scanTimer.current !== null) clearTimeout(scanTimer.current);
+    };
+  }, [scanning]);
 
   async function scanProjects() {
     setScanning(true);
@@ -52,7 +69,8 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
   function toggleProject(path: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(path) ? next.delete(path) : next.add(path);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
       return next;
     });
   }
@@ -83,9 +101,27 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
     }
   }
 
-  async function addManually() {
-    await invoke("add_project_dialog");
-    await dismiss();
+  async function addManually(advanceToDone = false) {
+    try {
+      await invoke("add_project_dialog");
+    } catch {
+      /* ignore */
+    }
+    if (advanceToDone) {
+      setImportedCount((c) => c + 1);
+      setStep("done");
+    } else {
+      await dismiss();
+    }
+  }
+
+  async function addAnotherFromDone() {
+    try {
+      await invoke("add_project_dialog");
+      setImportedCount((c) => c + 1);
+    } catch {
+      /* ignore */
+    }
   }
 
   async function dismiss() {
@@ -95,197 +131,168 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
 
   return (
     <div className="flex h-full items-center justify-center bg-bg p-6">
-      <div className="w-full max-w-xl ministr-fade-in">
-        {step === "welcome" && <Welcome onContinue={() => setStep("detect")} onManual={addManually} onSkip={dismiss} />}
-        {step === "detect" && (
-          <Detect
-            scanning={scanning}
-            detected={detected}
-            selected={selected}
-            importing={importing}
-            onBack={() => setStep("welcome")}
-            onToggle={toggleProject}
-            onToggleAll={toggleAll}
-            onManual={addManually}
-            onImport={importSelected}
-          />
-        )}
-        {step === "done" && <Done count={importedCount} onDismiss={dismiss} />}
+      <div className="w-full max-w-xl">
+        <Card>
+          <StepIndicator current={step} />
+          <div className="p-8">
+            {step === "welcome" && (
+              <Welcome
+                onContinue={() => setStep("detect")}
+                onManual={() => addManually(false)}
+              />
+            )}
+            {step === "detect" && (
+              <Detect
+                scanning={showScanning}
+                detected={detected}
+                selected={selected}
+                importing={importing}
+                onBack={() => setStep("welcome")}
+                onToggle={toggleProject}
+                onToggleAll={toggleAll}
+                onManual={() => addManually(true)}
+                onImport={importSelected}
+              />
+            )}
+            {step === "done" && (
+              <Done
+                count={importedCount}
+                onDismiss={dismiss}
+                onAddAnother={addAnotherFromDone}
+              />
+            )}
+            {step !== "done" && (
+              <div className="mt-6 flex items-center justify-end">
+                <button
+                  onClick={dismiss}
+                  className="inline-flex items-center gap-1 font-sans text-xs tracking-[0.05em] text-text-dim hover:text-text cursor-pointer"
+                >
+                  Skip for now
+                  <ArrowRight className="h-3 w-3" strokeWidth={2.5} />
+                </button>
+              </div>
+            )}
+          </div>
+        </Card>
       </div>
     </div>
   );
 }
 
-/**
- * Decorative preview of the cache observatory — shown at the bottom of the
- * Welcome step so users aren't surprised by the density of the real dashboard
- * after onboarding completes. Not driven by live data.
- */
-function ObservatoryPreview() {
+// ─── CARD + STEP INDICATOR ───────────────────────────────────────────────
+
+function Card({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-5 rounded-xl border border-dashed border-border/60 bg-surface-overlay/30 p-3">
-      <div className="flex items-center gap-3">
-        <div className="shrink-0">
-          <BudgetRing
-            utilization={0.62}
-            warm={0.38}
-            pressure="medium"
-            size={64}
-            stroke={5}
-          >
-            <span className="font-mono text-[11px] font-bold tabular-nums text-text leading-none">
-              62
-              <span className="text-[9px] text-text-dim">%</span>
+    <div className="border border-border-soft bg-surface shadow-[6px_6px_0_0_var(--shadow-color)]">
+      {children}
+    </div>
+  );
+}
+
+function StepIndicator({ current }: { current: Step }) {
+  return (
+    <div className="flex items-center justify-center gap-2 border-b-2 border-border bg-surface-overlay px-4 py-2">
+      {STEPS.map((s, i) => {
+        const isCurrent = s.key === current;
+        const isPast =
+          STEPS.findIndex((x) => x.key === current) > i;
+        return (
+          <div key={s.key} className="flex items-center gap-2">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 border border-border-soft px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.05em] transition-none",
+                isCurrent
+                  ? "bg-accent text-[var(--color-accent-fg-on)] shadow-[2px_2px_0_0_var(--shadow-color)]"
+                  : isPast
+                    ? "bg-surface text-text"
+                    : "bg-surface text-text-dim",
+              )}
+            >
+              <span className="tabular-nums">{s.n}</span>
+              <span>{s.key}</span>
             </span>
-          </BudgetRing>
-        </div>
-
-        <div className="flex-1 min-w-0 flex flex-col gap-1">
-          <PreviewChip label="ministr-rs" tone="accent" sub="1.2k sections" />
-          <PreviewChip label="docs-site" tone="success" sub="420 sections" />
-          <PreviewChip label="playground" tone="muted" sub="idle" />
-        </div>
-      </div>
-
-      <div className="mt-2 flex items-center gap-2 rounded-md bg-surface-raised/40 border-l-2 border-l-accent/60 pl-2 pr-2 py-1 text-[10px]">
-        <span className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-accent/15 text-accent">
-          <CircleDot className="h-2.5 w-2.5" />
-        </span>
-        <span className="font-mono text-text">survey</span>
-        <span className="text-text-dim truncate flex-1">
-          "authentication middleware"
-        </span>
-        <StatusDot tone="success" size="sm" />
-        <span className="font-mono text-text-dim tabular-nums">+1.4K</span>
-      </div>
+            {i < STEPS.length - 1 && (
+              <span className="font-mono text-xs text-text-dim">·</span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function PreviewChip({
-  label,
-  sub,
-  tone,
-}: {
-  label: string;
-  sub: string;
-  tone: "accent" | "success" | "muted";
-}) {
-  return (
-    <div className="flex items-center gap-2 rounded-md border border-border/40 bg-surface-raised/40 px-2 py-1">
-      <StatusDot tone={tone} size="sm" />
-      <span className="font-mono text-[11px] text-text truncate">{label}</span>
-      <span className="ml-auto font-mono text-[10px] text-text-dim truncate">
-        {sub}
-      </span>
-    </div>
-  );
-}
-
-function Logo({ large = false }: { large?: boolean }) {
-  return (
-    <div
-      className={cn(
-        "grid place-items-center rounded-2xl bg-accent text-[var(--color-accent-fg-on)] border border-border/40",
-        large ? "h-16 w-16" : "h-12 w-12",
-      )}
-    >
-      <CircleDot
-        className={large ? "h-8 w-8" : "h-6 w-6"}
-        strokeWidth={2.5}
-      />
-    </div>
-  );
-}
+// ─── WELCOME ─────────────────────────────────────────────────────────────
 
 function Welcome({
   onContinue,
   onManual,
-  onSkip,
 }: {
   onContinue: () => void;
   onManual: () => void;
-  onSkip: () => void;
 }) {
-  const features = [
-    {
-      icon: Search,
-      title: "Semantic search",
-      body: "Embedding-based retrieval across docs, code, and claims.",
-    },
-    {
-      icon: Layers,
-      title: "Session-aware",
-      body: "Dedup delivered content, deliver deltas when files change.",
-    },
-    {
-      icon: Zap,
-      title: "Predictive prefetch",
-      body: "Prefetch the next sections the agent will ask for.",
-    },
-    {
-      icon: Gauge,
-      title: "Budget awareness",
-      body: "Track token usage, flag pressure, recommend evictions.",
-    },
-  ];
-
   return (
-    <div className="rounded-2xl border border-border/70 bg-surface p-8 shadow-[var(--shadow-lg)]">
-      <div className="flex flex-col items-center text-center">
-        <Logo large />
-        <div className="mt-5">
-          <span className="ministr-wordmark text-2xl">ministr</span>
-        </div>
-        <p className="mt-3 max-w-md text-sm leading-relaxed text-text-muted">
-          A context cache for your LLM agent. ministr tracks what it has delivered,
-          pre-warms what's next, and flags budget pressure — locally, with no API keys.
+    <div>
+      <div className="text-center">
+        <span
+          className="ministr-wordmark"
+          style={{ fontSize: "48px", borderBottomWidth: "6px" }}
+        >
+          ministr
+        </span>
+        <p className="font-serif italic text-base text-text-dim mt-4">
+          Code intelligence for LLM agents.
+        </p>
+        <p className="mt-4 max-w-md mx-auto font-sans text-sm leading-relaxed text-text-muted">
+          ministr indexes your codebase. Survey, find symbols, follow
+          references, map cross-language bridges — locally, with no API keys.
         </p>
       </div>
 
-      <div className="mt-7 grid grid-cols-2 gap-3">
-        {features.map((f) => (
-          <div
-            key={f.title}
-            className="rounded-lg border border-border/60 bg-surface-overlay/40 p-3"
+      <div className="mt-6 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+        {["Survey", "Symbols", "References", "Bridge"].map((f, i) => (
+          <span
+            key={f}
+            className="inline-flex items-center gap-3 font-serif text-sm font-bold text-text"
           >
-            <div className="flex items-center gap-2">
-              <div className="grid h-6 w-6 place-items-center rounded-md bg-[var(--color-accent-soft)] text-accent">
-                <f.icon className="h-3.5 w-3.5" />
-              </div>
-              <p className="text-[13px] font-semibold text-text">{f.title}</p>
-            </div>
-            <p className="mt-1.5 text-xs leading-snug text-text-muted">
-              {f.body}
-            </p>
-          </div>
+            {f}
+            {i < 3 && (
+              <span className="font-mono text-text-dim">·</span>
+            )}
+          </span>
         ))}
       </div>
 
-      <ObservatoryPreview />
+      <p className="mt-5 text-center font-sans text-xs text-text-dim">
+        Press{" "}
+        <kbd
+          className="border border-border-soft bg-surface-overlay px-1 py-0 font-mono text-[0.6875rem] text-text-muted"
+          style={{ borderRadius: "var(--radius-pill)" }}
+        >
+          ⌘K
+        </kbd>{" "}
+        anywhere to jump.
+      </p>
 
-      <div className="mt-7 space-y-2">
+      <div className="mt-7 flex flex-col gap-2">
         <Button className="w-full" size="lg" onClick={onContinue}>
-          <Search className="h-3.5 w-3.5" />
           Scan for projects
-          <ArrowRight className="h-3.5 w-3.5" />
+          <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
         </Button>
-        <Button variant="outline" size="lg" className="w-full" onClick={onManual}>
-          <FolderOpen className="h-3.5 w-3.5" />
+        <Button
+          variant="outline"
+          size="lg"
+          className="w-full"
+          onClick={onManual}
+        >
+          <FolderOpen className="h-3.5 w-3.5" strokeWidth={2} />
           Pick a folder manually
         </Button>
       </div>
-
-      <button
-        onClick={onSkip}
-        className="mx-auto mt-4 flex items-center gap-1 text-[11px] text-text-dim hover:text-text-muted cursor-pointer"
-      >
-        Skip for now
-        <ArrowRight className="h-3 w-3" />
-      </button>
     </div>
   );
 }
+
+// ─── DETECT ──────────────────────────────────────────────────────────────
 
 function Detect({
   scanning,
@@ -309,61 +316,64 @@ function Detect({
   onImport: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-surface p-7 shadow-[var(--shadow-lg)]">
-      <div className="flex items-start gap-3">
-        <Logo />
-        <div className="flex-1">
-          <h2 className="text-base font-semibold text-text">Detected projects</h2>
-          <p className="mt-0.5 text-xs text-text-dim">
-            Scanning{" "}
-            <span className="font-mono">~/Code · ~/Projects · ~/Developer · ~/src</span>{" "}
-            for <span className="font-mono">.ministr.toml</span>
-          </p>
-        </div>
+    <div>
+      <div>
+        <h2 className="font-serif text-2xl font-normal text-text leading-tight">
+          Detected projects
+        </h2>
+        <p className="mt-1 font-serif text-sm italic text-text-dim">
+          Scanning ~/Code · ~/Projects · ~/Developer · ~/src for .ministr.toml
+        </p>
       </div>
 
       <div className="mt-5 min-h-[220px]">
         {scanning ? (
           <div className="flex flex-col items-center justify-center gap-3 py-10">
-            <div className="ministr-spin h-8 w-8 rounded-full border-2 border-border border-t-accent" />
-            <p className="text-xs text-text-muted">Scanning…</p>
+            <p className="font-serif text-base italic text-text-muted">
+              Scanning<span className="ministr-blink">_</span>
+            </p>
           </div>
         ) : detected.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
-            <div className="grid h-12 w-12 place-items-center rounded-xl bg-surface-overlay text-text-dim">
-              <FolderOpen className="h-5 w-5" />
+            <div className="grid h-12 w-12 place-items-center border border-border-soft bg-surface-overlay text-text-muted">
+              <FolderOpen className="h-5 w-5" strokeWidth={2} />
             </div>
-            <p className="text-sm font-medium text-text">No ministr projects found</p>
-            <p className="max-w-xs text-xs text-text-dim">
-              Drop a <span className="font-mono">.ministr.toml</span> into any
+            <p className="font-serif text-lg font-bold text-text">
+              No projects found
+            </p>
+            <p className="max-w-xs font-serif text-sm italic text-text-dim">
+              Drop a{" "}
+              <span className="font-mono not-italic">.ministr.toml</span> into any
               project root, or add a folder manually.
             </p>
           </div>
         ) : (
           <>
-            <div className="mb-2 flex items-center justify-between text-[11px]">
+            <div className="mb-2 flex items-center justify-between">
               <button
                 onClick={onToggleAll}
-                className="text-accent hover:underline cursor-pointer"
+                className="font-sans text-sm font-medium text-text-muted hover:text-text border-b border-transparent hover:border-text cursor-pointer"
               >
-                {selected.size === detected.length ? "Deselect all" : "Select all"}
+                {selected.size === detected.length
+                  ? "Deselect all"
+                  : "Select all"}
               </button>
-              <span className="font-mono text-text-dim">
+              <span className="font-mono text-xs tabular-nums text-text-dim">
                 {selected.size} / {detected.length}
               </span>
             </div>
 
-            <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+            <div className="max-h-72 space-y-0 overflow-y-auto">
               {detected.map((project) => {
                 const isSelected = selected.has(project.path);
                 return (
                   <label
                     key={project.path}
                     className={cn(
-                      "flex items-center gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-all duration-120",
+                      "relative flex items-center gap-3 border border-border-soft px-3 py-2 cursor-pointer transition-none -mt-[1px] first:mt-0",
                       isSelected
-                        ? "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] shadow-[0_0_0_3px_var(--color-accent-soft)]"
-                        : "border-border/60 hover:border-border-hover hover:bg-surface-overlay/60",
+                        ? "bg-surface-overlay border-accent text-text"
+                        : "bg-surface text-text-muted hover:bg-surface-overlay hover:text-text hover:border-border",
                     )}
                   >
                     <input
@@ -373,10 +383,10 @@ function Detect({
                       className="h-3.5 w-3.5 accent-accent cursor-pointer"
                     />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-semibold text-text">
+                      <div className="truncate font-mono text-sm font-semibold">
                         {project.name}
                       </div>
-                      <div className="truncate font-mono text-[11px] text-text-dim">
+                      <div className="truncate font-mono text-xs text-text-dim">
                         {project.path}
                       </div>
                     </div>
@@ -390,47 +400,115 @@ function Detect({
 
       <div className="mt-5 flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onBack}>
-          <ArrowLeft className="h-3.5 w-3.5" />
+          <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
           Back
         </Button>
         <div className="flex-1" />
         <Button variant="outline" size="sm" onClick={onManual}>
-          <FolderOpen className="h-3.5 w-3.5" />
+          <FolderOpen className="h-3.5 w-3.5" strokeWidth={2} />
           Add manually
         </Button>
         <Button size="sm" onClick={onImport} disabled={importing}>
           {importing
             ? "Importing…"
             : selected.size > 0
-              ? `Add ${selected.size} project${selected.size !== 1 ? "s" : ""}`
+              ? `Add ${selected.size}`
               : "Skip"}
-          {!importing && <ArrowRight className="h-3.5 w-3.5" />}
+          {!importing && (
+            <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
+          )}
         </Button>
       </div>
     </div>
   );
 }
 
-function Done({ count, onDismiss }: { count: number; onDismiss: () => void }) {
+// ─── DONE ────────────────────────────────────────────────────────────────
+
+function Done({
+  count,
+  onDismiss,
+  onAddAnother,
+}: {
+  count: number;
+  onDismiss: () => void;
+  onAddAnother: () => void;
+}) {
+  const tips: { key: string; description: string }[] = [
+    {
+      key: "Open search",
+      description: "Type a probe like `Config` to find symbols.",
+    },
+    {
+      key: "⌘K",
+      description: "Command palette — jump anywhere instantly.",
+    },
+    {
+      key: "?",
+      description: "See all keyboard shortcuts.",
+    },
+  ];
+
   return (
-    <div className="rounded-2xl border border-border/70 bg-surface p-8 shadow-[var(--shadow-lg)] text-center">
-      <div className="flex justify-center">
-        <div className="grid h-16 w-16 place-items-center rounded-2xl bg-success/15 text-success border border-success/30">
-          <CheckCircle2 className="h-8 w-8" strokeWidth={2.25} />
-        </div>
+    <div>
+      <div className="text-center">
+        <h2 className="font-serif text-2xl font-normal text-text leading-tight ">
+          Ready
+        </h2>
+        <p className="mx-auto mt-2 max-w-sm font-sans text-sm text-text-muted">
+          {count === 0
+            ? "ministr is ready. Add projects anytime from the dashboard or the tray."
+            : count === 1
+              ? "1 project indexing."
+              : `${count} projects indexing.`}
+        </p>
       </div>
-      <h2 className="mt-5 text-lg font-semibold text-text">You're all set</h2>
-      <p className="mx-auto mt-2 max-w-sm text-sm text-text-muted">
-        {count === 0
-          ? "ministr is ready. Add projects anytime from the dashboard or the tray."
-          : count === 1
-            ? "1 project is being indexed. You can add more anytime from the dashboard."
-            : `${count} projects are being indexed. You can add more anytime from the dashboard.`}
-      </p>
-      <Button className="mt-6" size="lg" onClick={onDismiss}>
-        Open dashboard
-        <ArrowRight className="h-3.5 w-3.5" />
-      </Button>
+
+      {/* §1 Try this */}
+      <div className="mt-6 border border-border-soft bg-surface-overlay">
+        <div className="flex items-baseline gap-3 border-b border-border-soft px-3 py-2">
+          <span className="font-serif text-base font-normal text-text-dim tabular-nums shrink-0 w-6">
+            §1
+          </span>
+          <h3 className="font-serif text-base font-bold text-text">
+            Try this
+          </h3>
+        </div>
+        <ul className="divide-y divide-border-soft">
+          {tips.map((t, i) => (
+            <li
+              key={t.key}
+              className="flex items-baseline gap-3 px-3 py-2"
+            >
+              <span className="font-serif text-sm text-text-dim w-5 text-right tabular-nums shrink-0">
+                {i + 1}
+              </span>
+              <span className="inline-flex items-center font-sans text-sm font-semibold text-text shrink-0 border-b-2 border-accent pb-px">
+                {t.key}
+              </span>
+              <span className="font-sans text-sm text-text-muted">
+                {t.description}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="mt-6 flex flex-col gap-2">
+        <Button className="w-full" size="lg" onClick={onDismiss}>
+          Open dashboard
+          <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
+        </Button>
+        <Button
+          variant="outline"
+          size="lg"
+          className="w-full"
+          onClick={onAddAnother}
+        >
+          <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+          Add another project
+        </Button>
+      </div>
     </div>
   );
 }
@@ -440,9 +518,9 @@ export function OnboardingSkipBadge({ onClick }: { onClick: () => void }) {
     <button
       onClick={onClick}
       aria-label="Dismiss onboarding"
-      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-dim hover:bg-surface-overlay hover:text-text cursor-pointer"
+      className="inline-flex h-7 w-7 items-center justify-center border-2 border-border text-text-dim hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
     >
-      <X className="h-3.5 w-3.5" />
+      <X className="h-3.5 w-3.5" strokeWidth={2.5} />
     </button>
   );
 }
