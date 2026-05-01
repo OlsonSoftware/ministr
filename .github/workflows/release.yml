@@ -303,6 +303,95 @@ jobs:
           tauriScript: pnpm tauri
           args: ${{ matrix.tauri_args }}
 
+      # Wrap the notarized .app in a signed + notarized .pkg installer.
+      # Tauri 2.x doesn't ship a .pkg target, so we drive Apple's stock
+      # toolchain (pkgbuild → productbuild → notarytool → stapler) directly.
+      #
+      # The postinstall script symlinks the bundled CLI onto PATH at
+      # /usr/local/bin/ministr — so users get a working `ministr` command
+      # the moment the installer finishes, with no shell-rc edits.
+      #
+      # Requires three additional repo secrets beyond the Application cert:
+      #   APPLE_INSTALLER_CERTIFICATE          — base64 of Developer ID Installer .p12
+      #   APPLE_INSTALLER_CERTIFICATE_PASSWORD — export password for that .p12
+      #   APPLE_INSTALLER_SIGNING_IDENTITY     — e.g. "Developer ID Installer: …"
+      # If any are unset, this step skips (DMG-only release, same as today).
+      - name: Build signed + notarized .pkg installer (macOS)
+        if: matrix.platform == 'macos-aarch64' && env.APPLE_INSTALLER_CERTIFICATE != ''
+        shell: bash
+        env:
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          APP_BUNDLE="target/aarch64-apple-darwin/release/bundle/macos/ministr.app"
+          test -d "$APP_BUNDLE" || { echo "ministr.app not found at $APP_BUNDLE"; exit 1; }
+
+          # tauri-action created an ad-hoc keychain and imported the
+          # Application cert there. We reuse it for the Installer cert
+          # so productbuild can find both certs in one place.
+          KEYCHAIN_PATH=$(security list-keychains -d user | awk -F'"' 'NR==1{print $2}')
+          CERT_PATH="$RUNNER_TEMP/installer-cert.p12"
+          echo "$APPLE_INSTALLER_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" \
+            -P "$APPLE_INSTALLER_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "" "$KEYCHAIN_PATH" >/dev/null
+
+          # Postinstall: symlink CLI onto PATH (overwrites stale links).
+          SCRIPTS_DIR="$RUNNER_TEMP/pkg-scripts"
+          mkdir -p "$SCRIPTS_DIR"
+          cat > "$SCRIPTS_DIR/postinstall" <<'POSTINSTALL'
+          #!/bin/bash
+          set -e
+          mkdir -p /usr/local/bin
+          ln -sf /Applications/ministr.app/Contents/MacOS/ministr-cli /usr/local/bin/ministr
+          exit 0
+          POSTINSTALL
+          chmod +x "$SCRIPTS_DIR/postinstall"
+
+          # Component pkg: the .app + scripts.
+          COMPONENT_PKG="$RUNNER_TEMP/ministr-component.pkg"
+          pkgbuild \
+            --component "$APP_BUNDLE" \
+            --install-location /Applications \
+            --identifier ai.ministr.desktop \
+            --version "$VERSION" \
+            --scripts "$SCRIPTS_DIR" \
+            "$COMPONENT_PKG"
+
+          # Distribution pkg: signed, what end users double-click.
+          mkdir -p _bundles
+          DIST_PKG="_bundles/ministr-desktop-aarch64-apple-darwin.pkg"
+          productbuild \
+            --package "$COMPONENT_PKG" \
+            --sign "$APPLE_INSTALLER_SIGNING_IDENTITY" \
+            --keychain "$KEYCHAIN_PATH" \
+            "$DIST_PKG"
+
+          # Notarize the signed .pkg. notarytool blocks until Apple
+          # responds (typically <2 min for pkgs).
+          xcrun notarytool submit "$DIST_PKG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          # Staple the notarization ticket so installs work offline.
+          xcrun stapler staple "$DIST_PKG"
+
+          # sha256 companion (matches the rest of the artifact set).
+          shasum -a 256 "$DIST_PKG" > "$DIST_PKG.sha256"
+          ls -la _bundles
+
       # Rename Tauri's `<productName>_<version>_<arch>.<ext>` outputs to
       # our `ministr-desktop-<target-triple>.<ext>` convention. Predictable
       # URLs for the dl.ministr.app Worker and install scripts.
@@ -332,6 +421,8 @@ jobs:
               AppImage) dst="_bundles/ministr-desktop-${{ matrix.triple }}.AppImage" ;;
               *) continue ;;
             esac
+            # Skip if our own pkg-installer step already produced this file.
+            [ -e "$dst" ] && continue
             cp "$src" "$dst"
             sha256 "$dst" > "$dst.sha256"
           done < <(find "${{ matrix.target_dir }}" -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) 2>/dev/null)
@@ -371,7 +462,7 @@ jobs:
           set -euo pipefail
           cd artifacts
           : > SHA256SUMS
-          for f in *.tar.gz *.zip *.dmg *.exe *.deb *.AppImage; do
+          for f in *.tar.gz *.zip *.dmg *.pkg *.exe *.deb *.AppImage; do
             [ -f "$f" ] || continue
             shasum -a 256 "$f" >> SHA256SUMS
           done

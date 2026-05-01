@@ -81,7 +81,7 @@ export const INSTALL_COMMANDS: readonly CliCommand[] = [
     shell: 'bash',
     command: 'curl -fsSL https://ministr.app/install.sh | bash',
     copyText: 'curl -fsSL https://ministr.app/install.sh | bash',
-    note: 'Apple Silicon only. Intel Mac users: build from source via the Cargo tab.',
+    note: 'Apple Silicon only. Intel Mac is unsupported.',
   },
   {
     id: 'linux',
@@ -116,7 +116,7 @@ export interface DesktopInstaller {
   /** Asset filename as published on the GitHub Release. */
   filename: string;
   /** Friendly file extension shown in the UI. */
-  ext: 'dmg' | 'exe' | 'deb' | 'AppImage';
+  ext: 'pkg' | 'dmg' | 'exe' | 'deb' | 'AppImage';
   /** One-line install/run hint. */
   hint: string;
 }
@@ -125,9 +125,9 @@ export const DESKTOP_INSTALLERS: readonly DesktopInstaller[] = [
   {
     id: 'macos-aarch64',
     label: 'macOS (Apple Silicon)',
-    filename: 'ministr-desktop-aarch64-apple-darwin.dmg',
-    ext: 'dmg',
-    hint: 'Drag ministr.app into /Applications.',
+    filename: 'ministr-desktop-aarch64-apple-darwin.pkg',
+    ext: 'pkg',
+    hint: 'Double-click to install. Adds the CLI to PATH automatically.',
   },
   {
     id: 'windows-x64',
