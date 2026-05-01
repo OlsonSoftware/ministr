@@ -25,6 +25,9 @@
     "vite": "^6"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@fontsource/ibm-plex-serif": "^5.2.7",
+    "@fontsource/jetbrains-mono": "^5.1.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   }
