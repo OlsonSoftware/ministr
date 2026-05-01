@@ -1,0 +1,89 @@
+import { useEffect, useState } from "react";
+
+const DEFAULT_TAB_KEY = "ministr-default-tab";
+const DENSITY_KEY = "ministr-density";
+
+export type DefaultTab =
+  | "search"
+  | "symbols"
+  | "bridge"
+  | "projects"
+  | "structure"
+  | "sessions"
+  | "logs";
+
+export type Density = "comfortable" | "compact";
+
+const VALID_DEFAULT_TABS: DefaultTab[] = [
+  "search",
+  "symbols",
+  "bridge",
+  "projects",
+  "structure",
+  "sessions",
+  "logs",
+];
+
+/** Default-tab-on-launch preference, persisted to localStorage. */
+export function useDefaultTab() {
+  const [defaultTab, setDefaultTabRaw] = useState<DefaultTab>(() => {
+    try {
+      const v = localStorage.getItem(DEFAULT_TAB_KEY);
+      if (v && VALID_DEFAULT_TABS.includes(v as DefaultTab)) return v as DefaultTab;
+    } catch {
+      /* ignore */
+    }
+    return "search";
+  });
+  function setDefaultTab(t: DefaultTab) {
+    setDefaultTabRaw(t);
+    try {
+      localStorage.setItem(DEFAULT_TAB_KEY, t);
+    } catch {
+      /* ignore */
+    }
+  }
+  return { defaultTab, setDefaultTab };
+}
+
+/** Density preference (affects card padding globally). */
+export function useDensity() {
+  const [density, setDensityRaw] = useState<Density>(() => {
+    try {
+      const v = localStorage.getItem(DENSITY_KEY);
+      if (v === "comfortable" || v === "compact") return v;
+    } catch {
+      /* ignore */
+    }
+    return "comfortable";
+  });
+  function setDensity(d: Density) {
+    setDensityRaw(d);
+    try {
+      localStorage.setItem(DENSITY_KEY, d);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Reflect density on the document so global CSS can switch padding via the
+  // `[data-density="compact"]` selector if components opt in.
+  useEffect(() => {
+    document.documentElement.dataset.density = density;
+  }, [density]);
+
+  return { density, setDensity };
+}
+
+/** Reset all preferences. */
+export function resetPreferences() {
+  try {
+    localStorage.removeItem(DEFAULT_TAB_KEY);
+    localStorage.removeItem(DENSITY_KEY);
+    localStorage.removeItem("ministr-theme");
+    localStorage.removeItem("ministr-active-corpus");
+    localStorage.removeItem("ministr-sessions-drawer-open");
+  } catch {
+    /* ignore */
+  }
+}
