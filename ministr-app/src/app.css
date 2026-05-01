@@ -1,80 +1,174 @@
 @import "tailwindcss";
 
 /* ------------------------------------------------------------------
-   Ministr design tokens — kept in parity with the docs site so the app
-   and marketing surface feel like the same product.
+   Ministr design tokens — neo-brutalist (loud), monochrome + accent.
+   Sharp 0px corners, 2px solid borders, hard offset shadows (no blur).
+   Black/white/grays + a single oklch-equivalent purple accent.
    ------------------------------------------------------------------ */
 
 :root {
-  /* Light theme */
-  --color-bg: #fafaf9;
+  /* Light theme — faint warm-paper bg + bright surface lift evokes the
+     datasheet/manpage reference; cards now have visible separation from page. */
+  --color-bg: #fafaf7;
   --color-surface: #ffffff;
   --color-surface-raised: #ffffff;
-  --color-surface-overlay: #f4f4f5;
-  --color-surface-sunken: #f4f4f5;
-  --color-border: #e7e5e4;
-  --color-border-hover: #d6d3d1;
-  --color-text: #1c1917;
-  --color-text-muted: #57534e;
-  --color-text-dim: #78716c;
+  --color-surface-overlay: #f1f1ed;
+  --color-surface-sunken: #ebebe6;
+  --color-border: #000000;
+  --color-border-soft: #b8b8b3;
+  --color-border-hover: #000000;
+  --color-text: #000000;
+  --color-text-muted: #404040;
+  --color-text-dim: #707070;
 
-  --color-accent: oklch(62% 0.2 278);
-  --color-accent-hover: oklch(58% 0.2 278);
-  --color-accent-ring: color-mix(in srgb, oklch(62% 0.2 278) 40%, transparent);
-  --color-accent-soft: color-mix(in srgb, oklch(62% 0.2 278) 8%, transparent);
+  --color-accent: #6b3aff;
+  --color-accent-hover: #5325f5;
   --color-accent-fg-on: #ffffff;
+  /* Compatibility shims so legacy callers don't crash mid-refactor.
+     They resolve to solid accent — no transparency. */
+  --color-accent-ring: var(--color-accent);
+  --color-accent-soft: var(--color-accent);
 
-  --color-success: #16a34a;
-  --color-warning: #d97706;
-  --color-danger: #dc2626;
+  /* Low-chroma semantics — muted versions of the previous pure hues, used
+     only for status dots / log-level chips / leading edges. */
+  --color-success: #2f6f4f;
+  --color-warning: #8a5a00;
+  --color-danger: #9a2028;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
+  /* Role-specific corner radii.
+     - Data surfaces (tables, code, treemap cells, status grids) keep 0px
+       to communicate "structured / fixed-width data".
+     - Interactive controls (buttons, inputs, chips, pills) get 2px so they
+       read as hand-touchable without breaking the brutalist edge. */
+  --radius-button: 2px;
+  --radius-input: 2px;
+  --radius-pill: 2px;
+  --radius-card: 0;
+  --radius-data: 0;
+  /* Tailwind's `rounded-{sm,md,lg,xl}` utilities resolve through these.
+     `rounded-md` etc. in legacy callers now read 2px (control-friendly);
+     anything that needs 0 should use `rounded-none`. */
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+  --radius-xl: 2px;
 
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.04);
-  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04);
-  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.04);
-  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.10), 0 2px 4px rgb(0 0 0 / 0.04);
+  /* Hard offset shadows. No blur, no spread, full alpha.
+     The offset values are themselves variables so high-DPI media queries
+     can bump them — keeps the brutalist signature visible at 2x/3x DPI. */
+  --shadow-color: #000000;
+  --shadow-offset-xs: 1px;
+  --shadow-offset-sm: 2px;
+  --shadow-offset-md: 4px;
+  --shadow-offset-lg: 6px;
+  --shadow-xs: var(--shadow-offset-xs) var(--shadow-offset-xs) 0 0 var(--shadow-color);
+  --shadow-sm: var(--shadow-offset-sm) var(--shadow-offset-sm) 0 0 var(--shadow-color);
+  --shadow-md: var(--shadow-offset-md) var(--shadow-offset-md) 0 0 var(--shadow-color);
+  --shadow-lg: var(--shadow-offset-lg) var(--shadow-offset-lg) 0 0 var(--shadow-color);
+
+  --border-width-default: 2px;
+  --border-width-thick: 3px;
+
+  /* Fluid type tokens — clamp(min, fluid, max). Used per-component when
+     a label would otherwise be hardcoded text-[Npx]. Floor stays at 10px
+     for true micro-labels; the upper end grows on big monitors / high DPI. */
+  --text-mono-xs: clamp(10px, 0.5vw + 9px, 12px);
+  --text-mono-sm: clamp(11px, 0.55vw + 10px, 13px);
+  --text-mono-base: clamp(12px, 0.6vw + 11px, 14px);
+  --text-sans-sm: clamp(12px, 0.6vw + 11px, 14px);
+  --text-sans-base: clamp(13px, 0.7vw + 12px, 16px);
 
   --grain-opacity: 0;
 }
 
 .dark {
-  --color-bg: #0a0a12;
-  --color-surface: #111224;
-  --color-surface-raised: #161732;
-  --color-surface-overlay: #1b1d3a;
-  --color-surface-sunken: #0a0a12;
-  --color-border: #26284a;
-  --color-border-hover: #353767;
-  --color-text: #e5e7eb;
-  --color-text-muted: #9ca3af;
-  --color-text-dim: #6b7280;
+  /* Dark theme — page bg slightly deeper than surface so cards visibly lift. */
+  --color-bg: #0c0c0c;
+  --color-surface: #141414;
+  --color-surface-raised: #1c1c1c;
+  --color-surface-overlay: #232323;
+  --color-surface-sunken: #080808;
+  --color-border: #ffffff;
+  --color-border-soft: #3a3a3a;
+  --color-border-hover: #ffffff;
+  --color-text: #ffffff;
+  --color-text-muted: #c8c8c8;
+  --color-text-dim: #a0a0a0;
 
-  --color-accent: oklch(70% 0.16 278);
-  --color-accent-hover: oklch(78% 0.16 278);
-  --color-accent-ring: color-mix(in srgb, oklch(70% 0.16 278) 50%, transparent);
-  --color-accent-soft: color-mix(in srgb, oklch(70% 0.16 278) 14%, transparent);
-  --color-accent-fg-on: #0a0a12;
+  --color-accent: #a17dff;
+  --color-accent-hover: #b896ff;
+  --color-accent-fg-on: #000000;
+  --color-accent-ring: var(--color-accent);
+  --color-accent-soft: var(--color-accent);
 
-  --color-success: #34d399;
-  --color-warning: #fbbf24;
-  --color-danger: #f87171;
+  /* Low-chroma semantics for dark. */
+  --color-success: #4ad295;
+  --color-warning: #f5c452;
+  --color-danger: #ea6770;
 
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
-  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.4), 0 1px 2px rgb(0 0 0 / 0.3);
-  --shadow-md:
-    0 4px 16px rgb(0 0 0 / 0.5),
-    0 1px 3px rgb(0 0 0 / 0.3),
-    0 0 0 1px color-mix(in srgb, var(--color-accent) 8%, transparent);
-  --shadow-lg:
-    0 16px 40px rgb(0 0 0 / 0.55),
-    0 2px 6px rgb(0 0 0 / 0.35);
+  /* Signature dark-mode move: shadow color = accent purple, not white.
+     Keeps the ministr identity present and avoids the washed-out look
+     of pure white on near-black. (Offset vars inherit from :root.) */
+  --shadow-color: var(--color-accent);
+  --shadow-xs: var(--shadow-offset-xs) var(--shadow-offset-xs) 0 0 var(--shadow-color);
+  --shadow-sm: var(--shadow-offset-sm) var(--shadow-offset-sm) 0 0 var(--shadow-color);
+  --shadow-md: var(--shadow-offset-md) var(--shadow-offset-md) 0 0 var(--shadow-color);
+  --shadow-lg: var(--shadow-offset-lg) var(--shadow-offset-lg) 0 0 var(--shadow-color);
 
-  --grain-opacity: 0.025;
+  --grain-opacity: 0;
 }
+
+/* ------------------------------------------------------------------
+   Resolution-aware scaling — the html base font-size IS the scale lever.
+   Tailwind v4's spacing/text/sizing scale is rem-based, so bumping the
+   root font-size proportionally scales every `p-3`, `text-xs`, `gap-2`,
+   `h-9`, etc. The `text-[Npx]` arbitrary-pixel classes are converted to
+   rem equivalents elsewhere so they participate too.
+
+   Two axes drive the scale:
+   1. Viewport width — a 4K monitor at 100% Windows scaling shows as a
+      very wide normal-DPI viewport. We bump aggressively above 1600px.
+   2. Pixel density — high-DPI (retina) displays at any resolution get a
+      modest baseline bump, layered with the viewport tier.
+   ------------------------------------------------------------------ */
+
+/* Default (≤1600px): 14px root. */
+html {
+  font-size: 14px;
+}
+
+/* Viewport-width tiers — primary scale lever for big monitors. */
+@media (min-width: 1600px) {
+  html { font-size: 15px; }
+}
+@media (min-width: 2000px) {
+  html { font-size: 16px; }
+}
+@media (min-width: 2560px) {
+  html { font-size: 18px; }
+}
+@media (min-width: 3200px) {
+  html { font-size: 20px; }
+}
+@media (min-width: 3840px) {
+  html { font-size: 22px; }
+}
+
+/* DPI tier — bump shadow offsets so the brutalist signature stays
+   visible on retina-class displays. Layered on top of viewport tier. */
+@media (min-resolution: 1.5dppx) {
+  :root,
+  .dark {
+    --shadow-offset-xs: 1px;
+    --shadow-offset-sm: 3px;
+    --shadow-offset-md: 5px;
+    --shadow-offset-lg: 7px;
+  }
+}
+
+/* At 4K with retina density (rare combo, e.g. 5K iMac), the viewport
+   tier already pushes us to 22-24px; further high-DPI bumps would
+   cause overflow. We rely on the viewport tier instead. */
 
 @theme {
   --color-bg: var(--color-bg);
@@ -83,6 +177,7 @@
   --color-surface-overlay: var(--color-surface-overlay);
   --color-surface-sunken: var(--color-surface-sunken);
   --color-border: var(--color-border);
+  --color-border-soft: var(--color-border-soft);
   --color-border-hover: var(--color-border-hover);
   --color-text: var(--color-text);
   --color-text-muted: var(--color-text-muted);
@@ -97,10 +192,13 @@
   --color-danger: var(--color-danger);
 
   --font-sans:
-    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
+  --font-serif:
+    "IBM Plex Serif", "Iowan Old Style", "Cambria", Georgia, serif;
   --font-mono:
-    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    "JetBrains Mono", "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+    monospace;
 }
 
 /* ------------------------------------------------------------------
@@ -116,49 +214,12 @@ body,
 body {
   margin: 0;
   font-family: var(--font-sans);
-  font-feature-settings: "cv11", "ss01";
+  font-weight: 500;
   background: var(--color-bg);
   color: var(--color-text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-}
-
-/* Subtle accent wash behind everything in dark mode. Pulls a soft ministr
-   glow into the top-left corner so the raw surface doesn't feel flat. */
-.dark body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(
-      900px 500px at 15% -10%,
-      color-mix(in srgb, var(--color-accent) 10%, transparent),
-      transparent 60%
-    ),
-    radial-gradient(
-      800px 500px at 100% 100%,
-      color-mix(in srgb, var(--color-accent) 6%, transparent),
-      transparent 70%
-    );
-}
-
-.dark body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  opacity: var(--grain-opacity);
-  background-image: radial-gradient(
-    circle at 1px 1px,
-    currentColor 0.8px,
-    transparent 0
-  );
-  background-size: 3px 3px;
-  color: var(--color-text-dim);
 }
 
 #root {
@@ -167,26 +228,23 @@ body {
 }
 
 /* ------------------------------------------------------------------
-   Scrollbar
+   Scrollbar — sharp, opaque, no rounded thumb.
    ------------------------------------------------------------------ */
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
 }
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--color-surface-overlay);
+  border-left: 2px solid var(--color-border);
 }
 ::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--color-border) 70%, transparent);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
+  background: var(--color-border);
+  border: 2px solid var(--color-surface-overlay);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-hover);
-  background-clip: padding-box;
-  border: 2px solid transparent;
+  background: var(--color-accent);
 }
 
 /* ------------------------------------------------------------------
@@ -194,91 +252,73 @@ body {
    ------------------------------------------------------------------ */
 
 ::selection {
-  background: var(--color-accent-soft);
-  color: var(--color-text);
+  background: var(--color-accent);
+  color: var(--color-accent-fg-on);
 }
 
 /* ------------------------------------------------------------------
-   Focus rings (consistent across interactive primitives)
+   Focus rings — sharp 2px outline, no offset radius.
    ------------------------------------------------------------------ */
 
 :focus-visible {
-  outline: 2px solid var(--color-accent-ring);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
 }
 
 /* ------------------------------------------------------------------
-   Brand — the "ministr" wordmark used in the app chrome
+   Brand — flat lowercase mono wordmark with a thick accent underbar.
    ------------------------------------------------------------------ */
 
 .ministr-wordmark {
-  font-family: var(--font-sans);
+  font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 14px;
-  letter-spacing: -0.02em;
-  background: linear-gradient(
-    135deg,
-    var(--color-accent) 0%,
-    color-mix(in srgb, var(--color-accent) 60%, #c4b5fd) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
+  /* Scales with root font-size (rem-based) so it grows on big monitors. */
+  font-size: 1.143rem;
+  letter-spacing: -0.04em;
+  color: var(--color-text);
+  border-bottom: 0.25rem solid var(--color-accent);
+  padding-bottom: 0.125rem;
+  line-height: 1;
 }
 
 /* ------------------------------------------------------------------
-   Keyframes
+   Keyframes — only hard-step animations. No easing.
    ------------------------------------------------------------------ */
 
-@keyframes ministr-pulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.6;
-    transform: scale(0.92);
-  }
-}
-
-@keyframes ministr-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @keyframes ministr-flash {
-  0% {
-    background-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  0%,
+  99% {
+    background-color: var(--color-accent);
+    color: var(--color-accent-fg-on);
   }
   100% {
     background-color: transparent;
+    color: inherit;
   }
 }
 
-.ministr-fade-in {
-  animation: ministr-fade-in 200ms cubic-bezier(0.2, 0, 0, 1) both;
+@keyframes ministr-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
 }
 
 .ministr-flash {
-  animation: ministr-flash 1.2s ease-out both;
+  animation: ministr-flash 600ms steps(1) both;
 }
 
-.ministr-pulse {
-  animation: ministr-pulse 1.8s ease-in-out infinite;
+.ministr-blink {
+  animation: ministr-blink 1s steps(1) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ministr-pulse,
-  .ministr-fade-in,
-  .ministr-flash {
+  .ministr-flash,
+  .ministr-blink {
     animation: none !important;
   }
 }
