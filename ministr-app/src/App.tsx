@@ -1,27 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Search, AlertTriangle } from "lucide-react";
 import {
-  Radio,
-  Users,
-  Search,
-  ScrollText,
-  Settings as SettingsIcon,
-  CircleDot,
-  Cpu,
-  Sparkles,
-  TreePine,
-  GitBranch,
-  FolderKanban,
-  Compass,
-  ChevronDown,
-  Command,
-  Keyboard,
-  AlertTriangle,
-} from "lucide-react";
+  BrutalSearch,
+  BrutalSymbols,
+  BrutalBridge,
+  BrutalProjects,
+  BrutalStructure,
+  BrutalSessions,
+  BrutalLogs,
+  BrutalSettings,
+} from "./components/ui/brutal-icons";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useTheme } from "./hooks/useTheme";
-import { Overview } from "./components/Overview";
+import { useCorpusContext } from "./hooks/useCorpusContext";
+import { useDefaultTab, useDensity } from "./hooks/usePreferences";
 import { ProjectList } from "./components/ProjectList";
 import { ProjectDetail } from "./components/ProjectDetail";
 import { Settings } from "./components/Settings";
@@ -31,47 +25,66 @@ import { SessionDashboard } from "./components/SessionDashboard";
 import { QueryPlayground } from "./components/QueryPlayground";
 import { CorpusTreemap } from "./components/CorpusTreemap";
 import { SymbolGraph } from "./components/SymbolGraph";
+import { Bridge } from "./components/Bridge";
 import { ContextSimulator } from "./components/ContextSimulator";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutSheet } from "./components/ShortcutSheet";
-import { Badge } from "./components/ui/badge";
-import { StatusDot } from "./components/ui/status-dot";
+import { CorpusPill } from "./components/shell/CorpusPill";
+import { DaemonDot } from "./components/shell/DaemonDot";
+import { VitalsChip } from "./components/shell/VitalsChip";
+import { ToastProvider, useToast } from "./components/shell/ToastTray";
+import { EntityPanelProvider } from "./hooks/useEntityPanel";
+import { EntityPanel } from "./components/EntityPanel";
 import { cn } from "./lib/utils";
-import { accentTone } from "./lib/ui-tokens";
+import { matchShortcut, type ShortcutAction } from "./lib/shortcuts";
 
 type Tab =
-  | "overview"
-  | "sessions"
   | "search"
-  | "treemap"
   | "symbols"
+  | "bridge"
+  | "projects"
+  | "structure"
+  | "sessions"
   | "simulator"
   | "logs"
-  | "settings"
-  | "projects";
+  | "settings";
 
 const VALID_TABS: Tab[] = [
-  "overview",
-  "sessions",
   "search",
-  "treemap",
   "symbols",
+  "bridge",
+  "projects",
+  "structure",
+  "sessions",
   "simulator",
   "logs",
   "settings",
-  "projects",
 ];
 
 export function App() {
+  return (
+    <ToastProvider>
+      <EntityPanelProvider>
+        <AppInner />
+      </EntityPanelProvider>
+    </ToastProvider>
+  );
+}
+
+function AppInner() {
   const { status, error, refresh } = useDaemonStatus();
   const { theme, setTheme } = useTheme();
-  const [tab, setTab] = useState<Tab>("overview");
+  const { activeCorpus, activeCorpusId, setActiveCorpusId } =
+    useCorpusContext(status);
+  const { defaultTab } = useDefaultTab();
+  // Initialize density preference (sets data-density on <html>).
+  useDensity();
+  const { toast } = useToast();
+  const [tab, setTab] = useState<Tab>(defaultTab as Tab);
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [selectedCorpusId, setSelectedCorpusId] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
-  const [exploreOpen, setExploreOpen] = useState(false);
   const gPending = useRef(false);
   const gTimer = useRef<number | null>(null);
 
@@ -86,14 +99,23 @@ export function App() {
     });
     const unlistenSelect = listen<string>("select-corpus", (event) => {
       if (typeof event.payload === "string") {
-        setSelectedCorpusId(event.payload);
+        setActiveCorpusId(event.payload);
       }
     });
+    // In-app navigation requests from components (e.g. LogViewer deep-links).
+    function onWindowNavigate(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (typeof detail === "string" && VALID_TABS.includes(detail as Tab)) {
+        setTab(detail as Tab);
+      }
+    }
+    window.addEventListener("ministr-navigate", onWindowNavigate);
     return () => {
       unlistenNav.then((fn) => fn());
       unlistenSelect.then((fn) => fn());
+      window.removeEventListener("ministr-navigate", onWindowNavigate);
     };
-  }, []);
+  }, [setActiveCorpusId]);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -104,7 +126,6 @@ export function App() {
         target?.tagName === "TEXTAREA" ||
         target?.isContentEditable;
 
-      // ⌘K / Ctrl+K — always available
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((o) => !o);
@@ -113,48 +134,67 @@ export function App() {
 
       if (typing) return;
 
-      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
-        e.preventDefault();
-        setShortcutsOpen((o) => !o);
-        return;
-      }
-
-      if (e.key === "\\") {
-        e.preventDefault();
-        setRailCollapsed((c) => !c);
-        return;
-      }
-
       if (e.key === "Escape") {
         if (paletteOpen) setPaletteOpen(false);
         else if (shortcutsOpen) setShortcutsOpen(false);
         return;
       }
 
-      // g <letter> shortcuts
-      if (gPending.current) {
-        gPending.current = false;
-        if (gTimer.current !== null) clearTimeout(gTimer.current);
-        const map: Record<string, Tab> = {
-          o: "overview",
-          s: "sessions",
-          q: "search",
-          p: "projects",
-          l: "logs",
-          ",": "settings",
-        };
-        const target = map[e.key.toLowerCase()];
-        if (target) {
-          e.preventDefault();
-          setTab(target);
-        }
-        return;
-      }
-      if (e.key === "g") {
+      // Single source of truth: the shortcut config decides what happens.
+      const result = matchShortcut(e, gPending.current);
+      if (result === "_pending:g") {
         gPending.current = true;
+        if (gTimer.current !== null) clearTimeout(gTimer.current);
         gTimer.current = window.setTimeout(() => {
           gPending.current = false;
         }, 900);
+        return;
+      }
+      if (gPending.current) {
+        gPending.current = false;
+        if (gTimer.current !== null) clearTimeout(gTimer.current);
+      }
+      if (!result) return;
+      e.preventDefault();
+      dispatchShortcut(result);
+
+      function dispatchShortcut(action: ShortcutAction) {
+        switch (action) {
+          case "toggle:shortcuts":
+            setShortcutsOpen((o) => !o);
+            return;
+          case "toggle:rail":
+            setRailCollapsed((c) => !c);
+            return;
+          case "nav:search":
+            setTab("search");
+            return;
+          case "nav:symbols":
+            setTab("symbols");
+            return;
+          case "nav:bridge":
+            setTab("bridge");
+            return;
+          case "nav:projects":
+            setTab("projects");
+            return;
+          case "nav:structure":
+            setTab("structure");
+            return;
+          case "nav:sessions":
+            setTab("sessions");
+            return;
+          case "nav:logs":
+            setTab("logs");
+            return;
+          case "nav:settings":
+            setTab("settings");
+            return;
+          // toggle:palette handled in the meta+K branch above.
+          case "toggle:palette":
+            setPaletteOpen((o) => !o);
+            return;
+        }
       }
     }
 
@@ -162,16 +202,26 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [paletteOpen, shortcutsOpen]);
 
-  const selectedCorpus = status?.corpora.find((c) => c.id === selectedCorpusId);
-
   const openAddProject = useCallback(async () => {
     try {
       await invoke("add_project_dialog");
       refresh();
+      toast("PROJECT ADDED", { tone: "success" });
     } catch {
       /* ignore */
     }
-  }, [refresh]);
+  }, [refresh, toast]);
+
+  function onSelectCorpus(id: string) {
+    const c = status?.corpora.find((x) => x.id === id);
+    setActiveCorpusId(id);
+    if (c) toast("CORPUS", { detail: c.id, tone: "info" });
+  }
+
+  function onThemeChange(t: "system" | "dark" | "light") {
+    setTheme(t);
+    toast("THEME", { detail: t.toUpperCase(), tone: "info" });
+  }
 
   if (showOnboarding) {
     return <Onboarding onDismiss={() => setShowOnboarding(false)} />;
@@ -181,68 +231,80 @@ export function App() {
     <div className="flex h-screen flex-col bg-bg text-text">
       <TopBar
         status={status}
+        error={error}
+        activeCorpus={activeCorpus}
+        onSelectCorpus={onSelectCorpus}
         onPaletteOpen={() => setPaletteOpen(true)}
         onShortcutsOpen={() => setShortcutsOpen(true)}
+        onOpenLogs={() => setTab("logs")}
       />
 
       {error && (
-        <div className="flex items-center gap-2 border-b border-danger/30 bg-danger/5 px-5 py-2 text-xs text-danger shrink-0">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        <div className="flex items-center gap-2 border-b-2 border-danger bg-surface px-5 py-2 text-xs font-mono tracking-[0.05em] text-danger shrink-0">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} />
           <span>{error}</span>
         </div>
       )}
 
       <div className="flex flex-1 min-h-0">
-        <Rail
-          tab={tab}
-          onSelect={setTab}
-          collapsed={railCollapsed}
-          exploreOpen={exploreOpen}
-          onExploreToggle={() => setExploreOpen((v) => !v)}
-        />
+        <Rail tab={tab} onSelect={setTab} collapsed={railCollapsed} />
 
         <main className="flex-1 overflow-y-auto p-5">
           {!status ? (
             <ConnectingState error={error ?? null} />
-          ) : tab === "overview" ? (
-            <Overview
+          ) : tab === "search" ? (
+            <QueryPlayground
               status={status}
-              selectedCorpusId={selectedCorpusId}
-              onSelectCorpus={setSelectedCorpusId}
-              onOpenProjects={() => setTab("projects")}
-              onOpenSessions={() => setTab("sessions")}
-              onAddProject={openAddProject}
-              onRefresh={refresh}
+              activeCorpusId={activeCorpusId}
+              setActiveCorpusId={setActiveCorpusId}
+            />
+          ) : tab === "symbols" ? (
+            <SymbolGraph
+              status={status}
+              activeCorpusId={activeCorpusId}
+              setActiveCorpusId={setActiveCorpusId}
+            />
+          ) : tab === "bridge" ? (
+            <Bridge
+              status={status}
+              activeCorpusId={activeCorpusId}
+              setActiveCorpusId={setActiveCorpusId}
             />
           ) : tab === "projects" ? (
-            <div className="flex gap-4 h-full ministr-fade-in">
+            <div className="@container/page flex gap-4 h-full min-h-0">
               <div
                 className={cn(
-                  "flex-1 min-w-0",
-                  selectedCorpus && "max-w-[55%]",
+                  "flex-1 min-w-0 min-h-0 overflow-y-auto",
+                  activeCorpus &&
+                    "@min-[1024px]/page:max-w-[clamp(360px,55%,720px)]",
                 )}
               >
                 <ProjectList
                   corpora={status.corpora}
                   onRefresh={refresh}
-                  onSelect={setSelectedCorpusId}
-                  selectedId={selectedCorpusId}
+                  onSelect={setActiveCorpusId}
+                  selectedId={activeCorpusId}
                 />
               </div>
-              {selectedCorpus && (
-                <div className="flex-1 min-w-0 hidden md:block">
-                  <ProjectDetail corpus={selectedCorpus} status={status} />
+              {activeCorpus && (
+                <div className="flex-1 min-w-0 min-h-0 overflow-y-auto hidden @min-[1024px]/page:block">
+                  <ProjectDetail
+                    corpus={activeCorpus}
+                    status={status}
+                    onNavigate={(target) => setTab(target)}
+                  />
                 </div>
               )}
             </div>
+          ) : tab === "structure" ? (
+            <CorpusTreemap
+              status={status}
+              activeCorpusId={activeCorpusId}
+              setActiveCorpusId={setActiveCorpusId}
+              onNavigate={(target) => setTab(target)}
+            />
           ) : tab === "sessions" ? (
             <SessionDashboard status={status} />
-          ) : tab === "search" ? (
-            <QueryPlayground status={status} />
-          ) : tab === "treemap" ? (
-            <CorpusTreemap status={status} />
-          ) : tab === "symbols" ? (
-            <SymbolGraph status={status} />
           ) : tab === "simulator" ? (
             <ContextSimulator />
           ) : tab === "logs" ? (
@@ -251,9 +313,10 @@ export function App() {
             <Settings
               status={status}
               theme={theme}
-              onThemeChange={setTheme}
+              onThemeChange={onThemeChange}
               onShowOnboarding={() => setShowOnboarding(true)}
               onRefresh={refresh}
+              onOpenLogs={() => setTab("logs")}
             />
           )}
         </main>
@@ -265,110 +328,121 @@ export function App() {
         status={status}
         onNavigate={(t) => setTab(t as Tab)}
         onAddProject={openAddProject}
-        onSelectCorpus={setSelectedCorpusId}
+        onSelectCorpus={onSelectCorpus}
         onShowShortcuts={() => setShortcutsOpen(true)}
-        onThemeChange={setTheme}
+        onThemeChange={onThemeChange}
         onRefresh={refresh}
       />
       <ShortcutSheet
         open={shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}
       />
+
+      {/* Universal entity-detail drawer — provider lives above us, panel
+          renders here so it overlays every page. */}
+      <EntityPanel />
     </div>
   );
 }
 
 function TopBar({
   status,
+  error,
+  activeCorpus,
+  onSelectCorpus,
   onPaletteOpen,
   onShortcutsOpen,
+  onOpenLogs,
 }: {
   status: import("./lib/types").DaemonStatus | null;
+  error: string | null;
+  activeCorpus: import("./lib/types").CorpusInfo | null;
+  onSelectCorpus: (id: string) => void;
   onPaletteOpen: () => void;
   onShortcutsOpen: () => void;
+  onOpenLogs: () => void;
 }) {
+  const totalSymbols = status?.corpora.reduce(
+    (s, c) => s + (c.symbols_count ?? 0),
+    0,
+  );
   return (
-    <header className="flex items-center justify-between gap-4 border-b border-border/70 bg-surface/50 backdrop-blur-sm px-5 py-2.5 shrink-0">
-      <div className="flex items-center gap-3">
-        <Logo />
-        <div
-          className="flex items-center gap-2"
+    <header className="flex items-center justify-between gap-4 border-b-2 border-border bg-surface px-5 py-2.5 shrink-0">
+      <div className="flex items-center gap-3 min-w-0">
+        <span
+          className="ministr-wordmark"
           title={status ? `ministr v${status.version}` : "ministr"}
         >
-          <span className="ministr-wordmark">ministr</span>
-          <StatusDot
-            tone={status ? "success" : "muted"}
-            pulse={status ? "live" : "off"}
-          />
-        </div>
+          ministr
+        </span>
+        <span className="font-mono text-xs font-semibold tracking-[0.05em] text-text-dim hidden md:inline">
+          CODE INTELLIGENCE
+        </span>
+        <DaemonDot status={status} error={error} onOpenLogs={onOpenLogs} />
+        <span className="hidden md:inline-block w-px h-4 bg-border opacity-50" />
+        <CorpusPill
+          corpora={status?.corpora ?? []}
+          activeCorpus={activeCorpus}
+          onSelect={onSelectCorpus}
+        />
       </div>
 
       {status && (
-        <div className="flex items-center gap-2">
-          <StatChip
-            icon={<Sparkles className="h-3 w-3" />}
-            label={status.model.replace("all-MiniLM-", "MiniLM-")}
-            sub={`${status.model_dimension}d`}
-          />
-          <StatChip
-            icon={<Cpu className="h-3 w-3" />}
-            label={`${status.memory_mb.toFixed(0)} MB`}
-          />
+        <div className="flex items-center gap-1 min-w-0">
+          {/* Sessions chip is highest-signal — always visible. */}
           {status.total_sessions > 0 && (
-            <Badge variant="success" dot>
-              {status.total_sessions} active
-            </Badge>
+            <VitalsChip
+              label="SESSIONS"
+              value={status.total_sessions}
+              accent
+            />
           )}
+          {/* Below xl: drop CORPORA + SYMBOLS to save horizontal space. */}
+          <span className="hidden xl:inline-flex">
+            <VitalsChip label="CORPORA" value={status.corpora.length} />
+          </span>
+          {totalSymbols !== undefined && totalSymbols > 0 && (
+            <span className="hidden xl:inline-flex">
+              <VitalsChip
+                label="SYMBOLS"
+                value={totalSymbols.toLocaleString()}
+              />
+            </span>
+          )}
+          {/* Below lg: drop MEM. */}
+          <span className="hidden lg:inline-flex">
+            <VitalsChip label="MEM" value={`${status.memory_mb.toFixed(0)}MB`} />
+          </span>
         </div>
       )}
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-2 shrink-0">
         <button
           onClick={onPaletteOpen}
           title="Command palette (⌘K)"
-          className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-surface-raised/50 pl-2.5 pr-1.5 py-1 text-xs text-text-muted hover:text-text hover:border-border-hover cursor-pointer transition-all"
+          className="inline-flex items-center gap-2 border border-border-soft bg-surface px-2.5 py-1 text-sm font-sans font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
+          style={{ borderRadius: "var(--radius-button)" }}
         >
-          <Command className="h-3 w-3" />
-          <span>Search</span>
-          <kbd className="ml-1 rounded border border-border/60 bg-surface-overlay px-1 py-0 text-[10px] font-mono text-text-dim">
+          <Search className="h-3.5 w-3.5" strokeWidth={2} />
+          {/* Hide the "Search" text below md so the button collapses to icon + ⌘K. */}
+          <span className="hidden md:inline">Search</span>
+          <kbd
+            className="border border-border-soft bg-surface-overlay px-1 text-[0.6875rem] font-mono text-text-dim"
+            style={{ borderRadius: "var(--radius-pill)" }}
+          >
             ⌘K
           </kbd>
         </button>
         <button
           onClick={onShortcutsOpen}
           title="Shortcuts (?)"
-          className="grid h-7 w-7 place-items-center rounded-md border border-transparent text-text-dim hover:text-text hover:bg-surface-overlay/60 cursor-pointer"
+          className="inline-flex h-7 items-center justify-center border border-border-soft bg-surface px-2 text-sm font-serif font-normal text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
+          style={{ borderRadius: "var(--radius-button)" }}
         >
-          <Keyboard className="h-3.5 w-3.5" />
+          ?
         </button>
       </div>
     </header>
-  );
-}
-
-function Logo() {
-  return (
-    <div className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-[var(--color-accent-fg-on)]">
-      <CircleDot className="h-4 w-4" strokeWidth={2.5} />
-    </div>
-  );
-}
-
-function StatChip({
-  icon,
-  label,
-  sub,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  sub?: string;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-surface-overlay/40 px-2 py-1 text-[11px] font-medium text-text-muted">
-      <span className="text-text-dim">{icon}</span>
-      <span>{label}</span>
-      {sub && <span className="font-mono text-text-dim">{sub}</span>}
-    </span>
   );
 }
 
@@ -376,97 +450,60 @@ function Rail({
   tab,
   onSelect,
   collapsed,
-  exploreOpen,
-  onExploreToggle,
 }: {
   tab: Tab;
   onSelect: (t: Tab) => void;
   collapsed: boolean;
-  exploreOpen: boolean;
-  onExploreToggle: () => void;
 }) {
   if (collapsed) return null;
 
   return (
-    <nav className="hidden sm:flex flex-col w-14 border-r border-border/70 bg-surface/30 py-3 items-center gap-0.5 shrink-0">
+    <nav className="hidden sm:flex flex-col w-14 border-r border-border bg-surface py-3 items-center gap-1 shrink-0">
       <RailItem
-        icon={Radio}
-        active={tab === "overview"}
-        label="Overview"
-        onClick={() => onSelect("overview")}
-      />
-      <RailItem
-        icon={Users}
-        active={tab === "sessions"}
-        label="Sessions"
-        onClick={() => onSelect("sessions")}
-      />
-      <RailItem
-        icon={Search}
+        icon={BrutalSearch}
         active={tab === "search"}
         label="Search"
         onClick={() => onSelect("search")}
       />
       <RailItem
-        icon={FolderKanban}
+        icon={BrutalSymbols}
+        active={tab === "symbols"}
+        label="Symbols"
+        onClick={() => onSelect("symbols")}
+      />
+      <RailItem
+        icon={BrutalBridge}
+        active={tab === "bridge"}
+        label="Bridge"
+        onClick={() => onSelect("bridge")}
+      />
+      <RailItem
+        icon={BrutalProjects}
         active={tab === "projects"}
         label="Projects"
         onClick={() => onSelect("projects")}
       />
-
-      <div className="relative w-full flex flex-col items-center">
-        <RailItem
-          icon={Compass}
-          active={
-            tab === "treemap" || tab === "symbols" || tab === "simulator"
-          }
-          label="Explore"
-          onClick={onExploreToggle}
-          trailing={
-            <ChevronDown
-              className={cn(
-                "absolute right-1.5 top-2.5 h-2.5 w-2.5 text-text-dim transition-transform",
-                exploreOpen && "rotate-180",
-              )}
-            />
-          }
-        />
-        {exploreOpen && (
-          <div className="flex flex-col items-center gap-0.5">
-            <RailItem
-              icon={TreePine}
-              active={tab === "treemap"}
-              label="Treemap"
-              onClick={() => onSelect("treemap")}
-              size="sm"
-            />
-            <RailItem
-              icon={GitBranch}
-              active={tab === "symbols"}
-              label="Symbols"
-              onClick={() => onSelect("symbols")}
-              size="sm"
-            />
-            <RailItem
-              icon={Cpu}
-              active={tab === "simulator"}
-              label="Simulator"
-              onClick={() => onSelect("simulator")}
-              size="sm"
-            />
-          </div>
-        )}
-      </div>
-
       <RailItem
-        icon={ScrollText}
+        icon={BrutalStructure}
+        active={tab === "structure"}
+        label="Structure"
+        onClick={() => onSelect("structure")}
+      />
+      <RailItem
+        icon={BrutalSessions}
+        active={tab === "sessions"}
+        label="Sessions"
+        onClick={() => onSelect("sessions")}
+      />
+      <RailItem
+        icon={BrutalLogs}
         active={tab === "logs"}
         label="Logs"
         onClick={() => onSelect("logs")}
       />
       <div className="flex-1" />
       <RailItem
-        icon={SettingsIcon}
+        icon={BrutalSettings}
         active={tab === "settings"}
         label="Settings"
         onClick={() => onSelect("settings")}
@@ -480,53 +517,41 @@ function RailItem({
   active,
   onClick,
   label,
-  size = "md",
-  trailing,
 }: {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   active: boolean;
   onClick: () => void;
   label: string;
-  size?: "sm" | "md";
-  trailing?: React.ReactNode;
 }) {
-  const dim = size === "sm" ? "h-7 w-7" : "h-9 w-9";
-  const iconSize = size === "sm" ? "h-4 w-4" : "h-[18px] w-[18px]";
   return (
     <button
       onClick={onClick}
       title={label}
       aria-label={label}
       className={cn(
-        "relative grid place-items-center rounded-lg transition-all duration-150 cursor-pointer",
-        dim,
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-ring)]",
+        "relative grid place-items-center h-10 w-10 cursor-pointer transition-none",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         active
-          ? accentTone
-          : "text-text-dim hover:text-text hover:bg-surface-overlay/70",
+          ? "bg-surface-overlay text-text"
+          : "text-text-dim hover:text-text hover:bg-surface-overlay",
       )}
     >
       {active && (
-        <span className="absolute left-[-9px] top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
+        <span className="absolute -left-[2px] top-1/2 h-6 w-[3px] -translate-y-1/2 bg-accent" />
       )}
-      <Icon className={iconSize} strokeWidth={active ? 2.25 : 2} />
-      {trailing}
+      <Icon className="h-[18px] w-[18px]" />
     </button>
   );
 }
 
 function ConnectingState({ error }: { error: string | null }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-4 ministr-fade-in">
-      <div className="relative">
-        <div className="ministr-spin h-10 w-10 rounded-full border-2 border-border border-t-accent" />
-        <CircleDot className="absolute inset-0 m-auto h-4 w-4 text-accent ministr-pulse" />
-      </div>
-      <div className="text-center">
-        <p className="text-sm font-medium text-text">Connecting to daemon…</p>
+    <div className="flex flex-col items-center justify-center h-full gap-4">
+      <div className="font-serif text-2xl font-normal text-text">
+        Connecting<span className="ministr-blink">_</span>
       </div>
       {error && (
-        <p className="max-w-md text-center text-xs text-danger/80 mt-2">
+        <p className="max-w-md text-center text-sm font-sans text-danger">
           {error}
         </p>
       )}
