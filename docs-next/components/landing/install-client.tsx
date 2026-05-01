@@ -126,7 +126,11 @@ export function InstallClient() {
                     <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
                   </a>
                   <p className="ministr-body-quiet text-center text-[11px] sm:text-right">
-                    Unsigned in v0.2.x — Gatekeeper / SmartScreen will warn on first launch.
+                    {primaryInstaller.ext === 'pkg'
+                      ? 'Signed + notarized by Apple. Installs cleanly with no Gatekeeper warning.'
+                      : primaryInstaller.ext === 'exe'
+                        ? 'Currently unsigned — SmartScreen will warn on first launch.'
+                        : 'Currently unsigned — your OS may warn on first launch.'}
                   </p>
                 </div>
               </div>
@@ -300,7 +304,7 @@ export function InstallClient() {
   );
 }
 
-function PlatformBadge({ ext }: { ext: 'dmg' | 'exe' | 'deb' | 'AppImage' }) {
+function PlatformBadge({ ext }: { ext: 'pkg' | 'dmg' | 'exe' | 'deb' | 'AppImage' }) {
   const label = ext.toUpperCase();
   return (
     <span className="inline-flex h-7 min-w-12 items-center justify-center rounded-md border border-[color-mix(in_oklch,var(--color-ministr-400)_28%,transparent)] bg-[color-mix(in_oklch,var(--color-ministr-500)_18%,transparent)] px-2 font-mono text-[11px] font-semibold text-[var(--ministr-accent-text)]">
