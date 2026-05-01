@@ -148,13 +148,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macOS ships a signed + notarized .pkg (built post-tauri-action
+          # below). Pass `--bundles app` so Tauri produces only the .app —
+          # we don't ship a .dmg, since the .pkg is a strictly better
+          # install UX (Apple Installer.app + auto CLI symlink) and the
+          # default Tauri DMG bundler is also famously flaky.
           - platform: macos-aarch64
             os: macos-latest
             cli_target: aarch64-apple-darwin
             cli_features: ""
             sidecar_bin: ministr
             sidecar_name: ministr-cli-aarch64-apple-darwin
-            tauri_args: "--target aarch64-apple-darwin"
+            tauri_args: "--target aarch64-apple-darwin --bundles app"
             target_dir: target/aarch64-apple-darwin/release/bundle
             triple: aarch64-apple-darwin
 
@@ -311,13 +316,18 @@ jobs:
       # /usr/local/bin/ministr — so users get a working `ministr` command
       # the moment the installer finishes, with no shell-rc edits.
       #
-      # Requires three additional repo secrets beyond the Application cert:
+      # Requires three additional repo secrets beyond the Application cert.
+      # The step is gated on ALL THREE being non-empty so a partial
+      # configuration fails fast at the `if:` instead of mid-step:
       #   APPLE_INSTALLER_CERTIFICATE          — base64 of Developer ID Installer .p12
       #   APPLE_INSTALLER_CERTIFICATE_PASSWORD — export password for that .p12
       #   APPLE_INSTALLER_SIGNING_IDENTITY     — e.g. "Developer ID Installer: …"
-      # If any are unset, this step skips (DMG-only release, same as today).
       - name: Build signed + notarized .pkg installer (macOS)
-        if: matrix.platform == 'macos-aarch64' && env.APPLE_INSTALLER_CERTIFICATE != ''
+        if: >-
+          matrix.platform == 'macos-aarch64'
+          && env.APPLE_INSTALLER_CERTIFICATE != ''
+          && env.APPLE_INSTALLER_CERTIFICATE_PASSWORD != ''
+          && env.APPLE_INSTALLER_SIGNING_IDENTITY != ''
         shell: bash
         env:
           APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
@@ -334,17 +344,31 @@ jobs:
           APP_BUNDLE="target/aarch64-apple-darwin/release/bundle/macos/ministr.app"
           test -d "$APP_BUNDLE" || { echo "ministr.app not found at $APP_BUNDLE"; exit 1; }
 
-          # tauri-action created an ad-hoc keychain and imported the
-          # Application cert there. We reuse it for the Installer cert
-          # so productbuild can find both certs in one place.
-          KEYCHAIN_PATH=$(security list-keychains -d user | awk -F'"' 'NR==1{print $2}')
+          # Dedicated temp keychain with a known password. tauri-action's
+          # keychain (used for the Application cert) isn't easily reusable
+          # because its password isn't exposed; an isolated keychain is
+          # cleaner and gets torn down on exit. Add it to the search list
+          # so productbuild's signing identity lookup finds it.
+          KEYCHAIN_PATH="$RUNNER_TEMP/installer-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
           CERT_PATH="$RUNNER_TEMP/installer-cert.p12"
-          echo "$APPLE_INSTALLER_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          trap 'security delete-keychain "$KEYCHAIN_PATH" >/dev/null 2>&1 || true' EXIT
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          existing=$(security list-keychains -d user | tr -d '"' | xargs)
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $existing
+
+          # macOS BSD `base64` historically only supports `-D`, not
+          # `--decode`. openssl is universal across BSD/GNU and pre-installed
+          # on every GHA runner.
+          echo "$APPLE_INSTALLER_CERTIFICATE" | openssl base64 -d -A > "$CERT_PATH"
           security import "$CERT_PATH" \
             -P "$APPLE_INSTALLER_CERTIFICATE_PASSWORD" \
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple: \
-            -s -k "" "$KEYCHAIN_PATH" >/dev/null
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
 
           # Postinstall: symlink CLI onto PATH (overwrites stale links).
           SCRIPTS_DIR="$RUNNER_TEMP/pkg-scripts"
@@ -416,16 +440,13 @@ jobs:
             ext="${src##*.}"
             case "$ext" in
               exe)      dst="_bundles/ministr-desktop-${{ matrix.triple }}-setup.exe" ;;
-              dmg)      dst="_bundles/ministr-desktop-${{ matrix.triple }}.dmg" ;;
               deb)      dst="_bundles/ministr-desktop-${{ matrix.triple }}.deb" ;;
               AppImage) dst="_bundles/ministr-desktop-${{ matrix.triple }}.AppImage" ;;
               *) continue ;;
             esac
-            # Skip if our own pkg-installer step already produced this file.
-            [ -e "$dst" ] && continue
             cp "$src" "$dst"
             sha256 "$dst" > "$dst.sha256"
-          done < <(find "${{ matrix.target_dir }}" -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) 2>/dev/null)
+          done < <(find "${{ matrix.target_dir }}" -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) 2>/dev/null)
           ls -la _bundles
 
       - name: Upload artifact
@@ -462,7 +483,7 @@ jobs:
           set -euo pipefail
           cd artifacts
           : > SHA256SUMS
-          for f in *.tar.gz *.zip *.dmg *.pkg *.exe *.deb *.AppImage; do
+          for f in *.tar.gz *.zip *.pkg *.exe *.deb *.AppImage; do
             [ -f "$f" ] || continue
             shasum -a 256 "$f" >> SHA256SUMS
           done
