@@ -274,17 +274,50 @@ jobs:
       # are only materialized in the macOS runner's process env.
       # Windows/Linux shards run an identical step minus the env block.
       #
-      # macOS code-signing + notarization: tauri-action reads the six
-      # APPLE_* env vars below. If they're unset (no secret bound), the
-      # action skips signing gracefully and ships an unsigned .dmg. Bind
-      # the secrets on the repo (Settings → Secrets and variables →
-      # Actions) and the next release auto-signs without further edits.
-      #   APPLE_CERTIFICATE          — base64 of the Developer ID .p12
-      #   APPLE_CERTIFICATE_PASSWORD — password used when exporting
-      #   APPLE_SIGNING_IDENTITY     — e.g. "Developer ID Application: …"
-      #   APPLE_ID                   — Apple Developer account email
-      #   APPLE_PASSWORD             — app-specific password (NOT login)
-      #   APPLE_TEAM_ID              — 10-char team ID
+      # macOS releases require all nine Apple signing secrets — three for
+      # the Application cert (.app code signing), three for notarization,
+      # and three for the Installer cert (.pkg). With `--bundles app` we
+      # don't ship an unsigned-DMG fallback, so a partial secret config
+      # would silently produce a release with no macOS installer at all.
+      # Validate up front and fail loudly instead.
+      - name: Validate macOS signing secrets
+        if: matrix.platform == 'macos-aarch64'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for var in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY \
+            APPLE_INSTALLER_CERTIFICATE \
+            APPLE_INSTALLER_CERTIFICATE_PASSWORD \
+            APPLE_INSTALLER_SIGNING_IDENTITY \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID
+          do
+            [ -n "${!var:-}" ] || missing+=("$var")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf 'Missing required macOS signing secret(s): %s\n' "${missing[*]}" >&2
+            printf 'Bind all nine on the repo (Settings → Secrets and variables → Actions) and re-run.\n' >&2
+            exit 1
+          fi
+
+      # macOS code-signing + notarization for the .app bundle. tauri-action
+      # reads the APPLE_* env vars below; presence is verified by the
+      # validate step above, so this step doesn't need a separate gate.
       - name: Build Tauri bundles (macOS, signed)
         if: matrix.platform == 'macos-aarch64'
         uses: tauri-apps/tauri-action@action-v0.6.2
@@ -314,20 +347,15 @@ jobs:
       #
       # The postinstall script symlinks the bundled CLI onto PATH at
       # /usr/local/bin/ministr — so users get a working `ministr` command
-      # the moment the installer finishes, with no shell-rc edits.
+      # the moment the installer finishes, with no shell-rc edits. The
+      # script refuses to clobber a foreign file at that path (e.g. a
+      # Homebrew-managed `ministr`) and only refreshes a symlink that
+      # already points at our app bundle.
       #
-      # Requires three additional repo secrets beyond the Application cert.
-      # The step is gated on ALL THREE being non-empty so a partial
-      # configuration fails fast at the `if:` instead of mid-step:
-      #   APPLE_INSTALLER_CERTIFICATE          — base64 of Developer ID Installer .p12
-      #   APPLE_INSTALLER_CERTIFICATE_PASSWORD — export password for that .p12
-      #   APPLE_INSTALLER_SIGNING_IDENTITY     — e.g. "Developer ID Installer: …"
+      # Secrets are validated by the upstream "Validate macOS signing
+      # secrets" step, so this step doesn't need its own env-gated `if:`.
       - name: Build signed + notarized .pkg installer (macOS)
-        if: >-
-          matrix.platform == 'macos-aarch64'
-          && env.APPLE_INSTALLER_CERTIFICATE != ''
-          && env.APPLE_INSTALLER_CERTIFICATE_PASSWORD != ''
-          && env.APPLE_INSTALLER_SIGNING_IDENTITY != ''
+        if: matrix.platform == 'macos-aarch64'
         shell: bash
         env:
           APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
@@ -370,14 +398,31 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
 
-          # Postinstall: symlink CLI onto PATH (overwrites stale links).
+          # Postinstall: symlink CLI onto PATH without clobbering a
+          # user-managed install (Homebrew formula, manual /usr/local/bin
+          # entry, etc.). YAML's `|` block scalar strips the consistent
+          # 10-space indent before bash sees this; the heredoc body lands
+          # at column 0 in the actual script, so the shebang is at byte 0.
           SCRIPTS_DIR="$RUNNER_TEMP/pkg-scripts"
           mkdir -p "$SCRIPTS_DIR"
           cat > "$SCRIPTS_DIR/postinstall" <<'POSTINSTALL'
           #!/bin/bash
           set -e
+          TARGET=/Applications/ministr.app/Contents/MacOS/ministr-cli
+          LINK=/usr/local/bin/ministr
           mkdir -p /usr/local/bin
-          ln -sf /Applications/ministr.app/Contents/MacOS/ministr-cli /usr/local/bin/ministr
+          if [ -L "$LINK" ]; then
+            current=$(readlink "$LINK")
+            if [ "$current" = "$TARGET" ]; then
+              ln -sf "$TARGET" "$LINK"
+            else
+              printf 'ministr installer: leaving existing symlink at %s unchanged (points to %s, not our bundle).\n' "$LINK" "$current" >&2
+            fi
+          elif [ -e "$LINK" ]; then
+            printf 'ministr installer: leaving existing file at %s unchanged (not created by this installer).\n' "$LINK" >&2
+          else
+            ln -s "$TARGET" "$LINK"
+          fi
           exit 0
           POSTINSTALL
           chmod +x "$SCRIPTS_DIR/postinstall"
