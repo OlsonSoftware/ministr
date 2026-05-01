@@ -3,14 +3,13 @@ import { Card } from "./card";
 import { cn } from "../../lib/utils";
 
 interface EmptyStateProps {
-  icon: React.ComponentType<{ className?: string }>;
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   title: string;
   hint?: React.ReactNode;
   /** Optional CTA rendered below the hint. Pass a Button or anchor. */
   action?: React.ReactNode;
-  /** Use the accent-tinted icon container (for places where the empty
-   *  state itself is a primary call-to-action; e.g. "Add your first
-   *  project"). Defaults to the muted treatment. */
+  /** Use the accent-filled icon container (for places where the empty
+   *  state itself is a primary call-to-action). Defaults to muted. */
   accent?: boolean;
   className?: string;
 }
@@ -32,16 +31,22 @@ export function EmptyState({
     >
       <div
         className={cn(
-          "grid place-items-center rounded-xl mb-2",
+          "grid place-items-center border border-border-soft mb-2",
           accent
-            ? "h-14 w-14 bg-[var(--color-accent-soft)] text-accent"
-            : "h-12 w-12 bg-surface-overlay text-text-dim",
+            ? "h-14 w-14 bg-accent text-[var(--color-accent-fg-on)]"
+            : "h-12 w-12 bg-surface-overlay text-text-muted",
         )}
       >
-        <Icon className={accent ? "h-6 w-6" : "h-5 w-5"} />
+        <Icon className={accent ? "h-6 w-6" : "h-5 w-5"} strokeWidth={2} />
       </div>
-      <p className="text-sm font-medium text-text">{title}</p>
-      {hint && <p className="max-w-sm text-xs text-text-dim">{hint}</p>}
+      <p className="font-serif text-lg font-bold text-text leading-snug">
+        {title}
+      </p>
+      {hint && (
+        <p className="max-w-sm font-serif text-sm italic text-text-dim leading-snug">
+          {hint}
+        </p>
+      )}
       {action && <div className="mt-3">{action}</div>}
     </Card>
   );

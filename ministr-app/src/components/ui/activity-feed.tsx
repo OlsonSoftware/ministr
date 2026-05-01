@@ -35,8 +35,8 @@ const TOOL_GLYPH: Record<string, string> = {
 };
 
 const PRESSURE_BORDER: Record<string, string> = {
-  normal: "border-l-border/40",
-  elevated: "border-l-warning/70",
+  normal: "border-l-border",
+  elevated: "border-l-warning",
   critical: "border-l-danger",
 };
 
@@ -59,11 +59,11 @@ export function ActivityFeed({
     return (
       <div
         className={cn(
-          "flex items-center justify-center rounded-lg border border-dashed border-border/50 bg-surface-raised/30 px-4 py-10 text-[11px] text-text-dim",
+          "flex items-center justify-center border-2 border-dotted border-border bg-surface px-4 py-10 text-[0.6875rem] font-mono uppercase tracking-[0.05em] text-text-dim",
           className,
         )}
       >
-        No tool activity yet — agent calls will stream here live.
+        No tool activity yet
       </div>
     );
   }
@@ -77,48 +77,48 @@ export function ActivityFeed({
         const pressureBorder =
           ev.pressure && PRESSURE_BORDER[ev.pressure]
             ? PRESSURE_BORDER[ev.pressure]
-            : "border-l-transparent";
+            : "border-l-border";
 
         return (
           <li
             key={`${ev.timestamp_ms}-${ev.tool}-${ev.corpus_id}`}
             className={cn(
-              "flex items-center gap-2 rounded-md border-l-2 bg-surface-raised/30 pl-2 pr-2 py-1.5 text-[11px] transition-colors",
+              "flex items-center gap-2 border-l-2 border-y-2 border-r-2 border-border bg-surface pl-2 pr-2 py-1.5 text-[0.6875rem] transition-none",
               pressureBorder,
               fresh && "ministr-flash",
             )}
           >
             <span
               className={cn(
-                "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm font-mono text-[12px]",
+                "inline-flex h-5 w-5 shrink-0 items-center justify-center border border-border-soft font-mono text-[0.75rem]",
                 ev.cache_hit
-                  ? "bg-success/15 text-success"
-                  : "bg-accent/15 text-accent",
+                  ? "bg-success text-[var(--color-accent-fg-on)]"
+                  : "bg-accent text-[var(--color-accent-fg-on)]",
               )}
               aria-hidden
             >
               {glyph}
             </span>
 
-            <span className="font-mono text-text whitespace-nowrap">
+            <span className="font-mono font-semibold text-text whitespace-nowrap">
               {ev.tool.replace(/^ministr_/, "")}
             </span>
 
-            <span className="text-text-dim truncate flex-1">
+            <span className="text-text-muted truncate flex-1 font-mono">
               {ev.summary || ev.corpus_id}
             </span>
 
             {ev.cache_hit ? (
-              <span className="font-mono text-[10px] uppercase tracking-wider rounded-sm bg-success/15 px-1.5 py-0.5 text-success">
+              <span className="font-mono text-xs uppercase tracking-[0.05em] border-2 border-success bg-surface px-1.5 py-0 text-success">
                 hit
               </span>
             ) : typeof ev.tokens_delta === "number" && ev.tokens_delta > 0 ? (
-              <span className="font-mono text-[10px] tabular-nums rounded-sm bg-accent/10 px-1.5 py-0.5 text-accent">
+              <span className="font-mono text-xs tabular-nums border-2 border-accent bg-surface px-1.5 py-0 text-accent">
                 +{formatTokens(ev.tokens_delta)}
               </span>
             ) : null}
 
-            <span className="font-mono text-[10px] text-text-dim tabular-nums whitespace-nowrap w-14 text-right">
+            <span className="font-mono text-xs text-text-dim tabular-nums whitespace-nowrap w-14 text-right">
               {relative(now, ev.timestamp_ms)}
             </span>
           </li>
@@ -130,8 +130,7 @@ export function ActivityFeed({
 
 /**
  * Bucket activity events into `bucketCount` equally-sized time windows and
- * compute the cache-hit ratio per bucket. Used to drive the real-history
- * hit-rate bars in Overview.
+ * compute the cache-hit ratio per bucket.
  */
 export function computeHitRateBuckets(
   events: ActivityEvent[],
@@ -148,7 +147,6 @@ export function computeHitRateBuckets(
   for (const ev of events) {
     const age = now - ev.timestamp_ms;
     if (age < 0 || age > windowMs) continue;
-    // Oldest bucket = 0, newest = bucketCount - 1.
     const idx = Math.min(
       bucketCount - 1,
       Math.max(0, bucketCount - 1 - Math.floor(age / bucketSize)),

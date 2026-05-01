@@ -2,16 +2,11 @@ import { cn } from "../../lib/utils";
 import { type BadgeVariant, toneBgClass } from "../../lib/status";
 
 const variants: Record<BadgeVariant, string> = {
-  default:
-    "bg-[var(--color-accent-soft)] text-accent border-[var(--color-accent-ring)]",
-  success:
-    "bg-success/10 text-success border-success/25",
-  warning:
-    "bg-warning/10 text-warning border-warning/30",
-  danger:
-    "bg-danger/10 text-danger border-danger/30",
-  muted:
-    "bg-surface-overlay text-text-muted border-border",
+  default: "bg-surface text-text border-border-soft",
+  success: "bg-surface text-success border-success",
+  warning: "bg-surface text-warning border-warning",
+  danger: "bg-surface text-danger border-danger",
+  muted: "bg-surface text-text-muted border-border-soft",
 };
 
 const dotTones: Record<BadgeVariant, "accent" | "success" | "warning" | "danger" | "muted"> = {
@@ -26,8 +21,7 @@ interface BadgeProps {
   variant?: BadgeVariant;
   children: React.ReactNode;
   className?: string;
-  /** Tiny static dot to reinforce variant color. Not animated; use
-   *  `<StatusDot pulse="live" />` separately if you need a live ping. */
+  /** Tiny static square dot to reinforce variant color. */
   dot?: boolean;
 }
 
@@ -40,17 +34,15 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-tight",
+        "inline-flex items-center gap-1.5 border px-2 py-1 text-[0.6875rem] font-mono font-semibold uppercase tracking-[0.05em] leading-tight",
         variants[variant],
         className,
       )}
+      style={{ borderRadius: "var(--radius-pill)" }}
     >
       {dot && (
         <span
-          className={cn(
-            "h-1.5 w-1.5 rounded-full",
-            toneBgClass(dotTones[variant]),
-          )}
+          className={cn("h-1.5 w-1.5", toneBgClass(dotTones[variant]))}
         />
       )}
       {children}

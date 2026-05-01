@@ -20,33 +20,25 @@ const KIND_GLYPH: Record<CoherenceKind, string> = {
   removed: "−",
 };
 
-const KIND_TONE: Record<
-  CoherenceKind,
-  {
-    border: string;
-    badge: string;
-    text: string;
-  }
-> = {
-  created: {
-    border: "border-l-success/70",
-    badge: "bg-success/15 text-success",
-    text: "text-success",
-  },
-  modified: {
-    border: "border-l-accent/70",
-    badge: "bg-accent/15 text-accent",
-    text: "text-accent",
-  },
-  removed: {
-    border: "border-l-danger/70",
-    badge: "bg-danger/15 text-danger",
-    text: "text-danger",
-  },
+const KIND_BORDER: Record<CoherenceKind, string> = {
+  created: "border-l-success",
+  modified: "border-l-accent",
+  removed: "border-l-danger",
+};
+
+const KIND_BADGE_BG: Record<CoherenceKind, string> = {
+  created: "bg-success",
+  modified: "bg-accent",
+  removed: "bg-danger",
+};
+
+const KIND_TEXT: Record<CoherenceKind, string> = {
+  created: "text-success",
+  modified: "text-accent",
+  removed: "text-danger",
 };
 
 function shortPath(path: string): string {
-  // Drop everything before the last 2 path segments so rows fit.
   const parts = path.split("/");
   if (parts.length <= 2) return path;
   return `…/${parts.slice(-2).join("/")}`;
@@ -71,11 +63,11 @@ export function CoherenceFeed({
     return (
       <div
         className={cn(
-          "flex items-center justify-center rounded-lg border border-dashed border-border/50 bg-surface-raised/30 px-4 py-8 text-[11px] text-text-dim",
+          "flex items-center justify-center border-2 border-dotted border-border bg-surface px-4 py-8 text-[0.6875rem] font-mono uppercase tracking-[0.05em] text-text-dim",
           className,
         )}
       >
-        No file changes observed — edits will stream here live.
+        No file changes observed
       </div>
     );
   }
@@ -85,7 +77,6 @@ export function CoherenceFeed({
       {filtered.map((ev) => {
         const fresh =
           typeof flashSince === "number" && ev.timestamp_ms > flashSince;
-        const tone = KIND_TONE[ev.kind];
         const glyph = KIND_GLYPH[ev.kind];
         const sectionCount = ev.affected_sections.length;
 
@@ -93,22 +84,27 @@ export function CoherenceFeed({
           <li
             key={`${ev.timestamp_ms}-${ev.path}-${ev.kind}`}
             className={cn(
-              "flex items-center gap-2 rounded-md border-l-2 bg-surface-raised/30 pl-2 pr-2 py-1.5 text-[11px] transition-colors",
-              tone.border,
+              "flex items-center gap-2 border-l-2 border-y-2 border-r-2 border-border bg-surface pl-2 pr-2 py-1.5 text-[0.6875rem] transition-none",
+              KIND_BORDER[ev.kind],
               fresh && "ministr-flash",
             )}
           >
             <span
               aria-hidden
               className={cn(
-                "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm font-mono text-[12px] font-bold",
-                tone.badge,
+                "inline-flex h-5 w-5 shrink-0 items-center justify-center border border-border-soft font-mono text-[0.75rem] font-bold text-[var(--color-accent-fg-on)]",
+                KIND_BADGE_BG[ev.kind],
               )}
             >
               {glyph}
             </span>
 
-            <span className={cn("font-mono text-[10px] uppercase tracking-wider", tone.text)}>
+            <span
+              className={cn(
+                "font-mono text-xs font-semibold uppercase tracking-[0.05em]",
+                KIND_TEXT[ev.kind],
+              )}
+            >
               {ev.kind}
             </span>
 
@@ -121,7 +117,7 @@ export function CoherenceFeed({
 
             {sectionCount > 0 ? (
               <span
-                className="font-mono text-[10px] tabular-nums rounded-sm bg-warning/10 px-1.5 py-0.5 text-warning"
+                className="font-mono text-xs tabular-nums border-2 border-warning bg-surface px-1.5 py-0 text-warning"
                 title={
                   sectionCount === 1
                     ? "1 section invalidated"
@@ -132,7 +128,7 @@ export function CoherenceFeed({
               </span>
             ) : null}
 
-            <span className="font-mono text-[10px] text-text-dim tabular-nums whitespace-nowrap w-14 text-right">
+            <span className="font-mono text-xs text-text-dim tabular-nums whitespace-nowrap w-14 text-right">
               {relative(now, ev.timestamp_ms)}
             </span>
           </li>

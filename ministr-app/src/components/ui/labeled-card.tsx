@@ -3,28 +3,23 @@ import { cn } from "../../lib/utils";
 import { labelSmallCap } from "../../lib/ui-tokens";
 
 interface LabeledCardProps {
-  /** Small-caps title shown in the header. */
+  /** Mono uppercase title shown in the header. */
   title: string;
   /** Optional inline icon before the title. */
-  icon?: React.ComponentType<{ className?: string }>;
-  /** Tint for the inline icon. `"dim"` (default) matches Overview/ProjectDetail
-   *  side panels; `"accent"` is for surfaces like Settings where the icon is
-   *  the section's identity cue. */
+  icon?: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  /** Tint for the inline icon. `"dim"` (default) for side panels;
+   *  `"accent"` for surfaces where the icon is the section's identity cue. */
   iconTone?: "accent" | "dim";
-  /** Optional content on the right side of the header (badge, live dot, etc.). */
+  /** Optional content on the right side of the header. */
   right?: React.ReactNode;
-  /** Override the body padding (use `mono` style for compact code/ID blocks). */
+  /** Compact body padding. */
   mono?: boolean;
   children: React.ReactNode;
 }
 
 /**
- * Compact data panel with a small-caps header. Used by the Overview side
- * panels and the ProjectDetail page where each section is a labeled
- * group of small rows rather than a prominent feature.
- *
- * Replaces the local `Section` and `SidePanel` helpers that duplicated
- * this pattern across ProjectDetail.tsx and Overview.tsx.
+ * Compact data panel with a mono uppercase header. Used by side panels
+ * and the ProjectDetail page.
  */
 export function LabeledCard({
   title,
@@ -43,6 +38,7 @@ export function LabeledCard({
               "h-3.5 w-3.5",
               iconTone === "accent" ? "text-accent" : "text-text-dim",
             )}
+            strokeWidth={2.5}
           />
         )}
         <h3 className={cn(labelSmallCap, "flex-1")}>{title}</h3>
