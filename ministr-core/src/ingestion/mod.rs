@@ -33,7 +33,7 @@ pub use pipeline::{
 };
 
 // Re-export utility functions used by other crates
-pub use discovery::discover_paths;
+pub use discovery::{compute_corpus_stat_merkle, discover_paths, is_unreal_corpus};
 pub use roots::{compute_root_id, namespace_path, strip_root_prefix};
 pub use sections::coalesce_small_sections;
 
@@ -62,4 +62,10 @@ pub(crate) use embedding::delete_document_vectors;
 /// - **2**: `extract_call_ref` now emits a `Uses(Parent)` ref alongside
 ///   `Calls(method)` for every `Parent::method(...)` scoped call, so
 ///   `ministr_references` on the parent type picks up method call sites.
-pub const EXTRACTOR_VERSION: i64 = 2;
+/// - **3**: C++ grammar swapped from `tree-sitter-cpp` to
+///   `tree-sitter-unreal-cpp` (a strict superset). Vanilla C++ ASTs
+///   should be byte-identical, but UE reflection macros (`UCLASS` /
+///   `UFUNCTION` / `GENERATED_BODY` / ...) now parse as first-class
+///   nodes instead of ERROR subtrees — UE corpora will pick up
+///   meaningfully more symbols on re-extraction.
+pub const EXTRACTOR_VERSION: i64 = 3;

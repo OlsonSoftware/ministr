@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use ministr_core::service::QueryError;
 use ministr_core::types::Resolution;
 use rmcp::handler::server::tool::ToolRouter;
-use sha2::{Digest, Sha256};
 
 use super::MinistrServer;
 
@@ -23,11 +22,9 @@ pub(crate) const MAX_INTENT_PREFETCH_SURVEY: usize = 5;
 /// Well-known progress token for ministr ingestion notifications.
 pub(crate) const INGESTION_PROGRESS_TOKEN: &str = "ministr/ingestion";
 
-/// Compute a SHA-256 hex digest of content for change detection.
+/// Compute a 64-char BLAKE3 hex digest of content for change detection.
 pub(crate) fn content_hash(text: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
-    format!("{:x}", hasher.finalize())
+    blake3::hash(text.as_bytes()).to_hex().to_string()
 }
 
 /// Parse a resolution string back to the enum.

@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 19;
+pub const CURRENT_SCHEMA_VERSION: usize = 21;
 
 /// Returns the migration set for the content database.
 ///
@@ -347,6 +347,41 @@ fn migrations() -> Migrations<'static> {
             ALTER TABLE file_hashes ADD COLUMN extractor_version INTEGER NOT NULL DEFAULT 0;
             ",
         ),
+        // V20: Corpus-root stat-merkle short-circuit. A reindex against
+        // an unchanged tree no longer needs to walk + hash every file:
+        // we fingerprint the corpus by a sorted BLAKE3 over each file's
+        // (rel_path, mtime_ns, size) tuple, store the root hash, and
+        // bail out at the top of `ingest_directory_with_embeddings_rooted`
+        // when it matches.
+        //
+        // We deliberately skip content hashing for the fingerprint —
+        // hashing 10M LOC of source on every reindex defeats the
+        // purpose. mtime+size is what every fast indexer uses (Cursor,
+        // CocoIndex). When mtime drifts but content actually matches,
+        // the existing per-file `file_hashes.content_hash` cache catches
+        // it inside the partial reindex path.
+        M::up(
+            "
+            CREATE TABLE corpus_merkle (
+                corpus_id       TEXT PRIMARY KEY NOT NULL,
+                root_hash       TEXT NOT NULL,
+                file_count      INTEGER NOT NULL,
+                last_indexed_ns INTEGER NOT NULL
+            );
+            ",
+        ),
+        // V21: Pin the corpus stat-merkle short-circuit to the
+        // extractor version that produced the on-disk index. Without
+        // this, an `EXTRACTOR_VERSION` bump (e.g. the C++ grammar swap
+        // in Phase 2) lets a stat-fingerprint match silently skip the
+        // re-extraction the bump was meant to trigger. Default 0 means
+        // every existing V20 row reads back as below any real version
+        // and forces a full reindex on first run after upgrade.
+        M::up(
+            "
+            ALTER TABLE corpus_merkle ADD COLUMN extractor_version INTEGER NOT NULL DEFAULT 0;
+            ",
+        ),
     ])
 }
 
@@ -481,6 +516,7 @@ mod tests {
         assert!(tables.contains(&"full_dim_vectors".to_string()));
         assert!(tables.contains(&"answer_cache".to_string()));
         assert!(tables.contains(&"answer_cache_sources".to_string()));
+        assert!(tables.contains(&"corpus_merkle".to_string()));
     }
 
     #[test]

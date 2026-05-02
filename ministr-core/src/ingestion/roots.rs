@@ -244,12 +244,21 @@ pub(super) async fn update_root_stats<S: Storage + ?Sized>(
 
 // ── Content hashing & mtime ──────────────────────────────────────────────────
 
-/// Compute the SHA-256 hex digest of a string.
+/// Compute a 64-char hex content-change fingerprint for a file's text.
+///
+/// Uses BLAKE3 (~3× faster than SHA-256 per core, with multithreaded
+/// hashing available in the underlying crate). Output is the same
+/// 32-byte digest length as SHA-256, formatted as 64 lowercase hex
+/// chars, so the value drops in wherever the previous SHA-256 hash
+/// was stored.
+///
+/// On upgrade from a SHA-256-era index, every stored hash will
+/// mismatch and the existing per-file change-detection logic will
+/// trigger one re-extraction pass — bumping `EXTRACTOR_VERSION`
+/// already produces this same effect, so the swap is free.
 #[must_use]
-pub(super) fn compute_sha256(content: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    format!("{:x}", hasher.finalize())
+pub(super) fn compute_content_hash(content: &str) -> String {
+    blake3::hash(content.as_bytes()).to_hex().to_string()
 }
 
 /// Get file mtime as nanoseconds since Unix epoch (async).

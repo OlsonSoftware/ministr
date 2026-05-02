@@ -73,6 +73,12 @@ quick-xml = "0.37"
 
 # Hashing
 sha2 = "0.10"
+# Used for content-change-detection hashes on the indexer hot path.
+# ~3× faster than SHA-256 per single-thread, with the same hex output
+# format (32-byte digest → 64 hex chars). Identity-style hashes
+# (corpus root ID, git repo cache key, bundle path) deliberately stay
+# on SHA-256 because their values are persisted across upgrades.
+blake3 = "1.5"
 
 # File watching
 notify = "7"
@@ -96,7 +102,12 @@ tree-sitter-typescript = "0.23"
 tree-sitter-go = "0.25"
 tree-sitter-java = "0.23"
 tree-sitter-c = "0.24"
-tree-sitter-cpp = "0.23"
+# Drop-in replacement for tree-sitter-cpp: a strict superset that
+# additionally recognizes Unreal Engine reflection macros (UCLASS,
+# UFUNCTION, GENERATED_BODY, etc.) as first-class syntax nodes.
+# Vanilla C++ parses identically. Pinned to a specific commit because
+# the upstream isn't on crates.io yet.
+tree-sitter-unreal-cpp = { git = "https://github.com/taku25/tree-sitter-unreal-cpp", rev = "92eee7d1ac994e408c208bcb1b73170c8746356f" }
 tree-sitter-ruby = "0.23"
 tree-sitter-c-sharp = "0.23"
 tree-sitter-swift = "0.7"

@@ -139,6 +139,44 @@ pub struct FileHashRecord {
     pub extractor_version: i64,
 }
 
+/// Stat-fingerprint of an entire corpus root.
+///
+/// `root_hash` is a sorted BLAKE3 over each indexed file's
+/// `(rel_path, mtime_ns, size)` tuple. When the freshly-computed hash
+/// matches the stored value AND the stored `extractor_version` equals
+/// the current [`crate::ingestion::EXTRACTOR_VERSION`], the corpus is
+/// provably unchanged at the filesystem-stat level *and* the on-disk
+/// index was produced by the same extractor pipeline, so the indexer
+/// can short-circuit without parsing or hashing any file contents.
+///
+/// On stat-mismatch OR extractor-version mismatch, the regular
+/// ingestion path runs and the existing per-file [`FileHashRecord`]
+/// cache picks up content-level dedupe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorpusMerkleRecord {
+    /// Corpus identifier (matches `corpus_roots.id` for registered
+    /// corpora; the daemon uses this as the lookup key).
+    pub corpus_id: String,
+    /// BLAKE3 hex digest of the sorted `(rel_path, mtime_ns, size)`
+    /// fingerprint. 64 hex chars.
+    pub root_hash: String,
+    /// File count at the time the fingerprint was computed — purely
+    /// observational, useful for telemetry and sanity checks.
+    pub file_count: i64,
+    /// Wall-clock nanoseconds at which the fingerprint was last stored.
+    /// Used to recognize stale fingerprints if we ever add an expiry
+    /// policy; today purely informational.
+    pub last_indexed_ns: i64,
+    /// Extractor pipeline version that produced the on-disk index for
+    /// this corpus. Compared against
+    /// [`crate::ingestion::EXTRACTOR_VERSION`] inside the short-circuit
+    /// guard — a mismatch falls through to the full reindex path so an
+    /// extractor or grammar bump auto-heals on first reindex after
+    /// upgrade. Pre-V21 rows read back as `0`, which is below any real
+    /// version, so they always fall through.
+    pub extractor_version: i64,
+}
+
 /// A web cache record tracking fetch metadata for staleness detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebCacheRecord {
@@ -781,4 +819,30 @@ pub trait Storage: Send + Sync {
         doc_id: &ContentId,
         root_id: &str,
     ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Look up the latest stat-merkle fingerprint for a corpus.
+    ///
+    /// Returns `None` when the corpus has never been indexed (or its
+    /// fingerprint was cleared via [`Storage::delete_corpus_merkle`]).
+    /// Callers compare the returned `root_hash` against a freshly
+    /// computed one and short-circuit ingestion on equality.
+    fn get_corpus_merkle(
+        &self,
+        corpus_id: &str,
+    ) -> impl Future<Output = Result<Option<CorpusMerkleRecord>, StorageError>> + Send;
+
+    /// Upsert the stat-merkle fingerprint for a corpus. Called at the
+    /// end of a successful ingestion to record the new root hash.
+    fn upsert_corpus_merkle(
+        &self,
+        record: &CorpusMerkleRecord,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+
+    /// Drop the stat-merkle fingerprint for a corpus. Called from
+    /// `unregister_corpus` so a re-registered corpus doesn't pick up a
+    /// stale match. Returns `true` when a row was deleted.
+    fn delete_corpus_merkle(
+        &self,
+        corpus_id: &str,
+    ) -> impl Future<Output = Result<bool, StorageError>> + Send;
 }

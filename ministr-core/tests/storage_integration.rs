@@ -4,6 +4,7 @@
 //! CRUD operations, concurrent access, WAL behavior, and migrations.
 
 use ministr_core::session::{EvictionPolicy, Session, SessionId};
+use ministr_core::storage::traits::CorpusMerkleRecord;
 use ministr_core::storage::{
     BridgeEndpointRecord, BridgeLinkRecord, SqliteStorage, Storage, SymbolFilter, SymbolRecord,
     SymbolRefRecord,
@@ -491,7 +492,42 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 19);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 21);
+}
+
+#[tokio::test]
+async fn corpus_merkle_roundtrips_extractor_version() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let record = CorpusMerkleRecord {
+        corpus_id: "root-deadbeefcafef00d".into(),
+        root_hash: "a".repeat(64),
+        file_count: 42,
+        last_indexed_ns: 123_456_789,
+        extractor_version: 7,
+    };
+    storage.upsert_corpus_merkle(&record).await.unwrap();
+
+    let got = storage
+        .get_corpus_merkle(&record.corpus_id)
+        .await
+        .unwrap()
+        .expect("merkle row");
+    assert_eq!(got, record);
+
+    // Upsert with a bumped extractor_version overwrites in place.
+    let bumped = CorpusMerkleRecord {
+        extractor_version: 8,
+        last_indexed_ns: 999,
+        ..record.clone()
+    };
+    storage.upsert_corpus_merkle(&bumped).await.unwrap();
+    let got2 = storage
+        .get_corpus_merkle(&record.corpus_id)
+        .await
+        .unwrap()
+        .expect("merkle row");
+    assert_eq!(got2.extractor_version, 8);
+    assert_eq!(got2.last_indexed_ns, 999);
 }
 
 #[tokio::test]

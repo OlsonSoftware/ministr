@@ -20,9 +20,9 @@ use tracing::instrument;
 use super::schema::{configure_connection, run_migrations};
 use super::traits::{
     BridgeEndpointRecord, BridgeLinkDetail, BridgeLinkRecord, ClaimRecord, CoAccessRecord,
-    CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord, PendingRefRecord,
-    RelatedClaimRecord, SectionAccessStat, SectionRecord, Storage, SymbolFilter, SymbolRecord,
-    SymbolRefRecord, WebCacheRecord,
+    CorpusMerkleRecord, CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord,
+    PendingRefRecord, RelatedClaimRecord, SectionAccessStat, SectionRecord, Storage, SymbolFilter,
+    SymbolRecord, SymbolRefRecord, WebCacheRecord,
 };
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
@@ -1106,6 +1106,85 @@ impl Storage for SqliteStorage {
                 })?;
 
             Ok(records)
+        })
+        .await
+    }
+
+    async fn get_corpus_merkle(
+        &self,
+        corpus_id: &str,
+    ) -> Result<Option<CorpusMerkleRecord>, StorageError> {
+        let corpus_id = corpus_id.to_owned();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT corpus_id, root_hash, file_count, last_indexed_ns, extractor_version \
+                     FROM corpus_merkle WHERE corpus_id = ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            let result = stmt
+                .query_row(rusqlite::params![corpus_id], |row| {
+                    Ok(CorpusMerkleRecord {
+                        corpus_id: row.get(0)?,
+                        root_hash: row.get(1)?,
+                        file_count: row.get(2)?,
+                        last_indexed_ns: row.get(3)?,
+                        extractor_version: row.get(4)?,
+                    })
+                })
+                .optional()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+
+            Ok(result)
+        })
+        .await
+    }
+
+    async fn upsert_corpus_merkle(&self, record: &CorpusMerkleRecord) -> Result<(), StorageError> {
+        let record = record.clone();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO corpus_merkle \
+                    (corpus_id, root_hash, file_count, last_indexed_ns, extractor_version) \
+                 VALUES (?1, ?2, ?3, ?4, ?5) \
+                 ON CONFLICT(corpus_id) DO UPDATE SET \
+                    root_hash = excluded.root_hash, \
+                    file_count = excluded.file_count, \
+                    last_indexed_ns = excluded.last_indexed_ns, \
+                    extractor_version = excluded.extractor_version",
+                rusqlite::params![
+                    record.corpus_id,
+                    record.root_hash,
+                    record.file_count,
+                    record.last_indexed_ns,
+                    record.extractor_version,
+                ],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: format!("failed to upsert corpus merkle: {e}"),
+            })?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn delete_corpus_merkle(&self, corpus_id: &str) -> Result<bool, StorageError> {
+        let corpus_id = corpus_id.to_owned();
+        self.with_conn(move |conn| {
+            let n = conn
+                .execute(
+                    "DELETE FROM corpus_merkle WHERE corpus_id = ?1",
+                    rusqlite::params![corpus_id],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            Ok(n > 0)
         })
         .await
     }

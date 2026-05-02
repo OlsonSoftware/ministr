@@ -59,6 +59,15 @@ const ALWAYS_IGNORE_PATTERNS: &[&str] = &[
     "*.bin",
     "*.safetensors",
     "*.snap",
+    // Unreal Engine: UnrealHeaderTool emits these from the
+    // `UCLASS()`/`USTRUCT()`/`GENERATED_BODY()` declarations in the
+    // adjacent non-generated header. The output is ~zero authored
+    // content (just reflection-macro spew), parser-hostile to
+    // tree-sitter-cpp, and on a UE5 source tree it's ~30K files /
+    // ~500 MB of pure busywork. Skip globally — they aren't useful in
+    // any other codebase either.
+    "*.generated.h",
+    "*.gen.cpp",
 ];
 
 /// Hard guard: reject files inside always-ignored directories.
@@ -196,4 +205,270 @@ fn collect_path_entry(
 
 pub(super) fn is_supported_file(path: &Path) -> bool {
     detect_parser_kind(path).is_some()
+}
+
+/// Detect whether a corpus root looks like an Unreal Engine project.
+///
+/// Returns `true` when any `*.uproject` or `*.uplugin` file exists
+/// within 2 directories of the root. Covers the standard UE layouts:
+/// - `<root>/MyGame.uproject`
+/// - `<root>/Plugins/MyPlugin/MyPlugin.uplugin` (UE projects nest
+///   plugins one level under `Plugins/`)
+///
+/// Currently unused — Phase 2 ended up swapping the C++ grammar
+/// globally (`tree-sitter-cpp` → `tree-sitter-unreal-cpp`, a strict
+/// superset that handles `UCLASS()` / `UFUNCTION()` /
+/// `GENERATED_BODY()` correctly while parsing vanilla C++
+/// byte-identically), so per-corpus grammar dispatch turned out not
+/// to be necessary. The function is kept available because future
+/// per-corpus routing decisions (e.g. content-extract dedupe gating
+/// on UE-vs-non-UE in Phase 6) would naturally reuse it.
+///
+/// Cheap probe — at most a handful of `read_dir` calls. Callers can
+/// memoize per-corpus if they call this hot.
+#[must_use]
+#[allow(dead_code)]
+pub fn is_unreal_corpus(root: &Path) -> bool {
+    fn has_ue_marker(dir: &Path) -> bool {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in rd.flatten() {
+            if let Some(name) = entry.file_name().to_str()
+                && (name.ends_with(".uproject") || name.ends_with(".uplugin"))
+            {
+                return true;
+            }
+        }
+        false
+    }
+    fn search(dir: &Path, depth: u8) -> bool {
+        if has_ue_marker(dir) {
+            return true;
+        }
+        if depth == 0 {
+            return false;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in rd.flatten() {
+            if entry.file_type().is_ok_and(|ft| ft.is_dir()) && search(&entry.path(), depth - 1) {
+                return true;
+            }
+        }
+        false
+    }
+    // 2 levels deep — covers root + child + grandchild, which is
+    // enough for UE's `Plugins/<name>/<name>.uplugin` layout.
+    search(root, 2)
+}
+
+/// Stat-fingerprint of an entire corpus root, plus the discovered file list.
+///
+/// Walks `dir` exactly once, computing both:
+/// - `Vec<PathBuf>` — every supported file (same set [`discover_files`] returns)
+/// - `String` — a BLAKE3 hex digest over the sorted
+///   `(rel_path, mtime_ns, size)` tuples of those files
+///
+/// The fingerprint deliberately avoids reading file *contents*: hashing
+/// 10 GB of source on every reindex defeats the purpose. mtime+size is
+/// the standard fast-fingerprint used by Cursor, CocoIndex, and other
+/// 2026-era incremental indexers. When mtime drifts but content
+/// actually matches (rare but possible — e.g. `touch -a`), the existing
+/// per-file `file_hashes.content_hash` cache catches it inside the
+/// regular ingestion path.
+///
+/// Determinism: the file list is sorted lexicographically before
+/// hashing, so the same corpus state always produces the same root
+/// hash regardless of walk order. The version prefix `v1\0` lets us
+/// tweak the fingerprint encoding later without colliding.
+///
+/// # Errors
+///
+/// Returns [`IngestionError::Io`] when the walk fails or any file's
+/// metadata cannot be read.
+#[must_use = "returns (root_hash, files)"]
+pub fn compute_corpus_stat_merkle(dir: &Path) -> Result<(String, Vec<PathBuf>), IngestionError> {
+    use ignore::WalkBuilder;
+    use ignore::overrides::OverrideBuilder;
+
+    let mut overrides = OverrideBuilder::new(dir);
+    for pattern in ALWAYS_IGNORE_PATTERNS {
+        let _ = overrides.add(&format!("!{pattern}"));
+    }
+    let overrides = overrides.build().map_err(|e| IngestionError::Io {
+        path: dir.to_path_buf(),
+        source: std::io::Error::other(format!("invalid ignore pattern: {e}")),
+    })?;
+
+    let mut walker = WalkBuilder::new(dir);
+    walker
+        .hidden(false)
+        .parents(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .overrides(overrides)
+        .filter_entry(|entry| {
+            if entry.file_type().is_some_and(|ft| ft.is_dir())
+                && let Some(name) = entry.file_name().to_str()
+                && ALWAYS_IGNORE_DIRS.contains(&name)
+            {
+                return false;
+            }
+            true
+        });
+
+    // Collect (rel_path, abs_path, mtime_ns, size) tuples; we need both
+    // the relative form (for the fingerprint, so absolute paths don't
+    // poison the hash on a different machine) and the absolute form
+    // (for the returned file list).
+    let mut entries: Vec<(String, PathBuf, i64, u64)> = Vec::new();
+    for result in walker.build() {
+        let entry = result.map_err(|e| IngestionError::Io {
+            path: dir.to_path_buf(),
+            source: std::io::Error::other(format!("walk error: {e}")),
+        })?;
+        let path = entry.into_path();
+        if !path.is_file() || !is_supported_file(&path) {
+            continue;
+        }
+        let meta = std::fs::metadata(&path).map_err(|e| IngestionError::Io {
+            path: path.clone(),
+            source: e,
+        })?;
+        let mtime_ns = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|d| i64::try_from(d.as_nanos()).ok())
+            .unwrap_or(0);
+        let size = meta.len();
+        let rel = path
+            .strip_prefix(dir)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            // Normalize Windows backslashes so the fingerprint matches
+            // across platforms for the same corpus content.
+            .replace('\\', "/");
+        entries.push((rel, path, mtime_ns, size));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut hasher = blake3::Hasher::new();
+    // Version tag — bump this constant whenever the fingerprint encoding
+    // changes (e.g. if we add ctime, switch hash algorithm, etc.).
+    hasher.update(b"v1\0");
+    for (rel, _, mtime_ns, size) in &entries {
+        hasher.update(rel.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(&mtime_ns.to_le_bytes());
+        hasher.update(&size.to_le_bytes());
+        hasher.update(b"\n");
+    }
+    let root_hash = hasher.finalize().to_hex().to_string();
+
+    let mut files: Vec<PathBuf> = entries.into_iter().map(|(_, abs, _, _)| abs).collect();
+    files.sort();
+    Ok((root_hash, files))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(path: &Path, body: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn compute_corpus_stat_merkle_is_deterministic_and_skips_unsupported() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("a.rs"), "fn main(){}");
+        write(&tmp.path().join("b.md"), "# hello");
+        // Unsupported binary — must not affect the fingerprint.
+        write(&tmp.path().join("ignore.bin"), "\x00\x01\x02");
+
+        let (h1, files1) = compute_corpus_stat_merkle(tmp.path()).unwrap();
+        let (h2, files2) = compute_corpus_stat_merkle(tmp.path()).unwrap();
+
+        assert_eq!(h1, h2, "stable across calls");
+        assert_eq!(files1, files2, "file list stable");
+        assert_eq!(files1.len(), 2, "binary excluded");
+        assert_eq!(h1.len(), 64, "blake3 hex is 64 chars");
+    }
+
+    #[test]
+    fn compute_corpus_stat_merkle_changes_when_file_grows() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("a.rs"), "fn main(){}");
+        let (h1, _) = compute_corpus_stat_merkle(tmp.path()).unwrap();
+
+        // Append more content — size + mtime both shift.
+        write(&tmp.path().join("a.rs"), "fn main(){}\nfn extra(){}");
+        let (h2, _) = compute_corpus_stat_merkle(tmp.path()).unwrap();
+
+        assert_ne!(h1, h2, "fingerprint reflects size/mtime change");
+    }
+
+    #[test]
+    fn compute_corpus_stat_merkle_changes_when_file_added() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("a.rs"), "fn main(){}");
+        let (h1, files1) = compute_corpus_stat_merkle(tmp.path()).unwrap();
+
+        write(&tmp.path().join("b.rs"), "fn b(){}");
+        let (h2, files2) = compute_corpus_stat_merkle(tmp.path()).unwrap();
+
+        assert_ne!(h1, h2);
+        assert_eq!(files1.len() + 1, files2.len());
+    }
+
+    #[test]
+    fn generated_headers_are_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(
+            &tmp.path().join("Source/MyClass.h"),
+            "class FOO_API UMyClass {};",
+        );
+        write(
+            &tmp.path().join("Source/MyClass.generated.h"),
+            "// auto-generated UnrealHeaderTool spew\n",
+        );
+        write(&tmp.path().join("Source/MyClass.gen.cpp"), "// generated\n");
+        let files = discover_files(tmp.path()).unwrap();
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"MyClass.h".to_string()));
+        assert!(!names.iter().any(|n| n.ends_with(".generated.h")));
+        assert!(!names.iter().any(|n| n.ends_with(".gen.cpp")));
+    }
+
+    #[test]
+    fn is_unreal_corpus_detects_root_uproject() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("MyGame.uproject"), "{}").unwrap();
+        std::fs::write(tmp.path().join("README.md"), "# game").unwrap();
+        assert!(is_unreal_corpus(tmp.path()));
+    }
+
+    #[test]
+    fn is_unreal_corpus_detects_nested_uplugin() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("Plugins/MyPlugin")).unwrap();
+        std::fs::write(tmp.path().join("Plugins/MyPlugin/MyPlugin.uplugin"), "{}").unwrap();
+        assert!(is_unreal_corpus(tmp.path()));
+    }
+
+    #[test]
+    fn is_unreal_corpus_returns_false_for_plain_codebase() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("src/main.rs"), "fn main(){}");
+        write(&tmp.path().join("Cargo.toml"), "[package]");
+        assert!(!is_unreal_corpus(tmp.path()));
+    }
 }
