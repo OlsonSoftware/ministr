@@ -236,7 +236,21 @@ function AppInner() {
         onSelectCorpus={onSelectCorpus}
         onPaletteOpen={() => setPaletteOpen(true)}
         onShortcutsOpen={() => setShortcutsOpen(true)}
-        onOpenLogs={() => setTab("logs")}
+        onOpenLogs={async () => {
+          // The DaemonDot popover button reads "Open log file" — that
+          // promise is the *file on disk*, not the Logs tab. Hand the
+          // log path off to the OS opener so the user lands in their
+          // text editor, then also switch the tab so the in-app Logs
+          // view is up next time.
+          if (status?.log_path) {
+            try {
+              await invoke("open_path", { path: status.log_path });
+            } catch (e) {
+              console.error("open_path(log) failed", e);
+            }
+          }
+          setTab("logs");
+        }}
       />
 
       {error && (

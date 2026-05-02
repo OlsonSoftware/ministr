@@ -112,7 +112,10 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
               onClick={() => {
                 onOpenLogs();
                 setOpen(false);
-                toast("Open logs", { detail: status.log_path, tone: "info" });
+                toast("Open log file", {
+                  detail: status.log_path,
+                  tone: "info",
+                });
               }}
               className="w-full border-t border-border-soft bg-surface text-text-muted hover:text-text hover:bg-surface-overlay cursor-pointer transition-none px-3 py-2 font-sans text-sm font-medium text-left"
             >
