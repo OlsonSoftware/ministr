@@ -36,7 +36,7 @@ use super::embedding::{
 use super::process::{ProcessOptions, store_enriched_document};
 use super::roots::{
     accumulate_language_stats, all_files_unchanged_by_mtime, compute_relative_path,
-    compute_root_id, compute_sha256, file_mtime_nanos, find_root_for_file, namespace_path,
+    compute_root_id, compute_content_hash, file_mtime_nanos, find_root_for_file, namespace_path,
     strip_root_prefix, update_root_stats,
 };
 use super::symbols::{
@@ -586,7 +586,7 @@ impl IngestionPipeline {
             path: file_path.to_path_buf(),
         })?;
 
-        let hash = compute_sha256(&content_str);
+        let hash = compute_content_hash(&content_str);
 
         if extractor_fresh
             && let Some(ref existing) = existing_hash
@@ -644,7 +644,7 @@ impl IngestionPipeline {
         parser_kind: ParserKind,
         storage: &S,
     ) -> Result<ContentIngestionStats, IngestionError> {
-        let hash = compute_sha256(content);
+        let hash = compute_content_hash(content);
 
         let existing_hash = storage
             .get_file_hash(source_path)
@@ -708,7 +708,7 @@ impl IngestionPipeline {
         E: Embedder + ?Sized,
         I: VectorIndex + ?Sized,
     {
-        let hash = compute_sha256(content);
+        let hash = compute_content_hash(content);
 
         let existing_hash = storage
             .get_file_hash(source_path)
@@ -1646,7 +1646,7 @@ impl IngestionPipeline {
             path: file_path.to_path_buf(),
         })?;
 
-        let hash = compute_sha256(&content_str);
+        let hash = compute_content_hash(&content_str);
 
         if extractor_fresh
             && let Some(ref existing) = existing_hash

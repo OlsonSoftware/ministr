@@ -17,7 +17,7 @@ mod tests {
     use super::super::embedding::embed_document;
     use super::super::pipeline::{IngestionPipeline, IngestionProgress};
     use super::super::roots::{
-        compute_relative_path, compute_root_id, compute_sha256, find_root_for_file,
+        compute_relative_path, compute_root_id, compute_content_hash, find_root_for_file,
         language_for_extension, module_path_from_file, namespace_path, strip_root_prefix,
     };
     use super::super::sections::{
@@ -62,21 +62,21 @@ mod tests {
 
     #[test]
     fn sha256_deterministic() {
-        let hash1 = compute_sha256("hello world");
-        let hash2 = compute_sha256("hello world");
+        let hash1 = compute_content_hash("hello world");
+        let hash2 = compute_content_hash("hello world");
         assert_eq!(hash1, hash2);
     }
 
     #[test]
     fn sha256_different_content() {
-        let hash1 = compute_sha256("hello");
-        let hash2 = compute_sha256("world");
+        let hash1 = compute_content_hash("hello");
+        let hash2 = compute_content_hash("world");
         assert_ne!(hash1, hash2);
     }
 
     #[test]
     fn sha256_empty_string() {
-        let hash = compute_sha256("");
+        let hash = compute_content_hash("");
         assert!(!hash.is_empty());
         assert_eq!(hash.len(), 64);
     }

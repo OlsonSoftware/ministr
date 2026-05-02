@@ -60,11 +60,12 @@ fn query_hash(query: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Compute a content hash for a section's text.
+/// Compute a 64-char BLAKE3 hex hash for a section's text.
+///
+/// Used as a cache-invalidation fingerprint, not a stable identifier,
+/// so the algorithm can change between releases without coordination.
 fn section_content_hash(text: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
-    format!("{:x}", hasher.finalize())
+    blake3::hash(text.as_bytes()).to_hex().to_string()
 }
 
 /// Run the ask pipeline: cache check → retrieve → infer → cache store.

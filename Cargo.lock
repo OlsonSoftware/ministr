@@ -4535,6 +4535,7 @@ version = "0.2.2"
 dependencies = [
  "async-stream",
  "axum",
+ "blake3",
  "futures-core",
  "http",
  "http-body-util",
@@ -4558,6 +4559,7 @@ name = "ministr-mcp"
 version = "0.2.2"
 dependencies = [
  "axum",
+ "blake3",
  "miette",
  "ministr-api",
  "ministr-core",

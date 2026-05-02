@@ -40,8 +40,9 @@ fn version_flag_exits_successfully() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let want = env!("CARGO_PKG_VERSION");
     assert!(
-        stdout.contains("0.1.0"),
-        "version output should contain 0.1.0, got: {stdout}"
+        stdout.contains(want),
+        "version output should contain {want}, got: {stdout}"
     );
 }

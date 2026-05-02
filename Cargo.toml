@@ -73,6 +73,12 @@ quick-xml = "0.37"
 
 # Hashing
 sha2 = "0.10"
+# Used for content-change-detection hashes on the indexer hot path.
+# ~3× faster than SHA-256 per single-thread, with the same hex output
+# format (32-byte digest → 64 hex chars). Identity-style hashes
+# (corpus root ID, git repo cache key, bundle path) deliberately stay
+# on SHA-256 because their values are persisted across upgrades.
+blake3 = "1.5"
 
 # File watching
 notify = "7"

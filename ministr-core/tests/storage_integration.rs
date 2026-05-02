@@ -491,7 +491,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 19);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 20);
 }
 
 #[tokio::test]
