@@ -110,12 +110,12 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
           {status?.log_path && onOpenLogs && (
             <button
               onClick={() => {
+                // The toast is owned by the App-level onOpenLogs callback
+                // now, since only it knows whether the host opener
+                // actually succeeded. DaemonDot just dispatches and
+                // closes the popover.
                 onOpenLogs();
                 setOpen(false);
-                toast("Open log file", {
-                  detail: status.log_path,
-                  tone: "info",
-                });
               }}
               className="w-full border-t border-border-soft bg-surface text-text-muted hover:text-text hover:bg-surface-overlay cursor-pointer transition-none px-3 py-2 font-sans text-sm font-medium text-left"
             >
