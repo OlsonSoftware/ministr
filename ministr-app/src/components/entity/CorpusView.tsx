@@ -38,8 +38,11 @@ export function CorpusView({ entity }: Props) {
     Promise.allSettled([
       invoke<FileInfo[]>("list_corpus_files", { corpusId: corpus.id }),
       invoke<SessionDetail[]>("list_sessions"),
+      // Bump the candidate window so a corpus with slightly older
+      // changes still appears active after sibling corpora produce
+      // 50+ newer events. Display still slices to 12 rows below.
       invoke<CoherenceEvent[]>("recent_coherence_events", {
-        limit: 50,
+        limit: 500,
         sinceMs: null,
       }),
     ]).then(([f, s, c]) => {

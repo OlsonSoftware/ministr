@@ -55,13 +55,18 @@ export function SectionView({ entity }: Props) {
     Promise.allSettled([symbolsP, changesP]).then(([s, c]) => {
       if (cancelled) return;
       setSymbols(s.status === "fulfilled" ? s.value : []);
+      // When the content_id has no embedded file path (stub symbol ids,
+      // legacy claim ids, etc.), there is no meaningful "Recent changes
+      // for this section" feed to show — fall through to an empty list
+      // so the §4 panel renders its empty state, never the unfiltered
+      // global feed for unrelated files.
       setChanges(
-        c.status === "fulfilled"
-          ? filePath
-            ? c.value.filter((e) =>
-                e.path.replace(/\\/g, "/").endsWith(filePath.replace(/\\/g, "/")),
-              )
-            : c.value
+        c.status === "fulfilled" && filePath
+          ? c.value.filter((e) =>
+              e.path
+                .replace(/\\/g, "/")
+                .endsWith(filePath.replace(/\\/g, "/")),
+            )
           : [],
       );
     });

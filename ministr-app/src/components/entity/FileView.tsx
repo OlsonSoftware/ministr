@@ -53,8 +53,13 @@ export function FileView({ entity }: Props) {
         filePath: path,
         limit: 200,
       }),
+      // Bump the candidate window from 50 to 500: the daemon doesn't
+      // yet support server-side filter args for recent_coherence_events,
+      // so we filter client-side and need enough headroom that a busy
+      // multi-file corpus doesn't push *this* file's older changes off
+      // the back. Display still slices to 10 rows below.
       invoke<CoherenceEvent[]>("recent_coherence_events", {
-        limit: 50,
+        limit: 500,
         sinceMs: null,
       }),
       invoke<FileInfo[]>("list_corpus_files", { corpusId }),

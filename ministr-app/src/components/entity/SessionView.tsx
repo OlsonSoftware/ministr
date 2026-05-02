@@ -38,7 +38,11 @@ export function SessionView({ entity }: Props) {
 
     Promise.allSettled([
       invoke<SessionDetail[]>("list_sessions"),
-      invoke<ActivityEvent[]>("recent_activity", { limit: 100 }),
+      // The daemon doesn't filter activity server-side yet, so we pull
+      // a generous candidate window and narrow client-side. 500 keeps
+      // older session history visible on busy daemons without bloating
+      // the JSON payload (display still slices to 50 below).
+      invoke<ActivityEvent[]>("recent_activity", { limit: 500 }),
       invoke<CorpusInfo[]>("list_corpora"),
     ]).then(([s, a, c]) => {
       if (cancelled) return;
