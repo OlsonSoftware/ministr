@@ -543,6 +543,7 @@ pub async fn search_symbols(
     corpus_id: String,
     query: String,
     kind: Option<String>,
+    file_path: Option<String>,
 ) -> Result<Vec<SymbolInfo>, String> {
     let guard = state.registry.corpora().read().await;
     let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
@@ -553,7 +554,7 @@ pub async fn search_symbols(
         kind,
         visibility: None,
         module: None,
-        file_path: None,
+        file_path,
     };
 
     let records = handle
@@ -664,6 +665,242 @@ pub async fn recent_activity(
         state.recent_activity(limit).await
     };
     Ok(events)
+}
+
+/// Cross-language bridge link returned to the frontend.
+#[derive(Serialize)]
+pub struct BridgeLinkOut {
+    pub kind: String,
+    pub confidence: f32,
+    pub export_file: String,
+    pub export_binding_key: String,
+    pub export_symbol: String,
+    pub export_language: String,
+    pub export_line: u32,
+    pub import_file: String,
+    pub import_binding_key: String,
+    pub import_symbol: String,
+    pub import_language: String,
+    pub import_line: u32,
+}
+
+/// Query cross-language bridge links (Tauri commands, `PyO3`, NAPI, FFI, HTTP routes).
+#[tauri::command]
+pub async fn bridge_query(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    query: Option<String>,
+    kind: Option<String>,
+    source_language: Option<String>,
+    file_path: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<BridgeLinkOut>, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let links = handle
+        .service
+        .query_bridges(
+            query.as_deref(),
+            kind.as_deref(),
+            source_language.as_deref(),
+            file_path.as_deref(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let cap = limit.unwrap_or(500);
+    Ok(links
+        .into_iter()
+        .take(cap)
+        .map(|l| BridgeLinkOut {
+            kind: l.kind,
+            confidence: l.confidence,
+            export_file: l.export_file,
+            export_binding_key: l.export_binding_key,
+            export_symbol: l.export_symbol,
+            export_language: l.export_language,
+            export_line: l.export_line,
+            import_file: l.import_file,
+            import_binding_key: l.import_binding_key,
+            import_symbol: l.import_symbol,
+            import_language: l.import_language,
+            import_line: l.import_line,
+        })
+        .collect())
+}
+
+/// Full symbol definition with source context.
+#[derive(Serialize)]
+pub struct SymbolDefinitionOut {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub visibility: String,
+    pub signature: String,
+    pub doc_comment: Option<String>,
+    pub file_path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub heading_path: Vec<String>,
+    pub source_context: String,
+}
+
+/// Open a file or folder with the OS default handler.
+///
+/// Used by the Settings page (Open data folder / Open log file) and any
+/// caller that wants the OS file manager / text editor to surface a path.
+///
+/// Expands a leading `~/` (or bare `~`) to the user's home directory before
+/// invoking the OS opener. Tilde expansion is a shell convention; the
+/// raw `open` / `explorer.exe` / `xdg-open` syscalls do *not* expand it,
+/// so call sites that pass `~/.ministr/` would otherwise fail silently.
+#[tauri::command]
+pub async fn open_path(path: String) -> Result<(), String> {
+    let resolved = expand_tilde(&path);
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&resolved)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(&resolved)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&resolved)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Expand a leading `~/` or bare `~` to the user's home directory.
+///
+/// Reads `HOME` on Unix and `USERPROFILE` on Windows; falls back to the
+/// original input if neither is set. Only the leading segment is
+/// expanded — `~` mid-path is preserved verbatim because that's a
+/// filename, not a shell expansion.
+fn expand_tilde(path: &str) -> String {
+    if path == "~" {
+        return home_dir().unwrap_or_else(|| path.to_string());
+    }
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"))
+        && let Some(home) = home_dir()
+    {
+        let sep = if cfg!(windows) { '\\' } else { '/' };
+        return format!("{home}{sep}{rest}");
+    }
+    path.to_string()
+}
+
+fn home_dir() -> Option<String> {
+    #[cfg(windows)]
+    {
+        std::env::var("USERPROFILE").ok()
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("HOME").ok()
+    }
+}
+
+/// Read a snippet of a source file with a small context window.
+///
+/// Used by the Bridge tab to render side-by-side endpoint code panes.
+/// Verifies the corpus exists AND that `file_path` resolves inside one
+/// of that corpus's root paths before reading from disk — without the
+/// scope check, a renderer-side caller could exfiltrate arbitrary text
+/// files from the host filesystem.
+#[tauri::command]
+pub async fn read_source_excerpt(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    file_path: String,
+    line_start: u32,
+    line_end: u32,
+) -> Result<String, String> {
+    // Snapshot the corpus's root paths under the registry lock, then
+    // drop the guard so the canonicalize awaits don't hold it.
+    let roots: Vec<String> = {
+        let guard = state.registry.corpora().read().await;
+        let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+        handle.info.read().await.paths.clone()
+    };
+
+    // Canonicalize both sides so symlinks / `..` segments / relative paths
+    // can't be used to step outside a corpus root. canonicalize() implicitly
+    // verifies the file exists; we treat the I/O error as "outside corpus"
+    // rather than leaking a missing-file error message.
+    let target = tokio::fs::canonicalize(&file_path)
+        .await
+        .map_err(|_| "path outside corpus".to_string())?;
+    let mut allowed = false;
+    for root in &roots {
+        if let Ok(canonical_root) = tokio::fs::canonicalize(root).await
+            && target.starts_with(&canonical_root)
+        {
+            allowed = true;
+            break;
+        }
+    }
+    if !allowed {
+        return Err("path outside corpus".to_string());
+    }
+
+    let content = tokio::fs::read_to_string(&target)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let lines: Vec<&str> = content.lines().collect();
+    let total = lines.len();
+    if total == 0 {
+        return Ok(String::new());
+    }
+
+    // 1-based line numbers from the daemon. Take a 3-line context window.
+    let s = (line_start.saturating_sub(4) as usize).min(total);
+    let e = ((line_end as usize).saturating_add(3)).min(total);
+    Ok(lines[s..e.max(s)].join("\n"))
+}
+
+/// Get the full definition of a symbol with surrounding source context.
+#[tauri::command]
+pub async fn symbol_definition(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    symbol_id: String,
+) -> Result<SymbolDefinitionOut, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let def = handle
+        .service
+        .get_symbol_definition(&symbol_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(SymbolDefinitionOut {
+        id: def.id,
+        name: def.name,
+        kind: def.kind,
+        visibility: def.visibility,
+        signature: def.signature,
+        doc_comment: def.doc_comment,
+        file_path: def.file_path,
+        line_start: def.line_start,
+        line_end: def.line_end,
+        heading_path: def.heading_path,
+        source_context: def.source_context,
+    })
 }
 
 /// Get ingestion progress for all corpora.

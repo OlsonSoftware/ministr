@@ -29,29 +29,29 @@ export function CorpusChip({
     <button
       onClick={onClick}
       className={cn(
-        "group relative inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-all duration-120 cursor-pointer shrink-0",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-ring)]",
+        "group relative inline-flex items-center gap-2 border-2 px-3 py-1.5 text-xs font-medium cursor-pointer shrink-0 transition-none",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         selected
-          ? "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] text-accent"
-          : "border-border/70 bg-surface-raised/80 text-text hover:border-border-hover hover:bg-surface-overlay/60",
+          ? "border-border bg-accent text-[var(--color-accent-fg-on)] shadow-[2px_2px_0_0_var(--shadow-color)]"
+          : "border-border bg-surface text-text hover:bg-surface-overlay hover:text-text",
         className,
       )}
       title={corpus.paths.join(" · ")}
     >
       <StatusDot tone={tone} pulse={isCorpusLive(corpus) ? "live" : "off"} />
-      <span className="font-mono font-semibold max-w-[140px] truncate">
+      <span className="font-mono font-bold tracking-[0.05em] max-w-[140px] truncate">
         {name}
       </span>
-      <span className="text-[10px] tabular-nums text-text-dim font-mono">
+      <span className="text-xs tabular-nums font-mono opacity-80">
         {corpus.sections_count.toLocaleString()}
       </span>
       {pct !== null && (
-        <span className="text-[10px] tabular-nums text-warning font-mono">
+        <span className="text-xs tabular-nums font-mono">
           {pct.toFixed(0)}%
         </span>
       )}
       {corpus.active_sessions > 0 && (
-        <span className="text-[10px] tabular-nums text-accent font-mono">
+        <span className="text-xs tabular-nums font-mono">
           {corpus.active_sessions}↯
         </span>
       )}

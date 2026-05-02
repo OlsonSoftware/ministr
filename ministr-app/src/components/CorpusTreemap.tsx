@@ -1,56 +1,43 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { TreePine, FileCode, File as FileIcon, Layers } from "lucide-react";
-import { Card } from "./ui/card";
-import { Badge } from "./ui/badge";
-import { CorpusSelect } from "./ui/corpus-select";
+import { TreePine } from "lucide-react";
 import { cn } from "../lib/utils";
-import { labelSmallCap } from "../lib/ui-tokens";
+import { useEntityPanel } from "../hooks/useEntityPanel";
 import type { DaemonStatus, FileInfo } from "../lib/types";
 
 interface Props {
   status: DaemonStatus;
+  activeCorpusId: string | null;
+  setActiveCorpusId: (id: string | null) => void;
+  /** Optional jump callback — clicking a cell navigates here. */
+  onNavigate?: (tab: "symbols") => void;
 }
 
-/**
- * Per-language swatch colour. Shares a unified OKLCH lightness/chroma
- * signature (L ≈ 0.68, C ≈ 0.17) so languages stay visually distinct
- * without jumping out of the ministr palette; docs and data files are
- * intentionally muted.
- */
-const LANG_COLORS: Record<string, string> = {
-  rs: "oklch(0.70 0.17 40)", // rust orange
-  ts: "oklch(0.66 0.16 240)", // typescript blue
-  tsx: "oklch(0.72 0.14 220)", // tsx sky
-  js: "oklch(0.80 0.16 95)", // js yellow
-  jsx: "oklch(0.78 0.16 75)", // jsx amber
-  py: "oklch(0.72 0.16 155)", // python green
-  go: "oklch(0.74 0.14 200)", // go cyan
-  java: "oklch(0.66 0.18 25)", // java red
-  kt: "oklch(0.66 0.17 295)", // kotlin violet
-  swift: "oklch(0.72 0.17 55)", // swift orange
-  c: "oklch(0.68 0.05 260)", // c slate
-  cpp: "oklch(0.62 0.17 265)", // cpp indigo
-  cs: "oklch(0.64 0.17 310)", // c# purple
-  rb: "oklch(0.68 0.17 15)", // ruby rose
-  md: "var(--color-accent)", // docs → ministr accent
-  toml: "oklch(0.74 0.14 30)", // toml coral
-  json: "oklch(0.70 0.03 260)", // json neutral
-  yaml: "oklch(0.76 0.14 355)", // yaml pink
-  yml: "oklch(0.76 0.14 355)",
-};
+type GroupBy = "flat" | "dir" | "ext";
 
-const FALLBACK_COLOR = "oklch(0.65 0.03 260)";
-
-function langColor(ext: string): string {
-  return LANG_COLORS[ext] ?? FALLBACK_COLOR;
+interface GroupedNode {
+  /** Group label, e.g. "core", "rs", or empty for flat. */
+  label: string;
+  files: FileInfo[];
+  total: number;
 }
 
-export function CorpusTreemap({ status }: Props) {
-  const [corpusId, setCorpusId] = useState(status.corpora[0]?.id ?? "");
+const TILE_GAP = 1;
+
+export function CorpusTreemap({
+  status,
+  activeCorpusId,
+  setActiveCorpusId,
+  onNavigate,
+}: Props) {
+  void onNavigate;
+  const { openEntity } = useEntityPanel();
+  const corpusId = activeCorpusId ?? status.corpora[0]?.id ?? "";
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [hoveredFile, setHoveredFile] = useState<FileInfo | null>(null);
+  const [groupBy, setGroupBy] = useState<GroupBy>("flat");
+  const [minSections, setMinSections] = useState(1);
 
   useEffect(() => {
     if (!corpusId) return;
@@ -61,190 +48,413 @@ export function CorpusTreemap({ status }: Props) {
       .finally(() => setLoading(false));
   }, [corpusId]);
 
+  // Reset filters when corpus changes.
+  useEffect(() => {
+    setMinSections(1);
+    setGroupBy("flat");
+    setHoveredFile(null);
+  }, [corpusId]);
+
   const totalSections = files.reduce((s, f) => s + f.section_count, 0);
-  const langBreakdown = getLangBreakdown(files);
-  const sortedFiles = [...files].sort((a, b) => b.section_count - a.section_count);
+  const sortedFiles = useMemo(
+    () => [...files].sort((a, b) => b.section_count - a.section_count),
+    [files],
+  );
+
+  const visibleFiles = useMemo(
+    () => sortedFiles.filter((f) => f.section_count >= minSections),
+    [sortedFiles, minSections],
+  );
+  const hiddenCount = sortedFiles.length - visibleFiles.length;
+
+  // Quartile thresholds based on the visible set, used by both the treemap
+  // and the top-files list so visual rhythm stays consistent.
+  const quartiles = useMemo(() => {
+    if (visibleFiles.length === 0) return { q1: 0, q2: 0, q3: 0 };
+    // q1 = 75th percentile, q2 = 50th, q3 = 25th.
+    const counts = visibleFiles.map((f) => f.section_count).sort((a, b) => b - a);
+    const at = (pct: number) =>
+      counts[Math.min(counts.length - 1, Math.floor(counts.length * pct))];
+    return {
+      q1: at(0.25),
+      q2: at(0.5),
+      q3: at(0.75),
+    };
+  }, [visibleFiles]);
+
+  function quartileBucket(count: number): "top" | "high" | "mid" | "low" {
+    if (count >= quartiles.q1) return "top";
+    if (count >= quartiles.q2) return "high";
+    if (count >= quartiles.q3) return "mid";
+    return "low";
+  }
+
+  const grouped = useMemo<GroupedNode[]>(() => {
+    if (groupBy === "flat") {
+      return [
+        {
+          label: "",
+          files: visibleFiles,
+          total: visibleFiles.reduce((s, f) => s + f.section_count, 0),
+        },
+      ];
+    }
+    const m = new Map<string, FileInfo[]>();
+    for (const f of visibleFiles) {
+      const key =
+        groupBy === "ext"
+          ? (f.path.split(".").pop() ?? "?").toLowerCase()
+          : (() => {
+              // Top-level directory of the path.
+              const norm = f.path.replace(/\\/g, "/");
+              const parts = norm.split("/").filter(Boolean);
+              return parts[0] ?? "/";
+            })();
+      const arr = m.get(key) ?? [];
+      arr.push(f);
+      m.set(key, arr);
+    }
+    return Array.from(m.entries())
+      .map(([label, arr]) => ({
+        label,
+        files: arr,
+        total: arr.reduce((s, f) => s + f.section_count, 0),
+      }))
+      .sort((a, b) => b.total - a.total);
+  }, [visibleFiles, groupBy]);
+
+  const langBreakdown = useMemo(() => {
+    if (visibleFiles.length === 0) return [];
+    const total = visibleFiles.reduce((s, f) => s + f.section_count, 0);
+    if (total === 0) return [];
+    const counts = new Map<string, number>();
+    for (const f of visibleFiles) {
+      const ext = (f.path.split(".").pop() ?? "?").toLowerCase();
+      counts.set(ext, (counts.get(ext) ?? 0) + f.section_count);
+    }
+    return Array.from(counts.entries())
+      .map(([ext, count]) => ({
+        ext,
+        count,
+        pct: (count / total) * 100,
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [visibleFiles]);
+
+  function onCellClick(f: FileInfo) {
+    setActiveCorpusId(corpusId);
+    openEntity({ kind: "file", corpusId, path: f.path });
+  }
 
   return (
-    <div className="space-y-4 ministr-fade-in">
-      <header className="flex items-end justify-between gap-4 flex-wrap">
+    <div className="@container/page flex flex-col gap-3 h-full min-h-0">
+      {/* Header strip — title + corpus summary */}
+      <header className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-base font-semibold text-text flex items-center gap-2">
-            <TreePine className="h-4 w-4 text-accent" />
-            Corpus treemap
+          <h2 className="font-serif text-2xl font-normal text-text leading-tight flex items-center gap-2">
+            <TreePine className="h-5 w-5 text-text-dim" strokeWidth={2} />
+            Structure
           </h2>
-          <p className="text-xs text-text-dim mt-0.5">
-            File size proportional to section count — hover or click rows for details.
+          <p className="font-serif text-sm italic text-text-dim mt-1">
+            File size proportional to section count · click to drill in.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <CorpusSelect
-            value={corpusId}
-            onChange={setCorpusId}
-            corpora={status.corpora}
-            ariaLabel="Treemap corpus"
-          />
-          <Badge variant="muted">
-            {files.length} files · {totalSections.toLocaleString()} sections
-          </Badge>
-        </div>
+        <span className="font-mono text-xs tabular-nums text-text-dim">
+          {visibleFiles.length} files · {totalSections.toLocaleString()} sections
+        </span>
       </header>
 
-      {langBreakdown.length > 0 && (
-        <Card hover="lift" className="p-3">
-          <div className="flex items-center gap-1.5 mb-2.5">
-            <Layers className="h-3 w-3 text-text-dim" />
-            <h3 className={labelSmallCap}>
-              Language mix
-            </h3>
-          </div>
-          <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-            {langBreakdown.map(({ ext, count, pct }) => (
-              <div key={ext} className="flex items-center gap-1.5 text-xs">
-                <div
-                  className="h-2.5 w-2.5 rounded-sm shrink-0"
-                  style={{ backgroundColor: langColor(ext) }}
-                />
-                <span className="font-mono text-text">.{ext}</span>
-                <span className="text-text-dim tabular-nums">
-                  ({count} · {pct}%)
-                </span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
+      {/* Controls row: group-by toggle + min-sections threshold */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+          Group
+        </span>
+        <div className="flex items-stretch gap-0">
+          {(
+            [
+              { key: "flat" as const, label: "Flat" },
+              { key: "dir" as const, label: "By dir" },
+              { key: "ext" as const, label: "By ext" },
+            ]
+          ).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setGroupBy(key)}
+              className={cn(
+                "border border-border-soft px-2 py-0.5 font-sans text-sm font-medium cursor-pointer transition-none -ml-[1px] first:ml-0",
+                groupBy === key
+                  ? "border-accent bg-surface-overlay text-text z-10 relative"
+                  : "bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
-      <Card hover="lift" className="p-3 relative">
-        {hoveredFile && (
-          <div className="absolute top-3 right-3 z-10 rounded-lg border border-border/70 bg-surface-raised px-3 py-2 text-xs max-w-[340px] shadow-[var(--shadow-md)] ministr-fade-in">
-            <p className="font-mono truncate text-text">{hoveredFile.path}</p>
-            <p className="text-text-dim mt-1 flex items-center gap-3">
-              <span className="tabular-nums">
-                {hoveredFile.section_count} sections
-              </span>
-              <span className="font-mono">
-                {hoveredFile.content_hash.slice(0, 12)}…
-              </span>
-            </p>
-          </div>
-        )}
+        <span className="w-px h-5 bg-border-soft" />
 
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="ministr-spin h-6 w-6 rounded-full border-2 border-border border-t-accent" />
-          </div>
-        ) : files.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-10 text-center">
-            <p className="text-sm font-medium text-text">No files indexed</p>
-            <p className="text-xs text-text-dim">
-              Kick off an ingestion run to populate this view.
-            </p>
-          </div>
-        ) : (
-          <div className="flex flex-wrap gap-[2px] bg-surface-sunken border border-border/50 rounded-lg overflow-hidden p-1.5 min-h-[220px]">
-            {sortedFiles.map((f, i) => {
-              const ext = f.path.split(".").pop() ?? "";
-              const area =
-                totalSections > 0
-                  ? Math.max(
-                      6,
-                      Math.sqrt((f.section_count / totalSections) * 60000),
-                    )
-                  : 10;
-              return (
-                <div
-                  key={`${f.path}-${i}`}
-                  className="rounded-sm opacity-75 hover:opacity-100 hover:scale-105 transition-all duration-100 cursor-pointer"
-                  style={{
-                    width: `${area}px`,
-                    height: `${area}px`,
-                    backgroundColor: langColor(ext),
-                  }}
-                  title={`${f.path} (${f.section_count} sections)`}
-                  onMouseEnter={() => setHoveredFile(f)}
-                  onMouseLeave={() => setHoveredFile(null)}
-                />
-              );
-            })}
-          </div>
-        )}
-      </Card>
-
-      <Card hover="lift" className="p-0 overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60">
-          <h3 className={labelSmallCap}>
-            Top 50 files by sections
-          </h3>
-          <span className="text-[11px] text-text-dim font-mono tabular-nums">
-            {sortedFiles.length > 50 ? "50" : sortedFiles.length} of {sortedFiles.length}
+        <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+          Min sections
+        </span>
+        <input
+          type="number"
+          min={0}
+          value={minSections}
+          onChange={(e) =>
+            setMinSections(Math.max(0, parseInt(e.target.value) || 0))
+          }
+          className="h-7 w-16 border border-border-soft bg-surface px-2 text-sm font-mono tabular-nums text-text focus:outline-none focus:border-accent transition-none"
+        />
+        {hiddenCount > 0 && (
+          <span className="font-serif text-xs italic text-text-dim">
+            + {hiddenCount} under threshold
           </span>
+        )}
+      </div>
+
+      {/* Unified component: treemap (top) · lang ribbon (middle) · top-files (bottom) */}
+      <div className="border border-border-soft bg-surface flex-1 min-h-0 flex flex-col">
+        {/* Treemap */}
+        <div className="relative flex-1 min-h-[280px] bg-surface-sunken">
+          {loading ? (
+            <div className="flex items-center justify-center h-full font-serif text-base italic text-text-dim">
+              Loading<span className="ministr-blink">_</span>
+            </div>
+          ) : visibleFiles.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-1.5 h-full text-center">
+              <p className="font-serif text-lg font-bold text-text">
+                No files indexed
+              </p>
+              <p className="font-serif text-sm italic text-text-dim">
+                Kick off an ingestion run to populate this view.
+              </p>
+            </div>
+          ) : (
+            <>
+              {hoveredFile && (
+                <div className="absolute top-2 right-2 z-20 max-w-[340px] border border-border-soft bg-surface px-2.5 py-1.5 shadow-[var(--shadow-sm)]">
+                  <p className="font-mono text-xs text-text break-all">
+                    {hoveredFile.path}
+                  </p>
+                  <p className="font-mono text-[0.6875rem] tabular-nums text-text-dim mt-0.5">
+                    {hoveredFile.section_count} sections ·{" "}
+                    {hoveredFile.content_hash.slice(0, 12)}
+                  </p>
+                </div>
+              )}
+
+              <div className="flex flex-col h-full p-1.5 gap-[2px]">
+                {grouped.map((group) => (
+                  <GroupBlock
+                    key={group.label || "flat"}
+                    group={group}
+                    showLabel={groupBy !== "flat"}
+                    quartileBucket={quartileBucket}
+                    onHover={setHoveredFile}
+                    onClick={onCellClick}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </div>
-        <div className="max-h-96 overflow-y-auto">
-          <table className="w-full text-xs">
-            <tbody>
-              {sortedFiles.slice(0, 50).map((f, i) => {
-                const ext = f.path.split(".").pop() ?? "";
-                const maxSections = sortedFiles[0]?.section_count ?? 1;
-                const pct = (f.section_count / maxSections) * 100;
-                return (
-                  <tr
-                    key={`${f.path}-${i}`}
-                    className="border-t border-border/40 first:border-0 hover:bg-surface-overlay/50"
-                  >
-                    <td className="py-1.5 px-4 font-mono w-full">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="h-2 w-2 rounded-sm shrink-0"
-                          style={{ backgroundColor: langColor(ext) }}
-                        />
-                        {LANG_COLORS[ext] ? (
-                          <FileCode className="h-3 w-3 text-text-dim shrink-0" />
-                        ) : (
-                          <FileIcon className="h-3 w-3 text-text-dim shrink-0" />
-                        )}
-                        <span className="truncate text-text">{f.path}</span>
-                      </div>
-                    </td>
-                    <td className="py-1.5 px-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="w-16 h-1 rounded-full bg-surface-overlay overflow-hidden">
-                          <div
-                            className="h-full"
-                            style={{
-                              width: `${pct}%`,
-                              backgroundColor: langColor(ext),
-                            }}
-                          />
-                        </div>
-                        <span className="text-text-muted tabular-nums font-mono w-10">
-                          {f.section_count}
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+
+        {/* Lang mix ribbon */}
+        {langBreakdown.length > 0 && (
+          <div className="border-t-2 border-border">
+            <div className="flex items-stretch h-6 -mx-[1px]">
+              {langBreakdown.map(({ ext, pct }, i) => (
+                <div
+                  key={ext}
+                  title={`.${ext} · ${pct.toFixed(1)}%`}
+                  className={cn(
+                    "border border-border-soft min-w-0 -ml-[2px] first:ml-0",
+                    bucketShade(i, langBreakdown.length),
+                  )}
+                  style={{ width: `${Math.max(pct, 3)}%` }}
+                />
+              ))}
+            </div>
+            <div className="flex items-center gap-3 px-2 py-1 border-t-2 border-border bg-surface-overlay overflow-x-auto">
+              <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text-dim shrink-0">Lang mix</span>
+              {langBreakdown.slice(0, 8).map(({ ext, pct }) => (
+                <span
+                  key={ext}
+                  className="font-mono text-xs text-text-dim shrink-0"
+                >
+                  .{ext}{" "}
+                  <span className="text-text tabular-nums">
+                    {pct.toFixed(0)}%
+                  </span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Top files list */}
+        <div className="border-t-2 border-border max-h-72 overflow-y-auto">
+          <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-1 sticky top-0 z-10">
+            <span className="font-sans text-xs font-bold tracking-[0.05em] text-text">
+              Top files by sections
+            </span>
+            <span className="font-mono text-xs tabular-nums text-text-dim">
+              {Math.min(50, visibleFiles.length)} OF {visibleFiles.length}
+            </span>
+          </div>
+          {visibleFiles.slice(0, 50).map((f) => {
+            const bucket = quartileBucket(f.section_count);
+            const max = sortedFiles[0]?.section_count ?? 1;
+            const pct = (f.section_count / max) * 100;
+            return (
+              <button
+                key={f.path}
+                onClick={() => onCellClick(f)}
+                onMouseEnter={() => setHoveredFile(f)}
+                onMouseLeave={() => setHoveredFile(null)}
+                title={f.path}
+                className="w-full text-left flex items-center gap-2 border-b-2 border-border last:border-b-0 px-3 py-1 cursor-pointer transition-none hover:bg-surface-overlay hover:text-text"
+              >
+                <span
+                  className={cn(
+                    "h-3 w-3 border border-border-soft shrink-0",
+                    bucketBg(bucket),
+                  )}
+                />
+                <span className="font-mono text-[0.6875rem] truncate flex-1">
+                  {f.path}
+                </span>
+                <div className="w-20 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">
+                  <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="font-mono text-xs tabular-nums w-12 text-right shrink-0">
+                  {f.section_count}
+                </span>
+              </button>
+            );
+          })}
         </div>
-      </Card>
+      </div>
     </div>
   );
 }
 
-function getLangBreakdown(files: FileInfo[]) {
-  const counts: Record<string, number> = {};
-  for (const f of files) {
-    const ext = f.path.split(".").pop() ?? "?";
-    counts[ext] = (counts[ext] ?? 0) + 1;
+// ─── GROUP BLOCK ──────────────────────────────────────────────────────────
+
+function GroupBlock({
+  group,
+  showLabel,
+  quartileBucket,
+  onHover,
+  onClick,
+}: {
+  group: GroupedNode;
+  showLabel: boolean;
+  quartileBucket: (count: number) => "top" | "high" | "mid" | "low";
+  onHover: (f: FileInfo | null) => void;
+  onClick: (f: FileInfo) => void;
+}) {
+  const total = group.total || 1;
+  return (
+    <div
+      className="border border-border-soft bg-surface flex flex-col min-h-0 flex-1"
+      style={{
+        flexGrow: Math.max(1, group.total),
+      }}
+    >
+      {showLabel && (
+        <div className="border-b-2 border-border bg-surface-overlay px-2 py-0.5 flex items-center justify-between">
+          <span className="font-mono text-xs font-bold tracking-[0.05em] text-text">
+            {group.label}
+          </span>
+          <span className="font-mono text-xs tabular-nums text-text-dim">
+            {group.files.length} · {group.total.toLocaleString()}
+          </span>
+        </div>
+      )}
+      <div
+        className="flex-1 flex flex-wrap gap-[1px] p-[2px] min-h-0"
+        style={{ alignContent: "flex-start" }}
+      >
+        {group.files.map((f) => {
+          const bucket = quartileBucket(f.section_count);
+          // Side length scales with sqrt(share). Floor 6px so every file is
+          // at least clickable; ceil 220px so a single dominant file doesn't
+          // eat the entire viewport.
+          const side = Math.max(
+            6,
+            Math.min(220, Math.sqrt((f.section_count / total) * 28000)),
+          );
+          const showLbl = side > 60;
+          const basename = f.path.split(/[\\/]/).pop() ?? f.path;
+          return (
+            <button
+              key={f.path}
+              onClick={() => onClick(f)}
+              onMouseEnter={() => onHover(f)}
+              onMouseLeave={() => onHover(null)}
+              title={`${f.path} · ${f.section_count}`}
+              className={cn(
+                "border-2 border-border cursor-pointer transition-none hover:bg-surface-overlay hover:text-text overflow-hidden flex items-center justify-center",
+                bucketBg(bucket),
+                bucketText(bucket),
+              )}
+              style={{
+                width: side,
+                height: side,
+                marginRight: TILE_GAP,
+                marginBottom: TILE_GAP,
+              }}
+            >
+              {showLbl && (
+                <span className="font-mono text-xs font-bold tracking-[0.05em] text-center px-1 truncate w-full">
+                  {basename.replace(/\.[^.]+$/, "")}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── BUCKET / SHADE HELPERS ───────────────────────────────────────────────
+
+function bucketBg(b: "top" | "high" | "mid" | "low"): string {
+  switch (b) {
+    case "top":
+      return "bg-accent";
+    case "high":
+      return "bg-text";
+    case "mid":
+      return "bg-text-muted";
+    case "low":
+    default:
+      return "bg-surface-overlay";
   }
-  const total = files.length || 1;
-  return Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .map(([ext, count]) => ({
-      ext,
-      count,
-      pct: Math.round((count / total) * 100),
-    }));
+}
+
+function bucketText(b: "top" | "high" | "mid" | "low"): string {
+  switch (b) {
+    case "top":
+      return "text-[var(--color-accent-fg-on)]";
+    case "high":
+      // Inverted text on the inverted body fill.
+      return "text-bg";
+    case "mid":
+      return "text-bg";
+    case "low":
+    default:
+      return "text-text";
+  }
+}
+
+/** Lang mix ribbon — graded shading by index (top extension darkest). */
+function bucketShade(i: number, total: number): string {
+  if (i === 0) return "bg-accent";
+  if (i <= Math.floor(total * 0.25)) return "bg-text";
+  if (i <= Math.floor(total * 0.5)) return "bg-text-muted";
+  return "bg-surface-overlay";
 }

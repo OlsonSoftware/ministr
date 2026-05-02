@@ -82,10 +82,10 @@ export function ContextSimulator() {
   const evictIds = evictRecommendation();
 
   return (
-    <div className="space-y-4 ministr-fade-in max-w-3xl">
+    <div className="space-y-4 max-w-3xl">
       <header>
         <h2 className="text-base font-semibold text-text flex items-center gap-2">
-          <Cpu className="h-4 w-4 text-accent" />
+          <Cpu className="h-4 w-4 text-accent" strokeWidth={2.5}/>
           Context simulator
         </h2>
         <p className="text-xs text-text-dim mt-0.5">
@@ -97,7 +97,7 @@ export function ContextSimulator() {
 
       <Card hover="lift" className="p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-text-dim">
+          <span className="text-[0.6875rem] font-medium uppercase tracking-[0.05em] text-text-dim">
             Token budget
           </span>
           <span className="text-sm font-mono font-semibold tabular-nums text-text">
@@ -113,7 +113,7 @@ export function ContextSimulator() {
           onChange={(e) => setBudget(Number(e.target.value))}
           className="w-full accent-accent cursor-pointer"
         />
-        <div className="flex justify-between text-[10px] text-text-dim font-mono">
+        <div className="flex justify-between text-xs text-text-dim font-mono">
           <span>10K</span>
           <span>1M</span>
         </div>
@@ -121,8 +121,8 @@ export function ContextSimulator() {
 
       <Card hover="lift" className="p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-text-dim">
-            <Gauge className="h-3 w-3" />
+          <span className="flex items-center gap-1.5 text-[0.6875rem] font-medium uppercase tracking-[0.05em] text-text-dim">
+            <Gauge className="h-3 w-3" strokeWidth={2.5}/>
             Context usage
           </span>
           <PressureBadge level={pressure} />
@@ -144,7 +144,7 @@ export function ContextSimulator() {
             <span className="text-text-dim">remaining</span>
           </div>
         </div>
-        <div className="text-[11px] text-text-dim">
+        <div className="text-[0.6875rem] text-text-dim">
           {context.length} section{context.length === 1 ? "" : "s"} loaded ·{" "}
           {(utilization * 100).toFixed(1)}% utilization
         </div>
@@ -154,7 +154,7 @@ export function ContextSimulator() {
         <Card className="border-danger/40 bg-danger/5 p-4">
           <div className="flex items-start gap-3">
             <div className="grid h-8 w-8 place-items-center rounded-lg bg-danger/15 text-danger shrink-0">
-              <AlertTriangle className="h-4 w-4" />
+              <AlertTriangle className="h-4 w-4" strokeWidth={2.5}/>
             </div>
             <div className="flex-1 space-y-2">
               <p className="text-sm font-semibold text-danger">
@@ -179,7 +179,7 @@ export function ContextSimulator() {
                   )
                 }
               >
-                <Trash2 className="h-3 w-3" />
+                <Trash2 className="h-3 w-3" strokeWidth={2.5}/>
                 Auto-evict recommended
               </Button>
             </div>
@@ -198,7 +198,7 @@ export function ContextSimulator() {
                 "h-3 w-3 transition-transform",
                 !showSections && "-rotate-90",
               )}
-            />
+            strokeWidth={2.5}/>
             Available sections
             <Badge variant="muted" className="ml-1">
               {SAMPLE_SECTIONS.length - context.length}
@@ -222,11 +222,11 @@ export function ContextSimulator() {
                   >
                     <span className="truncate text-text">{s.name}</span>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[10px] font-mono tabular-nums text-text-dim">
+                      <span className="text-xs font-mono tabular-nums text-text-dim">
                         {s.tokens}
                       </span>
                       {!inContext && (
-                        <Plus className="h-3 w-3 text-accent" />
+                        <Plus className="h-3 w-3 text-accent" strokeWidth={2.5}/>
                       )}
                     </div>
                   </button>
@@ -238,7 +238,7 @@ export function ContextSimulator() {
 
         <Card className="p-4">
           <h3 className="flex items-center gap-1.5 text-xs font-semibold text-text-muted mb-3">
-            <Layers className="h-3 w-3" />
+            <Layers className="h-3 w-3" strokeWidth={2.5}/>
             Context window
             <Badge variant="default" className="ml-1">
               {context.length}
@@ -265,7 +265,7 @@ export function ContextSimulator() {
                 >
                   <span className="truncate text-text">{s.name}</span>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[10px] font-mono tabular-nums text-text-dim">
+                    <span className="text-xs font-mono tabular-nums text-text-dim">
                       {s.tokens}
                     </span>
                     <button
@@ -273,7 +273,7 @@ export function ContextSimulator() {
                       className="text-text-dim hover:text-danger cursor-pointer"
                       title="Remove"
                     >
-                      <Trash2 className="h-3 w-3" />
+                      <Trash2 className="h-3 w-3" strokeWidth={2.5}/>
                     </button>
                   </div>
                 </div>

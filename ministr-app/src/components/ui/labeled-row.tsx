@@ -5,19 +5,12 @@ interface LabeledRowProps {
   value: React.ReactNode;
   /** Render the value in monospace with tabular numbers. */
   mono?: boolean;
-  /** Add a horizontal divider below each row (Settings-style data list).
-   *  Defaults to false (ProjectDetail-style packed rows). */
+  /** Add a horizontal divider below each row (Settings-style). */
   bordered?: boolean;
 }
 
 /**
- * A label/value row used inside compact data panels (Settings sections,
- * ProjectDetail cards). Replaces the local `Row` helpers that used to
- * live in both files.
- *
- * Overview.tsx keeps its own dl/dt/dd Row variant — the semantic
- * description-list markup there is intentional and doesn't fit this
- * span-based shape.
+ * Brutalist label/value row. Thicker bottom border (2px) when `bordered`.
  */
 export function LabeledRow({
   label,
@@ -29,10 +22,12 @@ export function LabeledRow({
     <div
       className={cn(
         "flex items-center justify-between text-xs",
-        bordered && "py-1 border-b border-border/40 last:border-0",
+        bordered && "py-1.5 border-b border-border-soft last:border-0",
       )}
     >
-      <span className="text-text-muted">{label}</span>
+      <span className="font-mono tracking-[0.05em] text-xs text-text-dim">
+        {label}
+      </span>
       <span className={cn("text-text", mono && "font-mono tabular-nums")}>
         {value}
       </span>

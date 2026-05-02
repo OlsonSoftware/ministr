@@ -10,15 +10,11 @@ interface CorpusSelectProps {
   /** Disable the control while a parent is loading. */
   disabled?: boolean;
   className?: string;
-  /** Optional aria-label for screen readers when there's no visible
-   *  label nearby (most call sites are flanked by enough context that
-   *  a label is unnecessary). */
   ariaLabel?: string;
 }
 
-/** Native `<select>` of the daemon's corpora, rendering the human
- *  label via `lib/corpus.ts::corpusLabel`. The styling matches the
- *  app's other compact form controls. */
+/** Native `<select>` of the daemon's corpora. Brutalist: 2px border, sharp
+ *  corners, mono. */
 export function CorpusSelect({
   value,
   onChange,
@@ -34,8 +30,8 @@ export function CorpusSelect({
       disabled={disabled}
       aria-label={ariaLabel}
       className={cn(
-        "h-8 rounded-md border border-border/70 bg-surface-raised px-2.5 text-xs font-mono text-text cursor-pointer",
-        "focus:outline-none focus:border-[var(--color-accent-ring)]",
+        "h-9 border-2 border-border bg-surface px-2.5 text-xs font-mono font-semibold uppercase tracking-[0.05em] text-text cursor-pointer transition-none",
+        "focus:outline-none focus:bg-surface-overlay focus:text-text",
         "disabled:cursor-not-allowed disabled:opacity-60",
         className,
       )}
