@@ -151,20 +151,47 @@ impl AstParser {
 
     /// Parse source bytes into a tree-sitter syntax tree.
     ///
+    /// A `PARSE_BUDGET` per-file wall-clock budget is enforced via a
+    /// `ParseOptions` progress callback so pathological inputs (deeply
+    /// nested templates, recursion bombs in C++ headers) can't hang the
+    /// ingestion pipeline. On timeout, `parse_with_options` returns
+    /// `None` and surfaces here as `ParseError::Failed`; the producer
+    /// records the path in `failed_files` and moves on rather than
+    /// blocking a worker indefinitely.
+    ///
     /// # Errors
     ///
     /// Returns [`ParseError::Failed`] if tree-sitter fails to produce a tree
     /// (e.g. due to a timeout or cancellation).
     #[must_use = "returns the parsed syntax tree"]
     pub fn parse(&mut self, source: &[u8]) -> Result<tree_sitter::Tree, ParseError> {
+        let len = source.len();
+        let mut chunk_cb = |i: usize, _: tree_sitter::Point| -> &[u8] {
+            if i < len { &source[i..] } else { &[] }
+        };
+        let deadline = std::time::Instant::now() + PARSE_BUDGET;
+        let mut progress_cb = |_state: &tree_sitter::ParseState| {
+            if std::time::Instant::now() >= deadline {
+                std::ops::ControlFlow::Break(())
+            } else {
+                std::ops::ControlFlow::Continue(())
+            }
+        };
+        let options = tree_sitter::ParseOptions::new().progress_callback(&mut progress_cb);
         self.parser
-            .parse(source, None)
+            .parse_with_options(&mut chunk_cb, None, Some(options))
             .ok_or_else(|| ParseError::Failed {
                 path: std::path::PathBuf::from("<source>"),
-                reason: "tree-sitter failed to produce a parse tree".into(),
+                reason: "tree-sitter failed to produce a parse tree (timeout or cancellation)"
+                    .into(),
             })
     }
 }
+
+/// Maximum wall time allowed for a single tree-sitter parse. 5 seconds
+/// — long enough for a multi-MB file, short enough that a stuck parse
+/// can't stall the pipeline.
+const PARSE_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl Default for AstParser {
     fn default() -> Self {
