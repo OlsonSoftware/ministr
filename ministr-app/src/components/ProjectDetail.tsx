@@ -1,146 +1,263 @@
 import {
-  Database,
-  HardDrive,
-  FileText,
-  Layers,
-  Users,
-  Clock,
-  Hash,
-  Sparkles,
   Activity,
-  Folder,
+  Box,
+  Clock,
+  Code2,
+  FileText,
+  GitBranch,
+  Layers,
+  Network,
+  TreePine,
+  Users,
 } from "lucide-react";
 import type { CorpusInfo, DaemonStatus } from "../lib/types";
-import { statusBadge } from "../lib/status";
-import { Badge } from "./ui/badge";
-import { LabeledCard } from "./ui/labeled-card";
-import { LabeledRow } from "./ui/labeled-row";
-import { MetricTile } from "./ui/metric-tile";
 import { cn } from "../lib/utils";
-import { iconBox } from "../lib/ui-tokens";
 
 interface ProjectDetailProps {
   corpus: CorpusInfo;
   status: DaemonStatus;
+  /** Optional jump callback — if provided, ACTIONS shows quick-jumps. */
+  onNavigate?: (tab: "symbols" | "bridge" | "structure") => void;
 }
 
-export function ProjectDetail({ corpus, status }: ProjectDetailProps) {
-  const { variant: statusVariant, label: statusLabel } = statusBadge(corpus.status);
-  return (
-    <div className="space-y-4 ministr-fade-in">
-      <header className="flex items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-text">Detail</h2>
-        <Badge variant={statusVariant} dot>{statusLabel}</Badge>
-      </header>
+/**
+ * Three-zone detail pane: STATS · METADATA · ACTIONS.
+ * Replaces the previous 6-section stack of separate cards.
+ *
+ * Re-index and remove actions live in ProjectList (the typed-confirm
+ * modal) — duplicating them here previously rendered permanently
+ * disabled because App.tsx never wired the callbacks. Keep ACTIONS
+ * focused on the navigate-into-tab quick-jumps.
+ */
+export function ProjectDetail({
+  corpus,
+  status,
+  onNavigate,
+}: ProjectDetailProps) {
+  const indexing = corpus.status.state === "indexing";
+  const error = corpus.status.state === "error" ? corpus.status.message : null;
 
-      <LabeledCard title="Index overview">
-        <div className="grid grid-cols-2 gap-2.5">
-          <MetricTile
-            icon={FileText}
-            label="Documents"
-            value={corpus.files_indexed.toLocaleString()}
-          />
-          <MetricTile
-            icon={Layers}
-            label="Sections"
-            value={corpus.sections_count.toLocaleString()}
-          />
-          <MetricTile
-            icon={Database}
-            label="Vectors"
-            value={corpus.embeddings_count.toLocaleString()}
-          />
-          <MetricTile
-            icon={Hash}
-            label="Symbols"
-            value={(corpus.symbols_count ?? 0).toLocaleString()}
+  return (
+    <div className="space-y-4">
+      {/* STATS */}
+      <Zone title="STATS">
+        <div className="grid grid-cols-2 gap-0">
+          <Stat icon={FileText} label="FILES" value={corpus.files_indexed} />
+          <Stat icon={Layers} label="SECTIONS" value={corpus.sections_count} />
+          <Stat icon={Code2} label="SYMBOLS" value={corpus.symbols_count ?? 0} />
+          <Stat
+            icon={Box}
+            label="VECTORS"
+            value={corpus.embeddings_count}
           />
         </div>
-      </LabeledCard>
 
-      <LabeledCard title="Sessions">
-        {corpus.active_sessions > 0 ? (
-          <div className="flex items-center gap-3">
-            <div className={cn(iconBox, "h-9 w-9")}>
-              <Users className="h-4 w-4" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-accent flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                {corpus.active_sessions} active
-              </p>
-              <p className="text-xs text-text-dim">
-                {corpus.active_sessions === 1
-                  ? "MCP agent connection"
-                  : "MCP agent connections"}
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-lg bg-surface-overlay text-text-dim">
-              <Users className="h-4 w-4" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-text">No active sessions</p>
-              <p className="text-xs text-text-dim">
-                Connect an MCP client to start querying.
-              </p>
-            </div>
+        <div className="border-t-2 border-border px-3 py-2 flex items-center justify-between">
+          <span className="font-sans text-xs tracking-[0.05em] text-text-dim">
+            Active sessions
+          </span>
+          <span
+            className={cn(
+              "font-mono text-sm font-bold tabular-nums",
+              corpus.active_sessions > 0 ? "text-accent" : "text-text-muted",
+            )}
+          >
+            {corpus.active_sessions}
+          </span>
+        </div>
+
+        {indexing && (
+          <div className="border-t-2 border-border px-3 py-2 flex items-center gap-2 text-warning">
+            <span className="h-1.5 w-1.5 bg-warning ministr-blink shrink-0" />
+            <span className="font-sans text-xs font-bold tracking-[0.05em]">
+              Indexing in progress
+            </span>
           </div>
         )}
-      </LabeledCard>
+        {error && (
+          <div className="border-t-2 border-danger px-3 py-2 text-danger">
+            <p className="font-mono text-xs font-bold tracking-[0.05em] mb-1">
+              ERROR
+            </p>
+            <p className="font-mono text-[0.6875rem] leading-relaxed break-words">
+              {error}
+            </p>
+          </div>
+        )}
+      </Zone>
 
-      <LabeledCard title="Corpus ID" mono>
-        <div className="font-mono text-[11px] leading-relaxed text-text-muted bg-surface-sunken border border-border/60 rounded-md px-3 py-2 break-all select-all">
-          {corpus.id}
-        </div>
-      </LabeledCard>
-
-      <LabeledCard title="Embedding model" icon={Sparkles}>
-        <LabeledRow label="Model" value={status.model} mono />
-        <LabeledRow
-          label="Dimension"
-          value={<Badge variant="muted" className="font-mono">{status.model_dimension}d</Badge>}
-        />
-      </LabeledCard>
-
-      <LabeledCard title="Source paths" icon={Folder}>
-        <ul className="space-y-1">
-          {corpus.paths.map((path) => (
-            <li
-              key={path}
-              className="flex items-center gap-2 text-[11px] font-mono text-text-dim"
-            >
-              <HardDrive className="h-3 w-3 shrink-0" />
-              <span className="truncate" title={path}>
-                {path}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </LabeledCard>
-
-      <LabeledCard title="Daemon" icon={Activity}>
-        <LabeledRow label="Version" value={`v${status.version}`} mono />
-        <LabeledRow
-          label="Uptime"
+      {/* METADATA */}
+      <Zone title="METADATA" subtitle="READ-ONLY">
+        <Row label="CORPUS ID" value={corpus.id} mono />
+        <Row label="MODEL" value={status.model} mono />
+        <Row label="DIM" value={`${status.model_dimension}d`} mono />
+        <Row
+          label="MEMORY"
+          value={`${status.memory_mb.toFixed(0)} MB RSS`}
           mono
+        />
+        <Row
+          label="DAEMON"
           value={
             <span className="inline-flex items-center gap-1">
-              <Clock className="h-3 w-3 text-text-dim" />
-              {formatUptime(status.uptime_secs)}
+              v{status.version}
+              <span className="text-text-dim">·</span>
+              <Clock className="h-3 w-3 text-text-dim" strokeWidth={2.5} />
+              <span className="tabular-nums">
+                {formatUptime(status.uptime_secs)}
+              </span>
             </span>
           }
-        />
-        <LabeledRow label="Memory" value={`${status.memory_mb.toFixed(0)} MB RSS`} mono />
-        <LabeledRow
-          label="Corpora"
-          value={status.corpora.length.toString()}
           mono
         />
-      </LabeledCard>
+        <div className="border-b-2 border-border last:border-b-0 px-3 py-2">
+          <div className="font-sans text-xs tracking-[0.05em] text-text-dim mb-1">
+            Source paths
+          </div>
+          <ul className="space-y-0.5">
+            {corpus.paths.map((path) => (
+              <li
+                key={path}
+                className="flex items-start gap-2 font-mono text-[0.6875rem] text-text break-all"
+                title={path}
+              >
+                <span className="text-text-dim shrink-0 mt-0.5">·</span>
+                <span>{path}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Zone>
+
+      {/* ACTIONS */}
+      <Zone title="ACTIONS">
+        <div className="grid grid-cols-3 gap-0 p-3">
+          <ActionButton
+            icon={GitBranch}
+            label="SYMBOLS"
+            onClick={() => onNavigate?.("symbols")}
+          />
+          <ActionButton
+            icon={Network}
+            label="BRIDGE"
+            onClick={() => onNavigate?.("bridge")}
+          />
+          <ActionButton
+            icon={TreePine}
+            label="STRUCTURE"
+            onClick={() => onNavigate?.("structure")}
+          />
+        </div>
+      </Zone>
     </div>
+  );
+}
+
+// ─── ZONE PRIMITIVE ────────────────────────────────────────────────────────
+
+function Zone({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="border border-border-soft bg-surface">
+      <header className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-1.5">
+        <span className="font-mono text-[0.6875rem] font-bold tracking-[0.05em] text-text">
+          {title}
+        </span>
+        {subtitle && (
+          <span className="font-mono text-xs tracking-[0.05em] text-text-dim">
+            {subtitle}
+          </span>
+        )}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function Stat({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="border-r border-b border-border-soft [&:nth-child(2n)]:border-r-0 [&:nth-last-child(-n+2)]:border-b-0 px-3 py-2.5 flex items-center gap-3 min-w-0">
+      <div className="grid h-7 w-7 place-items-center border border-border-soft bg-surface-overlay text-text shrink-0">
+        <Icon className="h-3.5 w-3.5" strokeWidth={2.5} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="font-mono text-xs font-bold tracking-[0.05em] text-text-dim">
+          {label}
+        </p>
+        <p className="font-mono text-base font-bold tabular-nums text-text">
+          {value.toLocaleString()}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function Row({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b-2 border-border last:border-b-0 px-3 py-1.5">
+      <span className="font-mono text-xs tracking-[0.05em] text-text-dim shrink-0">
+        {label}
+      </span>
+      <span
+        className={cn(
+          "text-text text-right truncate",
+          mono ? "font-mono text-[0.6875rem] tabular-nums" : "text-xs",
+        )}
+        title={typeof value === "string" ? value : undefined}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ActionButton({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  label: string;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={!onClick}
+      className={cn(
+        "border-2 border-border -ml-[2px] first:ml-0 px-2 py-3 flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-none",
+        "bg-surface text-text hover:bg-surface-overlay hover:text-text",
+        !onClick && "opacity-40 cursor-not-allowed",
+      )}
+    >
+      <Icon className="h-4 w-4" strokeWidth={2.5} />
+      <span className="font-mono text-xs font-bold tracking-[0.05em]">
+        → {label}
+      </span>
+    </button>
   );
 }
 
@@ -152,3 +269,8 @@ function formatUptime(secs: number): string {
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
 }
+
+// Re-export `Activity` `Users` to keep the prior import surface stable.
+// (No direct usage anymore — kept here for one-line clarity.)
+void Activity;
+void Users;

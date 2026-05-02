@@ -17,18 +17,15 @@ interface BudgetRingProps {
 }
 
 /**
- * A radial budget gauge — the signature ministr visualization.
- *
- * - outer arc = utilization (token budget used)
- * - inner arc = warm set (prefetch cache coverage)
- * - center = caller-provided content (typically the big % number)
+ * A radial gauge — kept as a ring shape since it's a graph, but stripped
+ * of glow filters and smooth transitions for a brutalist read.
  */
 export function BudgetRing({
   utilization,
   warm = 0,
   pressure = "none",
   size = 132,
-  stroke = 8,
+  stroke = 10,
   children,
   className,
 }: BudgetRingProps) {
@@ -64,7 +61,7 @@ export function BudgetRing({
         className="-rotate-90"
         aria-hidden="true"
       >
-        {/* Track */}
+        {/* Track — solid border color, no opacity. */}
         <circle
           cx={cx}
           cy={cy}
@@ -72,9 +69,8 @@ export function BudgetRing({
           fill="none"
           stroke="var(--color-border)"
           strokeWidth={stroke}
-          strokeOpacity={0.6}
         />
-        {/* Warm set (prefetch) — inner ghost arc */}
+        {/* Warm set (prefetch) — inner ghost arc at half stroke. */}
         {w > 0 && (
           <circle
             cx={cx}
@@ -82,14 +78,12 @@ export function BudgetRing({
             r={r - stroke - 2}
             fill="none"
             stroke={primaryColor}
-            strokeOpacity={0.25}
-            strokeWidth={stroke - 2}
+            strokeWidth={Math.max(2, stroke - 4)}
             strokeDasharray={c}
             strokeDashoffset={c - c * w}
-            strokeLinecap="round"
           />
         )}
-        {/* Primary utilization arc */}
+        {/* Primary utilization arc — instant snap, no drop-shadow. */}
         <circle
           cx={cx}
           cy={cy}
@@ -99,11 +93,6 @@ export function BudgetRing({
           strokeWidth={stroke}
           strokeDasharray={c}
           strokeDashoffset={c - c * u}
-          strokeLinecap="round"
-          style={{
-            filter: `drop-shadow(0 0 6px color-mix(in srgb, ${primaryColor} 50%, transparent))`,
-            transition: "stroke-dashoffset 600ms cubic-bezier(0.2, 0, 0, 1)",
-          }}
         />
       </svg>
 

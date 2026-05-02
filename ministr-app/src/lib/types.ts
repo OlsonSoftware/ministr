@@ -113,6 +113,41 @@ export interface SymbolRef {
   ref_kind: string;
 }
 
+/** Full symbol definition returned by `symbol_definition`. */
+export interface SymbolDefinitionDetail {
+  id: string;
+  name: string;
+  kind: string;
+  visibility: string;
+  signature: string;
+  doc_comment: string | null;
+  file_path: string;
+  line_start: number;
+  line_end: number;
+  heading_path: string[];
+  source_context: string;
+}
+
+/** One cross-language bridge link returned by `bridge_query`. */
+export interface BridgeLink {
+  /** Bridge mechanism (e.g. `tauri_command`, `pyo3_function`, `napi_export`,
+   *  `wasm_bindgen`, `http_route`, `ffi`). */
+  kind: string;
+  confidence: number;
+  /** Definition (export) side. */
+  export_file: string;
+  export_binding_key: string;
+  export_symbol: string;
+  export_language: string;
+  export_line: number;
+  /** Call-site (import) side. */
+  import_file: string;
+  import_binding_key: string;
+  import_symbol: string;
+  import_language: string;
+  import_line: number;
+}
+
 export interface IngestionProgressInfo {
   corpus_id: string;
   status: number;

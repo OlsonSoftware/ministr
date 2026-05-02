@@ -16,7 +16,7 @@ import { StatusDot } from "./status-dot";
 interface TurnBlockProps {
   session: SessionDetail;
   /** Optional corpora list so the footer can render the corpus's
-   *  human-readable name instead of its raw `multi-…` id. */
+   *  human-readable name. */
   corpora?: readonly CorpusInfo[] | null;
   /** True if this session just ticked a new turn (drives the flash). */
   fresh?: boolean;
@@ -34,8 +34,9 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
     <div
       onClick={onClick}
       className={cn(
-        "group relative rounded-xl border border-border/60 bg-surface-raised/60 p-3 transition-all duration-150",
-        onClick && "cursor-pointer hover:border-border-hover",
+        "group relative border border-border-soft bg-surface p-3 transition-none",
+        onClick &&
+          "cursor-pointer hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-[4px_4px_0_0_var(--shadow-color)]",
         fresh && "ministr-flash",
         className,
       )}
@@ -43,16 +44,16 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
       {/* Header row: session glyph + id + turn + pressure */}
       <div className="flex items-center gap-2 mb-2">
         <StatusDot tone={tone} pulse={fresh ? "live" : "off"} size="md" />
-        <span className="font-mono text-[11px] text-text-muted truncate">
+        <span className="font-mono text-[0.6875rem] text-text-muted truncate">
           {sessionShort}
         </span>
-        <span className="font-mono text-[11px] text-text-dim">·</span>
-        <span className="font-mono text-[11px] text-text truncate">
+        <span className="font-mono text-[0.6875rem] text-text-dim">·</span>
+        <span className="font-mono text-[0.6875rem] text-text truncate">
           turn {session.current_turn}
         </span>
         {session.parent_session_id && (
           <span
-            className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-surface-overlay/40 px-1.5 py-0.5 text-[10px] font-mono text-text-muted"
+            className="inline-flex items-center gap-1 border border-border-soft bg-surface-overlay px-1.5 py-0 text-xs font-mono text-text-muted"
             title={`Subagent of ${session.parent_session_id.slice(0, 8)}`}
           >
             <span aria-hidden="true">↳</span>
@@ -60,18 +61,18 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
           </span>
         )}
         {session.client_name && (
-          <span className="font-mono text-[10px] text-text-dim truncate max-w-[120px]">
+          <span className="font-mono text-xs text-text-dim truncate max-w-[120px]">
             {session.client_name}
           </span>
         )}
         <div className="flex-1" />
-        <span className={cn("font-mono text-[11px] font-semibold uppercase tracking-wider", pressureColor)}>
+        <span className={cn("font-mono text-[0.6875rem] font-bold uppercase tracking-[0.05em]", pressureColor)}>
           {session.pressure_level}
         </span>
       </div>
 
-      {/* Metrics row: budget gauge inline + delivered + saved + dedup */}
-      <div className="grid grid-cols-4 gap-2 text-[11px]">
+      {/* Metrics row */}
+      <div className="grid grid-cols-4 gap-2 text-[0.6875rem]">
         <MetricTile variant="compact" icon={Gauge} value={`${utilPct}%`} label="budget" />
         <MetricTile variant="compact" icon={Zap} value={formatTokens(session.tokens_used)} label="tokens" />
         <MetricTile
@@ -90,11 +91,11 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
         />
       </div>
 
-      {/* Budget bar sliver */}
-      <div className="mt-2.5 h-1 rounded-full bg-surface-overlay/80 overflow-hidden">
+      {/* Budget bar sliver — sharp, no rounded ends. */}
+      <div className="mt-2.5 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden">
         <div
           className={cn(
-            "h-full rounded-full transition-all duration-400",
+            "h-full transition-none",
             session.pressure_level === "critical" && "bg-danger",
             session.pressure_level === "high" && "bg-warning",
             (session.pressure_level === "medium"
@@ -105,15 +106,15 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
         />
       </div>
 
-      {/* Footer: corpus name (resolved from id via the parent's corpora list). */}
-      <div className="mt-2 flex items-center gap-1.5 text-[10px] font-mono text-text-dim truncate">
-        <span>corpus</span>
+      {/* Footer: corpus name */}
+      <div className="mt-2 flex items-center gap-1.5 text-xs font-mono text-text-dim truncate">
+        <span className="uppercase tracking-[0.05em]">corpus</span>
         <span className="text-text-muted truncate">
           {corpusLabelById(corpora, session.corpus_id)}
         </span>
         {session.pressure_level === "critical" && (
-          <span className="inline-flex items-center gap-1 ml-auto text-danger">
-            <AlertTriangle className="h-3 w-3" />
+          <span className="inline-flex items-center gap-1 ml-auto text-danger uppercase tracking-[0.05em] font-semibold">
+            <AlertTriangle className="h-3 w-3" strokeWidth={2.5}/>
             evict
           </span>
         )}
@@ -121,4 +122,3 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
     </div>
   );
 }
-
