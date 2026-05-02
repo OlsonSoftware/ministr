@@ -1145,10 +1145,7 @@ impl Storage for SqliteStorage {
         .await
     }
 
-    async fn upsert_corpus_merkle(
-        &self,
-        record: &CorpusMerkleRecord,
-    ) -> Result<(), StorageError> {
+    async fn upsert_corpus_merkle(&self, record: &CorpusMerkleRecord) -> Result<(), StorageError> {
         let record = record.clone();
         self.with_conn(move |conn| {
             conn.execute(

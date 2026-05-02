@@ -35,8 +35,8 @@ use super::embedding::{
 };
 use super::process::{ProcessOptions, store_enriched_document};
 use super::roots::{
-    accumulate_language_stats, all_files_unchanged_by_mtime, compute_relative_path,
-    compute_root_id, compute_content_hash, file_mtime_nanos, find_root_for_file, namespace_path,
+    accumulate_language_stats, all_files_unchanged_by_mtime, compute_content_hash,
+    compute_relative_path, compute_root_id, file_mtime_nanos, find_root_for_file, namespace_path,
     strip_root_prefix, update_root_stats,
 };
 use super::symbols::{

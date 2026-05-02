@@ -166,9 +166,8 @@ impl AstParser {
     #[must_use = "returns the parsed syntax tree"]
     pub fn parse(&mut self, source: &[u8]) -> Result<tree_sitter::Tree, ParseError> {
         let len = source.len();
-        let mut chunk_cb = |i: usize, _: tree_sitter::Point| -> &[u8] {
-            if i < len { &source[i..] } else { &[] }
-        };
+        let mut chunk_cb =
+            |i: usize, _: tree_sitter::Point| -> &[u8] { if i < len { &source[i..] } else { &[] } };
         let deadline = std::time::Instant::now() + PARSE_BUDGET;
         let mut progress_cb = |_state: &tree_sitter::ParseState| {
             if std::time::Instant::now() >= deadline {

@@ -50,4 +50,10 @@ allow = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+allow-git = [
+    # Unreal-aware C++ grammar — strict superset of tree-sitter-cpp,
+    # not yet published on crates.io. Pinned to a specific commit in
+    # ministr-core/Cargo.toml. Drop this allow-entry once upstream
+    # publishes a release crate.
+    "https://github.com/taku25/tree-sitter-unreal-cpp",
+]

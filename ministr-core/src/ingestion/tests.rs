@@ -17,7 +17,7 @@ mod tests {
     use super::super::embedding::embed_document;
     use super::super::pipeline::{IngestionPipeline, IngestionProgress};
     use super::super::roots::{
-        compute_relative_path, compute_root_id, compute_content_hash, find_root_for_file,
+        compute_content_hash, compute_relative_path, compute_root_id, find_root_for_file,
         language_for_extension, module_path_from_file, namespace_path, strip_root_prefix,
     };
     use super::super::sections::{

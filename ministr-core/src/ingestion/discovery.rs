@@ -253,9 +253,7 @@ pub fn is_unreal_corpus(root: &Path) -> bool {
             return false;
         };
         for entry in rd.flatten() {
-            if entry.file_type().is_ok_and(|ft| ft.is_dir())
-                && search(&entry.path(), depth - 1)
-            {
+            if entry.file_type().is_ok_and(|ft| ft.is_dir()) && search(&entry.path(), depth - 1) {
                 return true;
             }
         }
@@ -291,9 +289,7 @@ pub fn is_unreal_corpus(root: &Path) -> bool {
 /// Returns [`IngestionError::Io`] when the walk fails or any file's
 /// metadata cannot be read.
 #[must_use = "returns (root_hash, files)"]
-pub fn compute_corpus_stat_merkle(
-    dir: &Path,
-) -> Result<(String, Vec<PathBuf>), IngestionError> {
+pub fn compute_corpus_stat_merkle(dir: &Path) -> Result<(String, Vec<PathBuf>), IngestionError> {
     use ignore::WalkBuilder;
     use ignore::overrides::OverrideBuilder;
 
@@ -464,11 +460,7 @@ mod tests {
     fn is_unreal_corpus_detects_nested_uplugin() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("Plugins/MyPlugin")).unwrap();
-        std::fs::write(
-            tmp.path().join("Plugins/MyPlugin/MyPlugin.uplugin"),
-            "{}",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("Plugins/MyPlugin/MyPlugin.uplugin"), "{}").unwrap();
         assert!(is_unreal_corpus(tmp.path()));
     }
 
