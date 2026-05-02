@@ -748,32 +748,69 @@ pub struct SymbolDefinitionOut {
 
 /// Open a file or folder with the OS default handler.
 ///
-/// Used by the Settings page (OPEN DATA FOLDER, OPEN LOG FILE) and any
+/// Used by the Settings page (Open data folder / Open log file) and any
 /// caller that wants the OS file manager / text editor to surface a path.
+///
+/// Expands a leading `~/` (or bare `~`) to the user's home directory before
+/// invoking the OS opener. Tilde expansion is a shell convention; the
+/// raw `open` / `explorer.exe` / `xdg-open` syscalls do *not* expand it,
+/// so call sites that pass `~/.ministr/` would otherwise fail silently.
 #[tauri::command]
 pub async fn open_path(path: String) -> Result<(), String> {
+    let resolved = expand_tilde(&path);
+
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
-            .arg(&path)
+            .arg(&resolved)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer.exe")
-            .arg(&path)
+            .arg(&resolved)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         std::process::Command::new("xdg-open")
-            .arg(&path)
+            .arg(&resolved)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Expand a leading `~/` or bare `~` to the user's home directory.
+///
+/// Reads `HOME` on Unix and `USERPROFILE` on Windows; falls back to the
+/// original input if neither is set. Only the leading segment is
+/// expanded — `~` mid-path is preserved verbatim because that's a
+/// filename, not a shell expansion.
+fn expand_tilde(path: &str) -> String {
+    if path == "~" {
+        return home_dir().unwrap_or_else(|| path.to_string());
+    }
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"))
+        && let Some(home) = home_dir()
+    {
+        let sep = if cfg!(windows) { '\\' } else { '/' };
+        return format!("{home}{sep}{rest}");
+    }
+    path.to_string()
+}
+
+fn home_dir() -> Option<String> {
+    #[cfg(windows)]
+    {
+        std::env::var("USERPROFILE").ok()
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("HOME").ok()
+    }
 }
 
 /// Read a snippet of a source file with a small context window.
