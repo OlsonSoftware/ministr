@@ -56,6 +56,16 @@ export function CorpusPill({ corpora, activeCorpus, onSelect }: Props) {
     );
   }, [corpora, query]);
 
+  // Clamp `active` whenever the filtered set shrinks below the current
+  // index. Without this, typing a query that drops `filtered.length`
+  // below `active` leaves a stale pointer; the next Enter would try to
+  // index `filtered[active]` (undefined) and silently do nothing.
+  useEffect(() => {
+    if (active >= filtered.length) {
+      setActive(filtered.length === 0 ? 0 : filtered.length - 1);
+    }
+  }, [filtered.length, active]);
+
   function commit(id: string) {
     onSelect(id);
     setOpen(false);
