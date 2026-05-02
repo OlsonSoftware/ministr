@@ -7,13 +7,10 @@ import {
   GitBranch,
   Layers,
   Network,
-  RefreshCw,
-  Trash2,
   TreePine,
   Users,
 } from "lucide-react";
 import type { CorpusInfo, DaemonStatus } from "../lib/types";
-import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 
 interface ProjectDetailProps {
@@ -21,20 +18,21 @@ interface ProjectDetailProps {
   status: DaemonStatus;
   /** Optional jump callback — if provided, ACTIONS shows quick-jumps. */
   onNavigate?: (tab: "symbols" | "bridge" | "structure") => void;
-  onReindex?: () => void;
-  onRemove?: () => void;
 }
 
 /**
  * Three-zone detail pane: STATS · METADATA · ACTIONS.
  * Replaces the previous 6-section stack of separate cards.
+ *
+ * Re-index and remove actions live in ProjectList (the typed-confirm
+ * modal) — duplicating them here previously rendered permanently
+ * disabled because App.tsx never wired the callbacks. Keep ACTIONS
+ * focused on the navigate-into-tab quick-jumps.
  */
 export function ProjectDetail({
   corpus,
   status,
   onNavigate,
-  onReindex,
-  onRemove,
 }: ProjectDetailProps) {
   const indexing = corpus.status.state === "indexing";
   const error = corpus.status.state === "error" ? corpus.status.message : null;
@@ -150,26 +148,6 @@ export function ProjectDetail({
             onClick={() => onNavigate?.("structure")}
           />
         </div>
-        <div className="border-t-2 border-border p-3 flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onReindex}
-            disabled={!onReindex}
-          >
-            <RefreshCw className="h-3.5 w-3.5" strokeWidth={2.5} />
-            RE-INDEX
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={onRemove}
-            disabled={!onRemove}
-          >
-            <Trash2 className="h-3.5 w-3.5" strokeWidth={2.5} />
-            REMOVE
-          </Button>
-        </div>
       </Zone>
     </div>
   );
@@ -213,7 +191,7 @@ function Stat({
   value: number;
 }) {
   return (
-    <div className="border-r-2 border-b-2 border-border last:border-r-0 nth-2:border-r-0 px-3 py-2.5 flex items-center gap-3 min-w-0">
+    <div className="border-r border-b border-border-soft [&:nth-child(2n)]:border-r-0 [&:nth-last-child(-n+2)]:border-b-0 px-3 py-2.5 flex items-center gap-3 min-w-0">
       <div className="grid h-7 w-7 place-items-center border border-border-soft bg-surface-overlay text-text shrink-0">
         <Icon className="h-3.5 w-3.5" strokeWidth={2.5} />
       </div>
