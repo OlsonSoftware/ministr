@@ -279,8 +279,7 @@ pub fn extract_hlsl_symbols(content: &str, relative_path: &str) -> HlslExtractio
             Token::Ident => {
                 let name = &content[span.clone()];
                 if RESOURCE_TYPES.contains(&name)
-                    && let Some((var_name, semi_end)) =
-                        consume_resource_decl(&toks, i + 1, content)
+                    && let Some((var_name, semi_end)) = consume_resource_decl(&toks, i + 1, content)
                 {
                     out.symbols.push(make_record(
                         relative_path,
