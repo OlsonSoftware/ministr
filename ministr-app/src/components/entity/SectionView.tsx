@@ -47,8 +47,12 @@ export function SectionView({ entity }: Props) {
         })
       : Promise.resolve([] as SymbolInfo[]);
 
+    // Same candidate-window pattern as SessionView/FileView/CorpusView:
+    // pull a generous slice and filter client-side. Keeps section-scoped
+    // history visible on busy multi-file corpora until the daemon learns
+    // server-side file_path filtering.
     const changesP = invoke<CoherenceEvent[]>("recent_coherence_events", {
-      limit: 50,
+      limit: 500,
       sinceMs: null,
     });
 
@@ -60,12 +64,16 @@ export function SectionView({ entity }: Props) {
       // for this section" feed to show — fall through to an empty list
       // so the §4 panel renders its empty state, never the unfiltered
       // global feed for unrelated files.
+      //
+      // Use full-path equality (after slash normalization), not
+      // endsWith(): two corpus roots ending in the same relative path
+      // (e.g. apps/a/src/lib.rs vs apps/b/src/lib.rs) would otherwise
+      // cross-attribute each other's events.
       setChanges(
         c.status === "fulfilled" && filePath
-          ? c.value.filter((e) =>
-              e.path
-                .replace(/\\/g, "/")
-                .endsWith(filePath.replace(/\\/g, "/")),
+          ? c.value.filter(
+              (e) =>
+                e.path.replace(/\\/g, "/") === filePath.replace(/\\/g, "/"),
             )
           : [],
       );

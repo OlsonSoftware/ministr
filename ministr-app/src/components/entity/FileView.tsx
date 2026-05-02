@@ -67,10 +67,14 @@ export function FileView({ entity }: Props) {
       if (cancelled) return;
       setSymbols(s.status === "fulfilled" ? s.value : []);
       setBridges(b.status === "fulfilled" ? b.value : []);
+      // Compare normalized full paths, not endsWith(): two corpus roots
+      // ending in the same relative path (e.g. apps/a/src/lib.rs vs
+      // apps/b/src/lib.rs) would otherwise cross-attribute each other's
+      // events. `path` is already the exact file the panel is scoped to.
       setChanges(
         c.status === "fulfilled"
-          ? c.value.filter((e) =>
-              e.path.replace(/\\/g, "/").endsWith(path.replace(/\\/g, "/")),
+          ? c.value.filter(
+              (e) => e.path.replace(/\\/g, "/") === path.replace(/\\/g, "/"),
             )
           : [],
       );
