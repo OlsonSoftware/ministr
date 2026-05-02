@@ -617,7 +617,7 @@ mod tests {
     fn parse_cpp(source: &str) -> tree_sitter::Tree {
         let mut parser = tree_sitter::Parser::new();
         parser
-            .set_language(&tree_sitter_cpp::LANGUAGE.into())
+            .set_language(&tree_sitter_unreal_cpp::LANGUAGE.into())
             .unwrap();
         parser.parse(source.as_bytes(), None).unwrap()
     }

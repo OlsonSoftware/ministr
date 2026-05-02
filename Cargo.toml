@@ -96,7 +96,12 @@ tree-sitter-typescript = "0.23"
 tree-sitter-go = "0.25"
 tree-sitter-java = "0.23"
 tree-sitter-c = "0.24"
-tree-sitter-cpp = "0.23"
+# Drop-in replacement for tree-sitter-cpp: a strict superset that
+# additionally recognizes Unreal Engine reflection macros (UCLASS,
+# UFUNCTION, GENERATED_BODY, etc.) as first-class syntax nodes.
+# Vanilla C++ parses identically. Pinned to a specific commit because
+# the upstream isn't on crates.io yet.
+tree-sitter-unreal-cpp = { git = "https://github.com/taku25/tree-sitter-unreal-cpp", rev = "92eee7d1ac994e408c208bcb1b73170c8746356f" }
 tree-sitter-ruby = "0.23"
 tree-sitter-c-sharp = "0.23"
 tree-sitter-swift = "0.7"

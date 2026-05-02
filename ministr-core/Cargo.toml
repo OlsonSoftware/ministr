@@ -53,7 +53,7 @@ tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
 tree-sitter-java = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
-tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-unreal-cpp = { workspace = true, optional = true }
 tree-sitter-ruby = { workspace = true, optional = true }
 tree-sitter-c-sharp = { workspace = true, optional = true }
 tree-sitter-swift = { workspace = true, optional = true }
@@ -96,7 +96,7 @@ lang-typescript = ["dep:tree-sitter-typescript"]
 lang-go = ["dep:tree-sitter-go"]
 lang-java = ["dep:tree-sitter-java"]
 lang-c = ["dep:tree-sitter-c"]
-lang-cpp = ["dep:tree-sitter-cpp"]
+lang-cpp = ["dep:tree-sitter-unreal-cpp"]
 lang-ruby = ["dep:tree-sitter-ruby"]
 lang-csharp = ["dep:tree-sitter-c-sharp"]
 lang-swift = ["dep:tree-sitter-swift"]

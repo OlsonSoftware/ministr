@@ -147,7 +147,11 @@ impl GrammarRegistry {
             tree_sitter_c::LANGUAGE.into(),
         );
 
-        // C++
+        // C++ — using the Unreal-aware grammar (strict superset of
+        // tree-sitter-cpp). Vanilla C++ parses identically; UE
+        // reflection macros (UCLASS / UFUNCTION / GENERATED_BODY /
+        // ...) get recognized as first-class nodes instead of
+        // exploding into ERROR subtrees.
         #[cfg(feature = "lang-cpp")]
         register_language(
             &mut ext_to_lang,
@@ -155,7 +159,7 @@ impl GrammarRegistry {
             &mut grammars,
             "cpp",
             &["cpp", "cc", "cxx", "hpp", "hxx", "hh"],
-            tree_sitter_cpp::LANGUAGE.into(),
+            tree_sitter_unreal_cpp::LANGUAGE.into(),
         );
 
         // Ruby
