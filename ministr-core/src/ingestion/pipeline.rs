@@ -326,10 +326,21 @@ impl Default for IngestionProgress {
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
+/// Default concurrency for the producer-side parse fan-out.
+///
+/// `buffer_unordered(concurrency)` controls how many parse-and-store
+/// futures are in flight at once on the tokio runtime; the embedder
+/// consumer is bounded separately by the mpsc channel capacity.
+///
+/// Previously hard-capped at 16, which throttled UE5-class corpora on
+/// boxes with >16 cores. Now scales with `available_parallelism()` up
+/// to 32 — high-core machines keep all parsers busy without letting an
+/// absurdly large core count create memory pressure from too many
+/// parallel parse trees.
 fn default_concurrency() -> usize {
     std::thread::available_parallelism()
         .map_or(4, std::num::NonZero::get)
-        .min(16)
+        .min(32)
 }
 
 /// Result of processing a single file.
