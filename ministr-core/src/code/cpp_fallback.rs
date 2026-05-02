@@ -235,15 +235,11 @@ pub fn extract_cpp_fallback_symbols(content: &str, relative_path: &str) -> CppFa
                 if let Some((name, _, lbrace_idx)) = consume_namespace_header(&toks, i + 1, content)
                 {
                     namespace_stack.push(name);
-                    // Re-tag the brace we're about to walk into.
-                    *brace_stack.last_mut().unwrap_or(&mut BraceTag::Other) = BraceTag::Other;
-                    // Skip ahead past the `{` so the outer loop's
-                    // brace-depth tracking handles it cleanly.
+                    // Skip to the namespace's opening `{` and push a
+                    // `Namespace` tag so its matching `}` pops the
+                    // namespace_stack frame.
                     i = lbrace_idx;
                     if matches!(toks.get(i).map(|t| t.0), Some(Token::LBrace)) {
-                        // Replace the Other tag we'd push for this `{`.
-                        // Pre-tag: push Namespace before the LBrace
-                        // arm runs.
                         depth += 1;
                         brace_stack.push(BraceTag::Namespace);
                         i += 1;

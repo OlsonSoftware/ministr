@@ -64,11 +64,12 @@ impl super::DocumentParser for CodeParser {
         let is_rust = lang_name == Some("rust");
 
         // Select parser: use the grammar registry to find the right language.
-        // On parse failure (most commonly the per-file timeout from
-        // `AstParser::PARSE_BUDGET`) we degrade gracefully to the
-        // text-level fallback tree rather than dropping the file
-        // entirely. Pathologically deep templates (Slate widgets,
-        // recursive UE traits) shouldn't make a header invisible.
+        // On parse failure (most commonly the per-file parse-budget
+        // timeout enforced inside `AstParser::parse`) we degrade
+        // gracefully to the text-level fallback tree rather than
+        // dropping the file entirely. Pathologically deep templates
+        // (Slate widgets, recursive UE traits) shouldn't make a
+        // header invisible.
         let tree = if is_rust {
             let mut ast_parser = AstParser::new();
             match ast_parser.parse(source) {
