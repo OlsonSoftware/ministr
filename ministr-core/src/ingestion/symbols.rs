@@ -61,6 +61,15 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
+
+    // Shader languages take a separate path: there's no tree-sitter
+    // grammar, so we drive a Logos lexer to pull out top-level
+    // declarations. Skips ref / bridge resolution for now — adding
+    // shader includes into the cross-symbol graph is a follow-up.
+    if crate::code::hlsl::is_shader_extension(ext) {
+        return extract_shader_symbols(relative_path, content, storage).await;
+    }
+
     let language = registry.language_name_for_extension(ext);
     let is_rust = language.is_none_or(|l| l == "rust");
 
@@ -212,6 +221,110 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
         bridge_endpoints,
         embedding_pairs,
     })
+}
+
+// ── Shader extraction (Logos-driven, no tree-sitter) ──────────────────────────
+
+/// Run the HLSL/GLSL/MSL/WGSL Logos extractor and persist its symbols.
+///
+/// Mirrors the tree-sitter path's storage shape — wipes the file's
+/// previous symbol rows, inserts the freshly-extracted ones, and
+/// returns the embedding pairs for the deferred batch embed. Skips
+/// ref / bridge resolution: shader includes will eventually flow into
+/// the `RawRef` graph but that's out of scope here.
+async fn extract_shader_symbols<S: Storage + ?Sized>(
+    relative_path: &str,
+    content: &str,
+    storage: &S,
+) -> Result<CodeSymbolsResult, IngestionError> {
+    let extraction = crate::code::hlsl::extract_hlsl_symbols(content, relative_path);
+
+    if extraction.symbols.is_empty() {
+        // Still wipe stale rows in case a previous indexer pass had
+        // produced symbols for this file — keeps the index honest
+        // when a shader gets edited down to nothing.
+        let _ = storage.delete_symbols_for_file(relative_path).await;
+        return Ok(CodeSymbolsResult {
+            pending_refs: Vec::new(),
+            bridge_endpoints: Vec::new(),
+            embedding_pairs: Vec::new(),
+        });
+    }
+
+    let _ = storage.delete_symbols_for_file(relative_path).await;
+    storage
+        .insert_symbols(&extraction.symbols)
+        .await
+        .map_err(IngestionError::from)?;
+
+    let bytes = content.as_bytes();
+    let mut embedding_pairs: Vec<(VectorId, String)> = Vec::new();
+    for record in &extraction.symbols {
+        let stub_text = if record.signature.trim().is_empty() {
+            record.name.clone()
+        } else {
+            record.signature.clone()
+        };
+        if !stub_text.trim().is_empty() {
+            embedding_pairs.push((VectorId::symbol_stub(record.id.as_ref()), stub_text.clone()));
+        }
+
+        if let Some(full_text) = slice_lines(bytes, record.line_start, record.line_end)
+            && !full_text.trim().is_empty()
+        {
+            embedding_pairs.push((
+                VectorId::symbol_full(record.id.as_ref()),
+                full_text.to_string(),
+            ));
+        }
+    }
+
+    debug!(
+        path = %relative_path,
+        symbols = extraction.symbols.len(),
+        includes = extraction.includes.len(),
+        "extracted shader symbols (Logos)"
+    );
+
+    Ok(CodeSymbolsResult {
+        pending_refs: Vec::new(),
+        bridge_endpoints: Vec::new(),
+        embedding_pairs,
+    })
+}
+
+/// Slice the inclusive 1-based line range `[start, end]` out of `bytes`
+/// as UTF-8 text. Returns `None` if the range is out of bounds or the
+/// slice isn't valid UTF-8 (rare, since we got the offsets by hashing
+/// the same file's bytes).
+fn slice_lines(bytes: &[u8], start_line: u32, end_line: u32) -> Option<&str> {
+    if start_line == 0 || end_line < start_line {
+        return None;
+    }
+    let mut line: u32 = 1;
+    let mut start_off: Option<usize> = None;
+    let mut end_off: Option<usize> = None;
+    if start_line == 1 {
+        start_off = Some(0);
+    }
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\n' {
+            line += 1;
+            if start_off.is_none() && line == start_line {
+                start_off = Some(i + 1);
+            }
+            if line > end_line {
+                end_off = Some(i);
+                break;
+            }
+        }
+    }
+    let end = end_off.unwrap_or(bytes.len());
+    let start = start_off?;
+    if start > end {
+        return None;
+    }
+    std::str::from_utf8(&bytes[start..end]).ok()
 }
 
 // ── Reference resolution ─────────────────────────────────────────────────────
