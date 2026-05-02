@@ -684,7 +684,7 @@ pub struct BridgeLinkOut {
     pub import_line: u32,
 }
 
-/// Query cross-language bridge links (Tauri commands, PyO3, NAPI, FFI, HTTP routes).
+/// Query cross-language bridge links (Tauri commands, `PyO3`, NAPI, FFI, HTTP routes).
 #[tauri::command]
 pub async fn bridge_query(
     state: State<'_, AppState>,
