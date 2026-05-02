@@ -63,15 +63,40 @@ impl super::DocumentParser for CodeParser {
         let lang_name = registry.language_name_for_extension(ext);
         let is_rust = lang_name == Some("rust");
 
-        // Select parser: use the grammar registry to find the right language
+        // Select parser: use the grammar registry to find the right language.
+        // On parse failure (most commonly the per-file parse-budget
+        // timeout enforced inside `AstParser::parse`) we degrade
+        // gracefully to the text-level fallback tree rather than
+        // dropping the file entirely. Pathologically deep templates
+        // (Slate widgets, recursive UE traits) shouldn't make a
+        // header invisible.
         let tree = if is_rust {
-            // Rust: use the dedicated parser for backward compatibility
             let mut ast_parser = AstParser::new();
-            ast_parser.parse(source)?
+            match ast_parser.parse(source) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "tree-sitter parse failed, degrading to text fallback"
+                    );
+                    return Ok(build_fallback_tree(path, content));
+                }
+            }
         } else if let Some(ts_lang) = registry.language_for_extension(ext) {
-            // Other language with grammar: use the generic parser
             let mut ast_parser = AstParser::with_language(ts_lang)?;
-            ast_parser.parse(source)?
+            match ast_parser.parse(source) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        ext = %ext,
+                        error = %e,
+                        "tree-sitter parse failed, degrading to text fallback"
+                    );
+                    return Ok(build_fallback_tree(path, content));
+                }
+            }
         } else {
             // No tree-sitter grammar available.
             // Use heuristic assembly parser for assembly files.
