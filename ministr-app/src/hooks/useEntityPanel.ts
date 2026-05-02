@@ -12,6 +12,7 @@ import type {
   BridgeLink,
   CorpusInfo,
   SearchResult,
+  SessionDetail,
   SymbolInfo,
 } from "../lib/types";
 
@@ -24,7 +25,16 @@ export type Entity =
   | { kind: "section"; corpusId: string; result: SearchResult }
   | { kind: "bridge"; corpusId: string; link: BridgeLink }
   | { kind: "file"; corpusId: string; path: string }
-  | { kind: "session"; corpusId: string; sessionId: string }
+  | {
+      kind: "session";
+      corpusId: string;
+      sessionId: string;
+      /** Optional fallback session payload — used when the caller already
+       *  has a SessionDetail in memory but the daemon's `list_sessions`
+       *  may no longer return this id (history rows for ended sessions).
+       *  SessionView prefers live data, falls back to seed when missing. */
+      seed?: SessionDetail;
+    }
   | { kind: "corpus"; corpus: CorpusInfo };
 
 /** Short label used in the breadcrumb back-stack. */

@@ -23,16 +23,19 @@ interface Props {
 }
 
 export function SessionView({ entity }: Props) {
-  const { corpusId, sessionId } = entity;
+  const { corpusId, sessionId, seed } = entity;
   const { openEntity } = useEntityPanel();
 
-  const [session, setSession] = useState<SessionDetail | null>(null);
+  // Initialize from `seed` (caller-supplied SessionDetail) so historical
+  // sessions — which `list_sessions` no longer returns — render with full
+  // overview / budget data instead of a blank panel.
+  const [session, setSession] = useState<SessionDetail | null>(seed ?? null);
   const [activity, setActivity] = useState<ActivityEvent[] | null>(null);
   const [corpus, setCorpus] = useState<CorpusInfo | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setSession(null);
+    setSession(seed ?? null);
     setActivity(null);
     setCorpus(null);
 
@@ -46,11 +49,13 @@ export function SessionView({ entity }: Props) {
       invoke<CorpusInfo[]>("list_corpora"),
     ]).then(([s, a, c]) => {
       if (cancelled) return;
-      setSession(
+      // Prefer live data; fall back to the caller-supplied seed when the
+      // session id is no longer in `list_sessions` (e.g. history rows).
+      const live =
         s.status === "fulfilled"
           ? s.value.find((x) => x.session_id === sessionId) ?? null
-          : null,
-      );
+          : null;
+      setSession(live ?? seed ?? null);
       setActivity(
         a.status === "fulfilled"
           ? a.value.filter((e) => e.session_id === sessionId)
@@ -65,7 +70,7 @@ export function SessionView({ entity }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, corpusId]);
+  }, [sessionId, corpusId, seed]);
 
   const tone = session ? pressureTone(session.pressure_level) : "muted";
   const utilPct = session ? (session.utilization * 100).toFixed(0) : "—";

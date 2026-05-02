@@ -431,6 +431,11 @@ export function SessionDashboard({ status }: Props) {
                       kind: "session",
                       corpusId: sess.corpus_id,
                       sessionId: sess.session_id,
+                      // Always pass the in-memory SessionDetail as a
+                      // fallback. Required for history rows whose ids
+                      // are no longer returned by `list_sessions`;
+                      // harmless for live rows (live data takes priority).
+                      seed: sess,
                     })
                   }
                 />
@@ -452,6 +457,10 @@ export function SessionDashboard({ status }: Props) {
                         kind: "session",
                         corpusId: sess.corpus_id,
                         sessionId: sess.session_id,
+                        // Same fallback as the compact-row case — keeps
+                        // history-row sessions populated when list_sessions
+                        // no longer returns them.
+                        seed: sess,
                       })
                     }
                   />
