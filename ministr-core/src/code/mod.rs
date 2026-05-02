@@ -21,6 +21,7 @@ pub mod bridge;
 mod complexity;
 pub mod generic_extractor;
 pub mod grammar;
+pub mod hlsl;
 pub mod lang;
 pub mod package_graph;
 pub mod refs;
