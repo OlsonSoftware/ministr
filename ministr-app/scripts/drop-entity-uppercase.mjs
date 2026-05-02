@@ -9,8 +9,8 @@
 // list — they keep `uppercase` (Role B short label, ≤14 chars).
 import fs from "node:fs";
 import path from "node:path";
+import { srcRoot as root } from "./_src-root.mjs";
 
-const root = "D:/Code/ministr/ministr-app/src";
 
 // Variable expressions that we know render multi-word prose, file paths, ids,
 // names, descriptions — content where forced uppercase hurts legibility.

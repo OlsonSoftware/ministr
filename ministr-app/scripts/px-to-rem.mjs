@@ -3,8 +3,8 @@
 // viewport-based media queries set.
 import fs from "node:fs";
 import path from "node:path";
+import { srcRoot as root } from "./_src-root.mjs";
 
-const root = "D:/Code/ministr/ministr-app/src";
 
 function walk(d) {
   return fs

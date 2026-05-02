@@ -3,8 +3,8 @@
 // short labels, and the typed-confirm tokens.
 import fs from "node:fs";
 import path from "node:path";
+import { srcRoot as root } from "./_src-root.mjs";
 
-const root = "D:/Code/ministr/ministr-app/src";
 
 // Strings we MUST keep uppercase (page titles, section titles, short labels,
 // magic-word tokens, kind tags). Everything else gets converted.

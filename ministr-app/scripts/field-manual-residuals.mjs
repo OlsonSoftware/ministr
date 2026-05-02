@@ -15,8 +15,8 @@
 //      → `border-l-2 border-border-soft` (hairline marginalia rule).
 import fs from "node:fs";
 import path from "node:path";
+import { srcRoot as root } from "./_src-root.mjs";
 
-const root = "D:/Code/ministr/ministr-app/src";
 
 const ACR = ["LLM", "API", "HTTP", "IPC", "FFI", "URL", "IDE", "CLI", "NAPI",
   "JSON", "XML", "SQL", "UI", "OS", "PYO3", "WASM", "TLS", "TS", "JS", "RS",
