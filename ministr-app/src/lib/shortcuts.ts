@@ -41,6 +41,12 @@ export interface ShortcutDef {
   group: ShortcutGroup;
   /** True when this binding is the `g {x}` two-keystroke pattern. */
   prefixed?: boolean;
+  /** True when this binding should still fire when the user is typing
+   *  inside an `<input>` / `<textarea>` / contenteditable. Reserved for
+   *  the truly-global escape hatches (the command palette ⌘K / Ctrl+K),
+   *  not for letter-based bindings that would conflict with normal text
+   *  entry. App.tsx checks this flag before its typing-bail. */
+  firesWhileTyping?: boolean;
 }
 
 export const SHORTCUTS: readonly ShortcutDef[] = [
@@ -50,6 +56,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     keys: ["⌘", "K"],
     label: "Open command palette",
     group: "Navigation",
+    firesWhileTyping: true,
   },
   {
     id: "toggle:shortcuts",
@@ -134,6 +141,11 @@ export function getShortcut(id: ShortcutAction): ShortcutDef | undefined {
 /** Get the display-form keys for an action, or [] if unbound. */
 export function shortcutKeys(id: ShortcutAction): string[] {
   return BY_ID.get(id)?.keys ?? [];
+}
+
+/** True when an action should fire even while focus is in an input. */
+export function firesWhileTyping(id: ShortcutAction): boolean {
+  return BY_ID.get(id)?.firesWhileTyping ?? false;
 }
 
 /** Group definitions for the cheat sheet. */

@@ -36,7 +36,11 @@ import { ToastProvider, useToast } from "./components/shell/ToastTray";
 import { EntityPanelProvider } from "./hooks/useEntityPanel";
 import { EntityPanel } from "./components/EntityPanel";
 import { cn } from "./lib/utils";
-import { matchShortcut, type ShortcutAction } from "./lib/shortcuts";
+import {
+  matchShortcut,
+  firesWhileTyping,
+  type ShortcutAction,
+} from "./lib/shortcuts";
 
 type Tab =
   | "search"
@@ -126,22 +130,41 @@ function AppInner() {
         target?.tagName === "TEXTAREA" ||
         target?.isContentEditable;
 
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      // Single source of truth: the shortcut config decides what happens.
+      const result = matchShortcut(e, gPending.current);
+
+      // First pass — actions flagged firesWhileTyping bypass the typing
+      // bail below (currently just ⌘K / Ctrl+K so the palette is always
+      // reachable from inside any input).
+      if (
+        result &&
+        result !== "_pending:g" &&
+        firesWhileTyping(result)
+      ) {
         e.preventDefault();
-        setPaletteOpen((o) => !o);
+        dispatchShortcut(result);
         return;
       }
 
       if (typing) return;
 
       if (e.key === "Escape") {
-        if (paletteOpen) setPaletteOpen(false);
-        else if (shortcutsOpen) setShortcutsOpen(false);
+        // Stop propagation so EntityPanel's window-level Esc handler
+        // (mounted from useEntityPanel) doesn't ALSO fire and close the
+        // entity drawer underneath whichever overlay we just dismissed.
+        // Topmost-modal-first wins.
+        if (paletteOpen) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setPaletteOpen(false);
+        } else if (shortcutsOpen) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setShortcutsOpen(false);
+        }
         return;
       }
 
-      // Single source of truth: the shortcut config decides what happens.
-      const result = matchShortcut(e, gPending.current);
       if (result === "_pending:g") {
         gPending.current = true;
         if (gTimer.current !== null) clearTimeout(gTimer.current);
@@ -239,14 +262,23 @@ function AppInner() {
         onOpenLogs={async () => {
           // The DaemonDot popover button reads "Open log file" — that
           // promise is the *file on disk*, not the Logs tab. Hand the
-          // log path off to the OS opener so the user lands in their
-          // text editor, then also switch the tab so the in-app Logs
-          // view is up next time.
+          // log path off to the OS opener and surface the toast based
+          // on the actual outcome, so a failed open doesn't announce
+          // success. Always switch to the in-app Logs view too — the
+          // user wants to see the log either way.
           if (status?.log_path) {
             try {
               await invoke("open_path", { path: status.log_path });
+              toast("Open log file", {
+                detail: status.log_path,
+                tone: "info",
+              });
             } catch (e) {
               console.error("open_path(log) failed", e);
+              toast("Could not open log file", {
+                detail: status.log_path,
+                tone: "danger",
+              });
             }
           }
           setTab("logs");
