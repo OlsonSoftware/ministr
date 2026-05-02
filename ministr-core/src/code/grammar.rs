@@ -376,6 +376,39 @@ pub const ALL_CODE_EXTENSIONS: &[&str] = &[
     "s",
     "S",
     "inc",
+    // Shaders — no tree-sitter grammar yet, so these fall through
+    // to `build_fallback_tree` and get indexed at text level. That's
+    // a quality-of-life win on engines like Unreal where ~3K shader
+    // files would otherwise be entirely invisible to the indexer.
+    // Rich symbol extraction (cbuffer, Texture2D, [numthreads(...)],
+    // etc.) is a follow-up via a Logos lexer.
+    // HLSL — Microsoft / Direct3D / Unreal Engine `*.usf`+`*.ush`
+    "hlsl",
+    "usf",
+    "ush",
+    "fx",
+    "fxh",
+    "shader",
+    // GLSL — OpenGL / Vulkan
+    "glsl",
+    "vert",
+    "frag",
+    "geom",
+    "comp",
+    "tesc",
+    "tese",
+    "mesh",
+    "task",
+    "rgen",
+    "rmiss",
+    "rchit",
+    "rahit",
+    "rint",
+    "rcall",
+    // Metal Shading Language — Apple
+    "metal",
+    // WebGPU Shading Language
+    "wgsl",
 ];
 
 #[cfg(test)]
