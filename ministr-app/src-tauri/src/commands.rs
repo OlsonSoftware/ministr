@@ -779,8 +779,10 @@ pub async fn open_path(path: String) -> Result<(), String> {
 /// Read a snippet of a source file with a small context window.
 ///
 /// Used by the Bridge tab to render side-by-side endpoint code panes.
-/// Verifies the corpus exists before reading from disk to scope what
-/// the frontend can request.
+/// Verifies the corpus exists AND that `file_path` resolves inside one
+/// of that corpus's root paths before reading from disk — without the
+/// scope check, a renderer-side caller could exfiltrate arbitrary text
+/// files from the host filesystem.
 #[tauri::command]
 pub async fn read_source_excerpt(
     state: State<'_, AppState>,
@@ -789,12 +791,35 @@ pub async fn read_source_excerpt(
     line_start: u32,
     line_end: u32,
 ) -> Result<String, String> {
-    {
+    // Snapshot the corpus's root paths under the registry lock, then
+    // drop the guard so the canonicalize awaits don't hold it.
+    let roots: Vec<String> = {
         let guard = state.registry.corpora().read().await;
-        guard.get(&corpus_id).ok_or("corpus not found")?;
+        let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+        handle.info.read().await.paths.clone()
+    };
+
+    // Canonicalize both sides so symlinks / `..` segments / relative paths
+    // can't be used to step outside a corpus root. canonicalize() implicitly
+    // verifies the file exists; we treat the I/O error as "outside corpus"
+    // rather than leaking a missing-file error message.
+    let target = tokio::fs::canonicalize(&file_path)
+        .await
+        .map_err(|_| "path outside corpus".to_string())?;
+    let mut allowed = false;
+    for root in &roots {
+        if let Ok(canonical_root) = tokio::fs::canonicalize(root).await
+            && target.starts_with(&canonical_root)
+        {
+            allowed = true;
+            break;
+        }
+    }
+    if !allowed {
+        return Err("path outside corpus".to_string());
     }
 
-    let content = tokio::fs::read_to_string(&file_path)
+    let content = tokio::fs::read_to_string(&target)
         .await
         .map_err(|e| e.to_string())?;
 
