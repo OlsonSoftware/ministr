@@ -168,6 +168,13 @@ pub(super) fn language_for_extension(ext: &str) -> &'static str {
         "c" | "h" => "c",
         "cpp" | "cc" | "cxx" | "hpp" | "hxx" => "cpp",
         "asm" | "s" | "S" | "inc" => "assembly",
+        // Shaders — coarse "shader" label so the language-stats
+        // breakdown picks them up as one bucket. Per-language splits
+        // (HLSL vs GLSL vs MSL vs WGSL) can come back when symbol-level
+        // extraction lands and starts caring about the distinction.
+        "hlsl" | "usf" | "ush" | "fx" | "fxh" | "shader" | "glsl" | "vert" | "frag" | "geom"
+        | "comp" | "tesc" | "tese" | "mesh" | "task" | "rgen" | "rmiss" | "rchit" | "rahit"
+        | "rint" | "rcall" | "metal" | "wgsl" => "shader",
         "cs" => "csharp",
         "swift" => "swift",
         "lua" => "lua",

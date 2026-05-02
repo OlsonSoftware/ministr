@@ -493,6 +493,42 @@ fn internal_helper() {}
         assert!(tree.sections[0].children.is_empty());
     }
 
+    /// Shader files (HLSL / GLSL / MSL / WGSL) have no tree-sitter
+    /// grammar, so they fall through to `build_fallback_tree` and get
+    /// indexed at text level — better than being silently dropped.
+    /// This is the entry-level Phase 5 win; richer symbol extraction
+    /// is a follow-up.
+    #[test]
+    fn shader_files_fall_back_to_text_indexing() {
+        let parser = CodeParser::new();
+        let usf = "#include \"/Engine/Public/Platform.ush\"\n\n\
+                   Texture2D SourceTexture;\n\
+                   SamplerState BilinearSampler;\n\n\
+                   float4 MainPS(float2 UV : TEXCOORD0) : SV_Target0\n\
+                   {\n    return SourceTexture.Sample(BilinearSampler, UV);\n}\n";
+        for ext in [
+            "shader.usf",
+            "shader.ush",
+            "shader.hlsl",
+            "shader.glsl",
+            "shader.frag",
+            "shader.metal",
+            "shader.wgsl",
+        ] {
+            let tree = parser.parse(Path::new(ext), usf).unwrap();
+            assert_eq!(tree.sections.len(), 1, "{ext}: should yield one section");
+            let root = &tree.sections[0];
+            assert!(
+                root.text.contains("MainPS") || root.text.contains("Texture2D"),
+                "{ext}: full source should be in the fallback section text"
+            );
+            assert!(
+                root.children.is_empty(),
+                "{ext}: no symbol-level children expected from fallback path"
+            );
+        }
+    }
+
     // C3.4: Chunk a real ministr-core source file
     #[test]
     fn chunk_real_config_rs() {
