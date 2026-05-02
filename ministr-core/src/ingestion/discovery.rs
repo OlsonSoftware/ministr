@@ -59,6 +59,15 @@ const ALWAYS_IGNORE_PATTERNS: &[&str] = &[
     "*.bin",
     "*.safetensors",
     "*.snap",
+    // Unreal Engine: UnrealHeaderTool emits these from the
+    // `UCLASS()`/`USTRUCT()`/`GENERATED_BODY()` declarations in the
+    // adjacent non-generated header. The output is ~zero authored
+    // content (just reflection-macro spew), parser-hostile to
+    // tree-sitter-cpp, and on a UE5 source tree it's ~30K files /
+    // ~500 MB of pure busywork. Skip globally — they aren't useful in
+    // any other codebase either.
+    "*.generated.h",
+    "*.gen.cpp",
 ];
 
 /// Hard guard: reject files inside always-ignored directories.
@@ -196,6 +205,62 @@ fn collect_path_entry(
 
 pub(super) fn is_supported_file(path: &Path) -> bool {
     detect_parser_kind(path).is_some()
+}
+
+/// Detect whether a corpus root looks like an Unreal Engine project.
+///
+/// Returns `true` when any `*.uproject` or `*.uplugin` file exists
+/// within 2 directories of the root. Covers the standard UE layouts:
+/// - `<root>/MyGame.uproject`
+/// - `<root>/Plugins/MyPlugin/MyPlugin.uplugin` (UE projects nest
+///   plugins one level under `Plugins/`)
+/// - `<root>/Source/<Module>/...` (project source isn't a direct
+///   marker but plugins/projects elsewhere will be)
+///
+/// Used by the Phase 2 grammar router to switch C++ files inside UE
+/// corpora over to `tree-sitter-unreal-cpp`, which handles
+/// `UCLASS()` / `UFUNCTION()` / `GENERATED_BODY()` reflection macros
+/// that vanilla `tree-sitter-cpp` mishandles as ERROR nodes.
+///
+/// Cheap probe — at most a handful of `read_dir` calls. Callers can
+/// memoize per-corpus if they call this hot.
+#[must_use]
+pub fn is_unreal_corpus(root: &Path) -> bool {
+    fn has_ue_marker(dir: &Path) -> bool {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in rd.flatten() {
+            if let Some(name) = entry.file_name().to_str()
+                && (name.ends_with(".uproject") || name.ends_with(".uplugin"))
+            {
+                return true;
+            }
+        }
+        false
+    }
+    fn search(dir: &Path, depth: u8) -> bool {
+        if has_ue_marker(dir) {
+            return true;
+        }
+        if depth == 0 {
+            return false;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in rd.flatten() {
+            if entry.file_type().is_ok_and(|ft| ft.is_dir())
+                && search(&entry.path(), depth - 1)
+            {
+                return true;
+            }
+        }
+        false
+    }
+    // 2 levels deep — covers root + child + grandchild, which is
+    // enough for UE's `Plugins/<name>/<name>.uplugin` layout.
+    search(root, 2)
 }
 
 /// Stat-fingerprint of an entire corpus root, plus the discovered file list.
@@ -360,5 +425,55 @@ mod tests {
 
         assert_ne!(h1, h2);
         assert_eq!(files1.len() + 1, files2.len());
+    }
+
+    #[test]
+    fn generated_headers_are_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(
+            &tmp.path().join("Source/MyClass.h"),
+            "class FOO_API UMyClass {};",
+        );
+        write(
+            &tmp.path().join("Source/MyClass.generated.h"),
+            "// auto-generated UnrealHeaderTool spew\n",
+        );
+        write(&tmp.path().join("Source/MyClass.gen.cpp"), "// generated\n");
+        let files = discover_files(tmp.path()).unwrap();
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"MyClass.h".to_string()));
+        assert!(!names.iter().any(|n| n.ends_with(".generated.h")));
+        assert!(!names.iter().any(|n| n.ends_with(".gen.cpp")));
+    }
+
+    #[test]
+    fn is_unreal_corpus_detects_root_uproject() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("MyGame.uproject"), "{}").unwrap();
+        std::fs::write(tmp.path().join("README.md"), "# game").unwrap();
+        assert!(is_unreal_corpus(tmp.path()));
+    }
+
+    #[test]
+    fn is_unreal_corpus_detects_nested_uplugin() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("Plugins/MyPlugin")).unwrap();
+        std::fs::write(
+            tmp.path().join("Plugins/MyPlugin/MyPlugin.uplugin"),
+            "{}",
+        )
+        .unwrap();
+        assert!(is_unreal_corpus(tmp.path()));
+    }
+
+    #[test]
+    fn is_unreal_corpus_returns_false_for_plain_codebase() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("src/main.rs"), "fn main(){}");
+        write(&tmp.path().join("Cargo.toml"), "[package]");
+        assert!(!is_unreal_corpus(tmp.path()));
     }
 }

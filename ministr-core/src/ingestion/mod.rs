@@ -33,7 +33,7 @@ pub use pipeline::{
 };
 
 // Re-export utility functions used by other crates
-pub use discovery::{compute_corpus_stat_merkle, discover_paths};
+pub use discovery::{compute_corpus_stat_merkle, discover_paths, is_unreal_corpus};
 pub use roots::{compute_root_id, namespace_path, strip_root_prefix};
 pub use sections::coalesce_small_sections;
 
