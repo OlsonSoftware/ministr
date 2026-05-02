@@ -83,6 +83,10 @@ export function resetPreferences() {
     localStorage.removeItem("ministr-theme");
     localStorage.removeItem("ministr-active-corpus");
     localStorage.removeItem("ministr-sessions-drawer-open");
+    // Persisted ended-session history (24h window). Without this the
+    // "Reset preferences" action reports success but stale entries
+    // reappear on reload from cache.
+    localStorage.removeItem("ministr-sessions-history-v1");
   } catch {
     /* ignore */
   }
