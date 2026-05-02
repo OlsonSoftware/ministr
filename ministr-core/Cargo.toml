@@ -44,6 +44,7 @@ futures = "0.3"
 glob.workspace = true
 ignore.workspace = true
 parking_lot.workspace = true
+logos.workspace = true
 tree-sitter.workspace = true
 tree-sitter-language.workspace = true
 tree-sitter-rust.workspace = true
