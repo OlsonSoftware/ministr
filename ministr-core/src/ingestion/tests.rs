@@ -61,21 +61,21 @@ mod tests {
     // --- Hash computation ---
 
     #[test]
-    fn sha256_deterministic() {
+    fn content_hash_deterministic() {
         let hash1 = compute_content_hash("hello world");
         let hash2 = compute_content_hash("hello world");
         assert_eq!(hash1, hash2);
     }
 
     #[test]
-    fn sha256_different_content() {
+    fn content_hash_different_content() {
         let hash1 = compute_content_hash("hello");
         let hash2 = compute_content_hash("world");
         assert_ne!(hash1, hash2);
     }
 
     #[test]
-    fn sha256_empty_string() {
+    fn content_hash_empty_string() {
         let hash = compute_content_hash("");
         assert!(!hash.is_empty());
         assert_eq!(hash.len(), 64);

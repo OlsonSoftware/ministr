@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 20;
+pub const CURRENT_SCHEMA_VERSION: usize = 21;
 
 /// Returns the migration set for the content database.
 ///
@@ -368,6 +368,18 @@ fn migrations() -> Migrations<'static> {
                 file_count      INTEGER NOT NULL,
                 last_indexed_ns INTEGER NOT NULL
             );
+            ",
+        ),
+        // V21: Pin the corpus stat-merkle short-circuit to the
+        // extractor version that produced the on-disk index. Without
+        // this, an `EXTRACTOR_VERSION` bump (e.g. the C++ grammar swap
+        // in Phase 2) lets a stat-fingerprint match silently skip the
+        // re-extraction the bump was meant to trigger. Default 0 means
+        // every existing V20 row reads back as below any real version
+        // and forces a full reindex on first run after upgrade.
+        M::up(
+            "
+            ALTER TABLE corpus_merkle ADD COLUMN extractor_version INTEGER NOT NULL DEFAULT 0;
             ",
         ),
     ])

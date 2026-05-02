@@ -1118,7 +1118,7 @@ impl Storage for SqliteStorage {
         self.with_conn(move |conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT corpus_id, root_hash, file_count, last_indexed_ns \
+                    "SELECT corpus_id, root_hash, file_count, last_indexed_ns, extractor_version \
                      FROM corpus_merkle WHERE corpus_id = ?1",
                 )
                 .map_err(|e| StorageError::Database {
@@ -1132,6 +1132,7 @@ impl Storage for SqliteStorage {
                         root_hash: row.get(1)?,
                         file_count: row.get(2)?,
                         last_indexed_ns: row.get(3)?,
+                        extractor_version: row.get(4)?,
                     })
                 })
                 .optional()
@@ -1152,17 +1153,19 @@ impl Storage for SqliteStorage {
         self.with_conn(move |conn| {
             conn.execute(
                 "INSERT INTO corpus_merkle \
-                    (corpus_id, root_hash, file_count, last_indexed_ns) \
-                 VALUES (?1, ?2, ?3, ?4) \
+                    (corpus_id, root_hash, file_count, last_indexed_ns, extractor_version) \
+                 VALUES (?1, ?2, ?3, ?4, ?5) \
                  ON CONFLICT(corpus_id) DO UPDATE SET \
                     root_hash = excluded.root_hash, \
                     file_count = excluded.file_count, \
-                    last_indexed_ns = excluded.last_indexed_ns",
+                    last_indexed_ns = excluded.last_indexed_ns, \
+                    extractor_version = excluded.extractor_version",
                 rusqlite::params![
                     record.corpus_id,
                     record.root_hash,
                     record.file_count,
                     record.last_indexed_ns,
+                    record.extractor_version,
                 ],
             )
             .map_err(|e| StorageError::Database {

@@ -143,13 +143,15 @@ pub struct FileHashRecord {
 ///
 /// `root_hash` is a sorted BLAKE3 over each indexed file's
 /// `(rel_path, mtime_ns, size)` tuple. When the freshly-computed hash
-/// matches the stored value, the corpus is provably unchanged at the
-/// filesystem-stat level and the indexer can short-circuit without
-/// parsing or hashing any file contents.
+/// matches the stored value AND the stored `extractor_version` equals
+/// the current [`crate::ingestion::EXTRACTOR_VERSION`], the corpus is
+/// provably unchanged at the filesystem-stat level *and* the on-disk
+/// index was produced by the same extractor pipeline, so the indexer
+/// can short-circuit without parsing or hashing any file contents.
 ///
-/// On stat-mismatch, the existing per-file [`FileHashRecord`] cache
-/// inside the regular ingestion path picks up content-level dedupe;
-/// this is purely a corpus-level early exit.
+/// On stat-mismatch OR extractor-version mismatch, the regular
+/// ingestion path runs and the existing per-file [`FileHashRecord`]
+/// cache picks up content-level dedupe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CorpusMerkleRecord {
     /// Corpus identifier (matches `corpus_roots.id` for registered
@@ -165,6 +167,14 @@ pub struct CorpusMerkleRecord {
     /// Used to recognize stale fingerprints if we ever add an expiry
     /// policy; today purely informational.
     pub last_indexed_ns: i64,
+    /// Extractor pipeline version that produced the on-disk index for
+    /// this corpus. Compared against
+    /// [`crate::ingestion::EXTRACTOR_VERSION`] inside the short-circuit
+    /// guard — a mismatch falls through to the full reindex path so an
+    /// extractor or grammar bump auto-heals on first reindex after
+    /// upgrade. Pre-V21 rows read back as `0`, which is below any real
+    /// version, so they always fall through.
+    pub extractor_version: i64,
 }
 
 /// A web cache record tracking fetch metadata for staleness detection.

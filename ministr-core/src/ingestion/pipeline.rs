@@ -859,17 +859,26 @@ impl IngestionPipeline {
             && let Ok(Some(prior)) = storage.get_corpus_merkle(rid).await
             && prior.root_hash == *hash
         {
+            if prior.extractor_version == super::EXTRACTOR_VERSION {
+                info!(
+                    corpus_id = rid,
+                    file_count = files.len(),
+                    extractor_version = super::EXTRACTOR_VERSION,
+                    "corpus stat-merkle unchanged — short-circuiting reindex"
+                );
+                let mut stats = IngestionStats::new(files.len());
+                stats.files_skipped = files.len();
+                if let Some(ref progress) = self.progress {
+                    progress.complete();
+                }
+                return Ok(stats);
+            }
             info!(
                 corpus_id = rid,
-                file_count = files.len(),
-                "corpus stat-merkle unchanged — short-circuiting reindex"
+                stored_extractor_version = prior.extractor_version,
+                current_extractor_version = super::EXTRACTOR_VERSION,
+                "corpus stat-merkle matches but extractor version differs — re-extracting"
             );
-            let mut stats = IngestionStats::new(files.len());
-            stats.files_skipped = files.len();
-            if let Some(ref progress) = self.progress {
-                progress.complete();
-            }
-            return Ok(stats);
         }
 
         let mut stats = IngestionStats::new(files.len());
@@ -1008,6 +1017,7 @@ impl IngestionPipeline {
                 root_hash: hash,
                 file_count: i64::try_from(stats.files_discovered).unwrap_or(i64::MAX),
                 last_indexed_ns: now_ns,
+                extractor_version: super::EXTRACTOR_VERSION,
             };
             if let Err(e) = storage.upsert_corpus_merkle(&record).await {
                 // Don't fail the ingestion just because the merkle

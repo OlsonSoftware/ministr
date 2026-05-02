@@ -214,17 +214,20 @@ pub(super) fn is_supported_file(path: &Path) -> bool {
 /// - `<root>/MyGame.uproject`
 /// - `<root>/Plugins/MyPlugin/MyPlugin.uplugin` (UE projects nest
 ///   plugins one level under `Plugins/`)
-/// - `<root>/Source/<Module>/...` (project source isn't a direct
-///   marker but plugins/projects elsewhere will be)
 ///
-/// Used by the Phase 2 grammar router to switch C++ files inside UE
-/// corpora over to `tree-sitter-unreal-cpp`, which handles
-/// `UCLASS()` / `UFUNCTION()` / `GENERATED_BODY()` reflection macros
-/// that vanilla `tree-sitter-cpp` mishandles as ERROR nodes.
+/// Currently unused — Phase 2 ended up swapping the C++ grammar
+/// globally (`tree-sitter-cpp` → `tree-sitter-unreal-cpp`, a strict
+/// superset that handles `UCLASS()` / `UFUNCTION()` /
+/// `GENERATED_BODY()` correctly while parsing vanilla C++
+/// byte-identically), so per-corpus grammar dispatch turned out not
+/// to be necessary. The function is kept available because future
+/// per-corpus routing decisions (e.g. content-extract dedupe gating
+/// on UE-vs-non-UE in Phase 6) would naturally reuse it.
 ///
 /// Cheap probe — at most a handful of `read_dir` calls. Callers can
 /// memoize per-corpus if they call this hot.
 #[must_use]
+#[allow(dead_code)]
 pub fn is_unreal_corpus(root: &Path) -> bool {
     fn has_ue_marker(dir: &Path) -> bool {
         let Ok(rd) = std::fs::read_dir(dir) else {
