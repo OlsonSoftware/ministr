@@ -19,6 +19,7 @@
 pub(crate) mod ast_parser;
 pub mod bridge;
 mod complexity;
+pub mod cpp_fallback;
 pub mod generic_extractor;
 pub mod grammar;
 pub mod hlsl;

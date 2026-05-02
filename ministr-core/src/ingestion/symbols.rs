@@ -72,6 +72,7 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
 
     let language = registry.language_name_for_extension(ext);
     let is_rust = language.is_none_or(|l| l == "rust");
+    let is_cpp_family = matches!(language, Some("cpp" | "c"));
 
     let tree = if is_rust {
         let mut ast_parser = AstParser::new();
@@ -86,10 +87,17 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
         let Ok(mut ast_parser) = AstParser::with_language(ts_lang) else {
             return empty_result();
         };
-        match ast_parser.parse(source) {
-            Ok(t) => t,
-            Err(_) => return empty_result(),
-        }
+        let Ok(t) = ast_parser.parse(source) else {
+            // C/C++ has the deepest pathological-input risk
+            // (recursive templates, Slate widgets). Run the
+            // Logos fallback so we still recover top-level
+            // class/struct/enum/function/UE-macro symbols.
+            if is_cpp_family {
+                return extract_cpp_fallback_into_storage(relative_path, content, storage).await;
+            }
+            return empty_result();
+        };
+        t
     };
 
     let module_parts = module_path_from_file(relative_path);
@@ -219,6 +227,70 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
     Ok(CodeSymbolsResult {
         pending_refs,
         bridge_endpoints,
+        embedding_pairs,
+    })
+}
+
+// ── C/C++ fallback (Logos-driven, when tree-sitter timed out) ─────────────────
+
+/// Run the Logos C++ fallback when the tree-sitter parse couldn't
+/// complete (most commonly: per-file timeout on a pathological
+/// template or Slate widget). Recovers top-level class / struct /
+/// enum / function / Unreal-reflection-macro symbols so the file
+/// still appears in `ministr_symbols`. Skips ref / bridge resolution.
+async fn extract_cpp_fallback_into_storage<S: Storage + ?Sized>(
+    relative_path: &str,
+    content: &str,
+    storage: &S,
+) -> Result<CodeSymbolsResult, IngestionError> {
+    let extraction =
+        crate::code::cpp_fallback::extract_cpp_fallback_symbols(content, relative_path);
+
+    if extraction.symbols.is_empty() {
+        let _ = storage.delete_symbols_for_file(relative_path).await;
+        return Ok(CodeSymbolsResult {
+            pending_refs: Vec::new(),
+            bridge_endpoints: Vec::new(),
+            embedding_pairs: Vec::new(),
+        });
+    }
+
+    let _ = storage.delete_symbols_for_file(relative_path).await;
+    storage
+        .insert_symbols(&extraction.symbols)
+        .await
+        .map_err(IngestionError::from)?;
+
+    let bytes = content.as_bytes();
+    let mut embedding_pairs: Vec<(VectorId, String)> = Vec::new();
+    for record in &extraction.symbols {
+        let stub_text = if record.signature.trim().is_empty() {
+            record.name.clone()
+        } else {
+            record.signature.clone()
+        };
+        if !stub_text.trim().is_empty() {
+            embedding_pairs.push((VectorId::symbol_stub(record.id.as_ref()), stub_text.clone()));
+        }
+        if let Some(full_text) = slice_lines(bytes, record.line_start, record.line_end)
+            && !full_text.trim().is_empty()
+        {
+            embedding_pairs.push((
+                VectorId::symbol_full(record.id.as_ref()),
+                full_text.to_string(),
+            ));
+        }
+    }
+
+    info!(
+        path = %relative_path,
+        symbols = extraction.symbols.len(),
+        "tree-sitter parse failed for C/C++ — recovered symbols via Logos fallback"
+    );
+
+    Ok(CodeSymbolsResult {
+        pending_refs: Vec::new(),
+        bridge_endpoints: Vec::new(),
         embedding_pairs,
     })
 }
