@@ -1591,7 +1591,7 @@ fn process(config: Config) {}
         fn parse_cpp(source: &str) -> Vec<RawRef> {
             let mut parser = tree_sitter::Parser::new();
             parser
-                .set_language(&tree_sitter_cpp::LANGUAGE.into())
+                .set_language(&tree_sitter_unreal_cpp::LANGUAGE.into())
                 .unwrap();
             let tree = parser.parse(source.as_bytes(), None).unwrap();
             extract_refs(&tree, source.as_bytes(), "cpp")
@@ -1602,6 +1602,47 @@ fn process(config: Config) {}
             let refs = parse_cpp("extern \"C\" {\n#include <string.h>\n}\n");
             assert_eq!(refs.len(), 1);
             assert_eq!(refs[0].target_name, "string.h");
+        }
+
+        /// Smoke check that UE reflection macros parse cleanly under
+        /// the unreal-cpp grammar. Vanilla `tree-sitter-cpp` would
+        /// blow this up into a sea of ERROR nodes; the unreal-cpp
+        /// grammar treats `UCLASS()`, `GENERATED_BODY()`,
+        /// `UFUNCTION()`, `UPROPERTY()` as first-class syntax.
+        #[test]
+        fn unreal_macros_parse_without_error() {
+            let src = r#"
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+
+UCLASS(Blueprintable)
+class MYGAME_API AMyActor : public AActor {
+    GENERATED_BODY()
+public:
+    UFUNCTION(BlueprintCallable, Category="Test")
+    void DoThing();
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    int32 Counter;
+};
+"#;
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&tree_sitter_unreal_cpp::LANGUAGE.into())
+                .unwrap();
+            let tree = parser.parse(src.as_bytes(), None).unwrap();
+            assert!(
+                !tree.root_node().has_error(),
+                "tree-sitter-unreal-cpp should parse UE reflection macros cleanly"
+            );
+
+            // The two #includes must still resolve as refs — confirms
+            // the existing C/C++ extractor is compatible with the new
+            // grammar's parse tree.
+            let refs = extract_refs(&tree, src.as_bytes(), "cpp");
+            let names: Vec<&str> = refs.iter().map(|r| r.target_name.as_str()).collect();
+            assert!(names.contains(&"CoreMinimal.h"), "got: {names:?}");
+            assert!(names.contains(&"GameFramework/Actor.h"), "got: {names:?}");
         }
     }
 

@@ -35,8 +35,8 @@ use super::embedding::{
 };
 use super::process::{ProcessOptions, store_enriched_document};
 use super::roots::{
-    accumulate_language_stats, all_files_unchanged_by_mtime, compute_relative_path,
-    compute_root_id, compute_sha256, file_mtime_nanos, find_root_for_file, namespace_path,
+    accumulate_language_stats, all_files_unchanged_by_mtime, compute_content_hash,
+    compute_relative_path, compute_root_id, file_mtime_nanos, find_root_for_file, namespace_path,
     strip_root_prefix, update_root_stats,
 };
 use super::symbols::{
@@ -326,10 +326,21 @@ impl Default for IngestionProgress {
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
+/// Default concurrency for the producer-side parse fan-out.
+///
+/// `buffer_unordered(concurrency)` controls how many parse-and-store
+/// futures are in flight at once on the tokio runtime; the embedder
+/// consumer is bounded separately by the mpsc channel capacity.
+///
+/// Previously hard-capped at 16, which throttled UE5-class corpora on
+/// boxes with >16 cores. Now scales with `available_parallelism()` up
+/// to 32 — high-core machines keep all parsers busy without letting an
+/// absurdly large core count create memory pressure from too many
+/// parallel parse trees.
 fn default_concurrency() -> usize {
     std::thread::available_parallelism()
         .map_or(4, std::num::NonZero::get)
-        .min(16)
+        .min(32)
 }
 
 /// Result of processing a single file.
@@ -586,7 +597,7 @@ impl IngestionPipeline {
             path: file_path.to_path_buf(),
         })?;
 
-        let hash = compute_sha256(&content_str);
+        let hash = compute_content_hash(&content_str);
 
         if extractor_fresh
             && let Some(ref existing) = existing_hash
@@ -644,7 +655,7 @@ impl IngestionPipeline {
         parser_kind: ParserKind,
         storage: &S,
     ) -> Result<ContentIngestionStats, IngestionError> {
-        let hash = compute_sha256(content);
+        let hash = compute_content_hash(content);
 
         let existing_hash = storage
             .get_file_hash(source_path)
@@ -708,7 +719,7 @@ impl IngestionPipeline {
         E: Embedder + ?Sized,
         I: VectorIndex + ?Sized,
     {
-        let hash = compute_sha256(content);
+        let hash = compute_content_hash(content);
 
         let existing_hash = storage
             .get_file_hash(source_path)
@@ -825,7 +836,51 @@ impl IngestionPipeline {
             progress.set_phase(IngestionPhase::Discovering);
         }
 
-        let files = discover_files(dir)?;
+        // Phase 7 (corpus-root stat-merkle short-circuit). Walk once,
+        // computing both the file list and a sorted BLAKE3 over each
+        // file's (rel_path, mtime_ns, size). When the freshly-computed
+        // hash matches the stored value for this corpus_id, we know
+        // *no file has been touched* since the last successful index
+        // and can return immediately — no parse, no embed, no SQL
+        // churn. Saves minutes-to-hours on `git pull && reindex` of
+        // large corpora that didn't actually change.
+        //
+        // When root_id is None (test / unrooted callers) we keep the
+        // legacy `discover_files` path — there's no key under which to
+        // remember the fingerprint.
+        let (root_hash, files): (Option<String>, Vec<PathBuf>) = if root_id.is_some() {
+            let (h, f) = super::discovery::compute_corpus_stat_merkle(dir)?;
+            (Some(h), f)
+        } else {
+            (None, discover_files(dir)?)
+        };
+
+        if let (Some(rid), Some(hash)) = (root_id, &root_hash)
+            && let Ok(Some(prior)) = storage.get_corpus_merkle(rid).await
+            && prior.root_hash == *hash
+        {
+            if prior.extractor_version == super::EXTRACTOR_VERSION {
+                info!(
+                    corpus_id = rid,
+                    file_count = files.len(),
+                    extractor_version = super::EXTRACTOR_VERSION,
+                    "corpus stat-merkle unchanged — short-circuiting reindex"
+                );
+                let mut stats = IngestionStats::new(files.len());
+                stats.files_skipped = files.len();
+                if let Some(ref progress) = self.progress {
+                    progress.complete();
+                }
+                return Ok(stats);
+            }
+            info!(
+                corpus_id = rid,
+                stored_extractor_version = prior.extractor_version,
+                current_extractor_version = super::EXTRACTOR_VERSION,
+                "corpus stat-merkle matches but extractor version differs — re-extracting"
+            );
+        }
+
         let mut stats = IngestionStats::new(files.len());
 
         if files.is_empty() {
@@ -946,6 +1001,31 @@ impl IngestionPipeline {
             failed = stats.files_failed,
             "ingestion with embeddings complete"
         );
+
+        // Phase 7 — record the new stat-merkle so the *next* reindex can
+        // short-circuit. Only persist when (a) we have a corpus key to
+        // store under and (b) we successfully computed a hash earlier
+        // (i.e. we took the rooted code path).
+        if let (Some(rid), Some(hash)) = (root_id, root_hash) {
+            let now_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .and_then(|d| i64::try_from(d.as_nanos()).ok())
+                .unwrap_or(0);
+            let record = crate::storage::traits::CorpusMerkleRecord {
+                corpus_id: rid.to_string(),
+                root_hash: hash,
+                file_count: i64::try_from(stats.files_discovered).unwrap_or(i64::MAX),
+                last_indexed_ns: now_ns,
+                extractor_version: super::EXTRACTOR_VERSION,
+            };
+            if let Err(e) = storage.upsert_corpus_merkle(&record).await {
+                // Don't fail the ingestion just because the merkle
+                // upsert blew up — the corpus is correctly indexed,
+                // we just lose the short-circuit on the next run.
+                tracing::warn!(error = ?e, "failed to upsert corpus_merkle (non-fatal)");
+            }
+        }
 
         if let Some(ref progress) = self.progress {
             progress.complete();
@@ -1587,7 +1667,7 @@ impl IngestionPipeline {
             path: file_path.to_path_buf(),
         })?;
 
-        let hash = compute_sha256(&content_str);
+        let hash = compute_content_hash(&content_str);
 
         if extractor_fresh
             && let Some(ref existing) = existing_hash
