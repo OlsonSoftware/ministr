@@ -31,12 +31,14 @@ TAURI_DIR="$REPO_ROOT/ministr-app/src-tauri"
 INSTALLER_DIR="$REPO_ROOT/installer"
 OUTPUT_DIR="$REPO_ROOT/target/pkg"
 
-# Read version from tauri.conf.json
-VERSION=$(python3 -c "
-import json, sys
-with open('$TAURI_DIR/tauri.conf.json') as f:
-    print(json.load(f)['version'])
-")
+# Read version from src-tauri/Cargo.toml (single source of truth — the
+# `version` field was removed from tauri.conf.json in c8881f3 so Tauri
+# reads it from Cargo.toml directly).
+VERSION=$(awk -F\" '/^version[[:space:]]*=[[:space:]]*"/ { print $2; exit }' "$TAURI_DIR/Cargo.toml")
+if [[ -z "$VERSION" ]]; then
+    echo "error: could not read version from $TAURI_DIR/Cargo.toml" >&2
+    exit 1
+fi
 
 echo "═══════════════════════════════════════════════════════════════════"
 echo "  ministr PKG builder — v${VERSION}"
