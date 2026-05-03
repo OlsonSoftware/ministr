@@ -113,10 +113,16 @@ docker-run *args:
 
 # Build signed + notarized macOS .pkg installer
 pkg:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -f .env.signing ] && set -a && . ./.env.signing && set +a
     ./scripts/build-pkg.sh
 
 # Build macOS .pkg without notarization (for local testing)
 pkg-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -f .env.signing ] && set -a && . ./.env.signing && set +a
     SKIP_NOTARIZE=1 ./scripts/build-pkg.sh
 
 # Generate installer background images (requires librsvg)
@@ -135,7 +141,24 @@ reinstall:
     sleep 1
     echo "==> Clean rebuild (release)..."
     cargo clean -p ministr-mcp -p ministr-cli -p ministr-daemon -p ministr-app
-    cargo build --release -p ministr-cli -p ministr-app
+    cargo build --release -p ministr-cli
+    # Tauri's externalBin (tauri.conf.json) requires the sidecar at
+    # `ministr-app/src-tauri/binaries/ministr-cli-<host-triple>` before
+    # the ministr-app build script runs. Mirror scripts/reinstall.ps1.
+    HOST_TRIPLE=$(rustc -vV | awk '/^host:/ { print $2 }')
+    mkdir -p ministr-app/src-tauri/binaries
+    cp target/release/ministr "ministr-app/src-tauri/binaries/ministr-cli-${HOST_TRIPLE}"
+    # Tauri's `generate_context!` proc macro reads `frontendDist` from
+    # tauri.conf.json (`../dist`) at compile time, so the Vite output
+    # must exist before `cargo build -p ministr-app`. `tauri build` would
+    # run beforeBuildCommand for us; raw cargo doesn't.
+    if [ ! -d ministr-app/node_modules ]; then
+        echo "==> Installing frontend deps (pnpm install)..."
+        (cd ministr-app && pnpm install --frozen-lockfile)
+    fi
+    echo "==> Building frontend (vite)..."
+    (cd ministr-app && pnpm run build)
+    cargo build --release -p ministr-app
     echo "==> Installing CLI to ~/.ministr/bin/ministr (canonical dev location)..."
     # Remove stale copies from other locations to prevent shadow binaries.
     rm -f ~/.cargo/bin/ministr
@@ -161,13 +184,22 @@ reinstall:
         echo "   re-run this recipe." >&2
         exit 1
     fi
-    cp target/release/ministr-app /Applications/ministr.app/Contents/MacOS/ministr-app
+    # Bundles installed from a signed .pkg are owned by root; bundles
+    # built locally with `cargo build -p ministr-app` are owned by the
+    # current user. Use sudo only when needed so dev re-runs don't
+    # prompt for a password unnecessarily.
+    SUDO=""
+    if [ ! -w /Applications/ministr.app/Contents/MacOS/ministr-app ]; then
+        SUDO="sudo"
+        echo "   bundle is root-owned (.pkg-installed) — using sudo for in-place updates"
+    fi
+    $SUDO cp target/release/ministr-app /Applications/ministr.app/Contents/MacOS/ministr-app
     # Sidecar binary lives inside the bundle too; keep it in sync.
     if [ -f /Applications/ministr.app/Contents/MacOS/ministr-cli ]; then
-        cp target/release/ministr /Applications/ministr.app/Contents/MacOS/ministr-cli
+        $SUDO cp target/release/ministr /Applications/ministr.app/Contents/MacOS/ministr-cli
     fi
     # We modified the bundle contents; ad-hoc re-sign so macOS will launch it.
-    codesign --force --deep --sign - /Applications/ministr.app >/dev/null 2>&1 || true
+    $SUDO codesign --force --deep --sign - /Applications/ministr.app >/dev/null 2>&1 || true
     echo "==> Launching tray app..."
     open /Applications/ministr.app
     echo "==> Done. Restart your Claude Code session to pick up the new binary."
