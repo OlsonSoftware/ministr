@@ -23,6 +23,8 @@ import type { ExploreMode } from "./ExploreView";
 import { cn } from "../lib/utils";
 import { corpusLabel } from "../lib/corpus";
 import { shortcutKeys } from "../lib/shortcuts";
+import { useInvestigations } from "../hooks/useInvestigations";
+import { BrutalNew, BrutalPin } from "./ui/brutal-icons";
 
 type Tab =
   | "ask"
@@ -36,7 +38,7 @@ interface Cmd {
   label: string;
   hint?: string;
   shortcut?: string[];
-  group: "NAV" | "CORPUS" | "ACTIONS" | "THEME";
+  group: "NAV" | "CORPUS" | "ACTIONS" | "THEME" | "INVESTIGATION";
   icon: React.ComponentType<{ className?: string }>;
   run: () => void | Promise<void>;
 }
@@ -59,6 +61,9 @@ interface CommandPaletteProps {
   onShowShortcuts: () => void;
   onThemeChange: (t: "system" | "dark" | "light") => void;
   onRefresh: () => void;
+  /** Active corpus — gates investigation actions (new/clear/switch) so
+   *  they only appear when there's a corpus to attach to. */
+  activeCorpusId?: string | null;
 }
 
 export function CommandPalette({
@@ -73,10 +78,12 @@ export function CommandPalette({
   onShowShortcuts,
   onThemeChange,
   onRefresh,
+  activeCorpusId = null,
 }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const investigations = useInvestigations(activeCorpusId);
 
   const commands: Cmd[] = useMemo(() => {
     const base: Cmd[] = [
@@ -173,6 +180,32 @@ export function CommandPalette({
         icon: Plus,
         run: onAddProject,
       },
+      ...(activeCorpusId
+        ? [
+            {
+              id: "investigation:new",
+              label: "New investigation",
+              hint: "Start a fresh inquiry thread on the active corpus",
+              group: "INVESTIGATION" as const,
+              icon: BrutalNew as React.ComponentType<{ className?: string }>,
+              run: () => {
+                investigations.create();
+              },
+            },
+            ...(investigations.pinnedSourceIds.length > 0
+              ? [
+                  {
+                    id: "investigation:clear-pins",
+                    label: `Clear ${investigations.pinnedSourceIds.length} pinned source${investigations.pinnedSourceIds.length === 1 ? "" : "s"}`,
+                    hint: "Empty the source pane for this investigation",
+                    group: "INVESTIGATION" as const,
+                    icon: BrutalPin as React.ComponentType<{ className?: string }>,
+                    run: () => investigations.clearPins(),
+                  },
+                ]
+              : []),
+          ]
+        : []),
       {
         id: "action:refresh",
         label: "Refresh daemon status",
@@ -247,15 +280,36 @@ export function CommandPalette({
       ];
     });
 
-    return [...base, ...corpusCmds];
+    const investigationSwitchCmds: Cmd[] = activeCorpusId
+      ? investigations.investigations
+          .filter((inv) => inv.id !== investigations.active?.id)
+          .slice(0, 8)
+          .map((inv) => ({
+            id: `investigation:switch:${inv.id}`,
+            label: `Switch to · ${inv.title}`,
+            hint:
+              inv.pinnedSourceIds.length > 0
+                ? `${inv.pinnedSourceIds.length} pinned`
+                : "no pinned sources",
+            group: "INVESTIGATION" as const,
+            icon: BrutalNew as React.ComponentType<{ className?: string }>,
+            run: () => investigations.setActive(inv.id),
+          }))
+      : [];
+
+    return [...base, ...investigationSwitchCmds, ...corpusCmds];
   }, [
     status,
     onNavigate,
+    onNavigateExplore,
+    onOpenDiagnostics,
     onAddProject,
     onSelectCorpus,
     onShowShortcuts,
     onThemeChange,
     onRefresh,
+    activeCorpusId,
+    investigations,
   ]);
 
   const filtered = useMemo(() => {

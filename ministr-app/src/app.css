@@ -34,6 +34,15 @@
   --color-success: #2f6f4f;
   --color-warning: #8a5a00;
   --color-danger: #9a2028;
+  /* Info — cyan-leaning blue. New in the workspace shell for "pinned" /
+     "system" badges and the source-pane card identity edge. Joins
+     accent/danger/warning/success as a fifth tone. */
+  --color-info: #155e75;
+
+  /* Surface variant for pinned content in the source pane. Reads as
+     "kept" (subtly distinct from transient surface) without breaking
+     the flat brutalist look — light theme uses a faint warm tint. */
+  --color-surface-pinned: #f5f3ee;
 
   /* Role-specific corner radii.
      - Data surfaces (tables, code, treemap cells, status grids) keep 0px
@@ -68,6 +77,30 @@
 
   --border-width-default: 2px;
   --border-width-thick: 3px;
+  /* Strong divider — used for workspace pane dividers and active-pane
+     outlines. 3px replaces shadow-elevation as the hierarchy cue in the
+     refined brutalist shell. */
+  --border-width-strong: 3px;
+
+  /* Refined-brutalist motion. The ONLY transition timing in the system —
+     applied exclusively to data motion (streaming skeletons, phase rail
+     fills, drawer slides, source-pane pin animations). Hover/active stay
+     instant; chrome stays snap. */
+  --motion-data-duration: 200ms;
+  --motion-data-easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Live accent — gradient applied to the active phase in the streaming
+     rail and the budget meter when actively retrieving. Pulses to
+     communicate "data is moving." */
+  --accent-live: linear-gradient(
+    90deg,
+    var(--color-accent) 0%,
+    color-mix(in oklch, var(--color-accent) 60%, transparent) 100%
+  );
+
+  /* Hero/display type — for the empty Ask state and onboarding headline.
+     Mono, semibold, tight tracking. Scales with the root font-size lever. */
+  --text-display: clamp(28px, 2.4vw + 16px, 44px);
 
   /* Fluid type tokens — clamp(min, fluid, max). Used per-component when
      a label would otherwise be hardcoded text-[Npx]. Floor stays at 10px
@@ -105,6 +138,11 @@
   --color-success: #4ad295;
   --color-warning: #f5c452;
   --color-danger: #ea6770;
+  --color-info: #6dd3fc;
+
+  /* Pinned surface in dark — half-step between surface-raised and overlay
+     so pinned source cards read as "kept" against transient siblings. */
+  --color-surface-pinned: #1a1a26;
 
   /* Signature dark-mode move: shadow color = accent purple, not white.
      Keeps the ministr identity present and avoids the washed-out look
@@ -190,6 +228,8 @@ html {
   --color-success: var(--color-success);
   --color-warning: var(--color-warning);
   --color-danger: var(--color-danger);
+  --color-info: var(--color-info);
+  --color-surface-pinned: var(--color-surface-pinned);
 
   /* Mono micro-label sizes — replace ad-hoc text-[0.5625rem|0.625rem|0.6875rem]
      callsites. `micro` is the smallest legible label (10px floor); `mini` is
@@ -197,6 +237,7 @@ html {
      monitors via the underlying --text-mono-* tokens. */
   --text-mono-micro: var(--text-mono-xs);
   --text-mono-mini: var(--text-mono-sm);
+  --text-display: var(--text-display);
 
   /* Brutalist hard-offset shadows. Re-export the :root-level tokens to
      Tailwind so `shadow-xs/sm/md/lg` produce the signature look (purple
@@ -336,4 +377,106 @@ body {
   .ministr-blink {
     animation: none !important;
   }
+}
+
+/* ------------------------------------------------------------------
+   Workspace shell — refined-brutalist additions.
+
+   New in 0.3.0: a 3-pane workspace replaces the tab shell. These
+   utilities are scoped to the shell + AskView refactor; legacy
+   surfaces ignore them.
+   ------------------------------------------------------------------ */
+
+/* Data-motion utility — the only sanctioned transition. Applied to:
+   - streaming skeleton crossfades on phase events
+   - phase-strip fill width
+   - drawer slides
+   - source-pane card pin animations
+   Hover/active/select stay snap. */
+.motion-data {
+  transition-duration: var(--motion-data-duration);
+  transition-timing-function: var(--motion-data-easing);
+}
+
+/* Live accent fill — applied to active phase strip + budget meter when
+   retrieval is in flight. Animates a subtle wash so the user feels
+   "data is moving" without drifting into decorative motion. */
+@keyframes ministr-live-pulse {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
+.bg-accent-live {
+  background-image: var(--accent-live);
+  background-size: 200% 100%;
+  animation: ministr-live-pulse 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-accent-live {
+    animation: none !important;
+    background-position: 0% 50% !important;
+  }
+}
+
+/* Strong-border utility — used by workspace pane dividers and the
+   active-pane outline. Reads as elevation in lieu of shadow. */
+.border-strong {
+  border-width: var(--border-width-strong);
+}
+
+/* Drawer slide — the primitive used by Logs / Session / Indexing. */
+@keyframes ministr-drawer-in {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+.ministr-drawer-in {
+  animation: ministr-drawer-in var(--motion-data-duration)
+    var(--motion-data-easing) both;
+}
+
+/* Source-pane pin — slide from the right. */
+@keyframes ministr-pin-in {
+  from { transform: translateX(8px); opacity: 0; }
+  to   { transform: translateX(0);   opacity: 1; }
+}
+
+.ministr-pin-in {
+  animation: ministr-pin-in var(--motion-data-duration)
+    var(--motion-data-easing) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ministr-drawer-in,
+  .ministr-pin-in {
+    animation: none !important;
+  }
+  .motion-data {
+    transition-duration: 0ms !important;
+  }
+}
+
+/* Workspace pane resizer — thick brutalist divider. No drag handle dot;
+   the cursor IS the affordance. col-resize on hover/drag. */
+.workspace-resizer {
+  width: 3px;
+  background: var(--color-border);
+  cursor: col-resize;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.workspace-resizer:hover,
+.workspace-resizer[data-active="true"] {
+  background: var(--color-accent);
+}
+
+/* Display type — hero state for empty Ask + onboarding headline. */
+.text-display {
+  font-family: var(--font-mono);
+  font-size: var(--text-display);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
 }

@@ -204,3 +204,132 @@ export function BrutalSettings({ className }: IconProps) {
     </Svg>
   );
 }
+
+/** Pin — push-pin glyph for "pin source to pane". Solid head, vertical stem. */
+export function BrutalPin({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <rect x="7" y="2" width="10" height="8" fill="currentColor" />
+      <rect x="11" y="10" width="2" height="9" fill="currentColor" />
+      <rect x="5" y="19" width="14" height="3" fill="currentColor" />
+    </Svg>
+  );
+}
+
+/** Drawer — three stacked horizontal bars suggesting a pull-out tray. */
+export function BrutalDrawer({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <rect
+        x="2"
+        y="3"
+        width="20"
+        height="18"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <line
+        x1="2"
+        y1="9"
+        x2="22"
+        y2="9"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <line
+        x1="2"
+        y1="15"
+        x2="22"
+        y2="15"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+    </Svg>
+  );
+}
+
+/** Close — the X glyph with brutal square caps. */
+export function BrutalClose({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <line
+        x1="4"
+        y1="4"
+        x2="20"
+        y2="20"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="square"
+      />
+      <line
+        x1="20"
+        y1="4"
+        x2="4"
+        y2="20"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="square"
+      />
+    </Svg>
+  );
+}
+
+/** New — plus glyph for "new investigation" / "new tab". */
+export function BrutalNew({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <line
+        x1="12"
+        y1="3"
+        x2="12"
+        y2="21"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="square"
+      />
+      <line
+        x1="3"
+        y1="12"
+        x2="21"
+        y2="12"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="square"
+      />
+    </Svg>
+  );
+}
+
+/** Workspace — three-pane glyph for the "open workspace" idea. */
+export function BrutalWorkspace({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <rect
+        x="2"
+        y="3"
+        width="20"
+        height="18"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <line
+        x1="8"
+        y1="3"
+        x2="8"
+        y2="21"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <line
+        x1="16"
+        y1="3"
+        x2="16"
+        y2="21"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+    </Svg>
+  );
+}

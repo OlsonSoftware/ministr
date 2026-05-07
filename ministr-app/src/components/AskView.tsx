@@ -48,10 +48,15 @@ import type {
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { EmptyState } from "./ui/empty-state";
+import { BrutalPin } from "./ui/brutal-icons";
 import { useEntityPanel } from "../hooks/useEntityPanel";
+import { useInvestigations } from "../hooks/useInvestigations";
 import { corpusLabel } from "../lib/corpus";
 import { basename, corpusRelative } from "../lib/path";
 import { cn } from "../lib/utils";
+import { InlineCitation } from "./ask/InlineCitation";
+import { PhaseStrip, type AskPhaseName } from "./ask/PhaseStrip";
+import { InvestigationTabs } from "./ask/InvestigationTabs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types matching ministr-app/src-tauri/src/commands.rs::AskPhase
@@ -215,6 +220,21 @@ export function AskView({ status, activeCorpusId }: Props) {
     [status.corpora, corpusId],
   );
 
+  // Investigation state — lifted to a hook so the InvestigationTabs strip,
+  // the inline citations' Pin actions, and the SourceRow Pin buttons all
+  // share the same store. The hook is reactive across instances via
+  // INVESTIGATIONS_CHANGED so the CorpusRail and SourcePane stay in lockstep.
+  const {
+    investigations,
+    active: activeInvestigation,
+    create: createInvestigation,
+    setActive: setActiveInvestigation,
+    close: closeInvestigation,
+    pin: pinSource,
+    isPinned,
+    recordQuery,
+  } = useInvestigations(corpusId || null);
+
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<
     | "idle"
@@ -279,6 +299,9 @@ export function AskView({ status, activeCorpusId }: Props) {
       resetTransient();
       setQuery(q);
       setPhase("analyzing");
+      // Record the query into the active investigation (lazy-creates one
+      // if none exists). cached flag set after the done event lands.
+      recordQuery(q);
 
       const channel = new Channel<AskPhase>();
       channel.onmessage = (event: AskPhase) => {
@@ -364,7 +387,7 @@ export function AskView({ status, activeCorpusId }: Props) {
         }
       }
     },
-    [corpusId, phase],
+    [corpusId, phase, recordQuery],
   );
 
   function applyStarter(s: string) {
@@ -401,7 +424,20 @@ export function AskView({ status, activeCorpusId }: Props) {
   }
 
   return (
-    <div className="@container/page flex h-full gap-4 min-h-0">
+    <div className="@container/page flex h-full flex-col min-h-0">
+      <InvestigationTabs
+        investigations={investigations}
+        activeId={activeInvestigation?.id ?? null}
+        onSelect={(id) => setActiveInvestigation(id)}
+        onClose={(id) => closeInvestigation(id)}
+        onNew={() => {
+          createInvestigation();
+          resetTransient();
+          setQuery("");
+        }}
+      />
+
+      <div className="flex flex-1 gap-4 min-h-0 pt-4">
       {/* LEFT: prompt + answer column */}
       <div className="flex-1 min-w-0 flex flex-col gap-4 min-h-0">
         <Header corpus={corpus} health={health} />
@@ -421,10 +457,12 @@ export function AskView({ status, activeCorpusId }: Props) {
           disabled={!health?.available}
         />
 
-        {/* Phase rail — visible during loading and immediately after. */}
+        {/* Horizontal phase strip — replaces the old vertical PhaseRail.
+            Active phase pulses with the accent-live gradient; completed
+            phases fill solid; pending phases stay surface-overlay. */}
         {phase !== "idle" && phase !== "error" && (
-          <PhaseRail
-            phase={phase}
+          <PhaseStrip
+            phase={phase as AskPhaseName}
             cached={done?.cached ?? false}
             verified={verified !== null}
           />
@@ -474,6 +512,8 @@ export function AskView({ status, activeCorpusId }: Props) {
               corpus={corpus}
               cited={cited}
               verified={verified}
+              pin={pinSource}
+              isPinned={isPinned}
             />
           )}
         </div>
@@ -488,6 +528,7 @@ export function AskView({ status, activeCorpusId }: Props) {
           onClear={clearRecent}
         />
       </aside>
+      </div>
     </div>
   );
 }
@@ -671,78 +712,6 @@ function Omnibar({
   );
 }
 
-type RailPhase =
-  | "analyzing"
-  | "retrieving"
-  | "reranking"
-  | "synthesizing"
-  | "verifying"
-  | "done";
-
-function PhaseRail({
-  phase,
-  cached,
-  verified,
-}: {
-  phase: RailPhase;
-  cached: boolean;
-  verified: boolean;
-}) {
-  // Cached answers skip almost everything — collapse the rail.
-  const stages = cached
-    ? [
-        { id: "synthesizing", label: "Cache hit" },
-        { id: "done", label: "Done" },
-      ]
-    : [
-        { id: "analyzing", label: "Analyzing query" },
-        { id: "retrieving", label: "Retrieving" },
-        { id: "reranking", label: "Reranking" },
-        { id: "synthesizing", label: "Synthesizing" },
-        ...(verified
-          ? [{ id: "verifying", label: "Verifying" }]
-          : []),
-        { id: "done", label: "Done" },
-      ];
-  const currentIdx = stages.findIndex((s) => s.id === phase);
-
-  return (
-    <div className="flex items-stretch gap-0 border border-border-soft bg-surface shrink-0 overflow-x-auto">
-      {stages.map((s, i) => {
-        const active = i === currentIdx;
-        const past = i < currentIdx;
-        return (
-          <div
-            key={s.id}
-            className={cn(
-              "flex-1 min-w-[7.5rem] flex items-center gap-2.5 px-3 py-2",
-              i > 0 && "border-l border-border-soft",
-              active && "bg-surface-overlay",
-            )}
-          >
-            <div
-              className={cn(
-                "h-2 w-2 shrink-0 transition-none",
-                active && "bg-accent animate-pulse",
-                past && "bg-text-muted",
-                !active && !past && "bg-border",
-              )}
-            />
-            <span
-              className={cn(
-                "font-mono text-mono-mini uppercase tracking-[0.05em] truncate",
-                active ? "text-text" : "text-text-dim",
-              )}
-            >
-              {String(i + 1).padStart(2, "0")} · {s.label}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function Starters({
   onApply,
   disabled,
@@ -915,14 +884,22 @@ function ResultBody({
   corpus,
   cited,
   verified,
+  pin,
+  isPinned,
 }: {
   entry: RecentEntry;
   corpusId: string;
   corpus: CorpusInfo | null;
   cited: Set<number>;
   verified: { unsupported: string[] } | null;
+  pin: (sourceId: string) => void;
+  isPinned: (sourceId: string) => boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  // Source-first toggle: when on, the Sources panel renders BEFORE the
+  // synthesized answer — useful when the user trusts retrieval more than
+  // synthesis. Pure UI state, no backend change.
+  const [sourceFirst, setSourceFirst] = useState(false);
 
   function copy() {
     navigator.clipboard
@@ -936,10 +913,40 @@ function ResultBody({
       });
   }
 
-  return (
-    <div className="flex flex-col gap-4">
-      {/* Answer card */}
-      <Card className="space-y-3">
+  const sourcesPanel =
+    entry.source_ids.length > 0 ? (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+            Sources
+          </span>
+          <span className="font-mono text-mono-mini tabular-nums text-text-dim">
+            ({entry.source_ids.length})
+          </span>
+          <span className="flex-1 h-px bg-border-soft" />
+          {cited.size > 0 && cited.size < entry.source_ids.length && (
+            <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+              {cited.size} cited
+            </span>
+          )}
+        </div>
+        {entry.source_ids.map((id, i) => (
+          <SourceRow
+            key={id}
+            index={i + 1}
+            contentId={id}
+            corpusId={corpusId}
+            corpus={corpus}
+            cited={cited.size === 0 || cited.has(i + 1)}
+            pinned={isPinned(id)}
+            onPin={() => pin(id)}
+          />
+        ))}
+      </div>
+    ) : null;
+
+  const answerCard = (
+    <Card className="space-y-3">
         {/* Meta strip */}
         <div className="flex flex-wrap items-center gap-2 border-b border-border-soft pb-2 text-mono-mini font-mono uppercase tracking-[0.05em]">
           {entry.cached ? (
@@ -979,6 +986,22 @@ function ResultBody({
           </span>
           <span className="flex-1" />
           <button
+            onClick={() => setSourceFirst((v) => !v)}
+            title={
+              sourceFirst
+                ? "Show synthesized answer first"
+                : "Show source excerpts first"
+            }
+            className={cn(
+              "inline-flex items-center gap-1 border px-1.5 py-0.5 cursor-pointer transition-none",
+              sourceFirst
+                ? "border-accent bg-surface-overlay text-accent"
+                : "border-border-soft bg-surface text-text-muted hover:text-text hover:border-border",
+            )}
+          >
+            {sourceFirst ? "sources first" : "answer first"}
+          </button>
+          <button
             onClick={copy}
             className="inline-flex items-center gap-1 border border-border-soft bg-surface px-1.5 py-0.5 text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
           >
@@ -995,37 +1018,24 @@ function ResultBody({
           answer={entry.answer}
           sourceIds={entry.source_ids}
           corpusId={corpusId}
+          pin={pin}
+          isPinned={isPinned}
         />
       </Card>
+  );
 
-      {/* Sources panel — always shown, complement to inline chips. */}
-      {entry.source_ids.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
-              Sources
-            </span>
-            <span className="font-mono text-mono-mini tabular-nums text-text-dim">
-              ({entry.source_ids.length})
-            </span>
-            <span className="flex-1 h-px bg-border-soft" />
-            {cited.size > 0 && cited.size < entry.source_ids.length && (
-              <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
-                {cited.size} cited
-              </span>
-            )}
-          </div>
-          {entry.source_ids.map((id, i) => (
-            <SourceRow
-              key={id}
-              index={i + 1}
-              contentId={id}
-              corpusId={corpusId}
-              corpus={corpus}
-              cited={cited.size === 0 || cited.has(i + 1)}
-            />
-          ))}
-        </div>
+  return (
+    <div className="flex flex-col gap-4">
+      {sourceFirst ? (
+        <>
+          {sourcesPanel}
+          {answerCard}
+        </>
+      ) : (
+        <>
+          {answerCard}
+          {sourcesPanel}
+        </>
       )}
     </div>
   );
@@ -1038,10 +1048,14 @@ function Answer({
   answer,
   sourceIds,
   corpusId,
+  pin,
+  isPinned,
 }: {
   answer: string;
   sourceIds: string[];
   corpusId: string;
+  pin: (sourceId: string) => void;
+  isPinned: (sourceId: string) => boolean;
 }) {
   const { openEntity } = useEntityPanel();
 
@@ -1125,10 +1139,32 @@ function Answer({
             );
           },
           p({ children }) {
-            return <p className="my-2">{renderWithCitations(children, openCitation)}</p>;
+            return (
+              <p className="my-2">
+                {renderWithCitations(
+                  children,
+                  openCitation,
+                  sourceIds,
+                  corpusId,
+                  pin,
+                  isPinned,
+                )}
+              </p>
+            );
           },
           li({ children }) {
-            return <li>{renderWithCitations(children, openCitation)}</li>;
+            return (
+              <li>
+                {renderWithCitations(
+                  children,
+                  openCitation,
+                  sourceIds,
+                  corpusId,
+                  pin,
+                  isPinned,
+                )}
+              </li>
+            );
           },
         }}
       >
@@ -1151,23 +1187,37 @@ function injectCitationMarkers(text: string): string {
 }
 
 /** Walk children produced by react-markdown and rewrite text nodes that
- *  contain our sentinel into a mix of plain text + citation chips. */
+ *  contain our sentinel into a mix of plain text + InlineCitation chips
+ *  (with hover-popover preview + Pin/Open actions). */
 function renderWithCitations(
   children: ReactNode,
   open: (n: number) => void,
+  sourceIds: string[],
+  corpusId: string,
+  pin: (sourceId: string) => void,
+  isPinned: (sourceId: string) => boolean,
 ): ReactNode {
   if (typeof children === "string") {
-    return splitOnSentinel(children, open);
+    return splitOnSentinel(children, open, sourceIds, corpusId, pin, isPinned);
   }
   if (Array.isArray(children)) {
     return children.map((c, i) => (
-      <span key={i}>{renderWithCitations(c, open)}</span>
+      <span key={i}>
+        {renderWithCitations(c, open, sourceIds, corpusId, pin, isPinned)}
+      </span>
     ));
   }
   return children;
 }
 
-function splitOnSentinel(text: string, open: (n: number) => void): ReactNode {
+function splitOnSentinel(
+  text: string,
+  open: (n: number) => void,
+  sourceIds: string[],
+  corpusId: string,
+  pin: (sourceId: string) => void,
+  isPinned: (sourceId: string) => boolean,
+): ReactNode {
   const parts = text.split(/⁂([\d, ]+)⁂/);
   if (parts.length === 1) return text;
   return parts.map((part, i) => {
@@ -1179,31 +1229,23 @@ function splitOnSentinel(text: string, open: (n: number) => void): ReactNode {
       .filter((n) => Number.isFinite(n) && n > 0);
     return (
       <span key={i} className="inline-flex items-baseline gap-0.5 mx-0.5">
-        {numbers.map((n) => (
-          <CitationChip key={n} n={n} onClick={() => open(n)} />
-        ))}
+        {numbers.map((n) => {
+          const sourceId = sourceIds[n - 1];
+          return (
+            <InlineCitation
+              key={n}
+              n={n}
+              sourceId={sourceId}
+              corpusId={corpusId}
+              pinned={sourceId ? isPinned(sourceId) : false}
+              onPin={(id) => pin(id)}
+              onOpen={(num) => open(num)}
+            />
+          );
+        })}
       </span>
     );
   });
-}
-
-function CitationChip({ n, onClick }: { n: number; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      title={`Open source [${n}]`}
-      className={cn(
-        "inline-flex items-center justify-center align-baseline",
-        "border border-accent bg-surface text-accent",
-        "px-1 min-w-[1.25rem] h-[1.125rem] -translate-y-[1px]",
-        "font-mono text-mono-mini font-bold tabular-nums leading-none",
-        "hover:bg-accent hover:text-[var(--color-accent-fg-on)]",
-        "cursor-pointer transition-none",
-      "rounded-sm")}
-    >
-      {n}
-    </button>
-  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1216,6 +1258,8 @@ function SourceRow({
   corpus,
   cited,
   pending = false,
+  pinned = false,
+  onPin,
 }: {
   index: number;
   contentId: string;
@@ -1223,6 +1267,8 @@ function SourceRow({
   corpus: CorpusInfo | null;
   cited: boolean;
   pending?: boolean;
+  pinned?: boolean;
+  onPin?: () => void;
 }) {
   const { openEntity } = useEntityPanel();
   const [excerpt, setExcerpt] = useState<string | null>(null);
@@ -1251,14 +1297,24 @@ function SourceRow({
   const label = sourceLabel(contentId, headingPath ?? undefined);
 
   return (
-    <button
+    <div
       onClick={open}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      }}
       className={cn(
-        "group flex items-start gap-3 border bg-surface p-2.5 text-left",
+        "group flex items-start gap-3 border p-2.5 text-left",
         "cursor-pointer transition-none",
-        cited
-          ? "border-border-soft hover:border-accent hover:bg-surface-overlay"
-          : "border-border-soft opacity-60 hover:opacity-100 hover:border-border",
+        pinned
+          ? "border-info bg-surface-pinned"
+          : cited
+            ? "border-border-soft bg-surface hover:border-accent hover:bg-surface-overlay"
+            : "border-border-soft bg-surface opacity-60 hover:opacity-100 hover:border-border",
         pending && "animate-pulse",
       )}
     >
@@ -1291,11 +1347,32 @@ function SourceRow({
           </p>
         )}
       </div>
-      <ExternalLink
-        className="h-3.5 w-3.5 text-text-dim group-hover:text-accent shrink-0 mt-1"
-        strokeWidth={2}
-      />
-    </button>
+      <div className="flex items-center gap-1 shrink-0">
+        {onPin && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onPin();
+            }}
+            disabled={pinned}
+            title={pinned ? "Already pinned" : "Pin to investigation"}
+            aria-label={pinned ? "Pinned" : "Pin to investigation"}
+            className={cn(
+              "grid h-6 w-6 place-items-center cursor-pointer transition-none rounded-sm",
+              pinned
+                ? "text-info cursor-not-allowed"
+                : "text-text-dim hover:text-accent hover:bg-surface-overlay",
+            )}
+          >
+            <BrutalPin className="h-3 w-3" />
+          </button>
+        )}
+        <ExternalLink
+          className="h-3.5 w-3.5 text-text-dim group-hover:text-accent shrink-0 mt-1"
+          strokeWidth={2}
+        />
+      </div>
+    </div>
   );
 }
 

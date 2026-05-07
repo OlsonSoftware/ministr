@@ -1,20 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Search, AlertTriangle } from "lucide-react";
-import {
-  BrutalAsk,
-  BrutalExplore,
-  BrutalProjects,
-  BrutalSessions,
-  BrutalSettings,
-} from "./components/ui/brutal-icons";
+import { AlertTriangle } from "lucide-react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useTheme } from "./hooks/useTheme";
 import { useCorpusContext } from "./hooks/useCorpusContext";
-import { useDefaultTab, useDensity } from "./hooks/usePreferences";
+import { useDensity } from "./hooks/usePreferences";
+import { useInvestigations } from "./hooks/useInvestigations";
 import { ProjectList } from "./components/ProjectList";
-import { ProjectDetail } from "./components/ProjectDetail";
 import { Settings } from "./components/Settings";
 import { Onboarding } from "./components/Onboarding";
 import { SessionDashboard } from "./components/SessionDashboard";
@@ -22,12 +15,16 @@ import { AskView } from "./components/AskView";
 import { ExploreView, type ExploreMode } from "./components/ExploreView";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutSheet } from "./components/ShortcutSheet";
-import { CorpusPill } from "./components/shell/CorpusPill";
-import { DaemonDot } from "./components/shell/DaemonDot";
-import { VitalsChip } from "./components/shell/VitalsChip";
+import { LogViewer } from "./components/LogViewer";
 import { ToastProvider, useToast } from "./components/shell/ToastTray";
 import { EntityPanelProvider } from "./hooks/useEntityPanel";
 import { EntityPanel } from "./components/EntityPanel";
+import { WorkspaceShell } from "./components/workspace/WorkspaceShell";
+import { CorpusRail } from "./components/workspace/CorpusRail";
+import { SourcePane } from "./components/workspace/SourcePane";
+import { StatusBar } from "./components/workspace/StatusBar";
+import { Drawer } from "./components/workspace/Drawer";
+import { BrutalAsk, BrutalExplore } from "./components/ui/brutal-icons";
 import { corpusLabel } from "./lib/corpus";
 import { cn } from "./lib/utils";
 import {
@@ -36,20 +33,12 @@ import {
   type ShortcutAction,
 } from "./lib/shortcuts";
 
-type Tab =
-  | "ask"
-  | "explore"
-  | "projects"
-  | "sessions"
-  | "settings";
-
-const VALID_TABS: Tab[] = [
-  "ask",
-  "explore",
-  "projects",
-  "sessions",
-  "settings",
-];
+/**
+ * Center-pane modes — Ask is the marquee surface; Explore lives here too
+ * as an internal toggle so the Search/Symbols/Bridges flows aren't lost.
+ * (The deeper "inline filter chips merge into Ask" rewrite is a follow-up.)
+ */
+type CenterMode = "ask" | "explore";
 
 export function App() {
   return (
@@ -66,18 +55,31 @@ function AppInner() {
   const { theme, setTheme } = useTheme();
   const { activeCorpus, activeCorpusId, setActiveCorpusId } =
     useCorpusContext(status);
-  const { defaultTab } = useDefaultTab();
   // Initialize density preference (sets data-density on <html>).
   useDensity();
   const { toast } = useToast();
-  const [tab, setTab] = useState<Tab>(defaultTab as Tab);
+
+  // ── Workspace state ────────────────────────────────────────────────────────
+  const [centerMode, setCenterMode] = useState<CenterMode>("ask");
   const [exploreMode, setExploreMode] = useState<ExploreMode | undefined>(
     undefined,
   );
   const [showOnboarding, setShowOnboarding] = useState(false);
+
+  // Modals / drawers
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [sessionOpen, setSessionOpen] = useState(false);
+  const [indexingOpen, setIndexingOpen] = useState(false);
+  const [manageProjectsOpen, setManageProjectsOpen] = useState(false);
+
+  // Investigation state — single source of truth, lifted here so the
+  // CorpusRail (list/select), AskView (record query), and SourcePane
+  // (pinned ids) all read/write the same store snapshot.
+  const investigations = useInvestigations(activeCorpusId);
+
   const gPending = useRef(false);
   const gTimer = useRef<number | null>(null);
 
@@ -87,20 +89,23 @@ function AppInner() {
 
   useEffect(() => {
     const unlistenNav = listen<string>("navigate", (event) => {
-      const target = event.payload as Tab;
-      if (VALID_TABS.includes(target)) setTab(target);
+      const target = event.payload;
+      if (target === "ask") setCenterMode("ask");
+      else if (target === "explore") setCenterMode("explore");
+      else if (target === "settings") setSettingsOpen(true);
+      else if (target === "sessions") setSessionOpen(true);
     });
     const unlistenSelect = listen<string>("select-corpus", (event) => {
       if (typeof event.payload === "string") {
         setActiveCorpusId(event.payload);
       }
     });
-    // In-app navigation requests from components (e.g. LogViewer deep-links).
     function onWindowNavigate(e: Event) {
       const detail = (e as CustomEvent).detail;
-      if (typeof detail === "string" && VALID_TABS.includes(detail as Tab)) {
-        setTab(detail as Tab);
-      }
+      if (detail === "ask") setCenterMode("ask");
+      else if (detail === "explore") setCenterMode("explore");
+      else if (detail === "settings") setSettingsOpen(true);
+      else if (detail === "sessions") setSessionOpen(true);
     }
     window.addEventListener("ministr-navigate", onWindowNavigate);
     return () => {
@@ -110,7 +115,8 @@ function AppInner() {
     };
   }, [setActiveCorpusId]);
 
-  // Global keyboard shortcuts
+  // Global keyboard shortcuts. Many old nav targets retire — projects/
+  // sessions/logs are no longer top-level routes; map them to drawers.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
@@ -119,12 +125,8 @@ function AppInner() {
         target?.tagName === "TEXTAREA" ||
         target?.isContentEditable;
 
-      // Single source of truth: the shortcut config decides what happens.
       const result = matchShortcut(e, gPending.current);
 
-      // First pass — actions flagged firesWhileTyping bypass the typing
-      // bail below (currently just ⌘K / Ctrl+K so the palette is always
-      // reachable from inside any input).
       if (
         result &&
         result !== "_pending:g" &&
@@ -138,10 +140,7 @@ function AppInner() {
       if (typing) return;
 
       if (e.key === "Escape") {
-        // Stop propagation so EntityPanel's window-level Esc handler
-        // (mounted from useEntityPanel) doesn't ALSO fire and close the
-        // entity drawer underneath whichever overlay we just dismissed.
-        // Topmost-modal-first wins.
+        // Topmost-overlay-first wins. Modals beat drawers beat the panel.
         if (paletteOpen) {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -150,6 +149,10 @@ function AppInner() {
           e.preventDefault();
           e.stopImmediatePropagation();
           setShortcutsOpen(false);
+        } else if (settingsOpen) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setSettingsOpen(false);
         }
         return;
       }
@@ -176,35 +179,29 @@ function AppInner() {
             setShortcutsOpen((o) => !o);
             return;
           case "toggle:rail":
-            setRailCollapsed((c) => !c);
+            // Rail is permanent in the workspace shell — reuse the shortcut
+            // to toggle the source pane visibility instead. (TODO follow-up:
+            // route through WorkspaceShell.)
             return;
           case "nav:ask":
-            setTab("ask");
+            setCenterMode("ask");
             return;
           case "nav:explore":
-            setTab("explore");
-            setExploreMode(undefined); // honor persisted mode
+            setCenterMode("explore");
+            setExploreMode(undefined);
             return;
           case "nav:projects":
-            setTab("projects");
+            setManageProjectsOpen(true);
             return;
           case "nav:sessions":
-            setTab("sessions");
+            setSessionOpen(true);
             return;
           case "nav:logs":
-            setTab("settings");
-            requestAnimationFrame(() => {
-              window.dispatchEvent(
-                new CustomEvent("ministr-settings-scroll", {
-                  detail: "logs",
-                }),
-              );
-            });
+            setLogsOpen(true);
             return;
           case "nav:settings":
-            setTab("settings");
+            setSettingsOpen(true);
             return;
-          // toggle:palette handled in the meta+K branch above.
           case "toggle:palette":
             setPaletteOpen((o) => !o);
             return;
@@ -214,7 +211,7 @@ function AppInner() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [paletteOpen, shortcutsOpen]);
+  }, [paletteOpen, shortcutsOpen, settingsOpen]);
 
   const openAddProject = useCallback(async () => {
     try {
@@ -237,141 +234,88 @@ function AppInner() {
     toast("THEME", { detail: t.toUpperCase(), tone: "info" });
   }
 
+  // First-run onboarding — full-screen takeover.
   if (showOnboarding) {
     return <Onboarding onDismiss={() => setShowOnboarding(false)} />;
   }
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-text">
-      <TopBar
-        status={status}
-        error={error}
-        activeCorpus={activeCorpus}
-        onSelectCorpus={onSelectCorpus}
-        onPaletteOpen={() => setPaletteOpen(true)}
-        onShortcutsOpen={() => setShortcutsOpen(true)}
-        onOpenLogs={async () => {
-          // The DaemonDot popover button reads "Open log file" — that
-          // promise is the *file on disk*, not the Logs view. Hand the
-          // log path off to the OS opener and surface the toast based
-          // on the actual outcome, so a failed open doesn't announce
-          // success. Then jump to Settings → Diagnostics → Daemon log
-          // so the user sees the in-app log either way (post-Phase-4
-          // consolidation: Logs lives inside Settings now).
-          if (status?.log_path) {
-            try {
-              await invoke("open_path", { path: status.log_path });
-              toast("Open log file", {
-                detail: status.log_path,
-                tone: "info",
-              });
-            } catch (e) {
-              console.error("open_path(log) failed", e);
-              toast("Could not open log file", {
-                detail: status.log_path,
-                tone: "danger",
-              });
-            }
-          }
-          setTab("settings");
-          requestAnimationFrame(() => {
-            window.dispatchEvent(
-              new CustomEvent("ministr-settings-scroll", { detail: "logs" }),
-            );
-          });
-        }}
+    <>
+      <WorkspaceShell
+        banner={
+          error ? (
+            <div className="flex items-center gap-2 border-b-2 border-danger bg-surface px-5 py-2 text-xs font-mono tracking-[0.05em] text-danger shrink-0">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} />
+              <span>{error}</span>
+            </div>
+          ) : null
+        }
+        rail={
+          <CorpusRail
+            status={status}
+            activeCorpusId={activeCorpusId}
+            onSelectCorpus={onSelectCorpus}
+            onAddProject={openAddProject}
+            onManageProjects={() => setManageProjectsOpen(true)}
+            investigations={investigations.investigations}
+            activeInvestigationId={investigations.active?.id ?? null}
+            onSelectInvestigation={(id) => investigations.setActive(id)}
+            onNewInvestigation={() => investigations.create()}
+            onCloseInvestigation={(id) => investigations.close(id)}
+          />
+        }
+        center={
+          <CenterPane
+            status={status}
+            error={error}
+            mode={centerMode}
+            onModeChange={setCenterMode}
+            activeCorpusId={activeCorpusId}
+            setActiveCorpusId={setActiveCorpusId}
+            exploreMode={exploreMode}
+          />
+        }
+        source={
+          <SourcePane
+            corpusId={activeCorpusId}
+            pinnedSourceIds={investigations.pinnedSourceIds}
+            onUnpin={investigations.unpin}
+            onClear={investigations.clearPins}
+          />
+        }
+        statusBar={
+          <StatusBar
+            status={status}
+            error={error}
+            activeCorpus={activeCorpus}
+            onOpenLogs={() => setLogsOpen(true)}
+            onOpenSession={() => setSessionOpen(true)}
+            onOpenIndexing={() => setIndexingOpen(true)}
+            onOpenPalette={() => setPaletteOpen(true)}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        }
       />
 
-      {error && (
-        <div className="flex items-center gap-2 border-b-2 border-danger bg-surface px-5 py-2 text-xs font-mono tracking-[0.05em] text-danger shrink-0">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} />
-          <span>{error}</span>
-        </div>
-      )}
-
-      <div className="flex flex-1 min-h-0">
-        <Rail tab={tab} onSelect={setTab} collapsed={railCollapsed} />
-
-        <main className="flex-1 overflow-y-auto p-5">
-          {!status ? (
-            <ConnectingState error={error ?? null} />
-          ) : tab === "ask" ? (
-            <AskView
-              status={status}
-              activeCorpusId={activeCorpusId}
-              setActiveCorpusId={setActiveCorpusId}
-            />
-          ) : tab === "explore" ? (
-            <ExploreView
-              status={status}
-              activeCorpusId={activeCorpusId}
-              setActiveCorpusId={setActiveCorpusId}
-              initialMode={exploreMode}
-            />
-          ) : tab === "projects" ? (
-            <div className="@container/page flex gap-4 h-full min-h-0">
-              <div
-                className={cn(
-                  "flex-1 min-w-0 min-h-0 overflow-y-auto",
-                  activeCorpus &&
-                    "@min-[1024px]/page:max-w-[clamp(360px,55%,720px)]",
-                )}
-              >
-                <ProjectList
-                  corpora={status.corpora}
-                  onRefresh={refresh}
-                  onSelect={setActiveCorpusId}
-                  selectedId={activeCorpusId}
-                />
-              </div>
-              {activeCorpus && (
-                <div className="flex-1 min-w-0 min-h-0 overflow-y-auto hidden @min-[1024px]/page:block">
-                  <ProjectDetail
-                    corpus={activeCorpus}
-                    status={status}
-                    onNavigate={(target, mode) => {
-                      setTab(target);
-                      setExploreMode(mode);
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          ) : tab === "sessions" ? (
-            <SessionDashboard status={status} />
-          ) : (
-            <Settings
-              status={status}
-              theme={theme}
-              onThemeChange={onThemeChange}
-              onShowOnboarding={() => setShowOnboarding(true)}
-              onRefresh={refresh}
-              onOpenLogs={() => {
-                setTab("settings");
-                requestAnimationFrame(() => {
-                  window.dispatchEvent(
-                    new CustomEvent("ministr-settings-scroll", {
-                      detail: "logs",
-                    }),
-                  );
-                });
-              }}
-            />
-          )}
-        </main>
-      </div>
+      {/* ── Modals & drawers ────────────────────────────────────────────── */}
 
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         status={status}
-        onNavigate={(t) => setTab(t as Tab)}
+        activeCorpusId={activeCorpusId}
+        onNavigate={(t) => {
+          if (t === "ask" || t === "explore") setCenterMode(t);
+          else if (t === "projects") setManageProjectsOpen(true);
+          else if (t === "sessions") setSessionOpen(true);
+          else if (t === "settings") setSettingsOpen(true);
+        }}
         onNavigateExplore={(mode) => {
-          setTab("explore");
+          setCenterMode("explore");
           setExploreMode(mode);
         }}
         onOpenDiagnostics={(target) => {
-          setTab("settings");
+          setSettingsOpen(true);
           requestAnimationFrame(() => {
             window.dispatchEvent(
               new CustomEvent("ministr-settings-scroll", { detail: target }),
@@ -384,195 +328,184 @@ function AppInner() {
         onThemeChange={onThemeChange}
         onRefresh={refresh}
       />
+
       <ShortcutSheet
         open={shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}
       />
 
-      {/* Universal entity-detail drawer — provider lives above us, panel
-          renders here so it overlays every page. */}
+      {/* Settings — modal shell hosting the existing Settings component. */}
+      {settingsOpen && status && (
+        <SettingsModal
+          onClose={() => setSettingsOpen(false)}
+          status={status}
+          theme={theme}
+          onThemeChange={onThemeChange}
+          onShowOnboarding={() => {
+            setSettingsOpen(false);
+            setShowOnboarding(true);
+          }}
+          onRefresh={refresh}
+          onOpenLogs={() => {
+            setSettingsOpen(false);
+            setLogsOpen(true);
+          }}
+        />
+      )}
+
+      <Drawer
+        open={logsOpen}
+        onClose={() => setLogsOpen(false)}
+        title="Daemon log"
+      >
+        <div className="h-full">
+          <LogViewer />
+        </div>
+      </Drawer>
+
+      <Drawer
+        open={sessionOpen}
+        onClose={() => setSessionOpen(false)}
+        title="Session vitals"
+      >
+        {status && (
+          <div className="p-4">
+            <SessionDashboard status={status} />
+          </div>
+        )}
+      </Drawer>
+
+      <Drawer
+        open={indexingOpen}
+        onClose={() => setIndexingOpen(false)}
+        title="Indexing"
+        heightVh={45}
+      >
+        <div className="p-4">
+          {status && status.corpora.some((c) => c.status.state === "indexing") ? (
+            <IndexingDetail status={status} />
+          ) : (
+            <p className="font-serif text-sm italic text-text-dim">
+              No indexing in flight.
+            </p>
+          )}
+        </div>
+      </Drawer>
+
+      <Drawer
+        open={manageProjectsOpen}
+        onClose={() => setManageProjectsOpen(false)}
+        title="Manage projects"
+        heightVh={75}
+      >
+        {status && (
+          <div className="p-5">
+            <ProjectList
+              corpora={status.corpora}
+              onRefresh={refresh}
+              onSelect={(id) => {
+                setActiveCorpusId(id);
+                setManageProjectsOpen(false);
+              }}
+              selectedId={activeCorpusId}
+            />
+          </div>
+        )}
+      </Drawer>
+
+      {/* Universal entity-detail drawer — keeps existing drill-deeper UX
+          (breadcrumbs, related symbols) while the SourcePane handles
+          the persistent pinned stack. */}
       <EntityPanel />
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Center pane
+
+function CenterPane({
+  status,
+  error,
+  mode,
+  onModeChange,
+  activeCorpusId,
+  setActiveCorpusId,
+  exploreMode,
+}: {
+  status: import("./lib/types").DaemonStatus | null;
+  error: string | null;
+  mode: CenterMode;
+  onModeChange: (m: CenterMode) => void;
+  activeCorpusId: string | null;
+  setActiveCorpusId: (id: string | null) => void;
+  exploreMode: ExploreMode | undefined;
+}) {
+  if (!status) {
+    return <ConnectingState error={error ?? null} />;
+  }
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <CenterModeStrip mode={mode} onChange={onModeChange} />
+      <div className="flex-1 min-h-0 overflow-y-auto p-5">
+        {mode === "ask" ? (
+          <AskView
+            status={status}
+            activeCorpusId={activeCorpusId}
+            setActiveCorpusId={setActiveCorpusId}
+          />
+        ) : (
+          <ExploreView
+            status={status}
+            activeCorpusId={activeCorpusId}
+            setActiveCorpusId={setActiveCorpusId}
+            initialMode={exploreMode}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-function TopBar({
-  status,
-  error,
-  activeCorpus,
-  onSelectCorpus,
-  onPaletteOpen,
-  onShortcutsOpen,
-  onOpenLogs,
+function CenterModeStrip({
+  mode,
+  onChange,
 }: {
-  status: import("./lib/types").DaemonStatus | null;
-  error: string | null;
-  activeCorpus: import("./lib/types").CorpusInfo | null;
-  onSelectCorpus: (id: string) => void;
-  onPaletteOpen: () => void;
-  onShortcutsOpen: () => void;
-  onOpenLogs: () => void;
+  mode: CenterMode;
+  onChange: (m: CenterMode) => void;
 }) {
-  const totalSymbols = status?.corpora.reduce(
-    (s, c) => s + (c.symbols_count ?? 0),
-    0,
-  );
+  const items: { key: CenterMode; label: string; icon: typeof BrutalAsk }[] = [
+    { key: "ask", label: "Ask", icon: BrutalAsk },
+    { key: "explore", label: "Explore", icon: BrutalExplore },
+  ];
   return (
-    <header className="flex items-center justify-between gap-4 border-b-2 border-border bg-surface px-5 py-2.5 shrink-0">
-      <div className="flex items-center gap-3 min-w-0">
-        <span
-          className="ministr-wordmark"
-          title={status ? `ministr v${status.version}` : "ministr"}
-        >
-          ministr
-        </span>
-        <span className="font-mono text-xs font-semibold tracking-[0.05em] text-text-dim hidden md:inline">
-          CODE INTELLIGENCE
-        </span>
-        <DaemonDot status={status} error={error} onOpenLogs={onOpenLogs} />
-        <span className="hidden md:inline-block w-px h-4 bg-border opacity-50" />
-        <CorpusPill
-          corpora={status?.corpora ?? []}
-          activeCorpus={activeCorpus}
-          onSelect={onSelectCorpus}
-        />
-      </div>
-
-      {status && (
-        <div className="flex items-center gap-1 min-w-0">
-          {/* Sessions chip is highest-signal — always visible. */}
-          {status.total_sessions > 0 && (
-            <VitalsChip
-              label="SESSIONS"
-              value={status.total_sessions}
-              accent
-            />
-          )}
-          {/* Below xl: drop CORPORA + SYMBOLS to save horizontal space. */}
-          <span className="hidden xl:inline-flex">
-            <VitalsChip label="CORPORA" value={status.corpora.length} />
-          </span>
-          {totalSymbols !== undefined && totalSymbols > 0 && (
-            <span className="hidden xl:inline-flex">
-              <VitalsChip
-                label="SYMBOLS"
-                value={totalSymbols.toLocaleString()}
-              />
-            </span>
-          )}
-          {/* Below lg: drop MEM. */}
-          <span className="hidden lg:inline-flex">
-            <VitalsChip label="MEM" value={`${status.memory_mb.toFixed(0)}MB`} />
-          </span>
-        </div>
-      )}
-
-      <div className="flex items-center gap-2 shrink-0">
-        <button
-          onClick={onPaletteOpen}
-          title="Command palette (⌘K)"
-          className="inline-flex items-center gap-2 border border-border-soft bg-surface px-2.5 py-1 text-sm font-sans font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
-        >
-          <Search className="h-3.5 w-3.5" strokeWidth={2} />
-          {/* Hide the "Search" text below md so the button collapses to icon + ⌘K. */}
-          <span className="hidden md:inline">Search</span>
-          <kbd
-            className="border border-border-soft bg-surface-overlay px-1 text-mono-mini font-mono text-text-dim rounded-sm"
+    <div className="flex items-center gap-0 border-b-2 border-border bg-surface px-3 py-1.5 shrink-0">
+      {items.map(({ key, label, icon: Icon }) => {
+        const active = key === mode;
+        return (
+          <button
+            key={key}
+            onClick={() => onChange(key)}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3 py-1 cursor-pointer transition-none -ml-[1px] first:ml-0 rounded-sm",
+              "border border-border-soft bg-surface",
+              active
+                ? "border-accent bg-surface-overlay text-text z-10 relative"
+                : "text-text-muted hover:bg-surface-overlay hover:text-text",
+            )}
           >
-            ⌘K
-          </kbd>
-        </button>
-        <button
-          onClick={onShortcutsOpen}
-          title="Shortcuts (?)"
-          className="inline-flex h-7 items-center justify-center border border-border-soft bg-surface px-2 text-sm font-serif font-normal text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
-        >
-          ?
-        </button>
-      </div>
-    </header>
+            <Icon className="h-3.5 w-3.5" />
+            <span className="font-mono text-xs font-semibold">{label}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
-function Rail({
-  tab,
-  onSelect,
-  collapsed,
-}: {
-  tab: Tab;
-  onSelect: (t: Tab) => void;
-  collapsed: boolean;
-}) {
-  if (collapsed) return null;
-
-  return (
-    <nav className="hidden sm:flex flex-col w-14 border-r border-border bg-surface py-3 items-center gap-1 shrink-0">
-      <RailItem
-        icon={BrutalAsk}
-        active={tab === "ask"}
-        label="Ask"
-        onClick={() => onSelect("ask")}
-      />
-      <RailItem
-        icon={BrutalExplore}
-        active={tab === "explore"}
-        label="Explore"
-        onClick={() => onSelect("explore")}
-      />
-      <RailItem
-        icon={BrutalProjects}
-        active={tab === "projects"}
-        label="Projects"
-        onClick={() => onSelect("projects")}
-      />
-      <RailItem
-        icon={BrutalSessions}
-        active={tab === "sessions"}
-        label="Sessions"
-        onClick={() => onSelect("sessions")}
-      />
-      <div className="flex-1" />
-      <RailItem
-        icon={BrutalSettings}
-        active={tab === "settings"}
-        label="Settings"
-        onClick={() => onSelect("settings")}
-      />
-    </nav>
-  );
-}
-
-function RailItem({
-  icon: Icon,
-  active,
-  onClick,
-  label,
-}: {
-  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
-  active: boolean;
-  onClick: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      className={cn(
-        "relative grid place-items-center h-10 w-10 cursor-pointer transition-none",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-        active
-          ? "bg-surface-overlay text-text"
-          : "text-text-dim hover:text-text hover:bg-surface-overlay",
-      )}
-    >
-      {active && (
-        <span className="absolute -left-[2px] top-1/2 h-6 w-[3px] -translate-y-1/2 bg-accent" />
-      )}
-      <Icon className="h-[18px] w-[18px]" />
-    </button>
-  );
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Misc
 
 function ConnectingState({ error }: { error: string | null }) {
   return (
@@ -586,5 +519,115 @@ function ConnectingState({ error }: { error: string | null }) {
         </p>
       )}
     </div>
+  );
+}
+
+function IndexingDetail({
+  status,
+}: {
+  status: import("./lib/types").DaemonStatus;
+}) {
+  const indexing = status.corpora.filter((c) => c.status.state === "indexing");
+  return (
+    <ul className="space-y-3">
+      {indexing.map((c) => {
+        const s = c.status;
+        if (s.state !== "indexing") return null;
+        const pct = s.files_total > 0
+          ? Math.round((s.files_done / s.files_total) * 100)
+          : 0;
+        return (
+          <li
+            key={c.id}
+            className="border-2 border-border bg-surface px-4 py-3"
+          >
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <span className="font-mono text-sm font-bold text-text">
+                {corpusLabel(c)}
+              </span>
+              <span className="font-mono text-xs tabular-nums text-text-muted">
+                {s.files_done.toLocaleString()} / {s.files_total.toLocaleString()} files · {pct}%
+              </span>
+            </div>
+            <div className="h-2 bg-surface-overlay border-2 border-border">
+              <div
+                className="h-full bg-accent-live"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Settings modal — wraps the existing Settings component in modal chrome.
+
+function SettingsModal({
+  onClose,
+  status,
+  theme,
+  onThemeChange,
+  onShowOnboarding,
+  onRefresh,
+  onOpenLogs,
+}: {
+  onClose: () => void;
+  status: import("./lib/types").DaemonStatus;
+  theme: "system" | "dark" | "light";
+  onThemeChange: (t: "system" | "dark" | "light") => void;
+  onShowOnboarding: () => void;
+  onRefresh: () => void;
+  onOpenLogs: () => void;
+}) {
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-[1200] bg-black/40"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        className={cn(
+          "fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
+          "z-[1201] bg-surface border-2 border-border shadow-lg",
+          "w-[clamp(640px,80vw,920px)] max-h-[85vh] overflow-hidden",
+          "flex flex-col",
+        )}
+      >
+        <header className="flex items-center justify-between gap-3 border-b-2 border-border bg-surface-overlay px-4 py-2.5 shrink-0">
+          <h2 className="font-mono text-sm font-bold uppercase tracking-[0.05em] text-text">
+            Settings
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Close settings"
+            title="Close · Esc"
+            className={cn(
+              "grid h-7 w-7 shrink-0 place-items-center cursor-pointer",
+              "border border-border bg-surface text-text-muted",
+              "hover:text-text hover:border-border-hover transition-none rounded-sm",
+            )}
+          >
+            ×
+          </button>
+        </header>
+        <div className="flex-1 min-h-0 overflow-y-auto p-5">
+          <Settings
+            status={status}
+            theme={theme}
+            onThemeChange={onThemeChange}
+            onShowOnboarding={onShowOnboarding}
+            onRefresh={onRefresh}
+            onOpenLogs={onOpenLogs}
+          />
+        </div>
+      </div>
+    </>
   );
 }
