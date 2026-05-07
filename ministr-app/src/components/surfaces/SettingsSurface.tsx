@@ -19,6 +19,7 @@ const TABS: Tab[] = [
 
 interface Props {
   status: DaemonStatus;
+  activeCorpusId: string | null;
   theme: "system" | "dark" | "light";
   onThemeChange: (t: "system" | "dark" | "light") => void;
   onShowOnboarding: () => void;
@@ -70,8 +71,22 @@ export function SettingsSurface(props: Props) {
       </nav>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-5">
-        {tab === "general" && <Settings {...props} />}
-        {tab === "ai" && <AiAssistantsPanel />}
+        {tab === "general" && (
+          <Settings
+            status={props.status}
+            theme={props.theme}
+            onThemeChange={props.onThemeChange}
+            onShowOnboarding={props.onShowOnboarding}
+            onRefresh={props.onRefresh}
+            onOpenLogs={props.onOpenLogs}
+          />
+        )}
+        {tab === "ai" && (
+          <AiAssistantsPanel
+            corpora={props.status.corpora}
+            activeCorpusId={props.activeCorpusId}
+          />
+        )}
         {tab === "developer" && <DeveloperPlaceholder />}
       </div>
     </div>

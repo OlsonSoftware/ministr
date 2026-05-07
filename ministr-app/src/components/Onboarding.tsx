@@ -26,6 +26,7 @@ import { useIndexingProgress } from "../hooks/useIndexingProgress";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { Progress } from "./ui/progress";
 import { Button } from "./ui/button";
+import { AiAssistantsPanel } from "./surfaces/AiAssistantsPanel";
 
 type Step = "pick" | "index" | "connect";
 
@@ -503,6 +504,10 @@ function formatEta(secs: number): string {
 // Step 3 — Connect
 
 function StepConnect({ onDone }: { onDone: () => void }) {
+  const { status } = useDaemonStatus();
+  const corpora = status?.corpora ?? [];
+  const activeCorpusId = corpora[0]?.id ?? null;
+
   return (
     <div>
       <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-accent mb-3">
@@ -514,23 +519,17 @@ function StepConnect({ onDone }: { onDone: () => void }) {
         <span className="text-text-dim">AI tool.</span>
       </h1>
       <p className="font-serif text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
-        ministr is most useful when your AI assistant can ask it questions
-        on your behalf. The wizard for Claude Code, Cursor, VS Code Copilot,
-        and Codex lives in <span className="not-italic font-mono">Settings → AI assistants</span> —
-        we'll inline it here in the next release.
+        ministr is most useful when your AI assistant can ask it questions on
+        your behalf. Click Connect on any detected client below to write the
+        config file — for CLI clients we'll run a live test, for editors
+        you'll need to restart and re-test.
       </p>
 
-      <div className="mt-8 border-2 border-accent bg-surface-overlay p-4 space-y-2">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-accent" strokeWidth={2.5} />
-          <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text">
-            Coming next
-          </span>
-        </div>
-        <p className="font-serif text-sm text-text-muted">
-          One-click connect for each detected AI tool, with a live test that
-          confirms ministr is reachable before you switch apps.
-        </p>
+      <div className="mt-8">
+        <AiAssistantsPanel
+          corpora={corpora}
+          activeCorpusId={activeCorpusId}
+        />
       </div>
 
       <div className="mt-8 flex items-center gap-2 justify-end">

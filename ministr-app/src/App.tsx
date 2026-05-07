@@ -318,6 +318,7 @@ function SurfaceBody({
   return (
     <SettingsSurface
       status={status}
+      activeCorpusId={activeCorpusId}
       theme={theme}
       onThemeChange={onThemeChange}
       onShowOnboarding={onShowOnboarding}

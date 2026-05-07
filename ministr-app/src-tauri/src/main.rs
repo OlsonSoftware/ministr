@@ -130,6 +130,9 @@ fn main() {
             commands::ask_corpus,
             commands::inference_health,
             commands::read_section,
+            commands::mcp_detect_clients,
+            commands::mcp_write_config,
+            commands::mcp_test_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ministr app");

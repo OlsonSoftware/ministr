@@ -1311,3 +1311,286 @@ pub async fn read_section(
         claims_available: detail.claims_available,
     })
 }
+
+// ---------------------------------------------------------------------------
+// MCP wizard — detect / write / test the per-client config files. Powers
+// the Settings → AI Assistants panel + the onboarding "Connect your AI
+// tool" step.
+// ---------------------------------------------------------------------------
+
+/// Status of one detected MCP client on the user's machine.
+#[derive(Serialize)]
+pub struct McpClientInfo {
+    /// Stable id (`claude_code` / `cursor` / `vscode` / `codex`).
+    pub id: String,
+    /// Human-readable label.
+    pub display_name: String,
+    /// Whether the client appears to be installed (CLI on PATH or a
+    /// known config dir is present).
+    pub installed: bool,
+    /// Where ministr would write the config for this client. Always
+    /// populated, even if not yet `configured`.
+    pub config_path: String,
+    /// Whether the config file already exists *and* contains a ministr
+    /// entry. The wizard uses this to label connected vs. not-yet rows.
+    pub configured: bool,
+}
+
+/// Result of a connection test against one MCP client.
+#[derive(Serialize)]
+pub struct McpTestResult {
+    /// Whether the test passed.
+    pub ok: bool,
+    /// Short user-facing message (e.g. "ministr listed in `claude mcp list`"
+    /// or "Config file missing").
+    pub message: String,
+    /// Truncated raw output of the spawned CLI, when applicable. Empty
+    /// for editor-client tests.
+    pub raw_output_truncated: Option<String>,
+    /// True for editor clients (Cursor, VS Code) where we can only
+    /// validate the config file, not the live runtime. The wizard uses
+    /// this to add a "Restart your editor and re-test" hint.
+    pub manual_verify_needed: bool,
+}
+
+/// Detect the supported MCP clients on this machine and report whether
+/// each is already wired up to ministr.
+///
+/// `project_root` is the absolute path to the active project — used as
+/// the destination for per-project clients (Claude Code, Cursor,
+/// VS Code). Codex is user-global; `project_root` is ignored for it.
+#[tauri::command]
+pub async fn mcp_detect_clients(project_root: String) -> Result<Vec<McpClientInfo>, String> {
+    use ministr_core::init::McpClientId;
+    let root = std::path::PathBuf::from(&project_root);
+
+    Ok(vec![
+        client_info(McpClientId::ClaudeCode, &root),
+        client_info(McpClientId::Cursor, &root),
+        client_info(McpClientId::VsCode, &root),
+        client_info(McpClientId::Codex, &root),
+    ])
+}
+
+/// Write the MCP config for a single client. Returns the absolute path
+/// of the file that was written so the wizard can show it to the user.
+#[tauri::command]
+pub async fn mcp_write_config(
+    project_root: String,
+    client_id: String,
+) -> Result<String, String> {
+    use ministr_core::init::{McpClientId, write_mcp_config};
+    let client = McpClientId::parse(&client_id)
+        .ok_or_else(|| format!("unknown MCP client id: {client_id}"))?;
+    let root = std::path::PathBuf::from(&project_root);
+    let path = write_mcp_config(client, &root).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+/// Test the live connection from a CLI client to the ministr server.
+///
+/// For CLI clients (Claude Code, Codex) we shell out to their `mcp list`
+/// equivalent, parse the output, and look for "ministr". For editor
+/// clients (Cursor, VS Code Copilot) we can only validate the config
+/// file — the wizard surfaces this with `manual_verify_needed: true`.
+#[tauri::command]
+pub async fn mcp_test_connection(
+    project_root: String,
+    client_id: String,
+) -> Result<McpTestResult, String> {
+    use ministr_core::init::McpClientId;
+    let client = McpClientId::parse(&client_id)
+        .ok_or_else(|| format!("unknown MCP client id: {client_id}"))?;
+    let root = std::path::PathBuf::from(&project_root);
+
+    Ok(match client {
+        McpClientId::ClaudeCode => test_via_cli("claude", &["mcp", "list"]),
+        McpClientId::Codex => test_via_cli("codex", &["mcp", "list"]),
+        McpClientId::Cursor => test_via_config(client, &root, "Cursor"),
+        McpClientId::VsCode => test_via_config(client, &root, "VS Code"),
+    })
+}
+
+fn client_info(client: ministr_core::init::McpClientId, root: &std::path::Path) -> McpClientInfo {
+    use ministr_core::init::McpClientId;
+
+    let installed = match client {
+        McpClientId::ClaudeCode => probe_cli("claude") || home_subdir_exists(".claude"),
+        McpClientId::Cursor => probe_cli("cursor") || home_subdir_exists(".cursor"),
+        McpClientId::VsCode => probe_cli("code") || root.join(".vscode").exists(),
+        McpClientId::Codex => probe_cli("codex") || home_subdir_exists(".codex"),
+    };
+
+    let config_path = match client {
+        McpClientId::ClaudeCode => root.join(".mcp.json"),
+        McpClientId::Cursor => root.join(".cursor").join("mcp.json"),
+        McpClientId::VsCode => root.join(".vscode").join("mcp.json"),
+        McpClientId::Codex => home_pathbuf().map_or_else(
+            || std::path::PathBuf::from("~/.codex/config.toml"),
+            |h| h.join(".codex").join("config.toml"),
+        ),
+    };
+
+    let configured = match client {
+        McpClientId::ClaudeCode | McpClientId::Cursor | McpClientId::VsCode => {
+            json_has_ministr(&config_path)
+        }
+        McpClientId::Codex => toml_has_ministr(&config_path),
+    };
+
+    McpClientInfo {
+        id: client.as_str().to_string(),
+        display_name: client.display_name().to_string(),
+        installed,
+        config_path: config_path.display().to_string(),
+        configured,
+    }
+}
+
+fn test_via_cli(binary: &str, args: &[&str]) -> McpTestResult {
+    let resolved = if cfg!(windows) {
+        which_on_path(&format!("{binary}.exe")).or_else(|| which_on_path(binary))
+    } else {
+        which_on_path(binary)
+    };
+    let Some(_) = resolved else {
+        return McpTestResult {
+            ok: false,
+            message: format!("`{binary}` not found on PATH"),
+            raw_output_truncated: None,
+            manual_verify_needed: false,
+        };
+    };
+
+    // Block on the spawn; the timeout keeps the UI from hanging if the CLI
+    // is slow or deadlocked.
+    let result = std::process::Command::new(binary)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    match result {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let combined = format!("{stdout}{stderr}");
+            let listed = combined.to_lowercase().contains("ministr");
+            let truncated: String = combined.chars().take(800).collect();
+            McpTestResult {
+                ok: listed,
+                message: if listed {
+                    format!("ministr listed in `{binary} {}`.", args.join(" "))
+                } else {
+                    format!("`{binary} {}` ran but didn't list ministr.", args.join(" "))
+                },
+                raw_output_truncated: Some(truncated),
+                manual_verify_needed: false,
+            }
+        }
+        Err(e) => McpTestResult {
+            ok: false,
+            message: format!("Failed to run `{binary}`: {e}"),
+            raw_output_truncated: None,
+            manual_verify_needed: false,
+        },
+    }
+}
+
+fn test_via_config(
+    client: ministr_core::init::McpClientId,
+    root: &std::path::Path,
+    label: &str,
+) -> McpTestResult {
+    use ministr_core::init::McpClientId;
+    let path = match client {
+        McpClientId::Cursor => root.join(".cursor").join("mcp.json"),
+        McpClientId::VsCode => root.join(".vscode").join("mcp.json"),
+        _ => unreachable!("test_via_config is only called for editor clients"),
+    };
+
+    if !path.exists() {
+        return McpTestResult {
+            ok: false,
+            message: format!("Config file not found at {}", path.display()),
+            raw_output_truncated: None,
+            manual_verify_needed: true,
+        };
+    }
+
+    if json_has_ministr(&path) {
+        McpTestResult {
+            ok: true,
+            message: format!(
+                "ministr is configured in {}. Restart {label} and re-test if you haven't yet.",
+                path.display()
+            ),
+            raw_output_truncated: None,
+            manual_verify_needed: true,
+        }
+    } else {
+        McpTestResult {
+            ok: false,
+            message: format!(
+                "{} exists but has no ministr entry — run Connect to write one.",
+                path.display()
+            ),
+            raw_output_truncated: None,
+            manual_verify_needed: true,
+        }
+    }
+}
+
+fn json_has_ministr(path: &std::path::Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    value
+        .get("mcpServers")
+        .and_then(|v| v.get("ministr"))
+        .is_some()
+}
+
+fn toml_has_ministr(path: &std::path::Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    // We look for the `[mcp_servers.ministr]` header rather than parsing
+    // the TOML — the same shortcut used by `write_codex_mcp` to avoid
+    // round-tripping a hand-edited file.
+    content.contains("[mcp_servers.ministr]")
+}
+
+fn probe_cli(binary: &str) -> bool {
+    if cfg!(windows) {
+        which_on_path(&format!("{binary}.exe")).is_some() || which_on_path(binary).is_some()
+    } else {
+        which_on_path(binary).is_some()
+    }
+}
+
+fn home_subdir_exists(name: &str) -> bool {
+    home_pathbuf().is_some_and(|h| h.join(name).exists())
+}
+
+/// Cross-platform home-dir lookup as a [`PathBuf`]. The crate already has
+/// a `home_dir() -> Option<String>` helper used by the open-path expansion
+/// flow; this returns a typed path so the MCP wizard can compose it with
+/// `.join()` calls cleanly.
+fn home_pathbuf() -> Option<std::path::PathBuf> {
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+    {
+        return Some(std::path::PathBuf::from(home));
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE")
+        && !profile.is_empty()
+    {
+        return Some(std::path::PathBuf::from(profile));
+    }
+    None
+}

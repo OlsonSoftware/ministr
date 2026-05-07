@@ -324,39 +324,132 @@ pub fn write_config(root: &Path, force: bool) -> Result<ProjectDetection, InitEr
     Ok(detection)
 }
 
-/// Write MCP client configuration files for Claude Code, GitHub Copilot, and Cursor.
+/// Identifies a supported MCP client.
 ///
-/// Creates `.mcp.json` (Claude Code), `.vscode/mcp.json` (VS Code / GitHub
-/// Copilot), and `.cursor/mcp.json` (Cursor) if they don't already contain
-/// a ministr entry. Existing files are merged non-destructively — only the
-/// `ministr` key is added.
+/// Used by [`write_mcp_config`] (per-client write) and the Tauri MCP
+/// wizard surface to select which client's config file to touch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum McpClientId {
+    /// Anthropic Claude Code CLI. Reads `.mcp.json` in the project root.
+    ClaudeCode,
+    /// Cursor editor. Reads `.cursor/mcp.json` in the project root.
+    Cursor,
+    /// VS Code GitHub Copilot. Reads `.vscode/mcp.json` in the project root.
+    VsCode,
+    /// OpenAI Codex CLI. Reads `~/.codex/config.toml` (user-level, not
+    /// per-project — see [`write_codex_mcp`] for the path resolution
+    /// rationale).
+    Codex,
+}
+
+impl McpClientId {
+    /// Stable identifier suitable for IPC / config files.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude_code",
+            Self::Cursor => "cursor",
+            Self::VsCode => "vscode",
+            Self::Codex => "codex",
+        }
+    }
+
+    /// Parse from a wire-format identifier produced by [`Self::as_str`].
+    ///
+    /// Named `parse` rather than `from_str` to avoid clashing with
+    /// `std::str::FromStr::from_str`. Implementing FromStr would force a
+    /// concrete error type on every caller, which is overkill for a
+    /// closed enum like this.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "claude_code" => Some(Self::ClaudeCode),
+            "cursor" => Some(Self::Cursor),
+            "vscode" => Some(Self::VsCode),
+            "codex" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
+    /// Human-readable label for display in UI.
+    #[must_use]
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "Claude Code",
+            Self::Cursor => "Cursor",
+            Self::VsCode => "GitHub Copilot (VS Code)",
+            Self::Codex => "Codex",
+        }
+    }
+}
+
+/// Write the MCP config for a single client.
+///
+/// Returns the absolute path of the file that was written so the caller
+/// (typically the Tauri wizard) can show the user *exactly* which file
+/// changed.
+///
+/// `root` is the project root. It is ignored for [`McpClientId::Codex`],
+/// which writes a user-global file.
+///
+/// # Errors
+///
+/// Returns [`InitError::Io`] on filesystem errors.
+pub fn write_mcp_config(client: McpClientId, root: &Path) -> Result<PathBuf, InitError> {
+    match client {
+        McpClientId::ClaudeCode => write_claude_mcp(root),
+        McpClientId::Cursor => write_cursor_mcp(root),
+        McpClientId::VsCode => write_vscode_mcp(root),
+        McpClientId::Codex => write_codex_mcp(),
+    }
+}
+
+/// Write MCP client configuration files for every project-scoped client
+/// (Claude Code, VS Code Copilot, Cursor).
+///
+/// This is the bulk path used by `ministr init` so the user gets every
+/// project file written in one shot. The interactive wizard prefers
+/// [`write_mcp_config`] so it can target a single client at a time.
+///
+/// Codex is **not** included here because it's user-global, not
+/// per-project — `ministr init` shouldn't reach into `~/.codex/`
+/// without explicit consent.
 ///
 /// # Errors
 ///
 /// Returns [`InitError::Io`] on filesystem errors.
 pub fn write_mcp_configs(root: &Path) -> Result<(), InitError> {
-    // Claude Code: .mcp.json
-    write_mcp_json(root, ".mcp.json")?;
+    write_claude_mcp(root)?;
+    write_vscode_mcp(root)?;
+    write_cursor_mcp(root)?;
+    Ok(())
+}
 
-    // GitHub Copilot / VS Code: .vscode/mcp.json
-    let vscode_dir = root.join(".vscode");
-    if !vscode_dir.exists() {
-        std::fs::create_dir_all(&vscode_dir)?;
-    }
-    write_mcp_json(root, ".vscode/mcp.json")?;
+/// Write `.mcp.json` (Claude Code) under `root`.
+fn write_claude_mcp(root: &Path) -> Result<PathBuf, InitError> {
+    write_mcp_json_relative(root, ".mcp.json")
+}
 
-    // Cursor: .cursor/mcp.json
+/// Write `.cursor/mcp.json` (Cursor) under `root`.
+fn write_cursor_mcp(root: &Path) -> Result<PathBuf, InitError> {
     let cursor_dir = root.join(".cursor");
     if !cursor_dir.exists() {
         std::fs::create_dir_all(&cursor_dir)?;
     }
-    write_mcp_json(root, ".cursor/mcp.json")?;
-
-    Ok(())
+    write_mcp_json_relative(root, ".cursor/mcp.json")
 }
 
-/// Write or merge an ministr entry into an MCP JSON config file.
-fn write_mcp_json(root: &Path, relative_path: &str) -> Result<(), InitError> {
+/// Write `.vscode/mcp.json` (VS Code / GitHub Copilot) under `root`.
+fn write_vscode_mcp(root: &Path) -> Result<PathBuf, InitError> {
+    let vscode_dir = root.join(".vscode");
+    if !vscode_dir.exists() {
+        std::fs::create_dir_all(&vscode_dir)?;
+    }
+    write_mcp_json_relative(root, ".vscode/mcp.json")
+}
+
+/// Write or merge an ministr entry into a per-project MCP JSON config file.
+fn write_mcp_json_relative(root: &Path, relative_path: &str) -> Result<PathBuf, InitError> {
     let path = root.join(relative_path);
 
     let ministr_entry = serde_json::json!({
@@ -384,7 +477,92 @@ fn write_mcp_json(root: &Path, relative_path: &str) -> Result<(), InitError> {
         std::fs::write(&path, format!("{json_str}\n"))?;
     }
 
-    Ok(())
+    Ok(path)
+}
+
+/// Write or merge a `[mcp_servers.ministr]` entry into the user-global
+/// Codex CLI config at `~/.codex/config.toml`.
+///
+/// The Codex CLI's MCP support is configured via TOML (not JSON) and
+/// lives under the user's home directory rather than per-project — this
+/// matches the standard OpenAI Codex CLI layout.
+///
+/// We do a simple text patch rather than a full TOML round-trip: if the
+/// file exists and already has a `[mcp_servers.ministr]` section, we
+/// rewrite that block; otherwise we append. This keeps existing user
+/// edits in other sections intact even when our parser would round-trip
+/// poorly (Codex's config doc strings, comments, ordering all matter to
+/// users editing this file by hand).
+fn write_codex_mcp() -> Result<PathBuf, InitError> {
+    let home = home_dir().ok_or_else(|| {
+        InitError::Io {
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "could not resolve home directory for Codex config",
+            ),
+        }
+    })?;
+    let dir = home.join(".codex");
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)?;
+    }
+    let path = dir.join("config.toml");
+
+    let block = "\n[mcp_servers.ministr]\ncommand = \"ministr\"\nargs = [\"serve\", \"--transport\", \"stdio\"]\n";
+
+    let mut existing = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        String::new()
+    };
+
+    if let Some(start) = existing.find("[mcp_servers.ministr]") {
+        // Find end of this section: the next `[` at the start of a line,
+        // or end-of-file. Strip + reappend.
+        let after_header = start + "[mcp_servers.ministr]".len();
+        let rest = &existing[after_header..];
+        let next_section = rest
+            .match_indices('\n')
+            .find_map(|(i, _)| {
+                let line_start = after_header + i + 1;
+                let line = existing[line_start..].split_once('\n').map_or_else(
+                    || &existing[line_start..],
+                    |(line, _)| line,
+                );
+                if line.trim_start().starts_with('[') {
+                    Some(line_start)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(existing.len());
+        existing.replace_range(start..next_section, block.trim_start());
+    } else {
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            existing.push('\n');
+        }
+        existing.push_str(block);
+    }
+
+    std::fs::write(&path, existing)?;
+    Ok(path)
+}
+
+/// Cross-platform home-directory lookup. We prefer `HOME` (Unix) and
+/// `USERPROFILE` (Windows) directly to avoid pulling in the `dirs` crate
+/// for one call site.
+fn home_dir() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+    {
+        return Some(PathBuf::from(home));
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE")
+        && !profile.is_empty()
+    {
+        return Some(PathBuf::from(profile));
+    }
+    None
 }
 
 /// Derive the project name from the directory name or a manifest.
