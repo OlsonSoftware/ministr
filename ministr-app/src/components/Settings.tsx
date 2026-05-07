@@ -158,7 +158,7 @@ export function Settings({
       }
     }
     toast("CACHE CLEARED", {
-      detail: `${cleared} corpora re-indexing`,
+      detail: `${cleared} ${cleared === 1 ? "project" : "projects"} re-indexing`,
       tone: "info",
     });
     onRefresh();
@@ -270,7 +270,7 @@ export function Settings({
         {/* Autostart */}
         <PrefRow
           label="AUTOSTART"
-          description="Run the daemon at login so MCP clients can attach instantly."
+          description="Run ministr at login so your AI assistants can attach instantly."
           icon={Power}
         >
           <Toggle
@@ -281,11 +281,10 @@ export function Settings({
         </PrefRow>
       </Zone>
 
-      {/* SYSTEM */}
-      <Zone title="SYSTEM" subtitle="READ-ONLY" tone="serif">
-        <MetaRow label="DAEMON" value={`v${status.version}`} />
-        <MetaRow label="MODEL" value={status.model} />
-        <MetaRow label="DIM" value={`${status.model_dimension}d`} />
+      {/* SERVER */}
+      <Zone title="SERVER" subtitle="READ-ONLY" tone="serif">
+        <MetaRow label="VERSION" value={`v${status.version}`} />
+        <MetaRow label="EMBEDDING MODEL" value={status.model} />
         <MetaRow label="MEMORY" value={`${status.memory_mb.toFixed(0)} MB RSS`} />
         <MetaRow label="DATA DIR" value={DATA_DIR} />
         {status.log_path && (
@@ -329,13 +328,16 @@ export function Settings({
       {/* DIAGNOSTICS — folds the previous Logs + Simulator tabs into a
           collapsible zone here. Both default-collapsed so Settings stays
           fast on cold open; users can click a header to expand, or
-          dispatch `ministr-settings-scroll` from elsewhere in the app. */}
+          dispatch `ministr-settings-scroll` from elsewhere in the app.
+          (The Developer tab also surfaces the log viewer; this stays
+          here so the maintenance + log path are reachable from one
+          place.) */}
       <Zone title="DIAGNOSTICS" tone="serif">
         <div ref={logsRef}>
           <DiagnosticSection
             icon={ScrollText}
-            label="Daemon log"
-            hint="Recent log lines from the running ministr daemon"
+            label="Server log"
+            hint="Recent log lines from the running ministr server"
             expanded={logsExpanded}
             onToggle={() => setLogsExpanded((v) => !v)}
             isLast={false}
@@ -349,7 +351,7 @@ export function Settings({
           <DiagnosticSection
             icon={Terminal}
             label="Context simulator"
-            hint="Replay a corpus query against the current session model"
+            hint="Replay a project query against the current session model"
             expanded={simulatorExpanded}
             onToggle={() => setSimulatorExpanded((v) => !v)}
             isLast={true}
@@ -389,10 +391,10 @@ export function Settings({
             <>
               <p className="font-mono text-xs text-text leading-relaxed">
                 Clears local-storage preferences (theme, default tab, density,
-                drawer state, active corpus).
+                drawer state, active project).
               </p>
               <p className="font-sans text-xs tracking-[0.05em] text-text-dim mt-2">
-                Corpus registry is not touched.
+                Your project list is not touched.
               </p>
             </>
           }
@@ -410,7 +412,8 @@ export function Settings({
               <p className="font-mono text-xs text-text leading-relaxed">
                 Drops indexes for{" "}
                 <span className="font-bold uppercase">
-                  ALL {status.corpora.length} CORPORA
+                  ALL {status.corpora.length}{" "}
+                  {status.corpora.length === 1 ? "PROJECT" : "PROJECTS"}
                 </span>{" "}
                 and triggers re-index of each.
               </p>
