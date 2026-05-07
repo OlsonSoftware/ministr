@@ -151,12 +151,6 @@ pub struct EvictedParams {
     pub content_ids: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct AskParams {
-    /// Natural-language question about the codebase.
-    pub query: String,
-}
-
 impl ProxyServer {
     #[must_use]
     pub fn new(corpus_paths: Vec<String>) -> Self {
@@ -727,24 +721,6 @@ impl ProxyServer {
             }
         }
 
-        Self::json_result(&resp)
-    }
-
-    #[tool(
-        name = "ministr_ask",
-        description = "Ask a question about the codebase and get a synthesized answer. Uses cached sub-inference — much cheaper than manually surveying + reading multiple sections."
-    )]
-    async fn ask(
-        &self,
-        Parameters(params): Parameters<AskParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
-        let resp = self
-            .client
-            .ask(&cid, &params.query, Some(&sid))
-            .await
-            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 }

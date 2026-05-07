@@ -8,6 +8,7 @@ use ministr_api::corpus::{CorpusInfo, RegisterCorpusResponse};
 use ministr_api::status::DaemonStatus;
 use ministr_core::session::PressureLevel;
 use ministr_core::storage::traits::Storage;
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 use ministr_daemon::state::AppState;
@@ -923,4 +924,233 @@ pub async fn ingestion_progress(
             current_file: handle.progress.current_file(),
         })
         .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Ask (sub-inference) — phased, citation-aware Q&A for the desktop app.
+// ---------------------------------------------------------------------------
+
+/// Phase events streamed from `ask_corpus` to the frontend so the UI can
+/// render retrieving → synthesizing → done without faking progress.
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AskPhase {
+    /// Verified cache hit — answer is about to arrive in `Done`.
+    CacheHit { source_ids: Vec<String> },
+    /// Query analysis finished. Sub-question decomposition + `HyDE` preview
+    /// + symbol hints + bridge relevance flag arrive together.
+    Analyzed {
+        sub_questions: Vec<String>,
+        hyde_preview: String,
+        symbol_hints: Vec<String>,
+        bridge_relevant: bool,
+    },
+    /// Multi-strategy retrieval finished. Reports per-strategy counts +
+    /// the merged candidate ids that survived RRF fusion.
+    RetrievedCandidates {
+        by_strategy: std::collections::HashMap<String, usize>,
+        merged_ids: Vec<String>,
+    },
+    /// LLM rerank pass finished — these are the surviving sources in
+    /// score order.
+    Reranked { source_ids: Vec<String> },
+    /// All retrieval is done; inference is about to start.
+    Retrieved { source_ids: Vec<String> },
+    /// Verification stage ran. `unsupported_claims` is empty when the
+    /// answer is fully grounded; non-empty entries already appear in
+    /// the final `Done` answer as a confidence note.
+    Verified { unsupported_claims: Vec<String> },
+    /// Final answer with citations.
+    Done {
+        answer: String,
+        source_ids: Vec<String>,
+        cached: bool,
+        model: String,
+        elapsed_ms: u64,
+    },
+    /// Pipeline failed. The command will also return Err(message).
+    Error { message: String },
+}
+
+/// Synthesize an answer for a natural-language question against a corpus.
+///
+/// Streams phase events on `progress` so the UI can render skeletons that
+/// resolve into real content. The full answer is also returned via the
+/// final `Done` event; the command's `Result` is just a success signal.
+#[tauri::command]
+pub async fn ask_corpus(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    query: String,
+    progress: Channel<AskPhase>,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let _permit = state
+        .query_semaphore
+        .acquire()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let progress_for_callback = progress.clone();
+    let result = ministr_daemon::ask::ask_with_progress(
+        &query,
+        &handle.service,
+        &handle.storage,
+        state.inference.as_ref(),
+        move |event| {
+            let phase = match event {
+                ministr_daemon::ask::AskEvent::CacheHit { source_ids } => {
+                    AskPhase::CacheHit { source_ids }
+                }
+                ministr_daemon::ask::AskEvent::Analyzed {
+                    sub_questions,
+                    hyde_preview,
+                    symbol_hints,
+                    bridge_relevant,
+                } => AskPhase::Analyzed {
+                    sub_questions,
+                    hyde_preview,
+                    symbol_hints,
+                    bridge_relevant,
+                },
+                ministr_daemon::ask::AskEvent::RetrievedCandidates {
+                    by_strategy,
+                    merged_ids,
+                } => AskPhase::RetrievedCandidates {
+                    by_strategy,
+                    merged_ids,
+                },
+                ministr_daemon::ask::AskEvent::Reranked { source_ids } => {
+                    AskPhase::Reranked { source_ids }
+                }
+                ministr_daemon::ask::AskEvent::Retrieved { source_ids } => {
+                    AskPhase::Retrieved { source_ids }
+                }
+                ministr_daemon::ask::AskEvent::Verified { unsupported_claims } => {
+                    AskPhase::Verified { unsupported_claims }
+                }
+            };
+            // Channel send only fails if the frontend dropped the receiver,
+            // in which case there's nothing useful to do here.
+            let _ = progress_for_callback.send(phase);
+        },
+    )
+    .await;
+    drop(guard);
+
+    match result {
+        Ok(r) => {
+            let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            let _ = progress.send(AskPhase::Done {
+                answer: r.answer,
+                source_ids: r.source_ids,
+                cached: r.cached,
+                model: r.model,
+                elapsed_ms,
+            });
+            Ok(())
+        }
+        Err(e) => {
+            let message = e.to_string();
+            let _ = progress.send(AskPhase::Error {
+                message: message.clone(),
+            });
+            Err(message)
+        }
+    }
+}
+
+/// Health summary for the sub-inference backend used by `ask_corpus`.
+#[derive(Serialize)]
+pub struct InferenceHealth {
+    /// True if a usable inference backend is wired up. Currently this means
+    /// the `claude` CLI is present on PATH for the production
+    /// `ClaudeCliInference`. False means `ask` will fail at submit time.
+    pub available: bool,
+    /// Short human-readable reason when `available` is false (e.g.
+    /// "claude CLI not found on PATH"). Empty when available.
+    pub reason: String,
+    /// Best-effort path to the resolved binary, when available.
+    pub binary_path: Option<String>,
+}
+
+/// Probe whether the inference backend is ready, without invoking it.
+///
+/// The Ask tab shows a one-time install hint when this returns
+/// `available: false` so users find out about missing dependencies before
+/// typing a question rather than after.
+#[tauri::command]
+pub async fn inference_health(_state: State<'_, AppState>) -> Result<InferenceHealth, String> {
+    // The default backend is ClaudeCliInference, which spawns `claude -p`.
+    // A PATH probe is the cheapest reliable readiness signal.
+    let binary = if cfg!(windows) {
+        "claude.exe"
+    } else {
+        "claude"
+    };
+    if let Some(path) = which_on_path(binary) {
+        Ok(InferenceHealth {
+            available: true,
+            reason: String::new(),
+            binary_path: Some(path),
+        })
+    } else {
+        Ok(InferenceHealth {
+            available: false,
+            reason: format!("`{binary}` not found on PATH — install Claude Code to enable Ask."),
+            binary_path: None,
+        })
+    }
+}
+
+/// Look up a binary on `PATH`, returning the first absolute match.
+fn which_on_path(name: &str) -> Option<String> {
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate.display().to_string());
+        }
+    }
+    None
+}
+
+/// A section's full text, used by `AskView` to resolve a citation
+/// `content_id` into something it can hand to the entity panel as a
+/// `SearchResult`.
+#[derive(Serialize)]
+pub struct SectionDetailOut {
+    pub section_id: String,
+    pub heading_path: Vec<String>,
+    pub text: String,
+    pub summary: Option<String>,
+    pub claims_available: usize,
+}
+
+/// Read the full text of a section by its hierarchical content ID.
+#[tauri::command]
+pub async fn read_section(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    section_id: String,
+) -> Result<SectionDetailOut, String> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let detail = handle
+        .service
+        .read_section(&section_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(SectionDetailOut {
+        section_id: detail.section_id,
+        heading_path: detail.heading_path,
+        text: detail.text,
+        summary: detail.summary,
+        claims_available: detail.claims_available,
+    })
 }

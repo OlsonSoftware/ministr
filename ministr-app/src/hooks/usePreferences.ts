@@ -5,6 +5,7 @@ const DENSITY_KEY = "ministr-density";
 
 export type DefaultTab =
   | "search"
+  | "ask"
   | "symbols"
   | "bridge"
   | "projects"
@@ -16,6 +17,7 @@ export type Density = "comfortable" | "compact";
 
 const VALID_DEFAULT_TABS: DefaultTab[] = [
   "search",
+  "ask",
   "symbols",
   "bridge",
   "projects",

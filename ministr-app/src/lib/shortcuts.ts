@@ -18,6 +18,7 @@
 export type ShortcutAction =
   // navigation
   | "nav:search"
+  | "nav:ask"
   | "nav:symbols"
   | "nav:bridge"
   | "nav:projects"
@@ -75,6 +76,13 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     id: "nav:search",
     keys: ["g", "s"],
     label: "Search",
+    group: "Navigation",
+    prefixed: true,
+  },
+  {
+    id: "nav:ask",
+    keys: ["g", "a"],
+    label: "Ask",
     group: "Navigation",
     prefixed: true,
   },

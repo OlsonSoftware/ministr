@@ -72,6 +72,108 @@ pub trait Inference: Send + Sync {
     >;
 }
 
+/// Helper around [`Inference::infer`] that asks the model for JSON-only
+/// output and parses it. Free function (rather than trait method) so it
+/// stays dyn-compatible.
+///
+/// One repair retry: if the first parse fails, we re-prompt the model
+/// with its own broken output and ask it to fix the JSON. This is the
+/// cheapest reliable path for `claude -p` which doesn't expose a native
+/// JSON-mode flag.
+///
+/// # Errors
+///
+/// Returns [`InferenceError::ParseFailed`] if both attempts produce
+/// unparseable JSON, or any underlying inference error.
+pub async fn infer_json(
+    inference: &dyn Inference,
+    prompt: &str,
+) -> Result<serde_json::Value, InferenceError> {
+    let json_prompt = format!(
+        "{prompt}\n\n---\n\nRespond with a single valid JSON value and \
+         nothing else. No prose, no markdown fences, no commentary."
+    );
+    let first = inference.infer(&json_prompt).await?;
+    if let Some(value) = extract_json(&first.answer) {
+        return Ok(value);
+    }
+    // Repair attempt — give the model its own bad output and ask it to fix.
+    let repair_prompt = format!(
+        "The following text was supposed to be valid JSON but isn't. \
+         Re-emit it as a single valid JSON value. No prose, no fences.\n\n\
+         ---\n\n{}",
+        first.answer
+    );
+    let second = inference.infer(&repair_prompt).await?;
+    extract_json(&second.answer).ok_or_else(|| InferenceError::ParseFailed {
+        reason: format!(
+            "model failed to produce JSON after one repair attempt; last \
+             output: {}",
+            truncate_for_error(&second.answer, 200)
+        ),
+    })
+}
+
+/// Best-effort JSON extraction from a model response. Tolerates a leading
+/// ```json fence, a leading ``` fence, surrounding whitespace, and a stray
+/// trailing comma. Falls back to scanning for the first balanced `{...}`
+/// or `[...]` substring.
+fn extract_json(text: &str) -> Option<serde_json::Value> {
+    let trimmed = text.trim();
+
+    // Strip ``` fences if present.
+    let fenced = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .map(str::trim_start)
+        .and_then(|s| s.strip_suffix("```").map(str::trim_end))
+        .unwrap_or(trimmed);
+
+    if let Ok(v) = serde_json::from_str(fenced) {
+        return Some(v);
+    }
+
+    // Scan for first balanced object or array.
+    let bytes = fenced.as_bytes();
+    let mut start = None;
+    let mut depth = 0_i32;
+    let mut open: u8 = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'{' | b'[' if start.is_none() => {
+                start = Some(i);
+                open = b;
+                depth = 1;
+            }
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 && start.is_some() {
+                    let close = if open == b'{' { b'}' } else { b']' };
+                    if b == close {
+                        let s = &fenced[start.unwrap()..=i];
+                        if let Ok(v) = serde_json::from_str(s) {
+                            return Some(v);
+                        }
+                    }
+                    start = None;
+                    depth = 0;
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn truncate_for_error(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max])
+    }
+}
+
 /// Default inference timeout in seconds.
 /// Agentic mode needs more time for multi-turn tool use.
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
@@ -127,7 +229,8 @@ impl Inference for ClaudeCliInference {
             // The previous impl wrapped a blocking wait in `spawn_blocking`
             // under `tokio::time::timeout`, which leaked the process + pipe
             // + blocking-pool thread on every timeout.
-            let mut child = tokio::process::Command::new("claude")
+            let mut command = tokio::process::Command::new("claude");
+            command
                 .args([
                     "-p",
                     "--output-format",
@@ -141,11 +244,25 @@ impl Inference for ClaudeCliInference {
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-                .map_err(|e| InferenceError::CliNotFound {
-                    reason: e.to_string(),
-                })?;
+                .kill_on_drop(true);
+
+            // On Windows, the parent Tauri app is a GUI binary
+            // (`windows_subsystem = "windows"`), which means any child
+            // process inherits no console — so spawning `claude` would
+            // pop a fresh cmd window for the lifetime of the call. The
+            // CREATE_NO_WINDOW flag (0x0800_0000) tells the kernel to
+            // launch the child without allocating a console at all.
+            // tokio::process::Command exposes `creation_flags` natively
+            // on Windows; no trait import needed.
+            #[cfg(windows)]
+            {
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                command.creation_flags(CREATE_NO_WINDOW);
+            }
+
+            let mut child = command.spawn().map_err(|e| InferenceError::CliNotFound {
+                reason: e.to_string(),
+            })?;
 
             let output =
                 tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async move {

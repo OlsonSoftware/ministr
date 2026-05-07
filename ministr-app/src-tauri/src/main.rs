@@ -126,6 +126,9 @@ fn main() {
             commands::recent_coherence_events,
             commands::detect_projects,
             commands::register_projects_batch,
+            commands::ask_corpus,
+            commands::inference_health,
+            commands::read_section,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ministr app");

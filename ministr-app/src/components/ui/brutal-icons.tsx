@@ -145,6 +145,23 @@ export function BrutalLogs({ className }: IconProps) {
   );
 }
 
+/** Ask — a chevron prompt sigil over a horizontal answer bar. */
+export function BrutalAsk({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path
+        d="M3 5 L9 11 L3 17"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="square"
+        strokeLinejoin="miter"
+      />
+      <rect x="11" y="15" width="10" height="3" fill="currentColor" />
+    </Svg>
+  );
+}
+
 /** Settings — hexagonal outline + solid centered dot. */
 export function BrutalSettings({ className }: IconProps) {
   return (

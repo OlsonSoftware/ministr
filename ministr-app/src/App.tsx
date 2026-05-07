@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Search, AlertTriangle } from "lucide-react";
 import {
   BrutalSearch,
+  BrutalAsk,
   BrutalSymbols,
   BrutalBridge,
   BrutalProjects,
@@ -27,6 +28,7 @@ import { CorpusTreemap } from "./components/CorpusTreemap";
 import { SymbolGraph } from "./components/SymbolGraph";
 import { Bridge } from "./components/Bridge";
 import { ContextSimulator } from "./components/ContextSimulator";
+import { AskView } from "./components/AskView";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutSheet } from "./components/ShortcutSheet";
 import { CorpusPill } from "./components/shell/CorpusPill";
@@ -44,6 +46,7 @@ import {
 
 type Tab =
   | "search"
+  | "ask"
   | "symbols"
   | "bridge"
   | "projects"
@@ -55,6 +58,7 @@ type Tab =
 
 const VALID_TABS: Tab[] = [
   "search",
+  "ask",
   "symbols",
   "bridge",
   "projects",
@@ -192,6 +196,9 @@ function AppInner() {
           case "nav:search":
             setTab("search");
             return;
+          case "nav:ask":
+            setTab("ask");
+            return;
           case "nav:symbols":
             setTab("symbols");
             return;
@@ -300,6 +307,12 @@ function AppInner() {
             <ConnectingState error={error ?? null} />
           ) : tab === "search" ? (
             <QueryPlayground
+              status={status}
+              activeCorpusId={activeCorpusId}
+              setActiveCorpusId={setActiveCorpusId}
+            />
+          ) : tab === "ask" ? (
+            <AskView
               status={status}
               activeCorpusId={activeCorpusId}
               setActiveCorpusId={setActiveCorpusId}
@@ -510,6 +523,12 @@ function Rail({
         active={tab === "search"}
         label="Search"
         onClick={() => onSelect("search")}
+      />
+      <RailItem
+        icon={BrutalAsk}
+        active={tab === "ask"}
+        label="Ask"
+        onClick={() => onSelect("ask")}
       />
       <RailItem
         icon={BrutalSymbols}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Search,
+  Sparkles,
   Users,
   ScrollText,
   Settings as SettingsIcon,
@@ -24,6 +25,7 @@ import { shortcutKeys } from "../lib/shortcuts";
 
 type Tab =
   | "search"
+  | "ask"
   | "symbols"
   | "bridge"
   | "projects"
@@ -80,6 +82,15 @@ export function CommandPalette({
         group: "NAV",
         icon: Search,
         run: () => onNavigate("search"),
+      },
+      {
+        id: "nav:ask",
+        label: "Go to ask",
+        hint: "Ask anything about the codebase",
+        shortcut: shortcutKeys("nav:ask"),
+        group: "NAV",
+        icon: Sparkles,
+        run: () => onNavigate("ask"),
       },
       {
         id: "nav:symbols",
