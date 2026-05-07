@@ -27,6 +27,7 @@ import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { Progress } from "./ui/progress";
 import { Button } from "./ui/button";
 import { AiAssistantsPanel } from "./surfaces/AiAssistantsPanel";
+import { formatEtaBare } from "../lib/format";
 
 type Step = "pick" | "index" | "connect";
 
@@ -457,7 +458,7 @@ function StepIndex({
                   {done
                     ? "Ready"
                     : indexing
-                      ? `${filesDone.toLocaleString()} / ${filesTotal.toLocaleString()} files${eta != null ? ` · ~${formatEta(eta)}` : ""}`
+                      ? `${filesDone.toLocaleString()} / ${filesTotal.toLocaleString()} files${eta != null ? ` · ~${formatEtaBare(eta)}` : ""}`
                       : "Pending…"}
                 </span>
               </div>
@@ -492,12 +493,6 @@ function StepIndex({
       </div>
     </div>
   );
-}
-
-function formatEta(secs: number): string {
-  if (secs < 60) return `${Math.max(1, Math.round(secs))}s`;
-  if (secs < 3600) return `${Math.round(secs / 60)} min`;
-  return `${(secs / 3600).toFixed(1)} h`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

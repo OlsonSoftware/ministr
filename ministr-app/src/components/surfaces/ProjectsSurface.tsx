@@ -28,6 +28,7 @@ import {
 
 import type { CorpusInfo } from "../../lib/types";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
+import { formatEta, formatRelativeTime } from "../../lib/format";
 import { statusBadge } from "../../lib/status";
 import { cn } from "../../lib/utils";
 import {
@@ -558,21 +559,3 @@ function ProjectDetail({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Format helpers
-
-function formatEta(secs: number): string {
-  if (secs < 60) return `~${Math.max(1, Math.round(secs))}s left`;
-  if (secs < 3600) return `~${Math.round(secs / 60)} min left`;
-  return `~${(secs / 3600).toFixed(1)} h left`;
-}
-
-function formatRelativeTime(unixSeconds: number): string {
-  const now = Math.floor(Date.now() / 1000);
-  const diff = now - unixSeconds;
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`;
-  if (diff < 604800) return `${Math.floor(diff / 86400)} d ago`;
-  return new Date(unixSeconds * 1000).toLocaleDateString();
-}
