@@ -1,61 +1,57 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { cn } from "../../lib/utils";
-import { BrutalPin } from "../ui/brutal-icons";
+import { cn } from "../../../lib/utils";
+import { BrutalPin } from "../../ui/brutal-icons";
+import type { SectionDetailOut } from "./internals";
 
-interface InlineCitationProps {
+interface Props {
   /** 1-based citation index — matches source_ids[n-1]. */
   n: number;
   /** Resolved source content_id, or undefined if out of range. */
   sourceId: string | undefined;
   /** The corpus this citation lives in. */
   corpusId: string;
-  /** Pin into the active investigation. */
-  onPin: (sourceId: string) => void;
-  /** Open in the EntityPanel drawer (drill-deeper). */
+  /** Open in the EntityPanel drawer. */
   onOpen: (n: number) => void;
-  /** Whether this source is already pinned in the active investigation. */
-  pinned: boolean;
-}
-
-interface SectionDetail {
-  section_id: string;
-  heading_path: string[];
-  text: string;
-  summary?: string | null;
+  /** Pin this answer (the surface uses one Pin per answer, not per source).
+   *  When omitted the pin button is hidden. */
+  onPinAnswer?: () => void;
+  /** Whether the parent answer is pinned — flips the chip border colour. */
+  pinned?: boolean;
 }
 
 /**
- * Citation chip with hover-popover preview + pin/open actions.
+ * Inline citation chip with hover-popover preview + Open action.
  *
- * Visually: a tight superscript-style chip rendered inline at the end of a
- * cited claim. Hover (or focus) reveals a popover with the source's
- * heading_path, an excerpt, and two actions: Pin (locks the source into the
- * active investigation, persists across queries) and Open (drills into the
- * EntityPanel for breadcrumb navigation).
+ * Visually a tight superscript-style chip rendered inline at the end of a
+ * cited claim. Hover or focus reveals a popover with the source's heading
+ * path and an excerpt. Click drills into the EntityPanel for breadcrumb
+ * navigation.
  *
- * Replaces the old `CitationChip` whose only affordance was a raw click
- * straight into the entity panel.
+ * Replaces `components/ask/InlineCitation.tsx`. Differences:
+ *   - Source-pinning is gone; pinning lives on the answer card now (see
+ *     `PinnedAnswers.tsx`).
+ *   - Calls the real `read_section` Tauri command, not the no-longer-
+ *     registered `get_section_detail`.
  */
-export function InlineCitation({
+export function AskCitation({
   n,
   sourceId,
   corpusId,
-  onPin,
   onOpen,
-  pinned,
-}: InlineCitationProps) {
+  onPinAnswer,
+  pinned = false,
+}: Props) {
   const [open, setOpen] = useState(false);
-  const [detail, setDetail] = useState<SectionDetail | null>(null);
+  const [detail, setDetail] = useState<SectionDetailOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const hideTimer = useRef<number | null>(null);
   const wrapRef = useRef<HTMLSpanElement>(null);
 
-  // Fetch detail lazily on first hover/focus. Cached after that.
   useEffect(() => {
     if (!open || detail || !sourceId) return;
     let cancelled = false;
-    invoke<SectionDetail>("get_section_detail", {
+    invoke<SectionDetailOut>("read_section", {
       corpusId,
       sectionId: sourceId,
     })
@@ -93,7 +89,7 @@ export function InlineCitation({
     >
       <button
         onClick={() => onOpen(n)}
-        title={`Source [${n}]${pinned ? " · pinned" : ""}`}
+        title={`Source [${n}]`}
         aria-label={`Open source ${n}`}
         className={cn(
           "inline-flex items-center justify-center align-baseline",
@@ -101,7 +97,7 @@ export function InlineCitation({
           "font-mono text-mono-mini font-bold tabular-nums leading-none",
           "cursor-pointer transition-none rounded-sm border",
           pinned
-            ? "border-info bg-info text-accent-fg-on hover:bg-info hover:text-accent-fg-on"
+            ? "border-info bg-surface text-info hover:bg-info hover:text-[var(--color-accent-fg-on)]"
             : "border-accent bg-surface text-accent hover:bg-accent hover:text-[var(--color-accent-fg-on)]",
         )}
       >
@@ -144,23 +140,25 @@ export function InlineCitation({
             )}
           </div>
           <footer className="flex items-center gap-1.5 border-t-2 border-border bg-surface-overlay px-2.5 py-1.5">
-            <button
-              onClick={() => {
-                onPin(sourceId);
-                setOpen(false);
-              }}
-              disabled={pinned}
-              className={cn(
-                "inline-flex items-center gap-1 px-2 py-0.5 cursor-pointer transition-none rounded-sm",
-                "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
-                pinned
-                  ? "border border-border-soft bg-surface text-text-dim cursor-not-allowed"
-                  : "border border-accent bg-surface text-accent hover:bg-accent hover:text-[var(--color-accent-fg-on)]",
-              )}
-            >
-              <BrutalPin className="h-3 w-3" />
-              {pinned ? "Pinned" : "Pin"}
-            </button>
+            {onPinAnswer && (
+              <button
+                onClick={() => {
+                  onPinAnswer();
+                  setOpen(false);
+                }}
+                disabled={pinned}
+                className={cn(
+                  "inline-flex items-center gap-1 px-2 py-0.5 cursor-pointer transition-none rounded-sm",
+                  "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
+                  pinned
+                    ? "border border-border-soft bg-surface text-text-dim cursor-not-allowed"
+                    : "border border-info bg-surface text-info hover:bg-info hover:text-[var(--color-accent-fg-on)]",
+                )}
+              >
+                <BrutalPin className="h-3 w-3" />
+                {pinned ? "Pinned" : "Pin answer"}
+              </button>
+            )}
             <button
               onClick={() => {
                 onOpen(n);
