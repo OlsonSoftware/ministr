@@ -253,6 +253,7 @@ function AppInner() {
                 surface={surface}
                 status={status}
                 activeCorpusId={activeCorpusId}
+                setActiveCorpusId={setActiveCorpusId}
                 onSelectCorpus={onSelectCorpus}
                 onRefresh={refresh}
                 theme={theme}
@@ -279,6 +280,7 @@ function SurfaceBody({
   surface,
   status,
   activeCorpusId,
+  setActiveCorpusId,
   onSelectCorpus,
   onRefresh,
   theme,
@@ -289,6 +291,7 @@ function SurfaceBody({
   surface: SurfaceId;
   status: import("./lib/types").DaemonStatus;
   activeCorpusId: string | null;
+  setActiveCorpusId: (id: string | null) => void;
   onSelectCorpus: (id: string) => void;
   onRefresh: () => void;
   theme: "system" | "dark" | "light";
@@ -319,6 +322,7 @@ function SurfaceBody({
     <SettingsSurface
       status={status}
       activeCorpusId={activeCorpusId}
+      setActiveCorpusId={setActiveCorpusId}
       theme={theme}
       onThemeChange={onThemeChange}
       onShowOnboarding={onShowOnboarding}

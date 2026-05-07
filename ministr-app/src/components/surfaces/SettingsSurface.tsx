@@ -3,6 +3,7 @@ import { cn } from "../../lib/utils";
 import type { DaemonStatus } from "../../lib/types";
 import { Settings } from "../Settings";
 import { AiAssistantsPanel } from "./AiAssistantsPanel";
+import { DeveloperPanel } from "./DeveloperPanel";
 
 type SettingsTab = "general" | "ai" | "developer";
 
@@ -20,6 +21,7 @@ const TABS: Tab[] = [
 interface Props {
   status: DaemonStatus;
   activeCorpusId: string | null;
+  setActiveCorpusId: (id: string | null) => void;
   theme: "system" | "dark" | "light";
   onThemeChange: (t: "system" | "dark" | "light") => void;
   onShowOnboarding: () => void;
@@ -31,12 +33,11 @@ interface Props {
  * Settings surface — top-level destination, organised into tabs.
  *
  * - General: theme, density, default tab, autostart, daemon vitals.
- *   M1 wraps the existing Settings component as-is.
- * - AI assistants: the MCP wizard. M1 shows a stub; M3 ships the real one.
- * - Developer: container for Sessions / Logs / Activity / Bridges /
- *   Query playground that previously lived as top-level tabs and drawers.
- *   M1 shows a placeholder explaining the migration; M4 ports the real
- *   panels in.
+ *   Wraps the existing Settings component as-is.
+ * - AI assistants: the MCP wizard. One row per detected client with
+ *   one-click connect + live verification (see AiAssistantsPanel).
+ * - Developer: container for Sessions / Logs / Explore / Query
+ *   playground that previously lived as top-level tabs and drawers.
  */
 export function SettingsSurface(props: Props) {
   const [tab, setTab] = useState<SettingsTab>("general");
@@ -87,47 +88,15 @@ export function SettingsSurface(props: Props) {
             activeCorpusId={props.activeCorpusId}
           />
         )}
-        {tab === "developer" && <DeveloperPlaceholder />}
+        {tab === "developer" && (
+          <DeveloperPanel
+            status={props.status}
+            activeCorpusId={props.activeCorpusId}
+            setActiveCorpusId={props.setActiveCorpusId}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function DeveloperPlaceholder() {
-  return (
-    <div className="space-y-4">
-      <header className="space-y-1">
-        <h2 className="font-mono text-sm font-bold uppercase tracking-[0.05em] text-text">
-          Developer tools
-        </h2>
-        <p className="font-serif text-sm text-text-muted">
-          Power-user surfaces that used to be top-level tabs. Hidden here so
-          the main UI stays focused on what most users need day to day.
-        </p>
-      </header>
-
-      <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        {[
-          ["Sessions", "Per-agent budgets, dedup hits, compression ratio."],
-          ["Logs", "Live daemon stderr stream."],
-          ["Activity", "Recent ministr_* tool calls + file-change events."],
-          ["Bridges", "Cross-language IPC link explorer."],
-          ["Query playground", "Raw section / symbol / bridge search."],
-        ].map(([title, desc]) => (
-          <li
-            key={title}
-            className="border-2 border-border-soft bg-surface p-3"
-          >
-            <div className="font-mono text-xs font-semibold uppercase tracking-[0.05em] text-text">
-              {title}
-            </div>
-            <p className="font-serif text-mono-sm text-text-muted mt-1">{desc}</p>
-            <p className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim mt-2">
-              Coming in M4
-            </p>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
