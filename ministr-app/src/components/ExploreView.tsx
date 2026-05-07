@@ -132,7 +132,7 @@ function ModePivot({
           >
             <span
               className={cn(
-                "font-mono text-[0.6875rem] uppercase tracking-[0.05em]",
+                "font-mono text-mono-mini uppercase tracking-[0.05em]",
                 active ? "text-accent" : "text-text-dim",
               )}
             >

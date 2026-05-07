@@ -34,11 +34,10 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 border px-2 py-1 text-[0.6875rem] font-mono font-semibold uppercase tracking-[0.05em] leading-tight",
+        "inline-flex items-center gap-1.5 border px-2 py-1 text-mono-mini font-mono font-semibold uppercase tracking-[0.05em] leading-tight rounded-sm",
         variants[variant],
         className,
       )}
-      style={{ borderRadius: "var(--radius-pill)" }}
     >
       {dot && (
         <span

@@ -21,6 +21,7 @@ import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { CorpusChip } from "./ui/corpus-chip";
 import { EmptyState } from "./ui/empty-state";
+import { H1 } from "./ui/heading";
 import { MetricTile } from "./ui/metric-tile";
 import { Progress } from "./ui/progress";
 import { cn } from "../lib/utils";
@@ -176,9 +177,7 @@ export function ProjectList({
       {/* Page title row — quiet */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="font-serif text-2xl font-normal text-text leading-tight ">
-            Projects
-          </h2>
+          <H1>Projects</H1>
           <p className="font-serif text-sm italic text-text-dim mt-1">
             {corpora.length === 0
               ? "None registered."
@@ -282,7 +281,7 @@ export function ProjectList({
                 className={cn(
                   "group cursor-pointer p-4",
                   isSelected &&
-                    "border-accent shadow-[var(--shadow-sm)]",
+                    "border-accent shadow-sm",
                 )}
                 onClick={() => onSelect(corpus.id)}
               >
@@ -331,7 +330,7 @@ export function ProjectList({
                 </div>
 
                 {/* Second line: PATH */}
-                <p className="text-[0.6875rem] text-text-dim font-mono truncate mt-1">
+                <p className="text-mono-mini text-text-dim font-mono truncate mt-1">
                   {corpusRoot(corpus.paths)}
                 </p>
 
@@ -546,7 +545,7 @@ function ModalShell({
     >
       <div
         className={cn(
-          "w-full max-w-md border-2 bg-surface shadow-[6px_6px_0_0_var(--shadow-color)]",
+          "w-full max-w-md border-2 bg-surface shadow-lg",
           tone === "danger" ? "border-danger" : "border-border",
         )}
         onClick={(e) => e.stopPropagation()}
@@ -559,7 +558,7 @@ function ModalShell({
         >
           <span
             className={cn(
-              "font-mono text-[0.6875rem] font-bold uppercase tracking-[0.05em]",
+              "font-mono text-mono-mini font-bold uppercase tracking-[0.05em]",
               tone === "danger" ? "text-danger" : "text-text",
             )}
           >

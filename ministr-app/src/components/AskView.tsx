@@ -514,7 +514,7 @@ function Header({
         </span>
       </div>
       {health && !health.available && (
-        <span className="inline-flex items-center gap-1.5 border border-danger bg-surface px-2 py-1 font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-danger">
+        <span className="inline-flex items-center gap-1.5 border border-danger bg-surface px-2 py-1 font-mono text-mono-mini uppercase tracking-[0.05em] text-danger">
           <Terminal className="h-3 w-3" strokeWidth={2.5} />
           inference unavailable
         </span>
@@ -540,18 +540,18 @@ function SubQuestionStrip({
   return (
     <div className="flex flex-col gap-2 border border-border-soft bg-surface px-3 py-2 shrink-0">
       <div className="flex items-center gap-2">
-        <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
           Plan
         </span>
         {totalCandidates > 0 && (
-          <span className="font-mono text-[0.6875rem] tabular-nums text-text-dim">
+          <span className="font-mono text-mono-mini tabular-nums text-text-dim">
             · {totalCandidates} candidate{totalCandidates === 1 ? "" : "s"}
           </span>
         )}
         <span className="flex-1" />
         {bridgeRelevant && (
           <span
-            className="inline-flex items-center gap-1 border border-border-soft bg-surface-overlay px-1.5 py-0.5 font-mono text-[0.625rem] uppercase tracking-[0.05em] text-text-muted"
+            className="inline-flex items-center gap-1 border border-border-soft bg-surface-overlay px-1.5 py-0.5 font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim"
             title="The query analysis flagged this as involving cross-language boundaries; bridge index was searched."
           >
             bridge
@@ -561,7 +561,7 @@ function SubQuestionStrip({
       <ol className="flex flex-col gap-1">
         {subQuestions.map((sq, i) => (
           <li key={`${i}-${sq}`} className="flex items-start gap-2">
-            <span className="font-mono text-[0.6875rem] font-bold text-accent tabular-nums shrink-0 mt-0.5">
+            <span className="font-mono text-mono-mini font-bold text-accent tabular-nums shrink-0 mt-0.5">
               {i + 1}.
             </span>
             <span className="font-sans text-xs text-text leading-snug">
@@ -572,14 +572,13 @@ function SubQuestionStrip({
       </ol>
       {symbolHints.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="font-mono text-[0.625rem] uppercase tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
             Symbols
           </span>
           {symbolHints.slice(0, 8).map((h) => (
             <span
               key={h}
-              className="inline-flex items-center border border-border-soft bg-surface-overlay px-1.5 py-px font-mono text-[0.6875rem] text-text-muted"
-              style={{ borderRadius: "var(--radius-pill)" }}
+              className="inline-flex items-center border border-border-soft bg-surface-overlay px-1.5 py-px font-mono text-mono-mini text-text-muted rounded-sm"
             >
               {h}
             </span>
@@ -662,8 +661,7 @@ function Omnibar({
           )}
           {loading ? "Asking" : "Ask"}
           <kbd
-            className="ml-1 border border-border-soft bg-surface-overlay px-1 text-[0.6875rem] font-mono text-text-dim hidden sm:inline-flex"
-            style={{ borderRadius: "var(--radius-pill)" }}
+            className="ml-1 border border-border-soft bg-surface-overlay px-1 text-mono-mini font-mono text-text-dim hidden sm:inline-flex rounded-sm"
           >
             ⏎
           </kbd>
@@ -732,7 +730,7 @@ function PhaseRail({
             />
             <span
               className={cn(
-                "font-mono text-[0.6875rem] uppercase tracking-[0.05em] truncate",
+                "font-mono text-mono-mini uppercase tracking-[0.05em] truncate",
                 active ? "text-text" : "text-text-dim",
               )}
             >
@@ -755,7 +753,7 @@ function Starters({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
           Starter questions
         </span>
         <span className="flex-1 h-px bg-border-soft" />
@@ -864,7 +862,7 @@ function LoadingBody({
             className="h-3.5 w-3.5 text-accent animate-spin"
             strokeWidth={2.5}
           />
-          <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
             {label}
           </span>
         </div>
@@ -879,11 +877,11 @@ function LoadingBody({
       {/* Source cards: real once retrieved, ghost otherwise. */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
             Sources
           </span>
           {partialSourceIds.length > 0 && (
-            <span className="font-mono text-[0.6875rem] tabular-nums text-text-dim">
+            <span className="font-mono text-mono-mini tabular-nums text-text-dim">
               ({partialSourceIds.length})
             </span>
           )}
@@ -943,7 +941,7 @@ function ResultBody({
       {/* Answer card */}
       <Card className="space-y-3">
         {/* Meta strip */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-border-soft pb-2 text-[0.6875rem] font-mono uppercase tracking-[0.05em]">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border-soft pb-2 text-mono-mini font-mono uppercase tracking-[0.05em]">
           {entry.cached ? (
             <span className="inline-flex items-center gap-1 border border-accent bg-surface-overlay px-1.5 py-0.5 text-accent">
               <Zap className="h-3 w-3" strokeWidth={2.5} />
@@ -1004,15 +1002,15 @@ function ResultBody({
       {entry.source_ids.length > 0 && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+            <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
               Sources
             </span>
-            <span className="font-mono text-[0.6875rem] tabular-nums text-text-dim">
+            <span className="font-mono text-mono-mini tabular-nums text-text-dim">
               ({entry.source_ids.length})
             </span>
             <span className="flex-1 h-px bg-border-soft" />
             {cited.size > 0 && cited.size < entry.source_ids.length && (
-              <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+              <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
                 {cited.size} cited
               </span>
             )}
@@ -1198,11 +1196,10 @@ function CitationChip({ n, onClick }: { n: number; onClick: () => void }) {
         "inline-flex items-center justify-center align-baseline",
         "border border-accent bg-surface text-accent",
         "px-1 min-w-[1.25rem] h-[1.125rem] -translate-y-[1px]",
-        "font-mono text-[0.6875rem] font-bold tabular-nums leading-none",
+        "font-mono text-mono-mini font-bold tabular-nums leading-none",
         "hover:bg-accent hover:text-[var(--color-accent-fg-on)]",
         "cursor-pointer transition-none",
-      )}
-      style={{ borderRadius: "var(--radius-pill)" }}
+      "rounded-sm")}
     >
       {n}
     </button>
@@ -1269,12 +1266,11 @@ function SourceRow({
         className={cn(
           "inline-flex items-center justify-center shrink-0 mt-0.5",
           "border h-5 min-w-[1.25rem] px-1",
-          "font-mono text-[0.6875rem] font-bold tabular-nums leading-none",
+          "font-mono text-mono-mini font-bold tabular-nums leading-none",
           cited
             ? "border-accent bg-surface text-accent"
             : "border-border-soft bg-surface text-text-dim",
-        )}
-        style={{ borderRadius: "var(--radius-pill)" }}
+        "rounded-sm")}
       >
         {index}
       </span>
@@ -1284,7 +1280,7 @@ function SourceRow({
             {label}
           </span>
           {fileTag && fileTag !== label && (
-            <span className="font-mono text-[0.6875rem] text-text-dim truncate">
+            <span className="font-mono text-mono-mini text-text-dim truncate">
               {fileTag}
             </span>
           )}
@@ -1321,7 +1317,7 @@ function RecentStrip({
     <div className="flex flex-col gap-2 min-h-0">
       <div className="flex items-center gap-2 shrink-0">
         <History className="h-3.5 w-3.5 text-text-dim" strokeWidth={2} />
-        <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
           Recent
         </span>
         <span className="flex-1" />
@@ -1337,7 +1333,7 @@ function RecentStrip({
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5">
         {entries.length === 0 ? (
-          <p className="font-mono text-[0.6875rem] text-text-dim italic px-1">
+          <p className="font-mono text-mono-mini text-text-dim italic px-1">
             Your recent questions will appear here.
           </p>
         ) : (
@@ -1367,7 +1363,7 @@ function RecentStrip({
                     {e.query}
                   </span>
                 </div>
-                <span className="font-mono text-[0.625rem] text-text-dim tabular-nums">
+                <span className="font-mono text-mono-mini text-text-dim tabular-nums">
                   {e.source_ids.length} src · {formatDuration(e.elapsed_ms)}
                 </span>
               </button>

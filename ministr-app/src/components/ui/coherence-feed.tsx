@@ -63,7 +63,7 @@ export function CoherenceFeed({
     return (
       <div
         className={cn(
-          "flex items-center justify-center border-2 border-dotted border-border bg-surface px-4 py-8 text-[0.6875rem] font-mono uppercase tracking-[0.05em] text-text-dim",
+          "flex items-center justify-center border-2 border-dotted border-border bg-surface px-4 py-8 text-mono-mini font-mono uppercase tracking-[0.05em] text-text-dim",
           className,
         )}
       >
@@ -84,7 +84,7 @@ export function CoherenceFeed({
           <li
             key={`${ev.timestamp_ms}-${ev.path}-${ev.kind}`}
             className={cn(
-              "flex items-center gap-2 border-l-2 border-y-2 border-r-2 border-border bg-surface pl-2 pr-2 py-1.5 text-[0.6875rem] transition-none",
+              "flex items-center gap-2 border-l-2 border-y-2 border-r-2 border-border bg-surface pl-2 pr-2 py-1.5 text-mono-mini transition-none",
               KIND_BORDER[ev.kind],
               fresh && "ministr-flash",
             )}
@@ -92,7 +92,7 @@ export function CoherenceFeed({
             <span
               aria-hidden
               className={cn(
-                "inline-flex h-5 w-5 shrink-0 items-center justify-center border border-border-soft font-mono text-[0.75rem] font-bold text-[var(--color-accent-fg-on)]",
+                "inline-flex h-5 w-5 shrink-0 items-center justify-center border border-border-soft font-mono text-xs font-bold text-[var(--color-accent-fg-on)]",
                 KIND_BADGE_BG[ev.kind],
               )}
             >

@@ -40,7 +40,7 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md border border-border-soft bg-surface shadow-[var(--shadow-md)] overflow-hidden"
+        className="w-full max-w-md border border-border-soft bg-surface shadow-md overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-border-soft bg-surface-overlay">
@@ -50,8 +50,7 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
           <button
             onClick={onClose}
             aria-label="Close"
-            className="grid h-6 w-6 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-            style={{ borderRadius: "var(--radius-button)" }}
+            className="grid h-6 w-6 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
           >
             <X className="h-3 w-3" strokeWidth={2}/>
           </button>
@@ -79,8 +78,7 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
                       {item.keys.map((k, i) => (
                         <kbd
                           key={i}
-                          className="border border-border-soft bg-surface-overlay px-1.5 py-0 font-mono text-xs font-semibold text-text min-w-[22px] text-center leading-tight"
-                          style={{ borderRadius: "var(--radius-pill)" }}
+                          className="border border-border-soft bg-surface-overlay px-1.5 py-0 font-mono text-xs font-semibold text-text min-w-[22px] text-center leading-tight rounded-sm"
                         >
                           {k}
                         </kbd>

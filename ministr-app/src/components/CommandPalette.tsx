@@ -324,7 +324,7 @@ export function CommandPalette({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[720px] border border-border-soft bg-surface shadow-[var(--shadow-md)] overflow-hidden"
+        className="w-full max-w-[720px] border border-border-soft bg-surface shadow-md overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 border-b border-border-soft px-4 py-3 bg-surface-overlay">
@@ -340,8 +340,7 @@ export function CommandPalette({
             className="flex-1 bg-transparent text-base font-sans text-text placeholder:text-text-dim outline-none"
           />
           <kbd
-            className="border border-border-soft bg-surface px-1.5 py-0 text-xs font-mono text-text-dim"
-            style={{ borderRadius: "var(--radius-pill)" }}
+            className="border border-border-soft bg-surface px-1.5 py-0 text-xs font-mono text-text-dim rounded-sm"
           >
             Esc
           </kbd>
@@ -404,8 +403,7 @@ export function CommandPalette({
                             {cmd.shortcut.map((k, i) => (
                               <kbd
                                 key={i}
-                                className="border border-border-soft bg-surface px-1 py-0 text-xs font-mono text-text-dim"
-                                style={{ borderRadius: "var(--radius-pill)" }}
+                                className="border border-border-soft bg-surface px-1 py-0 text-xs font-mono text-text-dim rounded-sm"
                               >
                                 {k}
                               </kbd>

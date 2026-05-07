@@ -75,7 +75,7 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 w-[300px] border border-border-soft bg-surface shadow-[var(--shadow-md)]">
+        <div className="absolute top-full left-0 mt-1 z-50 w-[300px] border border-border-soft bg-surface shadow-md">
           <div className="border-b border-border-soft bg-surface-overlay px-3 py-2">
             <span className="font-serif text-base font-bold text-text">
               Daemon
@@ -144,7 +144,7 @@ function Row({
       </span>
       <span
         className={cn(
-          "font-mono text-[0.6875rem] tabular-nums text-text",
+          "font-mono text-mono-mini tabular-nums text-text",
           truncate && "truncate",
         )}
       >

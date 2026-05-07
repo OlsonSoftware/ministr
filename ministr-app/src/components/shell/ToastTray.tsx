@@ -70,7 +70,7 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
     <button
       onClick={onDismiss}
       className={cn(
-        "pointer-events-auto flex items-stretch border border-border-soft bg-surface shadow-[var(--shadow-sm)] cursor-pointer transition-none text-left",
+        "pointer-events-auto flex items-stretch border border-border-soft bg-surface shadow-sm cursor-pointer transition-none text-left",
       )}
     >
       <div className={cn("w-[3px] shrink-0", barClass)} />

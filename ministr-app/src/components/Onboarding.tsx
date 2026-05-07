@@ -8,6 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { H1 } from "./ui/heading";
 import { cn } from "../lib/utils";
 import type { DetectedProject } from "../lib/types";
 
@@ -132,7 +133,7 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
   return (
     <div className="flex h-full items-center justify-center bg-bg p-6">
       <div className="w-full max-w-xl">
-        <div className="border border-border-soft bg-surface shadow-[6px_6px_0_0_var(--shadow-color)]">
+        <div className="border border-border-soft bg-surface shadow-lg">
           <StepIndicator current={step} />
           <div className="p-8">
             {step === "welcome" && (
@@ -194,7 +195,7 @@ function StepIndicator({ current }: { current: Step }) {
               className={cn(
                 "inline-flex items-center gap-1 border border-border-soft px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.05em] transition-none",
                 isCurrent
-                  ? "bg-accent text-[var(--color-accent-fg-on)] shadow-[2px_2px_0_0_var(--shadow-color)]"
+                  ? "bg-accent text-[var(--color-accent-fg-on)] shadow-sm"
                   : isPast
                     ? "bg-surface text-text"
                     : "bg-surface text-text-dim",
@@ -257,8 +258,7 @@ function Welcome({
       <p className="mt-5 text-center font-sans text-xs text-text-dim">
         Press{" "}
         <kbd
-          className="border border-border-soft bg-surface-overlay px-1 py-0 font-mono text-[0.6875rem] text-text-muted"
-          style={{ borderRadius: "var(--radius-pill)" }}
+          className="border border-border-soft bg-surface-overlay px-1 py-0 font-mono text-mono-mini text-text-muted rounded-sm"
         >
           ⌘K
         </kbd>{" "}
@@ -310,9 +310,7 @@ function Detect({
   return (
     <div>
       <div>
-        <h2 className="font-serif text-2xl font-normal text-text leading-tight">
-          Detected projects
-        </h2>
+        <H1>Detected projects</H1>
         <p className="mt-1 font-serif text-sm italic text-text-dim">
           Scanning ~/Code · ~/Projects · ~/Developer · ~/src for .ministr.toml
         </p>
@@ -444,9 +442,7 @@ function Done({
   return (
     <div>
       <div className="text-center">
-        <h2 className="font-serif text-2xl font-normal text-text leading-tight ">
-          Ready
-        </h2>
+        <H1>Ready</H1>
         <p className="mx-auto mt-2 max-w-sm font-sans text-sm text-text-muted">
           {count === 0
             ? "ministr is ready. Add projects anytime from the dashboard or the tray."

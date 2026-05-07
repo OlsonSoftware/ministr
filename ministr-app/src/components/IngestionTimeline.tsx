@@ -165,7 +165,7 @@ function IngestionCard({
       </div>
 
       {isActive && p.current_file && (
-        <div className="flex items-center gap-1.5 text-[0.6875rem] text-text-muted bg-surface-sunken border border-border/60 rounded-md px-2.5 py-1.5 truncate">
+        <div className="flex items-center gap-1.5 text-mono-mini text-text-muted bg-surface-sunken border border-border/60 rounded-md px-2.5 py-1.5 truncate">
           <FileText className="h-3 w-3 shrink-0 text-accent" strokeWidth={2.5}/>
           <span className="truncate font-mono">{p.current_file}</span>
         </div>
@@ -190,7 +190,7 @@ function ProgressRow({
   const pct = total > 0 ? (done / total) * 100 : 0;
   return (
     <div>
-      <div className="flex items-center justify-between text-[0.6875rem] mb-1.5">
+      <div className="flex items-center justify-between text-mono-mini mb-1.5">
         <span className="flex items-center gap-1.5 text-text-muted">
           <Icon className="h-3 w-3" />
           {label}

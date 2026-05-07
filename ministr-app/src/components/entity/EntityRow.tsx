@@ -44,7 +44,7 @@ export function EntityRow({
       )}
     >
       {tag && (
-        <span className="font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-text-dim w-16 shrink-0 mt-1">
+        <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text-dim w-16 shrink-0 mt-1">
           {tag}
         </span>
       )}
@@ -65,7 +65,7 @@ export function EntityRow({
         )}
       </span>
       {meta && (
-        <span className="font-mono text-xs tabular-nums text-text-muted shrink-0 mt-1">
+        <span className="font-mono text-xs tabular-nums text-text-dim shrink-0 mt-1">
           {meta}
         </span>
       )}

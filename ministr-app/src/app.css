@@ -191,6 +191,21 @@ html {
   --color-warning: var(--color-warning);
   --color-danger: var(--color-danger);
 
+  /* Mono micro-label sizes — replace ad-hoc text-[0.5625rem|0.625rem|0.6875rem]
+     callsites. `micro` is the smallest legible label (10px floor); `mini` is
+     the workhorse for compact stat / chip / badge labels. Both clamp on big
+     monitors via the underlying --text-mono-* tokens. */
+  --text-mono-micro: var(--text-mono-xs);
+  --text-mono-mini: var(--text-mono-sm);
+
+  /* Brutalist hard-offset shadows. Re-export the :root-level tokens to
+     Tailwind so `shadow-xs/sm/md/lg` produce the signature look (purple
+     in dark, black in light), instead of Tailwind's default soft drops. */
+  --shadow-xs: var(--shadow-offset-xs) var(--shadow-offset-xs) 0 0 var(--shadow-color);
+  --shadow-sm: var(--shadow-offset-sm) var(--shadow-offset-sm) 0 0 var(--shadow-color);
+  --shadow-md: var(--shadow-offset-md) var(--shadow-offset-md) 0 0 var(--shadow-color);
+  --shadow-lg: var(--shadow-offset-lg) var(--shadow-offset-lg) 0 0 var(--shadow-color);
+
   --font-sans:
     "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;

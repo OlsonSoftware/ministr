@@ -22,14 +22,13 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
     <div
       ref={ref}
       className={cn(
-        "border border-border-soft transition-none",
+        "border border-border-soft transition-none rounded-none",
         "p-4 [html[data-density=compact]_&]:p-2.5",
         sunken ? "bg-surface-sunken" : "bg-surface-raised",
         hover === "lift" && "hover:bg-surface-overlay hover:border-border",
         hover === "accent" && "hover:bg-surface-overlay hover:border-accent",
         className,
       )}
-      style={{ borderRadius: "var(--radius-card)" }}
       {...props}
     />
   );

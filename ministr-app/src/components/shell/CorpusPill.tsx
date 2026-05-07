@@ -105,11 +105,10 @@ export function CorpusPill({ corpora, activeCorpus, onSelect }: Props) {
           "inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-1 font-sans text-sm font-medium cursor-pointer transition-none",
           "hover:bg-surface-overlay hover:border-border",
           open && "bg-surface-overlay border-accent text-text",
-        )}
-        style={{ borderRadius: "var(--radius-button)" }}
+        "rounded-sm")}
       >
         <StatusDot tone={tone} pulse={live ? "live" : "off"} />
-        <span className="text-[0.6875rem] font-mono uppercase tracking-[0.05em] text-text-dim">
+        <span className="text-mono-mini font-mono uppercase tracking-[0.05em] text-text-dim">
           Corpus
         </span>
         <span className="font-mono tabular-nums text-text">
@@ -119,7 +118,7 @@ export function CorpusPill({ corpora, activeCorpus, onSelect }: Props) {
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 w-[360px] border border-border-soft bg-surface shadow-[var(--shadow-md)]">
+        <div className="absolute top-full left-0 mt-1 z-50 w-[360px] border border-border-soft bg-surface shadow-md">
           <div className="flex items-center gap-2 border-b border-border-soft bg-surface-overlay px-3 py-2">
             <span className="font-mono text-base font-bold text-accent">{">"}</span>
             <input
@@ -135,8 +134,7 @@ export function CorpusPill({ corpora, activeCorpus, onSelect }: Props) {
             <button
               onClick={() => setOpen(false)}
               aria-label="Close picker"
-              className="grid h-5 w-5 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-              style={{ borderRadius: "var(--radius-button)" }}
+              className="grid h-5 w-5 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
             >
               <X className="h-2.5 w-2.5" strokeWidth={2} />
             </button>
@@ -174,7 +172,7 @@ export function CorpusPill({ corpora, activeCorpus, onSelect }: Props) {
                       <div className="font-mono text-sm font-semibold truncate">
                         {corpusLabel(c)}
                         {isCurrent && (
-                          <span className="ml-2 font-mono text-[0.625rem] uppercase tracking-[0.05em] text-text-dim">
+                          <span className="ml-2 font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
                             active
                           </span>
                         )}

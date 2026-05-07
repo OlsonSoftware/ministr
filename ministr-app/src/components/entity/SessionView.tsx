@@ -12,6 +12,7 @@ import { formatTokens } from "../../lib/format";
 import { pressureTone, toneTextClass } from "../../lib/status";
 import { cn } from "../../lib/utils";
 import { relative } from "../../lib/time";
+import { MetricTile } from "../ui/metric-tile";
 import type {
   ActivityEvent,
   CorpusInfo,
@@ -87,7 +88,7 @@ export function SessionView({ entity }: Props) {
             {session && (
               <span
                 className={cn(
-                  "font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em]",
+                  "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
                   toneTextClass(tone),
                 )}
               >
@@ -97,20 +98,22 @@ export function SessionView({ entity }: Props) {
           </div>
           {session?.client_name && (
             <p className="font-sans text-xs text-text-dim">
-              <span className="font-mono uppercase tracking-[0.05em] text-[0.6875rem]">Client</span>{" "}
+              <span className="font-mono uppercase tracking-[0.05em] text-mono-mini">Client</span>{" "}
               · {session.client_name}
             </p>
           )}
         </div>
         {session && (
-          <div className="grid grid-cols-4 border-t border-border-soft">
-            <Stat label="Turn" value={session.current_turn.toString()} />
-            <Stat label="Budget" value={`${utilPct}%`} />
-            <Stat
+          <div className="grid grid-cols-4 border-t border-border-soft divide-x divide-border-soft">
+            <MetricTile variant="cell" label="Turn" value={session.current_turn.toString()} />
+            <MetricTile variant="cell" label="Budget" value={`${utilPct}%`} />
+            <MetricTile
+              variant="cell"
               label="Tokens"
               value={formatTokens(session.tokens_used)}
             />
-            <Stat
+            <MetricTile
+              variant="cell"
               label="Saved"
               value={formatTokens(session.total_tokens_saved)}
               tone="success"
@@ -142,10 +145,10 @@ export function SessionView({ entity }: Props) {
               </span>
             </BudgetRing>
             <div className="space-y-1 font-sans text-sm text-text-muted">
-              <p><span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">Used</span> · {formatTokens(session.tokens_used)}</p>
-              <p><span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">Free</span> · {formatTokens(session.tokens_remaining)}</p>
-              <p className="text-success"><span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] opacity-70">Saved</span> · {formatTokens(session.total_tokens_saved)}</p>
-              <p className="text-accent"><span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] opacity-70">Dedup hits</span> · {session.dedup_hits}</p>
+              <p><span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">Used</span> · {formatTokens(session.tokens_used)}</p>
+              <p><span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">Free</span> · {formatTokens(session.tokens_remaining)}</p>
+              <p className="text-success"><span className="font-mono text-mono-mini uppercase tracking-[0.05em] opacity-70">Saved</span> · {formatTokens(session.total_tokens_saved)}</p>
+              <p className="text-accent"><span className="font-mono text-mono-mini uppercase tracking-[0.05em] opacity-70">Dedup hits</span> · {session.dedup_hits}</p>
             </div>
           </div>
         </EntitySection>
@@ -198,30 +201,3 @@ export function SessionView({ entity }: Props) {
   );
 }
 
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "success" | "accent";
-}) {
-  return (
-    <div className="border-r border-border-soft last:border-r-0 px-3 py-2">
-      <p className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
-        {label}
-      </p>
-      <p
-        className={cn(
-          "font-mono text-base font-semibold tabular-nums mt-0.5",
-          tone === "success" && "text-success",
-          tone === "accent" && "text-accent",
-          !tone && "text-text",
-        )}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}

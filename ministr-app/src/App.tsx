@@ -471,15 +471,13 @@ function TopBar({
         <button
           onClick={onPaletteOpen}
           title="Command palette (⌘K)"
-          className="inline-flex items-center gap-2 border border-border-soft bg-surface px-2.5 py-1 text-sm font-sans font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-          style={{ borderRadius: "var(--radius-button)" }}
+          className="inline-flex items-center gap-2 border border-border-soft bg-surface px-2.5 py-1 text-sm font-sans font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
         >
           <Search className="h-3.5 w-3.5" strokeWidth={2} />
           {/* Hide the "Search" text below md so the button collapses to icon + ⌘K. */}
           <span className="hidden md:inline">Search</span>
           <kbd
-            className="border border-border-soft bg-surface-overlay px-1 text-[0.6875rem] font-mono text-text-dim"
-            style={{ borderRadius: "var(--radius-pill)" }}
+            className="border border-border-soft bg-surface-overlay px-1 text-mono-mini font-mono text-text-dim rounded-sm"
           >
             ⌘K
           </kbd>
@@ -487,8 +485,7 @@ function TopBar({
         <button
           onClick={onShortcutsOpen}
           title="Shortcuts (?)"
-          className="inline-flex h-7 items-center justify-center border border-border-soft bg-surface px-2 text-sm font-serif font-normal text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-          style={{ borderRadius: "var(--radius-button)" }}
+          className="inline-flex h-7 items-center justify-center border border-border-soft bg-surface px-2 text-sm font-serif font-normal text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
         >
           ?
         </button>

@@ -6,6 +6,7 @@ import { corpusRelative } from "../lib/path";
 import { useEntityPanel } from "../hooks/useEntityPanel";
 import type { DaemonStatus, FileInfo } from "../lib/types";
 import type { ExploreMode } from "./ExploreView";
+import { H1 } from "./ui/heading";
 
 interface Props {
   status: DaemonStatus;
@@ -159,10 +160,10 @@ export function CorpusTreemap({
       {/* Header strip — title + corpus summary */}
       <header className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="font-serif text-2xl font-normal text-text leading-tight flex items-center gap-2">
+          <H1 className="flex items-center gap-2">
             <TreePine className="h-5 w-5 text-text-dim" strokeWidth={2} />
             Structure
-          </h2>
+          </H1>
           <p className="font-serif text-sm italic text-text-dim mt-1">
             File size proportional to section count · click to drill in.
           </p>
@@ -174,7 +175,7 @@ export function CorpusTreemap({
 
       {/* Controls row: group-by toggle + min-sections threshold */}
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
           Group
         </span>
         <div className="flex items-stretch gap-0">
@@ -202,7 +203,7 @@ export function CorpusTreemap({
 
         <span className="w-px h-5 bg-border-soft" />
 
-        <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
           Min sections
         </span>
         <input
@@ -241,11 +242,11 @@ export function CorpusTreemap({
           ) : (
             <>
               {hoveredFile && (
-                <div className="absolute top-2 right-2 z-20 max-w-[340px] border border-border-soft bg-surface px-2.5 py-1.5 shadow-[var(--shadow-sm)]">
+                <div className="absolute top-2 right-2 z-20 max-w-[340px] border border-border-soft bg-surface px-2.5 py-1.5 shadow-sm">
                   <p className="font-mono text-xs text-text break-all">
                     {corpusRelative(hoveredFile.path, corpus)}
                   </p>
-                  <p className="font-mono text-[0.6875rem] tabular-nums text-text-dim mt-0.5">
+                  <p className="font-mono text-mono-mini tabular-nums text-text-dim mt-0.5">
                     {hoveredFile.section_count} sections ·{" "}
                     {hoveredFile.content_hash.slice(0, 12)}
                   </p>
@@ -331,7 +332,7 @@ export function CorpusTreemap({
                     bucketBg(bucket),
                   )}
                 />
-                <span className="font-mono text-[0.6875rem] truncate flex-1">
+                <span className="font-mono text-mono-mini truncate flex-1">
                   {corpusRelative(f.path, corpus)}
                 </span>
                 <div className="w-20 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">

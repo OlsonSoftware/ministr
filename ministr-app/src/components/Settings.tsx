@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { H1 } from "./ui/heading";
 import { Toggle } from "./ui/toggle";
 import { Zone } from "./ui/zone";
 import { LogViewer } from "./LogViewer";
@@ -177,9 +178,7 @@ export function Settings({
   return (
     <div className="space-y-4 max-w-2xl mx-auto">
       <header>
-        <h2 className="font-serif text-2xl font-normal text-text leading-tight ">
-          Settings
-        </h2>
+        <H1>Settings</H1>
         <p className="font-sans text-xs tracking-[0.05em] text-text-dim mt-1">
           Preferences · system · maintenance
         </p>
@@ -227,8 +226,7 @@ export function Settings({
           <select
             value={defaultTab}
             onChange={(e) => setDefaultTab(e.target.value as DefaultTab)}
-            className="h-9 border border-border-soft bg-surface px-2 text-sm font-sans font-medium text-text cursor-pointer focus:outline-none focus:border-accent transition-none"
-            style={{ borderRadius: "var(--radius-input)" }}
+            className="h-9 border border-border-soft bg-surface px-2 text-sm font-sans font-medium text-text cursor-pointer focus:outline-none focus:border-accent transition-none rounded-sm"
           >
             {DEFAULT_TAB_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -529,7 +527,7 @@ function MetaRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-3 border-b border-border-soft last:border-b-0 px-3 py-1.5">
-      <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim shrink-0">
+      <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
         {label}
       </span>
       <span
@@ -604,7 +602,7 @@ function TypedConfirmModal({
     >
       <div
         className={cn(
-          "w-full max-w-md border-2 bg-surface shadow-[6px_6px_0_0_var(--shadow-color)]",
+          "w-full max-w-md border-2 bg-surface shadow-lg",
           tone === "danger" ? "border-danger" : "border-border",
         )}
         onClick={(e) => e.stopPropagation()}
@@ -615,7 +613,7 @@ function TypedConfirmModal({
             tone === "danger" ? "border-danger" : "border-border",
           )}
         >
-          <span className="inline-flex items-center gap-2 font-mono text-[0.6875rem] font-bold uppercase tracking-[0.05em] text-danger">
+          <span className="inline-flex items-center gap-2 font-mono text-mono-mini font-bold uppercase tracking-[0.05em] text-danger">
             <AlertTriangle className="h-3 w-3" strokeWidth={2.5} />
             {title}
           </span>

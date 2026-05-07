@@ -20,10 +20,10 @@ export function Toggle({ enabled, onToggle, ariaLabel }: ToggleProps) {
       aria-checked={!!enabled}
       aria-label={ariaLabel}
       className={cn(
-        "inline-flex h-7 min-w-[60px] items-center justify-center border-2 border-border px-2 text-[0.6875rem] font-mono font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none",
+        "inline-flex h-7 min-w-[60px] items-center justify-center border-2 border-border px-2 text-mono-mini font-mono font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         enabled
-          ? "bg-accent text-[var(--color-accent-fg-on)] shadow-[2px_2px_0_0_var(--shadow-color)]"
+          ? "bg-accent text-[var(--color-accent-fg-on)] shadow-sm"
           : "bg-surface text-text-muted",
         enabled === null && "opacity-50 cursor-wait",
       )}

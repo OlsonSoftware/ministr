@@ -165,14 +165,14 @@ export function SymbolView({ entity }: Props) {
       <EntitySection chapter={1} title="Overview">
         <div className="px-3 py-3 space-y-1.5">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-text-dim">
+            <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text-dim">
               {symbol.kind}
             </span>
             <span className="font-mono text-base font-bold text-text">
               {symbol.name}
             </span>
             {symbol.visibility && (
-              <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+              <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
                 {symbol.visibility}
               </span>
             )}
@@ -241,12 +241,11 @@ export function SymbolView({ entity }: Props) {
                     key={k}
                     onClick={() => toggleRefKind(k)}
                     className={cn(
-                      "inline-flex items-center gap-1.5 border px-2 py-0.5 font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none",
+                      "inline-flex items-center gap-1.5 border px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none",
                       active
                         ? "border-accent bg-surface-overlay text-text"
                         : "border-border-soft bg-surface text-text-muted hover:border-border hover:text-text",
-                    )}
-                    style={{ borderRadius: "var(--radius-pill)" }}
+                    "rounded-sm")}
                   >
                     {REF_KIND_LABELS[k] ?? k.toUpperCase()}
                     <span className="opacity-70 tabular-nums">{c}</span>

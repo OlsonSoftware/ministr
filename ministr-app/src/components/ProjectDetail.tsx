@@ -16,6 +16,7 @@ import {
 import type { CorpusInfo, DaemonStatus } from "../lib/types";
 import { cn } from "../lib/utils";
 import { Zone } from "./ui/zone";
+import { MetricTile } from "./ui/metric-tile";
 import { CorpusTreemap } from "./CorpusTreemap";
 import type { ExploreMode } from "./ExploreView";
 
@@ -64,14 +65,30 @@ export function ProjectDetail({
     <div className="space-y-4">
       {/* STATS */}
       <Zone title="STATS">
-        <div className="grid grid-cols-2 gap-0">
-          <Stat icon={FileText} label="FILES" value={corpus.files_indexed} />
-          <Stat icon={Layers} label="SECTIONS" value={corpus.sections_count} />
-          <Stat icon={Code2} label="SYMBOLS" value={corpus.symbols_count ?? 0} />
-          <Stat
+        <div className="grid grid-cols-2 divide-x divide-y divide-border-soft">
+          <MetricTile
+            variant="cell"
+            icon={FileText}
+            label="FILES"
+            value={corpus.files_indexed.toLocaleString()}
+          />
+          <MetricTile
+            variant="cell"
+            icon={Layers}
+            label="SECTIONS"
+            value={corpus.sections_count.toLocaleString()}
+          />
+          <MetricTile
+            variant="cell"
+            icon={Code2}
+            label="SYMBOLS"
+            value={(corpus.symbols_count ?? 0).toLocaleString()}
+          />
+          <MetricTile
+            variant="cell"
             icon={Box}
             label="VECTORS"
-            value={corpus.embeddings_count}
+            value={corpus.embeddings_count.toLocaleString()}
           />
         </div>
 
@@ -102,7 +119,7 @@ export function ProjectDetail({
             <p className="font-mono text-xs font-bold tracking-[0.05em] mb-1">
               ERROR
             </p>
-            <p className="font-mono text-[0.6875rem] leading-relaxed break-words">
+            <p className="font-mono text-mono-mini leading-relaxed break-words">
               {error}
             </p>
           </div>
@@ -141,7 +158,7 @@ export function ProjectDetail({
             {corpus.paths.map((path) => (
               <li
                 key={path}
-                className="flex items-start gap-2 font-mono text-[0.6875rem] text-text break-all"
+                className="flex items-start gap-2 font-mono text-mono-mini text-text break-all"
                 title={path}
               >
                 <span className="text-text-dim shrink-0 mt-0.5">·</span>
@@ -214,32 +231,6 @@ export function ProjectDetail({
   );
 }
 
-function Stat({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
-  label: string;
-  value: number;
-}) {
-  return (
-    <div className="border-r border-b border-border-soft [&:nth-child(2n)]:border-r-0 [&:nth-last-child(-n+2)]:border-b-0 px-3 py-2.5 flex items-center gap-3 min-w-0">
-      <div className="grid h-7 w-7 place-items-center border border-border-soft bg-surface-overlay text-text shrink-0">
-        <Icon className="h-3.5 w-3.5" strokeWidth={2.5} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="font-mono text-xs font-bold tracking-[0.05em] text-text-dim">
-          {label}
-        </p>
-        <p className="font-mono text-base font-bold tabular-nums text-text">
-          {value.toLocaleString()}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function Row({
   label,
   value,
@@ -257,7 +248,7 @@ function Row({
       <span
         className={cn(
           "text-text text-right truncate",
-          mono ? "font-mono text-[0.6875rem] tabular-nums" : "text-xs",
+          mono ? "font-mono text-mono-mini tabular-nums" : "text-xs",
         )}
         title={typeof value === "string" ? value : undefined}
       >

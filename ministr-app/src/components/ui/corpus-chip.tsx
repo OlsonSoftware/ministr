@@ -32,7 +32,7 @@ export function CorpusChip({
         "group relative inline-flex items-center gap-2 border-2 px-3 py-1.5 text-xs font-medium cursor-pointer shrink-0 transition-none",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         selected
-          ? "border-border bg-accent text-[var(--color-accent-fg-on)] shadow-[2px_2px_0_0_var(--shadow-color)]"
+          ? "border-border bg-accent text-[var(--color-accent-fg-on)] shadow-sm"
           : "border-border bg-surface text-text hover:bg-surface-overlay hover:text-text",
         className,
       )}

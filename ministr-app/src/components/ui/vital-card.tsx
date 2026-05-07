@@ -33,7 +33,7 @@ export function VitalCard({
         <div>
           <h3 className={labelSmallCap}>{title}</h3>
           {subtitle && (
-            <p className="text-[0.6875rem] text-text-dim mt-0.5 font-mono">{subtitle}</p>
+            <p className="text-mono-mini text-text-dim mt-0.5 font-mono">{subtitle}</p>
           )}
         </div>
         {right}

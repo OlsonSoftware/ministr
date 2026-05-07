@@ -11,6 +11,7 @@ import {
   ScrollText,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { H1 } from "./ui/heading";
 import { cn } from "../lib/utils";
 import { useToast } from "./shell/ToastTray";
 
@@ -237,9 +238,7 @@ export function LogViewer() {
       {/* Header */}
       <header className="flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div>
-          <h2 className="font-serif text-2xl font-normal text-text leading-tight ">
-            Logs
-          </h2>
+          <H1>Logs</H1>
           <p className="font-sans text-xs tracking-[0.05em] text-text-dim mt-1">
             Daemon tail
           </p>
@@ -358,7 +357,7 @@ export function LogViewer() {
             className={cn(
               "inline-flex items-center gap-1.5 border-2 border-border px-2 py-1 font-mono text-xs font-bold uppercase tracking-[0.05em] cursor-pointer transition-none",
               paused
-                ? "bg-warning text-[var(--color-accent-fg-on)] shadow-[2px_2px_0_0_var(--shadow-color)]"
+                ? "bg-warning text-[var(--color-accent-fg-on)] shadow-sm"
                 : "bg-surface text-text hover:bg-surface-overlay",
             )}
             title={paused ? "Resume feed" : "Pause feed"}
@@ -378,7 +377,7 @@ export function LogViewer() {
       {/* Log body */}
       <div
         ref={containerRef}
-        className="relative flex-1 overflow-y-auto border border-border-soft bg-surface-sunken font-mono text-[0.6875rem] leading-relaxed"
+        className="relative flex-1 overflow-y-auto border border-border-soft bg-surface-sunken font-mono text-mono-mini leading-relaxed"
       >
         {noLogFile ? (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-10">
@@ -422,7 +421,7 @@ export function LogViewer() {
         {showJump && (
           <button
             onClick={jumpToBottom}
-            className="sticky bottom-3 left-auto right-3 ml-auto block border-2 border-border bg-accent text-[var(--color-accent-fg-on)] shadow-[2px_2px_0_0_var(--shadow-color)] px-2 py-1 font-mono text-xs font-bold uppercase tracking-[0.05em] cursor-pointer transition-none"
+            className="sticky bottom-3 left-auto right-3 ml-auto block border-2 border-border bg-accent text-[var(--color-accent-fg-on)] shadow-sm px-2 py-1 font-mono text-xs font-bold uppercase tracking-[0.05em] cursor-pointer transition-none"
           >
             ↓ {newLineCount} NEW · CLICK TO JUMP
           </button>
@@ -502,7 +501,7 @@ function LogRow({
           onCopy();
         }}
         title="Copy line"
-        className="opacity-0 group-hover:opacity-100 shrink-0 border-2 border-border bg-surface text-text px-1 py-0 font-mono text-[0.5625rem] font-bold uppercase tracking-[0.05em] cursor-pointer transition-none hover:bg-surface-overlay hover:text-text"
+        className="opacity-0 group-hover:opacity-100 shrink-0 border-2 border-border bg-surface text-text px-1 py-0 font-mono text-mono-micro font-bold uppercase tracking-[0.05em] cursor-pointer transition-none hover:bg-surface-overlay hover:text-text"
       >
         COPY
       </button>

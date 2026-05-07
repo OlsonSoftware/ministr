@@ -4,6 +4,8 @@ import { AlertTriangle, ChevronLeft, ChevronRight, Filter, Users } from "lucide-
 import { Button } from "./ui/button";
 import { useEntityPanel } from "../hooks/useEntityPanel";
 import { EmptyState } from "./ui/empty-state";
+import { FilterPill } from "./ui/filter-pill";
+import { H1 } from "./ui/heading";
 import { StatusDot } from "./ui/status-dot";
 import { TurnBlock } from "./ui/turn-block";
 import { ActivityFeed } from "./ui/activity-feed";
@@ -257,7 +259,7 @@ export function SessionDashboard({ status }: Props) {
               <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
             </span>
             <span className="flex flex-col items-start min-w-0 flex-1 text-left">
-              <span className="font-sans text-[0.6875rem] font-bold tracking-[0.05em] text-danger">
+              <span className="font-sans text-mono-mini font-bold tracking-[0.05em] text-danger">
                 Critical · 1 session over budget
               </span>
               <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim truncate">
@@ -274,17 +276,14 @@ export function SessionDashboard({ status }: Props) {
         {/* Header */}
         <header className="flex items-center justify-between gap-4 shrink-0">
           <div>
-            <h1 className="font-serif text-2xl font-normal text-text leading-tight ">
-              Sessions
-            </h1>
+            <H1>Sessions</H1>
             <p className="font-serif text-sm italic text-text-dim mt-1">
               Live MCP agents · cache observability
             </p>
           </div>
           {vitals.total > 0 && (
             <span
-              className="inline-flex items-center gap-2 border border-success bg-surface px-2 py-0.5 font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-success"
-              style={{ borderRadius: "var(--radius-pill)" }}
+              className="inline-flex items-center gap-2 border border-success bg-surface px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-success rounded-sm"
             >
               <StatusDot tone="success" pulse="live" />
               {vitals.total} live
@@ -355,24 +354,31 @@ export function SessionDashboard({ status }: Props) {
             className="h-7 flex-1 max-w-xs border border-border-soft bg-surface px-2 text-sm font-sans text-text placeholder:text-text-dim focus:outline-none focus:border-accent transition-none"
           />
           <FilterPill
+            tone="sans"
             active={pressureFilter === "all"}
             onClick={() => setPressureFilter("all")}
           >
             All
           </FilterPill>
           <FilterPill
+            tone="sans"
             active={pressureFilter === "elevated"}
             onClick={() => setPressureFilter("elevated")}
           >
             Elevated+
           </FilterPill>
           <FilterPill
+            tone="sans"
             active={pressureFilter === "critical"}
             onClick={() => setPressureFilter("critical")}
           >
             Critical
           </FilterPill>
-          <FilterPill active={compact} onClick={() => setCompact((v) => !v)}>
+          <FilterPill
+            tone="sans"
+            active={compact}
+            onClick={() => setCompact((v) => !v)}
+          >
             Compact
           </FilterPill>
           <span className="font-mono text-xs tabular-nums text-text-dim ml-auto">
@@ -504,8 +510,7 @@ export function SessionDashboard({ status }: Props) {
                 onClick={() => setDrawerOpen(false)}
                 aria-label="Collapse drawer"
                 title="Collapse drawer"
-                className="grid h-5 w-5 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-                style={{ borderRadius: "var(--radius-button)" }}
+                className="grid h-5 w-5 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
               >
                 <ChevronRight className="h-2.5 w-2.5" strokeWidth={2} />
               </button>
@@ -596,7 +601,7 @@ function CompactSessionRow({
       )}
     >
       <StatusDot tone={tone} pulse={fresh ? "live" : "off"} size="md" />
-      <span className="font-mono text-[0.6875rem] text-text-muted shrink-0 w-20 truncate">
+      <span className="font-mono text-mono-mini text-text-dim shrink-0 w-20 truncate">
         {sessionShort}
       </span>
       <span className="font-mono text-xs text-text-dim shrink-0">
@@ -646,9 +651,7 @@ function SessionsEmpty() {
       <div className="grid h-12 w-12 mx-auto place-items-center border border-border-soft bg-surface-overlay text-text mb-4">
         <Users className="h-5 w-5" strokeWidth={2.5} />
       </div>
-      <h3 className="font-serif text-2xl font-normal text-text leading-tight">
-        No active sessions
-      </h3>
+      <H1>No active sessions</H1>
       <p className="font-serif text-base italic text-text-dim mt-2 max-w-md mx-auto">
         Point Claude Code, Cursor, or any MCP client at the daemon — sessions
         appear here live with budget, pressure, and dedup metrics.
@@ -685,7 +688,7 @@ function VStat({
 }) {
   return (
     <div className="flex items-center gap-2 px-3 py-1 border-r border-border-soft last:border-r-0 min-w-0">
-      <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim shrink-0">
+      <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
         {label}
       </span>
       <span
@@ -700,27 +703,3 @@ function VStat({
   );
 }
 
-function FilterPill({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "border px-2 py-0.5 text-sm font-sans font-medium cursor-pointer transition-none",
-        active
-          ? "border-accent bg-surface-overlay text-text"
-          : "border-border-soft bg-surface text-text-muted hover:border-border hover:text-text",
-      )}
-      style={{ borderRadius: "var(--radius-pill)" }}
-    >
-      {children}
-    </button>
-  );
-}

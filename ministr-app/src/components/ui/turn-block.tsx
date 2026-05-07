@@ -36,7 +36,7 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
       className={cn(
         "group relative border border-border-soft bg-surface p-3 transition-none",
         onClick &&
-          "cursor-pointer hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-[4px_4px_0_0_var(--shadow-color)]",
+          "cursor-pointer hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-md",
         fresh && "ministr-flash",
         className,
       )}
@@ -44,11 +44,11 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
       {/* Header row: session glyph + id + turn + pressure */}
       <div className="flex items-center gap-2 mb-2">
         <StatusDot tone={tone} pulse={fresh ? "live" : "off"} size="md" />
-        <span className="font-mono text-[0.6875rem] text-text-muted truncate">
+        <span className="font-mono text-mono-mini text-text-muted truncate">
           {sessionShort}
         </span>
-        <span className="font-mono text-[0.6875rem] text-text-dim">·</span>
-        <span className="font-mono text-[0.6875rem] text-text truncate">
+        <span className="font-mono text-mono-mini text-text-dim">·</span>
+        <span className="font-mono text-mono-mini text-text truncate">
           turn {session.current_turn}
         </span>
         {session.parent_session_id && (
@@ -66,13 +66,13 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
           </span>
         )}
         <div className="flex-1" />
-        <span className={cn("font-mono text-[0.6875rem] font-bold uppercase tracking-[0.05em]", pressureColor)}>
+        <span className={cn("font-mono text-mono-mini font-bold uppercase tracking-[0.05em]", pressureColor)}>
           {session.pressure_level}
         </span>
       </div>
 
       {/* Metrics row */}
-      <div className="grid grid-cols-4 gap-2 text-[0.6875rem]">
+      <div className="grid grid-cols-4 gap-2 text-mono-mini">
         <MetricTile variant="compact" icon={Gauge} value={`${utilPct}%`} label="budget" />
         <MetricTile variant="compact" icon={Zap} value={formatTokens(session.tokens_used)} label="tokens" />
         <MetricTile

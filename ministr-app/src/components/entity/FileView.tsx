@@ -8,6 +8,7 @@ import {
   EntitySectionLoading,
 } from "./EntitySection";
 import { cn } from "../../lib/utils";
+import { MetricTile } from "../ui/metric-tile";
 import type {
   BridgeLink,
   CoherenceEvent,
@@ -123,13 +124,22 @@ export function FileView({ entity }: Props) {
             {path}
           </p>
         </div>
-        <div className="grid grid-cols-3 border-t border-border-soft">
-          <Stat
+        <div className="grid grid-cols-3 border-t border-border-soft divide-x divide-border-soft">
+          <MetricTile
+            variant="cell"
             label="Sections"
             value={(meta?.section_count ?? 0).toLocaleString()}
           />
-          <Stat label="Symbols" value={(symbols?.length ?? 0).toString()} />
-          <Stat label="Bridges" value={(bridges?.length ?? 0).toString()} />
+          <MetricTile
+            variant="cell"
+            label="Symbols"
+            value={(symbols?.length ?? 0).toString()}
+          />
+          <MetricTile
+            variant="cell"
+            label="Bridges"
+            value={(bridges?.length ?? 0).toString()}
+          />
         </div>
       </EntitySection>
 
@@ -157,12 +167,11 @@ export function FileView({ entity }: Props) {
                     key={k}
                     onClick={() => toggleKind(k)}
                     className={cn(
-                      "inline-flex items-center gap-1.5 border px-2 py-0.5 font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none",
+                      "inline-flex items-center gap-1.5 border px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none rounded-sm",
                       active
                         ? "border-accent bg-surface-overlay text-text"
                         : "border-border-soft bg-surface text-text-muted hover:border-border hover:text-text",
                     )}
-                    style={{ borderRadius: "var(--radius-pill)" }}
                   >
                     {k.toUpperCase()}
                     <span className="opacity-70 tabular-nums">
@@ -242,15 +251,3 @@ export function FileView({ entity }: Props) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border-r border-border-soft last:border-r-0 px-3 py-2">
-      <p className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
-        {label}
-      </p>
-      <p className="font-mono text-base font-semibold tabular-nums text-text mt-0.5">
-        {value}
-      </p>
-    </div>
-  );
-}

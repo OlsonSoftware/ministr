@@ -2,7 +2,7 @@ import type React from "react";
 import { type Tone, toneTextClass } from "../../lib/status";
 import { cn } from "../../lib/utils";
 
-type MetricVariant = "tile" | "inline" | "compact";
+type MetricVariant = "tile" | "inline" | "compact" | "cell";
 
 interface MetricTileProps {
   /** Optional leading icon. */
@@ -53,9 +53,54 @@ export function MetricTile({
           {Icon && <Icon className="h-3 w-3" strokeWidth={2.5} />}
           <span>{value}</span>
         </div>
-        <span className="text-[0.5625rem] font-mono tracking-[0.05em] text-text-dim mt-0.5">
+        <span className="text-mono-micro font-mono tracking-[0.05em] text-text-dim mt-0.5">
           {label}
         </span>
+      </div>
+    );
+  }
+
+  if (variant === "cell") {
+    // Borderless stat cell. Pair with a grid container that uses
+    // `divide-x divide-y divide-border-soft` to draw the dividing
+    // lines automatically — `divide-*` skips the outer edges, which
+    // matches the data-grid look every entity-view "Stats" section
+    // wants without per-cell pseudo-selector hacks.
+    if (Icon) {
+      return (
+        <div className={cn("flex items-center gap-3 px-3 py-2.5 min-w-0", className)}>
+          <div className="grid h-7 w-7 place-items-center border border-border-soft bg-surface-overlay text-text shrink-0">
+            <Icon className="h-3.5 w-3.5" strokeWidth={2.5} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+              {label}
+            </p>
+            <p
+              className={cn(
+                "font-mono text-base font-semibold tabular-nums truncate",
+                tone ? toneTextClass(tone) : "text-text",
+              )}
+            >
+              {value}
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className={cn("px-3 py-2", className)}>
+        <p className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+          {label}
+        </p>
+        <p
+          className={cn(
+            "font-mono text-base font-semibold tabular-nums mt-0.5 truncate",
+            tone ? toneTextClass(tone) : "text-text",
+          )}
+        >
+          {value}
+        </p>
       </div>
     );
   }

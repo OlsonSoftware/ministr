@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangle, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
+import { FilterPill } from "./ui/filter-pill";
 import { cn } from "../lib/utils";
 import { relative } from "../lib/time";
 import { corpusRelative } from "../lib/path";
@@ -319,7 +320,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
         {/* History pills — visible only on focus and only when input is empty. */}
         {inputFocused && !query.trim() && history.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim shrink-0">
+            <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
               Recent
             </span>
             {history.map((h, i) => (
@@ -329,10 +330,9 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
                   setQuery(h);
                   submit(h);
                 }}
-                className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-                style={{ borderRadius: "var(--radius-pill)" }}
+                className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
               >
-                <span className="font-mono text-[0.6875rem] text-text-dim tabular-nums">{i + 1}</span>
+                <span className="font-mono text-mono-mini text-text-dim tabular-nums">{i + 1}</span>
                 <span className="font-mono">{h}</span>
               </button>
             ))}
@@ -341,15 +341,14 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
 
         {/* Quick probes — always visible. Click prefills + auto-runs. */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim shrink-0">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
             Probes
           </span>
           {probes.map((p) => (
             <button
               key={p}
               onClick={() => applyProbe(p)}
-              className="border border-border-soft bg-surface px-2 py-0.5 font-mono text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-              style={{ borderRadius: "var(--radius-pill)" }}
+              className="border border-border-soft bg-surface px-2 py-0.5 font-mono text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
             >
               {p}
             </button>
@@ -620,7 +619,7 @@ function BlendedResults({
                 className="w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-none border-b border-border-soft last:border-b-0 hover:bg-surface-overlay hover:text-text items-center"
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-[0.5625rem] uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.05em] opacity-70 shrink-0">
                     {b.export_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
@@ -631,7 +630,7 @@ function BlendedResults({
                   {b.kind}
                 </span>
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-[0.5625rem] uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.05em] opacity-70 shrink-0">
                     {b.import_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
@@ -753,7 +752,7 @@ function SymbolKindDashboard({
                 style={{ width: `${pct}%` }}
               />
             </div>
-            <span className="font-mono text-[0.5625rem] tabular-nums text-text-dim mt-0.5">
+            <span className="font-mono text-mono-micro tabular-nums text-text-dim mt-0.5">
               {pct.toFixed(1)}%
             </span>
           </div>
@@ -815,7 +814,7 @@ function ConfidenceRibbonTile({
                   style={{ height: `${pct}%` }}
                 />
               </div>
-              <span className="font-mono text-[0.5625rem] tracking-[0.05em] text-text-dim">
+              <span className="font-mono text-mono-micro tracking-[0.05em] text-text-dim">
                 {labels[i]}
               </span>
             </div>
@@ -1112,7 +1111,7 @@ function SymbolsResults({
                   {previewed.file_path}
                 </div>
                 {previewed.doc_comment && (
-                  <div className="border-l-2 border-accent bg-surface-overlay px-2 py-1.5 font-mono text-[0.6875rem] text-text-muted whitespace-pre-wrap">
+                  <div className="border-l-2 border-accent bg-surface-overlay px-2 py-1.5 font-mono text-mono-mini text-text-muted whitespace-pre-wrap">
                     {previewed.doc_comment}
                   </div>
                 )}
@@ -1228,7 +1227,7 @@ function BridgeResults({
                 )}
                 style={{ width: `max(7%, ${pct}%)` }}
               >
-                <span className="font-mono text-[0.5625rem] font-bold uppercase tracking-[0.05em] opacity-70 truncate w-full">
+                <span className="font-mono text-mono-micro font-bold uppercase tracking-[0.05em] opacity-70 truncate w-full">
                   {kind}
                 </span>
                 <span className="font-mono text-base font-bold tabular-nums leading-none mt-0.5">
@@ -1262,7 +1261,7 @@ function BridgeResults({
                 )}
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-[0.5625rem] uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.05em] opacity-70 shrink-0">
                     {b.export_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
@@ -1273,7 +1272,7 @@ function BridgeResults({
                   {b.kind}
                 </span>
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-[0.5625rem] uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.05em] opacity-70 shrink-0">
                     {b.import_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
@@ -1338,7 +1337,7 @@ function CodeExcerptPane({
           {tail}:{line}
         </span>
       </div>
-      <pre className="bg-surface-sunken px-3 py-2 font-mono text-[0.6875rem] leading-relaxed text-text whitespace-pre overflow-x-auto m-0 max-h-48 overflow-y-auto">
+      <pre className="bg-surface-sunken px-3 py-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre overflow-x-auto m-0 max-h-48 overflow-y-auto">
         {loading
           ? "LOADING_"
           : (source ?? "// (no source available)")}
@@ -1615,7 +1614,7 @@ function HotFilesTile({
               title={f.path}
               className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-none -mx-1"
             >
-              <span className="font-mono text-[0.6875rem] truncate flex-1 text-left">
+              <span className="font-mono text-mono-mini truncate flex-1 text-left">
                 {tail}
               </span>
               <div className="w-20 h-2 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">
@@ -1678,7 +1677,7 @@ function RecentChangesTile({
               {COHERENCE_GLYPH[ev.kind]}
             </span>
             <span
-              className="font-mono text-[0.6875rem] text-text truncate flex-1"
+              className="font-mono text-mono-mini text-text truncate flex-1"
               title={ev.path}
             >
               {corpusRelative(ev.path, corpus)}
@@ -1846,13 +1845,13 @@ function SurveyCard({
         onClick={onClick}
         className="text-left flex items-center gap-2 border-b border-border-soft bg-surface px-3 py-1.5 cursor-pointer transition-none hover:bg-surface-overlay hover:text-text"
       >
-        <span className="font-mono text-xs font-semibold tabular-nums w-10 shrink-0 text-text-muted">
+        <span className="font-mono text-xs font-semibold tabular-nums w-10 shrink-0 text-text-dim">
           {pct.toFixed(0)}%
         </span>
         <div className="w-16 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">
           <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
         </div>
-        <span className="font-mono text-xs truncate w-48 shrink-0 text-text-muted">
+        <span className="font-mono text-xs truncate w-48 shrink-0 text-text-dim">
           {shortId}
         </span>
         <span className="font-sans text-sm text-text-dim truncate flex-1">
@@ -1874,7 +1873,7 @@ function SurveyCard({
         <div className="w-24 h-2 border border-border-soft bg-surface overflow-hidden shrink-0">
           <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
         </div>
-        <span className="font-mono text-[0.6875rem] text-text truncate">
+        <span className="font-mono text-mono-mini text-text truncate">
           {shortId}
         </span>
       </div>
@@ -1893,7 +1892,7 @@ function SurveyCard({
       )}
 
       {excerptLines.length > 0 && (
-        <pre className="border-l-2 border-accent bg-surface-sunken px-3 py-2 font-mono text-[0.6875rem] leading-relaxed text-text whitespace-pre-wrap line-clamp-3 m-0">
+        <pre className="border-l-2 border-accent bg-surface-sunken px-3 py-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre-wrap line-clamp-3 m-0">
           {excerptLines}
         </pre>
       )}
@@ -1943,7 +1942,7 @@ function SymbolCard({
   return (
     <button
       onClick={onClick}
-      className="text-left border-2 border-border bg-surface cursor-pointer transition-none hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-[4px_4px_0_0_var(--shadow-color)]"
+      className="text-left border-2 border-border bg-surface cursor-pointer transition-none hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-md"
     >
       <div className="flex items-center gap-2 border-b-2 border-border bg-surface-overlay px-2 py-1.5">
         <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent w-14 shrink-0">
@@ -1960,7 +1959,7 @@ function SymbolCard({
       </div>
 
       {symbol.signature && (
-        <pre className="border-b-2 border-border bg-surface-sunken px-3 py-2 font-mono text-[0.6875rem] leading-relaxed text-text whitespace-pre-wrap break-words m-0">
+        <pre className="border-b-2 border-border bg-surface-sunken px-3 py-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre-wrap break-words m-0">
           {symbol.signature}
         </pre>
       )}
@@ -1985,21 +1984,16 @@ function ViewToggle({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <FilterPill
+      tone="sans"
+      size="md"
+      active={active}
       disabled={disabled}
-      className={cn(
-        "border px-2.5 h-9 font-sans text-sm font-medium cursor-pointer transition-none shrink-0",
-        active
-          ? "border-accent bg-surface-overlay text-text"
-          : "border-border-soft bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
-        disabled && "opacity-40 cursor-not-allowed",
-      )}
-      style={{ borderRadius: "var(--radius-button)" }}
+      onClick={onClick}
+      className="shrink-0"
     >
       {label}
-    </button>
+    </FilterPill>
   );
 }
 

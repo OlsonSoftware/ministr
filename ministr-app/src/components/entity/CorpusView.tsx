@@ -9,8 +9,8 @@ import {
 } from "./EntitySection";
 import { corpusLabel } from "../../lib/corpus";
 import { pressureTone, toneTextClass } from "../../lib/status";
-import { cn } from "../../lib/utils";
 import { formatTokens } from "../../lib/format";
+import { MetricTile } from "../ui/metric-tile";
 import type {
   CoherenceEvent,
   FileInfo,
@@ -89,20 +89,24 @@ export function CorpusView({ entity }: Props) {
 
       {/* §2 Stats */}
       <EntitySection chapter={2} title="Stats">
-        <div className="grid grid-cols-2">
-          <Stat
+        <div className="grid grid-cols-2 divide-x divide-y divide-border-soft">
+          <MetricTile
+            variant="cell"
             label="Files"
             value={corpus.files_indexed.toLocaleString()}
           />
-          <Stat
+          <MetricTile
+            variant="cell"
             label="Sections"
             value={corpus.sections_count.toLocaleString()}
           />
-          <Stat
+          <MetricTile
+            variant="cell"
             label="Symbols"
             value={(corpus.symbols_count ?? 0).toLocaleString()}
           />
-          <Stat
+          <MetricTile
+            variant="cell"
             label="Vectors"
             value={corpus.embeddings_count.toLocaleString()}
           />
@@ -202,17 +206,3 @@ export function CorpusView({ entity }: Props) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  const _ = cn; // keep import
-  void _;
-  return (
-    <div className="border-r border-b border-border-soft [&:nth-child(2n)]:border-r-0 [&:nth-last-child(-n+2)]:border-b-0 px-3 py-2">
-      <p className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
-        {label}
-      </p>
-      <p className="font-mono text-base font-semibold tabular-nums text-text mt-0.5">
-        {value}
-      </p>
-    </div>
-  );
-}

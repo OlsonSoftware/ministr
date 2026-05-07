@@ -59,7 +59,7 @@ export function ActivityFeed({
     return (
       <div
         className={cn(
-          "flex items-center justify-center border-2 border-dotted border-border bg-surface px-4 py-10 text-[0.6875rem] font-mono uppercase tracking-[0.05em] text-text-dim",
+          "flex items-center justify-center border-2 border-dotted border-border bg-surface px-4 py-10 text-mono-mini font-mono uppercase tracking-[0.05em] text-text-dim",
           className,
         )}
       >
@@ -83,14 +83,14 @@ export function ActivityFeed({
           <li
             key={`${ev.timestamp_ms}-${ev.tool}-${ev.corpus_id}`}
             className={cn(
-              "flex items-center gap-2 border-l-2 border-y-2 border-r-2 border-border bg-surface pl-2 pr-2 py-1.5 text-[0.6875rem] transition-none",
+              "flex items-center gap-2 border-l-2 border-y-2 border-r-2 border-border bg-surface pl-2 pr-2 py-1.5 text-mono-mini transition-none",
               pressureBorder,
               fresh && "ministr-flash",
             )}
           >
             <span
               className={cn(
-                "inline-flex h-5 w-5 shrink-0 items-center justify-center border border-border-soft font-mono text-[0.75rem]",
+                "inline-flex h-5 w-5 shrink-0 items-center justify-center border border-border-soft font-mono text-xs",
                 ev.cache_hit
                   ? "bg-success text-[var(--color-accent-fg-on)]"
                   : "bg-accent text-[var(--color-accent-fg-on)]",

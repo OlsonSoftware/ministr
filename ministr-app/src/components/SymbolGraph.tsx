@@ -306,8 +306,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
               <button
                 key={`${t.id}-${i}`}
                 onClick={() => jumpToTrailEntry(i)}
-                className="inline-flex items-center gap-1 border border-border-soft bg-surface px-2 py-0.5 font-mono text-xs font-semibold text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-                style={{ borderRadius: "var(--radius-pill)" }}
+                className="inline-flex items-center gap-1 border border-border-soft bg-surface px-2 py-0.5 font-mono text-xs font-semibold text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
               >
                 <ArrowLeft className="h-2.5 w-2.5" strokeWidth={2} />
                 <span className="truncate max-w-[120px]">{t.name}</span>
@@ -317,8 +316,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
           <button
             onClick={clearTrail}
             aria-label="Clear trail"
-            className="ml-auto grid h-5 w-5 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none shrink-0"
-            style={{ borderRadius: "var(--radius-button)" }}
+            className="ml-auto grid h-5 w-5 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none shrink-0 rounded-sm"
           >
             <X className="h-2.5 w-2.5" strokeWidth={2} />
           </button>
@@ -355,12 +353,11 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                   key={k}
                   onClick={() => toggleKind(k)}
                   className={cn(
-                    "border px-2 py-0.5 text-[0.6875rem] font-mono font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none",
+                    "border px-2 py-0.5 text-mono-mini font-mono font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none",
                     active
                       ? "border-accent bg-surface-overlay text-text"
                       : "border-border-soft bg-surface text-text-muted hover:border-border hover:text-text",
-                  )}
-                  style={{ borderRadius: "var(--radius-pill)" }}
+                  "rounded-sm")}
                 >
                   {k}
                 </button>
@@ -398,7 +395,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                     {isSelected && (
                       <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-accent" />
                     )}
-                    <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] w-12 shrink-0 text-text-dim">
+                    <span className="font-mono text-mono-mini uppercase tracking-[0.05em] w-12 shrink-0 text-text-dim">
                       {s.kind}
                     </span>
                     <span className="font-mono text-sm font-semibold truncate">
@@ -529,11 +526,11 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                       {definition.line_end}
                     </div>
                     {definition.doc_comment && (
-                      <div className="border-l-2 border-accent bg-surface-overlay px-2 py-1.5 font-mono text-[0.6875rem] text-text-muted whitespace-pre-wrap">
+                      <div className="border-l-2 border-accent bg-surface-overlay px-2 py-1.5 font-mono text-mono-mini text-text-muted whitespace-pre-wrap">
                         {definition.doc_comment}
                       </div>
                     )}
-                    <pre className="border border-border-soft bg-surface-sunken p-2 font-mono text-[0.6875rem] leading-relaxed text-text whitespace-pre overflow-x-auto max-h-72 overflow-y-auto">
+                    <pre className="border border-border-soft bg-surface-sunken p-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre overflow-x-auto max-h-72 overflow-y-auto">
                       <JumpableSource
                         source={definition.source_context}
                         symbols={symbols}
@@ -543,7 +540,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                     </pre>
                   </>
                 ) : (
-                  <p className="font-mono text-[0.6875rem] text-text-dim">
+                  <p className="font-mono text-mono-mini text-text-dim">
                     {selected.signature}
                   </p>
                 )}
@@ -585,7 +582,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                 )}
 
                 {visibleRefs.length === 0 ? (
-                  <p className="px-2 py-3 font-mono text-[0.6875rem] tracking-[0.05em] text-text-dim">
+                  <p className="px-2 py-3 font-mono text-mono-mini tracking-[0.05em] text-text-dim">
                     {refs.length === 0 ? "no references" : "no matches"}
                   </p>
                 ) : (
@@ -594,7 +591,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                       key={i}
                       onClick={() => pivotToName(r.from_name)}
                       title={`Pivot to ${r.from_name}`}
-                      className="w-full text-left flex items-center gap-2 border-b-2 border-border last:border-b-0 px-2 py-1.5 font-mono text-[0.6875rem] cursor-pointer transition-none hover:bg-surface-overlay hover:text-text"
+                      className="w-full text-left flex items-center gap-2 border-b-2 border-border last:border-b-0 px-2 py-1.5 font-mono text-mono-mini cursor-pointer transition-none hover:bg-surface-overlay hover:text-text"
                     >
                       <span className="text-text truncate flex-1">
                         {r.from_name}
@@ -606,7 +603,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                       <span className="text-text truncate flex-1">
                         {r.to_name}
                       </span>
-                      <span className="border border-border-soft px-1 text-[0.5625rem] uppercase tracking-[0.05em] opacity-70 shrink-0">
+                      <span className="border border-border-soft px-1 text-mono-micro uppercase tracking-[0.05em] opacity-70 shrink-0">
                         {r.ref_kind}
                       </span>
                     </button>

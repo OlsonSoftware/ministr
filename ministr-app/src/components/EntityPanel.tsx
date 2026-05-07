@@ -40,7 +40,7 @@ export function EntityPanel() {
       <aside
         className={cn(
           "fixed top-0 right-0 bottom-0 z-[1201] bg-surface flex flex-col",
-          "border-l-2 border-border shadow-[var(--shadow-lg)]",
+          "border-l-2 border-border shadow-lg",
           // Wide: ~58% width capped at 1200px. Narrow: full screen.
           "w-full @max-[1023px]/page:w-full",
           "min-[1024px]:w-[clamp(720px,58vw,1200px)]",
@@ -66,7 +66,7 @@ export function EntityPanel() {
                         : "text-text-muted hover:text-text border-b border-transparent hover:border-border cursor-pointer",
                     )}
                   >
-                    <span className="text-text-dim text-[0.6875rem] uppercase tracking-[0.05em]">
+                    <span className="text-text-dim text-mono-mini uppercase tracking-[0.05em]">
                       {entityKindLabel(e)}
                     </span>
                     <span className="truncate max-w-[200px]">
@@ -87,8 +87,7 @@ export function EntityPanel() {
             onClick={close}
             aria-label="Close panel"
             title="Close · Esc"
-            className="grid h-7 w-7 shrink-0 place-items-center border border-border bg-surface text-text-muted hover:text-text hover:border-border-hover cursor-pointer transition-none"
-            style={{ borderRadius: "var(--radius-button)" }}
+            className="grid h-7 w-7 shrink-0 place-items-center border border-border bg-surface text-text-muted hover:text-text hover:border-border-hover cursor-pointer transition-none rounded-sm"
           >
             <X className="h-3.5 w-3.5" strokeWidth={2} />
           </button>

@@ -37,7 +37,7 @@ export function VitalsChip({ label, value, accent }: Props) {
         flash && "ministr-flash",
       )}
     >
-      <span className="uppercase text-[0.6875rem] text-text-dim">{label}</span>
+      <span className="uppercase text-mono-mini text-text-dim">{label}</span>
       <span className="tabular-nums">{value}</span>
     </span>
   );
