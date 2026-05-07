@@ -122,6 +122,7 @@ fn main() {
             commands::read_source_excerpt,
             commands::open_path,
             commands::ingestion_progress,
+            commands::indexing_progress_events,
             commands::recent_activity,
             commands::recent_coherence_events,
             commands::detect_projects,

@@ -926,6 +926,163 @@ pub async fn ingestion_progress(
         .collect())
 }
 
+/// Push-based indexing-progress event streamed to the frontend over a
+/// [`Channel`]. The frontend opens this once per surface that needs live
+/// progress (Projects, Onboarding) and consumes events as they arrive,
+/// avoiding the previous 1Hz polling of `ingestion_progress`.
+///
+/// `status`: 0 = pending, 1 = running, 2 = complete (mirrors `IngestionProgress`).
+/// `estimated_remaining_secs` is `None` until at least one second of
+/// running samples has been observed (rate is too noisy below that).
+#[derive(Clone, Serialize)]
+pub struct IndexingProgressEvent {
+    pub corpus_id: String,
+    pub status: u8,
+    pub phase: String,
+    pub files_total: usize,
+    pub files_done: usize,
+    pub sections_done: usize,
+    pub embeddings_total: usize,
+    pub embeddings_done: usize,
+    pub current_file: String,
+    pub estimated_remaining_secs: Option<u64>,
+    pub timestamp_ms: u64,
+}
+
+/// Stream indexing-progress events to the frontend.
+///
+/// Returns immediately after spawning a background task that polls the
+/// atomic `IngestionProgress` for every corpus on a 250ms tick and sends
+/// an [`IndexingProgressEvent`] whenever something changed (status flip,
+/// file count tick, current-file change). The task exits when
+/// `on_event.send(...)` fails, which is how the Tauri channel signals
+/// that the frontend has dropped its receiver.
+///
+/// We poll the atomics rather than wiring a notify into ministr-core
+/// because the atomics are essentially free to read and the change
+/// signal we need (UI repaint) is naturally rate-limited.
+#[tauri::command]
+pub async fn indexing_progress_events(
+    state: State<'_, AppState>,
+    on_event: Channel<IndexingProgressEvent>,
+) -> Result<(), String> {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    let registry = state.registry.clone();
+
+    tauri::async_runtime::spawn(async move {
+        // Per-corpus tracking for change-detection + ETA. We only emit when
+        // something the UI cares about changed, and ETA is computed in the
+        // command (ministr-core's IngestionProgress doesn't track timing).
+        struct Track {
+            last_status: u8,
+            last_files_done: usize,
+            last_current_file: String,
+            run_started: Option<Instant>,
+        }
+        let mut tracks: HashMap<String, Track> = HashMap::new();
+
+        loop {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+
+            let now_ms = u64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0),
+            )
+            .unwrap_or(u64::MAX);
+
+            let guard = registry.corpora().read().await;
+            for (corpus_id, handle) in guard.iter() {
+                let p = &handle.progress;
+                let status = p.status();
+                let files_total = p.files_total();
+                let files_done = p.files_done();
+                let current_file = p.current_file();
+
+                let track = tracks.entry(corpus_id.clone()).or_insert(Track {
+                    last_status: u8::MAX,
+                    last_files_done: 0,
+                    last_current_file: String::new(),
+                    run_started: None,
+                });
+
+                let started_running = status == 1 && track.last_status != 1;
+                let stopped_running = status != 1 && track.last_status == 1;
+                let progressed = files_done != track.last_files_done
+                    || current_file != track.last_current_file;
+                let status_changed = status != track.last_status;
+
+                if started_running {
+                    track.run_started = Some(Instant::now());
+                }
+                if stopped_running {
+                    track.run_started = None;
+                }
+
+                if !status_changed && !progressed {
+                    continue;
+                }
+
+                let estimated_remaining_secs = if status == 1 && files_total > files_done {
+                    track.run_started.and_then(|t| {
+                        let elapsed = t.elapsed().as_secs_f64();
+                        if elapsed < 1.0 || files_done == 0 {
+                            return None;
+                        }
+                        // Precision loss is fine — these counts top out in
+                        // the millions for huge corpora and we only render
+                        // ETA to the nearest second.
+                        #[allow(clippy::cast_precision_loss)]
+                        let rate = files_done as f64 / elapsed;
+                        if rate <= 0.0 {
+                            return None;
+                        }
+                        #[allow(
+                            clippy::cast_precision_loss,
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss
+                        )]
+                        let remaining =
+                            (((files_total - files_done) as f64) / rate).round() as u64;
+                        Some(remaining)
+                    })
+                } else {
+                    None
+                };
+
+                let ev = IndexingProgressEvent {
+                    corpus_id: corpus_id.clone(),
+                    status,
+                    phase: p.phase().as_str().to_string(),
+                    files_total,
+                    files_done,
+                    sections_done: p.sections_done(),
+                    embeddings_total: p.embeddings_total(),
+                    embeddings_done: p.embeddings_done(),
+                    current_file: current_file.clone(),
+                    estimated_remaining_secs,
+                    timestamp_ms: now_ms,
+                };
+
+                track.last_status = status;
+                track.last_files_done = files_done;
+                track.last_current_file = current_file;
+
+                if on_event.send(ev).is_err() {
+                    // Frontend dropped the receiver — exit cleanly.
+                    return;
+                }
+            }
+            drop(guard);
+        }
+    });
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Ask (sub-inference) — phased, citation-aware Q&A for the desktop app.
 // ---------------------------------------------------------------------------
