@@ -95,7 +95,7 @@ parking_lot = "0.12"
 # Logos — fast tokenizer used for languages without a tree-sitter
 # grammar (HLSL/GLSL shaders today; planned C++ fallback when
 # tree-sitter times out). Keep on workspace so each crate can opt in.
-logos = "0.15"
+logos = "0.16"
 
 # Tree-sitter parsing
 tree-sitter = "0.26"
