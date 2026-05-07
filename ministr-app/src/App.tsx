@@ -14,6 +14,7 @@ import { EntityPanelProvider } from "./hooks/useEntityPanel";
 import { EntityPanel } from "./components/EntityPanel";
 import { Sidebar, type SurfaceId } from "./components/chrome/Sidebar";
 import { TopBar } from "./components/chrome/TopBar";
+import { CommandPalette } from "./components/chrome/CommandPalette";
 import { ProjectsSurface } from "./components/surfaces/ProjectsSurface";
 import { SettingsSurface } from "./components/surfaces/SettingsSurface";
 import { corpusLabel } from "./lib/corpus";
@@ -53,6 +54,7 @@ function AppInner() {
   const [surface, setSurface] = useState<SurfaceId>("ask");
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const gPending = useRef(false);
   const gTimer = useRef<number | null>(null);
@@ -115,7 +117,12 @@ function AppInner() {
       if (typing) return;
 
       if (e.key === "Escape") {
-        if (shortcutsOpen) {
+        // Topmost-overlay-first: palette beats shortcuts sheet.
+        if (paletteOpen) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setPaletteOpen(false);
+        } else if (shortcutsOpen) {
           e.preventDefault();
           e.stopImmediatePropagation();
           setShortcutsOpen(false);
@@ -154,9 +161,7 @@ function AppInner() {
             setSurface("settings");
             return;
           case "toggle:palette":
-            // Command palette is offline in M1; ⌘K is reserved for M4
-            // when the new palette ships. No-op here so we don't trap
-            // the keystroke without affordance.
+            setPaletteOpen((o) => !o);
             return;
         }
       }
@@ -164,7 +169,7 @@ function AppInner() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shortcutsOpen]);
+  }, [shortcutsOpen, paletteOpen]);
 
   const openAddProject = useCallback(async () => {
     try {
@@ -269,6 +274,16 @@ function AppInner() {
       <ShortcutSheet
         open={shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}
+      />
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        corpora={status?.corpora ?? []}
+        activeCorpusId={activeCorpusId}
+        onNavigate={setSurface}
+        onSelectCorpus={onSelectCorpus}
+        onAddProject={openAddProject}
       />
 
       <EntityPanel />
