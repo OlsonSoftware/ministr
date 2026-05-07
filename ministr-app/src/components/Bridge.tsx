@@ -3,8 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChevronRight, Download, ExternalLink, X } from "lucide-react";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
+import { corpusRelative } from "../lib/path";
 import { useEntityPanel } from "../hooks/useEntityPanel";
-import type { BridgeLink, DaemonStatus } from "../lib/types";
+import type { BridgeLink, CorpusInfo, DaemonStatus } from "../lib/types";
 
 /** Stable identity for a bridge link — used as the key in the multi-select
  *  set. The DB doesn't expose a numeric ID; this composite uniquely picks
@@ -96,6 +97,10 @@ interface ExcerptState {
 export function Bridge({ status, activeCorpusId }: Props) {
   const { openEntity } = useEntityPanel();
   const corpusId = activeCorpusId ?? status.corpora[0]?.id ?? "";
+  const selectedCorpus = useMemo(
+    () => status.corpora.find((c) => c.id === corpusId) ?? null,
+    [status.corpora, corpusId],
+  );
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<string | null>(null);
   const [language, setLanguage] = useState<string | null>(null);
@@ -366,6 +371,7 @@ export function Bridge({ status, activeCorpusId }: Props) {
         <ConnectionPreview
           link={selected}
           excerpt={excerpt}
+          corpus={selectedCorpus}
           onClose={() => setSelected(null)}
           onOpenFullPanel={() =>
             openEntity({ kind: "bridge", corpusId, link: selected })
@@ -714,11 +720,13 @@ function BridgeTable({
 function ConnectionPreview({
   link,
   excerpt,
+  corpus,
   onClose,
   onOpenFullPanel,
 }: {
   link: BridgeLink;
   excerpt: ExcerptState;
+  corpus: CorpusInfo | null;
   onClose: () => void;
   onOpenFullPanel?: () => void;
 }) {
@@ -765,6 +773,7 @@ function ConnectionPreview({
           source={excerpt.exportSrc}
           startLine={excerpt.exportStart}
           loading={excerpt.loading}
+          corpus={corpus}
         />
 
         <Connector />
@@ -779,6 +788,7 @@ function ConnectionPreview({
           source={excerpt.importSrc}
           startLine={excerpt.importStart}
           loading={excerpt.loading}
+          corpus={corpus}
         />
       </div>
 
@@ -804,6 +814,7 @@ function CodePane({
   source,
   startLine,
   loading,
+  corpus,
 }: {
   title: string;
   language: string;
@@ -814,12 +825,9 @@ function CodePane({
   source: string | null;
   startLine: number | null;
   loading: boolean;
+  corpus: CorpusInfo | null;
 }) {
-  const tail = file
-    .replace(/\\/g, "/")
-    .split("/")
-    .slice(-2)
-    .join("/");
+  const tail = corpusRelative(file, corpus);
 
   // Split source into lines with explicit numbers.
   const numbered = useMemo(() => {

@@ -2,15 +2,19 @@ import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { TreePine } from "lucide-react";
 import { cn } from "../lib/utils";
+import { corpusRelative } from "../lib/path";
 import { useEntityPanel } from "../hooks/useEntityPanel";
 import type { DaemonStatus, FileInfo } from "../lib/types";
+import type { ExploreMode } from "./ExploreView";
 
 interface Props {
   status: DaemonStatus;
   activeCorpusId: string | null;
   setActiveCorpusId: (id: string | null) => void;
-  /** Optional jump callback — clicking a cell navigates here. */
-  onNavigate?: (tab: "symbols") => void;
+  /** Optional jump callback — clicking a cell navigates to the
+   *  Explore tab on the given pivot mode. Currently unused inside
+   *  the treemap body; reserved for future drill-in actions. */
+  onNavigate?: (target: "explore", exploreMode?: ExploreMode) => void;
 }
 
 type GroupBy = "flat" | "dir" | "ext";
@@ -33,6 +37,10 @@ export function CorpusTreemap({
   void onNavigate;
   const { openEntity } = useEntityPanel();
   const corpusId = activeCorpusId ?? status.corpora[0]?.id ?? "";
+  const corpus = useMemo(
+    () => status.corpora.find((c) => c.id === corpusId) ?? null,
+    [status.corpora, corpusId],
+  );
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [hoveredFile, setHoveredFile] = useState<FileInfo | null>(null);
@@ -235,7 +243,7 @@ export function CorpusTreemap({
               {hoveredFile && (
                 <div className="absolute top-2 right-2 z-20 max-w-[340px] border border-border-soft bg-surface px-2.5 py-1.5 shadow-[var(--shadow-sm)]">
                   <p className="font-mono text-xs text-text break-all">
-                    {hoveredFile.path}
+                    {corpusRelative(hoveredFile.path, corpus)}
                   </p>
                   <p className="font-mono text-[0.6875rem] tabular-nums text-text-dim mt-0.5">
                     {hoveredFile.section_count} sections ·{" "}
@@ -251,6 +259,7 @@ export function CorpusTreemap({
                     group={group}
                     showLabel={groupBy !== "flat"}
                     quartileBucket={quartileBucket}
+                    pathTooltip={(p) => corpusRelative(p, corpus)}
                     onHover={setHoveredFile}
                     onClick={onCellClick}
                   />
@@ -323,7 +332,7 @@ export function CorpusTreemap({
                   )}
                 />
                 <span className="font-mono text-[0.6875rem] truncate flex-1">
-                  {f.path}
+                  {corpusRelative(f.path, corpus)}
                 </span>
                 <div className="w-20 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">
                   <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
@@ -346,12 +355,16 @@ function GroupBlock({
   group,
   showLabel,
   quartileBucket,
+  pathTooltip,
   onHover,
   onClick,
 }: {
   group: GroupedNode;
   showLabel: boolean;
   quartileBucket: (count: number) => "top" | "high" | "mid" | "low";
+  /** Tooltip-formatter for cell hover. Caller passes a corpus-relative
+   *  formatter so deep absolute paths don't clutter the title attribute. */
+  pathTooltip: (path: string) => string;
   onHover: (f: FileInfo | null) => void;
   onClick: (f: FileInfo) => void;
 }) {
@@ -394,7 +407,7 @@ function GroupBlock({
               onClick={() => onClick(f)}
               onMouseEnter={() => onHover(f)}
               onMouseLeave={() => onHover(null)}
-              title={`${f.path} · ${f.section_count}`}
+              title={`${pathTooltip(f.path)} · ${f.section_count}`}
               className={cn(
                 "border-2 border-border cursor-pointer transition-none hover:bg-surface-overlay hover:text-text overflow-hidden flex items-center justify-center",
                 bucketBg(bucket),

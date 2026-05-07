@@ -50,6 +50,7 @@ import { Card } from "./ui/card";
 import { EmptyState } from "./ui/empty-state";
 import { useEntityPanel } from "../hooks/useEntityPanel";
 import { corpusLabel } from "../lib/corpus";
+import { basename, corpusRelative } from "../lib/path";
 import { cn } from "../lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,14 +179,24 @@ function filePathFromContentId(id: string): string {
   return candidate;
 }
 
-/** Short label for a source: heading path > basename of file. */
+/** Short label for a source: heading path (with the file-basename
+ *  segment trimmed when it duplicates the file tag) > basename of file. */
 function sourceLabel(id: string, headingPath?: string[]): string {
-  if (headingPath && headingPath.length > 0) {
-    return headingPath.join(" › ");
-  }
   const file = filePathFromContentId(id);
-  const base = file.split(/[\\/]/).pop() ?? file;
-  return base || id;
+  const fileBase = basename(file);
+  const fileStem = fileBase.replace(/\.[^.]+$/, "");
+  if (headingPath && headingPath.length > 0) {
+    // Heading paths from the indexer often start with the file's
+    // basename or stem (e.g. ["auth.rs", "AuthMiddleware"]). When we
+    // already render the file-relative tag next to this label, that
+    // first segment is dead weight.
+    const trimmed =
+      headingPath[0] === fileBase || headingPath[0] === fileStem
+        ? headingPath.slice(1)
+        : headingPath;
+    if (trimmed.length > 0) return trimmed.join(" › ");
+  }
+  return fileBase || id;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -451,6 +462,7 @@ export function AskView({ status, activeCorpusId }: Props) {
             <LoadingBody
               partialSourceIds={partialSourceIds}
               corpusId={corpusId}
+              corpus={corpus}
               phase={phase}
             />
           )}
@@ -459,6 +471,7 @@ export function AskView({ status, activeCorpusId }: Props) {
             <ResultBody
               entry={done}
               corpusId={corpusId}
+              corpus={corpus}
               cited={cited}
               verified={verified}
             />
@@ -818,10 +831,12 @@ function ErrorCard({
 function LoadingBody({
   partialSourceIds,
   corpusId,
+  corpus,
   phase,
 }: {
   partialSourceIds: string[];
   corpusId: string;
+  corpus: CorpusInfo | null;
   phase:
     | "analyzing"
     | "retrieving"
@@ -881,6 +896,7 @@ function LoadingBody({
                 index={i + 1}
                 contentId={id}
                 corpusId={corpusId}
+                corpus={corpus}
                 cited={true}
                 pending
               />
@@ -898,11 +914,13 @@ function LoadingBody({
 function ResultBody({
   entry,
   corpusId,
+  corpus,
   cited,
   verified,
 }: {
   entry: RecentEntry;
   corpusId: string;
+  corpus: CorpusInfo | null;
   cited: Set<number>;
   verified: { unsupported: string[] } | null;
 }) {
@@ -1005,6 +1023,7 @@ function ResultBody({
               index={i + 1}
               contentId={id}
               corpusId={corpusId}
+              corpus={corpus}
               cited={cited.size === 0 || cited.has(i + 1)}
             />
           ))}
@@ -1197,12 +1216,14 @@ function SourceRow({
   index,
   contentId,
   corpusId,
+  corpus,
   cited,
   pending = false,
 }: {
   index: number;
   contentId: string;
   corpusId: string;
+  corpus: CorpusInfo | null;
   cited: boolean;
   pending?: boolean;
 }) {
@@ -1229,7 +1250,7 @@ function SourceRow({
   }
 
   const filePath = filePathFromContentId(contentId);
-  const fileBase = filePath.split(/[\\/]/).pop() ?? filePath;
+  const fileTag = corpusRelative(filePath, corpus);
   const label = sourceLabel(contentId, headingPath ?? undefined);
 
   return (
@@ -1262,9 +1283,9 @@ function SourceRow({
           <span className="font-sans text-sm font-medium text-text truncate">
             {label}
           </span>
-          {fileBase && fileBase !== label && (
+          {fileTag && fileTag !== label && (
             <span className="font-mono text-[0.6875rem] text-text-dim truncate">
-              {fileBase}
+              {fileTag}
             </span>
           )}
         </div>

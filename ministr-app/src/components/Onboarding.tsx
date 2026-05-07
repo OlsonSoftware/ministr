@@ -132,7 +132,7 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
   return (
     <div className="flex h-full items-center justify-center bg-bg p-6">
       <div className="w-full max-w-xl">
-        <Card>
+        <div className="border border-border-soft bg-surface shadow-[6px_6px_0_0_var(--shadow-color)]">
           <StepIndicator current={step} />
           <div className="p-8">
             {step === "welcome" && (
@@ -173,21 +173,13 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
               </div>
             )}
           </div>
-        </Card>
+        </div>
       </div>
     </div>
   );
 }
 
-// ─── CARD + STEP INDICATOR ───────────────────────────────────────────────
-
-function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="border border-border-soft bg-surface shadow-[6px_6px_0_0_var(--shadow-color)]">
-      {children}
-    </div>
-  );
-}
+// ─── STEP INDICATOR ──────────────────────────────────────────────────────
 
 function StepIndicator({ current }: { current: Step }) {
   return (
@@ -436,16 +428,16 @@ function Done({
 }) {
   const tips: { key: string; description: string }[] = [
     {
-      key: "Open search",
-      description: "Type a probe like `Config` to find symbols.",
+      key: "Ask a question",
+      description: "Natural-language Q&A grounded in your codebase.",
+    },
+    {
+      key: "g e",
+      description: "Explore — sections, symbols, and bridges in one place.",
     },
     {
       key: "⌘K",
       description: "Command palette — jump anywhere instantly.",
-    },
-    {
-      key: "?",
-      description: "See all keyboard shortcuts.",
     },
   ];
 
@@ -496,7 +488,7 @@ function Done({
 
       <div className="mt-6 flex flex-col gap-2">
         <Button className="w-full" size="lg" onClick={onDismiss}>
-          Open dashboard
+          Ask your first question
           <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
         </Button>
         <Button

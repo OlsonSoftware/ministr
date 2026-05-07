@@ -60,6 +60,34 @@ export function BrutalSearch({ className }: IconProps) {
   );
 }
 
+/** Explore — search frame plus a stacked 3-bar pivot below; signals the
+ *  three modes (sections / symbols / bridges) layered under one search. */
+export function BrutalExplore({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <rect
+        x="2"
+        y="2"
+        width="11"
+        height="11"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <rect
+        x="11"
+        y="11"
+        width="7"
+        height="3"
+        fill="currentColor"
+        transform="rotate(45 12 12)"
+      />
+      <rect x="3" y="16" width="18" height="2" fill="currentColor" />
+      <rect x="3" y="20" width="13" height="2" fill="currentColor" />
+    </Svg>
+  );
+}
+
 /** Symbols — 2×2 grid of filled squares (representing kinds: fn, struct, trait, enum). */
 export function BrutalSymbols({ className }: IconProps) {
   return (

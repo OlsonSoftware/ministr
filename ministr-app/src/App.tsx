@@ -3,14 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Search, AlertTriangle } from "lucide-react";
 import {
-  BrutalSearch,
   BrutalAsk,
-  BrutalSymbols,
-  BrutalBridge,
+  BrutalExplore,
   BrutalProjects,
-  BrutalStructure,
   BrutalSessions,
-  BrutalLogs,
   BrutalSettings,
 } from "./components/ui/brutal-icons";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
@@ -20,15 +16,10 @@ import { useDefaultTab, useDensity } from "./hooks/usePreferences";
 import { ProjectList } from "./components/ProjectList";
 import { ProjectDetail } from "./components/ProjectDetail";
 import { Settings } from "./components/Settings";
-import { LogViewer } from "./components/LogViewer";
 import { Onboarding } from "./components/Onboarding";
 import { SessionDashboard } from "./components/SessionDashboard";
-import { QueryPlayground } from "./components/QueryPlayground";
-import { CorpusTreemap } from "./components/CorpusTreemap";
-import { SymbolGraph } from "./components/SymbolGraph";
-import { Bridge } from "./components/Bridge";
-import { ContextSimulator } from "./components/ContextSimulator";
 import { AskView } from "./components/AskView";
+import { ExploreView, type ExploreMode } from "./components/ExploreView";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutSheet } from "./components/ShortcutSheet";
 import { CorpusPill } from "./components/shell/CorpusPill";
@@ -37,6 +28,7 @@ import { VitalsChip } from "./components/shell/VitalsChip";
 import { ToastProvider, useToast } from "./components/shell/ToastTray";
 import { EntityPanelProvider } from "./hooks/useEntityPanel";
 import { EntityPanel } from "./components/EntityPanel";
+import { corpusLabel } from "./lib/corpus";
 import { cn } from "./lib/utils";
 import {
   matchShortcut,
@@ -45,27 +37,17 @@ import {
 } from "./lib/shortcuts";
 
 type Tab =
-  | "search"
   | "ask"
-  | "symbols"
-  | "bridge"
+  | "explore"
   | "projects"
-  | "structure"
   | "sessions"
-  | "simulator"
-  | "logs"
   | "settings";
 
 const VALID_TABS: Tab[] = [
-  "search",
   "ask",
-  "symbols",
-  "bridge",
+  "explore",
   "projects",
-  "structure",
   "sessions",
-  "simulator",
-  "logs",
   "settings",
 ];
 
@@ -89,6 +71,9 @@ function AppInner() {
   useDensity();
   const { toast } = useToast();
   const [tab, setTab] = useState<Tab>(defaultTab as Tab);
+  const [exploreMode, setExploreMode] = useState<ExploreMode | undefined>(
+    undefined,
+  );
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -193,29 +178,28 @@ function AppInner() {
           case "toggle:rail":
             setRailCollapsed((c) => !c);
             return;
-          case "nav:search":
-            setTab("search");
-            return;
           case "nav:ask":
             setTab("ask");
             return;
-          case "nav:symbols":
-            setTab("symbols");
-            return;
-          case "nav:bridge":
-            setTab("bridge");
+          case "nav:explore":
+            setTab("explore");
+            setExploreMode(undefined); // honor persisted mode
             return;
           case "nav:projects":
             setTab("projects");
-            return;
-          case "nav:structure":
-            setTab("structure");
             return;
           case "nav:sessions":
             setTab("sessions");
             return;
           case "nav:logs":
-            setTab("logs");
+            setTab("settings");
+            requestAnimationFrame(() => {
+              window.dispatchEvent(
+                new CustomEvent("ministr-settings-scroll", {
+                  detail: "logs",
+                }),
+              );
+            });
             return;
           case "nav:settings":
             setTab("settings");
@@ -245,7 +229,7 @@ function AppInner() {
   function onSelectCorpus(id: string) {
     const c = status?.corpora.find((x) => x.id === id);
     setActiveCorpusId(id);
-    if (c) toast("CORPUS", { detail: c.id, tone: "info" });
+    if (c) toast("Corpus", { detail: corpusLabel(c), tone: "info" });
   }
 
   function onThemeChange(t: "system" | "dark" | "light") {
@@ -268,11 +252,12 @@ function AppInner() {
         onShortcutsOpen={() => setShortcutsOpen(true)}
         onOpenLogs={async () => {
           // The DaemonDot popover button reads "Open log file" — that
-          // promise is the *file on disk*, not the Logs tab. Hand the
+          // promise is the *file on disk*, not the Logs view. Hand the
           // log path off to the OS opener and surface the toast based
           // on the actual outcome, so a failed open doesn't announce
-          // success. Always switch to the in-app Logs view too — the
-          // user wants to see the log either way.
+          // success. Then jump to Settings → Diagnostics → Daemon log
+          // so the user sees the in-app log either way (post-Phase-4
+          // consolidation: Logs lives inside Settings now).
           if (status?.log_path) {
             try {
               await invoke("open_path", { path: status.log_path });
@@ -288,7 +273,12 @@ function AppInner() {
               });
             }
           }
-          setTab("logs");
+          setTab("settings");
+          requestAnimationFrame(() => {
+            window.dispatchEvent(
+              new CustomEvent("ministr-settings-scroll", { detail: "logs" }),
+            );
+          });
         }}
       />
 
@@ -305,29 +295,18 @@ function AppInner() {
         <main className="flex-1 overflow-y-auto p-5">
           {!status ? (
             <ConnectingState error={error ?? null} />
-          ) : tab === "search" ? (
-            <QueryPlayground
-              status={status}
-              activeCorpusId={activeCorpusId}
-              setActiveCorpusId={setActiveCorpusId}
-            />
           ) : tab === "ask" ? (
             <AskView
               status={status}
               activeCorpusId={activeCorpusId}
               setActiveCorpusId={setActiveCorpusId}
             />
-          ) : tab === "symbols" ? (
-            <SymbolGraph
+          ) : tab === "explore" ? (
+            <ExploreView
               status={status}
               activeCorpusId={activeCorpusId}
               setActiveCorpusId={setActiveCorpusId}
-            />
-          ) : tab === "bridge" ? (
-            <Bridge
-              status={status}
-              activeCorpusId={activeCorpusId}
-              setActiveCorpusId={setActiveCorpusId}
+              initialMode={exploreMode}
             />
           ) : tab === "projects" ? (
             <div className="@container/page flex gap-4 h-full min-h-0">
@@ -350,24 +329,16 @@ function AppInner() {
                   <ProjectDetail
                     corpus={activeCorpus}
                     status={status}
-                    onNavigate={(target) => setTab(target)}
+                    onNavigate={(target, mode) => {
+                      setTab(target);
+                      setExploreMode(mode);
+                    }}
                   />
                 </div>
               )}
             </div>
-          ) : tab === "structure" ? (
-            <CorpusTreemap
-              status={status}
-              activeCorpusId={activeCorpusId}
-              setActiveCorpusId={setActiveCorpusId}
-              onNavigate={(target) => setTab(target)}
-            />
           ) : tab === "sessions" ? (
             <SessionDashboard status={status} />
-          ) : tab === "simulator" ? (
-            <ContextSimulator />
-          ) : tab === "logs" ? (
-            <LogViewer />
           ) : (
             <Settings
               status={status}
@@ -375,7 +346,16 @@ function AppInner() {
               onThemeChange={onThemeChange}
               onShowOnboarding={() => setShowOnboarding(true)}
               onRefresh={refresh}
-              onOpenLogs={() => setTab("logs")}
+              onOpenLogs={() => {
+                setTab("settings");
+                requestAnimationFrame(() => {
+                  window.dispatchEvent(
+                    new CustomEvent("ministr-settings-scroll", {
+                      detail: "logs",
+                    }),
+                  );
+                });
+              }}
             />
           )}
         </main>
@@ -386,6 +366,18 @@ function AppInner() {
         onClose={() => setPaletteOpen(false)}
         status={status}
         onNavigate={(t) => setTab(t as Tab)}
+        onNavigateExplore={(mode) => {
+          setTab("explore");
+          setExploreMode(mode);
+        }}
+        onOpenDiagnostics={(target) => {
+          setTab("settings");
+          requestAnimationFrame(() => {
+            window.dispatchEvent(
+              new CustomEvent("ministr-settings-scroll", { detail: target }),
+            );
+          });
+        }}
         onAddProject={openAddProject}
         onSelectCorpus={onSelectCorpus}
         onShowShortcuts={() => setShortcutsOpen(true)}
@@ -519,28 +511,16 @@ function Rail({
   return (
     <nav className="hidden sm:flex flex-col w-14 border-r border-border bg-surface py-3 items-center gap-1 shrink-0">
       <RailItem
-        icon={BrutalSearch}
-        active={tab === "search"}
-        label="Search"
-        onClick={() => onSelect("search")}
-      />
-      <RailItem
         icon={BrutalAsk}
         active={tab === "ask"}
         label="Ask"
         onClick={() => onSelect("ask")}
       />
       <RailItem
-        icon={BrutalSymbols}
-        active={tab === "symbols"}
-        label="Symbols"
-        onClick={() => onSelect("symbols")}
-      />
-      <RailItem
-        icon={BrutalBridge}
-        active={tab === "bridge"}
-        label="Bridge"
-        onClick={() => onSelect("bridge")}
+        icon={BrutalExplore}
+        active={tab === "explore"}
+        label="Explore"
+        onClick={() => onSelect("explore")}
       />
       <RailItem
         icon={BrutalProjects}
@@ -549,22 +529,10 @@ function Rail({
         onClick={() => onSelect("projects")}
       />
       <RailItem
-        icon={BrutalStructure}
-        active={tab === "structure"}
-        label="Structure"
-        onClick={() => onSelect("structure")}
-      />
-      <RailItem
         icon={BrutalSessions}
         active={tab === "sessions"}
         label="Sessions"
         onClick={() => onSelect("sessions")}
-      />
-      <RailItem
-        icon={BrutalLogs}
-        active={tab === "logs"}
-        label="Logs"
-        onClick={() => onSelect("logs")}
       />
       <div className="flex-1" />
       <RailItem

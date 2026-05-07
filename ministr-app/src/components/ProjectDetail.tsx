@@ -1,6 +1,9 @@
+import { useRef, useState } from "react";
 import {
   Activity,
   Box,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Code2,
   FileText,
@@ -12,12 +15,18 @@ import {
 } from "lucide-react";
 import type { CorpusInfo, DaemonStatus } from "../lib/types";
 import { cn } from "../lib/utils";
+import { Zone } from "./ui/zone";
+import { CorpusTreemap } from "./CorpusTreemap";
+import type { ExploreMode } from "./ExploreView";
 
 interface ProjectDetailProps {
   corpus: CorpusInfo;
   status: DaemonStatus;
-  /** Optional jump callback — if provided, ACTIONS shows quick-jumps. */
-  onNavigate?: (tab: "symbols" | "bridge" | "structure") => void;
+  /** Optional jump callback — if provided, ACTIONS shows quick-jumps.
+   *  Pass `("explore", "symbols")` to land in Explore on the Symbols
+   *  pivot. Structure is now an inline collapsible zone here, not a
+   *  separate route. */
+  onNavigate?: (target: "explore", exploreMode?: ExploreMode) => void;
 }
 
 /**
@@ -36,6 +45,20 @@ export function ProjectDetail({
 }: ProjectDetailProps) {
   const indexing = corpus.status.state === "indexing";
   const error = corpus.status.state === "error" ? corpus.status.message : null;
+  const [structureExpanded, setStructureExpanded] = useState(false);
+  const structureRef = useRef<HTMLDivElement>(null);
+
+  function jumpToStructure() {
+    setStructureExpanded(true);
+    // Scroll into view on the next frame so the expansion has a chance
+    // to layout before we measure.
+    requestAnimationFrame(() => {
+      structureRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }
 
   return (
     <div className="space-y-4">
@@ -54,7 +77,7 @@ export function ProjectDetail({
 
         <div className="border-t-2 border-border px-3 py-2 flex items-center justify-between">
           <span className="font-sans text-xs tracking-[0.05em] text-text-dim">
-            Active sessions
+            Sessions
           </span>
           <span
             className={cn(
@@ -135,49 +158,59 @@ export function ProjectDetail({
           <ActionButton
             icon={GitBranch}
             label="SYMBOLS"
-            onClick={() => onNavigate?.("symbols")}
+            onClick={() => onNavigate?.("explore", "symbols")}
           />
           <ActionButton
             icon={Network}
             label="BRIDGE"
-            onClick={() => onNavigate?.("bridge")}
+            onClick={() => onNavigate?.("explore", "bridges")}
           />
           <ActionButton
             icon={TreePine}
             label="STRUCTURE"
-            onClick={() => onNavigate?.("structure")}
+            onClick={jumpToStructure}
           />
         </div>
       </Zone>
+
+      {/* STRUCTURE — inline collapsible treemap. Replaces the prior
+          standalone tab; lives where the user already is when poking at
+          a corpus. Collapsed by default to keep the project pane fast. */}
+      <div ref={structureRef}>
+        <Zone
+          title="STRUCTURE"
+          subtitle={structureExpanded ? "TREEMAP" : "COLLAPSED"}
+        >
+          <button
+            onClick={() => setStructureExpanded((e) => !e)}
+            className="flex w-full items-center gap-2 border-b-2 border-border px-3 py-2 cursor-pointer hover:bg-surface-overlay transition-none text-left"
+          >
+            {structureExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5 text-text-dim" strokeWidth={2.5} />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-text-dim" strokeWidth={2.5} />
+            )}
+            <span className="font-sans text-xs tracking-[0.05em] text-text-muted">
+              {structureExpanded
+                ? "Hide treemap"
+                : "Show file-size treemap"}
+            </span>
+          </button>
+          {structureExpanded && (
+            <div className="p-3 max-h-[600px] overflow-y-auto">
+              <CorpusTreemap
+                status={status}
+                activeCorpusId={corpus.id}
+                setActiveCorpusId={() => {
+                  /* no-op — corpus selection is owned by the parent */
+                }}
+                onNavigate={onNavigate}
+              />
+            </div>
+          )}
+        </Zone>
+      </div>
     </div>
-  );
-}
-
-// ─── ZONE PRIMITIVE ────────────────────────────────────────────────────────
-
-function Zone({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="border border-border-soft bg-surface">
-      <header className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-1.5">
-        <span className="font-mono text-[0.6875rem] font-bold tracking-[0.05em] text-text">
-          {title}
-        </span>
-        {subtitle && (
-          <span className="font-mono text-xs tracking-[0.05em] text-text-dim">
-            {subtitle}
-          </span>
-        )}
-      </header>
-      {children}
-    </section>
   );
 }
 

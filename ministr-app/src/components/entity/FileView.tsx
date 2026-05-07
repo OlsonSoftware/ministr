@@ -229,8 +229,11 @@ export function FileView({ entity }: Props) {
             <EntityRow
               key={i}
               tag={e.kind.toUpperCase()}
-              name={e.path.split(/[\\/]/).slice(-2).join("/")}
-              meta={`${e.affected_sections.length}§`}
+              name={new Date(e.timestamp_ms).toLocaleString()}
+              subtitle={`${e.affected_sections.length} affected section${
+                e.affected_sections.length === 1 ? "" : "s"
+              }`}
+              meta={`${e.duration_ms}ms`}
             />
           ))
         )}

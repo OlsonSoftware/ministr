@@ -4,26 +4,31 @@ const DEFAULT_TAB_KEY = "ministr-default-tab";
 const DENSITY_KEY = "ministr-density";
 
 export type DefaultTab =
-  | "search"
   | "ask"
-  | "symbols"
-  | "bridge"
+  | "explore"
   | "projects"
-  | "structure"
-  | "sessions"
-  | "logs";
+  | "sessions";
 
 export type Density = "comfortable" | "compact";
 
 const VALID_DEFAULT_TABS: DefaultTab[] = [
-  "search",
   "ask",
-  "symbols",
-  "bridge",
+  "explore",
   "projects",
-  "structure",
   "sessions",
-  "logs",
+];
+
+/**
+ * Display options for the Settings → Default tab dropdown.
+ * Keep in sync with [`DefaultTab`] / [`VALID_DEFAULT_TABS`] — this is the
+ * single source of truth so adding a tab elsewhere doesn't silently
+ * leave the dropdown stale.
+ */
+export const DEFAULT_TAB_OPTIONS: { value: DefaultTab; label: string }[] = [
+  { value: "ask", label: "ASK" },
+  { value: "explore", label: "EXPLORE" },
+  { value: "projects", label: "PROJECTS" },
+  { value: "sessions", label: "SESSIONS" },
 ];
 
 /** Default-tab-on-launch preference, persisted to localStorage. */
@@ -35,7 +40,7 @@ export function useDefaultTab() {
     } catch {
       /* ignore */
     }
-    return "search";
+    return "ask";
   });
   function setDefaultTab(t: DefaultTab) {
     setDefaultTabRaw(t);

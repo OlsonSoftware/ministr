@@ -5,6 +5,7 @@ import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
 import { cn } from "../lib/utils";
 import { relative } from "../lib/time";
+import { corpusRelative } from "../lib/path";
 import { useEntityPanel } from "../hooks/useEntityPanel";
 import type {
   BridgeLink,
@@ -14,7 +15,6 @@ import type {
   DaemonStatus,
   FileInfo,
   SearchResult,
-  SymbolDefinitionDetail,
   SymbolInfo,
 } from "../lib/types";
 
@@ -25,12 +25,6 @@ interface Props {
 }
 
 type KindFilter = "all" | "sections" | "symbols" | "bridges";
-
-interface DetailState {
-  kind: "section" | "symbol" | "bridge";
-  title: string;
-  body: React.ReactNode;
-}
 
 const FALLBACK_PROBES = [
   "authentication",
@@ -54,9 +48,6 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
   const [bridges, setBridges] = useState<BridgeLink[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Detail surface moved to the global EntityPanel; the kept setDetail
-  // refs below are now no-ops awaiting cleanup.
-  const setDetail = (_: unknown) => {};
   const [compact, setCompact] = useState(false);
   const [browse, setBrowse] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
@@ -149,7 +140,6 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
     setResults([]);
     setSymbols([]);
     setBridges([]);
-    setDetail(null);
   }
 
   /**
@@ -163,7 +153,6 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
     if (!q) return;
     setLoading(true);
     setError(null);
-    setDetail(null);
     setBrowse(false);
     lastQueryRef.current = q;
 
@@ -219,7 +208,6 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
     if (!corpusId) return;
     setLoading(true);
     setError(null);
-    setDetail(null);
     setBrowse(false);
     try {
       const r = await invoke<SymbolInfo[]>("search_symbols", {
@@ -243,7 +231,6 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
     if (!corpusId) return;
     setLoading(true);
     setError(null);
-    setDetail(null);
     setBrowse(false);
     try {
       const r = await invoke<BridgeLink[]>("bridge_query", {
@@ -428,7 +415,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
               bridges={bridges}
               compact={compact}
               filter={kindFilter}
-              corpusId={corpusId}
+              corpus={selectedCorpus}
               onOpenSection={openSectionDetail}
               onOpenSymbol={openSymbolDetail}
               onOpenBridge={openBridgeDetail}
@@ -502,8 +489,8 @@ function UnifiedLanding({
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
       <SymbolKindDashboard symbols={allSyms} corpusId={corpus.id} />
       <BridgesTile bridges={bridges} onJumpToKind={onJumpToBridgeKind} />
-      <HotFilesTile files={files} onJumpToFile={onJumpToFile} />
-      <RecentChangesTile events={coherence} corpusId={corpus.id} />
+      <HotFilesTile files={files} corpus={corpus} onJumpToFile={onJumpToFile} />
+      <RecentChangesTile events={coherence} corpus={corpus} />
     </div>
   );
 }
@@ -565,7 +552,7 @@ function BlendedResults({
   bridges,
   compact,
   filter,
-  corpusId,
+  corpus,
   onOpenSection,
   onOpenSymbol,
   onOpenBridge,
@@ -576,13 +563,12 @@ function BlendedResults({
   bridges: BridgeLink[];
   compact: boolean;
   filter: KindFilter;
-  corpusId: string;
+  corpus: CorpusInfo | null;
   onOpenSection: (r: SearchResult) => void;
   onOpenSymbol: (s: SymbolInfo) => void;
   onOpenBridge: (b: BridgeLink) => void;
 }) {
   void query;
-  void corpusId;
   const showSections = filter === "all" || filter === "sections";
   const showSymbols = filter === "all" || filter === "symbols";
   const showBridges = filter === "all" || filter === "bridges";
@@ -601,6 +587,7 @@ function BlendedResults({
                 key={`${r.content_id}-${i}`}
                 result={r}
                 compact={compact}
+                corpus={corpus}
                 onClick={() => onOpenSection(r)}
               />
             ))}
@@ -1414,8 +1401,8 @@ function LandingTiles({
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
       <StructureTile corpus={corpus} files={files} />
       <BridgesTile bridges={bridges} onJumpToKind={onJumpToBridgeKind} />
-      <HotFilesTile files={files} onJumpToFile={onJumpToFile} />
-      <RecentChangesTile events={coherence} corpusId={corpus.id} />
+      <HotFilesTile files={files} corpus={corpus} onJumpToFile={onJumpToFile} />
+      <RecentChangesTile events={coherence} corpus={corpus} />
     </div>
   );
 }
@@ -1584,9 +1571,11 @@ function BridgesTile({
 
 function HotFilesTile({
   files,
+  corpus,
   onJumpToFile,
 }: {
   files: FileInfo[] | null;
+  corpus: CorpusInfo;
   onJumpToFile: (filePath: string) => void;
 }) {
   const top = useMemo(() => {
@@ -1618,7 +1607,7 @@ function HotFilesTile({
       <div className="flex flex-col">
         {top.map((f) => {
           const pct = max > 0 ? (f.section_count / max) * 100 : 0;
-          const tail = f.path.split(/[\\/]/).slice(-2).join("/");
+          const tail = corpusRelative(f.path, corpus);
           return (
             <button
               key={f.path}
@@ -1653,17 +1642,17 @@ const COHERENCE_GLYPH: Record<CoherenceKind, string> = {
 
 function RecentChangesTile({
   events,
-  corpusId,
+  corpus,
 }: {
   events: CoherenceEvent[] | null;
-  corpusId: string;
+  corpus: CorpusInfo;
 }) {
   const filtered = useMemo(() => {
     if (!events) return null;
     return events
-      .filter((e) => e.corpus_id === corpusId)
+      .filter((e) => e.corpus_id === corpus.id)
       .slice(0, 10);
-  }, [events, corpusId]);
+  }, [events, corpus.id]);
 
   if (events === null) return <Tile title="RECENT CHANGES"><LoadingRow /></Tile>;
   if (!filtered || filtered.length === 0) {
@@ -1692,7 +1681,7 @@ function RecentChangesTile({
               className="font-mono text-[0.6875rem] text-text truncate flex-1"
               title={ev.path}
             >
-              {ev.path.split(/[\\/]/).slice(-2).join("/")}
+              {corpusRelative(ev.path, corpus)}
             </span>
             <span className="font-mono text-xs tabular-nums text-text-dim shrink-0">
               {relative(now, ev.timestamp_ms)}
@@ -1798,23 +1787,49 @@ function ResultSection({
   );
 }
 
+/** Strip the corpus root from a `content_id` like
+ *  `D:/code/foo/src/lib.rs#mod::Bar:c0` so the small mono badge shows
+ *  the project-relative path plus the section anchor. Falls back to the
+ *  original id (basename + anchor) when no corpus is available. */
+function shortContentId(
+  contentId: string,
+  corpus: CorpusInfo | null,
+): string {
+  const norm = contentId.replace(/\\/g, "/");
+  // Symbol ids (`sym-…`) carry the file path before `::`. Preserve that.
+  const stripped = norm.replace(/^sym-/, "");
+  const hashIdx = stripped.indexOf("#");
+  const colonIdx = stripped.indexOf("::");
+  const splitIdx =
+    hashIdx >= 0 && (colonIdx < 0 || hashIdx < colonIdx)
+      ? hashIdx
+      : colonIdx;
+  if (splitIdx < 0) {
+    return corpusRelative(stripped, corpus);
+  }
+  const filePart = stripped.slice(0, splitIdx);
+  const tail = stripped.slice(splitIdx);
+  const rel = corpusRelative(filePart, corpus);
+  return `${rel}${tail}`;
+}
+
 // ─── SURVEY CARD ───────────────────────────────────────────────────────────
 
 function SurveyCard({
   result,
   compact,
+  corpus,
   onClick,
 }: {
   result: SearchResult;
   compact?: boolean;
+  /** Optional. When provided, the card's small mono badge shows a
+   *  corpus-relative path. Falls back to last-2-segments otherwise. */
+  corpus?: CorpusInfo | null;
   onClick: () => void;
 }) {
   const pct = Math.max(0, Math.min(100, result.score * 100));
-  const shortId = result.content_id
-    .replace(/\\/g, "/")
-    .split("/")
-    .slice(-3)
-    .join("/");
+  const shortId = shortContentId(result.content_id, corpus ?? null);
   const excerptLines = (result.text ?? "")
     .split("\n")
     .filter((l) => l.trim().length > 0)
@@ -2008,92 +2023,3 @@ function ResultRow({
   );
 }
 
-function SymbolDetailPane({ def }: { def: SymbolDefinitionDetail }) {
-  return (
-    <div className="space-y-3 font-mono text-xs">
-      <div className="space-y-1">
-        <div className="text-xs tracking-[0.05em] text-text-dim">
-          {def.heading_path.join(" / ")}
-        </div>
-        <div className="font-bold text-text">{def.signature}</div>
-        <div className="text-xs text-text-dim">
-          {def.file_path}:{def.line_start}-{def.line_end}
-        </div>
-      </div>
-      {def.doc_comment && (
-        <div className="border-l-2 border-accent bg-surface-overlay px-2 py-1.5 text-text-muted whitespace-pre-wrap">
-          {def.doc_comment}
-        </div>
-      )}
-      <pre className="border border-border-soft bg-surface-sunken p-2 text-[0.6875rem] leading-relaxed text-text whitespace-pre overflow-x-auto">
-        {def.source_context}
-      </pre>
-    </div>
-  );
-}
-
-function BridgeDetailPane({ link }: { link: BridgeLink }) {
-  return (
-    <div className="space-y-3 font-mono text-xs">
-      <div className="border border-border-soft bg-surface-overlay px-2 py-1.5 flex items-center justify-between">
-        <span className="text-xs uppercase tracking-[0.05em] text-text">
-          {link.kind}
-        </span>
-        <span className="text-xs tabular-nums text-text-dim">
-          confidence {(link.confidence * 100).toFixed(0)}%
-        </span>
-      </div>
-
-      <BridgeEndpoint
-        title="EXPORT"
-        symbol={link.export_symbol}
-        binding={link.export_binding_key}
-        language={link.export_language}
-        file={link.export_file}
-        line={link.export_line}
-      />
-      <BridgeEndpoint
-        title="IMPORT"
-        symbol={link.import_symbol}
-        binding={link.import_binding_key}
-        language={link.import_language}
-        file={link.import_file}
-        line={link.import_line}
-      />
-    </div>
-  );
-}
-
-function BridgeEndpoint({
-  title,
-  symbol,
-  binding,
-  language,
-  file,
-  line,
-}: {
-  title: string;
-  symbol: string;
-  binding: string;
-  language: string;
-  file: string;
-  line: number;
-}) {
-  return (
-    <div className="border border-border-soft bg-surface p-2 space-y-1">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-bold uppercase tracking-[0.05em] text-accent">
-          {title}
-        </span>
-        <span className="text-xs uppercase tracking-[0.05em] text-text-dim">
-          {language}
-        </span>
-      </div>
-      <div className="font-bold text-text">{symbol}</div>
-      <div className="text-xs text-text-dim">{binding}</div>
-      <div className="text-xs text-text-dim">
-        {file}:{line}
-      </div>
-    </div>
-  );
-}

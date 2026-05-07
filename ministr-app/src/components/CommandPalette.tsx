@@ -19,20 +19,16 @@ import {
   Keyboard,
 } from "lucide-react";
 import type { DaemonStatus } from "../lib/types";
+import type { ExploreMode } from "./ExploreView";
 import { cn } from "../lib/utils";
 import { corpusLabel } from "../lib/corpus";
 import { shortcutKeys } from "../lib/shortcuts";
 
 type Tab =
-  | "search"
   | "ask"
-  | "symbols"
-  | "bridge"
+  | "explore"
   | "projects"
-  | "structure"
   | "sessions"
-  | "simulator"
-  | "logs"
   | "settings";
 
 interface Cmd {
@@ -50,6 +46,14 @@ interface CommandPaletteProps {
   onClose: () => void;
   status: DaemonStatus | null;
   onNavigate: (tab: Tab) => void;
+  /** Deep-link into the Explore tab on a specific mode (sections /
+   *  symbols / bridges). Caller routes to tab=explore + sets the mode. */
+  onNavigateExplore: (mode?: ExploreMode) => void;
+  /** Open Settings and scroll to a Diagnostics zone. After Phase 4 of
+   *  the consolidation pass, Logs and the Context Simulator live inside
+   *  Settings rather than as separate routes; this is how the palette
+   *  reaches them. */
+  onOpenDiagnostics: (target: "logs" | "simulator") => void;
   onAddProject: () => void;
   onSelectCorpus: (id: string) => void;
   onShowShortcuts: () => void;
@@ -62,6 +66,8 @@ export function CommandPalette({
   onClose,
   status,
   onNavigate,
+  onNavigateExplore,
+  onOpenDiagnostics,
   onAddProject,
   onSelectCorpus,
   onShowShortcuts,
@@ -75,15 +81,6 @@ export function CommandPalette({
   const commands: Cmd[] = useMemo(() => {
     const base: Cmd[] = [
       {
-        id: "nav:search",
-        label: "Go to search",
-        hint: "Survey · symbols · bridge",
-        shortcut: shortcutKeys("nav:search"),
-        group: "NAV",
-        icon: Search,
-        run: () => onNavigate("search"),
-      },
-      {
         id: "nav:ask",
         label: "Go to ask",
         hint: "Ask anything about the codebase",
@@ -93,22 +90,37 @@ export function CommandPalette({
         run: () => onNavigate("ask"),
       },
       {
-        id: "nav:symbols",
-        label: "Go to symbols",
-        hint: "Symbol graph + references",
-        shortcut: shortcutKeys("nav:symbols"),
+        id: "nav:explore",
+        label: "Go to explore",
+        hint: "Sections · symbols · bridges (last used)",
+        shortcut: shortcutKeys("nav:explore"),
         group: "NAV",
-        icon: GitBranch,
-        run: () => onNavigate("symbols"),
+        icon: Search,
+        run: () => onNavigateExplore(),
       },
       {
-        id: "nav:bridge",
-        label: "Go to bridge",
+        id: "nav:explore:symbols",
+        label: "Explore: Symbols",
+        hint: "Symbol graph + references",
+        group: "NAV",
+        icon: GitBranch,
+        run: () => onNavigateExplore("symbols"),
+      },
+      {
+        id: "nav:explore:bridges",
+        label: "Explore: Bridges",
         hint: "Cross-language IPC/FFI map",
-        shortcut: shortcutKeys("nav:bridge"),
         group: "NAV",
         icon: Network,
-        run: () => onNavigate("bridge"),
+        run: () => onNavigateExplore("bridges"),
+      },
+      {
+        id: "nav:explore:sections",
+        label: "Explore: Sections",
+        hint: "Docs · code · prose",
+        group: "NAV",
+        icon: ScrollText,
+        run: () => onNavigateExplore("sections"),
       },
       {
         id: "nav:projects",
@@ -118,15 +130,6 @@ export function CommandPalette({
         group: "NAV",
         icon: FolderKanban,
         run: () => onNavigate("projects"),
-      },
-      {
-        id: "nav:structure",
-        label: "Go to structure",
-        hint: "Corpus treemap",
-        shortcut: shortcutKeys("nav:structure"),
-        group: "NAV",
-        icon: TreePine,
-        run: () => onNavigate("structure"),
       },
       {
         id: "nav:sessions",
@@ -139,11 +142,20 @@ export function CommandPalette({
       },
       {
         id: "nav:logs",
-        label: "Go to logs",
+        label: "Open daemon log",
+        hint: "Diagnostics zone in Settings",
         shortcut: shortcutKeys("nav:logs"),
         group: "NAV",
         icon: ScrollText,
-        run: () => onNavigate("logs"),
+        run: () => onOpenDiagnostics("logs"),
+      },
+      {
+        id: "nav:simulator",
+        label: "Open context simulator",
+        hint: "Diagnostics zone in Settings",
+        group: "NAV",
+        icon: Terminal,
+        run: () => onOpenDiagnostics("simulator"),
       },
       {
         id: "nav:settings",

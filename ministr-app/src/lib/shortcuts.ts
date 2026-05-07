@@ -17,12 +17,9 @@
 
 export type ShortcutAction =
   // navigation
-  | "nav:search"
   | "nav:ask"
-  | "nav:symbols"
-  | "nav:bridge"
+  | "nav:explore"
   | "nav:projects"
-  | "nav:structure"
   | "nav:sessions"
   | "nav:logs"
   | "nav:settings"
@@ -73,13 +70,6 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   },
   // ── g-prefixed navigation ───────────────────────────────────────────
   {
-    id: "nav:search",
-    keys: ["g", "s"],
-    label: "Search",
-    group: "Navigation",
-    prefixed: true,
-  },
-  {
     id: "nav:ask",
     keys: ["g", "a"],
     label: "Ask",
@@ -87,16 +77,9 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     prefixed: true,
   },
   {
-    id: "nav:symbols",
-    keys: ["g", "y"],
-    label: "Symbols",
-    group: "Navigation",
-    prefixed: true,
-  },
-  {
-    id: "nav:bridge",
-    keys: ["g", "b"],
-    label: "Bridge",
+    id: "nav:explore",
+    keys: ["g", "e"],
+    label: "Explore",
     group: "Navigation",
     prefixed: true,
   },
@@ -108,15 +91,8 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     prefixed: true,
   },
   {
-    id: "nav:structure",
-    keys: ["g", "t"],
-    label: "Structure",
-    group: "Navigation",
-    prefixed: true,
-  },
-  {
     id: "nav:sessions",
-    keys: ["g", "e"],
+    keys: ["g", "s"],
     label: "Sessions",
     group: "Navigation",
     prefixed: true,

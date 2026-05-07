@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   FolderOpen,
   Moon,
@@ -11,13 +13,18 @@ import {
   Rocket,
   ScrollText,
   Sun,
+  Terminal,
   Trash2,
   X,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Toggle } from "./ui/toggle";
+import { Zone } from "./ui/zone";
+import { LogViewer } from "./LogViewer";
+import { ContextSimulator } from "./ContextSimulator";
 import { cn } from "../lib/utils";
 import {
+  DEFAULT_TAB_OPTIONS,
   type DefaultTab,
   type Density,
   resetPreferences,
@@ -26,6 +33,9 @@ import {
 } from "../hooks/usePreferences";
 import { useToast } from "./shell/ToastTray";
 import type { DaemonStatus } from "../lib/types";
+
+/** Detail payload for the `ministr-settings-scroll` window event. */
+export type SettingsScrollTarget = "logs" | "simulator";
 
 interface SettingsProps {
   status: DaemonStatus;
@@ -39,16 +49,6 @@ interface SettingsProps {
 
 const RELEASES_URL = "https://github.com/anthropics/ministr/releases";
 const DATA_DIR = "~/.ministr/";
-
-const DEFAULT_TAB_OPTIONS: { value: DefaultTab; label: string }[] = [
-  { value: "search", label: "SEARCH" },
-  { value: "symbols", label: "SYMBOLS" },
-  { value: "bridge", label: "BRIDGE" },
-  { value: "projects", label: "PROJECTS" },
-  { value: "structure", label: "STRUCTURE" },
-  { value: "sessions", label: "SESSIONS" },
-  { value: "logs", label: "LOGS" },
-];
 
 export function Settings({
   status,
@@ -64,6 +64,44 @@ export function Settings({
   const { toast } = useToast();
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [logsExpanded, setLogsExpanded] = useState(false);
+  const [simulatorExpanded, setSimulatorExpanded] = useState(false);
+  const logsRef = useRef<HTMLDivElement>(null);
+  const simulatorRef = useRef<HTMLDivElement>(null);
+
+  // Listen for scroll-to-zone requests from the rest of the app
+  // (DaemonDot's "open log file" fallback, palette nav:logs, etc.).
+  // Phase 4 of the consolidation pass folded the standalone Logs and
+  // Simulator tabs into this Diagnostics zone, so callers send us a
+  // window event instead of switching to a route.
+  useEffect(() => {
+    function onScroll(e: Event) {
+      const detail = (e as CustomEvent).detail as
+        | SettingsScrollTarget
+        | undefined;
+      if (detail === "logs") {
+        setLogsExpanded(true);
+        requestAnimationFrame(() => {
+          logsRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+        });
+      } else if (detail === "simulator") {
+        setSimulatorExpanded(true);
+        requestAnimationFrame(() => {
+          simulatorRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+        });
+      }
+    }
+    window.addEventListener("ministr-settings-scroll", onScroll);
+    return () => {
+      window.removeEventListener("ministr-settings-scroll", onScroll);
+    };
+  }, []);
 
   async function toggleAutostart() {
     const next = !autostart;
@@ -148,7 +186,7 @@ export function Settings({
       </header>
 
       {/* PREFERENCES */}
-      <Zone title="PREFERENCES">
+      <Zone title="PREFERENCES" tone="serif">
         {/* Theme */}
         <PrefRow
           label="THEME"
@@ -246,7 +284,7 @@ export function Settings({
       </Zone>
 
       {/* SYSTEM */}
-      <Zone title="SYSTEM" subtitle="READ-ONLY">
+      <Zone title="SYSTEM" subtitle="READ-ONLY" tone="serif">
         <MetaRow label="DAEMON" value={`v${status.version}`} />
         <MetaRow label="MODEL" value={status.model} />
         <MetaRow label="DIM" value={`${status.model_dimension}d`} />
@@ -258,7 +296,7 @@ export function Settings({
       </Zone>
 
       {/* MAINTENANCE */}
-      <Zone title="MAINTENANCE">
+      <Zone title="MAINTENANCE" tone="serif">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-0">
           <MaintAction
             icon={FolderOpen}
@@ -287,6 +325,39 @@ export function Settings({
             danger
             onClick={() => setConfirmClear(true)}
           />
+        </div>
+      </Zone>
+
+      {/* DIAGNOSTICS — folds the previous Logs + Simulator tabs into a
+          collapsible zone here. Both default-collapsed so Settings stays
+          fast on cold open; users can click a header to expand, or
+          dispatch `ministr-settings-scroll` from elsewhere in the app. */}
+      <Zone title="DIAGNOSTICS" tone="serif">
+        <div ref={logsRef}>
+          <DiagnosticSection
+            icon={ScrollText}
+            label="Daemon log"
+            hint="Recent log lines from the running ministr daemon"
+            expanded={logsExpanded}
+            onToggle={() => setLogsExpanded((v) => !v)}
+            isLast={false}
+          >
+            <div className="max-h-[420px] overflow-hidden">
+              <LogViewer />
+            </div>
+          </DiagnosticSection>
+        </div>
+        <div ref={simulatorRef}>
+          <DiagnosticSection
+            icon={Terminal}
+            label="Context simulator"
+            hint="Replay a corpus query against the current session model"
+            expanded={simulatorExpanded}
+            onToggle={() => setSimulatorExpanded((v) => !v)}
+            isLast={true}
+          >
+            <ContextSimulator />
+          </DiagnosticSection>
         </div>
       </Zone>
 
@@ -358,40 +429,58 @@ export function Settings({
   );
 }
 
-// ─── ZONE / ROW PRIMITIVES ─────────────────────────────────────────────────
+// ─── ROW PRIMITIVES ────────────────────────────────────────────────────────
 
-function Zone({
-  title,
-  subtitle,
+function DiagnosticSection({
+  icon: Icon,
+  label,
+  hint,
+  expanded,
+  onToggle,
+  isLast,
   children,
 }: {
-  title: string;
-  subtitle?: string;
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  label: string;
+  hint: string;
+  expanded: boolean;
+  onToggle: () => void;
+  isLast: boolean;
   children: React.ReactNode;
 }) {
-  // Display titles like "PREFERENCES" / "SYSTEM" arrive uppercase from
-  // legacy callers; render them as Plex Serif sentence-case.
-  const sentence = /^[A-Z][A-Z\s\-—·]+$/.test(title)
-    ? title.charAt(0) + title.slice(1).toLowerCase()
-    : title;
-  const subSentence =
-    subtitle && /^[A-Z][A-Z\s\-—·]+$/.test(subtitle)
-      ? subtitle.charAt(0) + subtitle.slice(1).toLowerCase()
-      : subtitle;
   return (
-    <section className="border border-border-soft bg-surface">
-      <header className="flex items-baseline justify-between gap-3 border-b border-border-soft bg-surface-overlay px-3 py-2">
-        <h3 className="font-serif text-base font-bold text-text">
-          {sentence}
-        </h3>
-        {subSentence && (
-          <span className="font-serif text-xs italic text-text-dim">
-            {subSentence}
-          </span>
+    <>
+      <button
+        onClick={onToggle}
+        className={cn(
+          "flex w-full items-center gap-2 px-3 py-2 cursor-pointer hover:bg-surface-overlay transition-none text-left",
+          !isLast || expanded ? "border-b border-border-soft" : "",
         )}
-      </header>
-      <div>{children}</div>
-    </section>
+      >
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 text-text-dim shrink-0" strokeWidth={2.5} />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 text-text-dim shrink-0" strokeWidth={2.5} />
+        )}
+        <Icon className="h-3.5 w-3.5 text-text-dim shrink-0" strokeWidth={2} />
+        <span className="font-sans text-sm font-semibold text-text">
+          {label}
+        </span>
+        <span className="font-sans text-xs text-text-dim truncate">
+          · {hint}
+        </span>
+      </button>
+      {expanded && (
+        <div
+          className={cn(
+            "px-3 py-3",
+            !isLast && "border-b border-border-soft",
+          )}
+        >
+          {children}
+        </div>
+      )}
+    </>
   );
 }
 
