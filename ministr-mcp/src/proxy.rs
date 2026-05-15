@@ -154,10 +154,9 @@ pub struct EvictedParams {
 impl ProxyServer {
     #[must_use]
     pub fn new(corpus_paths: Vec<String>) -> Self {
-        let budget_config = BudgetConfig {
-            max_context_tokens: 100_000,
-            ..BudgetConfig::default()
-        };
+        // Inherit the env-driven window (MINISTR_CONTEXT_WINDOW, else the
+        // 200k fallback) rather than pinning a misleadingly small 100k.
+        let budget_config = BudgetConfig::default();
         Self {
             client: Arc::new(DaemonClient::new()),
             corpus_id: Arc::new(Mutex::new(None)),
