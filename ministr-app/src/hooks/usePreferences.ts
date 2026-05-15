@@ -3,32 +3,26 @@ import { useEffect, useState } from "react";
 const DEFAULT_TAB_KEY = "ministr-default-tab";
 const DENSITY_KEY = "ministr-density";
 
-export type DefaultTab =
-  | "ask"
-  | "explore"
-  | "projects"
-  | "sessions";
+// The IA collapse left exactly three top-level surfaces. The old
+// "explore" / "sessions" options pointed at routes that no longer
+// exist — they're dropped here so the dropdown can't set a launch
+// target the shell can't honor.
+export type DefaultTab = "ask" | "projects" | "settings";
 
 export type Density = "comfortable" | "compact";
 
-const VALID_DEFAULT_TABS: DefaultTab[] = [
-  "ask",
-  "explore",
-  "projects",
-  "sessions",
-];
+const VALID_DEFAULT_TABS: DefaultTab[] = ["ask", "projects", "settings"];
 
 /**
  * Display options for the Settings → Default tab dropdown.
  * Keep in sync with [`DefaultTab`] / [`VALID_DEFAULT_TABS`] — this is the
- * single source of truth so adding a tab elsewhere doesn't silently
+ * single source of truth so adding a surface elsewhere doesn't silently
  * leave the dropdown stale.
  */
 export const DEFAULT_TAB_OPTIONS: { value: DefaultTab; label: string }[] = [
-  { value: "ask", label: "ASK" },
-  { value: "explore", label: "EXPLORE" },
-  { value: "projects", label: "PROJECTS" },
-  { value: "sessions", label: "SESSIONS" },
+  { value: "ask", label: "Ask" },
+  { value: "projects", label: "Projects" },
+  { value: "settings", label: "Settings" },
 ];
 
 /** Default-tab-on-launch preference, persisted to localStorage. */

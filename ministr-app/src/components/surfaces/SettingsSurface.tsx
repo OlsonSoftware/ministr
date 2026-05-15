@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { cn } from "../../lib/utils";
 import type { DaemonStatus } from "../../lib/types";
-import { Settings } from "../Settings";
+import { GeneralSettings } from "./GeneralSettings";
 import { AiAssistantsPanel } from "./AiAssistantsPanel";
+import { ServerSettings } from "./ServerSettings";
 import { DeveloperPanel } from "./DeveloperPanel";
+import { AboutPanel } from "./AboutPanel";
 
-type SettingsTab = "general" | "ai" | "developer";
+type SettingsTab = "general" | "ai" | "server" | "developer" | "about";
 
 interface Tab {
   id: SettingsTab;
@@ -15,7 +17,9 @@ interface Tab {
 const TABS: Tab[] = [
   { id: "general", label: "General" },
   { id: "ai", label: "AI assistants" },
+  { id: "server", label: "Server" },
   { id: "developer", label: "Developer" },
+  { id: "about", label: "About" },
 ];
 
 interface Props {
@@ -30,14 +34,16 @@ interface Props {
 }
 
 /**
- * Settings surface — top-level destination, organised into tabs.
+ * Settings surface — top-level destination, organised into five tabs:
  *
- * - General: theme, density, default tab, autostart, daemon vitals.
- *   Wraps the existing Settings component as-is.
- * - AI assistants: the MCP wizard. One row per detected client with
- *   one-click connect + live verification (see AiAssistantsPanel).
- * - Developer: container for Sessions / Logs / Explore / Query
- *   playground that previously lived as top-level tabs and drawers.
+ * - General: theme, density, default surface, autostart.
+ * - AI assistants: the MCP wizard — one row per detected client with
+ *   one-click connect + live verification.
+ * - Server: read-only ministr-server vitals + collapsible diagnostics
+ *   (log viewer, context simulator).
+ * - Developer: Sessions / Logs / Explore / Query playground that used
+ *   to live as top-level tabs and drawers.
+ * - About: version, maintenance, and the type-to-confirm danger zone.
  */
 export function SettingsSurface(props: Props) {
   const [tab, setTab] = useState<SettingsTab>("general");
@@ -73,13 +79,11 @@ export function SettingsSurface(props: Props) {
 
       <div className="flex-1 min-h-0 overflow-y-auto p-5">
         {tab === "general" && (
-          <Settings
+          <GeneralSettings
             status={props.status}
             theme={props.theme}
             onThemeChange={props.onThemeChange}
-            onShowOnboarding={props.onShowOnboarding}
             onRefresh={props.onRefresh}
-            onOpenLogs={props.onOpenLogs}
           />
         )}
         {tab === "ai" && (
@@ -88,6 +92,7 @@ export function SettingsSurface(props: Props) {
             activeCorpusId={props.activeCorpusId}
           />
         )}
+        {tab === "server" && <ServerSettings status={props.status} />}
         {tab === "developer" && (
           <DeveloperPanel
             status={props.status}
@@ -95,8 +100,15 @@ export function SettingsSurface(props: Props) {
             setActiveCorpusId={props.setActiveCorpusId}
           />
         )}
+        {tab === "about" && (
+          <AboutPanel
+            status={props.status}
+            onShowOnboarding={props.onShowOnboarding}
+            onRefresh={props.onRefresh}
+            onOpenLogs={props.onOpenLogs}
+          />
+        )}
       </div>
     </div>
   );
 }
-
