@@ -72,9 +72,10 @@ fn extract_text(content: &[Content]) -> &str {
 
 /// Extract the tool-specific `result` field from a `ToolResponse` JSON envelope.
 ///
-/// Since CONTEXT1.0, tool responses have the shape:
-/// `{ "budget_status": {...}, "result": { tool-specific data } }`.
-/// This helper navigates to the `result` sub-object.
+/// Tool responses have the shape `{ "result": { tool-specific data }, ... }`
+/// (plus optional `coherence_alerts` / `next_actions`). Budget status is
+/// tracked internally and intentionally not part of this envelope. This
+/// helper navigates to the `result` sub-object.
 fn tool_result(json: &serde_json::Value) -> &serde_json::Value {
     &json["result"]
 }
@@ -279,6 +280,23 @@ async fn call_tool(client: &McpClient, name: &str, args: serde_json::Value) -> C
     client.peer().call_tool(params).await.unwrap()
 }
 
+/// Assert a tool response carries no agent-facing budget hints.
+///
+/// Budget is tracked internally (and still queryable via the explicit
+/// `ministr_budget` tool) but must never be injected into ordinary tool
+/// responses — the per-call numbers made agents wrongly believe they
+/// were running out of context.
+fn assert_no_budget_hints(v: &serde_json::Value) {
+    assert!(
+        v.get("budget_status").is_none() || v["budget_status"].is_null(),
+        "budget_status must not be surfaced to the agent, got: {v}"
+    );
+    assert!(
+        v.get("eviction_recommendations").is_none() || v["eviction_recommendations"].is_null(),
+        "eviction_recommendations must not be surfaced to the agent, got: {v}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Tool listing
 // ---------------------------------------------------------------------------
@@ -358,10 +376,13 @@ async fn full_flow_survey_read_extract_via_call_tool() {
         assert!(r["text"].is_string());
     }
 
-    assert!(survey_json["budget_status"]["tokens_used"].is_number());
-    let tokens_after_survey = survey_json["budget_status"]["tokens_used"]
-        .as_u64()
-        .unwrap();
+    assert_no_budget_hints(&survey_json);
+    // Internal accounting is observed via the explicit budget tool, not
+    // injected into the survey reply.
+    let budget_after_survey = call_tool(&client, "ministr_budget", json!({})).await;
+    let bjs: serde_json::Value =
+        serde_json::from_str(extract_text(&budget_after_survey.content)).unwrap();
+    let tokens_after_survey = bjs["estimated_used"].as_u64().unwrap();
     assert!(tokens_after_survey > 0);
 
     // Step 2: Read a specific section
@@ -398,7 +419,11 @@ async fn full_flow_survey_read_extract_via_call_tool() {
         assert_eq!(heading_path[1], "Tokens");
     }
 
-    let tokens_after_read = read_json["budget_status"]["tokens_used"].as_u64().unwrap();
+    assert_no_budget_hints(&read_json);
+    let budget_after_read = call_tool(&client, "ministr_budget", json!({})).await;
+    let bjr: serde_json::Value =
+        serde_json::from_str(extract_text(&budget_after_read.content)).unwrap();
+    let tokens_after_read = bjr["estimated_used"].as_u64().unwrap();
     // If the section was already delivered by survey, the read returns
     // already_delivered and may trigger fault correction (budget decreases).
     // Otherwise budget accumulates as before.
@@ -428,9 +453,11 @@ async fn full_flow_survey_read_extract_via_call_tool() {
     assert!(claim_texts.iter().any(|t| t.contains("RS256")));
     assert!(claim_texts.iter().any(|t| t.contains("24 hours")));
 
-    let tokens_after_extract = extract_json["budget_status"]["tokens_used"]
-        .as_u64()
-        .unwrap();
+    assert_no_budget_hints(&extract_json);
+    let budget_after_extract = call_tool(&client, "ministr_budget", json!({})).await;
+    let bje: serde_json::Value =
+        serde_json::from_str(extract_text(&budget_after_extract.content)).unwrap();
+    let tokens_after_extract = bje["estimated_used"].as_u64().unwrap();
     assert!(
         tokens_after_extract >= tokens_after_read,
         "budget should not decrease: {tokens_after_extract} >= {tokens_after_read}"
@@ -509,7 +536,7 @@ async fn read_re_request_skips_unchanged_with_fault_correction() {
         d2["text"].is_null(),
         "should not include full text on re-request"
     );
-    assert!(j2["budget_status"].is_object());
+    assert_no_budget_hints(&j2);
     assert!(d2["claims_available"].is_number());
 }
 
@@ -566,8 +593,10 @@ async fn read_sections_from_different_documents() {
     let api_data = tool_result(&api_json);
     assert!(api_data["text"].as_str().unwrap().contains("Rate limits"));
 
-    let total_used = api_json["budget_status"]["tokens_used"].as_u64().unwrap();
-    assert!(total_used > 0, "budget should track multi-document reads");
+    // Budget is tracked internally (covered by
+    // budget_monotonically_increases_across_tool_types via the explicit
+    // ministr_budget tool) but must not be surfaced in the read reply.
+    assert_no_budget_hints(&api_json);
 }
 
 // ---------------------------------------------------------------------------
@@ -646,11 +675,20 @@ async fn extract_nonexistent_section_returns_user_friendly_error() {
 // Budget tracking end-to-end
 // ---------------------------------------------------------------------------
 
+/// Budget still accumulates internally across tool types — observed via
+/// the explicit `ministr_budget` tool, never injected into the survey/
+/// read/extract responses themselves.
 #[tokio::test]
 async fn budget_monotonically_increases_across_tool_types() {
+    // Helper: query the explicit budget tool for estimated_used.
+    async fn used(client: &McpClient) -> u64 {
+        let b = call_tool(client, "ministr_budget", json!({})).await;
+        let j: serde_json::Value = serde_json::from_str(extract_text(&b.content)).unwrap();
+        j["estimated_used"].as_u64().unwrap()
+    }
+
     let (client, _server) = wrap_as_client(setup_server().await).await;
 
-    // Survey
     let r1 = call_tool(
         &client,
         "ministr_survey",
@@ -658,9 +696,9 @@ async fn budget_monotonically_increases_across_tool_types() {
     )
     .await;
     let j1: serde_json::Value = serde_json::from_str(extract_text(&r1.content)).unwrap();
-    let t1 = j1["budget_status"]["tokens_used"].as_u64().unwrap();
+    assert_no_budget_hints(&j1);
+    let t1 = used(&client).await;
 
-    // Read
     let r2 = call_tool(
         &client,
         "ministr_read",
@@ -668,7 +706,8 @@ async fn budget_monotonically_increases_across_tool_types() {
     )
     .await;
     let j2: serde_json::Value = serde_json::from_str(extract_text(&r2.content)).unwrap();
-    let t2 = j2["budget_status"]["tokens_used"].as_u64().unwrap();
+    assert_no_budget_hints(&j2);
+    let t2 = used(&client).await;
 
     // Extract from a section NOT previously delivered (auth tokens)
     let r3 = call_tool(
@@ -678,16 +717,18 @@ async fn budget_monotonically_increases_across_tool_types() {
     )
     .await;
     let j3: serde_json::Value = serde_json::from_str(extract_text(&r3.content)).unwrap();
-    let t3 = j3["budget_status"]["tokens_used"].as_u64().unwrap();
+    assert_no_budget_hints(&j3);
+    let t3 = used(&client).await;
 
-    // Note: budget_status is at the top level of ToolResponse, not under result.
-    // The token values t1, t2, t3 are already correctly extracted from budget_status.
     assert!(t1 > 0, "survey should use tokens");
     assert!(t2 > t1, "read adds tokens: {t2} > {t1}");
     assert!(t3 >= t2, "extract should not decrease tokens: {t3} >= {t2}");
 
+    // The explicit budget tool still reports pressure level.
+    let b = call_tool(&client, "ministr_budget", json!({})).await;
+    let bj: serde_json::Value = serde_json::from_str(extract_text(&b.content)).unwrap();
     assert_eq!(
-        j3["budget_status"]["pressure_level"].as_str().unwrap(),
+        bj["pressure_level"].as_str().unwrap(),
         "normal",
         "small corpus should not trigger pressure"
     );
@@ -825,7 +866,7 @@ async fn compress_returns_summaries_for_sections() {
         );
     }
 
-    assert!(json["budget_status"]["tokens_used"].is_number());
+    assert_no_budget_hints(&json);
 }
 
 // ---------------------------------------------------------------------------
@@ -857,7 +898,7 @@ async fn related_returns_linked_claims() {
         assert!(r["relation_type"].is_string());
     }
 
-    assert!(json["budget_status"].is_object());
+    assert_no_budget_hints(&json);
 }
 
 #[tokio::test]
@@ -1353,8 +1394,7 @@ async fn e2e_survey_from_corpus_dir_returns_ranked_results() {
         assert!(r["text"].is_string(), "should have text");
     }
 
-    // Verify budget tracking
-    assert!(json["budget_status"]["tokens_used"].as_u64().unwrap() > 0);
+    assert_no_budget_hints(&json);
 }
 
 // ---------------------------------------------------------------------------
@@ -1471,13 +1511,7 @@ async fn e2e_extract_returns_claims_from_ingested_content() {
         );
     }
 
-    // Verify budget tracked the extraction
-    assert!(
-        extract_json["budget_status"]["tokens_used"]
-            .as_u64()
-            .unwrap()
-            > 0
-    );
+    assert_no_budget_hints(&extract_json);
 }
 
 // ---------------------------------------------------------------------------
@@ -1544,7 +1578,7 @@ async fn e2e_related_follows_claim_dependency_chains() {
             );
         }
 
-        assert!(related_json["budget_status"].is_object());
+        assert_no_budget_hints(&related_json);
     }
 
     // Also verify with the programmatic corpus that has guaranteed relationships
@@ -1623,7 +1657,7 @@ async fn e2e_read_session_dedup_on_second_request() {
         d2["text"].is_null(),
         "re-request should not include full text"
     );
-    assert!(j2["budget_status"].is_object());
+    assert_no_budget_hints(&j2);
     assert!(d2["claims_available"].is_number());
 
     // Verify survey deduplication works — same query returns fewer results
@@ -1971,11 +2005,7 @@ async fn ministr_toc_returns_all_documents_and_sections() {
         );
     }
 
-    // Budget status should be present
-    assert!(
-        body["budget_status"].is_object(),
-        "should include budget_status"
-    );
+    assert_no_budget_hints(&body);
 }
 
 #[tokio::test]
@@ -2498,10 +2528,7 @@ async fn e2e_ministr_fetch_then_survey_and_toc() {
         fetch_data["tokens_added"].as_u64().unwrap() > 0,
         "should report tokens added"
     );
-    assert!(
-        fetch_json["budget_status"].is_object(),
-        "should include budget_status"
-    );
+    assert_no_budget_hints(&fetch_json);
 
     // Step 2: Verify ministr_survey finds the fetched content
     let survey_result = call_tool(
@@ -2741,7 +2768,7 @@ async fn e2e_ministr_clone_then_survey_and_toc() {
         clone_data["sections_extracted"].as_u64().unwrap() > 0,
         "should extract sections from cloned content"
     );
-    assert!(clone_json["budget_status"].is_object());
+    assert_no_budget_hints(&clone_json);
 
     // Step 2: Verify ministr_survey finds content from the cloned repo
     let survey_result = call_tool(
@@ -3303,7 +3330,7 @@ async fn ministr_definition_returns_symbol_metadata() {
 }
 
 #[tokio::test]
-async fn ministr_definition_returns_budget_status() {
+async fn ministr_definition_omits_budget_status() {
     let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
     let result = call_tool(
         &client,
@@ -3315,10 +3342,7 @@ async fn ministr_definition_returns_budget_status() {
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
 
-    assert!(
-        response["budget_status"].is_object(),
-        "response should include budget_status"
-    );
+    assert_no_budget_hints(&response);
 }
 
 #[tokio::test]
@@ -3424,17 +3448,14 @@ async fn ministr_references_not_found() {
 }
 
 #[tokio::test]
-async fn ministr_symbols_includes_budget_status() {
+async fn ministr_symbols_omits_budget_status() {
     let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
     let result = call_tool(&client, "ministr_symbols", json!({"query": "Config"})).await;
 
     let text = extract_text(&result.content);
     let response: serde_json::Value = serde_json::from_str(text).unwrap();
 
-    assert!(
-        response["budget_status"].is_object(),
-        "ministr_symbols response should include budget_status"
-    );
+    assert_no_budget_hints(&response);
 }
 
 // ===========================================================================

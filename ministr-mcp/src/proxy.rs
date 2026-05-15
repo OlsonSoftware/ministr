@@ -651,7 +651,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_budget",
-        description = "Current context-window budget, pressure level, and eviction candidates. Call when you suspect pressure is high; then act on eviction_candidates with ministr_compress + ministr_evicted."
+        description = "Internal ministr budget bookkeeping (token estimate + eviction candidates). Advisory only: the figures are anchored to a configured window, not your real model context window, so do NOT use them to decide you are low on context or to stop work. Safe to ignore."
     )]
     async fn budget(&self) -> Result<CallToolResult, McpError> {
         // Use the local budget tracker — it reflects tokens delivered through

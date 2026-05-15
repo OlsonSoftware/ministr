@@ -7,8 +7,7 @@
 use serde::Serialize;
 
 use ministr_core::session::{
-    AccessMode, BudgetStatus, CompressionTier, PressureLevel, SessionEntry, SessionId,
-    SessionRegistry,
+    AccessMode, BudgetStatus, CompressionTier, SessionEntry, SessionId, SessionRegistry,
 };
 use ministr_core::token::count_tokens;
 use ministr_core::types::{ContentId, Resolution};
@@ -158,16 +157,14 @@ impl MinistrServer {
         let mut reg = self.registry.lock().await;
         let entry = self.ensure_session_mut(&mut reg);
         let alerts = entry.session.drain_alerts();
-
-        // Compute eviction recommendations when under pressure
-        let eviction_recommendations = if budget_status.pressure_level == PressureLevel::Normal {
-            Vec::new()
-        } else {
-            entry
-                .budget
-                .eviction_candidates(&entry.session, 3, Some(&entry.memory))
-        };
         drop(reg);
+
+        // Budget pressure is tracked internally (BudgetTracker keeps
+        // recording for compression/dedup) but never surfaced to the
+        // agent — the injected numbers were making agents wrongly think
+        // they were out of context. So no eviction recommendations are
+        // computed or sent, regardless of pressure level.
+        let eviction_recommendations = Vec::new();
 
         let progress = &self.ingestion_progress;
         let indexing = progress.is_running();
@@ -179,12 +176,7 @@ impl MinistrServer {
             None
         };
 
-        let next_actions = build_next_actions(
-            budget_status.pressure_level,
-            &eviction_recommendations,
-            &alerts,
-            extra_next_actions,
-        );
+        let next_actions = build_next_actions(&alerts, extra_next_actions);
 
         ToolResponse {
             budget_status,
@@ -200,43 +192,21 @@ impl MinistrServer {
 
 /// Synthesize the prioritized next-action list for a tool response.
 ///
-/// Order: pressure-driven (compress + evicted per candidate), then
-/// coherence-driven (re-read each changed section), then any per-handler
-/// hints supplied by the caller. Pure function — easy to unit-test.
+/// Order: coherence-driven (re-read each changed section), then any
+/// per-handler hints supplied by the caller. Pure function — easy to
+/// unit-test.
+///
+/// Budget pressure used to contribute compress/evict entries here; it no
+/// longer does. Those nudges made agents think they were running out of
+/// context. Pressure is still tracked internally for compression/dedup,
+/// it's just not turned into agent-facing instructions.
 fn build_next_actions(
-    pressure: PressureLevel,
-    eviction_recommendations: &[ministr_core::session::eviction::EvictionCandidate],
     coherence_alerts: &[ministr_core::session::CoherenceAlert],
     extra: Vec<NextAction>,
 ) -> Vec<NextAction> {
     let mut actions = Vec::new();
 
-    // 1. Pressure-driven: compress then evict each recommended candidate.
-    if pressure != PressureLevel::Normal {
-        let pressure_label = match pressure {
-            PressureLevel::Elevated => "elevated",
-            PressureLevel::Critical => "critical",
-            PressureLevel::Normal => unreachable!(),
-        };
-        for candidate in eviction_recommendations {
-            let ids = vec![candidate.content_id.clone()];
-            actions.push(NextAction {
-                action: "ministr_compress".to_string(),
-                args: serde_json::json!({ "content_ids": ids }),
-                reason: format!(
-                    "Pressure {pressure_label}; compress this section before dropping it ({} tokens)",
-                    candidate.tokens_recoverable
-                ),
-            });
-            actions.push(NextAction {
-                action: "ministr_evicted".to_string(),
-                args: serde_json::json!({ "content_ids": ids }),
-                reason: format!("Pressure {pressure_label}; signal eviction after dropping"),
-            });
-        }
-    }
-
-    // 2. Coherence-driven: re-read changed sections so the agent gets a delta.
+    // Coherence-driven: re-read changed sections so the agent gets a delta.
     for alert in coherence_alerts {
         for section_id in &alert.changed_sections {
             actions.push(NextAction {
@@ -247,7 +217,7 @@ fn build_next_actions(
         }
     }
 
-    // 3. Per-handler hints (e.g. "read the top survey hit").
+    // Per-handler hints (e.g. "read the top survey hit").
     actions.extend(extra);
 
     actions
@@ -256,46 +226,12 @@ fn build_next_actions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ministr_core::session::eviction::EvictionCandidate;
-    use ministr_core::session::{CoherenceAlert, PressureLevel};
-
-    fn candidate(id: &str, tokens: usize) -> EvictionCandidate {
-        EvictionCandidate {
-            content_id: id.to_string(),
-            reason: "test".to_string(),
-            tokens_recoverable: tokens,
-            score: 1.0,
-            factors: None,
-        }
-    }
+    use ministr_core::session::CoherenceAlert;
 
     #[test]
-    fn no_actions_under_normal_pressure_with_no_alerts_or_extras() {
-        let actions = build_next_actions(PressureLevel::Normal, &[], &[], Vec::new());
+    fn no_actions_with_no_alerts_or_extras() {
+        let actions = build_next_actions(&[], Vec::new());
         assert!(actions.is_empty());
-    }
-
-    #[test]
-    fn elevated_pressure_emits_compress_then_evicted_per_candidate() {
-        let candidates = vec![candidate("sec-a", 500), candidate("sec-b", 300)];
-        let actions = build_next_actions(PressureLevel::Elevated, &candidates, &[], Vec::new());
-
-        assert_eq!(actions.len(), 4);
-        assert_eq!(actions[0].action, "ministr_compress");
-        assert!(actions[0].reason.contains("elevated"));
-        assert_eq!(actions[1].action, "ministr_evicted");
-        assert_eq!(actions[2].action, "ministr_compress");
-        assert_eq!(actions[3].action, "ministr_evicted");
-        // Each compress/evict pair carries the candidate's content_id.
-        assert_eq!(actions[0].args["content_ids"][0], "sec-a");
-        assert_eq!(actions[2].args["content_ids"][0], "sec-b");
-    }
-
-    #[test]
-    fn critical_pressure_label_used() {
-        let candidates = vec![candidate("sec-a", 500)];
-        let actions = build_next_actions(PressureLevel::Critical, &candidates, &[], Vec::new());
-        assert!(actions[0].reason.contains("critical"));
     }
 
     #[test]
@@ -304,7 +240,7 @@ mod tests {
             changed_sections: vec!["docs/a.md#x".into(), "docs/b.md#y".into()],
             stale_content_ids: vec![],
         }];
-        let actions = build_next_actions(PressureLevel::Normal, &[], &alerts, Vec::new());
+        let actions = build_next_actions(&alerts, Vec::new());
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].action, "ministr_read");
@@ -312,23 +248,30 @@ mod tests {
         assert_eq!(actions[1].args["section_id"], "docs/b.md#y");
     }
 
+    /// Regression guard for the budget-hint removal: even with coherence
+    /// activity in play, no compress/evict pressure nudges are emitted.
+    /// `build_next_actions` no longer even accepts a pressure argument,
+    /// so this asserts the only actions are the coherence re-reads.
     #[test]
-    fn pressure_actions_come_before_coherence_actions() {
-        let candidates = vec![candidate("sec-a", 500)];
+    fn no_compress_or_evict_actions_are_ever_emitted() {
         let alerts = vec![CoherenceAlert {
             changed_sections: vec!["docs/a.md#x".into()],
             stale_content_ids: vec![],
         }];
-        let actions = build_next_actions(PressureLevel::Elevated, &candidates, &alerts, Vec::new());
+        let actions = build_next_actions(&alerts, Vec::new());
 
-        assert_eq!(actions.len(), 3);
-        assert_eq!(actions[0].action, "ministr_compress");
-        assert_eq!(actions[1].action, "ministr_evicted");
-        assert_eq!(actions[2].action, "ministr_read");
+        assert!(
+            actions
+                .iter()
+                .all(|a| a.action != "ministr_compress" && a.action != "ministr_evicted"),
+            "budget pressure must not inject compress/evict next-actions",
+        );
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action, "ministr_read");
     }
 
     #[test]
-    fn extras_are_appended_last() {
+    fn extras_are_appended_after_coherence() {
         let extras = vec![NextAction {
             action: "ministr_definition".to_string(),
             args: serde_json::json!({ "symbol_id": "sym-1" }),
@@ -338,7 +281,7 @@ mod tests {
             changed_sections: vec!["docs/a.md#x".into()],
             stale_content_ids: vec![],
         }];
-        let actions = build_next_actions(PressureLevel::Normal, &[], &alerts, extras);
+        let actions = build_next_actions(&alerts, extras);
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].action, "ministr_read");
