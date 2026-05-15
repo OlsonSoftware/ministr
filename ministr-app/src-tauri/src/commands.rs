@@ -1011,8 +1011,8 @@ pub async fn indexing_progress_events(
 
                 let started_running = status == 1 && track.last_status != 1;
                 let stopped_running = status != 1 && track.last_status == 1;
-                let progressed = files_done != track.last_files_done
-                    || current_file != track.last_current_file;
+                let progressed =
+                    files_done != track.last_files_done || current_file != track.last_current_file;
                 let status_changed = status != track.last_status;
 
                 if started_running {
@@ -1045,8 +1045,7 @@ pub async fn indexing_progress_events(
                             clippy::cast_possible_truncation,
                             clippy::cast_sign_loss
                         )]
-                        let remaining =
-                            (((files_total - files_done) as f64) / rate).round() as u64;
+                        let remaining = (((files_total - files_done) as f64) / rate).round() as u64;
                         Some(remaining)
                     })
                 } else {
@@ -1375,10 +1374,7 @@ pub async fn mcp_detect_clients(project_root: String) -> Result<Vec<McpClientInf
 /// Write the MCP config for a single client. Returns the absolute path
 /// of the file that was written so the wizard can show it to the user.
 #[tauri::command]
-pub async fn mcp_write_config(
-    project_root: String,
-    client_id: String,
-) -> Result<String, String> {
+pub async fn mcp_write_config(project_root: String, client_id: String) -> Result<String, String> {
     use ministr_core::init::{McpClientId, write_mcp_config};
     let client = McpClientId::parse(&client_id)
         .ok_or_else(|| format!("unknown MCP client id: {client_id}"))?;

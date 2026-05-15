@@ -494,13 +494,11 @@ fn write_mcp_json_relative(root: &Path, relative_path: &str) -> Result<PathBuf, 
 /// poorly (Codex's config doc strings, comments, ordering all matter to
 /// users editing this file by hand).
 fn write_codex_mcp() -> Result<PathBuf, InitError> {
-    let home = home_dir().ok_or_else(|| {
-        InitError::Io {
-            source: std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "could not resolve home directory for Codex config",
-            ),
-        }
+    let home = home_dir().ok_or_else(|| InitError::Io {
+        source: std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "could not resolve home directory for Codex config",
+        ),
     })?;
     let dir = home.join(".codex");
     if !dir.exists() {
@@ -525,10 +523,9 @@ fn write_codex_mcp() -> Result<PathBuf, InitError> {
             .match_indices('\n')
             .find_map(|(i, _)| {
                 let line_start = after_header + i + 1;
-                let line = existing[line_start..].split_once('\n').map_or_else(
-                    || &existing[line_start..],
-                    |(line, _)| line,
-                );
+                let line = existing[line_start..]
+                    .split_once('\n')
+                    .map_or_else(|| &existing[line_start..], |(line, _)| line);
                 if line.trim_start().starts_with('[') {
                     Some(line_start)
                 } else {
