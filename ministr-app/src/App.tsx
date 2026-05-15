@@ -5,7 +5,7 @@ import { AlertTriangle } from "lucide-react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useTheme } from "./hooks/useTheme";
 import { useCorpusContext } from "./hooks/useCorpusContext";
-import { useDensity } from "./hooks/usePreferences";
+import { useDensity, useDefaultTab } from "./hooks/usePreferences";
 import { Onboarding } from "./components/Onboarding";
 import { AskSurface } from "./components/surfaces/ask/AskSurface";
 import { ShortcutSheet } from "./components/ShortcutSheet";
@@ -49,9 +49,14 @@ function AppInner() {
   const { activeCorpusId, setActiveCorpusId } = useCorpusContext(status);
   // Initialize density preference (sets data-density on <html>).
   useDensity();
+  const { defaultTab } = useDefaultTab();
   const { toast } = useToast();
 
-  const [surface, setSurface] = useState<SurfaceId>("ask");
+  // Honour the user's "default tab" preference for the launch surface.
+  // The preference enum is kept in lock-step with SurfaceId, so the
+  // value maps straight across. The no-projects bounce below can still
+  // override this to Projects on a cold install.
+  const [surface, setSurface] = useState<SurfaceId>(defaultTab);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
