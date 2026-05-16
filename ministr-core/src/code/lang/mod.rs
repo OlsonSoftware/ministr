@@ -4,18 +4,38 @@
 //! language-specific node kind classification and name extraction on top of
 //! the generic extractor.
 
+mod bash;
 mod c;
+mod cmake;
 mod cpp;
+mod csharp;
+mod css;
+mod dart;
+mod erlang;
 mod go;
-mod java;
+mod graphql;
+mod groovy;
+mod haskell;
 mod hcl;
+mod java;
+mod javascript;
+mod julia;
 mod kotlin;
+mod lua;
+mod make;
+mod ocaml;
+mod php;
 mod proto;
 mod python;
+mod r;
+mod ruby;
 mod rust;
+mod scala;
+mod solidity;
 mod sql;
 mod swift;
 mod typescript;
+mod zig;
 
 use crate::code::ast_parser::ItemKind;
 
@@ -56,6 +76,26 @@ pub fn refinement_for(language: &str) -> Option<Box<dyn LanguageRefinement>> {
         "proto" => Some(Box::new(proto::ProtoRefinement)),
         "hcl" => Some(Box::new(hcl::HclRefinement)),
         "sql" => Some(Box::new(sql::SqlRefinement)),
+        "javascript" => Some(Box::new(javascript::JavaScriptRefinement)),
+        "ruby" => Some(Box::new(ruby::RubyRefinement)),
+        "php" => Some(Box::new(php::PhpRefinement)),
+        "scala" => Some(Box::new(scala::ScalaRefinement)),
+        "csharp" => Some(Box::new(csharp::CSharpRefinement)),
+        "bash" => Some(Box::new(bash::BashRefinement)),
+        "lua" => Some(Box::new(lua::LuaRefinement)),
+        "haskell" => Some(Box::new(haskell::HaskellRefinement)),
+        "ocaml" | "ocaml_interface" => Some(Box::new(ocaml::OCamlRefinement)),
+        "dart" => Some(Box::new(dart::DartRefinement)),
+        "r" => Some(Box::new(r::RRefinement)),
+        "zig" => Some(Box::new(zig::ZigRefinement)),
+        "css" => Some(Box::new(css::CssRefinement)),
+        "graphql" => Some(Box::new(graphql::GraphQlRefinement)),
+        "groovy" => Some(Box::new(groovy::GroovyRefinement)),
+        "solidity" => Some(Box::new(solidity::SolidityRefinement)),
+        "erlang" => Some(Box::new(erlang::ErlangRefinement)),
+        "julia" => Some(Box::new(julia::JuliaRefinement)),
+        "cmake" => Some(Box::new(cmake::CMakeRefinement)),
+        "make" => Some(Box::new(make::MakeRefinement)),
         _ => None,
     }
 }
