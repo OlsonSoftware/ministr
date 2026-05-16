@@ -73,6 +73,10 @@ pub struct ProjectDetection {
     pub has_go: bool,
     /// Whether a Java/Kotlin project was detected (`pom.xml` or `build.gradle`).
     pub has_java: bool,
+    /// Whether a PHP project was detected (`composer.json` present).
+    pub has_php: bool,
+    /// Whether a Ruby project was detected (`Gemfile` or `*.gemspec`).
+    pub has_ruby: bool,
     /// Relative paths to source directories.
     pub source_paths: Vec<String>,
     /// Relative paths to documentation files/directories.
@@ -89,6 +93,8 @@ pub enum Language {
     Python,
     Go,
     Java,
+    Php,
+    Ruby,
 }
 
 impl ProjectDetection {
@@ -110,6 +116,12 @@ impl ProjectDetection {
         }
         if self.has_java {
             langs.push(Language::Java);
+        }
+        if self.has_php {
+            langs.push(Language::Php);
+        }
+        if self.has_ruby {
+            langs.push(Language::Ruby);
         }
         langs
     }
@@ -151,6 +163,16 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
     let has_java = root.join("pom.xml").exists()
         || root.join("build.gradle").exists()
         || root.join("build.gradle.kts").exists();
+    let has_php = root.join("composer.json").exists();
+    let has_ruby = root.join("Gemfile").exists()
+        || std::fs::read_dir(root).is_ok_and(|entries| {
+            entries.flatten().any(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .is_some_and(|x| x == "gemspec")
+            })
+        });
 
     let project_name = derive_project_name(root);
     let source_paths = detect_source_paths(root, &workspaces, has_rust, has_node, has_python);
@@ -168,6 +190,8 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
         has_python,
         has_go,
         has_java,
+        has_php,
+        has_ruby,
         source_paths,
         doc_paths,
         ignore_patterns,

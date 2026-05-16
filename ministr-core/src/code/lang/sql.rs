@@ -52,7 +52,6 @@ impl LanguageRefinement for SqlRefinement {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::code::{GrammarRegistry, generic_extract_symbols_for};
 
     #[test]

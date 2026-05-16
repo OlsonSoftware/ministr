@@ -10,17 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Language & tech-stack coverage
-- Tree-sitter grammars for 16 more languages, all default-on: Bash/Shell,
+- Tree-sitter grammars for 17 more languages, all default-on: Bash/Shell,
   PHP, Scala, Lua, Elixir, Haskell, OCaml (impl + interface), Dart, R,
-  HCL/Terraform, JSON, YAML, TOML, SQL, Zig, and Protobuf. These file
-  types previously fell back to text-only chunking; `ministr_symbols` /
-  `ministr_definition` / `ministr_references` now work across ~28
-  languages.
-- Protobuf symbol refinement — `.proto` `message` / `enum` / `service`
-  surface as first-class symbols (gRPC / API discovery).
+  HCL/Terraform, JSON, YAML, TOML, SQL, Zig, Protobuf, and Svelte
+  (single-file components). These file types previously fell back to
+  text-only chunking; `ministr_symbols` / `ministr_definition` /
+  `ministr_references` now work across ~29 languages. (Dockerfile, Vue,
+  and Astro have no ABI-current Rust grammar and keep the lossless text
+  fallback.)
+- **Activated the dormant `LanguageRefinement` system** — `refinement_for`
+  was defined but never called, so every non-Rust language used only the
+  generic heuristic. It is now wired into the extractor, with refinements
+  for Protobuf (`message`/`enum`/`service`), HCL/Terraform (`resource.`/
+  `module.`/`variable.`/`output.` block addresses), and SQL (`CREATE
+  TABLE`/`VIEW`/`FUNCTION`/…).
 - Import cross-references for PHP, Kotlin, and Scala (`ministr_references`).
-- `ministr_bridge` — new **cgo** bridge kind: Go `C.func(...)` calls
-  linked to C function definitions (eighth bridge kind).
+- `ministr_bridge` — four new bridge kinds (11 total): **cgo** (Go
+  `C.func` ↔ C), **JNI** (Java/Kotlin `native` ↔ C/C++ `Java_*`),
+  **UniFFI** (Rust `#[uniffi::export]` ↔ Swift/Kotlin/Python), and
+  **gRPC** (`.proto` `service` ↔ generated stubs), with framework
+  auto-detection signals for each.
+- `ministr init` language rules now also cover PHP and Ruby.
 
 ### Changed
 

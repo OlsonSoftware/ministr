@@ -774,6 +774,32 @@ const JAVA_RULES: &str = "\
 - For Kotlin: prefer `data class`, `sealed class`, and null-safe types
 ";
 
+const PHP_RULES: &str = "\
+## PHP
+
+- Use `declare(strict_types=1);` at the top of every file
+- Type every parameter, property, and return; prefer enums over class constants
+- Follow PSR-12 formatting and PSR-4 autoloading; run `php-cs-fixer` / `phpcs`
+- Use Composer for dependencies; never commit `vendor/`
+- Static-analyze with PHPStan or Psalm at the highest practical level
+- Prefer constructor property promotion and readonly properties (PHP 8.1+)
+- Test with PHPUnit; use data providers for table-style cases
+- Throw typed exceptions; never return `false`/`null` to signal errors
+";
+
+const RUBY_RULES: &str = "\
+## Ruby
+
+- Follow the community Ruby Style Guide; enforce with RuboCop
+- Prefer keyword arguments for clarity; avoid long positional lists
+- Use `frozen_string_literal: true` magic comments
+- Raise specific exception classes; rescue narrowly, never bare `rescue`
+- Test with RSpec or Minitest; keep examples isolated and deterministic
+- Manage dependencies with Bundler; commit `Gemfile.lock` for apps
+- Prefer immutable value objects; avoid mutating shared state
+- Use `Sorbet`/RBS or YARD types for public APIs where practical
+";
+
 /// Compose language-specific rules based on detected project languages.
 ///
 /// Returns `None` if no known languages are detected.
@@ -795,6 +821,8 @@ fn language_rules_for_project(root: &Path) -> Option<String> {
             crate::init::Language::Python => md.push_str(PYTHON_RULES),
             crate::init::Language::Go => md.push_str(GO_RULES),
             crate::init::Language::Java => md.push_str(JAVA_RULES),
+            crate::init::Language::Php => md.push_str(PHP_RULES),
+            crate::init::Language::Ruby => md.push_str(RUBY_RULES),
         }
         md.push('\n');
     }
