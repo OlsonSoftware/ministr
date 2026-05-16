@@ -19,6 +19,7 @@
 //! The [`detector`] submodule provides [`FrameworkDetector`] for auto-detecting
 //! which bridge frameworks are present in a project.
 
+pub mod cgo;
 pub mod detector;
 pub mod ffi;
 pub mod http_route;
@@ -69,6 +70,8 @@ pub enum BridgeKind {
     HttpRoute,
     /// Foreign function interface: `extern "C"`, ctypes, JNI, etc.
     Ffi,
+    /// cgo: Go `C.func(...)` calls ↔ C function definitions.
+    Cgo,
 }
 
 impl BridgeKind {
@@ -83,6 +86,7 @@ impl BridgeKind {
             Self::PyO3 => "pyo3",
             Self::HttpRoute => "http_route",
             Self::Ffi => "ffi",
+            Self::Cgo => "cgo",
         }
     }
 
@@ -107,6 +111,7 @@ impl BridgeKind {
             "pyo3" => Some(Self::PyO3),
             "http_route" => Some(Self::HttpRoute),
             "ffi" => Some(Self::Ffi),
+            "cgo" => Some(Self::Cgo),
             _ => None,
         }
     }
@@ -396,6 +401,7 @@ pub fn create_linker_for_kinds(kinds: &[BridgeKind]) -> Option<linker::BridgeLin
             }
             BridgeKind::HttpRoute => linker.register(Box::new(http_route::HttpRouteExtractor)),
             BridgeKind::Ffi => linker.register(Box::new(ffi::FfiExtractor)),
+            BridgeKind::Cgo => linker.register(Box::new(cgo::CgoExtractor)),
         }
     }
     Some(linker)
@@ -501,6 +507,7 @@ mod tests {
             BridgeKind::PyO3,
             BridgeKind::HttpRoute,
             BridgeKind::Ffi,
+            BridgeKind::Cgo,
         ];
         for kind in kinds {
             let s = kind.as_str();

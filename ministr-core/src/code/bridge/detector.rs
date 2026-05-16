@@ -85,12 +85,16 @@ impl FrameworkDetector {
     pub fn detect(start_dir: &Path) -> Vec<BridgeKind> {
         let mut kinds = BTreeSet::new();
         let mut dir = start_dir.to_path_buf();
+        let mut go_mod_seen = false;
 
         loop {
             Self::scan_cargo_toml(&dir, &mut kinds);
             Self::scan_package_json(&dir, &mut kinds);
             Self::scan_pyproject_toml(&dir, &mut kinds);
             Self::scan_tauri_conf(&dir, &mut kinds);
+            if dir.join("go.mod").exists() {
+                go_mod_seen = true;
+            }
 
             // Stop at the ministr project root or VCS boundary.
             if dir.join(".ministr.toml").exists() || dir.join(".git").exists() {
@@ -108,6 +112,11 @@ impl FrameworkDetector {
         // filesystem-driven rather than manifest-driven.
         if Self::has_c_or_cpp_sources(start_dir) {
             kinds.insert(BridgeKind::Ffi);
+            // A Go module that also ships C sources is almost certainly
+            // using cgo (the only first-class Go↔C mechanism).
+            if go_mod_seen {
+                kinds.insert(BridgeKind::Cgo);
+            }
         }
 
         kinds.into_iter().collect()
@@ -450,6 +459,24 @@ napi-derive = "2"
             kinds.contains(&BridgeKind::Ffi),
             "bare C++ header should trigger FFI detection, got: {kinds:?}"
         );
+    }
+
+    #[test]
+    fn detect_cgo_from_go_mod_plus_c_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("go.mod"), "module example.com/m\n\ngo 1.22\n")
+            .unwrap();
+        std::fs::write(tmp.path().join("bridge.c"), "int work(void){return 0;}\n").unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::Cgo), "got {kinds:?}");
+    }
+
+    #[test]
+    fn no_cgo_without_c_sources() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("go.mod"), "module example.com/m\n").unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(!kinds.contains(&BridgeKind::Cgo), "got {kinds:?}");
     }
 
     #[test]
