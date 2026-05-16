@@ -9,6 +9,7 @@ mod cpp;
 mod go;
 mod java;
 mod kotlin;
+mod proto;
 mod python;
 mod rust;
 mod swift;
@@ -50,6 +51,7 @@ pub fn refinement_for(language: &str) -> Option<Box<dyn LanguageRefinement>> {
         "cpp" => Some(Box::new(cpp::CppRefinement)),
         "swift" => Some(Box::new(swift::SwiftRefinement)),
         "kotlin" => Some(Box::new(kotlin::KotlinRefinement)),
+        "proto" => Some(Box::new(proto::ProtoRefinement)),
         _ => None,
     }
 }
