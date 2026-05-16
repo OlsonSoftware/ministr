@@ -22,12 +22,15 @@
 pub mod cgo;
 pub mod detector;
 pub mod ffi;
+pub mod grpc;
+pub mod jni;
 pub mod http_route;
 pub mod linker;
 pub mod napi;
 pub mod pyo3;
 pub mod semantic;
 pub mod tauri;
+pub mod uniffi;
 mod util;
 pub mod wasm_bindgen;
 
@@ -72,6 +75,12 @@ pub enum BridgeKind {
     Ffi,
     /// cgo: Go `C.func(...)` calls ↔ C function definitions.
     Cgo,
+    /// JNI: Java/Kotlin `native`/`external` ↔ C/C++ `Java_*` exports.
+    Jni,
+    /// UniFFI: Rust `#[uniffi::export]` ↔ Swift/Kotlin/Python bindings.
+    UniFfi,
+    /// gRPC: `.proto` `service` ↔ generated client/stub references.
+    Grpc,
 }
 
 impl BridgeKind {
@@ -87,6 +96,9 @@ impl BridgeKind {
             Self::HttpRoute => "http_route",
             Self::Ffi => "ffi",
             Self::Cgo => "cgo",
+            Self::Jni => "jni",
+            Self::UniFfi => "uniffi",
+            Self::Grpc => "grpc",
         }
     }
 
@@ -112,6 +124,9 @@ impl BridgeKind {
             "http_route" => Some(Self::HttpRoute),
             "ffi" => Some(Self::Ffi),
             "cgo" => Some(Self::Cgo),
+            "jni" => Some(Self::Jni),
+            "uniffi" => Some(Self::UniFfi),
+            "grpc" => Some(Self::Grpc),
             _ => None,
         }
     }
@@ -402,6 +417,9 @@ pub fn create_linker_for_kinds(kinds: &[BridgeKind]) -> Option<linker::BridgeLin
             BridgeKind::HttpRoute => linker.register(Box::new(http_route::HttpRouteExtractor)),
             BridgeKind::Ffi => linker.register(Box::new(ffi::FfiExtractor)),
             BridgeKind::Cgo => linker.register(Box::new(cgo::CgoExtractor)),
+            BridgeKind::Jni => linker.register(Box::new(jni::JniExtractor)),
+            BridgeKind::UniFfi => linker.register(Box::new(uniffi::UniffiExtractor)),
+            BridgeKind::Grpc => linker.register(Box::new(grpc::GrpcExtractor)),
         }
     }
     Some(linker)
@@ -508,6 +526,9 @@ mod tests {
             BridgeKind::HttpRoute,
             BridgeKind::Ffi,
             BridgeKind::Cgo,
+            BridgeKind::Jni,
+            BridgeKind::UniFfi,
+            BridgeKind::Grpc,
         ];
         for kind in kinds {
             let s = kind.as_str();

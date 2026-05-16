@@ -41,9 +41,15 @@ const CARGO_MARKERS: &[(&str, &[BridgeKind])] = &[
     // FFI: native interop — function loaders, JNI, and C-bindings generators.
     ("libloading", &[BridgeKind::Ffi]),
     ("libffi", &[BridgeKind::Ffi]),
-    ("jni", &[BridgeKind::Ffi]),
+    ("jni", &[BridgeKind::Ffi, BridgeKind::Jni]),
     ("bindgen", &[BridgeKind::Ffi]),
     ("cbindgen", &[BridgeKind::Ffi]),
+    // UniFFI (Rust ↔ Swift/Kotlin/Python mobile bindings).
+    ("uniffi", &[BridgeKind::UniFfi]),
+    // gRPC (Rust tonic/prost).
+    ("tonic", &[BridgeKind::Grpc]),
+    ("prost", &[BridgeKind::Grpc]),
+    ("grpcio", &[BridgeKind::Grpc]),
 ];
 
 /// `package.json` dependency markers.
@@ -59,6 +65,8 @@ const NPM_MARKERS: &[(&str, &[BridgeKind])] = &[
     ("ffi-napi", &[BridgeKind::Ffi]),
     ("koffi", &[BridgeKind::Ffi]),
     ("node-ffi", &[BridgeKind::Ffi]),
+    ("@grpc/grpc-js", &[BridgeKind::Grpc]),
+    ("@grpc/proto-loader", &[BridgeKind::Grpc]),
 ];
 
 /// `pyproject.toml` dependency markers.
@@ -72,6 +80,8 @@ const PYTHON_MARKERS: &[(&str, &[BridgeKind])] = &[
     // the stdlib and won't appear here; bare ctypes-only projects are picked
     // up by the C/C++ source-presence fallback in `detect()` instead.
     ("cffi", &[BridgeKind::Ffi]),
+    ("grpcio", &[BridgeKind::Grpc]),
+    ("grpcio-tools", &[BridgeKind::Grpc]),
 ];
 
 impl FrameworkDetector {
@@ -119,6 +129,12 @@ impl FrameworkDetector {
             }
         }
 
+        // `.proto` files present → gRPC is in play (generated stubs
+        // are matched name-only, so this is the activation signal).
+        if Self::has_ext(start_dir, &["proto"]) {
+            kinds.insert(BridgeKind::Grpc);
+        }
+
         kinds.into_iter().collect()
     }
 
@@ -129,13 +145,22 @@ impl FrameworkDetector {
     /// corpus root, and recursing the whole tree would dominate detection
     /// time on large projects.
     fn has_c_or_cpp_sources(dir: &Path) -> bool {
-        const C_LIKE_EXTS: &[&str] = &["c", "cpp", "cc", "cxx", "h", "hpp", "hh", "hxx"];
+        Self::has_ext(
+            dir,
+            &["c", "cpp", "cc", "cxx", "h", "hpp", "hh", "hxx"],
+        )
+    }
+
+    /// Whether `dir` contains any top-level file with one of `exts`.
+    /// Cheap one-level scan (no recursion) — same rationale as the
+    /// C/C++ fallback.
+    fn has_ext(dir: &Path, exts: &[&str]) -> bool {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return false;
         };
         for entry in entries.flatten() {
             if let Some(ext) = entry.path().extension().and_then(|e| e.to_str())
-                && C_LIKE_EXTS.contains(&ext)
+                && exts.contains(&ext)
             {
                 return true;
             }
@@ -477,6 +502,37 @@ napi-derive = "2"
         std::fs::write(tmp.path().join("go.mod"), "module example.com/m\n").unwrap();
         let kinds = FrameworkDetector::detect(tmp.path());
         assert!(!kinds.contains(&BridgeKind::Cgo), "got {kinds:?}");
+    }
+
+    #[test]
+    fn detect_grpc_from_proto_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("svc.proto"), "service S {}\n").unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::Grpc), "got {kinds:?}");
+    }
+
+    #[test]
+    fn detect_uniffi_and_grpc_from_cargo() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[dependencies]\nuniffi = \"0.28\"\ntonic = \"0.12\"\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::UniFfi), "got {kinds:?}");
+        assert!(kinds.contains(&BridgeKind::Grpc), "got {kinds:?}");
+    }
+
+    #[test]
+    fn detect_jni_kind_from_cargo() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[dependencies]\njni = \"0.21\"\n")
+            .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::Jni), "got {kinds:?}");
+        assert!(kinds.contains(&BridgeKind::Ffi), "got {kinds:?}");
     }
 
     #[test]
