@@ -12,8 +12,9 @@ impl LanguageRefinement for GroovyRefinement {
             "class_declaration" => Some(ItemKind::Struct),
             "interface_declaration" | "trait_declaration" => Some(ItemKind::Trait),
             "enum_declaration" => Some(ItemKind::Enum),
-            "method_declaration" | "function_declaration"
-            | "function_definition" => Some(ItemKind::Function),
+            "method_declaration" | "function_declaration" | "function_definition" => {
+                Some(ItemKind::Function)
+            }
             "import_declaration" | "package_declaration" | "comment" => None,
             _ => return None,
         };

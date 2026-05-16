@@ -11,12 +11,12 @@ impl LanguageRefinement for JuliaRefinement {
         let result = match kind {
             "struct_definition" => Some(ItemKind::Struct),
             "abstract_definition" | "primitive_definition" => Some(ItemKind::Type),
-            "function_definition" | "short_function_definition"
-            | "macro_definition" => Some(ItemKind::Function),
+            "function_definition" | "short_function_definition" | "macro_definition" => {
+                Some(ItemKind::Function)
+            }
             "module_definition" | "baremodule_definition" => Some(ItemKind::Module),
             "const_statement" => Some(ItemKind::Const),
-            "import_statement" | "using_statement" | "line_comment"
-            | "block_comment" => None,
+            "import_statement" | "using_statement" | "line_comment" | "block_comment" => None,
             _ => return None,
         };
         Some(result)

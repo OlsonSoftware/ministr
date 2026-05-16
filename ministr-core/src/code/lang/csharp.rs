@@ -9,16 +9,18 @@ pub struct CSharpRefinement;
 impl LanguageRefinement for CSharpRefinement {
     fn classify_node_kind(&self, kind: &str) -> Option<Option<ItemKind>> {
         let result = match kind {
-            "class_declaration" | "struct_declaration" | "record_declaration"
+            "class_declaration"
+            | "struct_declaration"
+            | "record_declaration"
             | "record_struct_declaration" => Some(ItemKind::Struct),
             "interface_declaration" => Some(ItemKind::Trait),
             "enum_declaration" => Some(ItemKind::Enum),
-            "method_declaration" | "constructor_declaration" | "local_function_statement"
+            "method_declaration"
+            | "constructor_declaration"
+            | "local_function_statement"
             | "delegate_declaration" => Some(ItemKind::Function),
             "property_declaration" | "field_declaration" => Some(ItemKind::Const),
-            "namespace_declaration" | "file_scoped_namespace_declaration" => {
-                Some(ItemKind::Module)
-            }
+            "namespace_declaration" | "file_scoped_namespace_declaration" => Some(ItemKind::Module),
             "using_directive" | "comment" => None,
             _ => return None,
         };

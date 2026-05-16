@@ -12,8 +12,9 @@ impl LanguageRefinement for OCamlRefinement {
             "type_definition" | "type_binding" => Some(ItemKind::Type),
             "module_definition" | "module_binding" => Some(ItemKind::Module),
             "module_type_definition" => Some(ItemKind::Trait),
-            "value_definition" | "let_binding" | "method_definition"
-            | "external" => Some(ItemKind::Function),
+            "value_definition" | "let_binding" | "method_definition" | "external" => {
+                Some(ItemKind::Function)
+            }
             "class_definition" | "class_binding" => Some(ItemKind::Struct),
             "open_module" | "comment" => None,
             _ => return None,

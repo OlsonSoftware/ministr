@@ -13,8 +13,12 @@ impl LanguageRefinement for DartRefinement {
                 Some(ItemKind::Struct)
             }
             "enum_declaration" => Some(ItemKind::Enum),
-            "function_signature" | "method_signature" | "function_declaration"
-            | "method_declaration" | "constructor_signature" | "getter_signature"
+            "function_signature"
+            | "method_signature"
+            | "function_declaration"
+            | "method_declaration"
+            | "constructor_signature"
+            | "getter_signature"
             | "setter_signature" => Some(ItemKind::Function),
             "type_alias" => Some(ItemKind::Type),
             "import_or_export" | "library_name" | "comment" => None,

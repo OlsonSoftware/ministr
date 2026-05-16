@@ -10,8 +10,11 @@ impl LanguageRefinement for JavaScriptRefinement {
     fn classify_node_kind(&self, kind: &str) -> Option<Option<ItemKind>> {
         let result = match kind {
             "class_declaration" | "class" => Some(ItemKind::Struct),
-            "function_declaration" | "generator_function_declaration" | "method_definition"
-            | "function_expression" | "arrow_function" => Some(ItemKind::Function),
+            "function_declaration"
+            | "generator_function_declaration"
+            | "method_definition"
+            | "function_expression"
+            | "arrow_function" => Some(ItemKind::Function),
             "import_statement" | "comment" => None,
             _ => return None,
         };

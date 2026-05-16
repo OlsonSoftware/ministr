@@ -9,13 +9,15 @@ pub struct GraphQlRefinement;
 impl LanguageRefinement for GraphQlRefinement {
     fn classify_node_kind(&self, kind: &str) -> Option<Option<ItemKind>> {
         let result = match kind {
-            "object_type_definition" | "input_object_type_definition"
-            | "object_type_extension" => Some(ItemKind::Struct),
+            "object_type_definition" | "input_object_type_definition" | "object_type_extension" => {
+                Some(ItemKind::Struct)
+            }
             "interface_type_definition" => Some(ItemKind::Trait),
             "enum_type_definition" => Some(ItemKind::Enum),
             "union_type_definition" | "scalar_type_definition" => Some(ItemKind::Type),
-            "operation_definition" | "fragment_definition"
-            | "directive_definition" => Some(ItemKind::Function),
+            "operation_definition" | "fragment_definition" | "directive_definition" => {
+                Some(ItemKind::Function)
+            }
             "schema_definition" => Some(ItemKind::Module),
             "comment" => None,
             _ => return None,

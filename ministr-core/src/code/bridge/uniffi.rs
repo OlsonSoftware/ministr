@@ -50,11 +50,7 @@ impl BridgeExtractor for UniffiExtractor {
     }
 }
 
-fn extract_rust(
-    tree: &tree_sitter::Tree,
-    source: &[u8],
-    file_path: &str,
-) -> Vec<BridgeEndpoint> {
+fn extract_rust(tree: &tree_sitter::Tree, source: &[u8], file_path: &str) -> Vec<BridgeEndpoint> {
     let mut endpoints = Vec::new();
     let mut cursor = tree.walk();
     walk(&mut cursor, &mut |node| {
@@ -209,8 +205,9 @@ mod tests {
         ];
         let links = linker.extract_and_link(&files);
         assert!(
-            links.iter().any(|l| l.kind == BridgeKind::UniFfi
-                && l.export.binding_key == "Greet"),
+            links
+                .iter()
+                .any(|l| l.kind == BridgeKind::UniFfi && l.export.binding_key == "Greet"),
             "links: {links:?}"
         );
     }

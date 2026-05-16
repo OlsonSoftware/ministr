@@ -51,7 +51,15 @@ impl BridgeExtractor for GrpcExtractor {
     }
 
     fn applicable_languages(&self) -> &[&str] {
-        &["proto", "go", "python", "typescript", "tsx", "java", "kotlin"]
+        &[
+            "proto",
+            "go",
+            "python",
+            "typescript",
+            "tsx",
+            "java",
+            "kotlin",
+        ]
     }
 
     fn extract_endpoints(
@@ -168,7 +176,10 @@ mod tests {
 
     #[test]
     fn service_from_stub_cases() {
-        assert_eq!(service_from_stub("GreeterClient").as_deref(), Some("Greeter"));
+        assert_eq!(
+            service_from_stub("GreeterClient").as_deref(),
+            Some("Greeter")
+        );
         assert_eq!(
             service_from_stub("NewGreeterClient").as_deref(),
             Some("Greeter")
@@ -184,7 +195,8 @@ mod tests {
     #[test]
     fn grpc_proto_to_go_link() {
         use super::super::linker::{BridgeLinker, SourceFile};
-        let proto = "syntax=\"proto3\";\nservice Greeter { rpc SayHi(M) returns (M); }\nmessage M {}\n";
+        let proto =
+            "syntax=\"proto3\";\nservice Greeter { rpc SayHi(M) returns (M); }\nmessage M {}\n";
         let go = "package main\nfunc run(c GreeterClient) { _ = c }\n";
         let pt = parse("proto", proto);
         let gt = parse("go", go);

@@ -232,8 +232,8 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
         });
 
     let has_csharp = dir_has_extension(root, &["csproj", "sln"]);
-    let has_kotlin = root.join("build.gradle.kts").exists()
-        || root.join("settings.gradle.kts").exists();
+    let has_kotlin =
+        root.join("build.gradle.kts").exists() || root.join("settings.gradle.kts").exists();
     let has_swift = root.join("Package.swift").exists();
     let has_scala = root.join("build.sbt").exists();
     let has_cpp = root.join("CMakeLists.txt").exists();
@@ -1350,7 +1350,11 @@ version = "0.1.0"
         fs::write(root.join("build.gradle.kts"), "").unwrap();
         fs::write(root.join("Package.swift"), "// swift-tools-version:5.9").unwrap();
         fs::write(root.join("build.sbt"), "").unwrap();
-        fs::write(root.join("CMakeLists.txt"), "cmake_minimum_required(VERSION 3.20)").unwrap();
+        fs::write(
+            root.join("CMakeLists.txt"),
+            "cmake_minimum_required(VERSION 3.20)",
+        )
+        .unwrap();
         fs::write(root.join("mix.exs"), "defmodule M do\nend").unwrap();
 
         let d = detect_project(root);

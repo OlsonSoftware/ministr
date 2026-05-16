@@ -57,7 +57,10 @@ mod tests {
     #[test]
     fn classify_proto_items() {
         let r = ProtoRefinement;
-        assert_eq!(r.classify_node_kind("message"), Some(Some(ItemKind::Struct)));
+        assert_eq!(
+            r.classify_node_kind("message"),
+            Some(Some(ItemKind::Struct))
+        );
         assert_eq!(r.classify_node_kind("enum"), Some(Some(ItemKind::Enum)));
         assert_eq!(r.classify_node_kind("service"), Some(Some(ItemKind::Trait)));
         assert_eq!(r.classify_node_kind("syntax"), Some(None));

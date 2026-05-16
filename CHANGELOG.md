@@ -32,6 +32,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   auto-detection signals for each.
 - `ministr init` language rules now also cover PHP and Ruby.
 
+#### Maximal coverage expansion
+- Tree-sitter grammars for **11 more languages**, all default-on: CSS/SCSS,
+  GraphQL, Groovy/Gradle, Nix, Erlang, PowerShell, Solidity, Objective-C
+  (+ObjC++), Julia, CMake, and Make. `ministr_symbols` /
+  `ministr_definition` / `ministr_references` now work across ~40
+  languages. (Markdown and HTML keep their dedicated prose/markup
+  parsers, which outperform a code AST; Clojure has no ABI-current Rust
+  grammar — its crates.io latest hard-pins legacy tree-sitter — so it
+  keeps the lossless text fallback, alongside Dockerfile/Vue/Astro.)
+- **21 new `LanguageRefinement` implementations** so previously
+  generic-heuristic languages get accurate symbol kinds: Ruby, PHP,
+  Scala, C#, JavaScript, Bash, Lua, Haskell, OCaml, Dart, R, Zig, plus
+  the structure-heavy newcomers CSS, GraphQL, Groovy, Solidity, Erlang,
+  Julia, CMake, and Make. (Delegate-on-unknown — never a regression.)
+- Import cross-references for **Java, C#, Swift, and Ruby**
+  (`ministr_references`) — JVM-style dotted imports and Ruby
+  `require`/`require_relative`/`load`/`autoload`.
+- `ministr_bridge` — **two new bridge kinds (13 total)**: **Flutter
+  platform channels** (Dart `MethodChannel`/`EventChannel`/
+  `BasicMessageChannel` ↔ native Kotlin/Java/Swift/ObjC) and **Electron
+  IPC** (`ipcMain.handle`/`on` ↔ `ipcRenderer.invoke`/`send`/`on`), with
+  `pubspec.yaml` and `electron`-in-`package.json` auto-detection.
+- `ministr init` language rules now also cover C#, Kotlin, Swift, Scala,
+  C/C++, Elixir, and JavaScript (manifest-detected via `*.csproj`/`*.sln`,
+  `*.gradle.kts`, `Package.swift`, `build.sbt`, `CMakeLists.txt`,
+  `mix.exs`, and tsconfig-less `package.json`) — 13 languages total.
+
 ### Changed
 
 ### Fixed

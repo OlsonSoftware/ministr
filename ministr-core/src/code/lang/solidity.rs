@@ -9,12 +9,16 @@ pub struct SolidityRefinement;
 impl LanguageRefinement for SolidityRefinement {
     fn classify_node_kind(&self, kind: &str) -> Option<Option<ItemKind>> {
         let result = match kind {
-            "contract_declaration" | "library_declaration"
-            | "struct_declaration" => Some(ItemKind::Struct),
+            "contract_declaration" | "library_declaration" | "struct_declaration" => {
+                Some(ItemKind::Struct)
+            }
             "interface_declaration" => Some(ItemKind::Trait),
             "enum_declaration" => Some(ItemKind::Enum),
-            "function_definition" | "modifier_definition" | "constructor_definition"
-            | "fallback_receive_definition" | "event_definition" => Some(ItemKind::Function),
+            "function_definition"
+            | "modifier_definition"
+            | "constructor_definition"
+            | "fallback_receive_definition"
+            | "event_definition" => Some(ItemKind::Function),
             "user_defined_type_definition" => Some(ItemKind::Type),
             "import_directive" | "pragma_directive" | "comment" => None,
             _ => return None,

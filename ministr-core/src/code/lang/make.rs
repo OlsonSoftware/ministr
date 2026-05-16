@@ -12,8 +12,7 @@ pub struct MakeRefinement;
 impl LanguageRefinement for MakeRefinement {
     fn classify_node_kind(&self, kind: &str) -> Option<Option<ItemKind>> {
         let result = match kind {
-            "rule" => Some(ItemKind::Function),
-            "define_directive" => Some(ItemKind::Function),
+            "rule" | "define_directive" => Some(ItemKind::Function),
             "variable_assignment" => Some(ItemKind::Const),
             "comment" | "include_directive" => None,
             _ => return None,

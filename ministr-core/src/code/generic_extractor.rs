@@ -187,7 +187,13 @@ fn extract_from_node(
         || item_kind == ItemKind::Module
     {
         extract_nested_members(
-            node, source, file_path, module_path, &sym_name, refine, symbols,
+            node,
+            source,
+            file_path,
+            module_path,
+            &sym_name,
+            refine,
+            symbols,
         );
     }
 }
@@ -195,10 +201,7 @@ fn extract_from_node(
 /// Classify a node kind, consulting the language refinement first
 /// (`Some(Some)` = classified, `Some(None)` = explicitly skip, `None` =
 /// delegate) and falling back to the generic heuristic.
-fn classify_refined(
-    refine: Option<&dyn LanguageRefinement>,
-    node_kind: &str,
-) -> Option<ItemKind> {
+fn classify_refined(refine: Option<&dyn LanguageRefinement>, node_kind: &str) -> Option<ItemKind> {
     match refine.and_then(|r| r.classify_node_kind(node_kind)) {
         Some(opt) => opt,
         None => classify_node_kind(node_kind),

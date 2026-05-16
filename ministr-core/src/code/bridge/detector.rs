@@ -149,10 +149,7 @@ impl FrameworkDetector {
     /// corpus root, and recursing the whole tree would dominate detection
     /// time on large projects.
     fn has_c_or_cpp_sources(dir: &Path) -> bool {
-        Self::has_ext(
-            dir,
-            &["c", "cpp", "cc", "cxx", "h", "hpp", "hh", "hxx"],
-        )
+        Self::has_ext(dir, &["c", "cpp", "cc", "cxx", "h", "hpp", "hh", "hxx"])
     }
 
     /// Whether `dir` contains any top-level file with one of `exts`.
@@ -505,8 +502,11 @@ napi-derive = "2"
     #[test]
     fn detect_cgo_from_go_mod_plus_c_source() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("go.mod"), "module example.com/m\n\ngo 1.22\n")
-            .unwrap();
+        std::fs::write(
+            tmp.path().join("go.mod"),
+            "module example.com/m\n\ngo 1.22\n",
+        )
+        .unwrap();
         std::fs::write(tmp.path().join("bridge.c"), "int work(void){return 0;}\n").unwrap();
         let kinds = FrameworkDetector::detect(tmp.path());
         assert!(kinds.contains(&BridgeKind::Cgo), "got {kinds:?}");
@@ -544,8 +544,11 @@ napi-derive = "2"
     #[test]
     fn detect_jni_kind_from_cargo() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("Cargo.toml"), "[dependencies]\njni = \"0.21\"\n")
-            .unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[dependencies]\njni = \"0.21\"\n",
+        )
+        .unwrap();
         let kinds = FrameworkDetector::detect(tmp.path());
         assert!(kinds.contains(&BridgeKind::Jni), "got {kinds:?}");
         assert!(kinds.contains(&BridgeKind::Ffi), "got {kinds:?}");

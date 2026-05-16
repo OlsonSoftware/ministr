@@ -1065,14 +1065,12 @@ impl ImportExtractor for CSharpImports {
             let line = node_line(&node);
             let mut c2 = node.walk();
             for child in node.children(&mut c2) {
-                if matches!(child.kind(), "qualified_name" | "identifier" | "name_equals")
-                    && let Ok(text) = child.utf8_text(source)
+                if matches!(
+                    child.kind(),
+                    "qualified_name" | "identifier" | "name_equals"
+                ) && let Ok(text) = child.utf8_text(source)
                 {
-                    let last = text
-                        .rsplit(['.', '='])
-                        .next()
-                        .unwrap_or(text)
-                        .trim();
+                    let last = text.rsplit(['.', '=']).next().unwrap_or(text).trim();
                     if !last.is_empty() {
                         refs.push(import_ref(last.to_string(), line));
                     }
@@ -1116,7 +1114,10 @@ impl RubyImports {
         if node.kind() == "call"
             && let Some(method) = node.child_by_field_name("method")
             && let Ok(m) = method.utf8_text(source)
-            && matches!(m.trim(), "require" | "require_relative" | "load" | "autoload")
+            && matches!(
+                m.trim(),
+                "require" | "require_relative" | "load" | "autoload"
+            )
             && let Some(args) = node.child_by_field_name("arguments")
         {
             let line = node_line(node);

@@ -89,7 +89,10 @@ mod tests {
         let t = p.parse(src, None).unwrap();
         let syms = generic_extract_symbols_for(&t, src.as_bytes(), "main.tf", &[], Some("hcl"));
         let names: Vec<_> = syms.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"resource.aws_s3_bucket.web"), "got {names:?}");
+        assert!(
+            names.contains(&"resource.aws_s3_bucket.web"),
+            "got {names:?}"
+        );
         assert!(names.contains(&"variable.region"), "got {names:?}");
         assert!(names.contains(&"module.vpc"), "got {names:?}");
     }

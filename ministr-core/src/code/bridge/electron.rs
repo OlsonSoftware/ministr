@@ -147,8 +147,9 @@ mod tests {
         ];
         let links = linker.extract_and_link(&files);
         assert!(
-            links.iter().any(|l| l.kind == BridgeKind::ElectronIpc
-                && l.export.binding_key == "get-config"),
+            links
+                .iter()
+                .any(|l| l.kind == BridgeKind::ElectronIpc && l.export.binding_key == "get-config"),
             "links: {links:?}"
         );
     }

@@ -67,8 +67,7 @@ impl BridgeExtractor for FlutterChannelExtractor {
             EndpointRole::Export
         };
         let mut endpoints = Vec::new();
-        let mut seen: std::collections::BTreeSet<(String, u32)> =
-            std::collections::BTreeSet::new();
+        let mut seen: std::collections::BTreeSet<(String, u32)> = std::collections::BTreeSet::new();
         let mut cursor = tree.walk();
         walk(&mut cursor, &mut |node| {
             if !node.kind().contains("string") || node.child_count() > 3 {

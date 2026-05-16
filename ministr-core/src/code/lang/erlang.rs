@@ -13,8 +13,9 @@ impl LanguageRefinement for ErlangRefinement {
             "type_alias" | "opaque" | "nominal_type" => Some(ItemKind::Type),
             "record_decl" => Some(ItemKind::Struct),
             "module_attribute" => Some(ItemKind::Module),
-            "comment" | "export_attribute" | "import_attribute"
-            | "pp_include" | "pp_define" => None,
+            "comment" | "export_attribute" | "import_attribute" | "pp_include" | "pp_define" => {
+                None
+            }
             _ => return None,
         };
         Some(result)
