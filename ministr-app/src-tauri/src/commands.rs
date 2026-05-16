@@ -1544,8 +1544,8 @@ pub async fn mcp_test_connection(
     let root = std::path::PathBuf::from(&project_root);
 
     Ok(match client {
-        McpClientId::ClaudeCode => test_via_cli("claude", &["mcp", "list"]),
-        McpClientId::Codex => test_via_cli("codex", &["mcp", "list"]),
+        McpClientId::ClaudeCode => test_via_cli("claude", &["mcp", "list"], &root),
+        McpClientId::Codex => test_via_cli("codex", &["mcp", "list"], &root),
         McpClientId::Cursor => test_via_config(client, &root, "Cursor"),
         McpClientId::VsCode => test_via_config(client, &root, "VS Code"),
     })
@@ -1587,7 +1587,7 @@ fn client_info(client: ministr_core::init::McpClientId, root: &std::path::Path) 
     }
 }
 
-fn test_via_cli(binary: &str, args: &[&str]) -> McpTestResult {
+fn test_via_cli(binary: &str, args: &[&str], cwd: &std::path::Path) -> McpTestResult {
     let resolved = if cfg!(windows) {
         which_on_path(&format!("{binary}.exe")).or_else(|| which_on_path(binary))
     } else {
@@ -1602,10 +1602,14 @@ fn test_via_cli(binary: &str, args: &[&str]) -> McpTestResult {
         };
     };
 
-    // Block on the spawn; the timeout keeps the UI from hanging if the CLI
-    // is slow or deadlocked.
+    // Run *inside the project root*. Claude Code's `.mcp.json` is
+    // project-scoped — `claude mcp list` only enumerates it when invoked
+    // from that directory. Without `current_dir` the command ran in the
+    // Tauri app's cwd and never saw the project server, producing a
+    // false "ran but didn't list ministr".
     let result = std::process::Command::new(binary)
         .args(args)
+        .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1623,7 +1627,12 @@ fn test_via_cli(binary: &str, args: &[&str]) -> McpTestResult {
                 message: if listed {
                     format!("ministr listed in `{binary} {}`.", args.join(" "))
                 } else {
-                    format!("`{binary} {}` ran but didn't list ministr.", args.join(" "))
+                    format!(
+                        "`{binary} {}` ran but didn't list ministr. The config is \
+                         project-scoped (.mcp.json) — open this project in {binary} \
+                         once and approve the ministr server when prompted, then re-test.",
+                        args.join(" ")
+                    )
                 },
                 raw_output_truncated: Some(truncated),
                 manual_verify_needed: false,
