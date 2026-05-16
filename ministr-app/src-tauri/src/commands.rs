@@ -186,6 +186,95 @@ pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> R
     Ok(())
 }
 
+/// Result of an agent-config repair pass.
+#[derive(Serialize)]
+pub struct RepairReport {
+    /// The project roots that were scaffolded/healed.
+    pub roots: Vec<String>,
+    /// Newly created files (were missing).
+    pub created: usize,
+    /// Stale machine-generated hook files overwritten with the current template.
+    pub healed: usize,
+    /// Custom rules injected from `.ministr.toml [agent] rules`.
+    pub custom_rules: usize,
+}
+
+/// Idempotently repair every AI-assistant config file for all registered
+/// corpora.
+///
+/// For each unique local corpus root this (re)writes the full agent
+/// configuration set via `ministr_core::scaffold::scaffold_agent_config`:
+/// `.claude/` rules + `settings.json` + the `steer-to-ministr.sh` hook
+/// script, Cursor / Windsurf / Continue / Copilot hooks and rules, and
+/// `AGENTS.md`. It is **idempotent and non-destructive**: advisory `.md`
+/// files are created only if missing (never overwritten), machine hook
+/// files are healed only when their content drifts from the current
+/// template, and `.claude/settings.json` is *merged* — unrelated user
+/// keys (e.g. `permissions`) are preserved; only the `hooks` key is
+/// replaced. Nested sub-paths of an already-included root are skipped so
+/// config is written once per project, not scattered into subdirectories.
+#[tauri::command]
+pub async fn repair_agent_config(state: State<'_, AppState>) -> Result<RepairReport, String> {
+    use ministr_core::config::{CorpusSource, classify_corpus_path};
+
+    let corpora = state.registry.list().await;
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    for c in &corpora {
+        for p in &c.paths {
+            if let CorpusSource::Local(pb) = classify_corpus_path(p)
+                && pb.is_dir()
+            {
+                // Prefer the filesystem-canonical form so equivalent
+                // spellings of the same project collapse to one root.
+                roots.push(std::fs::canonicalize(&pb).unwrap_or(pb));
+            }
+        }
+    }
+    roots.sort();
+    roots.dedup();
+    // Drop any root nested under another — scaffold once per project.
+    let mut top: Vec<std::path::PathBuf> = Vec::new();
+    for r in roots {
+        if !top.iter().any(|a| r.starts_with(a)) {
+            top.push(r);
+        }
+    }
+    if top.is_empty() {
+        return Err("no local corpus roots registered to repair".to_string());
+    }
+
+    let report = tokio::task::spawn_blocking(move || {
+        let mut created = 0;
+        let mut healed = 0;
+        let mut custom_rules = 0;
+        let mut done = Vec::with_capacity(top.len());
+        for root in &top {
+            let res = ministr_core::scaffold::scaffold_agent_config(root);
+            created += res.created;
+            healed += res.healed;
+            custom_rules += res.custom_rules;
+            done.push(root.display().to_string());
+        }
+        RepairReport {
+            roots: done,
+            created,
+            healed,
+            custom_rules,
+        }
+    })
+    .await
+    .map_err(|e| format!("repair task failed to join: {e}"))?;
+
+    tracing::info!(
+        roots = report.roots.len(),
+        created = report.created,
+        healed = report.healed,
+        custom_rules = report.custom_rules,
+        "repair_agent_config completed"
+    );
+    Ok(report)
+}
+
 /// Add a project from the tray menu (called from Rust, not from JS).
 pub async fn add_project_from_tray(handle: &AppHandle) {
     use tauri_plugin_dialog::DialogExt;

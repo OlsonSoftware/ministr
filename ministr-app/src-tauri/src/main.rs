@@ -107,6 +107,7 @@ fn main() {
             commands::add_project_dialog,
             commands::remove_project,
             commands::trigger_reindex,
+            commands::repair_agent_config,
             commands::set_autostart,
             commands::read_logs,
             commands::should_show_onboarding,

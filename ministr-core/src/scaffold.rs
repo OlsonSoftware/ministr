@@ -304,10 +304,10 @@ const STEER_SCRIPT_REL: &str = ".claude/hooks/steer-to-ministr.sh";
 ///
 /// Design (deliberately *not* a hard wall — see [`STEER_SCRIPT`]):
 /// - The `Grep`/`Glob` tools are denied (ministr always has an
-///   equivalent, so this is frictionless).
-/// - Shell `grep`/`rg`/`find`/etc. *as a leading command* get `ask`
-///   (a speed-bump you can approve — they may be filtering command
-///   output or doing a filesystem op, not code search).
+///   equivalent, so this is frictionless and never prompts).
+/// - Shell `grep`/`rg`/`find`/etc. *as a leading command* are
+///   **allowed** with an advisory hint — they never prompt the user
+///   (an `ask` would be an endless yes/no for an autonomous agent).
 /// - Matching is leading-anchored (`Bash(grep *)`), so pipelines like
 ///   `cargo test | grep` / `git log | tail` are NOT intercepted.
 /// - Every decision is emitted by [`STEER_SCRIPT`], which builds the
@@ -432,12 +432,12 @@ case "$category" in
     reason="This repo dogfoods ministr for code exploration. Use mcp__ministr__ministr_survey(query) for semantic/content search, mcp__ministr__ministr_symbols(query) for symbols, or mcp__ministr__ministr_toc for project structure. ministr indexes this repo and returns deduplicated, budget-aware results. See .claude/rules/ministr-scope.md."
     ;;
   find)
-    decision="ask"
-    reason="For code/file discovery prefer mcp__ministr__ministr_toc (structure) or mcp__ministr__ministr_survey (locate code). Approve this call if find is a filesystem operation (delete, exec, chmod, mtime) rather than searching the codebase."
+    decision="allow"
+    reason="Allowed. Hint: for code/file discovery mcp__ministr__ministr_toc / mcp__ministr__ministr_survey are usually faster than shell find in this repo. (No action needed — proceeding.)"
     ;;
   grep|*)
-    decision="ask"
-    reason="For code search prefer mcp__ministr__ministr_survey(query) (semantic) or mcp__ministr__ministr_symbols(query) (symbols). Approve this call if the grep/rg is filtering command output (cargo, git, test logs) or otherwise not searching the codebase."
+    decision="allow"
+    reason="Allowed. Hint: for code search mcp__ministr__ministr_survey / mcp__ministr__ministr_symbols are usually faster than shell grep in this repo. Filtering command output with grep is expected. (No action needed — proceeding.)"
     ;;
 esac
 
@@ -459,8 +459,8 @@ const COPILOT_HOOKS: &str = r#"{
     "preToolUse": [
       {
         "type": "command",
-        "bash": "INPUT=$(cat); TN=$(echo \"$INPUT\" | jq -r '.toolName'); TA=$(echo \"$INPUT\" | jq -r '.toolArgs // \"\"'); case \"$TN\" in grep|Grep) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use mcp__ministr__ministr_survey for code search instead of the Grep tool.\"}'; exit 0;; glob|Glob) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use mcp__ministr__ministr_toc for structure instead of the Glob tool.\"}'; exit 0;; bash|Bash|shell) CMD=$(echo \"$TA\" | jq -r '.command // \"\"'); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo '{\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"Prefer mcp__ministr__ministr_survey for code search. Approve if this grep is filtering command output or otherwise not code search.\"}'; exit 0;; find\\ *|fd\\ *) echo '{\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"Prefer mcp__ministr__ministr_toc for discovery. Approve if this find is a filesystem operation rather than code search.\"}'; exit 0;; esac;; esac",
-        "powershell": "$input = [Console]::In.ReadToEnd() | ConvertFrom-Json; $tn = $input.toolName; $ta = if ($input.toolArgs) { $input.toolArgs } else { '' }; if (@('grep','Grep','glob','Glob') -contains $tn) { @{permissionDecision='deny'; permissionDecisionReason='Use ministr MCP tools (ministr_survey/ministr_toc) instead of the built-in Grep/Glob tools.'} | ConvertTo-Json -Compress; exit 0 }; if ($tn -in @('bash','Bash','shell')) { $cmd = ($ta | ConvertFrom-Json).command; if ($cmd -match '^(grep|egrep|fgrep|rg|ag|ack)\\s') { @{permissionDecision='ask'; permissionDecisionReason='Prefer ministr_survey for code search. Approve if filtering command output or not code search.'} | ConvertTo-Json -Compress; exit 0 }; if ($cmd -match '^(find|fd)\\s') { @{permissionDecision='ask'; permissionDecisionReason='Prefer ministr_toc for discovery. Approve if this is a filesystem operation.'} | ConvertTo-Json -Compress; exit 0 } }",
+        "bash": "INPUT=$(cat); TN=$(echo \"$INPUT\" | jq -r '.toolName'); TA=$(echo \"$INPUT\" | jq -r '.toolArgs // \"\"'); case \"$TN\" in grep|Grep) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use mcp__ministr__ministr_survey for code search instead of the Grep tool.\"}'; exit 0;; glob|Glob) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use mcp__ministr__ministr_toc for structure instead of the Glob tool.\"}'; exit 0;; bash|Bash|shell) CMD=$(echo \"$TA\" | jq -r '.command // \"\"'); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo '{\"permissionDecision\":\"allow\",\"permissionDecisionReason\":\"Allowed. Hint: ministr_survey/ministr_symbols are usually faster than shell grep here; filtering command output is expected.\"}'; exit 0;; find\\ *|fd\\ *) echo '{\"permissionDecision\":\"allow\",\"permissionDecisionReason\":\"Allowed. Hint: ministr_toc/ministr_survey are usually faster than shell find here.\"}'; exit 0;; esac;; esac",
+        "powershell": "$input = [Console]::In.ReadToEnd() | ConvertFrom-Json; $tn = $input.toolName; $ta = if ($input.toolArgs) { $input.toolArgs } else { '' }; if (@('grep','Grep','glob','Glob') -contains $tn) { @{permissionDecision='deny'; permissionDecisionReason='Use ministr MCP tools (ministr_survey/ministr_toc) instead of the built-in Grep/Glob tools.'} | ConvertTo-Json -Compress; exit 0 }; if ($tn -in @('bash','Bash','shell')) { $cmd = ($ta | ConvertFrom-Json).command; if ($cmd -match '^(grep|egrep|fgrep|rg|ag|ack)\\s') { @{permissionDecision='allow'; permissionDecisionReason='Allowed. Hint: ministr_survey is usually faster than shell grep here.'} | ConvertTo-Json -Compress; exit 0 }; if ($cmd -match '^(find|fd)\\s') { @{permissionDecision='allow'; permissionDecisionReason='Allowed. Hint: ministr_toc is usually faster than shell find here.'} | ConvertTo-Json -Compress; exit 0 } }",
         "timeoutSec": 5
       }
     ]
@@ -482,7 +482,7 @@ const CURSOR_HOOKS: &str = r#"{
   "hooks": {
     "beforeShellExecution": [
       {
-        "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".command // \\\"\\\"\"); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo \"{\\\"permission\\\":\\\"ask\\\",\\\"agentMessage\\\":\\\"Prefer ministr_survey for code search. Approve if this grep is filtering command output or otherwise not code search.\\\",\\\"userMessage\\\":\\\"Leading grep — prefer ministr_survey; approve if filtering output.\\\"}\"; exit 0;; find\\ *|fd\\ *) echo \"{\\\"permission\\\":\\\"ask\\\",\\\"agentMessage\\\":\\\"Prefer ministr_toc for discovery. Approve if this find is a filesystem operation rather than code search.\\\",\\\"userMessage\\\":\\\"Leading find — prefer ministr_toc; approve if filesystem op.\\\"}\"; exit 0;; esac'"
+        "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".command // \\\"\\\"\"); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo \"{\\\"permission\\\":\\\"allow\\\",\\\"agentMessage\\\":\\\"Allowed. Hint: ministr_survey is usually faster than shell grep here; filtering output is expected.\\\",\\\"userMessage\\\":\\\"\\\"}\"; exit 0;; find\\ *|fd\\ *) echo \"{\\\"permission\\\":\\\"allow\\\",\\\"agentMessage\\\":\\\"Allowed. Hint: ministr_toc is usually faster than shell find here.\\\",\\\"userMessage\\\":\\\"\\\"}\"; exit 0;; esac'"
       }
     ]
   }
@@ -576,22 +576,23 @@ work (pipelines, git, build/test output filtering all run unrestricted).
 | `ministr_extract(id: "...")`         | **PRIMARY**    | Get atomic claims from a section, optionally filtered by query.               |
 | `ministr_toc`                        | **PRIMARY**    | Structural overview of the indexed corpus.                                    |
 | `ministr_bridge(query/kind/...)`     | **PRIMARY**    | Cross-language bridge links (Tauri, PyO3, NAPI, etc.).                        |
-| `Grep` / `Glob` tools             | **DENIED**     | Frictionless: use `ministr_survey` / `ministr_symbols` instead.               |
-| `Bash(grep/find/...)` leading     | **ASK**        | Speed-bump. Approve when not code search (output filter, fs op).              |
+| `Grep` / `Glob` tools             | **DENIED**     | Frictionless redirect (no prompt): use `ministr_survey` / `ministr_symbols`.  |
+| `Bash(grep/find/...)` leading     | **ALLOWED**    | Auto-allowed with an advisory hint. Never prompts.                            |
 | `cmd \| grep`, `cmd \| tail`, …   | **ALLOWED**    | Pipelines / compound commands are never intercepted.                          |
 | `Read(file)`                      | **RESTRICTED** | Use `Read` only immediately before `Edit`. Never for exploration.             |
 
 ## What is steered (and what is not)
 
-Steered toward ministr:
+Steered toward ministr (advisory only — nothing ever prompts you):
 
-- The `Grep` / `Glob` tools — **denied**; use `ministr_survey` / `ministr_symbols`.
-- A *leading* `grep`/`rg`/`ag`/`ack`/`egrep`/`fgrep` — **ask**; for code
-  search use `ministr_survey`. Approve if filtering command output.
-- A *leading* `find`/`fd` — **ask**; for discovery use `ministr_toc` /
-  `ministr_survey`. Approve for filesystem operations.
+- The `Grep` / `Glob` tools — **denied** (silent redirect); use
+  `ministr_survey` / `ministr_symbols`.
+- A *leading* `grep`/`rg`/`ag`/`ack`/`egrep`/`fgrep` — **allowed** with a
+  hint to prefer `ministr_survey`.
+- A *leading* `find`/`fd` — **allowed** with a hint to prefer
+  `ministr_toc` / `ministr_survey`.
 
-Explicitly **not** steered (run normally, no prompt):
+Explicitly **not** steered at all (run normally):
 
 - Any pipeline / compound command: `cargo test | grep`, `… | tail`,
   `… | wc`, `git log | grep`, `git grep …`.
@@ -634,10 +635,10 @@ See `ministr-playbook.md` for decision trees and chaining patterns.
 - Use `ministr_survey` for file/concept discovery (the `Glob` tool is denied).
 - Use `ministr_symbols` for finding code symbols (the `Grep` tool is denied).
 - Use ministr tools for *code exploration*; `Read` only immediately before `Edit`.
-- The shell is unrestricted for everything else — pipelines, `git`, and
-  build/test output filtering (`cargo test | grep`, `… | tail`) run
-  normally. Only a *leading* `grep`/`find` prompts for approval; approve
-  it when it is not code search. See `ministr-scope.md`.
+- The shell is unrestricted — pipelines, `git`, and build/test output
+  filtering (`cargo test | grep`, `… | tail`) run normally. A *leading*
+  `grep`/`find` is auto-allowed with a one-line hint to prefer ministr;
+  nothing ever prompts you. See `ministr-scope.md`.
 ";
 
 /// Playbook for Tauri projects (Rust backend + JS/TS frontend).
@@ -1035,9 +1036,8 @@ normal shell work.
   `ministr_survey` / `ministr_toc`.
 - The shell is unrestricted: builds, tests, `git`, dependency installs,
   and filtering command output (`cargo test | grep`, `… | tail`) run
-  normally. A *leading* `grep`/`find` triggers an approval prompt —
-  approve it when it is filtering output or doing a filesystem
-  operation rather than searching the codebase.
+  normally. A *leading* `grep`/`find` is auto-allowed with a one-line
+  hint to prefer ministr — it never prompts.
 - Read files only immediately before editing them.
 
 ## Rules
@@ -1072,9 +1072,8 @@ This project uses [ministr](https://github.com/ministr-rs/ministr) as an MCP ser
 - The shell is unrestricted: building, testing, dependency installs,
   `git`, running the project, and filtering command output
   (`cargo test | grep`, `cargo build 2>&1 | tail`, `git log | grep`)
-  all run normally. A *leading* `grep`/`find` may prompt for approval —
-  approve it when it is filtering output or a filesystem operation
-  rather than searching the codebase.
+  all run normally. A *leading* `grep`/`find` is auto-allowed with a
+  one-line hint to prefer ministr — it never prompts.
 - Read files only immediately before editing them.
 
 ## Tool Mapping (preferences, not prohibitions)
@@ -1410,9 +1409,14 @@ mod tests {
             !STEER_SCRIPT.contains("Don't") && !STEER_SCRIPT.contains("doesn't"),
             "reason strings must be apostrophe-free"
         );
-        // Tool category denies; shell categories ask.
+        // Tool category denies (silent redirect); shell categories are
+        // ALLOWED with an advisory hint — never `ask` (no yes/no prompts).
         assert!(STEER_SCRIPT.contains(r#"decision="deny""#));
-        assert!(STEER_SCRIPT.contains(r#"decision="ask""#));
+        assert!(STEER_SCRIPT.contains(r#"decision="allow""#));
+        assert!(
+            !STEER_SCRIPT.contains(r#"decision="ask""#),
+            "must not prompt the user with ask"
+        );
         // Reasons name the concrete ministr tools (the redirect target).
         assert!(STEER_SCRIPT.contains("mcp__ministr__ministr_survey"));
         assert!(STEER_SCRIPT.contains("mcp__ministr__ministr_toc"));
@@ -1464,8 +1468,12 @@ mod tests {
             "Grep/Glob tools should be denied"
         );
         assert!(
-            bash.contains(r#""permissionDecision":"ask""#),
-            "leading shell search should ask, not hard-deny"
+            bash.contains(r#""permissionDecision":"allow""#),
+            "leading shell search should be auto-allowed, never ask"
+        );
+        assert!(
+            !bash.contains(r#""permissionDecision":"ask""#),
+            "must never prompt the user with ask"
         );
 
         // No pipe interception — the overzealous + crash-prone branch is gone.
@@ -1506,12 +1514,13 @@ mod tests {
             "must not detect/block piped search"
         );
 
-        // Steer, not wall: `ask` (not `deny`) with agent/user messages.
+        // Steer without ever prompting: `allow` (not `deny`, not `ask`)
+        // plus an advisory agentMessage.
         assert!(cmd.contains("permission"), "should contain permission key");
-        assert!(cmd.contains("ask"), "should ask, not hard-deny");
+        assert!(cmd.contains("allow"), "should auto-allow, not block/prompt");
         assert!(!cmd.contains("deny"), "must not hard-deny shell search");
+        assert!(!cmd.contains("ask"), "must never prompt the user with ask");
         assert!(cmd.contains("agentMessage"), "should have agentMessage");
-        assert!(cmd.contains("userMessage"), "should have userMessage");
     }
 
     /// Verify Windsurf hooks JSON structure and bash script blocking patterns.
