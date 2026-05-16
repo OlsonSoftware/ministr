@@ -362,7 +362,7 @@ function ProjectCard({
             {statusLabel}
           </Badge>
         </div>
-        <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-none">
+        <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
           <Button
             variant="ghost"
             size="icon-sm"

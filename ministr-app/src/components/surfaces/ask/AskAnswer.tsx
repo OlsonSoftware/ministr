@@ -102,7 +102,7 @@ export function AskAnswer({
             onClick={pinned ? onUnpin : onPin}
             title={pinned ? "Unpin this answer" : "Pin this answer"}
             className={cn(
-              "inline-flex items-center gap-1 border px-1.5 py-0.5 cursor-pointer transition-none rounded-sm",
+              "inline-flex items-center gap-1 border px-1.5 py-0.5 cursor-pointer transition-colors duration-150 rounded-full",
               "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
               pinned
                 ? "border-info bg-surface-overlay text-info"
@@ -116,7 +116,7 @@ export function AskAnswer({
             onClick={copy}
             title={copied ? "Copied" : "Copy to clipboard"}
             className={cn(
-              "inline-flex items-center gap-1 border px-1.5 py-0.5 cursor-pointer transition-none rounded-sm",
+              "inline-flex items-center gap-1 border px-1.5 py-0.5 cursor-pointer transition-colors duration-150 rounded-full",
               "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
               "border-border-soft bg-surface text-text-muted hover:text-text hover:border-border",
             )}
@@ -153,7 +153,7 @@ export function AskAnswer({
 
 function UnsupportedBanner({ count }: { count: number }) {
   return (
-    <div className="flex items-start gap-2 border border-danger bg-surface-overlay px-3 py-2">
+    <div className="flex items-start gap-2 rounded-lg border border-danger/50 bg-danger/10 px-3 py-2.5">
       <AlertTriangle
         className="h-4 w-4 text-danger shrink-0 mt-0.5"
         strokeWidth={2}
@@ -471,11 +471,11 @@ function SourceRow({
         }
       }}
       className={cn(
-        "group flex items-start gap-3 border p-2.5 text-left",
-        "cursor-pointer transition-none",
+        "group flex items-start gap-3 rounded-lg border p-2.5 text-left",
+        "cursor-pointer transition-colors duration-150",
         cited
-          ? "border-border-soft bg-surface hover:border-accent hover:bg-surface-overlay"
-          : "border-border-soft bg-surface opacity-60 hover:opacity-100 hover:border-border",
+          ? "border-border bg-surface hover:border-accent hover:bg-surface-overlay"
+          : "border-border bg-surface opacity-60 hover:opacity-100 hover:border-border-hover",
       )}
     >
       <span

@@ -180,7 +180,7 @@ export function ActivityTimeline({
           <button
             type="button"
             onClick={() => setLimit((l) => l + PAGE)}
-            className="w-full text-left border-t border-border-soft px-3 py-2 font-mono text-mono-mini uppercase tracking-[0.05em] text-text-muted hover:bg-surface-overlay cursor-pointer transition-none"
+            className="w-full text-left border-t border-border-soft px-3 py-2 font-mono text-mono-mini uppercase tracking-[0.05em] text-text-muted hover:bg-surface-overlay cursor-pointer transition-colors duration-150"
           >
             … {filtered.length - limit} more · load more
           </button>
@@ -238,7 +238,7 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        "px-1.5 py-0.5 font-mono text-mono-mini uppercase tracking-[0.05em] border rounded-sm cursor-pointer transition-none",
+        "px-1.5 py-0.5 font-mono text-mono-mini uppercase tracking-[0.05em] border rounded-sm cursor-pointer transition-colors duration-150",
         active
           ? "border-accent bg-accent text-[var(--color-accent-fg-on)]"
           : "border-border-soft text-text-muted hover:border-border",

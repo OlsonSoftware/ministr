@@ -82,7 +82,7 @@ export function ProjectSessions({ corpus }: { corpus: CorpusInfo }) {
           Sessions
         </h3>
         {vitals.total > 0 && (
-          <span className="inline-flex items-center gap-1.5 border border-success bg-surface px-1.5 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-success rounded-sm">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-success/40 bg-success/10 px-2 py-0.5 font-mono text-mono-mini font-medium uppercase tracking-[0.06em] text-success">
             <StatusDot tone="success" pulse="live" />
             {vitals.total} live
           </span>
@@ -92,7 +92,10 @@ export function ProjectSessions({ corpus }: { corpus: CorpusInfo }) {
           poll
         </span>
         <span
-          className={cn("h-1.5 w-1.5", beat ? "bg-accent" : "bg-border")}
+          className={cn(
+            "h-1.5 w-1.5 rounded-full transition-colors duration-200",
+            beat ? "bg-accent" : "bg-border",
+          )}
           aria-label="Polling heartbeat"
         />
       </div>
@@ -113,7 +116,7 @@ export function ProjectSessions({ corpus }: { corpus: CorpusInfo }) {
                 type="button"
                 onClick={() => navigator.clipboard.writeText(CONNECT_CMD)}
                 title="Click to copy"
-                className="mt-2 block w-full text-left border border-border-soft bg-surface-sunken px-2.5 py-1.5 font-mono text-mono-mini not-italic text-text break-all cursor-pointer hover:border-border hover:bg-surface-overlay transition-none"
+                className="mt-2 block w-full text-left border border-border-soft bg-surface-sunken px-2.5 py-1.5 font-mono text-mono-mini not-italic text-text break-all cursor-pointer hover:border-border-hover hover:bg-surface-overlay transition-colors duration-150"
               >
                 {`> ${CONNECT_CMD}`}
               </button>
