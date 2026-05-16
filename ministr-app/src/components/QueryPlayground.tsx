@@ -1071,8 +1071,7 @@ function SymbolsResults({
                     onDoubleClick={() => onOpenDetail(s)}
                     className={cn(
                       "cursor-pointer",
-                      isPreviewed &&
-                        "shadow-[4px_4px_0_0_var(--color-accent)] -translate-x-[2px] -translate-y-[2px]",
+                      isPreviewed && "ring-1 ring-accent border-accent",
                     )}
                     title={isPreviewed ? "Double-click for full source" : "Click to preview"}
                   >

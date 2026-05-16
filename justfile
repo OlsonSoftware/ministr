@@ -209,8 +209,12 @@ reinstall:
 reinstall:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\reinstall.ps1
 
-# Run all quality gates: format check + build + test + lint
-validate: fmt-check lint test
+# Enforce the ministr-app UI design contract (see ministr-app/DESIGN.md)
+design-lint:
+    cd ministr-app && node scripts/design-lint.cjs
+
+# Run all quality gates: format check + build + test + lint + UI contract
+validate: fmt-check lint test design-lint
 
 # Cut a release: bump versions, update CHANGELOG, commit + tag
 release version:

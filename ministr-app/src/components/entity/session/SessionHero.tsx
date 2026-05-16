@@ -90,7 +90,7 @@ export function SessionHero({
       className={cn(
         "rounded-xl bg-surface px-4 py-4 space-y-3",
         status.tone === "danger" && !ended
-          ? "border border-danger shadow-[0_0_0_1px_var(--color-danger)]"
+          ? "border border-danger ring-1 ring-danger"
           : "border border-border",
       )}
     >
