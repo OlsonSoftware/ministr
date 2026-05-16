@@ -1,11 +1,13 @@
 /**
  * DeveloperPanel — power-user surfaces moved here from top-level tabs.
  *
- * What used to live on the main rail (Sessions, Explore, Query playground)
- * or as Workspace drawers (Logs) now hides behind Settings → Developer.
- * Each row reuses the existing component as-is so behavior parity is
- * preserved; the only thing that changed is the route by which the user
- * reaches them.
+ * What used to live on the main rail (Explore, Query playground) or as
+ * Workspace drawers (Logs) now hides behind Settings → Developer. Each row
+ * reuses the existing component as-is so behavior parity is preserved; the
+ * only thing that changed is the route by which the user reaches them.
+ *
+ * Sessions is no longer here: it moved into the Projects detail pane
+ * (`ProjectSessions`), scoped to the selected project.
  *
  * The plan calls for these to be split into individual files under
  * `surfaces/settings/DeveloperTools/`. We keep them here as one file for
@@ -18,19 +20,13 @@ import { useState } from "react";
 
 import { cn } from "../../lib/utils";
 import type { DaemonStatus } from "../../lib/types";
-import { SessionDashboard } from "../SessionDashboard";
 import { LogViewer } from "../LogViewer";
 import { ExploreView } from "../ExploreView";
 import { QueryPlayground } from "../QueryPlayground";
 
-type DevTab = "sessions" | "logs" | "explore" | "playground";
+type DevTab = "logs" | "explore" | "playground";
 
 const TABS: { id: DevTab; label: string; hint: string }[] = [
-  {
-    id: "sessions",
-    label: "Sessions",
-    hint: "Per-agent budgets, dedup hits, compression ratio.",
-  },
   { id: "logs", label: "Logs", hint: "Live daemon stderr stream." },
   {
     id: "explore",
@@ -55,7 +51,7 @@ export function DeveloperPanel({
   activeCorpusId,
   setActiveCorpusId,
 }: Props) {
-  const [tab, setTab] = useState<DevTab>("sessions");
+  const [tab, setTab] = useState<DevTab>("logs");
   const current = TABS.find((t) => t.id === tab) ?? TABS[0];
 
   return (
@@ -102,7 +98,6 @@ export function DeveloperPanel({
       </p>
 
       <div className="border-t border-border-soft pt-4">
-        {tab === "sessions" && <SessionDashboard status={status} />}
         {tab === "logs" && (
           <div className="h-[600px]">
             <LogViewer />

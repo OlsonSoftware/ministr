@@ -71,6 +71,15 @@ export interface SessionDetail {
   total_compressions: number;
   dedup_hits: number;
   compression_ratio: number;
+  /** Token-level split + budget config. Added in a newer daemon — present
+   *  only once it has been rebuilt & the MCP session reconnected, so these
+   *  are optional and every consumer reads them defensively. */
+  cumulative_tokens_evicted?: number;
+  cumulative_tokens_compressed?: number;
+  delta_updates?: number;
+  context_window_tokens?: number;
+  pressure_threshold?: number;
+  critical_threshold?: number;
   /** Parent session id when this session was created on behalf of a
    *  subagent (e.g. Claude Code's Task tool spawning a sub-claude).
    *  Drives parent/child indenting in tray + SessionDashboard. */

@@ -375,8 +375,20 @@ pub struct SessionDetail {
     pub total_tokens_saved: u64,
     pub total_evictions: u64,
     pub total_compressions: u64,
+    /// Tokens freed by eviction vs compression — the token-level split
+    /// behind `total_tokens_saved` (UI economics bar).
+    pub cumulative_tokens_evicted: u64,
+    pub cumulative_tokens_compressed: u64,
+    /// Deliveries that changed since last seen (delta updates).
+    pub delta_updates: u64,
     pub dedup_hits: u64,
     pub compression_ratio: f64,
+    // Budget configuration — lets the UI derive pressure / projections
+    // from the *real* (env-driven) window + thresholds instead of
+    // hardcoding 0.80 / 0.95.
+    pub context_window_tokens: usize,
+    pub pressure_threshold: f64,
+    pub critical_threshold: f64,
     /// Parent session id when this session was created on behalf of a
     /// subagent (e.g. Claude Code's Task tool spawning a sub-claude).
     /// `None` for top-level sessions.
@@ -400,6 +412,7 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDeta
             if let Some(entry) = reg.get_session(&sid) {
                 let status = entry.budget.budget_status();
                 let metrics = entry.session.metrics();
+                let cfg = entry.budget.config();
                 #[allow(clippy::cast_precision_loss)]
                 let compression_ratio = if metrics.cumulative_tokens_delivered > 0 {
                     metrics.total_tokens_saved() as f64 / metrics.cumulative_tokens_delivered as f64
@@ -425,8 +438,14 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDeta
                     total_tokens_saved: metrics.total_tokens_saved(),
                     total_evictions: metrics.total_evictions,
                     total_compressions: metrics.total_compressions,
+                    cumulative_tokens_evicted: metrics.cumulative_tokens_evicted,
+                    cumulative_tokens_compressed: metrics.cumulative_tokens_compressed,
+                    delta_updates: metrics.delta_updates,
                     dedup_hits: metrics.dedup_hits,
                     compression_ratio,
+                    context_window_tokens: cfg.max_context_tokens,
+                    pressure_threshold: cfg.pressure_threshold,
+                    critical_threshold: cfg.critical_threshold,
                     parent_session_id: entry
                         .parent_session_id
                         .as_ref()
@@ -658,12 +677,23 @@ pub async fn recent_activity(
     state: State<'_, AppState>,
     limit: Option<usize>,
     since_ms: Option<u64>,
+    session_id: Option<String>,
 ) -> Result<Vec<ActivityEvent>, String> {
     let limit = limit.unwrap_or(50);
     let events = if let Some(since) = since_ms {
         state.activity_since(since, limit).await
     } else {
         state.recent_activity(limit).await
+    };
+    // Optional server-side per-session filter. The ring is small (≤ the
+    // requested window, ≤500), so filtering here is cheap and removes the
+    // pull-everything-then-filter-client-side workaround.
+    let events = match session_id {
+        Some(sid) => events
+            .into_iter()
+            .filter(|e| e.session_id.as_deref() == Some(sid.as_str()))
+            .collect(),
+        None => events,
     };
     Ok(events)
 }

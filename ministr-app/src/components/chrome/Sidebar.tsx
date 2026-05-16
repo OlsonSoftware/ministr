@@ -46,8 +46,12 @@ export function Sidebar({ active, onSelect }: Props) {
             aria-label={item.label}
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              "relative grid place-items-center h-12 w-12 cursor-pointer transition-none",
-              "border-l-[3px]",
+              // w-full (not w-12): the rail's content box is 46px after
+              // the 2px right border, so a fixed w-12 (48px) button plus
+              // its 3px left accent bar overflowed the rail. Filling the
+              // content box keeps the active item inside the sidebar.
+              "relative grid place-items-center h-12 w-full cursor-pointer transition-none",
+              "border-l-[3px] box-border",
               isActive
                 ? "border-l-accent bg-surface text-text"
                 : "border-l-transparent text-text-muted hover:text-text hover:bg-surface",

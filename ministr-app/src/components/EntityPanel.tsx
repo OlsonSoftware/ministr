@@ -10,7 +10,7 @@ import { SymbolView } from "./entity/SymbolView";
 import { SectionView } from "./entity/SectionView";
 import { BridgeView } from "./entity/BridgeView";
 import { FileView } from "./entity/FileView";
-import { SessionView } from "./entity/SessionView";
+import { SessionView } from "./entity/session/SessionView";
 import { CorpusView } from "./entity/CorpusView";
 
 /**

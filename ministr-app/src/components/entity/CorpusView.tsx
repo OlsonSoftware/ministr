@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEntityPanel, type Entity } from "../../hooks/useEntityPanel";
+import { useSessions } from "../../hooks/useSessions";
 import { EntityRow } from "./EntityRow";
 import {
   EntitySection,
@@ -8,14 +9,11 @@ import {
   EntitySectionLoading,
 } from "./EntitySection";
 import { corpusLabel } from "../../lib/corpus";
-import { pressureTone, toneTextClass } from "../../lib/status";
+import { toneTextClass } from "../../lib/status";
+import { statusLabel, utilizationTone } from "../../lib/sessions";
 import { formatTokens } from "../../lib/format";
 import { MetricTile } from "../ui/metric-tile";
-import type {
-  CoherenceEvent,
-  FileInfo,
-  SessionDetail,
-} from "../../lib/types";
+import type { CoherenceEvent, FileInfo } from "../../lib/types";
 
 interface Props {
   entity: Extract<Entity, { kind: "corpus" }>;
@@ -25,19 +23,23 @@ export function CorpusView({ entity }: Props) {
   const { corpus } = entity;
   const { openEntity } = useEntityPanel();
 
+  // Sessions come from the one shared store (single poll app-wide).
+  const { sessions: allSessions, loaded: sessionsLoaded } = useSessions();
+  const sessions = useMemo(
+    () => allSessions.filter((s) => s.corpus_id === corpus.id),
+    [allSessions, corpus.id],
+  );
+
   const [files, setFiles] = useState<FileInfo[] | null>(null);
-  const [sessions, setSessions] = useState<SessionDetail[] | null>(null);
   const [changes, setChanges] = useState<CoherenceEvent[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setFiles(null);
-    setSessions(null);
     setChanges(null);
 
     Promise.allSettled([
       invoke<FileInfo[]>("list_corpus_files", { corpusId: corpus.id }),
-      invoke<SessionDetail[]>("list_sessions"),
       // Bump the candidate window so a corpus with slightly older
       // changes still appears active after sibling corpora produce
       // 50+ newer events. Display still slices to 12 rows below.
@@ -45,14 +47,9 @@ export function CorpusView({ entity }: Props) {
         limit: 500,
         sinceMs: null,
       }),
-    ]).then(([f, s, c]) => {
+    ]).then(([f, c]) => {
       if (cancelled) return;
       setFiles(f.status === "fulfilled" ? f.value : []);
-      setSessions(
-        s.status === "fulfilled"
-          ? s.value.filter((x) => x.corpus_id === corpus.id)
-          : [],
-      );
       setChanges(
         c.status === "fulfilled"
           ? c.value.filter((e) => e.corpus_id === corpus.id)
@@ -117,19 +114,19 @@ export function CorpusView({ entity }: Props) {
       <EntitySection
         chapter={3}
         title="Active sessions"
-        meta={sessions === null ? "…" : sessions.length}
+        meta={!sessionsLoaded ? "…" : sessions.length}
       >
-        {sessions === null ? (
+        {!sessionsLoaded ? (
           <EntitySectionLoading />
         ) : sessions.length === 0 ? (
           <EntitySectionEmpty label="No active sessions." />
         ) : (
           sessions.map((s) => {
-            const tone = pressureTone(s.pressure_level);
+            const tone = utilizationTone(s.utilization);
             return (
               <EntityRow
                 key={s.session_id}
-                tag={s.pressure_level.toUpperCase()}
+                tag={statusLabel(tone)}
                 name={s.session_id.slice(0, 12)}
                 subtitle={`turn ${s.current_turn} · ${formatTokens(s.tokens_used)} tokens`}
                 meta={`${(s.utilization * 100).toFixed(0)}%`}
@@ -138,6 +135,7 @@ export function CorpusView({ entity }: Props) {
                     kind: "session",
                     corpusId: corpus.id,
                     sessionId: s.session_id,
+                    seed: s,
                   })
                 }
                 className={toneTextClass(tone)}

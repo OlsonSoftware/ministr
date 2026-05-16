@@ -74,8 +74,11 @@ function AppInner() {
       const target = event.payload;
       if (target === "ask" || target === "projects" || target === "settings") {
         setSurface(target);
-      } else if (target === "sessions" || target === "explore") {
-        // Deprecated targets — settle on Settings → Developer Tools (M4).
+      } else if (target === "sessions") {
+        // Sessions moved into the Projects detail pane.
+        setSurface("projects");
+      } else if (target === "explore") {
+        // Deprecated target — settles on Settings → Developer Tools (M4).
         setSurface("settings");
       }
     });
