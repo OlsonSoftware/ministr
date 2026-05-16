@@ -13,6 +13,7 @@
  *   - Onboarding step 3 (planned — currently a stub; can drop this
  *     component in once the surface is ready)
  */
+import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
@@ -20,9 +21,10 @@ import {
   Loader2,
   RefreshCw,
   Sparkles,
+  Wrench,
 } from "lucide-react";
 
-import type { CorpusInfo } from "../../lib/types";
+import type { CorpusInfo, RepairReport } from "../../lib/types";
 import { corpusRoot } from "../../lib/corpus";
 import { cn } from "../../lib/utils";
 import {
@@ -82,6 +84,148 @@ export function AiAssistantsPanel({ corpora, activeCorpusId }: Props) {
             onConnect={() => connect(view.info.id)}
             onTest={() => runTest(view.info.id)}
           />
+        ))}
+      </ul>
+
+      <AgentConfigCard />
+    </div>
+  );
+}
+
+type RepairPhase =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "done"; report: RepairReport; at: number }
+  | { kind: "error"; message: string; at: number };
+
+/**
+ * Agent-config repair — wraps the idempotent `repair_agent_config`
+ * command. Re-scaffolds / heals the steering rules + PreToolUse hooks
+ * for every registered project without overwriting user-edited advisory
+ * files. Safe to run repeatedly; the result region explicitly confirms
+ * the no-op case so a "nothing happened" run never looks like a failure.
+ */
+function AgentConfigCard() {
+  const [phase, setPhase] = useState<RepairPhase>({ kind: "idle" });
+  const running = phase.kind === "running";
+
+  const run = useCallback(async () => {
+    setPhase({ kind: "running" });
+    try {
+      const report = await invoke<RepairReport>("repair_agent_config");
+      setPhase({ kind: "done", report, at: Date.now() });
+    } catch (e) {
+      setPhase({
+        kind: "error",
+        message: typeof e === "string" ? e : String(e),
+        at: Date.now(),
+      });
+    }
+  }, []);
+
+  return (
+    <section className="border border-border-soft bg-surface p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1 min-w-0">
+          <h3 className="font-mono text-sm font-bold uppercase tracking-[0.08em] text-text">
+            Agent config
+          </h3>
+          <p className="font-sans text-sm text-text-muted">
+            Re-create or heal the steering rules and PreToolUse hooks for
+            every registered project (Claude Code, Cursor, Windsurf,
+            Copilot). Idempotent and non-destructive — advisory rules you
+            have edited are never overwritten; only stale machine-generated
+            hooks are refreshed.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={run}
+          disabled={running}
+          aria-busy={running}
+          className="shrink-0"
+        >
+          {running ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+          ) : (
+            <Wrench className="h-3.5 w-3.5" strokeWidth={2} />
+          )}
+          {running
+            ? "Repairing…"
+            : phase.kind === "error"
+              ? "Retry"
+              : "Repair"}
+        </Button>
+      </div>
+
+      <div aria-live="polite">
+        {phase.kind === "error" && (
+          <div className="border border-danger bg-surface p-3 flex items-start gap-2">
+            <AlertTriangle
+              className="h-4 w-4 text-danger shrink-0 mt-0.5"
+              strokeWidth={2.5}
+            />
+            <p className="font-mono text-mono-mini text-danger">
+              {phase.message}
+            </p>
+          </div>
+        )}
+        {phase.kind === "done" && (
+          <RepairSummary report={phase.report} at={phase.at} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RepairSummary({
+  report,
+  at,
+}: {
+  report: RepairReport;
+  at: number;
+}) {
+  const changed = report.created + report.healed + report.custom_rules;
+  const n = report.roots.length;
+  const projects = `${n} ${n === 1 ? "project" : "projects"}`;
+
+  if (changed === 0) {
+    return (
+      <div className="flex items-start gap-2">
+        <span className="inline-flex h-4 w-4 items-center justify-center bg-success text-white shrink-0">
+          <Check className="h-3 w-3" strokeWidth={3} />
+        </span>
+        <p className="font-mono text-mono-mini text-success">
+          Already up to date — {projects} checked · {formatTestStamp(at)}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-start gap-2">
+        <span className="inline-flex h-4 w-4 items-center justify-center bg-success text-white shrink-0">
+          <Check className="h-3 w-3" strokeWidth={3} />
+        </span>
+        <p className="font-mono text-mono-mini text-success">
+          Repaired {projects} · {report.created} created · {report.healed}{" "}
+          healed
+          {report.custom_rules > 0
+            ? ` · ${report.custom_rules} custom`
+            : ""}{" "}
+          · {formatTestStamp(at)}
+        </p>
+      </div>
+      <ul className="space-y-0.5 pl-6">
+        {report.roots.map((r) => (
+          <li
+            key={r}
+            className="font-mono text-mono-mini text-text-dim truncate max-w-[60ch]"
+          >
+            {r}
+          </li>
         ))}
       </ul>
     </div>

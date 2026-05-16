@@ -185,6 +185,19 @@ export interface ActivityEvent {
   duration_ms: number;
 }
 
+/** Result of the `repair_agent_config` command — one idempotent pass
+ *  re-scaffolding every AI-assistant config file across all corpus roots. */
+export interface RepairReport {
+  /** Project roots that were scaffolded/healed. */
+  roots: string[];
+  /** Newly created files (were missing). */
+  created: number;
+  /** Stale machine-generated hook files overwritten with the current template. */
+  healed: number;
+  /** Custom rules injected from `.ministr.toml [agent] rules`. */
+  custom_rules: number;
+}
+
 /** File-system change the daemon's watcher observed. */
 export type CoherenceKind = "created" | "modified" | "removed";
 
