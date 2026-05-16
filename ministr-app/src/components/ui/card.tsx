@@ -2,17 +2,17 @@ import { forwardRef } from "react";
 import { cn } from "../../lib/utils";
 
 interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** Hover treatment: "none" (default), "lift" (faint surface shift on hover),
-   *  or "accent" (lift with accent edge). The hard offset shadow is reserved
-   *  for focused/active state — hover is just a contrast cue now. */
+  /** Hover treatment: "none", "lift" (surface + shadow), or "accent"
+   *  (lift with accent ring + glow). */
   hover?: "none" | "lift" | "accent";
   /** Use the sunken background (inset feel) instead of the raised surface. */
   sunken?: boolean;
 }
 
 /**
- * Field-manual card: hairline border, no shadow by default. Padding reduces
- * in compact density mode via the `[data-density="compact"]` selector.
+ * Cockpit card: tier-1 surface, hairline border, soft radius. Elevation
+ * is communicated by shadow on hover/active (not a permanent hard
+ * offset). Padding tightens in compact density mode.
  */
 export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
   { className, hover = "none", sunken = false, ...props },
@@ -22,11 +22,14 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
     <div
       ref={ref}
       className={cn(
-        "border border-border-soft transition-none rounded-none",
+        "border border-border rounded-lg",
+        "transition-[background-color,box-shadow,border-color] duration-200 ease-out",
         "p-4 [html[data-density=compact]_&]:p-2.5",
-        sunken ? "bg-surface-sunken" : "bg-surface-raised",
-        hover === "lift" && "hover:bg-surface-overlay hover:border-border",
-        hover === "accent" && "hover:bg-surface-overlay hover:border-accent",
+        sunken ? "bg-surface-sunken" : "bg-surface",
+        hover === "lift" &&
+          "hover:bg-surface-overlay hover:border-border-hover hover:shadow-md",
+        hover === "accent" &&
+          "hover:border-accent hover:shadow-[var(--glow-soft)]",
         className,
       )}
       {...props}

@@ -6,25 +6,31 @@ interface ProgressProps {
   className?: string;
   /** Color of the fill. Defaults to `accent`. */
   tone?: Tone;
-  /** Legacy prop kept for compatibility — brutalist progress bars don't glow. */
+  /** Add a soft accent glow to the fill (for live/active progress). */
   glow?: boolean;
 }
 
+/** Cockpit progress bar — rounded track, animated fill width. */
 export function Progress({
   value,
   className,
   tone = "accent",
+  glow = false,
 }: ProgressProps) {
   const pct = Math.min(100, Math.max(0, value));
   return (
     <div
       className={cn(
-        "relative h-2 w-full overflow-hidden border border-border-soft bg-surface-overlay",
+        "relative h-1.5 w-full overflow-hidden rounded-full bg-surface-overlay",
         className,
       )}
     >
       <div
-        className={cn("h-full transition-none", toneBgClass(tone))}
+        className={cn(
+          "h-full rounded-full transition-[width] duration-300 ease-out",
+          toneBgClass(tone),
+          glow && "shadow-[var(--glow-soft)]",
+        )}
         style={{ width: `${pct}%` }}
       />
     </div>

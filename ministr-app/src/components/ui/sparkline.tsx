@@ -14,6 +14,9 @@ interface SparklineProps {
   height?: number;
   /** `line` stroke tone. Default `accent`. */
   tone?: Tone;
+  /** Smooth (Catmull-Rom) curve + soft area fill instead of the stepped
+   *  datasheet look. Opt-in; existing call sites stay stepped. */
+  smooth?: boolean;
   /** Required text alternative — the graphic is decorative, this carries
    *  the meaning for assistive tech. */
   ariaLabel: string;
@@ -33,6 +36,7 @@ function SparklineImpl({
   width = 120,
   height = 36,
   tone = "accent",
+  smooth = false,
   ariaLabel,
   className,
 }: SparklineProps) {
@@ -107,14 +111,57 @@ function SparklineImpl({
     );
   }
 
+  const lastX = x(n - 1);
+  const lastY = y(data[n - 1]);
+
+  if (smooth) {
+    // Catmull-Rom → cubic Bézier for a soft trend curve + area fill.
+    const P = data.map((v, i) => [x(i), y(v)] as const);
+    let d = `M ${P[0][0]} ${P[0][1]}`;
+    for (let i = 0; i < n - 1; i++) {
+      const p0 = P[i - 1] ?? P[i];
+      const p1 = P[i];
+      const p2 = P[i + 1];
+      const p3 = P[i + 2] ?? p2;
+      const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+      const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+      const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += ` C ${c1x} ${c1y} ${c2x} ${c2y} ${p2[0]} ${p2[1]}`;
+    }
+    const gid = `spk-${tone}`;
+    return wrap(
+      <>
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={stroke} stopOpacity={0.28} />
+            <stop offset="100%" stopColor={stroke} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <path
+          d={`${d} L ${lastX} ${height} L ${P[0][0]} ${height} Z`}
+          fill={`url(#${gid})`}
+        />
+        <path
+          d={d}
+          fill="none"
+          stroke={stroke}
+          strokeWidth={1.75}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
+        <circle cx={lastX} cy={lastY} r={2.25} fill={stroke} />
+      </>,
+    );
+  }
+
   // Build the step-after point list: hold each y until the next x.
   const pts: string[] = [];
   for (let i = 0; i < n; i++) {
     if (i > 0) pts.push(`${x(i)},${y(data[i - 1])}`);
     pts.push(`${x(i)},${y(data[i])}`);
   }
-  const lastX = x(n - 1);
-  const lastY = y(data[n - 1]);
 
   return wrap(
     <>
