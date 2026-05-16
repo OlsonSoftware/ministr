@@ -21,7 +21,9 @@
 
 pub mod cgo;
 pub mod detector;
+pub mod electron;
 pub mod ffi;
+pub mod flutter;
 pub mod grpc;
 pub mod jni;
 pub mod http_route;
@@ -81,6 +83,13 @@ pub enum BridgeKind {
     UniFfi,
     /// gRPC: `.proto` `service` ↔ generated client/stub references.
     Grpc,
+    /// Flutter platform channels: Dart `MethodChannel('name')` /
+    /// `EventChannel` ↔ native (Kotlin/Java/Swift/ObjC) channel of the
+    /// same name string.
+    FlutterChannel,
+    /// Electron IPC: renderer `ipcRenderer.invoke/send('chan')` /
+    /// `contextBridge` ↔ main-process `ipcMain.handle/on('chan')`.
+    ElectronIpc,
 }
 
 impl BridgeKind {
@@ -99,6 +108,8 @@ impl BridgeKind {
             Self::Jni => "jni",
             Self::UniFfi => "uniffi",
             Self::Grpc => "grpc",
+            Self::FlutterChannel => "flutter_channel",
+            Self::ElectronIpc => "electron_ipc",
         }
     }
 
@@ -127,6 +138,8 @@ impl BridgeKind {
             "jni" => Some(Self::Jni),
             "uniffi" => Some(Self::UniFfi),
             "grpc" => Some(Self::Grpc),
+            "flutter_channel" => Some(Self::FlutterChannel),
+            "electron_ipc" => Some(Self::ElectronIpc),
             _ => None,
         }
     }
@@ -420,6 +433,12 @@ pub fn create_linker_for_kinds(kinds: &[BridgeKind]) -> Option<linker::BridgeLin
             BridgeKind::Jni => linker.register(Box::new(jni::JniExtractor)),
             BridgeKind::UniFfi => linker.register(Box::new(uniffi::UniffiExtractor)),
             BridgeKind::Grpc => linker.register(Box::new(grpc::GrpcExtractor)),
+            BridgeKind::FlutterChannel => {
+                linker.register(Box::new(flutter::FlutterChannelExtractor));
+            }
+            BridgeKind::ElectronIpc => {
+                linker.register(Box::new(electron::ElectronIpcExtractor));
+            }
         }
     }
     Some(linker)

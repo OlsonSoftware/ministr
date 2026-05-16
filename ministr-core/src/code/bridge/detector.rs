@@ -67,6 +67,9 @@ const NPM_MARKERS: &[(&str, &[BridgeKind])] = &[
     ("node-ffi", &[BridgeKind::Ffi]),
     ("@grpc/grpc-js", &[BridgeKind::Grpc]),
     ("@grpc/proto-loader", &[BridgeKind::Grpc]),
+    // Electron — quoted to avoid matching substrings like
+    // `electron-builder` only; the dependency key is `"electron"`.
+    ("\"electron\"", &[BridgeKind::ElectronIpc]),
 ];
 
 /// `pyproject.toml` dependency markers.
@@ -102,6 +105,7 @@ impl FrameworkDetector {
             Self::scan_package_json(&dir, &mut kinds);
             Self::scan_pyproject_toml(&dir, &mut kinds);
             Self::scan_tauri_conf(&dir, &mut kinds);
+            Self::scan_pubspec(&dir, &mut kinds);
             if dir.join("go.mod").exists() {
                 go_mod_seen = true;
             }
@@ -194,6 +198,18 @@ impl FrameworkDetector {
             if content.contains(marker) {
                 kinds.extend(bridge_kinds);
             }
+        }
+    }
+
+    /// Scan for `pubspec.yaml` — its presence indicates a Flutter/Dart
+    /// project, which (when it has native platform code) uses platform
+    /// channels. The `flutter:` key narrows it to Flutter specifically.
+    fn scan_pubspec(root: &Path, kinds: &mut BTreeSet<BridgeKind>) {
+        let Ok(content) = std::fs::read_to_string(root.join("pubspec.yaml")) else {
+            return;
+        };
+        if content.contains("flutter:") || content.contains("sdk: flutter") {
+            kinds.insert(BridgeKind::FlutterChannel);
         }
     }
 
@@ -533,6 +549,30 @@ napi-derive = "2"
         let kinds = FrameworkDetector::detect(tmp.path());
         assert!(kinds.contains(&BridgeKind::Jni), "got {kinds:?}");
         assert!(kinds.contains(&BridgeKind::Ffi), "got {kinds:?}");
+    }
+
+    #[test]
+    fn detect_flutter_from_pubspec() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("pubspec.yaml"),
+            "name: app\ndependencies:\n  flutter:\n    sdk: flutter\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::FlutterChannel), "got {kinds:?}");
+    }
+
+    #[test]
+    fn detect_electron_from_package_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("package.json"),
+            "{\n  \"devDependencies\": { \"electron\": \"^30.0.0\" }\n}\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::ElectronIpc), "got {kinds:?}");
     }
 
     #[test]
