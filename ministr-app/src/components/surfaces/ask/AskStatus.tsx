@@ -1,5 +1,6 @@
 import { Loader2 } from "lucide-react";
-import { cn } from "../../../lib/utils";
+import { motion } from "motion/react";
+import { fadeRise } from "../../../lib/motion";
 import { statusLabel, type AskPhaseName } from "./internals";
 
 interface Props {
@@ -9,30 +10,27 @@ interface Props {
 }
 
 /**
- * Plain-English status indicator for the Ask pipeline.
- *
- * The daemon emits 5+ pipeline phases (analyzing → retrieving → reranking
- * → synthesizing → verifying); the user sees three perceptible states:
- *
- *   - "Thinking…"       (analyze + retrieve + rerank)
- *   - "Writing answer…" (synthesize)
- *   - "Checking sources…" (verify)
- *
- * Internal phase names like "HyDE", "rerank", and "verify" stay in the
- * Developer Tools surface — this is the user-facing strip.
+ * Plain-English status for the Ask pipeline (3 perceptible states).
+ * Choreographed: the strip springs in and the label crossfades as the
+ * phase advances.
  */
 export function AskStatus({ phase, cached = false }: Props) {
   if (cached && phase === "done") {
     return (
-      <div className="flex items-center gap-2 border border-accent bg-surface-overlay px-3 py-2">
-        <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-        <span className="font-mono text-xs font-semibold uppercase tracking-[0.05em] text-accent">
+      <motion.div
+        variants={fadeRise}
+        initial="initial"
+        animate="animate"
+        className="flex items-center gap-2 rounded-lg border border-accent/50 bg-accent-soft px-3 py-2"
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-accent ministr-pulse" />
+        <span className="font-mono text-xs font-medium uppercase tracking-[0.06em] text-accent">
           From cache
         </span>
-        <span className="font-serif text-xs italic text-text-dim">
+        <span className="font-sans text-xs text-text-dim">
           we already had this one
         </span>
-      </div>
+      </motion.div>
     );
   }
 
@@ -40,18 +38,23 @@ export function AskStatus({ phase, cached = false }: Props) {
   if (!label) return null;
 
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2 border border-border-soft bg-surface px-3 py-2",
-      )}
+    <motion.div
+      variants={fadeRise}
+      initial="initial"
+      animate="animate"
+      className="flex items-center gap-2.5 rounded-lg border border-border bg-surface px-3 py-2"
       role="status"
       aria-live="polite"
     >
-      <Loader2
-        className="h-3.5 w-3.5 text-accent animate-spin"
-        strokeWidth={2.5}
-      />
-      <span className="font-sans text-sm font-medium text-text">{label}</span>
-    </div>
+      <Loader2 className="h-3.5 w-3.5 text-accent animate-spin" strokeWidth={2.5} />
+      <motion.span
+        key={label}
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="font-sans text-sm font-medium text-text"
+      >
+        {label}
+      </motion.span>
+    </motion.div>
   );
 }

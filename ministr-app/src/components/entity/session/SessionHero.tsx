@@ -7,7 +7,9 @@ import {
   Copy,
   Minus,
 } from "lucide-react";
+import { motion } from "motion/react";
 import type { SessionDetail } from "../../../lib/types";
+import { fadeRise } from "../../../lib/motion";
 import { formatTokens } from "../../../lib/format";
 import { toneTextClass } from "../../../lib/status";
 import {
@@ -81,18 +83,21 @@ export function SessionHero({
   };
 
   return (
-    <header
+    <motion.header
+      variants={fadeRise}
+      initial="initial"
+      animate="animate"
       className={cn(
-        "bg-surface px-4 py-3.5 space-y-3",
+        "rounded-xl bg-surface px-4 py-4 space-y-3",
         status.tone === "danger" && !ended
-          ? "border-2 border-danger"
-          : "border border-border-soft",
+          ? "border border-danger shadow-[0_0_0_1px_var(--color-danger)]"
+          : "border border-border",
       )}
     >
       {(ended || stale) && (
         <div
           role="status"
-          className="flex items-center gap-2 -mx-4 -mt-3.5 mb-1 border-b border-border-soft bg-surface-overlay px-4 py-1 font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim"
+          className="flex items-center gap-2 -mx-4 -mt-4 mb-1 rounded-t-xl border-b border-border bg-surface-overlay px-4 py-1.5 font-mono text-mono-mini uppercase tracking-[0.06em] text-text-dim"
         >
           <StatusDot tone={ended ? "muted" : "warning"} />
           {ended
@@ -116,7 +121,7 @@ export function SessionHero({
           onClick={copyId}
           title="Copy session id"
           aria-label="Copy session id"
-          className="grid h-6 w-6 shrink-0 place-items-center border border-border bg-surface text-text-muted hover:text-text hover:border-border-hover cursor-pointer transition-none rounded-sm"
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-border bg-surface text-text-muted hover:text-text hover:border-border-hover cursor-pointer transition-colors duration-150"
         >
           {copied ? (
             <Check className="h-3 w-3 text-success" strokeWidth={2.5} />
@@ -175,7 +180,7 @@ export function SessionHero({
           <div className="flex items-center gap-2">
             <span
               className={cn(
-                "grid h-6 w-6 shrink-0 place-items-center border-2 border-border bg-surface",
+                "grid h-6 w-6 shrink-0 place-items-center rounded-md border border-border bg-surface-overlay",
                 toneTextClass(status.tone),
               )}
             >
@@ -213,6 +218,6 @@ export function SessionHero({
           </p>
         </div>
       </div>
-    </header>
+    </motion.header>
   );
 }

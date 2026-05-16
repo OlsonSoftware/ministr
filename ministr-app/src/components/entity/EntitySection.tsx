@@ -1,16 +1,14 @@
 import type { ReactNode } from "react";
+import { motion } from "motion/react";
+import { fadeRise } from "../../lib/motion";
 import { cn } from "../../lib/utils";
 
 interface Props {
-  /** Sentence-case section title (e.g. "Overview", "References",
-   *  "Bridges — export"). Rendered in Plex Serif weight 700.
-   *  Legacy callers may pass UPPERCASE strings — they still work, just
-   *  the serif heading reads better with sentence case. */
+  /** Sentence-case section title. */
   title: string;
-  /** Optional chapter index — renders as `§N` in the gutter alongside
-   *  the heading. Field-manual rhythm: §1 Overview, §2 References, etc. */
+  /** Optional chapter index — renders as `§N` in the gutter. */
   chapter?: number;
-  /** Right-edge count or summary (e.g. `24` or `0 / 12`). */
+  /** Right-edge count or summary. */
   meta?: string | number;
   /** When true, dims the whole block to indicate empty signal. */
   empty?: boolean;
@@ -18,37 +16,47 @@ interface Props {
 }
 
 /**
- * Field-manual section block. Hairline border on the container, Plex Serif
- * chapter heading on the header, restrained surface lift on the heading row.
- * No card-level shadow — that gesture is reserved for focused elements.
+ * Cockpit section block — rounded panel, hairline border, sans chapter
+ * heading, springy mount. Used across every EntityPanel view.
  */
-export function EntitySection({ title, chapter, meta, empty, children }: Props) {
+export function EntitySection({
+  title,
+  chapter,
+  meta,
+  empty,
+  children,
+}: Props) {
   return (
-    <section className="border border-border-soft bg-surface">
-      <header className="flex items-baseline gap-3 border-b border-border-soft bg-surface-overlay px-3 py-2">
+    <motion.section
+      variants={fadeRise}
+      initial="initial"
+      animate="animate"
+      className="overflow-hidden rounded-lg border border-border bg-surface"
+    >
+      <header className="flex items-baseline gap-3 border-b border-border bg-surface-overlay px-3.5 py-2.5">
         {chapter !== undefined && (
-          <span className="font-serif text-base font-normal text-text-dim tabular-nums shrink-0 w-6">
+          <span className="font-mono text-xs font-medium text-accent tabular-nums shrink-0">
             §{chapter}
           </span>
         )}
-        <h3 className="font-serif text-base font-bold text-text leading-snug flex-1 min-w-0">
+        <h3 className="font-sans text-base font-semibold tracking-[-0.005em] text-text leading-snug flex-1 min-w-0">
           {title}
         </h3>
         {meta !== undefined && (
           <span className="font-mono text-xs tabular-nums text-text-dim shrink-0">
-            {typeof meta === "number" ? meta : meta}
+            {meta}
           </span>
         )}
       </header>
       <div className={cn(empty && "opacity-50")}>{children}</div>
-    </section>
+    </motion.section>
   );
 }
 
 /** Single-line "loading…" hint for sections waiting on async data. */
 export function EntitySectionLoading() {
   return (
-    <p className="px-3 py-2 font-sans text-sm text-text-dim italic">
+    <p className="px-3.5 py-2.5 font-sans text-sm text-text-dim">
       Loading<span className="ministr-blink">_</span>
     </p>
   );
@@ -57,7 +65,7 @@ export function EntitySectionLoading() {
 /** Single-line "no data" hint for sections that resolved empty. */
 export function EntitySectionEmpty({ label }: { label?: string }) {
   return (
-    <p className="px-3 py-2 font-sans text-sm text-text-dim italic">
+    <p className="px-3.5 py-2.5 font-sans text-sm text-text-dim">
       {label ?? "—"}
     </p>
   );
