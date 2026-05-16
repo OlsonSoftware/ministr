@@ -108,8 +108,9 @@ fn extract_imports(
 ///
 /// Dispatches to language-specific extractors based on the `language` name.
 /// Supported languages: `"rust"`, `"python"`, `"javascript"`, `"typescript"`,
-/// `"tsx"`, `"go"`, `"c"`, `"cpp"`, `"php"`, `"kotlin"`, `"scala"`. For
-/// unrecognized languages, returns an empty vec.
+/// `"tsx"`, `"go"`, `"c"`, `"cpp"`, `"php"`, `"kotlin"`, `"scala"`,
+/// `"java"`, `"csharp"`, `"swift"`, `"ruby"`. For unrecognized
+/// languages, returns an empty vec.
 ///
 /// Returns unresolved references that must be matched against the symbol
 /// table to produce `SymbolRefRecord` values.
@@ -124,6 +125,10 @@ pub fn extract_refs(tree: &tree_sitter::Tree, source: &[u8], language: &str) -> 
         "php" => extract_refs_php(tree, source),
         "kotlin" => extract_refs_kotlin(tree, source),
         "scala" => extract_refs_scala(tree, source),
+        "java" => extract_refs_java(tree, source),
+        "csharp" => extract_refs_csharp(tree, source),
+        "swift" => extract_refs_swift(tree, source),
+        "ruby" => extract_refs_ruby(tree, source),
         _ => Vec::new(),
     }
 }
@@ -1022,6 +1027,128 @@ impl ImportExtractor for ScalaImports {
     }
 }
 
+/// Java `import a.b.C;` → `C` (wildcard `import a.b.*;` skipped). Mirrors
+/// the Kotlin extractor — JVM dotted imports, last segment is the symbol.
+struct JavaImports;
+impl ImportExtractor for JavaImports {
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            if node.kind() != "import_declaration" {
+                continue;
+            }
+            let line = node_line(&node);
+            let mut c2 = node.walk();
+            for child in node.children(&mut c2) {
+                if matches!(child.kind(), "scoped_identifier" | "identifier")
+                    && let Ok(text) = child.utf8_text(source)
+                {
+                    let last = text.rsplit('.').next().unwrap_or(text).trim();
+                    if !last.is_empty() && last != "*" {
+                        refs.push(import_ref(last.to_string(), line));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// C# `using System.Text;` → `Text`; `using Foo = A.B;` → `B`.
+struct CSharpImports;
+impl ImportExtractor for CSharpImports {
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            if node.kind() != "using_directive" {
+                continue;
+            }
+            let line = node_line(&node);
+            let mut c2 = node.walk();
+            for child in node.children(&mut c2) {
+                if matches!(child.kind(), "qualified_name" | "identifier" | "name_equals")
+                    && let Ok(text) = child.utf8_text(source)
+                {
+                    let last = text
+                        .rsplit(['.', '='])
+                        .next()
+                        .unwrap_or(text)
+                        .trim();
+                    if !last.is_empty() {
+                        refs.push(import_ref(last.to_string(), line));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Swift `import Foundation` → `Foundation`; `import struct A.B` → `B`.
+struct SwiftImports;
+impl ImportExtractor for SwiftImports {
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            if node.kind() != "import_declaration" {
+                continue;
+            }
+            let line = node_line(&node);
+            let mut c2 = node.walk();
+            for child in node.children(&mut c2) {
+                if matches!(child.kind(), "identifier" | "qualified_name")
+                    && let Ok(text) = child.utf8_text(source)
+                {
+                    let last = text.rsplit('.').next().unwrap_or(text).trim();
+                    if !last.is_empty() {
+                        refs.push(import_ref(last.to_string(), line));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Ruby has no `import` — dependencies come from `require`/
+/// `require_relative`/`load`/`autoload` calls. The ref target is the
+/// required file's stem: `require 'foo/bar'` → `bar`.
+struct RubyImports;
+impl RubyImports {
+    fn collect(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        if node.kind() == "call"
+            && let Some(method) = node.child_by_field_name("method")
+            && let Ok(m) = method.utf8_text(source)
+            && matches!(m.trim(), "require" | "require_relative" | "load" | "autoload")
+            && let Some(args) = node.child_by_field_name("arguments")
+        {
+            let line = node_line(node);
+            let mut c = args.walk();
+            for arg in args.children(&mut c) {
+                if arg.kind() == "string"
+                    && let Ok(raw) = arg.utf8_text(source)
+                {
+                    let path = raw.trim_matches(['"', '\'']).trim();
+                    let stem = path
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(path)
+                        .trim_end_matches(".rb");
+                    if !stem.is_empty() {
+                        refs.push(import_ref(stem.to_string(), line));
+                    }
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::collect(&child, source, refs);
+        }
+    }
+}
+impl ImportExtractor for RubyImports {
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        Self::collect(root, source, refs);
+    }
+}
+
 fn extract_refs_php(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     extract_imports(tree, source, &PhpImports)
 }
@@ -1030,6 +1157,18 @@ fn extract_refs_kotlin(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
 }
 fn extract_refs_scala(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     extract_imports(tree, source, &ScalaImports)
+}
+fn extract_refs_java(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    extract_imports(tree, source, &JavaImports)
+}
+fn extract_refs_csharp(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    extract_imports(tree, source, &CSharpImports)
+}
+fn extract_refs_swift(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    extract_imports(tree, source, &SwiftImports)
+}
+fn extract_refs_ruby(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    extract_imports(tree, source, &RubyImports)
 }
 
 #[cfg(test)]
@@ -1081,6 +1220,53 @@ mod new_lang_import_tests {
         assert!(names.contains(&"Y".to_string()), "got {names:?}");
         assert!(names.contains(&"A".to_string()), "got {names:?}");
         assert!(names.contains(&"B".to_string()), "got {names:?}");
+    }
+
+    #[test]
+    fn java_imports() {
+        let src = "package a.b;\nimport com.x.Y;\nimport com.x.*;\n";
+        let t = parse("java", src);
+        let names: Vec<_> = extract_refs_java(&t, src.as_bytes())
+            .into_iter()
+            .map(|r| r.target_name)
+            .collect();
+        assert!(names.contains(&"Y".to_string()), "got {names:?}");
+        assert!(!names.contains(&"*".to_string()), "got {names:?}");
+    }
+
+    #[test]
+    fn csharp_imports() {
+        let src = "using System.Text;\nusing Foo = A.B;\n";
+        let t = parse("csharp", src);
+        let names: Vec<_> = extract_refs_csharp(&t, src.as_bytes())
+            .into_iter()
+            .map(|r| r.target_name)
+            .collect();
+        assert!(names.contains(&"Text".to_string()), "got {names:?}");
+        assert!(names.contains(&"B".to_string()), "got {names:?}");
+    }
+
+    #[test]
+    fn swift_imports() {
+        let src = "import Foundation\nimport struct A.B\n";
+        let t = parse("swift", src);
+        let names: Vec<_> = extract_refs_swift(&t, src.as_bytes())
+            .into_iter()
+            .map(|r| r.target_name)
+            .collect();
+        assert!(names.contains(&"Foundation".to_string()), "got {names:?}");
+    }
+
+    #[test]
+    fn ruby_requires() {
+        let src = "require 'foo/bar'\nrequire_relative 'baz'\n";
+        let t = parse("ruby", src);
+        let names: Vec<_> = extract_refs_ruby(&t, src.as_bytes())
+            .into_iter()
+            .map(|r| r.target_name)
+            .collect();
+        assert!(names.contains(&"bar".to_string()), "got {names:?}");
+        assert!(names.contains(&"baz".to_string()), "got {names:?}");
     }
 }
 
