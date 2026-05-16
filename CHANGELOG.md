@@ -59,6 +59,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `*.gradle.kts`, `Package.swift`, `build.sbt`, `CMakeLists.txt`,
   `mix.exs`, and tsconfig-less `package.json`) — 13 languages total.
 
+#### Smarter project / ignore autodetection
+- Global ignore overhaul (sourced from the canonical `github/gitignore`
+  templates). `ALWAYS_IGNORE_DIRS` now prunes committed vendored-dep
+  trees (`3rdparty`, `third_party`, `extern`, `deps`, `_deps`,
+  `bower_components`, …) and per-ecosystem cache/build dirs
+  (`.dart_tool`, `.svelte-kit`, `.turbo`, `CMakeFiles`, `Pods`,
+  `DerivedData`, `.elixir_ls`, `.eggs`, …). New directory *glob*
+  ignores: `bazel-*`, `cmake-build-*`, `*.egg-info`, `*.xcodeproj`,
+  `*.xcworkspace`, `*.framework`. New generated-binding file ignores
+  (`*.pb.go`, `*_pb2.py`, `*_pb2_grpc.py`, `*.pb.cc/.h`, `*.g.dart`,
+  `*.Designer.cs`, `moc_*.cpp`, …). A vendored-dep C/C++ tree no longer
+  drowns the real engine code in semantic/symbol search.
+- Project-type-gated ignores in `ministr init`: `bin/`+`obj/` for .NET,
+  `Library/`/`Temp/`/`Obj/`/`Logs/` for Unity, `Binaries/`/
+  `Intermediate/`/`Saved/`/`DerivedDataCache/` for Unreal, `.build/`
+  for SwiftPM — names too generic to ignore globally, unambiguous once
+  the project type is known.
+- `detect_source_paths` is now polyglot: conventional source roots for
+  every detected language (Go `cmd`/`internal`/`pkg`, JVM
+  `src/main/{java,kotlin,scala}`, C/C++ `src`/`include`/`Source`, Swift
+  `Sources`, Elixir/Dart `lib`, …) instead of the old rust/node/python
+  trio — additive only, so a misdetection can never hide real code.
+- Informal polyglot monorepos (≥2 language ecosystems at the root with
+  no workspace manifest) are now classified as `Monorepo`.
+
 ### Changed
 
 ### Fixed

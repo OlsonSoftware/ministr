@@ -229,10 +229,7 @@ fn ignored_walk(dir: &Path) -> Result<ignore::Walk, IngestionError> {
         .overrides(overrides)
         .filter_entry(|entry| {
             !(entry.file_type().is_some_and(|ft| ft.is_dir())
-                && entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(dir_name_is_ignored))
+                && entry.file_name().to_str().is_some_and(dir_name_is_ignored))
         });
     Ok(walker.build())
 }

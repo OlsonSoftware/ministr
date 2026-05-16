@@ -242,12 +242,14 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
     let has_javascript = has_node && !root.join("tsconfig.json").exists();
 
     let project_name = derive_project_name(root);
-    let source_paths = detect_source_paths(root, &workspaces, has_rust, has_node, has_python);
     let doc_paths = detect_doc_paths(root);
-    let ignore_patterns = default_ignore_patterns(has_rust, has_node, has_python);
-    let project_type = classify_project_type(root, &workspaces, &bridges, has_rust, has_node);
+    let mut project_type = classify_project_type(root, &workspaces, &bridges, has_rust, has_node);
 
-    ProjectDetection {
+    // Build the detection with empty path lists first, then derive
+    // source/ignore paths from the full picture (every detected
+    // language, the project type, the workspace layout) rather than the
+    // old rust/node/python-only trio.
+    let mut detection = ProjectDetection {
         project_name,
         project_type,
         workspaces,
@@ -266,10 +268,45 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
         has_cpp,
         has_elixir,
         has_javascript,
-        source_paths,
+        source_paths: Vec::new(),
         doc_paths,
-        ignore_patterns,
+        ignore_patterns: Vec::new(),
+    };
+
+    // Smarter polyglot classification: a repo mixing ≥2 independent
+    // language ecosystems at the root (no formal workspace file) is
+    // effectively a monorepo for indexing purposes.
+    if matches!(project_type, ProjectType::Unknown) && ecosystem_count(&detection) >= 2 {
+        project_type = ProjectType::Monorepo;
+        detection.project_type = project_type;
     }
+
+    detection.source_paths = detect_source_paths(root, &detection);
+    detection.ignore_patterns = default_ignore_patterns(root, &detection);
+    detection
+}
+
+/// Number of independent language ecosystems detected at the root. Used
+/// to recognise informal polyglot monorepos (multiple stacks side by
+/// side without a Cargo/npm/pnpm/Nx workspace manifest).
+fn ecosystem_count(d: &ProjectDetection) -> usize {
+    [
+        d.has_rust,
+        d.has_node,
+        d.has_python,
+        d.has_go,
+        d.has_java,
+        d.has_php,
+        d.has_ruby,
+        d.has_csharp,
+        d.has_swift,
+        d.has_scala,
+        d.has_cpp,
+        d.has_elixir,
+    ]
+    .into_iter()
+    .filter(|&b| b)
+    .count()
 }
 
 /// Generate a commented TOML string from a [`ProjectDetection`].
@@ -695,14 +732,59 @@ fn npm_package_name(root: &Path) -> Option<String> {
     parsed.get("name")?.as_str().map(String::from)
 }
 
+/// Conventional source roots per detected language. Additive only — a
+/// directory is contributed only when it actually exists, and the `.`
+/// fallback still applies when nothing matched, so a misdetection can
+/// never hide real code. Over-inclusion is harmless because the global
+/// ignore rules already prune vendored/build trees.
+fn conventional_source_dirs(d: &ProjectDetection) -> Vec<&'static str> {
+    let mut dirs: Vec<&'static str> = Vec::new();
+    let mut add = |xs: &[&'static str]| {
+        for x in xs {
+            if !dirs.contains(x) {
+                dirs.push(x);
+            }
+        }
+    };
+    if d.has_rust {
+        add(&["src", "crates"]);
+    }
+    if d.has_go {
+        add(&["cmd", "internal", "pkg"]);
+    }
+    if d.has_java || d.has_kotlin || d.has_scala {
+        add(&["src/main/java", "src/main/kotlin", "src/main/scala", "src"]);
+    }
+    if d.has_csharp {
+        add(&["src", "Source"]);
+    }
+    if d.has_cpp {
+        add(&["src", "source", "Source", "lib", "include"]);
+    }
+    if d.has_swift {
+        add(&["Sources", "src"]);
+    }
+    if d.has_elixir {
+        add(&["lib"]);
+    }
+    if d.has_php {
+        add(&["src", "app"]);
+    }
+    if d.has_ruby {
+        add(&["lib", "app"]);
+    }
+    // Dart/Flutter live under lib/ (has_node==false there; keyed off
+    // the dart_tool/pubspec via has_* is not tracked, so include when
+    // a Flutter bridge is present).
+    if d.bridges.contains(&BridgeKind::FlutterChannel) {
+        add(&["lib"]);
+    }
+    dirs
+}
+
 /// Detect source directories based on project layout.
-fn detect_source_paths(
-    root: &Path,
-    workspaces: &[WorkspaceInfo],
-    has_rust: bool,
-    has_node: bool,
-    has_python: bool,
-) -> Vec<String> {
+fn detect_source_paths(root: &Path, d: &ProjectDetection) -> Vec<String> {
+    let workspaces = &d.workspaces;
     let mut paths = Vec::new();
 
     // Workspace members first
@@ -742,26 +824,34 @@ fn detect_source_paths(
         }
     }
 
-    // If no workspace members contributed paths, check for standalone layouts
+    // If no workspace members contributed paths, check for standalone
+    // layouts. JS/TS and Python get precise subdir resolution; every
+    // other detected language contributes its conventional roots.
     if paths.is_empty() {
-        if has_rust && root.join("src").is_dir() {
-            paths.push("src".to_string());
-        }
-        if has_node
+        if d.has_node
             && let Some(rel) = find_js_source_dir(root, root)
             && !paths.contains(&rel)
         {
             paths.push(rel);
         }
-        if has_python
+        if d.has_python
             && let Some(rel) = find_python_source_dir(root)
             && !paths.contains(&rel)
         {
             paths.push(rel);
         }
+        for dir in conventional_source_dirs(d) {
+            let candidate = dir.to_string();
+            if root.join(dir).is_dir() && !paths.contains(&candidate) {
+                paths.push(candidate);
+            }
+        }
     }
 
-    // Last resort: index everything
+    // Last resort: index everything (also the safety net whenever the
+    // detected roots might be incomplete — a single missed source dir
+    // is worse than indexing a bit extra, since global ignore rules
+    // already strip the noise).
     if paths.is_empty() {
         paths.push(".".to_string());
     }
@@ -817,14 +907,25 @@ fn detect_doc_paths(root: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Build default ignore patterns based on detected languages.
-fn default_ignore_patterns(has_rust: bool, has_node: bool, has_python: bool) -> Vec<String> {
+/// Build default ignore patterns from the full detection.
+///
+/// Two kinds of pattern:
+/// 1. Per-language test/snapshot globs (unchanged intent, now keyed off
+///    every detected language).
+/// 2. Project-type-gated build-output *directories*. These names
+///    (`bin/`, `obj/`, `Library/`, `Binaries/`, …) are too generic to
+///    sit in the global `ALWAYS_IGNORE_DIRS` (they collide with real
+///    authored dirs in unrelated projects), but once we know the
+///    project is Unity / Unreal / .NET / Xcode they are unambiguous
+///    build output. Written into `.ministr.toml` so they apply only to
+///    this scoped corpus.
+fn default_ignore_patterns(root: &Path, d: &ProjectDetection) -> Vec<String> {
     let mut patterns = Vec::new();
 
-    if has_rust {
+    if d.has_rust {
         patterns.push("*.snap".to_string());
     }
-    if has_node {
+    if d.has_node {
         patterns.extend([
             "*.test.ts".to_string(),
             "*.spec.ts".to_string(),
@@ -832,8 +933,48 @@ fn default_ignore_patterns(has_rust: bool, has_node: bool, has_python: bool) -> 
             "*.spec.js".to_string(),
         ]);
     }
-    if has_python {
+    if d.has_python {
         patterns.extend(["*_test.py".to_string(), "test_*.py".to_string()]);
+    }
+    if d.has_go {
+        patterns.push("*_test.go".to_string());
+    }
+
+    // .NET: bin/ and obj/ are build output but far too generic to
+    // ignore globally.
+    if d.has_csharp {
+        patterns.extend(["bin/".to_string(), "obj/".to_string()]);
+    }
+
+    // Unity: ProjectSettings/ + Assets/ (or any *.unity scene) is the
+    // unambiguous signature; Library/Temp/Obj/Logs are pure caches.
+    let is_unity = root.join("ProjectSettings").is_dir()
+        && (root.join("Assets").is_dir() || dir_has_extension(root, &["unity"]));
+    if is_unity {
+        patterns.extend([
+            "Library/".to_string(),
+            "Temp/".to_string(),
+            "Obj/".to_string(),
+            "Logs/".to_string(),
+            "MemoryCaptures/".to_string(),
+        ]);
+    }
+
+    // Unreal Engine: *.uproject/*.uplugin → Binaries/Intermediate/
+    // Saved/DerivedDataCache are all regenerated build artifacts.
+    if crate::ingestion::is_unreal_corpus(root) {
+        patterns.extend([
+            "Binaries/".to_string(),
+            "Intermediate/".to_string(),
+            "Saved/".to_string(),
+            "DerivedDataCache/".to_string(),
+        ]);
+    }
+
+    // Xcode/Swift: .build (SwiftPM) is build output; DerivedData is
+    // already global.
+    if d.has_swift {
+        patterns.push(".build/".to_string());
     }
 
     patterns
@@ -1205,13 +1346,64 @@ version = "0.1.0"
 
     #[test]
     fn test_ignore_patterns_per_language() {
-        let patterns = default_ignore_patterns(true, true, false);
-        assert!(patterns.contains(&"*.snap".to_string()));
-        assert!(patterns.contains(&"*.test.ts".to_string()));
-        assert!(!patterns.iter().any(|p| p.contains("_test.py")));
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+        fs::write(root.join("package.json"), r#"{"name":"x"}"#).unwrap();
+        let p = detect_project(root).ignore_patterns;
+        assert!(p.contains(&"*.snap".to_string()));
+        assert!(p.contains(&"*.test.ts".to_string()));
+        assert!(!p.iter().any(|x| x.contains("_test.py")));
 
-        let py_patterns = default_ignore_patterns(false, false, true);
-        assert!(py_patterns.contains(&"*_test.py".to_string()));
+        let tmp2 = TempDir::new().unwrap();
+        fs::write(
+            tmp2.path().join("pyproject.toml"),
+            "[project]\nname=\"x\"\n",
+        )
+        .unwrap();
+        let py = detect_project(tmp2.path()).ignore_patterns;
+        assert!(py.contains(&"*_test.py".to_string()));
+    }
+
+    #[test]
+    fn dotnet_project_gates_bin_obj_ignores() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("App.csproj"), "<Project/>").unwrap();
+        let p = detect_project(tmp.path()).ignore_patterns;
+        assert!(p.contains(&"bin/".to_string()));
+        assert!(p.contains(&"obj/".to_string()));
+    }
+
+    #[test]
+    fn unity_project_gates_library_temp_ignores() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("ProjectSettings")).unwrap();
+        fs::create_dir_all(root.join("Assets")).unwrap();
+        let p = detect_project(root).ignore_patterns;
+        assert!(p.contains(&"Library/".to_string()), "got {p:?}");
+        assert!(p.contains(&"Temp/".to_string()));
+    }
+
+    #[test]
+    fn unreal_project_gates_binaries_intermediate_ignores() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("MyGame.uproject"), "{}").unwrap();
+        let p = detect_project(tmp.path()).ignore_patterns;
+        assert!(p.contains(&"Binaries/".to_string()), "got {p:?}");
+        assert!(p.contains(&"Intermediate/".to_string()));
+        assert!(p.contains(&"Saved/".to_string()));
+    }
+
+    #[test]
+    fn polyglot_root_classified_as_monorepo() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        // Three independent ecosystems, no workspace manifest.
+        fs::write(root.join("go.mod"), "module x\n").unwrap();
+        fs::write(root.join("pyproject.toml"), "[project]\nname=\"x\"\n").unwrap();
+        fs::write(root.join("composer.json"), r#"{"name":"x/y"}"#).unwrap();
+        assert_eq!(detect_project(root).project_type, ProjectType::Monorepo);
     }
 
     // -----------------------------------------------------------------------
