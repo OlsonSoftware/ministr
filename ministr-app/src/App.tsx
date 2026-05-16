@@ -20,6 +20,7 @@ import { CommandPalette } from "./components/chrome/CommandPalette";
 import { ProjectsSurface } from "./components/surfaces/ProjectsSurface";
 import { SettingsSurface } from "./components/surfaces/SettingsSurface";
 import { corpusLabel } from "./lib/corpus";
+import { useLiveEvents } from "./lib/liveBus";
 import { fade } from "./lib/motion";
 import {
   matchShortcut,
@@ -88,6 +89,31 @@ function AppInner() {
   useEffect(() => {
     invoke<boolean>("should_show_onboarding").then(setShowOnboarding);
   }, []);
+
+  // Ambient liveness — surface session lifecycle moments as toasts.
+  useLiveEvents(
+    useCallback(
+      (e) => {
+        if (e.kind === "session-started") {
+          toast("Agent connected", {
+            detail: e.session.session_id.slice(0, 12),
+            tone: "success",
+          });
+        } else if (e.kind === "session-ended") {
+          toast("Session ended", {
+            detail: e.sessionId.slice(0, 12),
+            tone: "info",
+          });
+        } else if (e.kind === "pressure-critical") {
+          toast("Context critical", {
+            detail: e.session.session_id.slice(0, 12),
+            tone: "danger",
+          });
+        }
+      },
+      [toast],
+    ),
+  );
 
   // External navigation events from tray menu / deep links.
   useEffect(() => {

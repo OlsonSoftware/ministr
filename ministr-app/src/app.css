@@ -261,6 +261,14 @@ body {
 /* Designed "fresh" pulse — replaces the old hard-step .ministr-flash. */
 .ministr-pulse { animation: ministr-pulse 1.4s var(--ease-flow) infinite; }
 
+/* Compat: legacy .ministr-flash callers get a one-shot accent tint
+   (the old hard-step flash) until they migrate to .ministr-pulse. */
+@keyframes ministr-flash {
+  0% { color: var(--color-accent); }
+  100% { color: inherit; }
+}
+.ministr-flash { animation: ministr-flash 700ms var(--ease-flow) both; }
+
 @keyframes ministr-shimmer {
   100% { transform: translateX(100%); }
 }
@@ -343,6 +351,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .ministr-blink,
   .ministr-pulse,
+  .ministr-flash,
   .ministr-skeleton::after,
   .bg-accent-live {
     animation: none !important;
