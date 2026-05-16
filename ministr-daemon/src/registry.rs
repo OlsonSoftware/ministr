@@ -265,9 +265,47 @@ impl CorpusRegistry {
             .await;
         }
 
-        for entry in &entries {
+        // Partition into live vs dead entries. An entry is *dead* when
+        // every one of its paths is a local path that no longer exists
+        // (e.g. a `/tmp/ministr-e2e-test` left by a test run, or a project
+        // the user deleted). Remote sources (http/git) can't be stat'd, so
+        // any remote path keeps the entry alive.
+        let (live, dead): (Vec<&ManifestEntry>, Vec<&ManifestEntry>) =
+            entries.iter().partition(|e| entry_is_live(&e.paths));
+
+        for entry in &live {
             if let Err(e) = self.register(&entry.paths).await {
                 warn!(corpus_id = %entry.id, error = %e, "failed to restore corpus");
+            }
+        }
+
+        // Self-heal: drop dead entries from the manifest and best-effort
+        // remove their orphaned corpus dirs, so a stale test/deleted
+        // project stops reappearing after every restart / `just reinstall`.
+        if !dead.is_empty() {
+            for entry in &dead {
+                info!(
+                    corpus_id = %entry.id,
+                    paths = ?entry.paths,
+                    "pruning dead corpus entry (source paths gone)"
+                );
+            }
+            let dead_dirs: Vec<PathBuf> = dead.iter().map(|e| corpora_dir.join(&e.id)).collect();
+            tokio::spawn(async move {
+                for dir in dead_dirs {
+                    if dir.exists()
+                        && let Err(e) = ministr_core::fs_util::remove_dir_all_robust(&dir).await
+                    {
+                        warn!(error = %e, path = %dir.display(), "failed to remove dead corpus dir");
+                    }
+                }
+            });
+            // Persisting the live set drops the dead entries even if no
+            // live corpus is present to trigger a save via `register`.
+            if live.is_empty()
+                && let Err(e) = self.save_manifest().await
+            {
+                warn!(error = %e, "failed to persist pruned corpus manifest");
             }
         }
     }
@@ -709,6 +747,20 @@ async fn spawn_coherence_sink_pusher(
 /// Runs until the broadcast sender is dropped (corpus unregistered) or
 /// the corpus is removed from the registry. Lag drops are ignored — a
 /// missed alert is a bounded cost and the feed stays live.
+/// Whether a manifest entry should be restored.
+///
+/// `true` unless **every** path is a local path that no longer exists.
+/// Remote sources (`http`/`git`) can't be stat'd, so any remote path
+/// keeps the entry alive. An empty path set is dead.
+fn entry_is_live(paths: &[String]) -> bool {
+    use ministr_core::config::{CorpusSource, classify_corpus_path};
+    !paths.is_empty()
+        && paths.iter().any(|p| match classify_corpus_path(p) {
+            CorpusSource::Local(pb) => pb.exists(),
+            CorpusSource::Web(_) | CorpusSource::Git(_) => true,
+        })
+}
+
 #[must_use]
 pub fn spawn_session_invalidator(
     registry: Arc<CorpusRegistry>,
