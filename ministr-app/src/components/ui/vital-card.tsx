@@ -40,7 +40,7 @@ export function VitalCard({
       </div>
       {empty ? (
         <div className="flex h-[118px] items-center justify-center">
-          <span className="font-mono text-xs tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-xs tracking-[0.08em] text-text-dim">
             {emptyLabel}
           </span>
         </div>

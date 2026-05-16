@@ -45,10 +45,11 @@ function TurnBlockImpl({
     <div
       onClick={onClick}
       className={cn(
-        "group relative border border-border-soft bg-surface p-3 pl-3.5 transition-none",
+        "group relative rounded-lg border border-border bg-surface p-3 pl-3.5",
+        "transition-[border-color,box-shadow,transform] duration-150 ease-out",
         onClick &&
-          "cursor-pointer hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-md",
-        fresh && "ministr-flash",
+          "cursor-pointer hover:-translate-y-0.5 hover:border-border-hover hover:shadow-md",
+        fresh && "ministr-pulse",
         className,
       )}
     >
@@ -88,7 +89,7 @@ function TurnBlockImpl({
         <div className="flex-1" />
         <span
           className={cn(
-            "font-mono text-mono-mini font-bold uppercase tracking-[0.05em]",
+            "font-mono text-mono-mini font-bold uppercase tracking-[0.08em]",
             toneTextClass(tone),
           )}
         >
@@ -133,12 +134,12 @@ function TurnBlockImpl({
 
       {/* Footer: project name */}
       <div className="mt-2 flex items-center gap-1.5 text-xs font-mono text-text-dim truncate">
-        <span className="uppercase tracking-[0.05em]">project</span>
+        <span className="uppercase tracking-[0.08em]">project</span>
         <span className="text-text-muted truncate">
           {corpusLabelById(corpora, session.corpus_id)}
         </span>
         {critical && (
-          <span className="inline-flex items-center gap-1 ml-auto text-danger uppercase tracking-[0.05em] font-semibold">
+          <span className="inline-flex items-center gap-1 ml-auto text-danger uppercase tracking-[0.08em] font-semibold">
             <AlertTriangle className="h-3 w-3" strokeWidth={2.5} />
             evicting
           </span>

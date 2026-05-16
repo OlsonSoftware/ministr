@@ -40,7 +40,7 @@ export function TokenEconomicsBar({
 
   return (
     <div className={cn("space-y-2", className)}>
-      <div className="flex h-7 w-full overflow-hidden border-2 border-border bg-surface-overlay">
+      <div className="flex h-6 w-full overflow-hidden rounded-full border border-border bg-surface-overlay">
         {total > 0 &&
           segs.map((s, i) => (
             <div
@@ -48,7 +48,7 @@ export function TokenEconomicsBar({
               className={cn(
                 "h-full",
                 s.bg,
-                i < segs.length - 1 && "border-r-2 border-border",
+                i < segs.length - 1 && "border-r border-border",
               )}
               style={{ flexBasis: `${(s.tokens / total) * 100}%` }}
             />
@@ -58,7 +58,7 @@ export function TokenEconomicsBar({
         {segs.map((s) => (
           <div key={s.label} className="flex items-center gap-1.5">
             <span
-              className={cn("h-2.5 w-2.5 border border-border", s.bg)}
+              className={cn("h-2.5 w-2.5 rounded-full border border-border", s.bg)}
               aria-hidden="true"
             />
             <span className={labelMicro}>{s.label}</span>

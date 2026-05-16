@@ -42,14 +42,17 @@ export function BudgetBar({
     <div className={cn("flex items-center gap-2", className)}>
       <div
         className={cn(
-          "relative flex-1 overflow-hidden bg-surface-overlay",
+          "relative flex-1 overflow-hidden rounded-full bg-surface-overlay",
           size === "hero"
-            ? "h-3 border-2 border-border"
+            ? "h-2.5 border border-border"
             : "h-2 border border-border-soft",
         )}
       >
         <div
-          className={cn("h-full motion-data", toneBgClass(tone))}
+          className={cn(
+            "h-full rounded-full transition-[width] duration-300 ease-out",
+            toneBgClass(tone),
+          )}
           style={{ width: `${pct}%` }}
         />
       </div>

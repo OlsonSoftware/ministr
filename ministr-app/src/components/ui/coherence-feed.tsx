@@ -63,7 +63,7 @@ export function CoherenceFeed({
     return (
       <div
         className={cn(
-          "flex items-center justify-center border-2 border-dotted border-border bg-surface px-4 py-8 text-mono-mini font-mono uppercase tracking-[0.05em] text-text-dim",
+          "flex items-center justify-center rounded-lg border border-dashed border-border bg-surface px-4 py-8 text-mono-mini font-mono uppercase tracking-[0.08em] text-text-dim",
           className,
         )}
       >
@@ -84,9 +84,9 @@ export function CoherenceFeed({
           <li
             key={`${ev.timestamp_ms}-${ev.path}-${ev.kind}`}
             className={cn(
-              "flex items-center gap-2 border-l-2 border-y-2 border-r-2 border-border bg-surface pl-2 pr-2 py-1.5 text-mono-mini transition-none",
+              "flex items-center gap-2 rounded-md border border-l-2 border-border bg-surface pl-2 pr-2 py-1.5 text-mono-mini",
               KIND_BORDER[ev.kind],
-              fresh && "ministr-flash",
+              fresh && "ministr-pulse",
             )}
           >
             <span
@@ -101,7 +101,7 @@ export function CoherenceFeed({
 
             <span
               className={cn(
-                "font-mono text-xs font-semibold uppercase tracking-[0.05em]",
+                "font-mono text-xs font-semibold uppercase tracking-[0.08em]",
                 KIND_TEXT[ev.kind],
               )}
             >
@@ -117,7 +117,7 @@ export function CoherenceFeed({
 
             {sectionCount > 0 ? (
               <span
-                className="font-mono text-xs tabular-nums border-2 border-warning bg-surface px-1.5 py-0 text-warning"
+                className="font-mono text-xs tabular-nums rounded-full border border-warning/40 bg-surface px-2 py-0 text-warning"
                 title={
                   sectionCount === 1
                     ? "1 section invalidated"

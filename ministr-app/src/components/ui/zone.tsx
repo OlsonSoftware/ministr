@@ -1,21 +1,14 @@
 import type React from "react";
 import { cn } from "../../lib/utils";
+import { headingChapter, labelSmallCap } from "../../lib/ui-tokens";
 
 /**
- * Zone — labelled section primitive used across the app's "field manual"
- * surfaces (Projects, Settings, future Diagnostics, etc.).
- *
- * Two tones, both sharing the same outer frame so adjacent zones still
+ * Zone — labelled section primitive. Cockpit panel: rounded, hairline,
+ * tier-2 header. Two title tones share the same frame so adjacent zones
  * line up:
- *
- * - **mono** (default) — compact mono-caps title with a thicker header
- *   underline. The original ProjectDetail look; right for stats /
- *   key-value zones where the header is a label, not a heading.
- * - **serif** — Plex Serif sentence-case title with a softer underline.
- *   Right for prose-heavy zones (Settings groups, prefs).
- *
- * Both tones auto-sentence-case ALL_CAPS titles when `tone === "serif"`,
- * so legacy callers passing "PREFERENCES" still render correctly.
+ * - **mono** (default) — mono-caps label header (stats / key-value).
+ * - **serif** — sans heading header (prose-heavy: Settings groups).
+ *   (Name kept for compat; "serif" is now the Cockpit sans heading.)
  */
 interface ZoneProps {
   title: string;
@@ -36,12 +29,15 @@ export function Zone({
     const t = sentenceCase(title);
     const s = subtitle ? sentenceCase(subtitle) : undefined;
     return (
-      <section className={cn("border border-border-soft bg-surface", className)}>
-        <header className="flex items-baseline justify-between gap-3 border-b border-border-soft bg-surface-overlay px-3 py-2">
-          <h3 className="font-serif text-base font-bold text-text">{t}</h3>
-          {s && (
-            <span className="font-serif text-xs italic text-text-dim">{s}</span>
-          )}
+      <section
+        className={cn(
+          "overflow-hidden rounded-lg border border-border bg-surface",
+          className,
+        )}
+      >
+        <header className="flex items-baseline justify-between gap-3 border-b border-border bg-surface-overlay px-3.5 py-2.5">
+          <h3 className={headingChapter}>{t}</h3>
+          {s && <span className="font-sans text-xs text-text-dim">{s}</span>}
         </header>
         <div>{children}</div>
       </section>
@@ -49,13 +45,16 @@ export function Zone({
   }
 
   return (
-    <section className={cn("border border-border-soft bg-surface", className)}>
-      <header className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-1.5">
-        <span className="font-mono text-mono-mini font-bold tracking-[0.05em] text-text">
-          {title}
-        </span>
+    <section
+      className={cn(
+        "overflow-hidden rounded-lg border border-border bg-surface",
+        className,
+      )}
+    >
+      <header className="flex items-center justify-between border-b border-border bg-surface-overlay px-3.5 py-2">
+        <span className={labelSmallCap}>{title}</span>
         {subtitle && (
-          <span className="font-mono text-xs tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-xs tracking-[0.08em] text-text-dim">
             {subtitle}
           </span>
         )}
@@ -65,7 +64,7 @@ export function Zone({
   );
 }
 
-/** Convert ALL_CAPS legacy titles to sentence case for serif rendering. */
+/** Convert ALL_CAPS legacy titles to sentence case for heading rendering. */
 function sentenceCase(s: string): string {
   if (/^[A-Z][A-Z\s\-—·]+$/.test(s)) {
     return s.charAt(0) + s.slice(1).toLowerCase();

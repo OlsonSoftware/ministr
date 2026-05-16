@@ -29,17 +29,18 @@ export function CorpusChip({
     <button
       onClick={onClick}
       className={cn(
-        "group relative inline-flex items-center gap-2 border-2 px-3 py-1.5 text-xs font-medium cursor-pointer shrink-0 transition-none",
+        "group relative inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium cursor-pointer shrink-0",
+        "transition-colors duration-150 ease-out",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         selected
-          ? "border-border bg-accent text-[var(--color-accent-fg-on)] shadow-sm"
-          : "border-border bg-surface text-text hover:bg-surface-overlay hover:text-text",
+          ? "border-accent bg-accent text-[var(--color-accent-fg-on)] shadow-[var(--glow-soft)]"
+          : "border-border bg-surface text-text hover:bg-surface-overlay hover:border-border-hover",
         className,
       )}
       title={corpus.paths.join(" · ")}
     >
       <StatusDot tone={tone} pulse={isCorpusLive(corpus) ? "live" : "off"} />
-      <span className="font-mono font-bold tracking-[0.05em] max-w-[140px] truncate">
+      <span className="font-mono font-semibold tracking-[0.04em] max-w-[140px] truncate">
         {name}
       </span>
       <span className="text-xs tabular-nums font-mono opacity-80">

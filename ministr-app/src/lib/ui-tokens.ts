@@ -76,3 +76,41 @@ export const containerDefault = "border border-border rounded-lg";
 /** Selected / highlighted outer — accent ring. */
 export const containerActive =
   "border border-accent rounded-lg shadow-[var(--glow-soft)]";
+
+/* ---- Interaction & motion ---- */
+
+/** The one sanctioned hover/active transition for interactive elements.
+ *  Never use `transition-none` on something clickable. */
+export const transitionInteractive =
+  "transition-colors duration-150 ease-out";
+
+/** Focus ring for custom interactive elements (buttons/rows/inputs that
+ *  don't get it from a primitive). */
+export const focusRing =
+  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+
+/* ---- Dividers (alias the separators with intent-named exports) ---- */
+
+/** Between list rows — faintest hairline. */
+export const dividerRow = separatorThin;
+
+/** Section header underline / table separator — hairline. */
+export const dividerSection = separatorBold;
+
+/* ---- Chip (must match the <Badge> pill shape) ---- */
+
+/** Idle filter/selector chip — rounded-full pill, hairline. */
+export const chip =
+  "inline-flex items-center gap-1.5 rounded-full border border-border " +
+  "bg-surface px-2.5 py-0.5 font-mono text-mono-mini font-medium " +
+  "uppercase tracking-[0.06em] text-text-muted " +
+  "hover:text-text hover:border-border-hover hover:bg-surface-overlay " +
+  transitionInteractive +
+  " cursor-pointer";
+
+/** Selected chip — solid accent. */
+export const chipActive =
+  "inline-flex items-center gap-1.5 rounded-full border border-accent " +
+  "bg-accent px-2.5 py-0.5 font-mono text-mono-mini font-medium " +
+  "uppercase tracking-[0.06em] text-[var(--color-accent-fg-on)] " +
+  "cursor-pointer";
