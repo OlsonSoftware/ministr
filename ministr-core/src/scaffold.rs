@@ -76,6 +76,14 @@ pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     // ── Claude Code + VS Code: .claude/settings.json (hooks — autoheal) ─
     result.merge(write_claude_hooks(project_root));
 
+    // ── Claude Code: .claude/hooks/steer-to-ministr.sh (script — autoheal)
+    // The settings.json hooks delegate every decision to this script.
+    // Healed (not user-owned) so re-running `ministr init` always brings
+    // it back to the current, crash-proof template.
+    let claude_hooks_dir = project_root.join(".claude").join("hooks");
+    let claude_hook_script: &[(&str, &str)] = &[("steer-to-ministr.sh", STEER_SCRIPT)];
+    result.merge(write_files(&claude_hooks_dir, claude_hook_script, true));
+
     // ── Copilot CLI: .github/hooks/ (hooks — autoheal) ──────────────────
     let hooks_dir = project_root.join(".github").join("hooks");
     let hooks_files: &[(&str, &str)] = &[("ministr-enforce.json", COPILOT_HOOKS)];
@@ -289,37 +297,41 @@ fn write_claude_hooks(project_root: &Path) -> ScaffoldResult {
     }
 }
 
+/// Relative path of the steering script the hooks delegate to.
+const STEER_SCRIPT_REL: &str = ".claude/hooks/steer-to-ministr.sh";
+
 /// Build the hooks JSON value for `.claude/settings.json`.
+///
+/// Design (deliberately *not* a hard wall — see [`STEER_SCRIPT`]):
+/// - The `Grep`/`Glob` tools are denied (ministr always has an
+///   equivalent, so this is frictionless).
+/// - Shell `grep`/`rg`/`find`/etc. *as a leading command* get `ask`
+///   (a speed-bump you can approve — they may be filtering command
+///   output or doing a filesystem op, not code search).
+/// - Matching is leading-anchored (`Bash(grep *)`), so pipelines like
+///   `cargo test | grep` / `git log | tail` are NOT intercepted.
+/// - Every decision is emitted by [`STEER_SCRIPT`], which builds the
+///   JSON from shell variables — an apostrophe in a reason string can
+///   never close a quote and crash the hook (the bug this replaces).
 fn build_claude_hooks() -> serde_json::Value {
-    let deny_search = "Use ministr_survey or ministr_symbols instead of shell search tools. \
-        ministr provides semantic code search with better results. \
-        See .claude/rules/ministr-scope.md for the full tool guide.";
-    let deny_files = "Use ministr_toc or ministr_survey instead of shell file-finding tools.";
-    let deny_pipe = "Don't pipe to search/filter tools for code exploration. \
-        Use ministr_survey for search, ministr_toc for structure, ministr_read for content.";
-
     let mut bash_hooks: Vec<serde_json::Value> = Vec::new();
-
     for cmd in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
-        bash_hooks.push(deny_hook(&format!("Bash({cmd} *)"), deny_search));
+        bash_hooks.push(steer_hook(&format!("Bash({cmd} *)"), "grep"));
     }
     for cmd in &["find", "fd"] {
-        bash_hooks.push(deny_hook(&format!("Bash({cmd} *)"), deny_files));
+        bash_hooks.push(steer_hook(&format!("Bash({cmd} *)"), "find"));
     }
-    for cmd in &["grep", "rg", "ag", "ack"] {
-        bash_hooks.push(deny_hook(&format!("Bash(*|*{cmd} *)"), deny_pipe));
-    }
-    // Note: we intentionally do NOT block `| head`, `| tail`, `| wc` —
-    // those are general-purpose and used legitimately with build/test output.
-    // The advisory rules discourage piped exploration; hooks only block
-    // unambiguous search tools.
+    // No pipe rules: piping command output through grep/rg/tail/wc is
+    // normal workflow, not code exploration. The previous `Bash(*|*grep *)`
+    // rules blocked `cargo test | grep` and (via an apostrophe in the
+    // reason) crashed unrelated commands like `git commit`.
 
     serde_json::json!({
         "hooks": {
             "PreToolUse": [
                 {
                     "matcher": "Grep|Glob",
-                    "hooks": [deny_hook("", deny_search)]
+                    "hooks": [steer_hook("", "tool")]
                 },
                 {
                     "matcher": "Bash",
@@ -330,32 +342,23 @@ fn build_claude_hooks() -> serde_json::Value {
     })
 }
 
-/// Build a single PreToolUse deny hook entry.
+/// Build a single PreToolUse hook entry that delegates the decision to
+/// the committed steering script with the given `category`.
 ///
-/// When the `if_pattern` matches a tool invocation, the hook returns a JSON
-/// deny decision with the given `reason`. If `if_pattern` is empty, the hook
-/// fires for all invocations matching the parent matcher.
-fn deny_hook(if_pattern: &str, reason: &str) -> serde_json::Value {
-    // Escape quotes in the reason for the printf JSON string.
-    let escaped = reason.replace('"', r#"\""#);
-    let printf_json = format!(
-        "printf '{{\"hookSpecificOutput\":{{\"hookEventName\":\"PreToolUse\",\
-         \"permissionDecision\":\"deny\",\
-         \"permissionDecisionReason\":\"{escaped}\"}}}}'",
-    );
-
+/// If `if_pattern` is empty the hook fires for all invocations matching
+/// the parent matcher (used for the `Grep|Glob` tool deny).
+fn steer_hook(if_pattern: &str, category: &str) -> serde_json::Value {
+    let command = format!("bash \"$CLAUDE_PROJECT_DIR/{STEER_SCRIPT_REL}\" {category}");
     let mut hook = serde_json::json!({
         "type": "command",
-        "command": printf_json
+        "command": command
     });
-
     if !if_pattern.is_empty() {
         hook.as_object_mut().unwrap().insert(
             "if".to_string(),
             serde_json::Value::String(if_pattern.to_string()),
         );
     }
-
     hook
 }
 
@@ -391,6 +394,57 @@ fn playbook_for_project(root: &Path) -> &'static str {
 // Embedded templates
 // ---------------------------------------------------------------------------
 
+/// The Claude Code steering script (`.claude/hooks/steer-to-ministr.sh`).
+///
+/// Centralizes every PreToolUse decision in one crash-proof place. The
+/// reason text lives in shell variables and is ASCII-only (no quote /
+/// backslash / apostrophe), so it can never close the surrounding quote
+/// and crash the hook — the failure mode of the previous inline
+/// `printf '...Don't...'` design. Invoked as
+/// `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh" <cat>`
+/// so no execute bit is required (portable to Windows).
+const STEER_SCRIPT: &str = r#"#!/usr/bin/env bash
+# PreToolUse steering hook (generated by `ministr init`).
+#
+# This repo dogfoods ministr for code exploration. Rather than hard-
+# walling shell utilities, this hook emits ONE well-formed PreToolUse
+# decision that redirects the agent to the equivalent ministr tool. The
+# agent receives `permissionDecisionReason` as guidance and re-routes —
+# that reason text IS the steering mechanism, so it names the exact
+# replacement tool and when the shell command is legitimately fine.
+#
+# Why a script instead of inline `printf` in settings.json: the previous
+# inline hooks embedded the reason inside a single-quoted `printf '...'`.
+# A reason containing an apostrophe (e.g. a contraction) closed the shell
+# quote and CRASHED the hook (unexpected EOF) instead of returning a
+# decision. Here the reason is a shell variable, ASCII-only, never
+# interpolated into a quoted literal, so that class of bug is impossible.
+#
+# Usage: steer-to-ministr.sh <category>   where category in grep|find|tool
+
+set -eu
+
+category="${1:-grep}"
+
+case "$category" in
+  tool)
+    decision="deny"
+    reason="This repo dogfoods ministr for code exploration. Use mcp__ministr__ministr_survey(query) for semantic/content search, mcp__ministr__ministr_symbols(query) for symbols, or mcp__ministr__ministr_toc for project structure. ministr indexes this repo and returns deduplicated, budget-aware results. See .claude/rules/ministr-scope.md."
+    ;;
+  find)
+    decision="ask"
+    reason="For code/file discovery prefer mcp__ministr__ministr_toc (structure) or mcp__ministr__ministr_survey (locate code). Approve this call if find is a filesystem operation (delete, exec, chmod, mtime) rather than searching the codebase."
+    ;;
+  grep|*)
+    decision="ask"
+    reason="For code search prefer mcp__ministr__ministr_survey(query) (semantic) or mcp__ministr__ministr_symbols(query) (symbols). Approve this call if the grep/rg is filtering command output (cargo, git, test logs) or otherwise not searching the codebase."
+    ;;
+esac
+
+printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"%s","permissionDecisionReason":"%s"}}' \
+  "$decision" "$reason"
+"#;
+
 /// Copilot CLI / cloud agent hooks (`.github/hooks/ministr-enforce.json`).
 ///
 /// Copilot CLI reads `.github/hooks/*.json` with `"version": 1` format.
@@ -405,8 +459,8 @@ const COPILOT_HOOKS: &str = r#"{
     "preToolUse": [
       {
         "type": "command",
-        "bash": "INPUT=$(cat); TN=$(echo \"$INPUT\" | jq -r '.toolName'); TA=$(echo \"$INPUT\" | jq -r '.toolArgs // \"\"'); case \"$TN\" in grep|Grep) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use ministr_survey instead of grep. ministr provides semantic code search.\"}'; exit 0;; glob|Glob) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use ministr_toc instead of glob. ministr provides structural overview.\"}'; exit 0;; bash|Bash|shell) CMD=$(echo \"$TA\" | jq -r '.command // \"\"'); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use ministr_survey instead of shell search commands.\"}'; exit 0;; find\\ *|fd\\ *) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use ministr_toc instead of shell file-finding commands.\"}'; exit 0;; esac; if echo \"$CMD\" | grep -qE '\\|\\s*(grep|rg|ag|ack)'; then echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not pipe to search tools. Use ministr_survey or ministr_read.\"}'; exit 0; fi;; esac",
-        "powershell": "$input = [Console]::In.ReadToEnd() | ConvertFrom-Json; $tn = $input.toolName; $ta = if ($input.toolArgs) { $input.toolArgs } else { '' }; $blocked = @('grep','Grep','glob','Glob'); if ($blocked -contains $tn) { @{permissionDecision='deny'; permissionDecisionReason='Use ministr MCP tools instead of built-in search.'} | ConvertTo-Json -Compress; exit 0 }; if ($tn -in @('bash','Bash','shell')) { $cmd = ($ta | ConvertFrom-Json).command; if ($cmd -match '^(grep|egrep|fgrep|rg|ag|ack|find|fd)\\s') { @{permissionDecision='deny'; permissionDecisionReason='Use ministr MCP tools instead of shell search.'} | ConvertTo-Json -Compress; exit 0 }; if ($cmd -match '\\|\\s*(grep|rg|ag|ack)') { @{permissionDecision='deny'; permissionDecisionReason='Do not pipe to search tools. Use ministr tools.'} | ConvertTo-Json -Compress; exit 0 } }",
+        "bash": "INPUT=$(cat); TN=$(echo \"$INPUT\" | jq -r '.toolName'); TA=$(echo \"$INPUT\" | jq -r '.toolArgs // \"\"'); case \"$TN\" in grep|Grep) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use mcp__ministr__ministr_survey for code search instead of the Grep tool.\"}'; exit 0;; glob|Glob) echo '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use mcp__ministr__ministr_toc for structure instead of the Glob tool.\"}'; exit 0;; bash|Bash|shell) CMD=$(echo \"$TA\" | jq -r '.command // \"\"'); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo '{\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"Prefer mcp__ministr__ministr_survey for code search. Approve if this grep is filtering command output or otherwise not code search.\"}'; exit 0;; find\\ *|fd\\ *) echo '{\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"Prefer mcp__ministr__ministr_toc for discovery. Approve if this find is a filesystem operation rather than code search.\"}'; exit 0;; esac;; esac",
+        "powershell": "$input = [Console]::In.ReadToEnd() | ConvertFrom-Json; $tn = $input.toolName; $ta = if ($input.toolArgs) { $input.toolArgs } else { '' }; if (@('grep','Grep','glob','Glob') -contains $tn) { @{permissionDecision='deny'; permissionDecisionReason='Use ministr MCP tools (ministr_survey/ministr_toc) instead of the built-in Grep/Glob tools.'} | ConvertTo-Json -Compress; exit 0 }; if ($tn -in @('bash','Bash','shell')) { $cmd = ($ta | ConvertFrom-Json).command; if ($cmd -match '^(grep|egrep|fgrep|rg|ag|ack)\\s') { @{permissionDecision='ask'; permissionDecisionReason='Prefer ministr_survey for code search. Approve if filtering command output or not code search.'} | ConvertTo-Json -Compress; exit 0 }; if ($cmd -match '^(find|fd)\\s') { @{permissionDecision='ask'; permissionDecisionReason='Prefer ministr_toc for discovery. Approve if this is a filesystem operation.'} | ConvertTo-Json -Compress; exit 0 } }",
         "timeoutSec": 5
       }
     ]
@@ -428,7 +482,7 @@ const CURSOR_HOOKS: &str = r#"{
   "hooks": {
     "beforeShellExecution": [
       {
-        "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".command // \\\"\\\"\"); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Use ministr_survey instead of shell search. ministr provides semantic code search.\\\",\\\"userMessage\\\":\\\"Blocked: shell search command. Use ministr_survey.\\\"}\"; exit 0;; find\\ *|fd\\ *) echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Use ministr_toc instead of shell file-finding. ministr provides structural overview.\\\",\\\"userMessage\\\":\\\"Blocked: shell file-find. Use ministr_toc.\\\"}\"; exit 0;; esac; if echo \"$CMD\" | grep -qE \"\\\\|\\\\s*(grep|rg|ag|ack)\"; then echo \"{\\\"permission\\\":\\\"deny\\\",\\\"agentMessage\\\":\\\"Do not pipe to search tools. Use ministr_survey or ministr_read.\\\",\\\"userMessage\\\":\\\"Blocked: piped search. Use ministr tools.\\\"}\"; exit 0; fi'"
+        "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".command // \\\"\\\"\"); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo \"{\\\"permission\\\":\\\"ask\\\",\\\"agentMessage\\\":\\\"Prefer ministr_survey for code search. Approve if this grep is filtering command output or otherwise not code search.\\\",\\\"userMessage\\\":\\\"Leading grep — prefer ministr_survey; approve if filtering output.\\\"}\"; exit 0;; find\\ *|fd\\ *) echo \"{\\\"permission\\\":\\\"ask\\\",\\\"agentMessage\\\":\\\"Prefer ministr_toc for discovery. Approve if this find is a filesystem operation rather than code search.\\\",\\\"userMessage\\\":\\\"Leading find — prefer ministr_toc; approve if filesystem op.\\\"}\"; exit 0;; esac'"
       }
     ]
   }
@@ -438,14 +492,18 @@ const CURSOR_HOOKS: &str = r#"{
 /// Windsurf hooks (`.windsurf/hooks.json`).
 ///
 /// Windsurf reads `.windsurf/hooks.json` (workspace-level).
-/// Uses `pre_run_command` to block grep/rg/find/fd and piped exploration.
-/// Hook scripts receive JSON on stdin with `tool_info.command_line` field.
-/// Exit code 2 blocks the action.
+/// `pre_run_command` only has block (exit 2) / allow (exit 0) — there is
+/// no "ask". To avoid being overzealous (Windsurf cannot prompt, and
+/// blocking would wall legitimate output-filtering / filesystem ops), a
+/// *leading* grep/find emits an advisory steering hint and ALLOWS the
+/// command (exit 0). Pipelines are never touched. Enforcement for
+/// Windsurf is advisory; the rules file carries the policy.
+/// Hook scripts receive JSON on stdin with `tool_info.command_line`.
 const WINDSURF_HOOKS: &str = r#"{
   "hooks": {
     "pre_run_command": [
       {
-        "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".tool_info.command_line // \\\"\\\"\"); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo \"Blocked: use ministr_survey instead of shell search.\"; exit 2;; find\\ *|fd\\ *) echo \"Blocked: use ministr_toc instead of shell file-find.\"; exit 2;; esac; if echo \"$CMD\" | grep -qE \"\\\\|\\\\s*(grep|rg|ag|ack)\"; then echo \"Blocked: do not pipe to search tools. Use ministr_survey.\"; exit 2; fi'",
+        "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".tool_info.command_line // \\\"\\\"\"); case \"$CMD\" in grep\\ *|egrep\\ *|fgrep\\ *|rg\\ *|ag\\ *|ack\\ *) echo \"Hint: prefer ministr_survey for code search (this repo dogfoods ministr). Proceeding — ignore if filtering command output.\";; find\\ *|fd\\ *) echo \"Hint: prefer ministr_toc for discovery. Proceeding — ignore if this is a filesystem operation.\";; esac; exit 0'",
         "show_output": true
       }
     ]
@@ -457,35 +515,34 @@ const WINDSURF_HOOKS: &str = r#"{
 ///
 /// Windsurf reads rules from `windsurf/rules/` in the workspace root.
 /// Standard markdown format — no frontmatter required.
-const WINDSURF_RULES: &str = r#"# ministr MCP — Codebase Navigation (MANDATORY)
+const WINDSURF_RULES: &str = r#"# ministr MCP — Codebase Navigation
 
 This project uses ministr as an MCP server for semantic code search.
+ministr is the **preferred** tool for code *exploration*. It does not
+restrict normal shell work.
 
-## CRITICAL: Tool Restrictions
+## Policy
 
-**You MUST use ministr MCP tools for ALL codebase exploration.**
+- Prefer ministr MCP tools for code discovery, search, and navigation.
+- The built-in `Grep` / `Glob` tools should not be used for exploration —
+  `ministr_survey` / `ministr_toc` are the equivalents.
+- The shell is unrestricted: pipelines, `git`, dependency installs,
+  builds/tests, and filtering command output (`cargo test | grep`,
+  `… | tail`) all run normally. A *leading* `grep`/`find` is a hint to
+  prefer ministr — it is fine when filtering output or doing a
+  filesystem operation.
+- Read files only immediately before editing them.
 
-### Prohibited Tools and Patterns
+## Tool Mapping
 
-- ❌ `grep`, `rg`, `ag`, `ack` in terminal — use `ministr_survey` instead
-- ❌ `find`, `fd`, `ls -R` in terminal — use `ministr_toc` instead
-- ❌ `cat | grep`, piped shell commands — use ministr tools
-- ❌ Reading files for exploration — use `ministr_symbols` → `ministr_definition`
+| For… | Prefer… |
+|------|---------|
+| code/text search | `ministr_survey(query: "...")` |
+| file/structure discovery | `ministr_toc` |
+| a symbol's source | `ministr_symbols` → `ministr_definition` |
+| who calls a symbol | `ministr_references(symbol_id: "...")` |
 
-### Allowed Uses of Shell
-
-Shell is ONLY acceptable for: building code, running tests, installing dependencies, git operations, and running the project. NEVER for searching, file discovery, or piped exploration.
-
-### Required Tool Mapping
-
-| Instead of… | Use… |
-|-------------|------|
-| Grep / text search | `ministr_survey(query: "...")` |
-| Find / file listing | `ministr_toc` |
-| Reading files for exploration | `ministr_symbols` → `ministr_definition` |
-| Finding references | `ministr_references(symbol_id: "...")` |
-
-### Workflow
+## Workflow
 
 1. `ministr_survey` → find relevant code
 2. `ministr_symbols` → locate specific symbols
@@ -500,10 +557,12 @@ Shell is ONLY acceptable for: building code, running tests, installing dependenc
 /// Standard markdown — no frontmatter, no hooks system.
 const CONTINUE_RULES: &str = WINDSURF_RULES;
 
-/// Mandatory tool scope rules — always the same regardless of project type.
+/// Tool scope rules — always the same regardless of project type.
 const MINISTR_SCOPE: &str = r#"# ministr MCP — Codebase Navigation
 
-ministr is the **required** tool for all codebase exploration. Do NOT use built-in search tools.
+ministr is the **preferred** tool for all codebase *exploration*. The
+PreToolUse hooks steer you there; they do **not** restrict normal shell
+work (pipelines, git, build/test output filtering all run unrestricted).
 
 ## Tool Rules
 
@@ -517,28 +576,35 @@ ministr is the **required** tool for all codebase exploration. Do NOT use built-
 | `ministr_extract(id: "...")`         | **PRIMARY**    | Get atomic claims from a section, optionally filtered by query.               |
 | `ministr_toc`                        | **PRIMARY**    | Structural overview of the indexed corpus.                                    |
 | `ministr_bridge(query/kind/...)`     | **PRIMARY**    | Cross-language bridge links (Tauri, PyO3, NAPI, etc.).                        |
-| `Grep` / `Glob`                   | **BLOCKED**    | Denied by PreToolUse hook. Use ministr_survey or ministr_symbols instead.           |
-| `Bash(grep/rg/find/...)`          | **BLOCKED**    | Denied by PreToolUse hook. Do NOT shell out for search or file discovery.     |
-| `Bash(... \| grep/head/tail/wc)`  | **BLOCKED**    | Denied by PreToolUse hook. Do NOT pipe to search/filter tools.               |
+| `Grep` / `Glob` tools             | **DENIED**     | Frictionless: use `ministr_survey` / `ministr_symbols` instead.               |
+| `Bash(grep/find/...)` leading     | **ASK**        | Speed-bump. Approve when not code search (output filter, fs op).              |
+| `cmd \| grep`, `cmd \| tail`, …   | **ALLOWED**    | Pipelines / compound commands are never intercepted.                          |
 | `Read(file)`                      | **RESTRICTED** | Use `Read` only immediately before `Edit`. Never for exploration.             |
 
-## Prohibited Patterns
+## What is steered (and what is not)
 
-These are **hard-blocked** by PreToolUse hooks and will be denied:
+Steered toward ministr:
 
-- `grep`, `rg`, `ag`, `ack`, `egrep`, `fgrep` — use `ministr_survey` instead
-- `find`, `fd` — use `ministr_toc` or `ministr_survey` instead
-- `cat file | grep`, `cmd | head`, `cmd | tail`, `cmd | wc` — use ministr tools instead
-- `Grep(pattern)`, `Glob(pattern)` — use `ministr_survey` or `ministr_symbols` instead
+- The `Grep` / `Glob` tools — **denied**; use `ministr_survey` / `ministr_symbols`.
+- A *leading* `grep`/`rg`/`ag`/`ack`/`egrep`/`fgrep` — **ask**; for code
+  search use `ministr_survey`. Approve if filtering command output.
+- A *leading* `find`/`fd` — **ask**; for discovery use `ministr_toc` /
+  `ministr_survey`. Approve for filesystem operations.
+
+Explicitly **not** steered (run normally, no prompt):
+
+- Any pipeline / compound command: `cargo test | grep`, `… | tail`,
+  `… | wc`, `git log | grep`, `git grep …`.
+- `find` as a filesystem operation: `find . -name '*.tmp' -delete`.
 
 ## Workflow
 
-1. **`ministr_survey` first** — semantic search across docs and code. Always start here.
-2. **`ministr_symbols` for code navigation** — find symbols by name, kind, or module.
-3. **`ministr_definition` / `ministr_read`** — get full source of a symbol or section.
-4. **`ministr_references` before modifying shared code** — find callers, implementors, importers.
-5. **`ministr_bridge` before modifying any cross-language boundary** — see all endpoints.
-6. **`ministr_toc`** — structural overview when you need to understand project layout.
+1. **`ministr_survey` first** — semantic search across docs and code.
+2. **`ministr_symbols`** — find symbols by name, kind, or module.
+3. **`ministr_definition` / `ministr_read`** — get full source.
+4. **`ministr_references` before modifying shared code** — find callers.
+5. **`ministr_bridge` before modifying any cross-language boundary**.
+6. **`ministr_toc`** — structural overview / project layout.
 
 See `ministr-playbook.md` for detailed decision trees and chaining patterns.
 "#;
@@ -565,9 +631,13 @@ See `ministr-playbook.md` for decision trees and chaining patterns.
 
 ## Tool Preferences
 
-- Use `ministr_survey` instead of Glob/find for file and concept discovery.
-- Use `ministr_symbols` instead of Grep for finding code symbols.
-- Use ministr tools for exploration; `Read` only immediately before `Edit`.
+- Use `ministr_survey` for file/concept discovery (the `Glob` tool is denied).
+- Use `ministr_symbols` for finding code symbols (the `Grep` tool is denied).
+- Use ministr tools for *code exploration*; `Read` only immediately before `Edit`.
+- The shell is unrestricted for everything else — pipelines, `git`, and
+  build/test output filtering (`cargo test | grep`, `… | tail`) run
+  normally. Only a *leading* `grep`/`find` prompts for approval; approve
+  it when it is not code search. See `ministr-scope.md`.
 ";
 
 /// Playbook for Tauri projects (Rust backend + JS/TS frontend).
@@ -934,14 +1004,16 @@ fn language_rules_for_project(root: &Path) -> Option<String> {
 /// optional YAML frontmatter. The `description` and `globs` fields control
 /// when the rules are shown to the agent.
 const CURSOR_RULES: &str = r#"---
-description: ministr MCP codebase navigation — REQUIRED for all code search and exploration
+description: ministr MCP codebase navigation — preferred for code search and exploration
 globs:
   - "**/*"
 ---
 
-# ministr MCP — Codebase Navigation (MANDATORY)
+# ministr MCP — Codebase Navigation
 
-ministr is an MCP server providing semantic code search. **You MUST use ministr tools for ALL codebase exploration.**
+ministr is an MCP server providing semantic code search. It is the
+**preferred** tool for codebase *exploration*. It does not restrict
+normal shell work.
 
 ## Available Tools
 
@@ -956,29 +1028,25 @@ ministr is an MCP server providing semantic code search. **You MUST use ministr 
 | `ministr_toc` | Structural overview of the indexed corpus. |
 | `ministr_bridge` | Cross-language bridge links (Tauri, PyO3, NAPI, etc.). |
 
-## PROHIBITED — Do NOT Use These for Exploration
+## Policy
 
-**NEVER use these tools for code discovery, search, or exploration:**
-
-- ❌ `grep`, `rg`, `ripgrep`, `ag`, `ack` — use `ministr_survey` instead
-- ❌ `find`, `fd`, `ls -R`, directory traversal — use `ministr_toc` instead
-- ❌ `cat file | grep`, `cmd | head`, `cmd | tail`, `cmd | wc` — use ministr tools
-- ❌ Built-in file search / text search / Grep tool — use `ministr_survey`
-- ❌ Built-in Glob / file listing — use `ministr_toc`
-- ❌ Reading files to discover structure — use `ministr_toc` or `ministr_symbols`
-- ❌ Shell/Bash/Terminal for ANY search, file discovery, or piped exploration
-
-The ONLY acceptable use of file Read is immediately before Edit.
-The ONLY acceptable use of Shell/Bash is for building, testing, and running commands (not exploration).
+- Prefer ministr for code discovery, search, and navigation. The
+  built-in Grep/Glob tools are not for exploration here — use
+  `ministr_survey` / `ministr_toc`.
+- The shell is unrestricted: builds, tests, `git`, dependency installs,
+  and filtering command output (`cargo test | grep`, `… | tail`) run
+  normally. A *leading* `grep`/`find` triggers an approval prompt —
+  approve it when it is filtering output or doing a filesystem
+  operation rather than searching the codebase.
+- Read files only immediately before editing them.
 
 ## Rules
 
-1. **Use `ministr_survey` instead of ANY search** for discovering code and documentation.
-2. **Use `ministr_symbols` instead of grep** for finding functions, structs, traits, or enums.
-3. **Use `ministr_definition` instead of reading whole files** to get a symbol's source.
-4. **Use `ministr_references` before modifying any shared symbol** to find all callers.
-5. **Use `ministr_bridge` before modifying any cross-language boundary** (Tauri commands, FFI, etc.).
-6. **NEVER use Bash/Shell for code search, file discovery, or piped exploration.**
+1. Prefer `ministr_survey` for discovering code and documentation.
+2. Prefer `ministr_symbols` for finding functions, structs, traits, enums.
+3. Prefer `ministr_definition` over reading whole files for a symbol's source.
+4. Run `ministr_references` before modifying any shared symbol.
+5. Run `ministr_bridge` before modifying any cross-language boundary.
 
 ## Workflow
 
@@ -992,41 +1060,32 @@ The ONLY acceptable use of Shell/Bash is for building, testing, and running comm
 /// GitHub Copilot custom instructions (`.github/copilot-instructions.md`).
 ///
 /// Used by Copilot CLI, Copilot Chat in VS Code, and Copilot cloud agent.
-const COPILOT_INSTRUCTIONS: &str = r#"# ministr MCP — Codebase Navigation (MANDATORY)
+const COPILOT_INSTRUCTIONS: &str = r#"# ministr MCP — Codebase Navigation
 
-This project uses [ministr](https://github.com/ministr-rs/ministr) as an MCP server for semantic code search.
+This project uses [ministr](https://github.com/ministr-rs/ministr) as an MCP server for semantic code search. ministr is the **preferred** tool for codebase *exploration*; it does not restrict normal shell work.
 
-## CRITICAL: Tool Restrictions
+## Policy
 
-**You MUST use ministr MCP tools for ALL codebase exploration.** The following are PROHIBITED:
+- Prefer ministr MCP tools for code discovery, search, and navigation.
+- The built-in **Grep** / **Glob** tools are not for exploration here —
+  use `ministr_survey` / `ministr_toc`.
+- The shell is unrestricted: building, testing, dependency installs,
+  `git`, running the project, and filtering command output
+  (`cargo test | grep`, `cargo build 2>&1 | tail`, `git log | grep`)
+  all run normally. A *leading* `grep`/`find` may prompt for approval —
+  approve it when it is filtering output or a filesystem operation
+  rather than searching the codebase.
+- Read files only immediately before editing them.
 
-### Prohibited Tools and Patterns
+## Tool Mapping (preferences, not prohibitions)
 
-- ❌ **Grep tool** — use `ministr_survey(query: "...")` instead
-- ❌ **Glob tool** — use `ministr_toc` instead
-- ❌ **`grep`**, **`rg`**, **`ag`**, **`ack`** in Bash/Shell — use `ministr_survey` instead
-- ❌ **`find`**, **`fd`**, **`ls -R`** in Bash/Shell — use `ministr_toc` instead
-- ❌ **`cat | grep`**, **`cmd | head`**, **`cmd | tail`**, **`cmd | wc`** — use ministr tools
-- ❌ **ANY piped shell command** for code exploration — use ministr tools
-- ❌ **Reading files** for exploration — use `ministr_symbols` → `ministr_definition`
-
-### Allowed Uses of Shell/Bash
-
-Shell is ONLY acceptable for: building code, running tests, installing dependencies, git operations, and running the project. NEVER for searching, file discovery, or piped exploration.
-
-### Allowed Uses of file Read
-
-File Read is ONLY acceptable immediately before Edit — never for exploration or discovery.
-
-## Required Tool Mapping
-
-| Instead of… | Use… |
-|-------------|------|
-| `grep` / `Grep` / text search | `ministr_survey(query: "...")` — semantic search across docs and code |
-| `find` / `Glob` / file listing | `ministr_toc` — structural overview of the indexed corpus |
-| Reading a file to find symbols | `ministr_symbols(query: "name")` — find by name/kind/module |
-| Reading a file for a specific function | `ministr_definition(symbol_id: "...")` — get full source |
-| Checking who calls a function | `ministr_references(symbol_id: "...")` — find all callers |
+| For… | Prefer… |
+|------|---------|
+| code / text search | `ministr_survey(query: "...")` — semantic search across docs and code |
+| file / structure discovery | `ministr_toc` — structural overview of the indexed corpus |
+| finding a symbol | `ministr_symbols(query: "name")` — by name/kind/module |
+| a specific function's source | `ministr_definition(symbol_id: "...")` |
+| who calls a function | `ministr_references(symbol_id: "...")` |
 
 ## Workflow
 
@@ -1048,7 +1107,7 @@ File Read is ONLY acceptable immediately before Edit — never for exploration o
 const AGENTS_MD: &str = r"# Agent Instructions
 
 This project uses **ministr** as an MCP server for semantic code search and navigation.
-All AI agents working on this codebase **MUST** use ministr tools instead of built-in alternatives.
+ministr is the **preferred** tool for codebase *exploration*; it does not restrict normal shell work.
 
 ## MCP Server: ministr
 
@@ -1067,21 +1126,19 @@ ministr is automatically configured via `.mcp.json` (Claude Code), `.vscode/mcp.
 | `ministr_toc` | Structural overview of the indexed corpus. |
 | `ministr_bridge(query)` | Cross-language bridge links (Tauri, PyO3, NAPI, etc.). |
 
-### PROHIBITED — Do NOT Use for Exploration
+### Policy (preferences, not prohibitions)
 
-**These are BLOCKED and must NEVER be used for code discovery or search:**
+- Prefer ministr for code discovery, search, and navigation.
+- The built-in Grep/Glob tools are not for exploration here → use
+  `ministr_survey` / `ministr_toc`.
+- The shell is **unrestricted**: building, testing, `git`, installing
+  dependencies, running the project, and filtering command output
+  (`cargo test | grep`, `… | tail`, `… | wc`, `git log | grep`) all run
+  normally. A *leading* `grep`/`find` is a hint to prefer ministr and is
+  fine when filtering output or doing a filesystem operation.
+- Read files only immediately before editing them.
 
-- ❌ `grep`, `rg`, `ripgrep`, `ag`, `ack`, `egrep`, `fgrep` → use `ministr_survey`
-- ❌ `find`, `fd`, `ls -R`, `tree`, directory listing → use `ministr_toc`
-- ❌ `cat file | grep`, `cmd | head`, `cmd | tail`, `cmd | wc` → use ministr tools
-- ❌ Built-in Grep/Glob tools → use `ministr_survey` / `ministr_toc`
-- ❌ Reading files for exploration → use `ministr_symbols` → `ministr_definition`
-- ❌ Any Shell/Bash/Terminal command for search or file discovery
-
-**Allowed uses of Shell/Bash:** building, testing, git, installing dependencies, running the project.
-**Allowed uses of file Read:** only immediately before Edit — never for exploration.
-
-### Required Tool Mapping
+### Tool Mapping
 
 | Instead of… | Use… |
 |-------------|------|
@@ -1112,11 +1169,13 @@ mod tests {
 
         let result = scaffold_agent_config(root);
 
-        // Should create: 3 claude rules + 1 settings.json + 1 copilot hooks
-        //   + 1 cursor rule + 1 cursor hooks + 1 windsurf hooks + 1 windsurf rules
-        //   + 1 copilot instructions + 1 AGENTS.md = 11
-        assert_eq!(result.created, 12);
+        // 3 claude rules + 1 settings.json + 1 claude steer script
+        //   + 1 copilot hooks + 1 cursor rule + 1 cursor hooks
+        //   + 1 windsurf hooks + 1 windsurf rules + 1 copilot instructions
+        //   + 1 continue rules + 1 AGENTS.md = 13
+        assert_eq!(result.created, 13);
         assert_eq!(result.healed, 0);
+        assert!(root.join(".claude/hooks/steer-to-ministr.sh").exists());
 
         // Claude Code files
         assert!(root.join(".claude/rules/ministr-scope.md").exists());
@@ -1181,7 +1240,7 @@ mod tests {
         let root = tmp.path();
 
         let first = scaffold_agent_config(root);
-        assert_eq!(first.created, 12);
+        assert_eq!(first.created, 13);
         assert_eq!(first.healed, 0);
 
         let second = scaffold_agent_config(root);
@@ -1260,7 +1319,7 @@ mod tests {
 
         // First scaffold creates everything.
         let first = scaffold_agent_config(root);
-        assert_eq!(first.created, 12);
+        assert_eq!(first.created, 13);
 
         // Corrupt a hook file (machine-generated — should be healed).
         std::fs::write(
@@ -1290,71 +1349,75 @@ mod tests {
     // STABLE1.2 — Hook enforcement test suite
     // -----------------------------------------------------------------------
 
-    /// Verify Claude Code hooks block grep/glob/find and pass legitimate commands.
+    /// Verify Claude Code hooks delegate to the steering script, deny the
+    /// Grep/Glob tools, `ask` for leading shell search, and — critically —
+    /// never intercept pipelines (the overzealous + crashing behaviour).
     #[test]
-    fn claude_hooks_block_search_tools() {
+    fn claude_hooks_steer_not_wall() {
         let hooks = build_claude_hooks();
         let pre = hooks["hooks"]["PreToolUse"].as_array().unwrap();
 
-        // First entry: Grep|Glob matcher — unconditional deny.
+        // First entry: Grep|Glob matcher — unconditional, delegates to the
+        // committed steering script with the `tool` category.
         let grep_glob = &pre[0];
         assert_eq!(grep_glob["matcher"].as_str().unwrap(), "Grep|Glob");
         let inner_hooks = grep_glob["hooks"].as_array().unwrap();
         assert_eq!(inner_hooks.len(), 1);
-        // No "if" pattern — blanket deny for all Grep/Glob invocations.
         assert!(inner_hooks[0].get("if").is_none());
-        let cmd = inner_hooks[0]["command"].as_str().unwrap();
-        assert!(cmd.contains("permissionDecision"));
-        assert!(cmd.contains("deny"));
+        let tool_cmd = inner_hooks[0]["command"].as_str().unwrap();
+        assert!(tool_cmd.contains(".claude/hooks/steer-to-ministr.sh"));
+        assert!(tool_cmd.contains("$CLAUDE_PROJECT_DIR"));
+        assert!(tool_cmd.trim_end().ends_with(" tool"));
+        // Never an inline printf (the apostrophe-crash class is gone).
+        assert!(!tool_cmd.contains("printf"));
 
-        // Second entry: Bash matcher — conditional deny per pattern.
+        // Second entry: Bash matcher — leading-anchored, delegates to the
+        // same script with grep/find categories.
         let bash = &pre[1];
         assert_eq!(bash["matcher"].as_str().unwrap(), "Bash");
         let bash_hooks = bash["hooks"].as_array().unwrap();
-
-        // Collect all "if" patterns from the Bash hooks.
         let patterns: Vec<&str> = bash_hooks.iter().filter_map(|h| h["if"].as_str()).collect();
 
-        // Should block direct search commands.
-        for cmd in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
+        for cmd in &["grep", "egrep", "fgrep", "rg", "ag", "ack", "find", "fd"] {
             let expected = format!("Bash({cmd} *)");
             assert!(
                 patterns.contains(&expected.as_str()),
-                "missing pattern for direct search: {cmd}"
+                "missing leading-anchored pattern: {cmd}"
             );
         }
 
-        // Should block file-finding commands.
-        for cmd in &["find", "fd"] {
-            let expected = format!("Bash({cmd} *)");
+        // No pipe rules at all — `cargo test | grep` etc. must run freely.
+        for p in &patterns {
             assert!(
-                patterns.contains(&expected.as_str()),
-                "missing pattern for file-finding: {cmd}"
+                !p.contains('|'),
+                "pipe-matching pattern {p} would wall legitimate pipelines"
             );
         }
+        for h in bash_hooks {
+            let c = h["command"].as_str().unwrap();
+            assert!(c.contains(".claude/hooks/steer-to-ministr.sh"));
+            assert!(!c.contains("printf"));
+        }
+    }
 
-        // Should block piped search.
-        for cmd in &["grep", "rg", "ag", "ack"] {
-            let expected = format!("Bash(*|*{cmd} *)");
-            assert!(
-                patterns.contains(&expected.as_str()),
-                "missing pattern for piped search: {cmd}"
-            );
-        }
-
-        // Should NOT block head/tail/wc (false positives we fixed).
-        for cmd in &["head", "tail", "wc"] {
-            let pipe_pattern = format!("Bash(*|*{cmd}*)");
-            let direct_pattern = format!("Bash({cmd} *)");
-            assert!(
-                !patterns.contains(&pipe_pattern.as_str()),
-                "should NOT block piped {cmd}"
-            );
-            assert!(
-                !patterns.contains(&direct_pattern.as_str()),
-                "should NOT block direct {cmd}"
-            );
-        }
+    /// The generated steering script must be crash-proof and emit valid,
+    /// correctly-categorised JSON for every category.
+    #[test]
+    fn steer_script_emits_valid_json_per_category() {
+        // Apostrophe-crash regression: the reason text must never contain a
+        // single quote (it lives in a shell var but defence in depth).
+        assert!(
+            !STEER_SCRIPT.contains("Don't") && !STEER_SCRIPT.contains("doesn't"),
+            "reason strings must be apostrophe-free"
+        );
+        // Tool category denies; shell categories ask.
+        assert!(STEER_SCRIPT.contains(r#"decision="deny""#));
+        assert!(STEER_SCRIPT.contains(r#"decision="ask""#));
+        // Reasons name the concrete ministr tools (the redirect target).
+        assert!(STEER_SCRIPT.contains("mcp__ministr__ministr_survey"));
+        assert!(STEER_SCRIPT.contains("mcp__ministr__ministr_toc"));
+        // No pipe handling — pipelines are never the script's concern.
+        assert!(!STEER_SCRIPT.contains("grep -qE"));
     }
 
     /// Verify Copilot CLI hooks JSON structure and bash script blocking patterns.
@@ -1391,24 +1454,28 @@ mod tests {
             );
         }
 
-        // Should block file-finding commands.
-        assert!(bash.contains("find"), "should block find");
-        assert!(bash.contains("fd"), "should block fd");
+        // Should reference file-finding commands.
+        assert!(bash.contains("find"), "should reference find");
+        assert!(bash.contains("fd"), "should reference fd");
 
-        // Should block piped search.
+        // Tools are denied; leading shell search is `ask` (steer, not wall).
         assert!(
-            bash.contains("grep -qE"),
-            "should use regex to detect piped search"
+            bash.contains(r#""permissionDecision":"deny""#),
+            "Grep/Glob tools should be denied"
         );
         assert!(
-            bash.contains("(grep|rg|ag|ack)"),
-            "pipe regex should target search tools"
+            bash.contains(r#""permissionDecision":"ask""#),
+            "leading shell search should ask, not hard-deny"
         );
 
-        // Should NOT block head/tail/wc in the pipe regex.
+        // No pipe interception — the overzealous + crash-prone branch is gone.
         assert!(
-            !bash.contains("head|tail|wc"),
-            "pipe regex must NOT block head/tail/wc"
+            !bash.contains("grep -qE"),
+            "must NOT regex-scan for piped search"
+        );
+        assert!(
+            !bash.contains("(grep|rg|ag|ack)"),
+            "must NOT block piped search"
         );
     }
 
@@ -1429,19 +1496,20 @@ mod tests {
             assert!(cmd.contains(tool), "cursor hook should block: {tool}");
         }
 
-        // Should block file-finding.
-        assert!(cmd.contains("find"), "should block find");
-        assert!(cmd.contains("fd"), "should block fd");
+        // Should reference file-finding.
+        assert!(cmd.contains("find"), "should reference find");
+        assert!(cmd.contains("fd"), "should reference fd");
 
-        // Should block piped search.
+        // Must NOT intercept piped search (overzealous behaviour removed).
         assert!(
-            cmd.contains("(grep|rg|ag|ack)"),
-            "should detect piped search"
+            !cmd.contains("(grep|rg|ag|ack)"),
+            "must not detect/block piped search"
         );
 
-        // Output format: permission deny with agentMessage and userMessage.
+        // Steer, not wall: `ask` (not `deny`) with agent/user messages.
         assert!(cmd.contains("permission"), "should contain permission key");
-        assert!(cmd.contains("deny"), "should contain deny value");
+        assert!(cmd.contains("ask"), "should ask, not hard-deny");
+        assert!(!cmd.contains("deny"), "must not hard-deny shell search");
         assert!(cmd.contains("agentMessage"), "should have agentMessage");
         assert!(cmd.contains("userMessage"), "should have userMessage");
     }
@@ -1467,39 +1535,48 @@ mod tests {
             "should read tool_info.command_line"
         );
 
-        // Should block search commands.
+        // Should reference search commands (advisory hint, not a block).
         for tool in &["grep", "egrep", "fgrep", "rg", "ag", "ack"] {
-            assert!(cmd.contains(tool), "windsurf hook should block: {tool}");
+            assert!(cmd.contains(tool), "windsurf hook should reference: {tool}");
         }
+        assert!(cmd.contains("find"), "should reference find");
+        assert!(cmd.contains("fd"), "should reference fd");
 
-        // Should block file-finding.
-        assert!(cmd.contains("find"), "should block find");
-        assert!(cmd.contains("fd"), "should block fd");
-
-        // Should block piped search.
+        // Must NOT block piped search.
         assert!(
-            cmd.contains("(grep|rg|ag|ack)"),
-            "should detect piped search"
+            !cmd.contains("(grep|rg|ag|ack)"),
+            "must not detect/block piped search"
         );
 
-        // Exit code 2 to block (Windsurf convention).
-        assert!(cmd.contains("exit 2"), "should use exit 2 to block");
+        // Windsurf has no `ask` — advisory hint then ALLOW (exit 0), never
+        // a hard block (exit 2). It is not overzealous.
+        assert!(!cmd.contains("exit 2"), "must not hard-block (exit 2)");
+        assert!(cmd.contains("exit 0"), "should allow after advisory hint");
     }
 
-    /// Verify deny_hook produces correctly structured JSON.
+    /// Verify steer_hook delegates to the script and threads the category.
     #[test]
-    fn deny_hook_structure() {
-        let hook = deny_hook("Bash(grep *)", "reason text");
+    fn steer_hook_structure() {
+        let hook = steer_hook("Bash(grep *)", "grep");
         assert_eq!(hook["type"].as_str().unwrap(), "command");
         assert_eq!(hook["if"].as_str().unwrap(), "Bash(grep *)");
         let cmd = hook["command"].as_str().unwrap();
-        assert!(cmd.contains("permissionDecision"));
-        assert!(cmd.contains("deny"));
-        assert!(cmd.contains("reason text"));
+        assert!(cmd.contains("$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh"));
+        assert!(cmd.trim_end().ends_with(" grep"));
+        // No inline JSON/printf — decisions are emitted by the script.
+        assert!(!cmd.contains("printf"));
+        assert!(!cmd.contains("permissionDecision"));
 
-        // Empty if_pattern should omit the "if" key entirely.
-        let blanket = deny_hook("", "blanket deny");
+        // Empty if_pattern omits the "if" key entirely (blanket matcher).
+        let blanket = steer_hook("", "tool");
         assert!(blanket.get("if").is_none());
+        assert!(
+            blanket["command"]
+                .as_str()
+                .unwrap()
+                .trim_end()
+                .ends_with(" tool")
+        );
     }
 
     /// Verify all four platforms' generated files are valid JSON.
@@ -1670,7 +1747,7 @@ mod tests {
         let root = tmp.path();
 
         let first = scaffold_agent_config(root);
-        assert_eq!(first.created, 12);
+        assert_eq!(first.created, 13);
         assert_eq!(first.healed, 0);
 
         // Record modification times.
