@@ -8,10 +8,12 @@ mod c;
 mod cpp;
 mod go;
 mod java;
+mod hcl;
 mod kotlin;
 mod proto;
 mod python;
 mod rust;
+mod sql;
 mod swift;
 mod typescript;
 
@@ -52,6 +54,8 @@ pub fn refinement_for(language: &str) -> Option<Box<dyn LanguageRefinement>> {
         "swift" => Some(Box::new(swift::SwiftRefinement)),
         "kotlin" => Some(Box::new(kotlin::KotlinRefinement)),
         "proto" => Some(Box::new(proto::ProtoRefinement)),
+        "hcl" => Some(Box::new(hcl::HclRefinement)),
+        "sql" => Some(Box::new(sql::SqlRefinement)),
         _ => None,
     }
 }
