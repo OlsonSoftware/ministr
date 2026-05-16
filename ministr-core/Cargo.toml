@@ -76,6 +76,17 @@ tree-sitter-sequel = { workspace = true, optional = true }
 tree-sitter-zig = { workspace = true, optional = true }
 tree-sitter-proto = { workspace = true, optional = true }
 tree-sitter-svelte-ng = { workspace = true, optional = true }
+tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-graphql = { workspace = true, optional = true }
+tree-sitter-groovy = { workspace = true, optional = true }
+tree-sitter-nix = { workspace = true, optional = true }
+tree-sitter-erlang = { workspace = true, optional = true }
+tree-sitter-powershell = { workspace = true, optional = true }
+tree-sitter-solidity = { workspace = true, optional = true }
+tree-sitter-objc = { workspace = true, optional = true }
+tree-sitter-julia = { workspace = true, optional = true }
+tree-sitter-cmake = { workspace = true, optional = true }
+tree-sitter-make = { workspace = true, optional = true }
 tar.workspace = true
 zstd.workspace = true
 tempfile.workspace = true
@@ -124,6 +135,17 @@ lang-all = [
     "lang-zig",
     "lang-proto",
     "lang-svelte",
+    "lang-css",
+    "lang-graphql",
+    "lang-groovy",
+    "lang-nix",
+    "lang-erlang",
+    "lang-powershell",
+    "lang-solidity",
+    "lang-objc",
+    "lang-julia",
+    "lang-cmake",
+    "lang-make",
 ]
 lang-python = ["dep:tree-sitter-python"]
 lang-javascript = ["dep:tree-sitter-javascript"]
@@ -153,6 +175,17 @@ lang-sql = ["dep:tree-sitter-sequel"]
 lang-zig = ["dep:tree-sitter-zig"]
 lang-proto = ["dep:tree-sitter-proto"]
 lang-svelte = ["dep:tree-sitter-svelte-ng"]
+lang-css = ["dep:tree-sitter-css"]
+lang-graphql = ["dep:tree-sitter-graphql"]
+lang-groovy = ["dep:tree-sitter-groovy"]
+lang-nix = ["dep:tree-sitter-nix"]
+lang-erlang = ["dep:tree-sitter-erlang"]
+lang-powershell = ["dep:tree-sitter-powershell"]
+lang-solidity = ["dep:tree-sitter-solidity"]
+lang-objc = ["dep:tree-sitter-objc"]
+lang-julia = ["dep:tree-sitter-julia"]
+lang-cmake = ["dep:tree-sitter-cmake"]
+lang-make = ["dep:tree-sitter-make"]
 
 [dev-dependencies]
 serde_json.workspace = true

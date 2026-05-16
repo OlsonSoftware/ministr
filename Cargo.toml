@@ -141,6 +141,23 @@ tree-sitter-proto = "0.2"
 # multi-language SFC structure; embedded JS/CSS is a follow-up via
 # injection). `-ng` = modern tree-sitter-language bindings.
 tree-sitter-svelte-ng = "1"
+# Maximal coverage expansion — markup, config, JVM-adjacent, functional,
+# and niche stacks. All resolver-validated against tree-sitter 0.26 via
+# the tree-sitter-language 0.1 ABI shim; any crate that fails to link
+# (legacy `links = "tree-sitter"` against an old core) gets dropped to
+# the documented text fallback below rather than pinned, to keep the
+# build green on a single `cargo build --workspace`.
+tree-sitter-css = "0.25"
+tree-sitter-graphql = "0.1"
+tree-sitter-groovy = "0.1"
+tree-sitter-nix = "0.3"
+tree-sitter-erlang = "0.17"
+tree-sitter-powershell = "0.26"
+tree-sitter-solidity = "1"
+tree-sitter-objc = "3"
+tree-sitter-julia = "0.23"
+tree-sitter-cmake = "0.7"
+tree-sitter-make = "1"
 # (tree-sitter-vue 0.0.3 and tree-sitter-astro have no ABI-current
 #  release — vue pins legacy tree-sitter 0.20, astro is unpublished.
 #  .vue/.astro keep the text fallback. Svelte uses the modern `-ng`
@@ -151,6 +168,15 @@ tree-sitter-svelte-ng = "1"
 # allows only one copy). Dockerfiles keep routing to the text
 # fallback (no regression). Revisit when an upstream rev adopts the
 # tree-sitter-language 0.1 ABI shim.
+# Markdown/HTML: deliberately NOT added as code grammars. ministr
+# routes .md/.html to dedicated prose/markup parsers (ParserKind::
+# Markdown / ::Html) which outperform a code AST for those formats.
+# Clojure: same situation as Dockerfile. tree-sitter-clojure 0.1.0
+# (latest on crates.io) depends on `tree-sitter ^0.25.6` as a *normal*
+# dep with `links = "tree-sitter"`, conflicting with our 0.26. The 13
+# other coverage grammars use `tree-sitter-language ^0.1` (tree-sitter
+# only as a dev-dep), so they link cleanly. .clj/.cljs/.cljc/.edn keep
+# the text fallback. Revisit when crates.io clojure adopts the shim.
 
 # Archive / compression
 tar = "0.4"
