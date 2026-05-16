@@ -7,20 +7,7 @@
 [corpus]
 paths = [
     # Source code
-    "ministr-api/src",
-    "ministr-app/src",
-    "ministr-app/src-tauri/src",
-    "ministr-cli/src",
-    "ministr-core/src",
-    "ministr-daemon/src",
-    "ministr-mcp/src",
-
-    # Documentation
-    "README.md",
-    "CHANGELOG.md",
-    "CONTRIBUTING.md",
-    "RELEASE.md",
-    "SECURITY.md",
+    "."
 ]
 
 ignore = [
