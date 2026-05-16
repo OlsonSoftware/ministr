@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AlertTriangle } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useTheme } from "./hooks/useTheme";
 import { useCorpusContext } from "./hooks/useCorpusContext";
 import { useDensity, useDefaultTab } from "./hooks/usePreferences";
 import { Onboarding } from "./components/Onboarding";
 import { AskSurface } from "./components/surfaces/ask/AskSurface";
+import { SessionsSurface } from "./components/surfaces/SessionsSurface";
 import { ShortcutSheet } from "./components/ShortcutSheet";
 import { ToastProvider, useToast } from "./components/shell/ToastTray";
 import { EntityPanelProvider } from "./hooks/useEntityPanel";
@@ -18,6 +20,7 @@ import { CommandPalette } from "./components/chrome/CommandPalette";
 import { ProjectsSurface } from "./components/surfaces/ProjectsSurface";
 import { SettingsSurface } from "./components/surfaces/SettingsSurface";
 import { corpusLabel } from "./lib/corpus";
+import { fade } from "./lib/motion";
 import {
   matchShortcut,
   firesWhileTyping,
@@ -25,13 +28,10 @@ import {
 } from "./lib/shortcuts";
 
 /**
- * App shell — three top-level surfaces (Ask / Projects / Settings) wired
- * around a persistent project picker in the top bar.
- *
- * The previous workspace shell (rail + center modes + source pane + status
- * bar + four drawers) is replaced by a flat surface switcher. Power-user
- * features (Sessions / Logs / Activity / Bridges / Query playground) move
- * into Settings → Developer Tools (M4).
+ * App shell — the Cockpit. Four top-level surfaces (Ask / Projects /
+ * Sessions / Settings) behind a nav rail + context-aware top bar, a
+ * global command palette, and a stacked entity inspector. Surface
+ * switches animate; a small back/forward history backs ⌘[ / ⌘].
  */
 export function App() {
   return (
@@ -47,16 +47,37 @@ function AppInner() {
   const { status, error, refresh } = useDaemonStatus();
   const { theme, setTheme } = useTheme();
   const { activeCorpusId, setActiveCorpusId } = useCorpusContext(status);
-  // Initialize density preference (sets data-density on <html>).
   useDensity();
   const { defaultTab } = useDefaultTab();
   const { toast } = useToast();
 
-  // Honour the user's "default tab" preference for the launch surface.
-  // The preference enum is kept in lock-step with SurfaceId, so the
-  // value maps straight across. The no-projects bounce below can still
-  // override this to Projects on a cold install.
-  const [surface, setSurface] = useState<SurfaceId>(defaultTab);
+  // Surface + a small navigation history (back/forward).
+  const [history, setHistory] = useState<SurfaceId[]>([defaultTab]);
+  const [cursor, setCursor] = useState(0);
+  const surface = history[cursor];
+
+  // Refs so the keyboard/event handlers always see the latest state
+  // without re-binding listeners on every navigation.
+  const historyRef = useRef(history);
+  const cursorRef = useRef(cursor);
+  historyRef.current = history;
+  cursorRef.current = cursor;
+
+  const navigate = useCallback((next: SurfaceId) => {
+    const h = historyRef.current;
+    const c = cursorRef.current;
+    if (h[c] === next) return;
+    const nh = [...h.slice(0, c + 1), next];
+    setHistory(nh);
+    setCursor(nh.length - 1);
+  }, []);
+
+  const back = useCallback(() => setCursor((c) => Math.max(0, c - 1)), []);
+  const forward = useCallback(
+    () => setCursor((c) => Math.min(historyRef.current.length - 1, c + 1)),
+    [],
+  );
+
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -71,15 +92,16 @@ function AppInner() {
   // External navigation events from tray menu / deep links.
   useEffect(() => {
     const unlistenNav = listen<string>("navigate", (event) => {
-      const target = event.payload;
-      if (target === "ask" || target === "projects" || target === "settings") {
-        setSurface(target);
-      } else if (target === "sessions") {
-        // Sessions moved into the Projects detail pane.
-        setSurface("projects");
-      } else if (target === "explore") {
-        // Deprecated target — settles on Settings → Developer Tools (M4).
-        setSurface("settings");
+      const t = event.payload;
+      if (
+        t === "ask" ||
+        t === "projects" ||
+        t === "sessions" ||
+        t === "settings"
+      ) {
+        navigate(t);
+      } else if (t === "explore") {
+        navigate("settings");
       }
     });
     const unlistenSelect = listen<string>("select-corpus", (event) => {
@@ -89,8 +111,13 @@ function AppInner() {
     });
     function onWindowNavigate(e: Event) {
       const detail = (e as CustomEvent).detail;
-      if (detail === "ask" || detail === "projects" || detail === "settings") {
-        setSurface(detail);
+      if (
+        detail === "ask" ||
+        detail === "projects" ||
+        detail === "sessions" ||
+        detail === "settings"
+      ) {
+        navigate(detail);
       }
     }
     window.addEventListener("ministr-navigate", onWindowNavigate);
@@ -99,9 +126,9 @@ function AppInner() {
       unlistenSelect.then((fn) => fn());
       window.removeEventListener("ministr-navigate", onWindowNavigate);
     };
-  }, [setActiveCorpusId]);
+  }, [setActiveCorpusId, navigate]);
 
-  // Global keyboard shortcuts. Pruned to the three surfaces that exist.
+  // Global keyboard shortcuts.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
@@ -110,13 +137,17 @@ function AppInner() {
         target?.tagName === "TEXTAREA" ||
         target?.isContentEditable;
 
+      // ⌘[ / ⌘] — history back/forward (works even while typing is fine).
+      if ((e.metaKey || e.ctrlKey) && (e.key === "[" || e.key === "]")) {
+        e.preventDefault();
+        if (e.key === "[") back();
+        else forward();
+        return;
+      }
+
       const result = matchShortcut(e, gPending.current);
 
-      if (
-        result &&
-        result !== "_pending:g" &&
-        firesWhileTyping(result)
-      ) {
+      if (result && result !== "_pending:g" && firesWhileTyping(result)) {
         e.preventDefault();
         dispatchShortcut(result);
         return;
@@ -125,7 +156,6 @@ function AppInner() {
       if (typing) return;
 
       if (e.key === "Escape") {
-        // Topmost-overlay-first: palette beats shortcuts sheet.
         if (paletteOpen) {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -160,13 +190,16 @@ function AppInner() {
             setShortcutsOpen((o) => !o);
             return;
           case "nav:ask":
-            setSurface("ask");
+            navigate("ask");
             return;
           case "nav:projects":
-            setSurface("projects");
+            navigate("projects");
+            return;
+          case "nav:sessions":
+            navigate("sessions");
             return;
           case "nav:settings":
-            setSurface("settings");
+            navigate("settings");
             return;
           case "toggle:palette":
             setPaletteOpen((o) => !o);
@@ -177,13 +210,13 @@ function AppInner() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shortcutsOpen, paletteOpen]);
+  }, [shortcutsOpen, paletteOpen, navigate, back, forward]);
 
   const openAddProject = useCallback(async () => {
     try {
       await invoke("add_project_dialog");
       refresh();
-      toast("PROJECT ADDED", { tone: "success" });
+      toast("Project added", { tone: "success" });
     } catch {
       /* user cancelled */
     }
@@ -201,7 +234,7 @@ function AppInner() {
   const onThemeChange = useCallback(
     (t: "system" | "dark" | "light") => {
       setTheme(t);
-      toast("THEME", { detail: t.toUpperCase(), tone: "info" });
+      toast("Theme", { detail: t.toUpperCase(), tone: "info" });
     },
     [setTheme, toast],
   );
@@ -219,18 +252,15 @@ function AppInner() {
   const corpora = status?.corpora ?? [];
   const hasCorpora = corpora.length > 0;
 
-  // Smart default: if we land with no projects, route the user to Projects
-  // so the empty state's "Add" CTA is the obvious next step. Declared
-  // before the onboarding early return so the hook order stays stable.
+  // Cold install with no projects → bounce to Projects so the empty
+  // state's CTA is the obvious next step.
   useEffect(() => {
     if (status && !hasCorpora && surface === "ask") {
-      setSurface("projects");
+      navigate("projects");
     }
-    // Only run when projects appear/disappear, not on every surface change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasCorpora, status]);
 
-  // First-run onboarding — full-screen takeover.
   if (showOnboarding) {
     return <Onboarding onDismiss={() => setShowOnboarding(false)} />;
   }
@@ -246,50 +276,66 @@ function AppInner() {
           onSelectCorpus={onSelectCorpus}
           onAddProject={openAddProject}
           onOpenLogs={onOpenLogs}
+          onOpenPalette={() => setPaletteOpen(true)}
         />
 
-        {error && (
-          <div className="flex items-center gap-2 border-b-2 border-danger bg-surface px-5 py-2 text-xs font-mono tracking-[0.05em] text-danger shrink-0">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} />
-            <span>{error}</span>
-          </div>
-        )}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="flex items-center gap-2 overflow-hidden border-b border-danger/50 bg-danger/10 px-5 py-2 text-xs font-mono text-danger shrink-0"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+              <span>{error}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="flex flex-1 min-h-0">
-          <Sidebar active={surface} onSelect={setSurface} />
+          <Sidebar active={surface} onSelect={navigate} />
 
           <main className="flex-1 min-w-0 min-h-0 bg-bg" role="main">
             {!status ? (
               <ConnectingState error={error} />
             ) : (
-              <SurfaceBody
-                surface={surface}
-                status={status}
-                activeCorpusId={activeCorpusId}
-                setActiveCorpusId={setActiveCorpusId}
-                onSelectCorpus={onSelectCorpus}
-                onRefresh={refresh}
-                theme={theme}
-                onThemeChange={onThemeChange}
-                onShowOnboarding={() => setShowOnboarding(true)}
-                onOpenLogs={onOpenLogs}
-              />
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={surface}
+                  variants={fade}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  className="h-full"
+                >
+                  <SurfaceBody
+                    surface={surface}
+                    status={status}
+                    activeCorpusId={activeCorpusId}
+                    setActiveCorpusId={setActiveCorpusId}
+                    onSelectCorpus={onSelectCorpus}
+                    onRefresh={refresh}
+                    theme={theme}
+                    onThemeChange={onThemeChange}
+                    onShowOnboarding={() => setShowOnboarding(true)}
+                    onOpenLogs={onOpenLogs}
+                  />
+                </motion.div>
+              </AnimatePresence>
             )}
           </main>
         </div>
       </div>
 
-      <ShortcutSheet
-        open={shortcutsOpen}
-        onClose={() => setShortcutsOpen(false)}
-      />
+      <ShortcutSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         corpora={status?.corpora ?? []}
         activeCorpusId={activeCorpusId}
-        onNavigate={setSurface}
+        onNavigate={navigate}
         onSelectCorpus={onSelectCorpus}
         onAddProject={openAddProject}
       />
@@ -341,6 +387,12 @@ function SurfaceBody({
     );
   }
 
+  if (surface === "sessions") {
+    return (
+      <SessionsSurface status={status} activeCorpusId={activeCorpusId} />
+    );
+  }
+
   return (
     <SettingsSurface
       status={status}
@@ -358,7 +410,7 @@ function SurfaceBody({
 function ConnectingState({ error }: { error: string | null }) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4">
-      <div className="font-serif text-2xl font-normal text-text">
+      <div className="text-display text-text">
         Connecting<span className="ministr-blink">_</span>
       </div>
       {error && (

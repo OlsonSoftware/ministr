@@ -19,6 +19,7 @@ export type ShortcutAction =
   // navigation — three surfaces only after the M1 IA collapse.
   | "nav:ask"
   | "nav:projects"
+  | "nav:sessions"
   | "nav:settings"
   // chrome toggles
   | "toggle:palette"
@@ -70,6 +71,13 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     id: "nav:projects",
     keys: ["g", "p"],
     label: "Projects",
+    group: "Navigation",
+    prefixed: true,
+  },
+  {
+    id: "nav:sessions",
+    keys: ["g", "s"],
+    label: "Sessions",
     group: "Navigation",
     prefixed: true,
   },

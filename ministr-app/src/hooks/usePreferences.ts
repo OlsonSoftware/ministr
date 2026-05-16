@@ -7,11 +7,16 @@ const DENSITY_KEY = "ministr-density";
 // "explore" / "sessions" options pointed at routes that no longer
 // exist — they're dropped here so the dropdown can't set a launch
 // target the shell can't honor.
-export type DefaultTab = "ask" | "projects" | "settings";
+export type DefaultTab = "ask" | "projects" | "sessions" | "settings";
 
 export type Density = "comfortable" | "compact";
 
-const VALID_DEFAULT_TABS: DefaultTab[] = ["ask", "projects", "settings"];
+const VALID_DEFAULT_TABS: DefaultTab[] = [
+  "ask",
+  "projects",
+  "sessions",
+  "settings",
+];
 
 /**
  * Display options for the Settings → Default tab dropdown.
@@ -22,6 +27,7 @@ const VALID_DEFAULT_TABS: DefaultTab[] = ["ask", "projects", "settings"];
 export const DEFAULT_TAB_OPTIONS: { value: DefaultTab; label: string }[] = [
   { value: "ask", label: "Ask" },
   { value: "projects", label: "Projects" },
+  { value: "sessions", label: "Sessions" },
   { value: "settings", label: "Settings" },
 ];
 

@@ -1,19 +1,21 @@
-import { MessageSquare, FolderOpen, Settings as SettingsIcon } from "lucide-react";
+import { MessageSquare, FolderOpen, Activity, Settings as SettingsIcon } from "lucide-react";
+import { motion } from "motion/react";
+import { spring } from "../../lib/motion";
 import { cn } from "../../lib/utils";
 
-export type SurfaceId = "ask" | "projects" | "settings";
+export type SurfaceId = "ask" | "projects" | "sessions" | "settings";
 
 interface Item {
   id: SurfaceId;
   label: string;
   icon: typeof MessageSquare;
-  /** Two-key chord shown on hover (g + …). */
   chord: string;
 }
 
 const ITEMS: Item[] = [
   { id: "ask", label: "Ask", icon: MessageSquare, chord: "g a" },
   { id: "projects", label: "Projects", icon: FolderOpen, chord: "g p" },
+  { id: "sessions", label: "Sessions", icon: Activity, chord: "g s" },
   { id: "settings", label: "Settings", icon: SettingsIcon, chord: "g ," },
 ];
 
@@ -23,16 +25,15 @@ interface Props {
 }
 
 /**
- * Three-item sidebar rail. Each row is a square icon button with a
- * left accent bar when active. Labels appear on hover (tooltip via
- * native title; a future iteration may inline them when the rail
- * widens past a threshold).
+ * Cockpit nav rail. Icon-only column; the active indicator is a single
+ * shared-layout pill that springs between items. Label + chord show as
+ * a tooltip on hover.
  */
 export function Sidebar({ active, onSelect }: Props) {
   return (
     <nav
       aria-label="Primary"
-      className="flex flex-col items-stretch gap-0 border-r-2 border-border bg-surface-overlay py-2 w-12 shrink-0"
+      className="flex flex-col items-center gap-1 border-r border-border bg-surface py-3 w-14 shrink-0"
     >
       {ITEMS.map((item) => {
         const Icon = item.icon;
@@ -46,18 +47,26 @@ export function Sidebar({ active, onSelect }: Props) {
             aria-label={item.label}
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              // w-full (not w-12): the rail's content box is 46px after
-              // the 2px right border, so a fixed w-12 (48px) button plus
-              // its 3px left accent bar overflowed the rail. Filling the
-              // content box keeps the active item inside the sidebar.
-              "relative grid place-items-center h-12 w-full cursor-pointer transition-none",
-              "border-l-[3px] box-border",
+              "group relative grid place-items-center h-10 w-10 rounded-lg cursor-pointer",
+              "transition-colors duration-150 ease-out",
               isActive
-                ? "border-l-accent bg-surface text-text"
-                : "border-l-transparent text-text-muted hover:text-text hover:bg-surface",
+                ? "text-[var(--color-accent-fg-on)]"
+                : "text-text-dim hover:text-text hover:bg-surface-overlay",
             )}
           >
-            <Icon className="h-5 w-5" strokeWidth={2} />
+            {isActive && (
+              <motion.span
+                layoutId="nav-active"
+                transition={spring}
+                className="absolute inset-0 rounded-lg bg-accent shadow-[var(--glow-soft)]"
+              />
+            )}
+            <motion.span
+              whileTap={{ scale: 0.86 }}
+              className="relative z-10 grid place-items-center"
+            >
+              <Icon className="h-[18px] w-[18px]" strokeWidth={2} />
+            </motion.span>
           </button>
         );
       })}

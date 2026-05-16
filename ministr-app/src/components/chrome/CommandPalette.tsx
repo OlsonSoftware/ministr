@@ -1,17 +1,18 @@
 /**
- * CommandPalette — slim ⌘K palette scoped to the 3-surface IA.
+ * CommandPalette — a real command system with mode prefixes.
  *
- * Replaces the old multi-section palette (search/symbols/bridges/sessions/
- * diagnostics) with the minimum useful set: nav between Ask / Projects /
- * Settings, switch the active project, and add a new project. Anything
- * deeper now lives behind Settings → Developer or the EntityPanel.
+ *   (none)  everything: navigation + actions + projects
+ *   >       actions only (add project, open logs via nav…)
+ *   @       switch project
+ *   #       open a live session
+ *   ?       jump to Ask
  *
- * Items are filtered by case-insensitive substring match on label +
- * keywords; first match is the default selection. Arrow keys navigate;
- * Enter / click activates; Esc closes.
+ * Fuzzy-ish substring match on label + keywords; arrow keys navigate;
+ * Enter/click activates; Esc closes. Spring-animated open/close.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   FolderOpen,
   MessageSquare,
   Plus,
@@ -19,10 +20,15 @@ import {
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 
 import type { CorpusInfo } from "../../lib/types";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
+import { popIn, scrim } from "../../lib/motion";
+import { clampPct } from "../../lib/sessions";
 import { cn } from "../../lib/utils";
+import { useSessions } from "../../hooks/useSessions";
+import { useEntityPanel } from "../../hooks/useEntityPanel";
 import type { SurfaceId } from "./Sidebar";
 
 interface CommandItem {
@@ -31,6 +37,8 @@ interface CommandItem {
   hint?: string;
   keywords: string;
   icon: LucideIcon;
+  /** Which prefix-mode this item belongs to ("" = always). */
+  mode: "" | ">" | "@" | "#" | "?";
   run: () => void;
 }
 
@@ -44,6 +52,14 @@ interface Props {
   onAddProject: () => void;
 }
 
+const MODE_HINT: Record<string, string> = {
+  "": "Type to search · > actions · @ projects · # sessions · ? ask",
+  ">": "Actions",
+  "@": "Switch project",
+  "#": "Open a live session",
+  "?": "Ask the codebase",
+};
+
 export function CommandPalette({
   open,
   onClose,
@@ -56,17 +72,21 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { sessions } = useSessions();
+  const { openEntity } = useEntityPanel();
 
-  // Reset state every open so the palette never reopens with a stale
-  // search or a highlight pointing at an item that no longer matches.
   useEffect(() => {
     if (open) {
       setQuery("");
       setHighlight(0);
-      // Defer focus to next tick so the input exists in the DOM.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
+
+  const mode = (
+    ["@", "#", ">", "?"].includes(query[0]) ? query[0] : ""
+  ) as CommandItem["mode"];
+  const term = (mode ? query.slice(1) : query).trim().toLowerCase();
 
   const items = useMemo<CommandItem[]>(() => {
     const list: CommandItem[] = [
@@ -76,6 +96,7 @@ export function CommandPalette({
         hint: "Codebase Q&A",
         keywords: "ask question query",
         icon: MessageSquare,
+        mode: "",
         run: () => onNavigate("ask"),
       },
       {
@@ -84,7 +105,17 @@ export function CommandPalette({
         hint: "Manage indexed projects",
         keywords: "projects manage corpus",
         icon: FolderOpen,
+        mode: "",
         run: () => onNavigate("projects"),
+      },
+      {
+        id: "nav:sessions",
+        label: "Go to Sessions",
+        hint: "Live agent sessions",
+        keywords: "sessions agents live monitor",
+        icon: Activity,
+        mode: "",
+        run: () => onNavigate("sessions"),
       },
       {
         id: "nav:settings",
@@ -92,6 +123,7 @@ export function CommandPalette({
         hint: "Theme, AI assistants, developer",
         keywords: "settings preferences theme",
         icon: SettingsIcon,
+        mode: "",
         run: () => onNavigate("settings"),
       },
       {
@@ -100,7 +132,17 @@ export function CommandPalette({
         hint: "Open the system folder picker",
         keywords: "add new project import",
         icon: Plus,
+        mode: ">",
         run: onAddProject,
+      },
+      {
+        id: "action:ask",
+        label: "Ask the codebase…",
+        hint: "Open the Ask surface",
+        keywords: "ask question",
+        icon: Sparkles,
+        mode: "?",
+        run: () => onNavigate("ask"),
       },
     ];
     for (const c of corpora) {
@@ -110,31 +152,57 @@ export function CommandPalette({
         label: `Switch to ${corpusLabel(c)}`,
         hint: corpusRoot(c.paths),
         keywords: `${corpusLabel(c)} ${c.id}`,
-        icon: Sparkles,
+        icon: FolderOpen,
+        mode: "@",
         run: () => onSelectCorpus(c.id),
       });
     }
+    for (const s of sessions) {
+      list.push({
+        id: `session:${s.session_id}`,
+        label: s.session_id.slice(0, 12),
+        hint: `${clampPct(s.utilization * 100)}% · turn ${s.current_turn}${
+          s.client_name ? ` · ${s.client_name}` : ""
+        }`,
+        keywords: `${s.session_id} ${s.client_name ?? ""}`,
+        icon: Activity,
+        mode: "#",
+        run: () =>
+          openEntity({
+            kind: "session",
+            corpusId: s.corpus_id,
+            sessionId: s.session_id,
+            seed: s,
+          }),
+      });
+    }
     return list;
-  }, [corpora, activeCorpusId, onNavigate, onSelectCorpus, onAddProject]);
+  }, [
+    corpora,
+    activeCorpusId,
+    sessions,
+    onNavigate,
+    onSelectCorpus,
+    onAddProject,
+    openEntity,
+  ]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-      (i) =>
-        i.label.toLowerCase().includes(q) ||
-        i.keywords.toLowerCase().includes(q),
-    );
-  }, [items, query]);
+    return items.filter((i) => {
+      if (mode && i.mode !== mode) return false;
+      if (!term) return true;
+      return (
+        i.label.toLowerCase().includes(term) ||
+        i.keywords.toLowerCase().includes(term)
+      );
+    });
+  }, [items, mode, term]);
 
-  // Keep highlight in range when the filtered set shrinks.
   useEffect(() => {
     if (highlight >= filtered.length) {
       setHighlight(Math.max(0, filtered.length - 1));
     }
   }, [filtered.length, highlight]);
-
-  if (!open) return null;
 
   function activate(item: CommandItem) {
     item.run();
@@ -159,81 +227,108 @@ export function CommandPalette({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[1300] flex items-start justify-center bg-black/40 px-6"
-      style={{ paddingTop: "15vh" }}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Command palette"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-xl border-2 border-border bg-surface shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="border-b-2 border-border bg-surface-overlay">
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder="Type to search…"
-            className={cn(
-              "w-full bg-transparent px-3 py-2.5 outline-none",
-              "font-mono text-sm text-text placeholder:text-text-dim",
-            )}
-            autoComplete="off"
-          />
-        </div>
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          key="cmd-scrim"
+          variants={scrim}
+          initial="initial"
+          animate="animate"
+          exit="exit"
+          className="fixed inset-0 z-[1300] flex items-start justify-center bg-black/50 backdrop-blur-[2px] px-6"
+          style={{ paddingTop: "14vh" }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Command palette"
+          onClick={onClose}
+        >
+          <motion.div
+            variants={popIn}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="w-full max-w-xl overflow-hidden rounded-xl border border-border bg-surface shadow-lg origin-top"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-border bg-surface-overlay">
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder="Search commands…"
+                className={cn(
+                  "w-full bg-transparent px-4 py-3 outline-none",
+                  "font-mono text-sm text-text placeholder:text-text-dim",
+                )}
+                autoComplete="off"
+              />
+            </div>
 
-        {filtered.length === 0 ? (
-          <p className="px-3 py-6 font-serif italic text-sm text-text-dim text-center">
-            No matches.
-          </p>
-        ) : (
-          <ul role="listbox" className="max-h-[50vh] overflow-y-auto">
-            {filtered.map((item, idx) => {
-              const Icon = item.icon;
-              const active = idx === highlight;
-              return (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    onMouseEnter={() => setHighlight(idx)}
-                    onClick={() => activate(item)}
-                    className={cn(
-                      "flex w-full items-center gap-3 px-3 py-2 text-left cursor-pointer transition-none",
-                      active
-                        ? "bg-surface-overlay text-text"
-                        : "text-text-muted hover:bg-surface-overlay",
-                    )}
-                  >
-                    <Icon className="h-4 w-4 shrink-0" strokeWidth={2} />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-mono text-sm font-semibold truncate">
-                        {item.label}
-                      </div>
-                      {item.hint && (
-                        <div className="font-mono text-mono-mini text-text-dim truncate">
-                          {item.hint}
+            {filtered.length === 0 ? (
+              <p className="px-4 py-8 font-sans text-sm text-text-dim text-center">
+                No matches.
+              </p>
+            ) : (
+              <ul role="listbox" className="max-h-[52vh] overflow-y-auto p-1.5">
+                {filtered.map((item, idx) => {
+                  const Icon = item.icon;
+                  const active = idx === highlight;
+                  return (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        onMouseEnter={() => setHighlight(idx)}
+                        onClick={() => activate(item)}
+                        className={cn(
+                          "flex w-full items-center gap-3 px-3 py-2 rounded-md text-left cursor-pointer",
+                          "transition-colors duration-100",
+                          active
+                            ? "bg-accent text-[var(--color-accent-fg-on)]"
+                            : "text-text-muted hover:bg-surface-overlay",
+                        )}
+                      >
+                        <Icon
+                          className="h-4 w-4 shrink-0"
+                          strokeWidth={2}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-sans text-sm font-medium truncate">
+                            {item.label}
+                          </div>
+                          {item.hint && (
+                            <div
+                              className={cn(
+                                "font-mono text-mono-mini truncate",
+                                active
+                                  ? "text-[var(--color-accent-fg-on)]/70"
+                                  : "text-text-dim",
+                              )}
+                            >
+                              {item.hint}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
 
-        <footer className="flex items-center justify-end gap-3 border-t-2 border-border bg-surface-overlay px-3 py-1.5 font-mono text-mono-mini text-text-dim">
-          <span>↑↓ navigate</span>
-          <span>↵ select</span>
-          <span>esc close</span>
-        </footer>
-      </div>
-    </div>
+            <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface-overlay px-4 py-2 font-mono text-mono-mini text-text-dim">
+              <span className="truncate">{MODE_HINT[mode]}</span>
+              <span className="flex gap-3 shrink-0">
+                <span>↑↓</span>
+                <span>↵</span>
+                <span>esc</span>
+              </span>
+            </footer>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
