@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Language & tech-stack coverage
+- Tree-sitter grammars for 16 more languages, all default-on: Bash/Shell,
+  PHP, Scala, Lua, Elixir, Haskell, OCaml (impl + interface), Dart, R,
+  HCL/Terraform, JSON, YAML, TOML, SQL, Zig, and Protobuf. These file
+  types previously fell back to text-only chunking; `ministr_symbols` /
+  `ministr_definition` / `ministr_references` now work across ~28
+  languages.
+- Protobuf symbol refinement — `.proto` `message` / `enum` / `service`
+  surface as first-class symbols (gRPC / API discovery).
+- Import cross-references for PHP, Kotlin, and Scala (`ministr_references`).
+- `ministr_bridge` — new **cgo** bridge kind: Go `C.func(...)` calls
+  linked to C function definitions (eighth bridge kind).
+
 ### Changed
 
 ### Fixed

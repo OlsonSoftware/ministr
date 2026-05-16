@@ -64,8 +64,8 @@ claude mcp add ministr -- ministr                                    # Claude Co
 ## Features
 
 - **Semantic search** across docs and code at the granularity the agent needs — summary, section, or single claim (a one-sentence fact pulled from a section). Code gets two extra levels: symbol stub (signature + doc) and full source.
-- **Code symbol navigation** — find and trace structs, functions, traits across 12 languages via tree-sitter
-- **Cross-language bridge detection** — Tauri commands and events, napi-rs, PyO3, wasm-bindgen exports, HTTP routes (actix-web / axum / rocket), and raw FFI
+- **Code symbol navigation** — find and trace structs, functions, traits across ~28 languages via tree-sitter (Rust, Python, JS/TS, Go, Java, C/C++, C#, Ruby, Swift, Kotlin, PHP, Scala, Bash, Lua, Elixir, Haskell, OCaml, Dart, R, HCL/Terraform, SQL, Zig, Protobuf, JSON/YAML/TOML)
+- **Cross-language bridge detection** — Tauri commands and events, napi-rs, PyO3, wasm-bindgen exports, HTTP routes (actix-web / axum / rocket), cgo (Go ↔ C), and raw FFI
 - **Session tracking** with predictive prefetch, deduplication, and delta delivery
 - **Budget management** — token usage monitoring, eviction recommendations, compressed summaries under pressure
 - **Local embeddings** — Candle with Metal GPU on Apple Silicon by default (7-12× faster than the ONNX path for batch embedding); FastEmbed + DirectML on Windows DirectX 12 GPUs (with the `directml` cargo feature); FastEmbed + CPU ONNX on Linux and feature-less Windows

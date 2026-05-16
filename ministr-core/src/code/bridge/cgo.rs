@@ -74,7 +74,7 @@ fn extract_go_c_calls(
             role: EndpointRole::Import,
             language: "go".into(),
             file_path: file_path.into(),
-            line: node_line(&node),
+            line: node_line(node),
             symbol_name: name,
             confidence: ConfidenceLevel::Exact.score(),
         });
