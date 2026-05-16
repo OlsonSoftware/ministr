@@ -393,6 +393,19 @@ impl GrammarRegistry {
             tree_sitter_proto::LANGUAGE.into(),
         );
 
+        // Svelte — a composite single-file component grammar (markup +
+        // embedded <script>/<style>). The host grammar models the SFC
+        // structure; deep JS/CSS injection is a follow-up.
+        #[cfg(feature = "lang-svelte")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "svelte",
+            &["svelte"],
+            tree_sitter_svelte_ng::LANGUAGE.into(),
+        );
+
         Self {
             ext_to_lang,
             languages,
@@ -558,6 +571,12 @@ pub const ALL_CODE_EXTENSIONS: &[&str] = &[
     "dockerfile",
     // Protobuf
     "proto",
+    // Composite / single-file components. `.svelte` has a registered
+    // grammar; `.vue`/`.astro` route here for text-level indexing until
+    // ABI-current grammars exist.
+    "svelte",
+    "vue",
+    "astro",
     // Assembly
     "asm",
     "s",

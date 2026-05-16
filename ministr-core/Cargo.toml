@@ -75,6 +75,7 @@ tree-sitter-toml-ng = { workspace = true, optional = true }
 tree-sitter-sequel = { workspace = true, optional = true }
 tree-sitter-zig = { workspace = true, optional = true }
 tree-sitter-proto = { workspace = true, optional = true }
+tree-sitter-svelte-ng = { workspace = true, optional = true }
 tar.workspace = true
 zstd.workspace = true
 tempfile.workspace = true
@@ -122,6 +123,7 @@ lang-all = [
     "lang-sql",
     "lang-zig",
     "lang-proto",
+    "lang-svelte",
 ]
 lang-python = ["dep:tree-sitter-python"]
 lang-javascript = ["dep:tree-sitter-javascript"]
@@ -150,6 +152,7 @@ lang-toml = ["dep:tree-sitter-toml-ng"]
 lang-sql = ["dep:tree-sitter-sequel"]
 lang-zig = ["dep:tree-sitter-zig"]
 lang-proto = ["dep:tree-sitter-proto"]
+lang-svelte = ["dep:tree-sitter-svelte-ng"]
 
 [dev-dependencies]
 serde_json.workspace = true

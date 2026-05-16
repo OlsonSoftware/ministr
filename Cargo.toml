@@ -137,11 +137,20 @@ tree-sitter-toml-ng = "0.7"
 tree-sitter-sequel = "0.3"
 tree-sitter-zig = "1"
 tree-sitter-proto = "0.2"
-# NOTE: Dockerfile deferred — the only published crate
-# (tree-sitter-dockerfile 0.2) pins legacy tree-sitter 0.20 (ABI
-# incompatible with our 0.26). Dockerfiles still route to the text
-# fallback (no regression). Revisit if an ABI-current crate/grammar
-# rev appears (unreal-cpp git-pin pattern).
+# Composite / single-file-component grammars (host grammar parses the
+# multi-language SFC structure; embedded JS/CSS is a follow-up via
+# injection). `-ng` = modern tree-sitter-language bindings.
+tree-sitter-svelte-ng = "1"
+# (tree-sitter-vue 0.0.3 and tree-sitter-astro have no ABI-current
+#  release — vue pins legacy tree-sitter 0.20, astro is unpublished.
+#  .vue/.astro keep the text fallback. Svelte uses the modern `-ng`
+#  bindings, like tree-sitter-kotlin-ng.)
+# Dockerfile: NO ABI-current grammar exists. Both crates.io 0.2.0 and
+# the upstream main branch declare `links = "tree-sitter"` against
+# tree-sitter ^0.24, which hard-conflicts with our 0.26 (`links`
+# allows only one copy). Dockerfiles keep routing to the text
+# fallback (no regression). Revisit when an upstream rev adopts the
+# tree-sitter-language 0.1 ABI shim.
 
 # Archive / compression
 tar = "0.4"
