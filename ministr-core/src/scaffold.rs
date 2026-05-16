@@ -800,6 +800,97 @@ const RUBY_RULES: &str = "\
 - Use `Sorbet`/RBS or YARD types for public APIs where practical
 ";
 
+const JAVASCRIPT_RULES: &str = "\
+## JavaScript
+
+- Use `const` by default; `let` only when reassigned; never `var`
+- Prefer `async/await` over raw Promise chains; always handle rejections
+- Use strict equality (`===`/`!==`); avoid implicit coercion
+- Use optional chaining (`?.`) and nullish coalescing (`??`)
+- Prefer named exports and ES modules over CommonJS where possible
+- Lint with ESLint and format with Prettier
+- Validate external input at boundaries; never trust untyped data
+- Test with Vitest or Jest; keep tests beside source or in `__tests__/`
+";
+
+const CSHARP_RULES: &str = "\
+## C#
+
+- Enable nullable reference types (`<Nullable>enable</Nullable>`)
+- Prefer `record` types for immutable data; `readonly`/`init` for properties
+- Use `async`/`await` end-to-end; suffix async methods with `Async`
+- Prefer expression-bodied members and pattern matching where it clarifies
+- Dispose `IDisposable` via `using` declarations
+- Follow .NET naming: `PascalCase` for members/types, `camelCase` for locals
+- Analyze with the .NET analyzers / Roslyn; treat warnings as errors in CI
+- Test with xUnit or NUnit; one assert-focused scenario per test
+";
+
+const KOTLIN_RULES: &str = "\
+## Kotlin
+
+- Prefer `val` over `var`; embrace immutability
+- Use null-safe types — avoid `!!`; prefer `?.`, `?:`, and `requireNotNull`
+- Model domain with `data class` and `sealed class`/`sealed interface`
+- Use extension functions instead of utility classes
+- Prefer `when` expressions; make them exhaustive over sealed hierarchies
+- Use coroutines for async; never block a coroutine dispatcher
+- Format/lint with ktlint or detekt
+- Test with JUnit5 + kotlin.test or Kotest
+";
+
+const SWIFT_RULES: &str = "\
+## Swift
+
+- Prefer `struct`/`enum` value types; use `class` only when reference identity is needed
+- Use `let` by default; avoid force-unwrap (`!`) and force-`try`
+- Model absence with `Optional`; surface errors with `throws`/`Result`
+- Use `guard` for early exit and to flatten optional unwrapping
+- Mark types `Sendable` and isolate state with actors for concurrency
+- Follow the Swift API Design Guidelines for naming
+- Format/lint with SwiftFormat / SwiftLint
+- Test with XCTest or Swift Testing; keep tests deterministic
+";
+
+const SCALA_RULES: &str = "\
+## Scala
+
+- Prefer immutable `val` and immutable collections; avoid `var`
+- Use `Option`/`Either`/`Try` instead of `null` or thrown control flow
+- Model domain with `case class` and `sealed trait` ADTs; pattern-match exhaustively
+- Keep functions pure; push side effects to the edges
+- Prefer `for`-comprehensions over nested `flatMap`/`map`
+- Format with scalafmt; lint with scalafix / compiler `-Wunused`
+- Test with ScalaTest or MUnit
+- Avoid overusing implicits/`given`s — keep them explicit and local
+";
+
+const CPP_RULES: &str = "\
+## C / C++
+
+- Prefer RAII and smart pointers (`unique_ptr`/`shared_ptr`); avoid raw `new`/`delete`
+- Follow the C++ Core Guidelines; prefer `const`-correctness everywhere
+- Use `std::` containers/algorithms over hand-rolled loops and C arrays
+- Pass by `const&` for non-trivial inputs; return by value (move semantics)
+- Mark overrides `override`; make single-arg constructors `explicit`
+- Build with warnings-as-errors; run clang-tidy and a sanitizer in CI
+- Format with clang-format
+- Test with GoogleTest, Catch2, or doctest
+";
+
+const ELIXIR_RULES: &str = "\
+## Elixir
+
+- Embrace immutability and pure functions; transform with the pipe operator
+- Use pattern matching and guards over conditional branching
+- Return `{:ok, value}` / `{:error, reason}` tuples; reserve `!` for raising variants
+- Let it crash — supervise processes; don't defensively rescue everywhere
+- Use `with` for happy-path pipelines of fallible steps
+- Type with `@spec`/`@type`; check with Dialyzer (dialyxir)
+- Format with `mix format`; lint with Credo
+- Test with ExUnit; use `async: true` when tests share no state
+";
+
 /// Compose language-specific rules based on detected project languages.
 ///
 /// Returns `None` if no known languages are detected.
@@ -823,6 +914,13 @@ fn language_rules_for_project(root: &Path) -> Option<String> {
             crate::init::Language::Java => md.push_str(JAVA_RULES),
             crate::init::Language::Php => md.push_str(PHP_RULES),
             crate::init::Language::Ruby => md.push_str(RUBY_RULES),
+            crate::init::Language::JavaScript => md.push_str(JAVASCRIPT_RULES),
+            crate::init::Language::Csharp => md.push_str(CSHARP_RULES),
+            crate::init::Language::Kotlin => md.push_str(KOTLIN_RULES),
+            crate::init::Language::Swift => md.push_str(SWIFT_RULES),
+            crate::init::Language::Scala => md.push_str(SCALA_RULES),
+            crate::init::Language::Cpp => md.push_str(CPP_RULES),
+            crate::init::Language::Elixir => md.push_str(ELIXIR_RULES),
         }
         md.push('\n');
     }

@@ -77,6 +77,21 @@ pub struct ProjectDetection {
     pub has_php: bool,
     /// Whether a Ruby project was detected (`Gemfile` or `*.gemspec`).
     pub has_ruby: bool,
+    /// Whether a C# project was detected (`*.csproj` or `*.sln`).
+    pub has_csharp: bool,
+    /// Whether a Kotlin project was detected (`*.gradle.kts`).
+    pub has_kotlin: bool,
+    /// Whether a Swift package was detected (`Package.swift`).
+    pub has_swift: bool,
+    /// Whether a Scala project was detected (`build.sbt`).
+    pub has_scala: bool,
+    /// Whether a C/C++ project was detected (`CMakeLists.txt`).
+    pub has_cpp: bool,
+    /// Whether an Elixir project was detected (`mix.exs`).
+    pub has_elixir: bool,
+    /// Whether a JavaScript (non-TypeScript) project was detected
+    /// (`package.json` present, no `tsconfig.json`).
+    pub has_javascript: bool,
     /// Relative paths to source directories.
     pub source_paths: Vec<String>,
     /// Relative paths to documentation files/directories.
@@ -90,11 +105,18 @@ pub struct ProjectDetection {
 pub enum Language {
     Rust,
     TypeScript,
+    JavaScript,
     Python,
     Go,
     Java,
     Php,
     Ruby,
+    Csharp,
+    Kotlin,
+    Swift,
+    Scala,
+    Cpp,
+    Elixir,
 }
 
 impl ProjectDetection {
@@ -107,6 +129,10 @@ impl ProjectDetection {
         }
         if self.has_node {
             langs.push(Language::TypeScript);
+        }
+        // A Node project with no tsconfig.json also gets JS guidance.
+        if self.has_javascript {
+            langs.push(Language::JavaScript);
         }
         if self.has_python {
             langs.push(Language::Python);
@@ -122,6 +148,24 @@ impl ProjectDetection {
         }
         if self.has_ruby {
             langs.push(Language::Ruby);
+        }
+        if self.has_csharp {
+            langs.push(Language::Csharp);
+        }
+        if self.has_kotlin {
+            langs.push(Language::Kotlin);
+        }
+        if self.has_swift {
+            langs.push(Language::Swift);
+        }
+        if self.has_scala {
+            langs.push(Language::Scala);
+        }
+        if self.has_cpp {
+            langs.push(Language::Cpp);
+        }
+        if self.has_elixir {
+            langs.push(Language::Elixir);
         }
         langs
     }
@@ -144,6 +188,19 @@ pub enum InitError {
         #[from]
         source: std::io::Error,
     },
+}
+
+/// Whether the top level of `root` contains a file with any of the given
+/// extensions (case-sensitive, no leading dot).
+fn dir_has_extension(root: &Path, exts: &[&str]) -> bool {
+    std::fs::read_dir(root).is_ok_and(|entries| {
+        entries.flatten().any(|e| {
+            e.path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .is_some_and(|x| exts.contains(&x))
+        })
+    })
 }
 
 /// Detect project structure at `root` and build a [`ProjectDetection`].
@@ -174,6 +231,16 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
             })
         });
 
+    let has_csharp = dir_has_extension(root, &["csproj", "sln"]);
+    let has_kotlin = root.join("build.gradle.kts").exists()
+        || root.join("settings.gradle.kts").exists();
+    let has_swift = root.join("Package.swift").exists();
+    let has_scala = root.join("build.sbt").exists();
+    let has_cpp = root.join("CMakeLists.txt").exists();
+    let has_elixir = root.join("mix.exs").exists();
+    // Node project with no TypeScript config → treat as JavaScript.
+    let has_javascript = has_node && !root.join("tsconfig.json").exists();
+
     let project_name = derive_project_name(root);
     let source_paths = detect_source_paths(root, &workspaces, has_rust, has_node, has_python);
     let doc_paths = detect_doc_paths(root);
@@ -192,6 +259,13 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
         has_java,
         has_php,
         has_ruby,
+        has_csharp,
+        has_kotlin,
+        has_swift,
+        has_scala,
+        has_cpp,
+        has_elixir,
+        has_javascript,
         source_paths,
         doc_paths,
         ignore_patterns,
@@ -1266,5 +1340,46 @@ version = "0.1.0"
             "should find co-located frontend: {:?}",
             detection.source_paths
         );
+    }
+
+    #[test]
+    fn detects_expanded_languages() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("App.csproj"), "<Project/>").unwrap();
+        fs::write(root.join("build.gradle.kts"), "").unwrap();
+        fs::write(root.join("Package.swift"), "// swift-tools-version:5.9").unwrap();
+        fs::write(root.join("build.sbt"), "").unwrap();
+        fs::write(root.join("CMakeLists.txt"), "cmake_minimum_required(VERSION 3.20)").unwrap();
+        fs::write(root.join("mix.exs"), "defmodule M do\nend").unwrap();
+
+        let d = detect_project(root);
+        assert!(d.has_csharp);
+        assert!(d.has_kotlin);
+        assert!(d.has_swift);
+        assert!(d.has_scala);
+        assert!(d.has_cpp);
+        assert!(d.has_elixir);
+
+        let langs = d.detected_languages();
+        for l in [
+            Language::Csharp,
+            Language::Kotlin,
+            Language::Swift,
+            Language::Scala,
+            Language::Cpp,
+            Language::Elixir,
+        ] {
+            assert!(langs.contains(&l), "missing {l:?} in {langs:?}");
+        }
+    }
+
+    #[test]
+    fn node_without_tsconfig_is_javascript() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("package.json"), r#"{"name":"x"}"#).unwrap();
+        let d = detect_project(tmp.path());
+        assert!(d.has_javascript);
+        assert!(d.detected_languages().contains(&Language::JavaScript));
     }
 }
