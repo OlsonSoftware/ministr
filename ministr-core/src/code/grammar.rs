@@ -206,6 +206,193 @@ impl GrammarRegistry {
             tree_sitter_kotlin_ng::LANGUAGE.into(),
         );
 
+        // Bash / Shell
+        #[cfg(feature = "lang-bash")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "bash",
+            &["sh", "bash", "zsh"],
+            tree_sitter_bash::LANGUAGE.into(),
+        );
+
+        // PHP
+        #[cfg(feature = "lang-php")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "php",
+            &["php"],
+            tree_sitter_php::LANGUAGE_PHP.into(),
+        );
+
+        // Scala
+        #[cfg(feature = "lang-scala")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "scala",
+            &["scala", "sc"],
+            tree_sitter_scala::LANGUAGE.into(),
+        );
+
+        // Lua
+        #[cfg(feature = "lang-lua")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "lua",
+            &["lua"],
+            tree_sitter_lua::LANGUAGE.into(),
+        );
+
+        // Elixir
+        #[cfg(feature = "lang-elixir")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "elixir",
+            &["ex", "exs"],
+            tree_sitter_elixir::LANGUAGE.into(),
+        );
+
+        // Haskell
+        #[cfg(feature = "lang-haskell")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "haskell",
+            &["hs"],
+            tree_sitter_haskell::LANGUAGE.into(),
+        );
+
+        // OCaml — separate grammars for implementations (.ml) and
+        // interfaces (.mli).
+        #[cfg(feature = "lang-ocaml")]
+        {
+            register_language(
+                &mut ext_to_lang,
+                &mut languages,
+                &mut grammars,
+                "ocaml",
+                &["ml"],
+                tree_sitter_ocaml::LANGUAGE_OCAML.into(),
+            );
+            register_language(
+                &mut ext_to_lang,
+                &mut languages,
+                &mut grammars,
+                "ocaml_interface",
+                &["mli"],
+                tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
+            );
+        }
+
+        // Dart
+        #[cfg(feature = "lang-dart")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "dart",
+            &["dart"],
+            tree_sitter_dart::language(),
+        );
+
+        // R
+        #[cfg(feature = "lang-r")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "r",
+            &["r", "R"],
+            tree_sitter_r::LANGUAGE.into(),
+        );
+
+        // HCL / Terraform
+        #[cfg(feature = "lang-hcl")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "hcl",
+            &["tf", "hcl"],
+            tree_sitter_hcl::LANGUAGE.into(),
+        );
+
+        // JSON
+        #[cfg(feature = "lang-json")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "json",
+            &["json", "jsonc"],
+            tree_sitter_json::LANGUAGE.into(),
+        );
+
+        // YAML
+        #[cfg(feature = "lang-yaml")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "yaml",
+            &["yml", "yaml"],
+            tree_sitter_yaml::LANGUAGE.into(),
+        );
+
+        // TOML
+        #[cfg(feature = "lang-toml")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "toml",
+            &["toml"],
+            tree_sitter_toml_ng::LANGUAGE.into(),
+        );
+
+        // SQL
+        #[cfg(feature = "lang-sql")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "sql",
+            &["sql"],
+            tree_sitter_sequel::LANGUAGE.into(),
+        );
+
+        // Zig
+        #[cfg(feature = "lang-zig")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "zig",
+            &["zig"],
+            tree_sitter_zig::LANGUAGE.into(),
+        );
+
+        // Protobuf
+        #[cfg(feature = "lang-proto")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "proto",
+            &["proto"],
+            tree_sitter_proto::LANGUAGE.into(),
+        );
+
         Self {
             ext_to_lang,
             languages,

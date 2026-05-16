@@ -10,11 +10,13 @@
 //! [`SymbolTable`] collects symbols and provides query methods.
 //!
 //! The [`GrammarRegistry`] maps file extensions to tree-sitter language
-//! grammars, supporting 12 languages via cargo feature flags (Rust is
-//! always on; Python, JavaScript, TypeScript/TSX, Go, Java, C, C++, Ruby,
-//! C#, Swift, and Kotlin are feature-gated). The [`generic_extract_symbols`]
-//! function provides language-agnostic symbol extraction using node kind
-//! heuristics common across grammars.
+//! grammars via cargo feature flags. Rust is always on; the `lang-all`
+//! default additionally enables Python, JavaScript, TypeScript/TSX, Go,
+//! Java, C, C++, Ruby, C#, Swift, Kotlin, Bash, PHP, Scala, Lua, Elixir,
+//! Haskell, OCaml (impl + interface), Dart, R, HCL/Terraform, JSON, YAML,
+//! TOML, SQL, Zig, and Protobuf. The [`generic_extract_symbols`] function
+//! provides language-agnostic symbol extraction using node kind heuristics
+//! common across grammars.
 
 pub(crate) mod ast_parser;
 pub mod bridge;

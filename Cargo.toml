@@ -117,6 +117,31 @@ tree-sitter-ruby = "0.23"
 tree-sitter-c-sharp = "0.23"
 tree-sitter-swift = "0.7"
 tree-sitter-kotlin-ng = "1"
+# Coverage expansion — already-routed languages that previously fell back
+# to text-only chunking. All compile against tree-sitter 0.26 via the
+# tree-sitter-language 0.1 ABI shim. Versions are resolver-validated;
+# pin a git rev (unreal-cpp pattern) for any grammar that lags crates.io.
+tree-sitter-bash = "0.25"
+tree-sitter-php = "0.24"
+tree-sitter-scala = "0.24"
+tree-sitter-lua = "0.4"
+tree-sitter-elixir = "0.3"
+tree-sitter-haskell = "0.23"
+tree-sitter-ocaml = "0.24"
+tree-sitter-dart = "0.0"
+tree-sitter-r = "1"
+tree-sitter-hcl = "1"
+tree-sitter-json = "0.24"
+tree-sitter-yaml = "0.7"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-sequel = "0.3"
+tree-sitter-zig = "1"
+tree-sitter-proto = "0.2"
+# NOTE: Dockerfile deferred — the only published crate
+# (tree-sitter-dockerfile 0.2) pins legacy tree-sitter 0.20 (ABI
+# incompatible with our 0.26). Dockerfiles still route to the text
+# fallback (no regression). Revisit if an ABI-current crate/grammar
+# rev appears (unreal-cpp git-pin pattern).
 
 # Archive / compression
 tar = "0.4"

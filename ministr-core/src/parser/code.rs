@@ -888,7 +888,9 @@ fn internal_helper() {}
     fn parse_unknown_extension_produces_fallback() {
         let parser = CodeParser::new();
         let source = "some content in an unknown language";
-        let tree = parser.parse(Path::new("file.zig"), source).unwrap();
+        // `.asm` is routed to the Code parser but has no tree-sitter
+        // grammar registered, so it must hit the text fallback path.
+        let tree = parser.parse(Path::new("file.asm"), source).unwrap();
 
         // Fallback: single section with full content, no symbol children
         assert_eq!(tree.sections.len(), 1);
