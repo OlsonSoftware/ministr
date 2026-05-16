@@ -108,8 +108,8 @@ fn extract_imports(
 ///
 /// Dispatches to language-specific extractors based on the `language` name.
 /// Supported languages: `"rust"`, `"python"`, `"javascript"`, `"typescript"`,
-/// `"tsx"`, `"go"`, `"c"`, `"cpp"`. For unrecognized languages, returns an
-/// empty vec.
+/// `"tsx"`, `"go"`, `"c"`, `"cpp"`, `"php"`, `"kotlin"`, `"scala"`. For
+/// unrecognized languages, returns an empty vec.
 ///
 /// Returns unresolved references that must be matched against the symbol
 /// table to produce `SymbolRefRecord` values.
@@ -121,6 +121,9 @@ pub fn extract_refs(tree: &tree_sitter::Tree, source: &[u8], language: &str) -> 
         "javascript" | "typescript" | "tsx" => extract_refs_js_ts(tree, source),
         "go" => extract_refs_go(tree, source),
         "c" | "cpp" => extract_refs_c_cpp(tree, source),
+        "php" => extract_refs_php(tree, source),
+        "kotlin" => extract_refs_kotlin(tree, source),
+        "scala" => extract_refs_scala(tree, source),
         _ => Vec::new(),
     }
 }
@@ -912,6 +915,173 @@ impl ImportExtractor for GoImports {
 
 fn extract_refs_go(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     extract_imports(tree, source, &GoImports)
+}
+
+// ---------------------------------------------------------------------------
+// PHP / Kotlin / Scala imports
+// ---------------------------------------------------------------------------
+
+/// Last `\`-separated segment of a PHP qualified name, stripping a trailing
+/// ` as Alias`. `Foo\Bar` → `Bar`; `Foo\Baz as Q` → `Baz`.
+fn php_use_name(clause: &str) -> Option<String> {
+    let path = clause.split(" as ").next().unwrap_or(clause).trim();
+    let seg = path.rsplit('\\').next().unwrap_or(path).trim();
+    (!seg.is_empty()).then(|| seg.to_string())
+}
+
+struct PhpImports;
+impl ImportExtractor for PhpImports {
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            if node.kind() != "namespace_use_declaration" {
+                continue;
+            }
+            let line = node_line(&node);
+            let mut c2 = node.walk();
+            for child in node.children(&mut c2) {
+                if child.kind() == "namespace_use_clause"
+                    && let Ok(text) = child.utf8_text(source)
+                    && let Some(name) = php_use_name(text)
+                {
+                    refs.push(import_ref(name, line));
+                }
+            }
+        }
+    }
+}
+
+struct KotlinImports;
+impl ImportExtractor for KotlinImports {
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            if node.kind() != "import" {
+                continue;
+            }
+            let line = node_line(&node);
+            if let Some(qi) = node.child_by_field_name("name").or_else(|| {
+                let mut c2 = node.walk();
+                node.children(&mut c2)
+                    .find(|c| c.kind() == "qualified_identifier")
+            }) && let Ok(text) = qi.utf8_text(source)
+            {
+                // `com.x.Y` → `Y`; wildcard `com.x.*` → skipped.
+                let last = text.rsplit('.').next().unwrap_or(text).trim();
+                if !last.is_empty() && last != "*" {
+                    refs.push(import_ref(last.to_string(), line));
+                }
+            }
+        }
+    }
+}
+
+struct ScalaImports;
+impl ImportExtractor for ScalaImports {
+    fn walk_imports(&self, root: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            if node.kind() != "import_declaration" {
+                continue;
+            }
+            let line = node_line(&node);
+            let mut c2 = node.walk();
+            let mut last_ident: Option<String> = None;
+            for child in node.children(&mut c2) {
+                match child.kind() {
+                    "identifier" => {
+                        if let Ok(t) = child.utf8_text(source) {
+                            last_ident = Some(t.trim().to_string());
+                        }
+                    }
+                    // `import a.b.{A, B}` — push each selected name.
+                    "namespace_selectors" => {
+                        last_ident = None;
+                        let mut c3 = child.walk();
+                        for sel in child.children(&mut c3) {
+                            if sel.kind() == "identifier"
+                                && let Ok(t) = sel.utf8_text(source)
+                            {
+                                let t = t.trim();
+                                if !t.is_empty() && t != "_" {
+                                    refs.push(import_ref(t.to_string(), line));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(name) = last_ident
+                && !name.is_empty()
+                && name != "_"
+            {
+                refs.push(import_ref(name, line));
+            }
+        }
+    }
+}
+
+fn extract_refs_php(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    extract_imports(tree, source, &PhpImports)
+}
+fn extract_refs_kotlin(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    extract_imports(tree, source, &KotlinImports)
+}
+fn extract_refs_scala(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
+    extract_imports(tree, source, &ScalaImports)
+}
+
+#[cfg(test)]
+mod new_lang_import_tests {
+    use super::*;
+    use crate::code::GrammarRegistry;
+
+    fn parse(lang: &str, src: &str) -> tree_sitter::Tree {
+        let l = GrammarRegistry::global()
+            .language_by_name(lang)
+            .expect("registered");
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(l).unwrap();
+        p.parse(src, None).unwrap()
+    }
+
+    #[test]
+    fn php_use_imports() {
+        let src = "<?php\nnamespace App;\nuse Foo\\Bar;\nuse Foo\\Baz as Q;\n";
+        let t = parse("php", src);
+        let names: Vec<_> = extract_refs_php(&t, src.as_bytes())
+            .into_iter()
+            .map(|r| r.target_name)
+            .collect();
+        assert!(names.contains(&"Bar".to_string()), "got {names:?}");
+        assert!(names.contains(&"Baz".to_string()), "got {names:?}");
+    }
+
+    #[test]
+    fn kotlin_imports() {
+        let src = "package a.b\nimport com.x.Y\nimport com.x.Z as W\n";
+        let t = parse("kotlin", src);
+        let names: Vec<_> = extract_refs_kotlin(&t, src.as_bytes())
+            .into_iter()
+            .map(|r| r.target_name)
+            .collect();
+        assert!(names.contains(&"Y".to_string()), "got {names:?}");
+        assert!(names.contains(&"Z".to_string()), "got {names:?}");
+    }
+
+    #[test]
+    fn scala_imports() {
+        let src = "package a.b\nimport com.x.Y\nimport com.x.{A, B}\n";
+        let t = parse("scala", src);
+        let names: Vec<_> = extract_refs_scala(&t, src.as_bytes())
+            .into_iter()
+            .map(|r| r.target_name)
+            .collect();
+        assert!(names.contains(&"Y".to_string()), "got {names:?}");
+        assert!(names.contains(&"A".to_string()), "got {names:?}");
+        assert!(names.contains(&"B".to_string()), "got {names:?}");
+    }
 }
 
 /// Extract import names from a Go import declaration.
