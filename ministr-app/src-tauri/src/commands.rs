@@ -1407,14 +1407,43 @@ pub async fn inference_health(_state: State<'_, AppState>) -> Result<InferenceHe
 }
 
 /// Look up a binary on `PATH`, returning the first absolute match.
+///
+/// On Windows the bare name rarely exists on disk — CLIs installed via
+/// npm (`claude`, `codex`) are `name.cmd`/`name.ps1` shims and native
+/// installers drop `name.exe`. So when `name` has no extension we also
+/// try every `PATHEXT` suffix. Returning the *resolved absolute path*
+/// (with its real extension) is what lets the caller spawn it correctly
+/// — `Command::new("claude")` from a GUI process finds nothing.
 fn which_on_path(name: &str) -> Option<String> {
     let path_var = std::env::var_os("PATH")?;
+    let has_ext = std::path::Path::new(name).extension().is_some();
+    #[cfg(windows)]
+    let exts: Vec<String> = if has_ext {
+        Vec::new()
+    } else {
+        std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(str::to_ascii_lowercase)
+            .collect()
+    };
     for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate.display().to_string());
+        let direct = dir.join(name);
+        if direct.is_file() {
+            return Some(direct.display().to_string());
+        }
+        #[cfg(windows)]
+        if !has_ext {
+            for ext in &exts {
+                let cand = dir.join(format!("{name}{ext}"));
+                if cand.is_file() {
+                    return Some(cand.display().to_string());
+                }
+            }
         }
     }
+    let _ = has_ext;
     None
 }
 
@@ -1588,27 +1617,55 @@ fn client_info(client: ministr_core::init::McpClientId, root: &std::path::Path) 
 }
 
 fn test_via_cli(binary: &str, args: &[&str], cwd: &std::path::Path) -> McpTestResult {
-    let resolved = if cfg!(windows) {
-        which_on_path(&format!("{binary}.exe")).or_else(|| which_on_path(binary))
-    } else {
-        which_on_path(binary)
-    };
-    let Some(_) = resolved else {
+    let Some(exe) = which_on_path(binary) else {
         return McpTestResult {
             ok: false,
-            message: format!("`{binary}` not found on PATH"),
+            message: format!(
+                "`{binary}` not found on PATH. If it is installed, the ministr \
+                 desktop app may have a narrower PATH than your shell — relaunch \
+                 it after installing {binary}, or ensure {binary} is on the user PATH."
+            ),
             raw_output_truncated: None,
             manual_verify_needed: false,
         };
     };
+
+    // Build the command from the *resolved absolute path* — `Command::new(
+    // "claude")` from a GUI process can't find an npm `.cmd` shim, and a
+    // `.cmd`/`.bat` cannot be spawned directly on Windows (it must go
+    // through `cmd /c`, and Rust ≥1.77 hard-errors otherwise).
+    let mut command;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // GUI binary (windows_subsystem = "windows") → suppress the
+        // console window the child would otherwise flash.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        let is_script = std::path::Path::new(&exe)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+        if is_script {
+            command = std::process::Command::new("cmd");
+            command.arg("/c").arg(&exe).args(args);
+        } else {
+            command = std::process::Command::new(&exe);
+            command.args(args);
+        }
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        command = std::process::Command::new(&exe);
+        command.args(args);
+    }
 
     // Run *inside the project root*. Claude Code's `.mcp.json` is
     // project-scoped — `claude mcp list` only enumerates it when invoked
     // from that directory. Without `current_dir` the command ran in the
     // Tauri app's cwd and never saw the project server, producing a
     // false "ran but didn't list ministr".
-    let result = std::process::Command::new(binary)
-        .args(args)
+    let result = command
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
