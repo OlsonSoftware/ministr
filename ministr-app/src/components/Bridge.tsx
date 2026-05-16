@@ -239,7 +239,7 @@ export function Bridge({ status, activeCorpusId }: Props) {
     <div className="@container/page flex flex-col h-full gap-3 min-h-0">
       <header>
         <H1>Cross-language bridge</H1>
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim mt-1">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim mt-1">
           Tauri · PyO3 · NAPI · wasm-bindgen · HTTP routes · raw FFI
         </p>
       </header>
@@ -297,7 +297,7 @@ export function Bridge({ status, activeCorpusId }: Props) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="filter (optional)"
-            className="h-9 w-56 border-2 border-border bg-surface px-2 text-xs font-mono text-text placeholder:text-text-dim focus:outline-none focus:bg-surface-overlay focus:text-text transition-none"
+            className="h-9 w-56 border border-border bg-surface px-2 text-xs font-mono text-text placeholder:text-text-dim focus:outline-none focus:bg-surface-overlay focus:text-text transition-colors duration-150 ease-out"
           />
           <Button type="submit" disabled={loading} size="sm">
             {loading ? "…" : "RUN"}
@@ -318,14 +318,14 @@ export function Bridge({ status, activeCorpusId }: Props) {
           <span className="w-px h-5 bg-border-soft" />
           <button
             onClick={() => exportJson(selectedRows)}
-            className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
+            className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
           >
             <Download className="h-3.5 w-3.5" strokeWidth={2} />
             Export JSON
           </button>
           <button
             onClick={() => exportCsv(selectedRows)}
-            className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
+            className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
           >
             <Download className="h-3.5 w-3.5" strokeWidth={2} />
             Export CSV
@@ -333,13 +333,13 @@ export function Bridge({ status, activeCorpusId }: Props) {
           <button
             onClick={() => exportJson(links)}
             title="Export all visible bridges (ignoring selection)"
-            className="font-serif text-sm italic text-text-dim hover:text-text-muted cursor-pointer transition-none border-b border-transparent hover:border-text-muted"
+            className="font-sans text-sm italic text-text-dim hover:text-text-muted cursor-pointer transition-colors duration-150 ease-out border-b border-transparent hover:border-text-muted"
           >
             Export all visible
           </button>
           <button
             onClick={clearSelection}
-            className="ml-auto font-sans text-sm font-medium text-text-muted hover:text-text border-b border-transparent hover:border-text cursor-pointer transition-none"
+            className="ml-auto font-sans text-sm font-medium text-text-muted hover:text-text border-b border-transparent hover:border-text cursor-pointer transition-colors duration-150 ease-out"
           >
             Clear
           </button>
@@ -416,7 +416,7 @@ function KindSummary({
     // 32px ribbon when a row is selected.
     return (
       <div className="flex items-center gap-2 border border-border-soft bg-surface px-2 py-1 shrink-0 overflow-x-auto">
-        <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text-dim shrink-0">
+        <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim shrink-0">
           Surface
         </span>
         {rows.map(({ kind, count }) => {
@@ -426,11 +426,11 @@ function KindSummary({
               key={kind}
               onClick={() => onPick(kind)}
               className={cn(
-                "inline-flex items-center gap-1 border px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none shrink-0",
+                "inline-flex items-center gap-1 border px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] cursor-pointer transition-colors duration-150 ease-out shrink-0",
                 active
                   ? "border-accent bg-surface-overlay text-text"
                   : "border-border-soft bg-surface text-text-muted hover:border-border hover:text-text",
-              "rounded-sm")}
+              "rounded-md")}
             >
               <span>{kind}</span>
               <span className="opacity-70 tabular-nums">{count}</span>
@@ -445,7 +445,7 @@ function KindSummary({
   return (
     <div className="border border-border-soft bg-surface shrink-0">
       <div className="flex items-baseline justify-between border-b border-border-soft bg-surface-overlay px-3 py-2">
-        <h3 className="font-serif text-base font-bold text-text">
+        <h3 className="font-sans text-base font-bold text-text">
           Surface
         </h3>
         <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -464,14 +464,14 @@ function KindSummary({
               onClick={() => onPick(kind)}
               title={`${kind} · ${count} (${pct.toFixed(1)}%)`}
               className={cn(
-                "flex flex-col items-start justify-center border border-border-soft px-2 cursor-pointer transition-none -ml-[1px] first:ml-0 min-w-0",
+                "flex flex-col items-start justify-center border border-border-soft px-2 cursor-pointer transition-colors duration-150 ease-out -ml-[1px] first:ml-0 min-w-0",
                 active
                   ? "border-accent bg-surface-overlay text-text z-10 relative"
                   : "bg-surface text-text-muted hover:text-text hover:border-border",
               )}
               style={{ width, flexBasis: width }}
             >
-              <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text-dim truncate w-full">
+              <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim truncate w-full">
                 {kind}
               </span>
               <span className="font-mono text-base font-semibold tabular-nums leading-none mt-0.5 text-text">
@@ -532,14 +532,14 @@ function BridgeTable({
         <HeaderCell>Import</HeaderCell>
         <HeaderCell align="right">Lang</HeaderCell>
         <div className="flex items-center justify-end gap-1 px-2 py-2">
-          <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim">
             Conf
           </span>
           <button
             onClick={onShowConfHelp}
             aria-label="Confidence help"
             title="What does confidence mean?"
-            className="grid h-4 w-4 place-items-center border border-border-soft bg-surface font-serif text-mono-mini text-text-dim hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
+            className="grid h-4 w-4 place-items-center border border-border-soft bg-surface font-sans text-mono-mini text-text-dim hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
           >
             ?
           </button>
@@ -567,7 +567,7 @@ function BridgeTable({
       </div>
 
       {links.length === 0 ? (
-        <div className="px-3 py-8 font-serif text-base italic text-text-dim text-center">
+        <div className="px-3 py-8 font-sans text-base italic text-text-dim text-center">
           {loading ? "Querying…" : "No bridges found."}
         </div>
       ) : (
@@ -575,7 +575,7 @@ function BridgeTable({
           const isSel = selected === l;
           const isChecked = selectedIds.has(bridgeKey(l));
           const cls = cn(
-            "relative w-full text-left transition-none border-b border-border-soft",
+            "relative w-full text-left transition-colors duration-150 ease-out border-b border-border-soft",
             isSel
               ? "bg-surface-overlay text-text"
               : isChecked
@@ -618,7 +618,7 @@ function BridgeTable({
                   />
                 </div>
                 <Cell>
-                  <span className="font-mono text-xs font-semibold uppercase tracking-[0.05em] text-text-dim">
+                  <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-dim">
                     {l.kind}
                   </span>
                 </Cell>
@@ -636,7 +636,7 @@ function BridgeTable({
                   </span>
                 </Cell>
                 <Cell align="right">
-                  <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+                  <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
                     {l.export_language}/{l.import_language}
                   </span>
                 </Cell>
@@ -670,13 +670,13 @@ function BridgeTable({
                   />
                 </div>
                 <Cell>
-                  <span className="font-mono text-xs font-semibold uppercase tracking-[0.05em] text-text-dim">
+                  <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-dim">
                     {l.kind}
                   </span>
                 </Cell>
                 <Cell>
                   <span className="inline-flex items-center gap-1 min-w-0">
-                    <span className="border border-border-soft px-1 font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
+                    <span className="border border-border-soft px-1 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
                       {l.export_language}
                     </span>
                     <span className="font-mono text-sm truncate">
@@ -689,7 +689,7 @@ function BridgeTable({
                 </Cell>
                 <Cell>
                   <span className="inline-flex items-center gap-1 min-w-0">
-                    <span className="border border-border-soft px-1 font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
+                    <span className="border border-border-soft px-1 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
                       {l.import_language}
                     </span>
                     <span className="font-mono text-sm truncate">
@@ -730,10 +730,10 @@ function ConnectionPreview({
     <section className="flex-1 min-h-0 flex flex-col gap-2 border border-border-soft bg-surface border-l-[6px] border-l-accent">
       <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-2 shrink-0">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent">
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
             CONNECTION
           </span>
-          <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
             {link.kind}
           </span>
         </div>
@@ -741,7 +741,7 @@ function ConnectionPreview({
           {onOpenFullPanel && (
             <button
               onClick={onOpenFullPanel}
-              className="inline-flex items-center gap-1 border-2 border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.05em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
+              className="inline-flex items-center gap-1 border border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
               title="Open full panel"
             >
               <ExternalLink className="h-3 w-3" strokeWidth={2.5} />
@@ -750,7 +750,7 @@ function ConnectionPreview({
           )}
           <button
             onClick={onClose}
-            className="grid h-6 w-6 place-items-center border-2 border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
+            className="grid h-6 w-6 place-items-center border border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
             aria-label="Close preview"
           >
             <X className="h-3 w-3" strokeWidth={2.5} />
@@ -789,7 +789,7 @@ function ConnectionPreview({
       </div>
 
       <div className="border-t-2 border-border bg-surface-overlay px-3 py-1.5 flex items-center justify-between shrink-0">
-        <span className="font-mono text-xs uppercase tracking-[0.05em] text-text">
+        <span className="font-mono text-xs uppercase tracking-[0.08em] text-text">
           {link.kind} · {link.export_symbol || link.export_binding_key}
         </span>
         <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -842,10 +842,10 @@ function CodePane({
     <div className="flex-1 min-w-0 flex flex-col border border-border-soft bg-surface">
       <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1.5 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent shrink-0">
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent shrink-0">
             {title}
           </span>
-          <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim shrink-0">
+          <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-dim shrink-0">
             {language}
           </span>
         </div>
@@ -933,13 +933,13 @@ function ConfidenceHelpModal({ onClose }: { onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-2">
-          <span className="font-mono text-mono-mini font-bold uppercase tracking-[0.05em] text-text">
+          <span className="font-mono text-mono-mini font-bold uppercase tracking-[0.08em] text-text">
             CONFIDENCE
           </span>
           <button
             onClick={onClose}
             aria-label="Close"
-            className="grid h-6 w-6 place-items-center border-2 border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
+            className="grid h-6 w-6 place-items-center border border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
           >
             <X className="h-3 w-3" strokeWidth={2.5} />
           </button>
@@ -964,7 +964,7 @@ function HeaderCell({
   return (
     <div
       className={cn(
-        "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text-dim px-2 py-2",
+        "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim px-2 py-2",
         align === "right" && "text-right",
       )}
     >

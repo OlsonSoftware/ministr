@@ -57,10 +57,10 @@ export function DeveloperPanel({
   return (
     <div className="space-y-4">
       <header className="space-y-1">
-        <h2 className="font-mono text-sm font-bold uppercase tracking-[0.05em] text-text">
+        <h2 className="font-mono text-sm font-bold uppercase tracking-[0.08em] text-text">
           Developer tools
         </h2>
-        <p className="font-serif text-sm text-text-muted">
+        <p className="font-sans text-sm text-text-muted">
           Power-user surfaces that used to be top-level tabs. Hidden here so
           the main UI stays focused on what most users need day to day.
         </p>
@@ -79,9 +79,9 @@ export function DeveloperPanel({
               onClick={() => setTab(t.id)}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "px-3 py-2 cursor-pointer transition-none -mb-[2px]",
+                "px-3 py-2 cursor-pointer transition-colors duration-150 ease-out -mb-[2px]",
                 "border-b-[3px]",
-                "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
+                "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]",
                 active
                   ? "border-b-accent text-text"
                   : "border-b-transparent text-text-muted hover:text-text",
@@ -93,7 +93,7 @@ export function DeveloperPanel({
         })}
       </nav>
 
-      <p className="font-serif italic text-mono-mini text-text-dim">
+      <p className="font-sans italic text-mono-mini text-text-dim">
         {current.hint}
       </p>
 

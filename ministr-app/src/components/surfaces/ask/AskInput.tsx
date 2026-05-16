@@ -128,7 +128,7 @@ function RecentStrip({
         strokeWidth={2}
         aria-hidden
       />
-      <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
+      <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
         Recent
       </span>
       <div className="flex items-center gap-1.5">
@@ -157,9 +157,9 @@ function RecentStrip({
         title="Clear recent"
         className={cn(
           "shrink-0 border border-transparent px-1.5 py-0.5",
-          "font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim",
+          "font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim",
           "hover:text-text hover:border-border-soft",
-          "cursor-pointer transition-none rounded-sm",
+          "cursor-pointer transition-colors duration-150 ease-out rounded-md",
           "disabled:opacity-50 disabled:cursor-not-allowed",
         )}
       >

@@ -79,7 +79,7 @@ export function AskEmpty(props: Props) {
           strokeWidth={2.5}
           aria-hidden
         />
-        <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
           Try asking
         </span>
         <span className="flex-1 h-px bg-border-soft" />
@@ -95,7 +95,7 @@ export function AskEmpty(props: Props) {
               "px-3 py-2.5 text-left",
               "hover:border-accent hover:bg-surface-overlay",
               "disabled:opacity-50 disabled:hover:border-border-soft disabled:hover:bg-surface",
-              "cursor-pointer disabled:cursor-not-allowed transition-none",
+              "cursor-pointer disabled:cursor-not-allowed transition-colors duration-150 ease-out",
             )}
           >
             <span className="font-mono text-xs font-bold text-accent shrink-0 mt-0.5">

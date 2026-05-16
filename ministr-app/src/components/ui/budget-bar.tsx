@@ -23,9 +23,8 @@ interface BudgetBarProps {
 /**
  * The budget-utilization bar. Colour is derived from utilization (never a
  * pressure string), so it cannot regress to the old grey/colourless state.
- * Brutalist: sharp corners, solid-offset frame, no blur. The fill width
- * carries `.motion-data` (the one sanctioned data-motion) so it eases on
- * poll and snaps under `prefers-reduced-motion`.
+ * Cockpit: rounded track, hairline frame. The fill width eases on poll via
+ * a width transition and snaps under `prefers-reduced-motion`.
  */
 export function BudgetBar({
   utilization,

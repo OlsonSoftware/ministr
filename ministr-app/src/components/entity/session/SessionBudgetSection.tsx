@@ -72,7 +72,7 @@ export function SessionBudgetSection({
       <div className="px-3 py-3 space-y-3">
         <div className="space-y-1">
           <div className="flex items-baseline justify-between">
-            <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+            <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
               Tokens in context
             </span>
             <span className="font-mono text-xs tabular-nums text-text">
@@ -92,7 +92,7 @@ export function SessionBudgetSection({
           </div>
         </div>
         <div className="space-y-1">
-          <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
             Headroom
           </span>
           <div className="border border-border-soft">
@@ -105,7 +105,7 @@ export function SessionBudgetSection({
             />
           </div>
         </div>
-        <p className="font-serif text-xs italic text-text-dim leading-snug">
+        <p className="font-sans text-xs italic text-text-dim leading-snug">
           ~{spanMin}m window · {samples.length} samples · sampled on each poll
         </p>
       </div>

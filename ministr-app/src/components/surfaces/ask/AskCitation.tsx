@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { AnimatePresence, motion } from "motion/react";
+import { popIn } from "../../../lib/motion";
 import { cn } from "../../../lib/utils";
 import { BrutalPin } from "../../ui/brutal-icons";
 import type { SectionDetailOut } from "./internals";
@@ -95,7 +97,7 @@ export function AskCitation({
           "inline-flex items-center justify-center align-baseline",
           "px-1 min-w-[1.25rem] h-[1.125rem] -translate-y-[1px]",
           "font-mono text-mono-mini font-bold tabular-nums leading-none",
-          "cursor-pointer transition-none rounded-sm border",
+          "cursor-pointer transition-colors duration-150 ease-out rounded-md border",
           pinned
             ? "border-info bg-surface text-info hover:bg-info hover:text-[var(--color-accent-fg-on)]"
             : "border-accent bg-surface text-accent hover:bg-accent hover:text-[var(--color-accent-fg-on)]",
@@ -104,20 +106,23 @@ export function AskCitation({
         {n}
       </button>
 
+      <AnimatePresence>
       {open && sourceId && (
-        <span
+        <motion.span
           role="tooltip"
           onMouseEnter={show}
           onMouseLeave={scheduleHide}
+          variants={popIn}
+          initial="initial"
+          animate="animate"
+          exit="exit"
           className={cn(
-            "absolute left-0 top-full mt-1 z-[1300] w-[360px]",
-            "border-2 border-border bg-surface shadow-md",
-            "ministr-pin-in",
-            "block",
+            "absolute left-0 top-full mt-1 z-[1300] w-[360px] origin-top-left",
+            "block overflow-hidden rounded-lg border border-border bg-surface shadow-lg",
           )}
         >
-          <header className="flex items-center justify-between gap-2 border-b-2 border-border bg-surface-overlay px-2.5 py-1.5">
-            <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text-dim">
+          <header className="flex items-center justify-between gap-2 border-b border-border bg-surface-overlay px-2.5 py-1.5">
+            <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim">
               Source [{n}]
             </span>
             {detail && (
@@ -139,7 +144,7 @@ export function AskCitation({
               </pre>
             )}
           </div>
-          <footer className="flex items-center gap-1.5 border-t-2 border-border bg-surface-overlay px-2.5 py-1.5">
+          <footer className="flex items-center gap-1.5 border-t border-border bg-surface-overlay px-2.5 py-1.5">
             {onPinAnswer && (
               <button
                 onClick={() => {
@@ -148,8 +153,8 @@ export function AskCitation({
                 }}
                 disabled={pinned}
                 className={cn(
-                  "inline-flex items-center gap-1 px-2 py-0.5 cursor-pointer transition-none rounded-sm",
-                  "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
+                  "inline-flex items-center gap-1 px-2 py-0.5 cursor-pointer transition-colors duration-150 ease-out rounded-md",
+                  "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]",
                   pinned
                     ? "border border-border-soft bg-surface text-text-dim cursor-not-allowed"
                     : "border border-info bg-surface text-info hover:bg-info hover:text-[var(--color-accent-fg-on)]",
@@ -165,8 +170,8 @@ export function AskCitation({
                 setOpen(false);
               }}
               className={cn(
-                "inline-flex items-center gap-1 px-2 py-0.5 cursor-pointer transition-none rounded-sm",
-                "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
+                "inline-flex items-center gap-1 px-2 py-0.5 cursor-pointer transition-colors duration-150 ease-out rounded-md",
+                "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]",
                 "border border-border-soft bg-surface text-text-muted",
                 "hover:text-text hover:border-border",
               )}
@@ -174,8 +179,9 @@ export function AskCitation({
               Open ↗
             </button>
           </footer>
-        </span>
+        </motion.span>
       )}
+      </AnimatePresence>
     </span>
   );
 }
@@ -186,7 +192,7 @@ function SkeletonLines() {
       {[80, 70, 90, 60].map((w, i) => (
         <div
           key={i}
-          className="h-2 bg-surface-overlay motion-data"
+          className="h-2 ministr-skeleton"
           style={{ width: `${w}%` }}
         />
       ))}

@@ -87,7 +87,7 @@ export function AskAnswer({
 
       <Card className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 border-b border-border-soft pb-2">
-          <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
             Answer
           </span>
           <span className="font-mono text-mono-mini text-text-dim tabular-nums">
@@ -103,7 +103,7 @@ export function AskAnswer({
             title={pinned ? "Unpin this answer" : "Pin this answer"}
             className={cn(
               "inline-flex items-center gap-1 border px-1.5 py-0.5 cursor-pointer transition-colors duration-150 rounded-full",
-              "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
+              "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]",
               pinned
                 ? "border-info bg-surface-overlay text-info"
                 : "border-border-soft bg-surface text-text-muted hover:text-text hover:border-border",
@@ -117,7 +117,7 @@ export function AskAnswer({
             title={copied ? "Copied" : "Copy to clipboard"}
             className={cn(
               "inline-flex items-center gap-1 border px-1.5 py-0.5 cursor-pointer transition-colors duration-150 rounded-full",
-              "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
+              "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]",
               "border-border-soft bg-surface text-text-muted hover:text-text hover:border-border",
             )}
           >
@@ -162,7 +162,7 @@ function UnsupportedBanner({ count }: { count: number }) {
         <p className="font-sans text-sm font-medium text-text">
           {count} claim{count === 1 ? "" : "s"} not backed by sources
         </p>
-        <p className="font-serif text-xs italic text-text-dim mt-0.5">
+        <p className="font-sans text-xs italic text-text-dim mt-0.5">
           Citation-checking flagged statements that don&apos;t appear in the
           retrieved excerpts. Open each source to verify before relying on it.
         </p>
@@ -198,7 +198,7 @@ function Answer({
   }
 
   return (
-    <div className="ask-answer font-serif text-[0.9375rem] leading-relaxed text-text">
+    <div className="ask-answer font-sans text-[0.9375rem] leading-relaxed text-text">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -393,7 +393,7 @@ function SourcesPanel({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
           Sources
         </span>
         <span className="font-mono text-mono-mini tabular-nums text-text-dim">
@@ -401,7 +401,7 @@ function SourcesPanel({
         </span>
         <span className="flex-1 h-px bg-border-soft" />
         {cited.size > 0 && cited.size < sourceIds.length && (
-          <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
             {cited.size} cited
           </span>
         )}
@@ -486,7 +486,7 @@ function SourceRow({
           cited
             ? "border-accent bg-surface text-accent"
             : "border-border-soft bg-surface text-text-dim",
-          "rounded-sm",
+          "rounded-md",
         )}
       >
         {index}

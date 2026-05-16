@@ -39,7 +39,7 @@ function LineageRow({
       onClick={() => onOpen?.(s)}
       style={{ paddingLeft: depth * 16 + 12 }}
       className={cn(
-        "group w-full text-left flex items-center gap-2 pr-3 py-2 transition-none",
+        "group w-full text-left flex items-center gap-2 pr-3 py-2 transition-colors duration-150 ease-out",
         "border-b border-border-soft last:border-b-0",
         current
           ? "border-l-2 border-accent bg-surface-overlay cursor-default"
@@ -55,7 +55,7 @@ function LineageRow({
       >
         {s.session_id.slice(0, 8)}
       </span>
-      <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
+      <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
         {role}
       </span>
       <div className="flex-1" />
@@ -64,7 +64,7 @@ function LineageRow({
       </span>
       <span
         className={cn(
-          "font-mono text-mono-mini uppercase tracking-[0.05em] shrink-0",
+          "font-mono text-mono-mini uppercase tracking-[0.08em] shrink-0",
           toneTextClass(tone),
         )}
       >

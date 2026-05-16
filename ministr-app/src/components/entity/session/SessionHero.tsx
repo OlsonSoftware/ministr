@@ -135,7 +135,7 @@ export function SessionHero({
       <p
         aria-live="polite"
         aria-atomic="true"
-        className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim"
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim"
       >
         {session.parent_session_id && (
           <button
@@ -143,7 +143,7 @@ export function SessionHero({
             onClick={onOpenParent}
             disabled={!onOpenParent}
             className={cn(
-              "uppercase tracking-[0.05em] transition-none",
+              "uppercase tracking-[0.08em] transition-colors duration-150 ease-out",
               onOpenParent
                 ? "text-accent hover:underline cursor-pointer"
                 : "text-text-dim cursor-default",
@@ -158,7 +158,7 @@ export function SessionHero({
           </span>
         )}
         {session.client_name && <span>client {session.client_name}</span>}
-        <span className={cn(fresh && "ministr-flash text-text")}>
+        <span className={cn(fresh && "ministr-pulse text-text")}>
           turn {session.current_turn}
         </span>
       </p>
@@ -188,7 +188,7 @@ export function SessionHero({
             </span>
             <span
               className={cn(
-                "font-mono text-sm font-bold uppercase tracking-[0.05em]",
+                "font-mono text-sm font-bold uppercase tracking-[0.08em]",
                 toneTextClass(status.tone),
               )}
             >

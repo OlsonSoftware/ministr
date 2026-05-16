@@ -44,13 +44,13 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-border-soft bg-surface-overlay">
-          <h2 className="font-serif text-lg font-bold text-text">
+          <h2 className="font-sans text-lg font-bold text-text">
             Keyboard shortcuts
           </h2>
           <button
             onClick={onClose}
             aria-label="Close"
-            className="grid h-6 w-6 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
+            className="grid h-6 w-6 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
           >
             <X className="h-3 w-3" strokeWidth={2}/>
           </button>
@@ -60,10 +60,10 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
           {SECTIONS.map((section, sectionIdx) => (
             <div key={section.title}>
               <div className="flex items-baseline gap-3 mb-2">
-                <span className="font-serif text-base font-normal text-text-dim tabular-nums shrink-0 w-6">
+                <span className="font-sans text-base font-normal text-text-dim tabular-nums shrink-0 w-6">
                   §{sectionIdx + 1}
                 </span>
-                <h3 className="font-serif text-base font-bold text-text">
+                <h3 className="font-sans text-base font-bold text-text">
                   {section.title}
                 </h3>
               </div>
@@ -78,7 +78,7 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
                       {item.keys.map((k, i) => (
                         <kbd
                           key={i}
-                          className="border border-border-soft bg-surface-overlay px-1.5 py-0 font-mono text-xs font-semibold text-text min-w-[22px] text-center leading-tight rounded-sm"
+                          className="border border-border-soft bg-surface-overlay px-1.5 py-0 font-mono text-xs font-semibold text-text min-w-[22px] text-center leading-tight rounded-md"
                         >
                           {k}
                         </kbd>
@@ -91,7 +91,7 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
           ))}
         </div>
 
-        <div className="px-5 py-3 border-t border-border-soft bg-surface-overlay font-serif text-sm italic text-text-dim">
+        <div className="px-5 py-3 border-t border-border-soft bg-surface-overlay font-sans text-sm italic text-text-dim">
           On Windows / Linux, use Ctrl where ⌘ is shown.
         </div>
       </div>

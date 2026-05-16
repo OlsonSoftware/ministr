@@ -103,7 +103,7 @@ function StepIndicator({ step }: { step: Step }) {
   ];
   const currentIdx = items.findIndex((i) => i.key === step);
   return (
-    <ol className="flex items-center gap-2 font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]">
+    <ol className="flex items-center gap-2 font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]">
       {items.map((item, idx) => {
         const isActive = idx === currentIdx;
         const isDone = idx < currentIdx;
@@ -111,7 +111,7 @@ function StepIndicator({ step }: { step: Step }) {
           <li key={item.key} className="flex items-center gap-2">
             <span
               className={cn(
-                "inline-flex h-5 w-5 items-center justify-center border-2",
+                "inline-flex h-5 w-5 items-center justify-center border",
                 isActive
                   ? "border-accent text-accent bg-surface"
                   : isDone
@@ -231,7 +231,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
 
   return (
     <div>
-      <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-accent mb-3">
+      <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-accent mb-3">
         Step 1 of 3 · Welcome
       </p>
       <h1 className="text-display text-text">
@@ -239,7 +239,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
         <br />
         <span className="text-text-dim">anything.</span>
       </h1>
-      <p className="font-serif text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
+      <p className="font-sans text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
         Pick a folder. ministr indexes it locally — code, docs, symbols,
         cross-language bridges — then answers questions about it with cited
         source.
@@ -266,9 +266,9 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
       )}
 
       {detected && (
-        <div className="mt-6 border-2 border-border bg-surface">
+        <div className="mt-6 border border-border bg-surface">
           <header className="flex items-center justify-between gap-2 border-b-2 border-border bg-surface-overlay px-4 py-2">
-            <h2 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text">
+            <h2 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text">
               {detected.length === 0
                 ? "No projects detected"
                 : `Detected ${detected.length} project${detected.length === 1 ? "" : "s"}`}
@@ -277,8 +277,8 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
               <button
                 onClick={toggleAll}
                 className={cn(
-                  "font-mono text-mono-mini font-semibold uppercase tracking-[0.05em]",
-                  "text-text-dim hover:text-text cursor-pointer transition-none",
+                  "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]",
+                  "text-text-dim hover:text-text cursor-pointer transition-colors duration-150 ease-out",
                 )}
               >
                 {selected.size === detected.length
@@ -290,7 +290,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
 
           {detected.length === 0 ? (
             <div className="px-4 py-6">
-              <p className="font-serif text-sm italic text-text-dim mb-3">
+              <p className="font-sans text-sm italic text-text-dim mb-3">
                 Nothing in the usual places. Try Pick a folder.
               </p>
               <Button
@@ -310,7 +310,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
                     <li key={p.path}>
                       <label
                         className={cn(
-                          "flex items-start gap-3 px-4 py-2.5 cursor-pointer transition-none",
+                          "flex items-start gap-3 px-4 py-2.5 cursor-pointer transition-colors duration-150 ease-out",
                           "hover:bg-surface-overlay",
                           isSelected && "bg-surface-overlay",
                         )}
@@ -419,13 +419,13 @@ function StepIndex({
 
   return (
     <div>
-      <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-accent mb-3">
+      <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-accent mb-3">
         Step 2 of 3 · Indexing
       </p>
       <h1 className="text-display text-text">
         {allComplete ? "All set." : "Reading your code…"}
       </h1>
-      <p className="font-serif text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
+      <p className="font-sans text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
         ministr scans every file once, extracts symbols + cross-language
         links, and embeds the chunks for retrieval. You can continue in
         the background as soon as the first project is ready.
@@ -433,7 +433,7 @@ function StepIndex({
 
       <ul className="mt-8 space-y-3">
         {watched.length === 0 && (
-          <li className="font-serif italic text-sm text-text-dim">
+          <li className="font-sans italic text-sm text-text-dim">
             Waiting for the daemon to register your project…
           </li>
         )}
@@ -448,13 +448,13 @@ function StepIndex({
           return (
             <li
               key={c.id}
-              className="border-2 border-border bg-surface px-4 py-3"
+              className="border border-border bg-surface px-4 py-3"
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="font-mono text-sm font-bold text-text truncate">
                   {c.display_name ?? c.id}
                 </span>
-                <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+                <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
                   {done
                     ? "Ready"
                     : indexing
@@ -505,7 +505,7 @@ function StepConnect({ onDone }: { onDone: () => void }) {
 
   return (
     <div>
-      <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-accent mb-3">
+      <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-accent mb-3">
         Step 3 of 3 · Connect
       </p>
       <h1 className="text-display text-text">
@@ -513,7 +513,7 @@ function StepConnect({ onDone }: { onDone: () => void }) {
         <br />
         <span className="text-text-dim">AI tool.</span>
       </h1>
-      <p className="font-serif text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
+      <p className="font-sans text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
         ministr is most useful when your AI assistant can ask it questions on
         your behalf. Click Connect on any detected client below to write the
         config file — for CLI clients we'll run a live test, for editors
@@ -560,8 +560,8 @@ function PrimaryAction({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "group relative flex flex-col items-start gap-2 p-5 text-left cursor-pointer transition-none",
-        "border-2 border-border bg-surface",
+        "group relative flex flex-col items-start gap-2 p-5 text-left cursor-pointer transition-colors duration-150 ease-out",
+        "border border-border bg-surface",
         "hover:bg-surface-overlay hover:border-accent",
         "disabled:opacity-50 disabled:cursor-not-allowed",
         "shadow-sm",
@@ -580,7 +580,7 @@ function PrimaryAction({
           {title}
         </span>
       </div>
-      <p className="font-serif text-sm italic text-text-muted">{hint}</p>
+      <p className="font-sans text-sm italic text-text-muted">{hint}</p>
       <ArrowRight
         className="absolute top-4 right-4 h-4 w-4 text-text-dim group-hover:text-accent"
         strokeWidth={2.5}
@@ -594,11 +594,11 @@ function Capability({ title, hint }: { title: string; hint: string }) {
     <div className="border border-border-soft bg-surface px-3 py-2.5">
       <div className="flex items-center gap-1.5">
         <Sparkles className="h-3 w-3 text-accent" strokeWidth={2.5} />
-        <h3 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text">
+        <h3 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text">
           {title}
         </h3>
       </div>
-      <p className="font-serif text-xs italic text-text-dim mt-1 leading-relaxed">
+      <p className="font-sans text-xs italic text-text-dim mt-1 leading-relaxed">
         {hint}
       </p>
     </div>

@@ -118,11 +118,11 @@ export function ActivityTimeline({
                 key={`${e.timestamp_ms}-${e.tool}-${e.corpus_id}`}
                 className={cn(
                   "flex flex-col gap-1 border-b border-border-soft last:border-b-0 px-3 py-2",
-                  fresh && "ministr-flash",
+                  fresh && "ministr-pulse",
                 )}
               >
                 <div className="flex items-baseline gap-2">
-                  <span className="w-16 shrink-0 font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text-dim">
+                  <span className="w-16 shrink-0 font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim">
                     {tag(e.tool)}
                   </span>
                   <span className="flex-1 min-w-0 truncate font-mono text-sm font-semibold text-text">
@@ -134,12 +134,12 @@ export function ActivityTimeline({
                 </div>
                 <div className="flex items-center gap-2 pl-[4.5rem] font-mono text-mono-mini">
                   {e.resolution && (
-                    <span className="border border-border-soft px-1 uppercase tracking-[0.05em] text-text-dim rounded-sm">
+                    <span className="border border-border-soft px-1 uppercase tracking-[0.08em] text-text-dim rounded-md">
                       {e.resolution}
                     </span>
                   )}
                   {e.cache_hit && (
-                    <span className="border border-border-soft px-1 uppercase tracking-[0.05em] text-success rounded-sm">
+                    <span className="border border-border-soft px-1 uppercase tracking-[0.08em] text-success rounded-md">
                       cache hit
                     </span>
                   )}
@@ -164,7 +164,7 @@ export function ActivityTimeline({
                   {e.pressure && PRESSURE_CHIP[e.pressure] && (
                     <span
                       className={cn(
-                        "ml-auto uppercase tracking-[0.05em]",
+                        "ml-auto uppercase tracking-[0.08em]",
                         PRESSURE_CHIP[e.pressure],
                       )}
                     >
@@ -180,7 +180,7 @@ export function ActivityTimeline({
           <button
             type="button"
             onClick={() => setLimit((l) => l + PAGE)}
-            className="w-full text-left border-t border-border-soft px-3 py-2 font-mono text-mono-mini uppercase tracking-[0.05em] text-text-muted hover:bg-surface-overlay cursor-pointer transition-colors duration-150"
+            className="w-full text-left border-t border-border-soft px-3 py-2 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-muted hover:bg-surface-overlay cursor-pointer transition-colors duration-150"
           >
             … {filtered.length - limit} more · load more
           </button>
@@ -238,7 +238,7 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        "px-1.5 py-0.5 font-mono text-mono-mini uppercase tracking-[0.05em] border rounded-sm cursor-pointer transition-colors duration-150",
+        "px-1.5 py-0.5 font-mono text-mono-mini uppercase tracking-[0.08em] border rounded-md cursor-pointer transition-colors duration-150",
         active
           ? "border-accent bg-accent text-[var(--color-accent-fg-on)]"
           : "border-border-soft text-text-muted hover:border-border",

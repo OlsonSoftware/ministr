@@ -167,7 +167,7 @@ export function FileView({ entity }: Props) {
                     key={k}
                     onClick={() => toggleKind(k)}
                     className={cn(
-                      "inline-flex items-center gap-1.5 border px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none rounded-sm",
+                      "inline-flex items-center gap-1.5 border px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] cursor-pointer transition-colors duration-150 ease-out rounded-md",
                       active
                         ? "border-accent bg-surface-overlay text-text"
                         : "border-border-soft bg-surface text-text-muted hover:border-border hover:text-text",

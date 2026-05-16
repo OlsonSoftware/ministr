@@ -258,16 +258,8 @@ body {
   0%, 100% { box-shadow: 0 0 0 0 rgb(var(--color-accent-glow) / 0.5); }
   50%      { box-shadow: 0 0 0 5px rgb(var(--color-accent-glow) / 0); }
 }
-/* Designed "fresh" pulse — replaces the old hard-step .ministr-flash. */
+/* Designed "fresh" pulse — the single sanctioned just-changed cue. */
 .ministr-pulse { animation: ministr-pulse 1.4s var(--ease-flow) infinite; }
-
-/* Compat: legacy .ministr-flash callers get a one-shot accent tint
-   (the old hard-step flash) until they migrate to .ministr-pulse. */
-@keyframes ministr-flash {
-  0% { color: var(--color-accent); }
-  100% { color: inherit; }
-}
-.ministr-flash { animation: ministr-flash 700ms var(--ease-flow) both; }
 
 @keyframes ministr-shimmer {
   100% { transform: translateX(100%); }
@@ -351,7 +343,6 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .ministr-blink,
   .ministr-pulse,
-  .ministr-flash,
   .ministr-skeleton::after,
   .bg-accent-live {
     animation: none !important;

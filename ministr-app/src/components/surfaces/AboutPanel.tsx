@@ -143,7 +143,7 @@ export function AboutPanel({
         </div>
       </Zone>
 
-      <footer className="flex items-center justify-between gap-3 border-t-2 border-border px-3 py-2 font-mono text-xs uppercase tracking-[0.05em] text-text-dim">
+      <footer className="flex items-center justify-between gap-3 border-t-2 border-border px-3 py-2 font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
         <button
           onClick={copyVersion}
           title="Click to copy version"
@@ -156,7 +156,7 @@ export function AboutPanel({
         </button>
         <button
           onClick={checkForUpdates}
-          className="inline-flex items-center gap-1 border-2 border-border bg-surface px-2 py-0.5 text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
+          className="inline-flex items-center gap-1 border border-border bg-surface px-2 py-0.5 text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
         >
           <ExternalLink className="h-3 w-3" strokeWidth={2.5} />
           Check for updates
@@ -175,7 +175,7 @@ export function AboutPanel({
               Clears local-storage preferences (theme, default tab, density,
               drawer state, active project).
             </p>
-            <p className="font-sans text-xs tracking-[0.05em] text-text-dim mt-2">
+            <p className="font-sans text-xs tracking-[0.08em] text-text-dim mt-2">
               Your project list is not touched.
             </p>
           </>
@@ -200,7 +200,7 @@ export function AboutPanel({
               </span>{" "}
               and triggers a re-index of each.
             </p>
-            <p className="font-sans text-xs tracking-[0.05em] text-text-dim mt-2">
+            <p className="font-sans text-xs tracking-[0.08em] text-text-dim mt-2">
               Source files on disk are not touched.
             </p>
           </>

@@ -65,7 +65,7 @@ export function GeneralSettings({
                   key={key}
                   onClick={() => onThemeChange(key)}
                   className={cn(
-                    "inline-flex flex-col items-center gap-1 border border-border-soft w-20 h-14 cursor-pointer transition-none -ml-[1px] first:ml-0 justify-center",
+                    "inline-flex flex-col items-center gap-1 border border-border-soft w-20 h-14 cursor-pointer transition-colors duration-150 ease-out -ml-[1px] first:ml-0 justify-center",
                     active
                       ? "border-accent bg-surface-overlay text-text z-10 relative"
                       : "bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
@@ -86,7 +86,7 @@ export function GeneralSettings({
           <select
             value={defaultTab}
             onChange={(e) => setDefaultTab(e.target.value as DefaultTab)}
-            className="h-9 border border-border-soft bg-surface px-2 text-sm font-sans font-medium text-text cursor-pointer focus:outline-none focus:border-accent transition-none rounded-sm"
+            className="h-9 border border-border-soft bg-surface px-2 text-sm font-sans font-medium text-text cursor-pointer focus:outline-none focus:border-accent transition-colors duration-150 ease-out rounded-md"
           >
             {DEFAULT_TAB_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -113,7 +113,7 @@ export function GeneralSettings({
                   key={key}
                   onClick={() => setDensity(key as Density)}
                   className={cn(
-                    "border border-border-soft px-3 h-9 cursor-pointer transition-none -ml-[1px] first:ml-0 font-sans text-sm font-medium",
+                    "border border-border-soft px-3 h-9 cursor-pointer transition-colors duration-150 ease-out -ml-[1px] first:ml-0 font-sans text-sm font-medium",
                     active
                       ? "border-accent bg-surface-overlay text-text z-10 relative"
                       : "bg-surface text-text-muted hover:text-text hover:bg-surface-overlay",

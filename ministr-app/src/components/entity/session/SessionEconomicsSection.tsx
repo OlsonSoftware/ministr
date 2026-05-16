@@ -65,7 +65,7 @@ export function SessionEconomicsSection({ chapter, session }: Props) {
           tone={v.savingsRate ? "success" : undefined}
         />
       </div>
-      <p className="border-t border-border-soft px-3 py-2 font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+      <p className="border-t border-border-soft px-3 py-2 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
         Reclaimed ·{" "}
         <span className="text-text">
           {hasTokenSplit

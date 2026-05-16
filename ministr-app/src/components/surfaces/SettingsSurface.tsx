@@ -63,9 +63,9 @@ export function SettingsSurface(props: Props) {
               onClick={() => setTab(t.id)}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "px-4 py-2.5 cursor-pointer transition-none -mb-[2px]",
+                "px-4 py-2.5 cursor-pointer transition-colors duration-150 ease-out -mb-[2px]",
                 "border-b-[3px]",
-                "font-mono text-xs font-semibold uppercase tracking-[0.05em]",
+                "font-mono text-xs font-semibold uppercase tracking-[0.08em]",
                 active
                   ? "border-b-accent text-text"
                   : "border-b-transparent text-text-muted hover:text-text",

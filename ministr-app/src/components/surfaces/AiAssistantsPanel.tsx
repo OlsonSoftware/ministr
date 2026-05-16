@@ -49,8 +49,8 @@ export function AiAssistantsPanel({ corpora, activeCorpusId }: Props) {
     return (
       <div className="space-y-4">
         <Header />
-        <div className="border-2 border-border-soft bg-surface p-4">
-          <p className="font-serif text-sm text-text-muted">
+        <div className="border border-border-soft bg-surface p-4">
+          <p className="font-sans text-sm text-text-muted">
             Add a project first — the wizard writes per-project config files
             (and a user-global one for Codex). Visit Projects to add one.
           </p>
@@ -64,7 +64,7 @@ export function AiAssistantsPanel({ corpora, activeCorpusId }: Props) {
       <Header projectRoot={projectRoot} onRefresh={refresh} loading={loading} />
 
       {error && (
-        <div className="border-2 border-danger bg-surface p-3 flex items-start gap-2">
+        <div className="border border-danger bg-surface p-3 flex items-start gap-2">
           <AlertTriangle
             className="h-4 w-4 text-danger shrink-0 mt-0.5"
             strokeWidth={2.5}
@@ -100,10 +100,10 @@ function Header({
   return (
     <header className="flex items-start justify-between gap-3">
       <div className="space-y-1">
-        <h2 className="font-mono text-sm font-bold uppercase tracking-[0.05em] text-text">
+        <h2 className="font-mono text-sm font-bold uppercase tracking-[0.08em] text-text">
           AI assistants
         </h2>
-        <p className="font-serif text-sm text-text-muted">
+        <p className="font-sans text-sm text-text-muted">
           Connect ministr to the AI tools you use — one click each.
         </p>
         {projectRoot && (
@@ -149,7 +149,7 @@ function ClientRow({
   return (
     <li
       className={cn(
-        "border-2 bg-surface p-4 space-y-3",
+        "border bg-surface p-4 space-y-3",
         tone === "success" && "border-success",
         tone === "warning" && "border-warning",
         tone === "muted" && "border-border-soft",
@@ -160,7 +160,7 @@ function ClientRow({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <StateDot tone={tone} />
-            <span className="font-mono text-sm font-bold tracking-[0.05em] text-text">
+            <span className="font-mono text-sm font-bold tracking-[0.08em] text-text">
               {info.display_name}
             </span>
           </div>
@@ -179,7 +179,7 @@ function ClientRow({
             </p>
           )}
           {lastTest?.manual_verify_needed && (
-            <p className="font-serif italic text-mono-mini text-text-muted mt-1">
+            <p className="font-sans italic text-mono-mini text-text-muted mt-1">
               Editor clients can't be reached programmatically. Restart{" "}
               {info.display_name} and hit Re-test to confirm it picked up the
               new config.

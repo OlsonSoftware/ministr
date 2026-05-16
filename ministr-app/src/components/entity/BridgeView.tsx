@@ -260,10 +260,10 @@ function CodePane({
   return (
     <div className="border border-border-soft bg-surface flex flex-col min-h-0">
       <div className="flex items-baseline justify-between border-b border-border-soft bg-surface-overlay px-3 py-2 shrink-0">
-        <span className="font-serif text-base font-bold text-text">
+        <span className="font-sans text-base font-bold text-text">
           {title}
         </span>
-        <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
           {language}
         </span>
       </div>
@@ -276,7 +276,7 @@ function CodePane({
         </p>
       </div>
       {loading ? (
-        <p className="px-3 py-2 font-serif text-sm italic text-text-dim">
+        <p className="px-3 py-2 font-sans text-sm italic text-text-dim">
           Loading<span className="ministr-blink">_</span>
         </p>
       ) : (
@@ -284,7 +284,7 @@ function CodePane({
           {source ?? "// (no source)"}
         </pre>
       )}
-      <p className="px-3 py-1 font-serif text-xs italic text-text-dim border-t border-border-soft">
+      <p className="px-3 py-1 font-sans text-xs italic text-text-dim border-t border-border-soft">
         Starting at line {startLine}.
       </p>
     </div>

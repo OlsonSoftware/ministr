@@ -123,7 +123,7 @@ function ModePivot({
             key={it.id}
             onClick={() => onChange(it.id)}
             className={cn(
-              "flex-1 flex flex-col items-start gap-0.5 px-3 py-2 cursor-pointer transition-none text-left",
+              "flex-1 flex flex-col items-start gap-0.5 px-3 py-2 cursor-pointer transition-colors duration-150 ease-out text-left",
               i > 0 && "border-l border-border-soft",
               active
                 ? "bg-surface-overlay text-text"
@@ -132,7 +132,7 @@ function ModePivot({
           >
             <span
               className={cn(
-                "font-mono text-mono-mini uppercase tracking-[0.05em]",
+                "font-mono text-mono-mini uppercase tracking-[0.08em]",
                 active ? "text-accent" : "text-text-dim",
               )}
             >

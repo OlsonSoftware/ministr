@@ -298,7 +298,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
       {/* Trail strip — visible only with 1+ entries */}
       {trail.length > 0 && (
         <div className="flex items-center gap-2 border border-border-soft bg-surface-overlay px-2 py-1 shrink-0">
-          <span className="font-serif text-sm font-bold text-text-dim shrink-0">
+          <span className="font-sans text-sm font-bold text-text-dim shrink-0">
             Trail
           </span>
           <div className="flex items-center gap-1 flex-wrap min-w-0">
@@ -306,7 +306,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
               <button
                 key={`${t.id}-${i}`}
                 onClick={() => jumpToTrailEntry(i)}
-                className="inline-flex items-center gap-1 border border-border-soft bg-surface px-2 py-0.5 font-mono text-xs font-semibold text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
+                className="inline-flex items-center gap-1 border border-border-soft bg-surface px-2 py-0.5 font-mono text-xs font-semibold text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
               >
                 <ArrowLeft className="h-2.5 w-2.5" strokeWidth={2} />
                 <span className="truncate max-w-[120px]">{t.name}</span>
@@ -316,7 +316,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
           <button
             onClick={clearTrail}
             aria-label="Clear trail"
-            className="ml-auto grid h-5 w-5 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-none shrink-0 rounded-sm"
+            className="ml-auto grid h-5 w-5 place-items-center border border-border-soft text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out shrink-0 rounded-md"
           >
             <X className="h-2.5 w-2.5" strokeWidth={2} />
           </button>
@@ -338,7 +338,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="search symbols"
-              className="h-9 flex-1 border border-border-soft bg-surface px-2 text-sm font-sans text-text placeholder:text-text-dim focus:outline-none focus:border-accent transition-none"
+              className="h-9 flex-1 border border-border-soft bg-surface px-2 text-sm font-sans text-text placeholder:text-text-dim focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
             />
             <Button type="submit" disabled={loading} size="default">
               {loading ? "…" : "Go"}
@@ -353,11 +353,11 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                   key={k}
                   onClick={() => toggleKind(k)}
                   className={cn(
-                    "border px-2 py-0.5 text-mono-mini font-mono font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none",
+                    "border px-2 py-0.5 text-mono-mini font-mono font-semibold uppercase tracking-[0.08em] cursor-pointer transition-colors duration-150 ease-out",
                     active
                       ? "border-accent bg-surface-overlay text-text"
                       : "border-border-soft bg-surface text-text-muted hover:border-border hover:text-text",
-                  "rounded-sm")}
+                  "rounded-md")}
                 >
                   {k}
                 </button>
@@ -367,7 +367,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
 
           <div className="flex-1 min-h-0 overflow-y-auto border border-border-soft bg-surface">
             <div className="flex items-baseline justify-between gap-3 border-b border-border-soft bg-surface-overlay px-3 py-1.5 sticky top-0">
-              <h3 className="font-serif text-sm font-bold text-text">
+              <h3 className="font-sans text-sm font-bold text-text">
                 {symbols.length === 0 && !query ? "Browse" : "Matches"}
               </h3>
               <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -375,7 +375,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
               </span>
             </div>
             {visibleSymbols.length === 0 ? (
-              <p className="px-3 py-4 font-serif text-sm italic text-text-dim">
+              <p className="px-3 py-4 font-sans text-sm italic text-text-dim">
                 {loading ? "Loading_" : query ? "No matches." : "No symbols."}
               </p>
             ) : (
@@ -386,7 +386,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                     key={s.id}
                     onClick={() => selectSymbol(s)}
                     className={cn(
-                      "relative w-full text-left flex items-center gap-2 px-3 py-1.5 border-b border-border-soft last:border-b-0 cursor-pointer transition-none",
+                      "relative w-full text-left flex items-center gap-2 px-3 py-1.5 border-b border-border-soft last:border-b-0 cursor-pointer transition-colors duration-150 ease-out",
                       isSelected
                         ? "bg-surface-overlay text-text"
                         : "text-text-muted hover:bg-surface-overlay hover:text-text",
@@ -395,7 +395,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                     {isSelected && (
                       <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-accent" />
                     )}
-                    <span className="font-mono text-mono-mini uppercase tracking-[0.05em] w-12 shrink-0 text-text-dim">
+                    <span className="font-mono text-mono-mini uppercase tracking-[0.08em] w-12 shrink-0 text-text-dim">
                       {s.kind}
                     </span>
                     <span className="font-mono text-sm font-semibold truncate">
@@ -475,10 +475,10 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
               <div className="grid h-12 w-12 place-items-center border border-border-soft bg-surface-overlay text-text-muted">
                 ⌺
               </div>
-              <p className="font-sans text-xs font-semibold tracking-[0.05em] text-text">
+              <p className="font-sans text-xs font-semibold tracking-[0.08em] text-text">
                 Pick a symbol
               </p>
-              <p className="max-w-xs font-sans text-xs tracking-[0.05em] text-text-dim">
+              <p className="max-w-xs font-sans text-xs tracking-[0.08em] text-text-dim">
                 Click any node in the graph to pivot.
               </p>
             </div>
@@ -491,12 +491,12 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
             <>
               <section className="border border-border-soft bg-surface p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent">
+                  <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
                     Definition
                   </span>
                   <div className="flex items-center gap-2">
                     {selected.visibility && (
-                      <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim">
+                      <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
                         {selected.visibility}
                       </span>
                     )}
@@ -508,7 +508,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                           symbol: selected,
                         })
                       }
-                      className="inline-flex items-center gap-1 border-2 border-border bg-surface px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.05em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
+                      className="inline-flex items-center gap-1 border border-border bg-surface px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
                       title="Open full panel"
                     >
                       <ExternalLink className="h-3 w-3" strokeWidth={2.5} />
@@ -548,7 +548,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
 
               <section className="border border-border-soft bg-surface">
                 <div className="border-b-2 border-border bg-surface-overlay px-2 py-1 flex items-center justify-between">
-                  <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text">
+                  <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">
                     REFERENCES
                   </span>
                   <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -567,7 +567,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                           key={k}
                           onClick={() => toggleRefKind(k)}
                           className={cn(
-                            "inline-flex items-center gap-1 border-2 border-border px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.05em] cursor-pointer transition-none",
+                            "inline-flex items-center gap-1 border border-border px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] cursor-pointer transition-colors duration-150 ease-out",
                             active
                               ? "bg-accent text-[var(--color-accent-fg-on)]"
                               : "bg-surface text-text hover:bg-surface-overlay",
@@ -582,7 +582,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                 )}
 
                 {visibleRefs.length === 0 ? (
-                  <p className="px-2 py-3 font-mono text-mono-mini tracking-[0.05em] text-text-dim">
+                  <p className="px-2 py-3 font-mono text-mono-mini tracking-[0.08em] text-text-dim">
                     {refs.length === 0 ? "no references" : "no matches"}
                   </p>
                 ) : (
@@ -591,7 +591,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                       key={i}
                       onClick={() => pivotToName(r.from_name)}
                       title={`Pivot to ${r.from_name}`}
-                      className="w-full text-left flex items-center gap-2 border-b-2 border-border last:border-b-0 px-2 py-1.5 font-mono text-mono-mini cursor-pointer transition-none hover:bg-surface-overlay hover:text-text"
+                      className="w-full text-left flex items-center gap-2 border-b-2 border-border last:border-b-0 px-2 py-1.5 font-mono text-mono-mini cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text"
                     >
                       <span className="text-text truncate flex-1">
                         {r.from_name}
@@ -603,7 +603,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                       <span className="text-text truncate flex-1">
                         {r.to_name}
                       </span>
-                      <span className="border border-border-soft px-1 text-mono-micro uppercase tracking-[0.05em] opacity-70 shrink-0">
+                      <span className="border border-border-soft px-1 text-mono-micro uppercase tracking-[0.08em] opacity-70 shrink-0">
                         {r.ref_kind}
                       </span>
                     </button>
@@ -612,7 +612,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
               </section>
             </>
           ) : (
-            <div className="border-2 border-dotted border-border bg-surface px-3 py-6 text-center font-sans text-xs tracking-[0.05em] text-text-dim">
+            <div className="border border-dotted border-border bg-surface px-3 py-6 text-center font-sans text-xs tracking-[0.08em] text-text-dim">
               Select a symbol for details
             </div>
           )}

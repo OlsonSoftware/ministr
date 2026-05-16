@@ -78,7 +78,7 @@ export function ProjectSessions({ corpus }: { corpus: CorpusInfo }) {
     <section className="pt-3 border-t border-border-soft">
       {/* Section header — label · live pill · poll heartbeat */}
       <div className="flex items-center gap-2 mb-3">
-        <h3 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.05em] text-text">
+        <h3 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text">
           Sessions
         </h3>
         {vitals.total > 0 && (
@@ -88,7 +88,7 @@ export function ProjectSessions({ corpus }: { corpus: CorpusInfo }) {
           </span>
         )}
         <div className="flex-1" />
-        <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
           poll
         </span>
         <span
@@ -101,7 +101,7 @@ export function ProjectSessions({ corpus }: { corpus: CorpusInfo }) {
       </div>
 
       {!loaded ? (
-        <p className="font-serif text-base italic text-text-dim py-4">
+        <p className="font-sans text-base italic text-text-dim py-4">
           Loading<span className="ministr-blink">_</span>
         </p>
       ) : sessions.length === 0 ? (
@@ -175,7 +175,7 @@ export function ProjectSessions({ corpus }: { corpus: CorpusInfo }) {
                   })
                 }
                 className={cn(
-                  "flex items-center gap-2 px-3 py-1.5 text-left min-w-0 transition-none",
+                  "flex items-center gap-2 px-3 py-1.5 text-left min-w-0 transition-colors duration-150 ease-out",
                   worst && "cursor-pointer hover:bg-surface-overlay",
                 )}
               >
@@ -187,7 +187,7 @@ export function ProjectSessions({ corpus }: { corpus: CorpusInfo }) {
                 ) : (
                   <StatusDot tone={worstTone} />
                 )}
-                <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
+                <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
                   Watch
                 </span>
                 {worst ? (
@@ -206,7 +206,7 @@ export function ProjectSessions({ corpus }: { corpus: CorpusInfo }) {
                 )}
                 <div className="flex-1" />
                 {worst && (
-                  <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-accent shrink-0">
+                  <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-accent shrink-0">
                     open ›
                   </span>
                 )}
@@ -252,7 +252,7 @@ function VStat({
 }) {
   return (
     <div className="flex items-center gap-2 px-3 py-1 border-r border-border-soft last:border-r-0 min-w-0 flex-1">
-      <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
+      <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
         {label}
       </span>
       <span

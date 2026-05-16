@@ -298,7 +298,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
                 if (e.target.value === "") clearResults();
               }}
               placeholder="search anything · sections, symbols, bridges"
-              className="h-12 flex-1 border border-border-soft bg-surface px-3 text-base font-sans text-text placeholder:text-text-dim placeholder:normal-case focus:outline-none focus:border-accent transition-none"
+              className="h-12 flex-1 border border-border-soft bg-surface px-3 text-base font-sans text-text placeholder:text-text-dim placeholder:normal-case focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
             />
             <Button type="submit" size="lg" disabled={loading}>
               {loading ? "…" : "Run"}
@@ -320,7 +320,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
         {/* History pills — visible only on focus and only when input is empty. */}
         {inputFocused && !query.trim() && history.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
+            <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
               Recent
             </span>
             {history.map((h, i) => (
@@ -330,7 +330,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
                   setQuery(h);
                   submit(h);
                 }}
-                className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
+                className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
               >
                 <span className="font-mono text-mono-mini text-text-dim tabular-nums">{i + 1}</span>
                 <span className="font-mono">{h}</span>
@@ -341,14 +341,14 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
 
         {/* Quick probes — always visible. Click prefills + auto-runs. */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
             Probes
           </span>
           {probes.map((p) => (
             <button
               key={p}
               onClick={() => applyProbe(p)}
-              className="border border-border-soft bg-surface px-2 py-0.5 font-mono text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none rounded-sm"
+              className="border border-border-soft bg-surface px-2 py-0.5 font-mono text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
             >
               {p}
             </button>
@@ -360,7 +360,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
           <div className="border border-danger bg-surface p-3 flex items-start gap-3 border-l-2">
             <AlertTriangle className="h-4 w-4 text-danger shrink-0 mt-0.5" strokeWidth={2} />
             <div className="flex-1 min-w-0">
-              <p className="font-serif text-base font-bold text-danger">
+              <p className="font-sans text-base font-bold text-danger">
                 Query failed
               </p>
               <p className="font-sans text-sm text-text-muted mt-1 break-words">
@@ -524,7 +524,7 @@ function KindFilterStrip({
             onClick={() => onChange(key)}
             disabled={key !== "all" && count === 0}
             className={cn(
-              "border border-border-soft px-3 py-1.5 font-sans text-sm font-medium cursor-pointer transition-none -ml-[1px] first:ml-0 inline-flex items-center gap-1.5",
+              "border border-border-soft px-3 py-1.5 font-sans text-sm font-medium cursor-pointer transition-colors duration-150 ease-out -ml-[1px] first:ml-0 inline-flex items-center gap-1.5",
               active
                 ? "border-accent bg-surface-overlay text-text z-10 relative"
                 : "bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
@@ -616,21 +616,21 @@ function BlendedResults({
               <button
                 key={`${b.kind}-${i}`}
                 onClick={() => onOpenBridge(b)}
-                className="w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-none border-b border-border-soft last:border-b-0 hover:bg-surface-overlay hover:text-text items-center"
+                className="w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-colors duration-150 ease-out border-b border-border-soft last:border-b-0 hover:bg-surface-overlay hover:text-text items-center"
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.08em] opacity-70 shrink-0">
                     {b.export_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
                     {b.export_symbol || b.export_binding_key}
                   </span>
                 </span>
-                <span className="font-mono text-xs uppercase tracking-[0.05em] opacity-70 shrink-0">
+                <span className="font-mono text-xs uppercase tracking-[0.08em] opacity-70 shrink-0">
                   {b.kind}
                 </span>
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.08em] opacity-70 shrink-0">
                     {b.import_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
@@ -677,10 +677,10 @@ function BlendedGroup({
   return (
     <section>
       <header className="flex items-baseline gap-3 border-b border-border-soft bg-surface-overlay px-3 py-2 mb-2">
-        <span className="font-serif text-base font-normal text-text-dim tabular-nums shrink-0 w-6">
+        <span className="font-sans text-base font-normal text-text-dim tabular-nums shrink-0 w-6">
           §{idx}
         </span>
-        <h3 className="font-serif text-base font-bold text-text flex-1 min-w-0">
+        <h3 className="font-sans text-base font-bold text-text flex-1 min-w-0">
           {sentence}
         </h3>
         <span className="font-mono text-xs tabular-nums text-text-dim shrink-0">
@@ -717,7 +717,7 @@ function SymbolKindDashboard({
   if (symbols.length === 0)
     return (
       <Tile title="KIND DASHBOARD" subtitle="0">
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
           No symbols indexed
         </p>
       </Tile>
@@ -739,7 +739,7 @@ function SymbolKindDashboard({
             className="border border-border-soft bg-surface px-3 py-2 -m-[1px] flex flex-col"
           >
             <div className="flex items-baseline justify-between">
-              <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent">
+              <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
                 {kind}
               </span>
               <span className="font-mono text-base font-bold tabular-nums text-text">
@@ -778,7 +778,7 @@ function ConfidenceRibbonTile({
   if (bridges.length === 0)
     return (
       <Tile title="CONFIDENCE" subtitle="0">
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
           No bridges detected
         </p>
       </Tile>
@@ -814,7 +814,7 @@ function ConfidenceRibbonTile({
                   style={{ height: `${pct}%` }}
                 />
               </div>
-              <span className="font-mono text-mono-micro tracking-[0.05em] text-text-dim">
+              <span className="font-mono text-mono-micro tracking-[0.08em] text-text-dim">
                 {labels[i]}
               </span>
             </div>
@@ -877,7 +877,7 @@ function SurveyResults({
       {/* Score histogram strip */}
       <div className="border border-border-soft bg-surface">
         <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
-          <span className="font-sans text-xs font-bold tracking-[0.05em] text-text">
+          <span className="font-sans text-xs font-bold tracking-[0.08em] text-text">
             Score distribution
           </span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -910,20 +910,20 @@ function SurveyResults({
         {facets.length > 1 && (
           <aside className="w-44 shrink-0 border border-border-soft bg-surface self-start">
             <div className="border-b-2 border-border bg-surface-overlay px-2 py-1">
-              <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text">
+              <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">
                 FACETS
               </span>
             </div>
             <button
               onClick={() => setActiveFacet(null)}
               className={cn(
-                "w-full flex items-center justify-between border-b-2 border-border px-2 py-1 cursor-pointer transition-none",
+                "w-full flex items-center justify-between border-b-2 border-border px-2 py-1 cursor-pointer transition-colors duration-150 ease-out",
                 activeFacet === null
                   ? "bg-accent text-[var(--color-accent-fg-on)]"
                   : "bg-surface text-text hover:bg-surface-overlay",
               )}
             >
-              <span className="font-mono text-xs uppercase tracking-[0.05em] truncate">
+              <span className="font-mono text-xs uppercase tracking-[0.08em] truncate">
                 ALL
               </span>
               <span className="font-mono text-xs tabular-nums shrink-0">
@@ -938,13 +938,13 @@ function SurveyResults({
                     setActiveFacet(activeFacet === root ? null : root)
                   }
                   className={cn(
-                    "w-full flex items-center justify-between border-b-2 border-border last:border-b-0 px-2 py-1 cursor-pointer transition-none text-left",
+                    "w-full flex items-center justify-between border-b-2 border-border last:border-b-0 px-2 py-1 cursor-pointer transition-colors duration-150 ease-out text-left",
                     activeFacet === root
                       ? "bg-accent text-[var(--color-accent-fg-on)]"
                       : "bg-surface text-text hover:bg-surface-overlay",
                   )}
                 >
-                  <span className="font-mono text-xs tracking-[0.05em] truncate">
+                  <span className="font-mono text-xs tracking-[0.08em] truncate">
                     {root}
                   </span>
                   <span className="font-mono text-xs tabular-nums shrink-0">
@@ -1026,7 +1026,7 @@ function SymbolsResults({
       {/* Kind-count strip */}
       <div className="border border-border-soft bg-surface shrink-0">
         <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text">Kind breakdown</span>
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Kind breakdown</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
             {visible.length} / {symbols.length} SYMBOLS
           </span>
@@ -1039,13 +1039,13 @@ function SymbolsResults({
                 key={kind}
                 onClick={() => toggleKind(kind)}
                 className={cn(
-                  "border-2 border-border px-3 py-1.5 cursor-pointer transition-none -m-[1px] flex items-baseline gap-1.5",
+                  "border border-border px-3 py-1.5 cursor-pointer transition-colors duration-150 ease-out -m-[1px] flex items-baseline gap-1.5",
                   active
                     ? "bg-accent text-[var(--color-accent-fg-on)] z-10 relative"
                     : "bg-surface text-text hover:bg-surface-overlay",
                 )}
               >
-                <span className="font-mono text-xs font-bold uppercase tracking-[0.05em]">
+                <span className="font-mono text-xs font-bold uppercase tracking-[0.08em]">
                   {kind}
                 </span>
                 <span className="font-mono text-sm font-bold tabular-nums">
@@ -1092,19 +1092,19 @@ function SymbolsResults({
           {previewed ? (
             <div className="border border-border-soft bg-surface">
               <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-2 sticky top-0 z-10">
-                <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent">
+                <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
                   PREVIEW
                 </span>
                 <button
                   onClick={() => onOpenDetail(previewed)}
-                  className="border-2 border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.05em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
+                  className="border border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
                 >Full source →</button>
               </div>
               <div className="p-3 space-y-2">
                 <div className="font-mono text-xs font-bold text-text break-words">
                   {previewed.signature}
                 </div>
-                <div className="font-mono text-xs tracking-[0.05em] text-text-dim">
+                <div className="font-mono text-xs tracking-[0.08em] text-text-dim">
                   {previewed.module_path}
                 </div>
                 <div className="font-mono text-xs text-text-dim break-all">
@@ -1118,7 +1118,7 @@ function SymbolsResults({
               </div>
             </div>
           ) : (
-            <div className="border-2 border-dotted border-border bg-surface px-3 py-6 text-center font-sans text-xs tracking-[0.05em] text-text-dim">
+            <div className="border border-dotted border-border bg-surface px-3 py-6 text-center font-sans text-xs tracking-[0.08em] text-text-dim">
               Select a symbol to preview
             </div>
           )}
@@ -1205,7 +1205,7 @@ function BridgeResults({
       {/* Kind summary strip — proportional blocks */}
       <div className="border border-border-soft bg-surface shrink-0">
         <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text">Bridge surface</span>
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Bridge surface</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
             {visible.length} / {bridges.length} LINKS
           </span>
@@ -1220,14 +1220,14 @@ function BridgeResults({
                 onClick={() => setActiveKind(activeKind === kind ? null : kind)}
                 title={`${kind} · ${count} (${pct.toFixed(1)}%)`}
                 className={cn(
-                  "flex flex-col items-start justify-center border-2 border-border px-2 cursor-pointer transition-none -ml-[2px] first:ml-0 min-w-0",
+                  "flex flex-col items-start justify-center border border-border px-2 cursor-pointer transition-colors duration-150 ease-out -ml-[2px] first:ml-0 min-w-0",
                   active
                     ? "bg-accent text-[var(--color-accent-fg-on)] z-10 relative"
                     : "bg-surface text-text hover:bg-surface-overlay",
                 )}
                 style={{ width: `max(7%, ${pct}%)` }}
               >
-                <span className="font-mono text-mono-micro font-bold uppercase tracking-[0.05em] opacity-70 truncate w-full">
+                <span className="font-mono text-mono-micro font-bold uppercase tracking-[0.08em] opacity-70 truncate w-full">
                   {kind}
                 </span>
                 <span className="font-mono text-base font-bold tabular-nums leading-none mt-0.5">
@@ -1242,7 +1242,7 @@ function BridgeResults({
       {/* Visual rows: EXPORT — connector — IMPORT, click expands inline */}
       <div className="flex-1 min-h-0 overflow-y-auto border border-border-soft bg-surface">
         <div className="border-b-2 border-border bg-surface-overlay px-2 py-1 sticky top-0 z-10 flex items-center justify-between">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text">Bridge links</span>
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Bridge links</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
             Click to expand
           </span>
@@ -1254,25 +1254,25 @@ function BridgeResults({
               <button
                 onClick={() => setExpandedIdx(expanded ? null : i)}
                 className={cn(
-                  "w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-none items-center",
+                  "w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-colors duration-150 ease-out items-center",
                   expanded
                     ? "bg-accent text-[var(--color-accent-fg-on)]"
                     : "bg-surface text-text hover:bg-surface-overlay",
                 )}
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.08em] opacity-70 shrink-0">
                     {b.export_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
                     {b.export_symbol || b.export_binding_key}
                   </span>
                 </span>
-                <span className="font-mono text-xs uppercase tracking-[0.05em] opacity-70 shrink-0">
+                <span className="font-mono text-xs uppercase tracking-[0.08em] opacity-70 shrink-0">
                   {b.kind}
                 </span>
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.08em] opacity-70 shrink-0">
                     {b.import_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
@@ -1280,7 +1280,7 @@ function BridgeResults({
                   </span>
                 </span>
                 <ChevronRight
-                  className={cn("h-3 w-3 shrink-0 transition-none", expanded && "rotate-90")}
+                  className={cn("h-3 w-3 shrink-0 transition-colors duration-150 ease-out", expanded && "rotate-90")}
                   strokeWidth={2.5}
                 />
                 <span className="font-mono text-xs tabular-nums text-right shrink-0">
@@ -1330,7 +1330,7 @@ function CodeExcerptPane({
   return (
     <div className="border border-border-soft bg-surface">
       <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
-        <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent">
+        <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
           {title}
         </span>
         <span className="font-mono text-xs text-text-dim truncate ml-2">
@@ -1451,7 +1451,7 @@ function StructureTile({
 
       {langMix.length > 0 && (
         <div className="mt-3 pt-3 border-t-2 border-border">
-          <div className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text-dim mb-1.5">Lang mix</div>
+          <div className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text-dim mb-1.5">Lang mix</div>
           <div className="flex h-3 border border-border-soft bg-surface-overlay overflow-hidden">
             {langMix.map(({ ext, pct }, i) => (
               <div
@@ -1490,7 +1490,7 @@ function StatRow({
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   return (
     <div className="flex items-center gap-2">
-      <span className="font-mono text-xs tracking-[0.05em] text-text-dim w-16 shrink-0">
+      <span className="font-mono text-xs tracking-[0.08em] text-text-dim w-16 shrink-0">
         {label}
       </span>
       <span className="font-mono text-xs font-bold tabular-nums text-text w-16 shrink-0 text-right">
@@ -1527,7 +1527,7 @@ function BridgesTile({
   if (grouped && grouped.total === 0) {
     return (
       <Tile title="BRIDGES" subtitle="0">
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
           No cross-language links detected
         </p>
       </Tile>
@@ -1547,9 +1547,9 @@ function BridgesTile({
             <button
               key={kind}
               onClick={() => onJumpToKind(kind)}
-              className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-none -mx-1"
+              className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out -mx-1"
             >
-              <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] w-32 shrink-0 text-left">
+              <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] w-32 shrink-0 text-left">
                 {kind}
               </span>
               <span className="font-mono text-xs font-bold tabular-nums w-10 shrink-0 text-right">
@@ -1590,7 +1590,7 @@ function HotFilesTile({
   if (!top || top.length === 0) {
     return (
       <Tile title="HOT FILES" subtitle="0">
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
           No indexed files
         </p>
       </Tile>
@@ -1612,7 +1612,7 @@ function HotFilesTile({
               key={f.path}
               onClick={() => onJumpToFile(f.path)}
               title={f.path}
-              className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-none -mx-1"
+              className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out -mx-1"
             >
               <span className="font-mono text-mono-mini truncate flex-1 text-left">
                 {tail}
@@ -1657,7 +1657,7 @@ function RecentChangesTile({
   if (!filtered || filtered.length === 0) {
     return (
       <Tile title="RECENT CHANGES" subtitle="0">
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
           No recent file changes
         </p>
       </Tile>
@@ -1697,10 +1697,10 @@ function RecentChangesTile({
 function EmptyCorpusTile() {
   return (
     <div className="border border-border-soft bg-surface p-8 text-center">
-      <h3 className="font-sans text-base font-bold tracking-[0.05em] text-text">
+      <h3 className="font-sans text-base font-bold tracking-[0.08em] text-text">
         Add a project to begin
       </h3>
-      <p className="mt-3 font-sans text-xs tracking-[0.05em] text-text-dim">
+      <p className="mt-3 font-sans text-xs tracking-[0.08em] text-text-dim">
         Open the Projects tab and add a directory — ministr will index it for survey, symbols, and bridge.
       </p>
     </div>
@@ -1728,12 +1728,12 @@ function Tile({
   return (
     <section className="border border-border-soft bg-surface flex flex-col">
       <header className="flex items-baseline justify-between gap-2 border-b border-border-soft bg-surface-overlay px-3 py-2">
-        <h3 className="font-serif text-base font-bold text-text">
+        <h3 className="font-sans text-base font-bold text-text">
           {sentence}
         </h3>
         <div className="flex items-center gap-2">
           {hint && (
-            <span className="font-serif text-xs italic text-text-dim">
+            <span className="font-sans text-xs italic text-text-dim">
               {hint}
             </span>
           )}
@@ -1751,7 +1751,7 @@ function Tile({
 
 function LoadingRow() {
   return (
-    <p className="font-serif text-base italic text-text-dim">
+    <p className="font-sans text-base italic text-text-dim">
       Loading<span className="ministr-blink">_</span>
     </p>
   );
@@ -1774,7 +1774,7 @@ function ResultSection({
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between border-b border-border-soft bg-surface-overlay px-3 py-2">
-        <h3 className="font-serif text-base font-bold text-text">
+        <h3 className="font-sans text-base font-bold text-text">
           {sentence}
         </h3>
         <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -1843,7 +1843,7 @@ function SurveyCard({
     return (
       <button
         onClick={onClick}
-        className="text-left flex items-center gap-2 border-b border-border-soft bg-surface px-3 py-1.5 cursor-pointer transition-none hover:bg-surface-overlay hover:text-text"
+        className="text-left flex items-center gap-2 border-b border-border-soft bg-surface px-3 py-1.5 cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text"
       >
         <span className="font-mono text-xs font-semibold tabular-nums w-10 shrink-0 text-text-dim">
           {pct.toFixed(0)}%
@@ -1864,7 +1864,7 @@ function SurveyCard({
   return (
     <button
       onClick={onClick}
-      className="text-left border border-border-soft bg-surface cursor-pointer transition-none hover:border-border hover:bg-surface-overlay"
+      className="text-left border border-border-soft bg-surface cursor-pointer transition-colors duration-150 ease-out hover:border-border hover:bg-surface-overlay"
     >
       <div className="flex items-center gap-2 border-b border-border-soft bg-surface-overlay px-3 py-1.5">
         <span className="font-mono text-xs font-bold tabular-nums text-text w-10 shrink-0">
@@ -1879,7 +1879,7 @@ function SurveyCard({
       </div>
 
       {result.heading_path.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-1 border-b-2 border-border font-mono text-xs uppercase tracking-[0.05em] text-text-dim flex-wrap">
+        <div className="flex items-center gap-1 px-2 py-1 border-b-2 border-border font-mono text-xs uppercase tracking-[0.08em] text-text-dim flex-wrap">
           {result.heading_path.map((h, j) => (
             <span key={j} className="flex items-center gap-1">
               {j > 0 && (
@@ -1921,9 +1921,9 @@ function SymbolCard({
     return (
       <button
         onClick={onClick}
-        className="text-left flex items-center gap-2 border-b-2 border-border bg-surface px-2 py-1.5 cursor-pointer transition-none hover:bg-surface-overlay hover:text-text hover:translate-x-[2px]"
+        className="text-left flex items-center gap-2 border-b-2 border-border bg-surface px-2 py-1.5 cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text hover:translate-x-[2px]"
       >
-        <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent w-12 shrink-0">
+        <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent w-12 shrink-0">
           {symbol.kind}
         </span>
         <span className="font-mono text-xs font-bold truncate w-48 shrink-0">
@@ -1942,17 +1942,17 @@ function SymbolCard({
   return (
     <button
       onClick={onClick}
-      className="text-left border-2 border-border bg-surface cursor-pointer transition-none hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-md"
+      className="text-left border border-border bg-surface cursor-pointer transition-colors duration-150 ease-out hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-md"
     >
       <div className="flex items-center gap-2 border-b-2 border-border bg-surface-overlay px-2 py-1.5">
-        <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent w-14 shrink-0">
+        <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent w-14 shrink-0">
           {symbol.kind}
         </span>
         <span className="font-mono text-sm font-bold text-text truncate flex-1">
           {symbol.name}
         </span>
         {symbol.visibility && (
-          <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim shrink-0">
+          <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-dim shrink-0">
             {symbol.visibility}
           </span>
         )}
@@ -2008,7 +2008,7 @@ function ResultRow({
     <div
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2 border-b border-border-soft px-3 py-2 transition-none",
+        "flex items-center gap-2 border-b border-border-soft px-3 py-2 transition-colors duration-150 ease-out",
         onClick && "cursor-pointer hover:bg-surface-overlay hover:text-text",
       )}
     >

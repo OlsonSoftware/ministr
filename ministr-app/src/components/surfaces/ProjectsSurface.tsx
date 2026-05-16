@@ -132,7 +132,7 @@ export function ProjectsSurface({
       <header className="flex items-center justify-between gap-4 p-5 pb-3 shrink-0">
         <div className="min-w-0">
           <H1>Projects</H1>
-          <p className="font-serif text-sm italic text-text-dim mt-1">
+          <p className="font-sans text-sm italic text-text-dim mt-1">
             {corpora.length === 0
               ? "None registered."
               : `${corpora.length} ${corpora.length === 1 ? "project" : "projects"} indexed.`}
@@ -228,7 +228,7 @@ export function ProjectsSurface({
                 </span>{" "}
                 and starts over.
               </p>
-              <p className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim mt-2">
+              <p className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim mt-2">
                 {confirmReindex.files_indexed.toLocaleString()} files ·{" "}
                 {confirmReindex.sections_count.toLocaleString()} sections
               </p>
@@ -252,7 +252,7 @@ export function ProjectsSurface({
                 <span className="font-bold">{corpusLabel(confirmRemove)}</span>{" "}
                 from the registry, including all indexed sections and symbols.
               </p>
-              <p className="font-sans text-xs tracking-[0.05em] text-text-dim mt-2">
+              <p className="font-sans text-xs tracking-[0.08em] text-text-dim mt-2">
                 Source files on disk are not touched.
               </p>
             </>
@@ -355,7 +355,7 @@ function ProjectCard({
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 flex-wrap min-w-0">
-          <span className="font-mono text-sm font-bold tracking-[0.05em] text-text truncate">
+          <span className="font-mono text-sm font-bold tracking-[0.08em] text-text truncate">
             {corpusLabel(corpus)}
           </span>
           <Badge variant={statusVariant} dot>
@@ -397,7 +397,7 @@ function ProjectCard({
 
       {indexing ? (
         <div className="mt-3">
-          <div className="flex justify-between text-mono-mini font-mono uppercase tracking-[0.05em] text-warning mb-1.5">
+          <div className="flex justify-between text-mono-mini font-mono uppercase tracking-[0.08em] text-warning mb-1.5">
             <span>
               {filesDone.toLocaleString()} / {filesTotal.toLocaleString()} files
             </span>
@@ -410,7 +410,7 @@ function ProjectCard({
           <Progress tone="warning" value={pct} />
         </div>
       ) : (
-        <div className="flex items-center justify-between mt-2 text-mono-mini font-mono uppercase tracking-[0.05em] text-text-dim">
+        <div className="flex items-center justify-between mt-2 text-mono-mini font-mono uppercase tracking-[0.08em] text-text-dim">
           <span>{corpus.files_indexed.toLocaleString()} files</span>
           {corpus.last_indexed && (
             <span title={new Date(corpus.last_indexed * 1000).toLocaleString()}>
@@ -450,7 +450,7 @@ function ProjectDetail({
   if (!corpus) {
     return (
       <div className="flex-1 grid place-items-center min-h-0 border-l-2 border-border-soft">
-        <p className="font-serif italic text-sm text-text-dim">
+        <p className="font-sans italic text-sm text-text-dim">
           Select a project to see details.
         </p>
       </div>
@@ -470,7 +470,7 @@ function ProjectDetail({
       <div className="space-y-5">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="font-mono text-lg font-bold tracking-[0.05em] text-text">
+            <h2 className="font-mono text-lg font-bold tracking-[0.08em] text-text">
               {corpusLabel(corpus)}
             </h2>
             <Badge variant={statusVariant} dot>
@@ -490,7 +490,7 @@ function ProjectDetail({
 
         {indexing && (
           <div className="border border-border-soft bg-surface p-3 space-y-2">
-            <div className="flex justify-between text-mono-mini font-mono uppercase tracking-[0.05em] text-warning">
+            <div className="flex justify-between text-mono-mini font-mono uppercase tracking-[0.08em] text-warning">
               <span>
                 {progress?.phase ? `${progress.phase} · ` : ""}
                 {filesDone.toLocaleString()} / {filesTotal.toLocaleString()} files
@@ -534,7 +534,7 @@ function ProjectDetail({
         </div>
 
         {corpus.last_indexed && (
-          <div className="flex items-center gap-2 text-mono-mini font-mono uppercase tracking-[0.05em] text-text-dim">
+          <div className="flex items-center gap-2 text-mono-mini font-mono uppercase tracking-[0.08em] text-text-dim">
             <Clock className="h-3 w-3" strokeWidth={2.5} />
             <span>Last indexed · {formatRelativeTime(corpus.last_indexed)}</span>
           </div>

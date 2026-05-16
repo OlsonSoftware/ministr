@@ -34,7 +34,7 @@ export function PinnedAnswers({
     <div className="flex flex-col gap-2 min-h-0">
       <div className="flex items-center gap-2 shrink-0">
         <BrutalPin className="h-3 w-3 text-text-dim" />
-        <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
           Pinned
         </span>
         {entries.length > 0 && (
@@ -46,7 +46,7 @@ export function PinnedAnswers({
 
       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5">
         {entries.length === 0 ? (
-          <p className="font-serif text-xs italic text-text-dim leading-snug">
+          <p className="font-sans text-xs italic text-text-dim leading-snug">
             Pin answers you want to keep — they&apos;ll show up here for
             instant recall.
           </p>
@@ -59,7 +59,7 @@ export function PinnedAnswers({
                 key={`${e.ts}-${e.query}`}
                 className={cn(
                   "group flex items-start gap-1.5 border bg-surface p-2",
-                  "transition-none",
+                  "transition-colors duration-150 ease-out",
                   active
                     ? "border-info bg-surface-overlay"
                     : "border-border-soft hover:border-border hover:bg-surface-overlay",
@@ -89,7 +89,7 @@ export function PinnedAnswers({
                   title="Unpin"
                   aria-label={`Unpin "${e.query}"`}
                   className={cn(
-                    "shrink-0 grid h-5 w-5 place-items-center cursor-pointer rounded-sm transition-none",
+                    "shrink-0 grid h-5 w-5 place-items-center cursor-pointer rounded-md transition-colors duration-150 ease-out",
                     "text-text-dim hover:text-danger hover:bg-surface",
                     "opacity-0 group-hover:opacity-100",
                   )}

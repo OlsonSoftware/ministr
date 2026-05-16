@@ -58,7 +58,7 @@ export function MetaRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-3 border-b border-border-soft last:border-b-0 px-3 py-1.5">
-      <span className="font-mono text-mono-mini uppercase tracking-[0.05em] text-text-dim shrink-0">
+      <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
         {label}
       </span>
       <span
@@ -89,7 +89,7 @@ export function MaintAction({
     <button
       onClick={onClick}
       className={cn(
-        "border border-border-soft px-3 py-3 flex flex-col items-center gap-2 cursor-pointer transition-none -ml-[1px] -mt-[1px] first:ml-0 first:mt-0",
+        "border border-border-soft px-3 py-3 flex flex-col items-center gap-2 cursor-pointer transition-colors duration-150 ease-out -ml-[1px] -mt-[1px] first:ml-0 first:mt-0",
         "bg-surface text-text-muted",
         danger
           ? "hover:bg-danger hover:text-white hover:border-danger"
@@ -124,7 +124,7 @@ export function DiagnosticSection({
       <button
         onClick={onToggle}
         className={cn(
-          "flex w-full items-center gap-2 px-3 py-2 cursor-pointer hover:bg-surface-overlay transition-none text-left",
+          "flex w-full items-center gap-2 px-3 py-2 cursor-pointer hover:bg-surface-overlay transition-colors duration-150 ease-out text-left",
           !isLast || expanded ? "border-b border-border-soft" : "",
         )}
       >

@@ -334,10 +334,10 @@ function Header({ corpus }: { corpus: CorpusInfo }) {
           className="h-4 w-4 text-accent shrink-0 self-center"
           strokeWidth={2.5}
         />
-        <h1 className="font-serif text-2xl font-bold text-text leading-none">
+        <h1 className="font-sans text-2xl font-bold text-text leading-none">
           Ask
         </h1>
-        <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim truncate">
+        <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-dim truncate">
           {corpusLabel(corpus)}
         </span>
       </div>
@@ -364,7 +364,7 @@ function ErrorCard({
         strokeWidth={2}
       />
       <div className="flex-1 min-w-0">
-        <p className="font-serif text-base font-bold text-danger">
+        <p className="font-sans text-base font-bold text-danger">
           {isInferenceFailure ? "Inference failed" : "Ask failed"}
         </p>
         <p className="font-sans text-sm text-text-muted mt-1 break-words">

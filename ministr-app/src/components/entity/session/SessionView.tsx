@@ -73,7 +73,7 @@ export function SessionView({ entity }: Props) {
       return (
         <div className="flex flex-col gap-4">
           <div className="border border-border-soft bg-surface px-4 py-3.5">
-            <p className="font-serif text-base italic text-text-dim">
+            <p className="font-sans text-base italic text-text-dim">
               Loading session<span className="ministr-blink">_</span>
             </p>
           </div>

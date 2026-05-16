@@ -80,7 +80,8 @@ export const containerActive =
 /* ---- Interaction & motion ---- */
 
 /** The one sanctioned hover/active transition for interactive elements.
- *  Never use `transition-none` on something clickable. */
+ *  Clickable things must animate their state change — use this, never
+ *  the disabled-transition utility. */
 export const transitionInteractive =
   "transition-colors duration-150 ease-out";
 

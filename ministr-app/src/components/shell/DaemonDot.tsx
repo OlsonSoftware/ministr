@@ -137,7 +137,7 @@ function Row({
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="font-mono text-xs tracking-[0.05em] text-text-dim shrink-0">
+      <span className="font-mono text-xs tracking-[0.08em] text-text-dim shrink-0">
         {label}
       </span>
       <span
