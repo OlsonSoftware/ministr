@@ -127,11 +127,16 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
         e.to_string()
     })?;
 
-    // Clean up index data.
-    if let Some(dir) = data_dir
-        && dir.exists()
-    {
-        let _ = std::fs::remove_dir_all(&dir);
+    // Clean up index data. `unregister` has already awaited task teardown,
+    // and `remove_dir_all_robust` retries the Windows handle-close race —
+    // so a failure here is real and must be surfaced, not swallowed.
+    if let Some(dir) = data_dir {
+        ministr_core::fs_util::remove_dir_all_robust(&dir)
+            .await
+            .map_err(|e| {
+                tracing::error!(path = %dir.display(), error = %e, "failed to delete corpus data");
+                format!("failed to delete corpus data at {}: {e}", dir.display())
+            })?;
         tracing::info!(path = %dir.display(), "cleaned up corpus data");
     }
 
@@ -143,19 +148,36 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
 pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> Result<(), String> {
     tracing::info!(corpus_id = %corpus_id, "trigger_reindex called from frontend");
 
-    // Get the paths for this corpus.
-    let paths = {
+    // Get the paths and data dir for this corpus.
+    let (paths, data_dir) = {
         let guard = state.registry.corpora().read().await;
         let Some(h) = guard.get(&corpus_id) else {
             tracing::warn!(corpus_id = %corpus_id, "trigger_reindex: corpus not found");
             return Err(format!("corpus '{corpus_id}' not found"));
         };
-        h.info.read().await.paths.clone()
+        (h.info.read().await.paths.clone(), h.data_dir.clone())
     };
 
-    tracing::info!(corpus_id = %corpus_id, paths = ?paths, "trigger_reindex: unregister + re-register");
-    // Unregister first, then re-register to force a fresh indexing run.
-    let _ = state.registry.unregister(&corpus_id).await;
+    tracing::info!(corpus_id = %corpus_id, paths = ?paths, "trigger_reindex: purge + re-register");
+
+    // Propagate unregister failure: proceeding to register after a failed
+    // unregister would leave the old handle (cancellation token, watcher,
+    // sessions) alive alongside a fresh one — split, inconsistent state.
+    state.registry.unregister(&corpus_id).await.map_err(|e| {
+        tracing::error!(corpus_id = %corpus_id, error = %e, "trigger_reindex: unregister failed");
+        e.to_string()
+    })?;
+
+    // A re-index is a *rebuild*: purge the on-disk index so stale/orphaned
+    // entries for deleted files don't survive. `unregister` has already
+    // awaited task teardown, so the handles are closed.
+    ministr_core::fs_util::remove_dir_all_robust(&data_dir)
+        .await
+        .map_err(|e| {
+            tracing::error!(path = %data_dir.display(), error = %e, "trigger_reindex: purge failed");
+            format!("failed to purge corpus data at {}: {e}", data_dir.display())
+        })?;
+
     state
         .registry
         .register(&paths)
@@ -346,10 +368,13 @@ pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result
         .await
         .map_err(|e| e.to_string())?;
 
-    if let Some(dir) = data_dir
-        && dir.exists()
-    {
-        let _ = std::fs::remove_dir_all(&dir);
+    if let Some(dir) = data_dir {
+        ministr_core::fs_util::remove_dir_all_robust(&dir)
+            .await
+            .map_err(|e| {
+                tracing::error!(path = %dir.display(), error = %e, "failed to delete corpus data from tray remove");
+                format!("failed to delete corpus data at {}: {e}", dir.display())
+            })?;
         tracing::info!(path = %dir.display(), "cleaned up corpus data from tray remove");
     }
 

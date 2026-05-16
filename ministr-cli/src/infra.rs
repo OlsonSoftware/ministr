@@ -49,6 +49,8 @@ pub(crate) async fn init_infrastructure(
     let corpus_dir = config.data_dir.join("corpora").join(&corpus_name);
     let db_path = corpus_dir.join("content.db");
 
+    migrate_legacy_corpus_dir(config, corpus_paths, &corpus_name, &corpus_dir);
+
     // Create corpus directory if it doesn't exist.
     std::fs::create_dir_all(&corpus_dir)
         .into_diagnostic()
@@ -432,17 +434,71 @@ pub(crate) fn corpus_session_id(corpus_paths: &[String]) -> Option<String> {
 }
 
 /// Derive a stable data directory name from corpus paths.
+///
+/// Delegates to [`ministr_core::corpus_id::corpus_id_from_paths`] — the
+/// single source of truth shared with the daemon's registry. The CLI and
+/// daemon both resolve a corpus to `<data_dir>/corpora/<this name>`, so
+/// they MUST agree: a divergence silently splits one project's index
+/// across two directories (data loss with no error). Empty / invalid
+/// path sets fall back to `"default"`, matching the caller's own
+/// empty-slice handling in [`init_infrastructure`].
 pub(crate) fn corpus_data_dir_name(corpus_paths: &[String]) -> String {
+    ministr_core::corpus_id::corpus_id_from_paths(corpus_paths)
+        .unwrap_or_else(|_| "default".to_owned())
+}
+
+/// One-time migration from the pre-unification directory scheme.
+///
+/// If the canonical dir doesn't exist yet but an older CLI already
+/// indexed this project under the legacy name, move it across so we
+/// reuse the existing index instead of silently re-indexing from
+/// scratch. Best-effort: a collision (both dirs present) or rename
+/// failure just leaves the legacy dir untouched — never overwrite
+/// live data.
+fn migrate_legacy_corpus_dir(
+    config: &ministr_core::config::MinistrConfig,
+    corpus_paths: &[String],
+    corpus_name: &str,
+    corpus_dir: &Path,
+) {
+    if corpus_paths.is_empty() || corpus_dir.exists() {
+        return;
+    }
+    let legacy_name = legacy_corpus_data_dir_name(corpus_paths);
+    if legacy_name == corpus_name {
+        return;
+    }
+    let legacy_dir = config.data_dir.join("corpora").join(&legacy_name);
+    if !legacy_dir.is_dir() {
+        return;
+    }
+    match std::fs::rename(&legacy_dir, corpus_dir) {
+        Ok(()) => tracing::info!(
+            legacy = %legacy_dir.display(),
+            canonical = %corpus_dir.display(),
+            "migrated corpus dir to canonical id"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            legacy = %legacy_dir.display(),
+            "failed to migrate legacy corpus dir; re-indexing under canonical id"
+        ),
+    }
+}
+
+/// The pre-unification directory-name scheme.
+///
+/// Retained solely so [`init_infrastructure`] can migrate an existing
+/// on-disk corpus (indexed by an older CLI) to the canonical name instead
+/// of orphaning it and silently re-indexing from scratch.
+fn legacy_corpus_data_dir_name(corpus_paths: &[String]) -> String {
     if corpus_paths.len() == 1 {
-        // Single path: use the last component for human readability.
         let p = &corpus_paths[0];
         let name = p.rsplit('/').find(|s| !s.is_empty()).unwrap_or(p);
-        // Only use the name if it looks like a simple path component (no scheme).
         if !name.contains("://") && !name.contains(':') {
             return name.to_owned();
         }
     }
-    // Multiple paths or URL: hash all paths.
     let mut hasher = sha2::Sha256::new();
     for p in corpus_paths {
         sha2::Digest::update(&mut hasher, p.as_bytes());

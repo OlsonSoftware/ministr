@@ -94,6 +94,7 @@ fn build_handle(
         progress: Arc::new(IngestionProgress::new()),
         cancel: CancellationToken::new(),
         data_dir,
+        tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
         coherence_tx: tokio::sync::broadcast::channel(16).0,
     }
 }
@@ -139,8 +140,12 @@ async fn session_invalidation_propagates_on_coherence_broadcast() {
         .await
         .insert(corpus_id.clone(), handle);
 
-    // Wire the session invalidator the same way `register` does.
-    ministr_daemon::registry::spawn_session_invalidator(Arc::clone(&registry), corpus_id.clone());
+    // Wire the session invalidator the same way `register` does. Keep the
+    // join handle alive for the duration of the test.
+    let _invalidator = ministr_daemon::registry::spawn_session_invalidator(
+        Arc::clone(&registry),
+        corpus_id.clone(),
+    );
     // Give the spawned task a chance to acquire its broadcast subscriber
     // before we send — `broadcast::send` errors if no receivers exist.
     for _ in 0..50 {

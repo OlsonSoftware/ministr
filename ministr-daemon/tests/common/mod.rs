@@ -281,6 +281,7 @@ fn build_corpus_handle(
         progress: Arc::new(IngestionProgress::new()),
         cancel: CancellationToken::new(),
         data_dir,
+        tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
         coherence_tx: tokio::sync::broadcast::channel(16).0,
     }
 }
