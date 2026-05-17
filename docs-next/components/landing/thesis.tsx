@@ -29,11 +29,14 @@ export function Thesis() {
             Ask Claude Code to find one function and it <span className="font-mono">Glob</span>s
             the repo, <span className="font-mono">Grep</span>s for a keyword, then{' '}
             <span className="font-mono">Read</span>s whole files to see the match in context.
-            You pay for every line it touches — and on the next turn it does it again,
-            because it doesn&rsquo;t remember what it already saw.{' '}
+            Text matching, not understanding — it can&rsquo;t tell a definition from a
+            mention, a caller from a comment, or that a Rust export is what Python calls
+            across the boundary.{' '}
             <span className="font-medium text-fd-foreground">
-              ministr replaces those three tools with a semantic index that ships the exact
-              section your agent needs, once.
+              ministr replaces those tools with code intelligence: AST-level search,
+              symbols, references, and cross-language bridges — the exact slice, not a
+              file dump. It also remembers what it already sent, so re-reads cost almost
+              nothing.
             </span>
           </p>
         </div>
@@ -51,9 +54,9 @@ export function Thesis() {
  *
  * A playable step-through comparing the two workflows tool-call by
  * tool-call. Press play and cumulative token bars fill while each
- * call becomes active; the grep+read side blows past the 80% budget
- * wall while ministr stays in a green zone. Hover a step to see the
- * output preview; click a step to jump to it.
+ * call becomes active; the grep+read side fills the window fast
+ * while ministr stays lean. Figures are illustrative, not a
+ * benchmark. Hover a step to see the output preview; click to jump.
  *
  * Why grep burns tokens: Claude Code's Grep prepends every match with
  * the full file path (Anthropic docs), and Read returns entire files.
@@ -170,8 +173,8 @@ function sum(s: Step[], k: 'tokens' | 'signal') {
 
 const BLIND_TOTAL = sum(WITHOUT_MINISTR, 'tokens');
 const MINISTR_TOTAL = sum(WITH_MINISTR, 'tokens');
-const BUDGET = 12500; // token budget for the cumulative bar
-const WALL = 0.8 * BUDGET; // 80% pressure line
+const BUDGET = 12500; // context-window size for the cumulative bar (illustrative)
+const WALL = 0.8 * BUDGET; // point where the window is filling fast
 const STEP_MS = 900;     // playback cadence
 const TOTAL_STEPS = Math.max(WITHOUT_MINISTR.length, WITH_MINISTR.length);
 
@@ -336,9 +339,8 @@ function WasteDiagram() {
         reset · click any step to jump
       </p>
 
-      {/* ── Running cumulative budget bars. These are the hero — they
-             fill as steps become active, crossing the 80% pressure
-             wall on the grep+read side. ──────────────────────────── */}
+      {/* ── Running cumulative token bars — they fill as steps become
+             active; the grep+read side fills the window much faster. ── */}
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
         <CumulativeBar
           label="grep + read"
@@ -501,21 +503,10 @@ function CumulativeBar({
           animate={{ width: `${pct}%` }}
           transition={{ duration: reduced ? 0 : 0.5, ease: [0.2, 0.8, 0.2, 1] }}
         />
-        {/* 80% pressure wall */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-y-[-3px] left-[80%] w-px bg-[var(--color-warning)]"
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute left-[80%] -top-3.5 -translate-x-1/2 font-mono text-[9px] uppercase tracking-[0.16em] text-[var(--color-warning)]"
-        >
-          80%
-        </div>
       </div>
       <div className="mt-1 flex items-baseline justify-end font-mono text-[10px] uppercase tracking-[0.18em]">
         <span style={{ color: accentVar }}>
-          {past ? 'past 80% · pressure' : accent === 'warning' ? 'climbing' : 'healthy'}
+          {past ? 'window filling fast' : accent === 'warning' ? 'climbing' : 'lean'}
         </span>
       </div>
     </div>
@@ -758,7 +749,8 @@ function Verdict({
       </div>
       <p className="ministr-body-quiet mt-3 font-mono text-[11px] leading-relaxed">
         Same task, same agent, same model — only the retrieval layer changed. The tokens
-        ministr saved are budget the agent still has for the <span className="text-fd-foreground">next</span> turn.
+        ministr saved are window the agent still has for the <span className="text-fd-foreground">next</span> turn.
+        <span className="ml-1 opacity-70">Illustrative scenario, not a benchmark.</span>
       </p>
     </motion.div>
   );

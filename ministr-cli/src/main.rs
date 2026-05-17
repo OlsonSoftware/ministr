@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use miette::Result;
 
-/// ministr — a context cache for LLM agents.
+/// ministr — a code intelligence MCP server for AI coding agents.
 ///
 /// Runs an MCP server that provides intelligent context retrieval
 /// tools (survey, read, extract) for a local document corpus.

@@ -6,10 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "A context cache for LLM agents — MCP server for intelligent document retrieval"
+description = "Code intelligence MCP server for AI coding agents — semantic code search, symbol navigation, and cross-language bridge detection"
 readme = "../README.md"
 categories = ["command-line-utilities", "development-tools"]
-keywords = ["mcp", "llm", "context", "embeddings", "rag"]
+keywords = ["mcp", "code-intelligence", "embeddings", "llm", "rag"]
 
 [[bin]]
 name = "ministr"

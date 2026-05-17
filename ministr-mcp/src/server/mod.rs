@@ -94,11 +94,12 @@ use crate::task::{McpTaskManager, task_to_cancel_result, task_to_get_result};
 /// consumers cannot get from the project's `CLAUDE.md` (that file is only
 /// loaded when editing ministr itself).
 pub(crate) const DEFAULT_INSTRUCTIONS: &str = "\
-ministr is a context cache for LLM agents — it indexes a corpus once, then \
-serves you semantic search, code navigation, and atomic claim extraction \
-without re-reading files. Prefer it over Read/Grep/Glob for any exploration: \
-ministr's responses are deduplicated against a session shadow, so re-asking \
-for content you already have is cheap.
+ministr is a code intelligence MCP server. It gives you AST-level \
+understanding of the codebase: semantic search, symbol navigation, \
+real reference graphs, and cross-language bridge detection — not text \
+matching. Prefer it over Read/Grep/Glob for any exploration. As a bonus, \
+ministr remembers what it has already shown you this session, so re-asking \
+for the same content costs almost nothing and you only get back what changed.
 
 # Where to start
 - Vague concept question → ministr_survey
@@ -122,18 +123,16 @@ search-style tools when it clears.
 - `next_actions` array → concrete suggested next tool calls with arguments and reasons. \
 Treat as advisory but high-signal; the server picked them based on session state.
 
-Note: ministr does NOT report context-budget pressure to you. It tracks \
-token accounting internally (for dedup and optional compression) but \
-deliberately does not surface budget numbers — they were anchored to a \
-configured window, not your real model context window, and caused agents \
-to wrongly believe they were running out of room. Manage your own context \
-as you normally would; do not treat ministr as a signal that you are low \
-on context.
+Note: ministr tracks delivery internally only to avoid re-sending content \
+you already have. It does not, and is not designed to, tell you how full \
+your context window is — any internal figures are anchored to a configured \
+window, not your real model context window. Manage your own context as you \
+normally would; do not treat ministr as a signal that you are low on room.
 
 # Anti-patterns
 - Don't shell out to grep/rg/find/ag/cat for search — use ministr_survey or ministr_symbols.
-- Don't Read a file just to explore — use ministr_read so the session shadow tracks delivery \
-and dedup works on subsequent calls.
+- Don't Read a file just to explore — use ministr_read so ministr can track what \
+you've seen and return only the delta on later calls.
 ";
 
 /// Minimum survey score for a top-result follow-up suggestion.
@@ -355,8 +354,9 @@ impl ServerHandler for MinistrServer {
         )
         .with_server_info(
             Implementation::new("ministr", env!("CARGO_PKG_VERSION")).with_description(
-                "A context cache for LLM agents — session tracking, \
-                     predictive prefetching, budget awareness, and coherence.",
+                "Code intelligence MCP server for AI coding agents — semantic \
+                     search, symbol navigation, reference graphs, and \
+                     cross-language bridge detection.",
             ),
         )
         .with_instructions(instructions)
@@ -976,7 +976,7 @@ impl MinistrServer {
     ///    of re-delivering the full text.
     #[tool(
         name = "ministr_read",
-        description = "Full content of a section by ID, with delta delivery for changed content and short stubs for unchanged re-requests. Call ministr_extract instead if you only need atomic claims.",
+        description = "Full content of a section by ID. On a repeat request it returns only what changed since it last showed you this section (or a short stub if nothing changed). Call ministr_extract instead if you only need atomic claims.",
         output_schema = tool_output_schema::<ToolResponse<ReadOutputData>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1240,7 +1240,7 @@ impl MinistrServer {
     /// of budget tracking and deduplication for subsequent requests.
     #[tool(
         name = "ministr_evicted",
-        description = "Call immediately after dropping content from your context window. Keeps dedup and budget tracking accurate; without this, future ministr_read calls on dropped IDs return short 'already_delivered' stubs instead of the actual text.",
+        description = "Call immediately after dropping content you previously received. Keeps ministr's view of what you still have accurate; without this, future ministr_read calls on dropped IDs return short 'already delivered' stubs instead of the full text.",
         output_schema = tool_output_schema::<ToolResponse<EvictedResponse>>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1296,7 +1296,7 @@ impl MinistrServer {
     /// to understand budget health and decide what to evict.
     #[tool(
         name = "ministr_budget",
-        description = "Internal ministr budget bookkeeping (token estimate + eviction candidates). Advisory only: the figures are anchored to a configured window, not your real model context window, so do NOT use them to decide you are low on context or to stop work. Safe to ignore.",
+        description = "Internal ministr accounting (a rough token estimate of what it has delivered so far). Advisory only and anchored to a configured window, not your real model context window — do NOT use it to decide you are low on context or to stop work. Safe to ignore.",
         output_schema = tool_output_schema::<BudgetResponse>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1423,7 +1423,7 @@ impl MinistrServer {
     /// with no extra cost.
     #[tool(
         name = "ministr_compress",
-        description = "Extractive TF-IDF summaries (60-80% reduction) for sections you intend to evict. Pair with ministr_evicted after dropping the originals from context.",
+        description = "Extractive TF-IDF summaries (roughly 60-80% shorter) for sections you want to keep referenceable without their full text. Pair with ministr_evicted after dropping the originals.",
         output_schema = tool_output_schema::<ToolResponse<CompressResponse>>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]
@@ -2134,7 +2134,7 @@ impl MinistrServer {
     /// coherence alerts or stale content.
     #[prompt(
         name = "session-summary",
-        description = "Summarize sections read, budget state, and session activity"
+        description = "Summarize sections read and session activity"
     )]
     async fn session_summary(&self) -> Result<GetPromptResult, McpError> {
         let reg = self.registry.lock().await;
@@ -2385,7 +2385,10 @@ mod tests {
         assert!(!DEFAULT_INSTRUCTIONS.contains("ministr_budget"));
         assert!(!DEFAULT_INSTRUCTIONS.contains("Budget protocol"));
         assert!(!DEFAULT_INSTRUCTIONS.contains("eviction_recommendations"));
-        assert!(DEFAULT_INSTRUCTIONS.contains("does NOT report context-budget pressure"));
+        assert!(
+            DEFAULT_INSTRUCTIONS
+                .contains("do not treat ministr as a signal that you are low on room")
+        );
     }
 
     #[test]
@@ -3337,8 +3340,8 @@ mod tests {
         // It should explicitly tell the agent ministr is not a
         // low-context signal.
         assert!(
-            instructions.contains("does NOT report context-budget pressure"),
-            "instructions should state budget pressure is not surfaced"
+            instructions.contains("do not treat ministr as a signal that you are low on room"),
+            "instructions should state ministr is not a low-context signal"
         );
     }
 

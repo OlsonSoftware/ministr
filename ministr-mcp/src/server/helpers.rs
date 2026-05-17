@@ -258,7 +258,7 @@ pub(crate) fn build_instructions(router: &ToolRouter<MinistrServer>) -> String {
     }
 
     format!(
-        "ministr is a context cache for LLM agents. Use {}.",
+        "ministr is a code intelligence MCP server for AI coding agents. Use {}.",
         parts.join(", "),
     )
 }

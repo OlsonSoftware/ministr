@@ -29,7 +29,7 @@ Prefetch runs at two distinct moments in the agent's workflow. Four strategies f
 
 **Survey expand.** When a survey returns claim-level hits, pre-warm each hit's parent section — so the typical `survey → read` follow-up is already in cache.
 
-**Agent plan (intent-based).** Cheaply analyse the query plus the top survey hits to infer what the agent is likely to ask for next, and pre-warm a small capped list. Capped to avoid cache thrashing.
+**Agent plan (intent-based).** Cheaply analyse the query plus the top survey hits to infer what the agent is likely to ask for next, and pre-warm a small capped list. Capped to avoid wasted prefetching.
 
 ## Cache
 

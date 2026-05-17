@@ -88,7 +88,7 @@
       }
     },
     "category": "DeveloperTool",
-    "shortDescription": "Context cache for LLM agents",
-    "longDescription": "ministr is an MCP server that serves context to LLM agents the way an L1 cache serves the CPU — with session tracking, predictive prefetching, budget awareness, and coherence. Your agent still owns its context window; ministr keeps its own output tight."
+    "shortDescription": "Code intelligence MCP server for AI coding agents",
+    "longDescription": "ministr is a code intelligence MCP server. It gives AI coding agents AST-level understanding of a codebase — semantic search, symbol navigation, reference graphs, and cross-language bridge detection across ~29 languages, all local. As a bonus, it remembers what it already sent and ships only what changed on the next turn."
   }
 }

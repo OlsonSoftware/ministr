@@ -16,7 +16,7 @@ ministr-cli/           — binary entry point, depends on ministr-mcp
 ministr-app/src-tauri/ — Tauri v2 desktop app, depends on ministr-core + ministr-api + ministr-daemon
 ```
 
-**ministr-core** contains all business logic: parsing, indexing, embedding, search, session management, prefetching, and budget tracking. It has no knowledge of MCP or any transport protocol.
+**ministr-core** contains all business logic: parsing, indexing, embedding, search, session management, prefetching, and usage accounting. It has no knowledge of MCP or any transport protocol.
 
 **ministr-api** defines the shared request/response types and the `DaemonClient` for communicating with the ministr daemon over a Unix domain socket (`~/.ministr/ministrd.sock`). It has no dependency on ministr-core — it is pure types.
 
@@ -28,24 +28,24 @@ ministr-app/src-tauri/ — Tauri v2 desktop app, depends on ministr-core + minis
 
 **ministr-app** is the Tauri v2 desktop application that wraps the daemon with a GUI dashboard and system tray icon.
 
-## The Six Mechanisms
+## The Mechanisms
 
-ministr combines six mechanisms — each fixes a specific way AI coding agents waste their context window. The first four track and predict what the agent has already seen so the same content isn't re-fetched; the last two handle freshness and search quality.
+ministr combines a few mechanisms. Hybrid search and the retrieval pipeline are how it understands code; the session-tracking mechanisms keep delivery lean so the agent spends its window on the work, not on re-reading.
 
 ### 1. Session Shadow
-A per-session record of every chunk of code or docs ministr has already sent the agent. Lets ministr deduplicate, send a pointer instead of the same text, or compute a delta when something changes.
+A per-session record of every chunk of code or docs ministr has already sent the agent. Lets ministr skip re-sending, return a pointer instead of the same text, or compute a delta when something changes.
 
 ### 2. Delta Delivery
 When the agent re-reads a file that has changed since it last saw it, ministr sends only the changed lines — not the whole file again. Built on top of the Session Shadow.
 
 ### 3. Predictive Prefetch
-After every read, ministr guesses what the agent will look up next (sequentially, by topic, or by document structure) and pre-computes those results. The next call hits a warm cache instead of running a fresh search.
+After every read, ministr guesses what the agent will look up next (sequentially, by topic, or by document structure) and pre-computes those results. The next call lands on a pre-warmed result instead of running a fresh search.
 
-### 4. Budget & Pressure
-ministr tracks how full the agent's context window is getting. As it fills, ministr automatically compresses responses (claim-level extracts instead of full sections) and recommends what to drop first.
+### 4. Lean Delivery
+ministr keeps an advisory estimate of how many tokens it has delivered and can return compact claim-level extracts instead of full sections when asked. This is internal accounting, not a signal the agent should treat as "low on context."
 
 ### 5. Coherence Watcher
-A file watcher that notices when files change on disk after the agent has read them, marks the cached content stale, and surfaces alerts on the next tool call so the agent doesn't reason off rotted context.
+A file watcher that notices when files change on disk after the agent has read them, marks the delivered content stale, and surfaces alerts on the next tool call so the agent doesn't reason off rotted context.
 
 ### 6. Hybrid Search
 Semantic ("meaning") search and keyword search run together, with their rankings fused — so the agent finds the right function whether it searches by what the function does or what it's called.
