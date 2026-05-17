@@ -37,10 +37,38 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────
+  # signing-preflight: validate the Apple signing creds in ~1 min on a
+  # bare macOS runner BEFORE the ~20-min Rust/Tauri build. Runs the same
+  # keychain import + find-identity path as `ci.py pkg`, so a bad
+  # secret/identity fails fast instead of after the whole build. Every
+  # heavy job `needs:` this — broken creds skip the entire expensive
+  # matrix.
+  # ──────────────────────────────────────────────────────────────────────
+  signing-preflight:
+    name: signing preflight (macOS creds)
+    runs-on: macos-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Verify Apple signing identities
+        run: python3 scripts/ci/ci.py verify-signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+  # ──────────────────────────────────────────────────────────────────────
   # CLI tarballs / zip
   # ──────────────────────────────────────────────────────────────────────
   cli:
     name: CLI ${{ matrix.target }}
+    needs: [signing-preflight]
     # Custom-runner routing (fallback = the matrix GitHub-hosted runner):
     #   x86_64 Linux  → vars.CI_RUNNER          (heavy ORT/grammar build)
     #   x86_64 Windows → vars.CI_RUNNER_WINDOWS  (slowest release build)
@@ -141,6 +169,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   desktop:
     name: Desktop ${{ matrix.platform }}
+    needs: [signing-preflight]
     runs-on: >-
       ${{ (matrix.platform == 'linux-x86_64' && (vars.CI_RUNNER || matrix.os))
        || (matrix.platform == 'windows-x86_64' && (vars.CI_RUNNER_WINDOWS || matrix.os))
