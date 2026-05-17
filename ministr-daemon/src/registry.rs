@@ -22,7 +22,7 @@ use ministr_core::ingestion::IngestionProgress;
 use ministr_core::service::QueryService;
 use ministr_core::session::prefetch::PrefetchEngine;
 use ministr_core::session::{BudgetConfig, SessionRegistry};
-use ministr_core::storage::SqliteStorage;
+use ministr_core::storage::{SqliteStorage, Storage};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -368,6 +368,12 @@ impl CorpusRegistry {
         // teardown in `unregister`.
         let tasks = Arc::clone(&handle.tasks);
 
+        // Snapshot storage + index for a post-insert integrity probe
+        // (the loaded-from-disk state, before the background indexer
+        // gets a chance to rebuild it).
+        let integrity_storage = Arc::clone(&handle.storage);
+        let integrity_index = Arc::clone(&handle.index);
+
         // Atomic check-and-insert. The early `contains_key` above is only
         // a fast path; the authoritative test happens here under the
         // write lock so two concurrent `register`s of the same id can't
@@ -384,6 +390,8 @@ impl CorpusRegistry {
             map.insert(corpus_id.clone(), Arc::new(handle));
         }
         info!(corpus_id = %corpus_id, "corpus registered");
+
+        check_index_integrity(&corpus_id, &integrity_storage, integrity_index.len()).await;
 
         // Manifest persistence failure is non-fatal for the in-memory
         // registration (the corpus is usable this session) but must not
@@ -897,6 +905,38 @@ fn load_or_create_index(
     let fresh = HnswIndex::new(dim, 100_000).map_err(|e| RegistryError::Index(e.to_string()))?;
     fresh.set_model_name(model_name);
     Ok(Arc::new(fresh))
+}
+
+/// Lightweight desync probe: warn (with an actionable repair path) when
+/// the persisted `SQLite` content and the on-disk vector index are
+/// grossly out of sync at registration time — i.e. one side is empty
+/// while the other is not. This catches an index whose dump was lost or
+/// failed to load (search silently returns nothing despite indexed
+/// content) and an orphaned index left without backing content. It
+/// never deletes anything: the background indexer reconciles a real
+/// content drift; a stale-merkle short-circuit is the case that would
+/// otherwise leave this broken until the user forces a re-index.
+async fn check_index_integrity(corpus_id: &str, storage: &SqliteStorage, vector_count: usize) {
+    let sections = match storage.section_count().await {
+        Ok(n) => n,
+        Err(e) => {
+            // Can't probe — don't block registration over a stats query.
+            tracing::debug!(corpus_id, error = %e, "integrity probe: section_count failed");
+            return;
+        }
+    };
+
+    let desynced = (sections > 0 && vector_count == 0) || (sections == 0 && vector_count > 0);
+    if desynced {
+        warn!(
+            corpus_id,
+            sections,
+            vectors = vector_count,
+            "index/content desync detected — semantic search will be \
+             degraded for this corpus. Re-index to repair: \
+             `ministr reindex` (CLI) or the Re-index button in the app."
+        );
+    }
 }
 
 /// Remove a corrupt/incompatible index dir with the Windows-robust
