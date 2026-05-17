@@ -50,15 +50,51 @@ impl ScaffoldResult {
     }
 }
 
-/// Scaffold agent configuration files in the given project root.
-///
-/// - Advisory files (`.md`, `.mdc`) are created if missing but never overwritten
-///   (users may customise them).
-/// - Machine-generated hook files (`.json`) are auto-healed: if the on-disk
-///   content differs from the current template, the file is overwritten.
+/// How aggressively [`scaffold_agent_config_with`] writes hook files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaffoldMode {
+    /// Create missing files only. **Never overwrite an existing file** —
+    /// including the `.claude/settings.json` hooks block. This is the
+    /// mode `ministr serve` uses on every launch: a routine MCP start
+    /// must not silently rewrite hooks the user (or a newer ministr)
+    /// has already settled on. Otherwise any stale `ministr` anywhere in
+    /// the launch path clobbers the project's hooks every session.
+    CreateOnly,
+    /// Create missing files *and* heal stale machine-generated hook
+    /// files (overwrite when on-disk content drifts from the template).
+    /// Used by the explicit, user-initiated paths: `ministr init` and
+    /// the desktop "Repair agent config" command.
+    Heal,
+}
+
+/// Scaffold agent configuration files in the given project root, healing
+/// stale hook files. Equivalent to
+/// [`scaffold_agent_config_with`]`(root, ScaffoldMode::Heal)` — used by
+/// the explicit `ministr init` / Repair paths.
 ///
 /// Returns a [`ScaffoldResult`] with created/healed counts.
+#[allow(clippy::must_use_candidate)]
 pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
+    scaffold_agent_config_with(project_root, ScaffoldMode::Heal)
+}
+
+/// Scaffold agent configuration files in the given project root.
+///
+/// - Advisory files (`.md`, `.mdc`) are created if missing but never
+///   overwritten (users may customise them) — regardless of `mode`.
+/// - Machine-generated hook files (`.json`, the steer script) are
+///   auto-healed **only** under [`ScaffoldMode::Heal`]. Under
+///   [`ScaffoldMode::CreateOnly`] they are created if missing but an
+///   existing file is left untouched.
+///
+/// Returns a [`ScaffoldResult`] with created/healed counts.
+#[allow(clippy::must_use_candidate)]
+pub fn scaffold_agent_config_with(project_root: &Path, mode: ScaffoldMode) -> ScaffoldResult {
+    // Heal hook files only when explicitly asked (init / repair). On a
+    // routine `serve` start this is `false`, so an existing hooks block
+    // is never rewritten — the root cause of "hooks come back every
+    // session no matter how often I reinstall".
+    let heal = matches!(mode, ScaffoldMode::Heal);
     let playbook = playbook_for_project(project_root);
     let custom_rules = load_custom_rules(project_root);
     let lang_rules = language_rules_for_project(project_root);
@@ -73,8 +109,8 @@ pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     ];
     result.merge(write_files(&claude_rules_dir, claude_rules, false));
 
-    // ── Claude Code + VS Code: .claude/settings.json (hooks — autoheal) ─
-    result.merge(write_claude_hooks(project_root));
+    // ── Claude Code + VS Code: .claude/settings.json (hooks) ────────────
+    result.merge(write_claude_hooks(project_root, heal));
 
     // ── Claude Code: .claude/hooks/steer-to-ministr.sh (script — autoheal)
     // The settings.json hooks delegate every decision to this script.
@@ -82,32 +118,32 @@ pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     // it back to the current, crash-proof template.
     let claude_hooks_dir = project_root.join(".claude").join("hooks");
     let claude_hook_script: &[(&str, &str)] = &[("steer-to-ministr.sh", STEER_SCRIPT)];
-    result.merge(write_files(&claude_hooks_dir, claude_hook_script, true));
+    result.merge(write_files(&claude_hooks_dir, claude_hook_script, heal));
 
-    // ── Copilot CLI: .github/hooks/ (hooks — autoheal) ──────────────────
+    // ── Copilot CLI: .github/hooks/ (hooks) ─────────────────────────────
     let hooks_dir = project_root.join(".github").join("hooks");
     let hooks_files: &[(&str, &str)] = &[("ministr-enforce.json", COPILOT_HOOKS)];
-    result.merge(write_files(&hooks_dir, hooks_files, true));
+    result.merge(write_files(&hooks_dir, hooks_files, heal));
 
     // ── Cursor: .cursor/rules/ (advisory — never overwrite) ─────────────
     let cursor_rules_dir = project_root.join(".cursor").join("rules");
     let cursor_rules: &[(&str, &str)] = &[("ministr.mdc", CURSOR_RULES)];
     result.merge(write_files(&cursor_rules_dir, cursor_rules, false));
 
-    // ── Cursor: .cursor/hooks.json (hooks — autoheal) ───────────────────
+    // ── Cursor: .cursor/hooks.json (hooks) ──────────────────────────────
     let cursor_dir = project_root.join(".cursor");
     let cursor_hooks: &[(&str, &str)] = &[("hooks.json", CURSOR_HOOKS)];
-    result.merge(write_files(&cursor_dir, cursor_hooks, true));
+    result.merge(write_files(&cursor_dir, cursor_hooks, heal));
 
     // ── GitHub Copilot: .github/copilot-instructions.md (advisory) ──────
     let github_dir = project_root.join(".github");
     let copilot_files: &[(&str, &str)] = &[("copilot-instructions.md", COPILOT_INSTRUCTIONS)];
     result.merge(write_files(&github_dir, copilot_files, false));
 
-    // ── Windsurf: .windsurf/hooks.json (hooks — autoheal) ───────────────
+    // ── Windsurf: .windsurf/hooks.json (hooks) ──────────────────────────
     let windsurf_dir = project_root.join(".windsurf");
     let windsurf_hooks: &[(&str, &str)] = &[("hooks.json", WINDSURF_HOOKS)];
-    result.merge(write_files(&windsurf_dir, windsurf_hooks, true));
+    result.merge(write_files(&windsurf_dir, windsurf_hooks, heal));
 
     // ── Windsurf: windsurf/rules/ (advisory — never overwrite) ──────────
     let windsurf_rules_dir = project_root.join("windsurf").join("rules");
@@ -127,10 +163,10 @@ pub fn scaffold_agent_config(project_root: &Path) -> ScaffoldResult {
     if let Some((ref rules_content, count)) = custom_rules {
         result.custom_rules = count;
         let custom: &[(&str, &str)] = &[("ministr-custom.md", rules_content)];
-        result.merge(write_files(&claude_rules_dir, custom, true));
-        result.merge(write_files(&cursor_rules_dir, custom, true));
-        result.merge(write_files(&windsurf_rules_dir, custom, true));
-        result.merge(write_files(&continue_rules_dir, custom, true));
+        result.merge(write_files(&claude_rules_dir, custom, heal));
+        result.merge(write_files(&cursor_rules_dir, custom, heal));
+        result.merge(write_files(&windsurf_rules_dir, custom, heal));
+        result.merge(write_files(&continue_rules_dir, custom, heal));
     }
 
     // ── Language-specific rules (advisory — never overwrite) ─────────────
@@ -225,46 +261,92 @@ fn write_files(dir: &Path, files: &[(&str, &str)], heal: bool) -> ScaffoldResult
     result
 }
 
-/// Write `.claude/settings.json` with `PreToolUse` hooks that redirect
-/// Grep/Glob/Bash-search usage to ministr.
-///
-/// Merges non-destructively with existing settings (preserves user keys).
-/// Auto-heals: if the file already has a `hooks` key but the content
-/// differs from what ministr would generate, the `hooks` key is replaced.
-fn write_claude_hooks(project_root: &Path) -> ScaffoldResult {
-    let settings_path = project_root.join(".claude").join("settings.json");
+/// Monotonic version of the generated hook templates. **Bump on every
+/// change to the emitted hooks / steer script.** It is stamped into
+/// `.claude/settings.json` as `_ministrHooksVersion` and makes autoheal
+/// *forward-only*: a binary will never overwrite hooks that were written
+/// by an equal-or-newer ministr. That is what stops a stale `ministr`
+/// anywhere in the launch path from reverting good hooks to its own old
+/// (bad) template — autoheal converges to the newest state, not "this
+/// binary's state".
+const HOOK_TEMPLATE_VERSION: u64 = 2;
 
+/// Write `.claude/settings.json` with `PreToolUse` hooks that steer
+/// Grep/Glob/Bash-search to ministr.
+///
+/// Non-destructive: user keys (`permissions`, etc.) are preserved; only
+/// the `hooks` key + the `_ministrHooksVersion` stamp are managed.
+///
+/// `heal` semantics:
+/// - `false` ([`ScaffoldMode::CreateOnly`], every `serve`): create the
+///   file only if absent; an existing file is **never** modified.
+/// - `true` ([`ScaffoldMode::Heal`], `init` / repair): refresh stale
+///   hooks — but **never downgrade**: if the on-disk
+///   `_ministrHooksVersion` is newer than this binary's, leave it.
+fn write_claude_hooks(project_root: &Path, heal: bool) -> ScaffoldResult {
+    let settings_path = project_root.join(".claude").join("settings.json");
     let hooks_value = build_claude_hooks();
 
-    // If the file exists and already has our exact hooks, nothing to do.
-    if settings_path.exists()
-        && let Ok(content) = std::fs::read_to_string(&settings_path)
-        && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
-        && val.get("hooks") == Some(&hooks_value["hooks"])
-    {
-        debug!(file = %settings_path.display(), "hooks up to date");
-        return ScaffoldResult::default();
+    let existing: Option<serde_json::Value> = if settings_path.exists() {
+        std::fs::read_to_string(&settings_path)
+            .ok()
+            .and_then(|c| serde_json::from_str(&c).ok())
+    } else {
+        None
+    };
+
+    if let Some(val) = &existing {
+        let on_disk_ver = val
+            .get("_ministrHooksVersion")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+
+        // Already current (same hooks + stamped at our version): no-op.
+        if on_disk_ver >= HOOK_TEMPLATE_VERSION && val.get("hooks") == Some(&hooks_value["hooks"]) {
+            debug!(file = %settings_path.display(), "hooks up to date");
+            return ScaffoldResult::default();
+        }
+
+        // Forward-only: a newer ministr already wrote these. Never let
+        // an older binary downgrade them, even on an explicit heal.
+        if on_disk_ver > HOOK_TEMPLATE_VERSION {
+            debug!(
+                file = %settings_path.display(),
+                on_disk = on_disk_ver,
+                this_binary = HOOK_TEMPLATE_VERSION,
+                "on-disk hooks newer than this ministr — not downgrading"
+            );
+            return ScaffoldResult::default();
+        }
+
+        // CreateOnly: a routine `serve` must not rewrite an existing
+        // settings.json. Healing is reserved for `init` / Repair.
+        if !heal {
+            debug!(
+                file = %settings_path.display(),
+                "create-only: existing settings.json left untouched"
+            );
+            return ScaffoldResult::default();
+        }
     }
 
-    let is_heal = settings_path.exists();
+    let is_heal = existing.is_some();
 
-    // Merge with existing settings (preserves user keys like "permissions").
-    let merged = if settings_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&settings_path) {
-            if let Ok(mut existing) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(obj) = existing.as_object_mut() {
-                    obj.insert("hooks".to_string(), hooks_value["hooks"].clone());
-                }
-                existing
-            } else {
-                hooks_value
-            }
-        } else {
-            hooks_value
-        }
-    } else {
-        hooks_value
+    // Merge into existing settings (preserves user keys like
+    // "permissions"); stamp the managed keys.
+    let mut merged = match existing {
+        Some(v) if v.is_object() => v,
+        _ => serde_json::json!({}),
     };
+    if let Some(obj) = merged.as_object_mut() {
+        obj.insert("hooks".to_string(), hooks_value["hooks"].clone());
+        obj.insert(
+            "_ministrHooksVersion".to_string(),
+            serde_json::json!(HOOK_TEMPLATE_VERSION),
+        );
+    } else {
+        merged = hooks_value;
+    }
 
     if let Err(e) = std::fs::create_dir_all(settings_path.parent().unwrap_or(project_root)) {
         debug!(error = %e, "failed to create .claude/");
@@ -1276,7 +1358,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = write_claude_hooks(root);
+        let result = write_claude_hooks(root, true);
         // File existed but had no hooks — treated as heal (overwrites hooks key).
         assert_eq!(result.healed, 1);
 
@@ -1301,7 +1383,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = write_claude_hooks(root);
+        let result = write_claude_hooks(root, true);
         assert_eq!(result.healed, 1); // Should heal — hooks are stale.
         assert_eq!(result.created, 0);
 
@@ -1697,7 +1779,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = write_claude_hooks(root);
+        let result = write_claude_hooks(root, true);
         assert_eq!(result.healed, 1, "stale hooks should be healed");
 
         let after: serde_json::Value = serde_json::from_str(

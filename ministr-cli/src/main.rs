@@ -338,7 +338,14 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
             oauth,
             oauth_issuer,
         } => {
-            ministr_core::scaffold::scaffold_agent_config(&rc.cwd);
+            // Create-only: a routine MCP start must never silently
+            // rewrite an existing .claude/settings.json hooks block.
+            // Healing is reserved for explicit `ministr init` / the
+            // desktop Repair action (run with a known-current binary).
+            ministr_core::scaffold::scaffold_agent_config_with(
+                &rc.cwd,
+                ministr_core::scaffold::ScaffoldMode::CreateOnly,
+            );
 
             match transport {
                 Transport::Stdio if proxy => {
