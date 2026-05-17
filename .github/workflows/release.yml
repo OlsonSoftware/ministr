@@ -84,6 +84,26 @@ jobs:
             archive: ministr-x86_64-pc-windows-msvc.zip
 
     steps:
+      # MUST be first: on a self-hosted Windows runner `shell: bash`
+      # resolves to C:\Windows\System32\bash.exe (the WSL launcher),
+      # which exits 1 when no WSL distro is installed. This fails not
+      # just our bash steps but the internal `shell: bash` step inside
+      # `dtolnay/rust-toolchain` (runs right after checkout). Prepend
+      # Git's bin (real Git Bash) to PATH up front so EVERY subsequent
+      # bash resolution — ours and nested actions' — uses Git Bash, the
+      # same bash GitHub-hosted runners use. No-op-safe on hosted.
+      - name: Prefer Git Bash over WSL for shell:bash (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $gitRoot = Split-Path (Split-Path (Get-Command git).Source)
+          $bin = Join-Path $gitRoot 'bin'
+          if (-not (Test-Path (Join-Path $bin 'bash.exe'))) {
+            throw "Git Bash not found at $bin — install Git for Windows on this runner (see CI-RUNNER-SETUP.md C1)."
+          }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "PATH-prepended $bin so shell:bash uses Git Bash, not System32 WSL bash."
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
@@ -107,23 +127,6 @@ jobs:
           Add-MpPreference -ExclusionProcess "cargo.exe"
           Add-MpPreference -ExclusionProcess "link.exe"
           Add-MpPreference -ExclusionProcess "lld-link.exe"
-
-      # On a self-hosted Windows runner `shell: bash` resolves to
-      # C:\Windows\System32\bash.exe (the WSL launcher) which exits 1
-      # when no WSL distro is installed. Prepend Git's bin (real Git
-      # Bash) to PATH so every later `shell: bash` step uses it — the
-      # same bash GitHub-hosted runners use. No-op-safe on hosted.
-      - name: Prefer Git Bash over WSL for shell:bash (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $gitRoot = Split-Path (Split-Path (Get-Command git).Source)
-          $bin = Join-Path $gitRoot 'bin'
-          if (-not (Test-Path (Join-Path $bin 'bash.exe'))) {
-            throw "Git Bash not found at $bin — install Git for Windows on this runner (see CI-RUNNER-SETUP.md C1)."
-          }
-          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          Write-Host "PATH-prepended $bin so shell:bash uses Git Bash, not System32 WSL bash."
 
       - name: Use lld linker on Windows
         if: matrix.target == 'x86_64-pc-windows-msvc'
@@ -224,6 +227,21 @@ jobs:
             triple: x86_64-unknown-linux-gnu
 
     steps:
+      # MUST be first — see cli job. Forces `shell: bash` (incl. the
+      # internal one in dtolnay/rust-toolchain) to Git Bash instead of
+      # the System32 WSL stub, before any action runs.
+      - name: Prefer Git Bash over WSL for shell:bash (Windows)
+        if: matrix.platform == 'windows-x86_64'
+        shell: pwsh
+        run: |
+          $gitRoot = Split-Path (Split-Path (Get-Command git).Source)
+          $bin = Join-Path $gitRoot 'bin'
+          if (-not (Test-Path (Join-Path $bin 'bash.exe'))) {
+            throw "Git Bash not found at $bin — install Git for Windows on this runner (see CI-RUNNER-SETUP.md C1)."
+          }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "PATH-prepended $bin so shell:bash uses Git Bash, not System32 WSL bash."
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
@@ -251,19 +269,6 @@ jobs:
           Add-MpPreference -ExclusionProcess "cargo.exe"
           Add-MpPreference -ExclusionProcess "link.exe"
           Add-MpPreference -ExclusionProcess "lld-link.exe"
-
-      # See cli job: force `shell: bash` to Git Bash, not System32 WSL.
-      - name: Prefer Git Bash over WSL for shell:bash (Windows)
-        if: matrix.platform == 'windows-x86_64'
-        shell: pwsh
-        run: |
-          $gitRoot = Split-Path (Split-Path (Get-Command git).Source)
-          $bin = Join-Path $gitRoot 'bin'
-          if (-not (Test-Path (Join-Path $bin 'bash.exe'))) {
-            throw "Git Bash not found at $bin — install Git for Windows on this runner (see CI-RUNNER-SETUP.md C1)."
-          }
-          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          Write-Host "PATH-prepended $bin so shell:bash uses Git Bash, not System32 WSL bash."
 
       # Use rust-lld instead of MSVC link.exe on Windows. Faster final-link
       # phase, no quality difference for our binaries.
