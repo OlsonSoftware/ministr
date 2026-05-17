@@ -77,7 +77,11 @@ pub struct CorpusHandle {
     pub storage: Arc<SqliteStorage>,
     pub index: Arc<dyn VectorIndex>,
     pub service: QueryService,
-    pub sessions: tokio::sync::Mutex<SessionRegistry>,
+    /// `Arc` so `list()` (and any read-mostly status path) can clone the
+    /// handle out and drop the corpora-map guard *before* awaiting the
+    /// session lock. Accessors are unchanged — `Arc` derefs to the
+    /// `Mutex` for `.lock()`/`.try_lock()`.
+    pub sessions: Arc<tokio::sync::Mutex<SessionRegistry>>,
     pub prefetch: Arc<tokio::sync::Mutex<PrefetchEngine>>,
     pub progress: Arc<IngestionProgress>,
     pub cancel: CancellationToken,
@@ -563,13 +567,38 @@ impl CorpusRegistry {
     }
 
     /// List all registered corpora with current status.
+    ///
+    /// Snapshots each corpus's `Arc` fields under the map read guard,
+    /// then **drops the guard** before awaiting any per-corpus lock —
+    /// so a concurrent `register`/`unregister` (map write lock) is never
+    /// serialised behind N per-corpus `info`/`sessions` awaits.
     pub async fn list(&self) -> Vec<CorpusInfo> {
-        let corpora = self.corpora.read().await;
-        let mut result = Vec::with_capacity(corpora.len());
-        for handle in corpora.values() {
-            let mut info = handle.current_info().await;
-            info.active_sessions = handle.sessions.lock().await.session_count();
-            result.push(info);
+        type Snap = (
+            Arc<RwLock<CorpusInfo>>,
+            Arc<IngestionProgress>,
+            Arc<dyn VectorIndex>,
+            Arc<tokio::sync::Mutex<SessionRegistry>>,
+        );
+        let snap: Vec<Snap> = {
+            let corpora = self.corpora.read().await;
+            corpora
+                .values()
+                .map(|h| {
+                    (
+                        Arc::clone(&h.info),
+                        Arc::clone(&h.progress),
+                        Arc::clone(&h.index),
+                        Arc::clone(&h.sessions),
+                    )
+                })
+                .collect()
+        };
+
+        let mut result = Vec::with_capacity(snap.len());
+        for (info, progress, index, sessions) in snap {
+            let mut ci = merge_live_info(info.read().await.clone(), &progress, index.len());
+            ci.active_sessions = sessions.lock().await.session_count();
+            result.push(ci);
         }
         result
     }
@@ -727,7 +756,9 @@ impl CorpusRegistry {
             storage,
             index,
             service,
-            sessions: tokio::sync::Mutex::new(SessionRegistry::new(BudgetConfig::default())),
+            sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
+                BudgetConfig::default(),
+            ))),
             prefetch: Arc::new(tokio::sync::Mutex::new(
                 PrefetchEngine::with_default_capacity(),
             )),

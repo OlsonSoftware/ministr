@@ -274,7 +274,9 @@ fn build_corpus_handle(
         storage,
         index,
         service,
-        sessions: tokio::sync::Mutex::new(SessionRegistry::new(BudgetConfig::default())),
+        sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
+            BudgetConfig::default(),
+        ))),
         prefetch: Arc::new(tokio::sync::Mutex::new(
             PrefetchEngine::with_default_capacity(),
         )),
