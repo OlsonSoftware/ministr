@@ -216,43 +216,27 @@ design-lint:
 # Run all quality gates: format check + build + test + lint + UI contract
 validate: fmt-check lint test design-lint
 
-# Cut a release: bump versions, update CHANGELOG, commit + tag
-release version:
+# Release pre-flight gates — run before merging the release-plz PR
+release-preflight: validate deny eval-gate
+    cargo audit
+    cd docs-next && npm run types:check && npm run build
+
+# Releases are automated by release-plz (see RELEASE.md). Versions +
+# CHANGELOG are bumped on a bot "release" PR from Conventional Commits;
+# merging it pushes the `vX.Y.Z` tag that drives release.yml. There is
+# no manual version-bump recipe anymore — this just points you there.
+release:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Validate version format
-    if ! echo "{{version}}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-        echo "error: version must be in semver format (e.g. 0.2.0)" >&2
-        exit 1
-    fi
-    # Bump version in every workspace crate. Must match the root
-    # [workspace] members list — missing one breaks cross-crate publish
-    # ordering because path deps still pin the old version.
-    # Uses `-i.bak` + explicit rm so the recipe works on both GNU sed
-    # (Linux CI) and BSD sed (macOS dev machines).
-    for toml in \
-        ministr-api/Cargo.toml \
-        ministr-core/Cargo.toml \
-        ministr-daemon/Cargo.toml \
-        ministr-mcp/Cargo.toml \
-        ministr-cli/Cargo.toml \
-        ministr-app/src-tauri/Cargo.toml; \
-    do
-        sed -i.bak -e "s/^version = \".*\"/version = \"{{version}}\"/" "$toml"
-        rm -f "$toml.bak"
-    done
-    # Add new section to CHANGELOG.md (inserted before the first
-    # existing `## [` heading so the freshest release stays on top).
-    date=$(date +%Y-%m-%d)
-    printf '\n## [{{version}}] - %s\n\n### Added\n\n### Changed\n\n### Fixed\n\n' "$date" | \
-        sed -i.bak -e "/^## \[/r /dev/stdin" CHANGELOG.md
-    rm -f CHANGELOG.md.bak
-    # Add link reference at bottom
-    echo "[{{version}}]: https://github.com/OlsonSoftware/ministr/releases/tag/v{{version}}" >> CHANGELOG.md
-    # Validate the workspace compiles
-    cargo check --workspace
-    # Commit and tag
-    git add -A
-    git commit -m "release: v{{version}}"
-    git tag "v{{version}}"
-    echo "Tagged v{{version}} — push with: git push origin main v{{version}}"
+    cat >&2 <<'EOF'
+    Releases are automated by release-plz.
+
+      1. Land your changes on `main` (Conventional Commit messages).
+      2. release-plz keeps a "release" PR updated (version + CHANGELOG).
+      3. Run `just release-preflight`, then merge that PR.
+      4. release-plz pushes `vX.Y.Z`; release.yml builds + publishes.
+
+    See RELEASE.md. To preview locally:
+      release-plz update --config release-plz.toml   # dry-run diff
+    EOF
+    exit 1

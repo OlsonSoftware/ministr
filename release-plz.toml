@@ -1,0 +1,72 @@
+# release-plz — automated Release-PR + tagging for the ministr workspace.
+#
+# Model: every push to `main` updates a single "release" PR that bumps the
+# version and the CHANGELOG from Conventional Commits. Merging that PR makes
+# release-plz push exactly one `vX.Y.Z` tag, which triggers the EXISTING
+# `.github/workflows/release.yml` (artifact builds + the GitHub Release).
+# release-plz itself does NOT publish to crates.io and does NOT create the
+# GitHub Release — see RELEASE.md.
+
+[workspace]
+# Private repo: crates.io publishing stays disabled (was the old policy).
+publish = false
+# release.yml already creates the GitHub Release with every artifact when
+# the tag lands — don't let release-plz create a second, empty one.
+git_release_enable = false
+# Default-off so we don't emit six `<pkg>-vX.Y.Z` tags; exactly one
+# package (ministr-cli) re-enables it below to emit a single `vX.Y.Z`.
+git_tag_enable = false
+# One aggregated changelog at the repo root.
+changelog_update = true
+changelog_path = "CHANGELOG.md"
+# Marks the bot PR so it's easy to spot and branch-protect.
+pr_labels = ["release"]
+
+# ── All six crates move in lockstep on ONE product version ──────────────
+# (mirrors the old `just release`: a single product version, not
+# independent per-crate semver). ministr-cli owns the single tag.
+
+[[package]]
+name = "ministr-cli"
+version_group = "ministr"
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+
+[[package]]
+name = "ministr-api"
+version_group = "ministr"
+
+[[package]]
+name = "ministr-core"
+version_group = "ministr"
+
+[[package]]
+name = "ministr-daemon"
+version_group = "ministr"
+
+[[package]]
+name = "ministr-mcp"
+version_group = "ministr"
+
+[[package]]
+name = "ministr-app"
+version_group = "ministr"
+
+# ── Changelog grouping (git-cliff under the hood) ───────────────────────
+# Map Conventional Commit types onto the existing Keep-a-Changelog
+# Added / Changed / Fixed / Security headings; drop CI/chore/test noise.
+[changelog]
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^sec|^security", group = "Security" },
+  { message = "^perf", group = "Changed" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^docs", group = "Changed" },
+  { message = "^ci", skip = true },
+  { message = "^build", skip = true },
+  { message = "^chore", skip = true },
+  { message = "^test", skip = true },
+  { message = "^release", skip = true },
+  { message = ".*", group = "Changed" },
+]
