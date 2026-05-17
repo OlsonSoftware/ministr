@@ -76,9 +76,19 @@ jobs:
               --title "chore: release v$VER" --body "$body" --label release
           fi
 
-  # Is HEAD the merge of the release PR? (commit subject `chore: release`)
+  # Does the manifest version still lack its `v<version>` tag?
+  #
+  # This is the whole anti-deadlock: gate fires on the STATE ("there is
+  # a prepared, untagged version"), not on a commit subject. A merged
+  # release PR bumps the manifest with no tag yet -> gate true -> build
+  # -> tag. If the build fails, no tag is created, so the NEXT push to
+  # main still sees an untagged version -> it retries automatically.
+  # Nothing can get stranded in a "prepared but untagged" limbo again.
+  # Normal commits never touch the product version (release_pr.py only
+  # bumps it on the release branch), so gate is false outside a pending
+  # release and we never rebuild artifacts for nothing.
   gate:
-    name: Detect release commit
+    name: Detect pending release
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'OlsonSoftware' }}
     outputs:
@@ -90,17 +100,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          subj="$(git log -1 --pretty=%s)"
-          echo "HEAD subject: $subj"
-          if printf '%s' "$subj" | grep -qE '^chore: release'; then
-            ver="$(grep -m1 '^version' ministr-cli/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-            [ -n "$ver" ] || { echo "::error::cannot parse version"; exit 1; }
-            echo "release commit — v$ver"
-            echo "is_release=true" >> "$GITHUB_OUTPUT"
-            echo "version=$ver"   >> "$GITHUB_OUTPUT"
-          else
-            echo "not a release commit"
+          ver="$(grep -m1 '^version' ministr-cli/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          [ -n "$ver" ] || { echo "::error::cannot parse version"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$ver" >/dev/null 2>&1; then
+            echo "v$ver is already tagged - nothing to release"
             echo "is_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$ver has no tag - release pending"
+            echo "is_release=true"  >> "$GITHUB_OUTPUT"
+            echo "version=$ver"     >> "$GITHUB_OUTPUT"
           fi
 
   # Build EVERY artifact for this commit. No tag exists yet. Any failure
