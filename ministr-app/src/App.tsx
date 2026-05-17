@@ -284,6 +284,29 @@ function AppInner() {
     }
   }, [status, toast]);
 
+  const onReindexActive = useCallback(async () => {
+    if (!activeCorpusId) {
+      toast("No active project", {
+        detail: "Select a project first",
+        tone: "info",
+      });
+      return;
+    }
+    try {
+      await invoke("trigger_reindex", { corpusId: activeCorpusId });
+      toast("Re-indexing started", { tone: "info" });
+      refresh();
+    } catch (e) {
+      toast("Re-index failed", { detail: String(e), tone: "danger" });
+    }
+  }, [activeCorpusId, toast, refresh]);
+
+  const onCycleTheme = useCallback(() => {
+    const order = ["system", "dark", "light"] as const;
+    const next = order[(order.indexOf(theme) + 1) % order.length];
+    onThemeChange(next);
+  }, [theme, onThemeChange]);
+
   const corpora = status?.corpora ?? [];
   const hasCorpora = corpora.length > 0;
 
@@ -378,6 +401,9 @@ function AppInner() {
         onNavigate={navigate}
         onSelectCorpus={onSelectCorpus}
         onAddProject={openAddProject}
+        onOpenLogs={onOpenLogs}
+        onReindexActive={onReindexActive}
+        onCycleTheme={onCycleTheme}
       />
 
       <EntityPanel />

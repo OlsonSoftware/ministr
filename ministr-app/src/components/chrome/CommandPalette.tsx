@@ -13,11 +13,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  Eye,
+  FileText,
   FolderOpen,
   MessageSquare,
   Plus,
+  RefreshCw,
   Settings as SettingsIcon,
   Sparkles,
+  SunMoon,
   type LucideIcon,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -51,6 +55,9 @@ interface Props {
   onNavigate: (surface: SurfaceId) => void;
   onSelectCorpus: (id: string) => void;
   onAddProject: () => void;
+  onOpenLogs: () => void;
+  onReindexActive: () => void;
+  onCycleTheme: () => void;
 }
 
 const MODE_HINT: Record<string, string> = {
@@ -69,6 +76,9 @@ export function CommandPalette({
   onNavigate,
   onSelectCorpus,
   onAddProject,
+  onOpenLogs,
+  onReindexActive,
+  onCycleTheme,
 }: Props) {
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
@@ -142,6 +152,33 @@ export function CommandPalette({
         run: onAddProject,
       },
       {
+        id: "action:reindex",
+        label: "Re-index active project",
+        hint: "Rebuild the active project's index",
+        keywords: "reindex rebuild index refresh",
+        icon: RefreshCw,
+        mode: ">",
+        run: onReindexActive,
+      },
+      {
+        id: "action:open-logs",
+        label: "Open logs",
+        hint: "Reveal the daemon log file",
+        keywords: "logs log file debug troubleshoot",
+        icon: FileText,
+        mode: ">",
+        run: onOpenLogs,
+      },
+      {
+        id: "action:cycle-theme",
+        label: "Cycle theme",
+        hint: "System → Dark → Light",
+        keywords: "theme dark light system appearance",
+        icon: SunMoon,
+        mode: ">",
+        run: onCycleTheme,
+      },
+      {
         id: "action:ask",
         label: "Ask the codebase…",
         hint: "Open the Ask surface",
@@ -182,6 +219,18 @@ export function CommandPalette({
           }),
       });
     }
+    const active = corpora.find((c) => c.id === activeCorpusId);
+    if (active) {
+      list.push({
+        id: "action:inspect-active",
+        label: `Inspect ${corpusLabel(active)}`,
+        hint: "Open the project inspector",
+        keywords: `inspect ${corpusLabel(active)} corpus detail project`,
+        icon: Eye,
+        mode: ">",
+        run: () => openEntity({ kind: "corpus", corpus: active }),
+      });
+    }
     return list;
   }, [
     corpora,
@@ -190,6 +239,9 @@ export function CommandPalette({
     onNavigate,
     onSelectCorpus,
     onAddProject,
+    onOpenLogs,
+    onReindexActive,
+    onCycleTheme,
     openEntity,
   ]);
 
