@@ -5,7 +5,7 @@ This directory is a **verbatim, in-tree copy** of the
 that additionally recognizes Unreal Engine reflection macros (`UCLASS`,
 `UFUNCTION`, `GENERATED_BODY`, …) as first-class syntax nodes.
 
-| | |
+| Field | Value |
 |---|---|
 | Upstream | https://github.com/taku25/tree-sitter-unreal-cpp |
 | Pinned rev | `92eee7d1ac994e408c208bcb1b73170c8746356f` |

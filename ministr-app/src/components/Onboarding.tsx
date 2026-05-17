@@ -304,18 +304,29 @@ function StatusRow({
   title: string;
   detail?: string;
 }) {
+  const statusLabel = pending ? "Loading" : ok ? "OK" : "Warning";
   return (
     <div className="flex items-start gap-3 px-4 py-2.5">
-      <span className="mt-0.5 shrink-0">
+      <span className="mt-0.5 shrink-0" role="img" aria-label={statusLabel}>
+        <span className="sr-only">{statusLabel}</span>
         {pending ? (
           <Loader2
             className="h-4 w-4 text-text-dim animate-spin"
             strokeWidth={2}
+            aria-hidden="true"
           />
         ) : ok ? (
-          <Check className="h-4 w-4 text-accent" strokeWidth={3} />
+          <Check
+            className="h-4 w-4 text-accent"
+            strokeWidth={3}
+            aria-hidden="true"
+          />
         ) : (
-          <TriangleAlert className="h-4 w-4 text-danger" strokeWidth={2.5} />
+          <TriangleAlert
+            className="h-4 w-4 text-danger"
+            strokeWidth={2.5}
+            aria-hidden="true"
+          />
         )}
       </span>
       <div className="flex-1 min-w-0">
