@@ -6,23 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.2.3](https://github.com/OlsonSoftware/ministr/releases/tag/v0.2.3) - 2026-05-17
 
 ### Changed
-- *(docs)* Repositioned ministr as a code intelligence MCP server ("Real
-  codebase understanding for AI coding agents"). Documentation, landing
-  site, crate metadata, MCP server instructions, and tool descriptions now
-  lead with semantic search, symbol navigation, reference graphs, and
-  cross-language bridge detection; session-delivery efficiency is presented
-  as a supporting benefit rather than the headline. Removed the standalone
-  "Budget Management" docs page. No runtime behavior changed; internal
-  budget/eviction symbol and tool-id renames are tracked as follow-ups.
-
+- Rebrand ministr as a code intelligence MCP server ([#100](https://github.com/OlsonSoftware/ministr/pull/100))- Rewrite README in concise manuscript style; gate release automation on non-doc pushes
 ## [0.2.2](https://github.com/OlsonSoftware/ministr/releases/tag/v0.2.2) - 2026-05-17
 
 ### Added
 - *(release)* Replace release-plz with git-cliff (no cargo packaging) ([#81](https://github.com/OlsonSoftware/ministr/pull/81))
+### Changed
+- Wip
 ### Fixed
-- *(release)* Reset main to v0.2.1 — restore manifest==last-tag invariant ([#90](https://github.com/OlsonSoftware/ministr/pull/90))- *(release)* Release-pr stands down while a release is pending ([#89](https://github.com/OlsonSoftware/ministr/pull/89))- *(ci)* Don't merge native stderr into version echoes (NativeCommandError) ([#87](https://github.com/OlsonSoftware/ministr/pull/87))- *(ci)* Python-build-standalone (no MSI) + release-pr open-PR check ([#85](https://github.com/OlsonSoftware/ministr/pull/85))- *(release)* Gate on untagged version, not commit subject ([#84](https://github.com/OlsonSoftware/ministr/pull/84))- *(ci)* Win_setup.ps1 pure ASCII — PowerShell 5.1 mis-decodes em-dash ([#83](https://github.com/OlsonSoftware/ministr/pull/83))- *(release)* Winget-free Windows bootstrap + build-then-tag pipeline ([#80](https://github.com/OlsonSoftware/ministr/pull/80))
+- *(ci)* Set git identity before annotated tag in tag-and-release ([#99](https://github.com/OlsonSoftware/ministr/pull/99))- *(ci)* Signing preflight tests each cert in isolation (no false pass) ([#98](https://github.com/OlsonSoftware/ministr/pull/98))- *(ci)* MacOS .pkg signing + fast signing preflight ([#97](https://github.com/OlsonSoftware/ministr/pull/97))- *(ci)* Pnpm install via cmd on Windows (PowerShell ExecutionPolicy=Restricted) ([#96](https://github.com/OlsonSoftware/ministr/pull/96))- *(ci)* Bootstrap Node in win_setup.ps1 (runner has no npm) ([#95](https://github.com/OlsonSoftware/ministr/pull/95))- *(ci)* Pnpm standalone install (self-hosted Windows has no npm) ([#94](https://github.com/OlsonSoftware/ministr/pull/94))- *(ci)* Bulletproof version echoes — Show-Version helper (no abort) ([#93](https://github.com/OlsonSoftware/ministr/pull/93))- *(release)* Reset main to v0.2.1 — restore manifest==last-tag invariant ([#90](https://github.com/OlsonSoftware/ministr/pull/90))- *(release)* Release-pr stands down while a release is pending ([#89](https://github.com/OlsonSoftware/ministr/pull/89))- *(ci)* Don't merge native stderr into version echoes (NativeCommandError) ([#87](https://github.com/OlsonSoftware/ministr/pull/87))- *(ci)* Python-build-standalone (no MSI) + release-pr open-PR check ([#85](https://github.com/OlsonSoftware/ministr/pull/85))- *(release)* Gate on untagged version, not commit subject ([#84](https://github.com/OlsonSoftware/ministr/pull/84))- *(ci)* Win_setup.ps1 pure ASCII — PowerShell 5.1 mis-decodes em-dash ([#83](https://github.com/OlsonSoftware/ministr/pull/83))- *(release)* Winget-free Windows bootstrap + build-then-tag pipeline ([#80](https://github.com/OlsonSoftware/ministr/pull/80))
 ## [0.2.1](https://github.com/OlsonSoftware/ministr/releases/tag/v0.2.1) - 2026-05-17
 
 ### Added

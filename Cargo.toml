@@ -214,7 +214,7 @@ tempfile = "3"
 # workspace version (the last released tag); release-plz rewrites both
 # the crate `version` and these requirements in lockstep on every bump,
 # so this never needs to be hand-edited again.
-ministr-api = { path = "ministr-api", version = "0.2.2" }
-ministr-core = { path = "ministr-core", version = "0.2.2" }
-ministr-daemon = { path = "ministr-daemon", version = "0.2.2" }
-ministr-mcp = { path = "ministr-mcp", version = "0.2.2" }
+ministr-api = { path = "ministr-api", version = "0.2.3" }
+ministr-core = { path = "ministr-core", version = "0.2.3" }
+ministr-daemon = { path = "ministr-daemon", version = "0.2.3" }
+ministr-mcp = { path = "ministr-mcp", version = "0.2.3" }
