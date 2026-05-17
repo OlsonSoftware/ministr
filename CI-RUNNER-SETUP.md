@@ -68,7 +68,7 @@ sudo useradd -m -s /bin/bash gha && sudo usermod -aG docker gha
 Two agents = `rust-dev` and `rust-release` (which run in parallel) share
 the box and its warm cache instead of serializing.
 
-1. GitHub → org → Settings → Actions → Runners → **New runner** → **New self-hosted runner** → Linux x64. Copy the `./config.sh` URL + token.
+1. GitHub → **OlsonSoftware org** → Settings → Actions → Runners → **New runner** → **New self-hosted runner** → Linux x64. **Must be the _org_ page** — runner groups are an org-level feature, so the `--url` is `https://github.com/OlsonSoftware` (the org, *not* `.../ministr`) and the token is an org token. Copy the exact `--url`/`--token` shown there.
 2. On the box, as the `gha` user, install **two** runner instances:
 
 ```bash
@@ -78,8 +78,8 @@ for i in 1 2; do
   curl -o r.tar.gz -L https://github.com/actions/runner/releases/latest/download/actions-runner-linux-x64.tar.gz
   tar xzf r.tar.gz
   ./config.sh \
-    --url https://github.com/OlsonSoftware/ministr \
-    --token <REGISTRATION_TOKEN> \
+    --url https://github.com/OlsonSoftware \
+    --token <ORG_REGISTRATION_TOKEN> \
     --runnergroup ministr-rust \
     --labels ministr-rust \
     --name "ministr-rust-$i" \
@@ -89,7 +89,12 @@ for i in 1 2; do
 done
 ```
 
-> Get a fresh `<REGISTRATION_TOKEN>` for each from the **New runner** page (they're single-use, ~1 h TTL). The critical part is `--labels ministr-rust`.
+> The runner registers at the **org** and is restricted to this repo by
+> the `ministr-rust` group's *Repository access → OlsonSoftware/ministr*
+> setting (S/A2) — not by the URL. Using the repo URL `.../ministr` with
+> `--runnergroup` returns **404 Not Found** at registration. Get a fresh
+> `<ORG_REGISTRATION_TOKEN>` from the org **New runner** page for each
+> (single-use, ~1 h TTL).
 
 ### A4. Disk hygiene (cron)
 The debug `--all-targets` tree is large. Add a weekly prune as `gha`:
@@ -283,9 +288,12 @@ create it now with *Repository access → Selected → OlsonSoftware/ministr*.
 
 ### C4. Register the runner as a Windows service
 
-GitHub → org → Settings → Actions → Runners → **New runner** → **New
-self-hosted runner** → **Windows / x64**. Copy the registration token it
-shows, then in an **elevated PowerShell**:
+GitHub → **OlsonSoftware org** → Settings → Actions → Runners → **New
+runner** → **New self-hosted runner** → **Windows / x64**. This **must
+be the org-level page** (org runner groups don't exist at repo scope) —
+it shows `--url https://github.com/OlsonSoftware` (the org, *not*
+`.../ministr`) and an org registration token. Copy that token, then in
+an **elevated PowerShell**:
 
 ```powershell
 mkdir C:\actions-runner; cd C:\actions-runner
@@ -294,8 +302,8 @@ Invoke-WebRequest -Uri "https://github.com/actions/runner/releases/download/v$ve
 Expand-Archive -Path runner.zip -DestinationPath . -Force; Remove-Item runner.zip
 
 .\config.cmd `
-  --url https://github.com/OlsonSoftware/ministr `
-  --token <REGISTRATION_TOKEN> `
+  --url https://github.com/OlsonSoftware `
+  --token <ORG_REGISTRATION_TOKEN> `
   --runnergroup ministr-rust `
   --labels ministr-windows `
   --name "ministr-win-$env:COMPUTERNAME" `
@@ -303,6 +311,14 @@ Expand-Archive -Path runner.zip -DestinationPath . -Force; Remove-Item runner.zi
   --runasservice `
   --unattended --replace
 ```
+
+> **404 at "Authentication" / registration** = wrong scope: the URL was
+> the repo (`.../ministr`) or the token was a repo token while
+> `--runnergroup` (an org concept) was set. Use the **org** URL
+> `https://github.com/OlsonSoftware` + an **org** token from the org
+> New-runner page. The runner is still restricted to this repo — that's
+> enforced by the `ministr-rust` group's *Repository access* setting
+> (S2 / step C3), not the URL.
 
 - `--runasservice` installs it as the `actions.runner.*` Windows
   service → it auto-starts at boot and is online whenever your machine
