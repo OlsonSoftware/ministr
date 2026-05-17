@@ -7,7 +7,12 @@ authors = [
   "Amaan Qureshi <amaanq12@gmail.com>",
 ]
 license = "MIT"
-readme = "README.md"
+# Upstream's manifest points at a README.md that was never part of the
+# vendored snapshot (only LICENSE + grammar sources were copied at rev
+# 92eee7d). A dangling readme path makes `cargo package` fail manifest
+# verification; `false` explicitly declares "no readme" without faking
+# upstream content. See ../../third_party/tree-sitter-unreal-cpp/VENDOR.md.
+readme = false
 keywords = ["incremental", "parsing", "tree-sitter", "cpp"]
 categories = ["parsing", "text-editors"]
 repository = "https://github.com/tree-sitter/tree-sitter-unreal-cpp"
