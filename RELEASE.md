@@ -1,5 +1,21 @@
 # Releasing ministr
 
+> ## ⚠️ THE RELEASE CONTRACT — read this first
+>
+> **The only supported way to cut a release:**
+> 1. land work on `main` (Conventional Commit messages)
+> 2. release-plz keeps **one** `chore: release` PR updated (version + CHANGELOG)
+> 3. you review + **merge that PR**
+> 4. release-plz tags `vX.Y.Z` *because of step 3* (`release_always=false`) → `release.yml` builds + publishes
+>
+> **HARD INVARIANT — never violate:** do **not** create, move, or delete
+> `v*` tags by hand, and do **not** hand-edit crate versions. `main`'s
+> version always equals the last released tag; the *only* thing that
+> introduces a new untagged version is merging the release PR. Every
+> release outage in this repo's history came from breaking this. If a
+> `chore: release` PR looks wrong, **close it** — the next push to `main`
+> regenerates it. Never hand-merge a stale one.
+
 Releases are **automated by [release-plz](https://release-plz.dev)**
 (config: [`release-plz.toml`](release-plz.toml), workflow:
 [`.github/workflows/release-plz.yml`](.github/workflows/release-plz.yml)).

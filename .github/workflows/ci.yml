@@ -342,21 +342,22 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     env:
-      # Shared compile cache. With the SCCACHE_* secrets set this is a
-      # Cloudflare R2 bucket shared across runs/branches; unset, sccache
-      # transparently falls back to an on-disk cache (ideal on a
-      # persistent self-hosted runner) — either way CI still works.
-      RUSTC_WRAPPER: sccache
-      SCCACHE_BUCKET: ${{ secrets.SCCACHE_BUCKET }}
-      SCCACHE_ENDPOINT: ${{ secrets.SCCACHE_ENDPOINT }}
-      SCCACHE_REGION: auto
-      AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
       # Cap parallel codegen so a cold-cache candle/ort/esaxx compile
       # can't OOM the box; sccache hits make most units near-instant.
       CARGO_BUILD_JOBS: "8"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Toolchain (no-op — baked in ministr-ci) + sccache→R2 env. Same
+      # composite release.yml uses → ONE definition of the Rust build
+      # substrate, no repeated inline SCCACHE_* env blocks.
+      - name: Rust env
+        uses: ./.github/actions/rust-env
+        with:
+          sccache-bucket: ${{ secrets.SCCACHE_BUCKET }}
+          sccache-endpoint: ${{ secrets.SCCACHE_ENDPOINT }}
+          aws-access-key-id: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
 
       # Registry + git dep checkouts only (NOT target/ — sccache owns
       # compile artifacts). `dev` shared-key stays disjoint from
@@ -444,15 +445,17 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_BUCKET: ${{ secrets.SCCACHE_BUCKET }}
-      SCCACHE_ENDPOINT: ${{ secrets.SCCACHE_ENDPOINT }}
-      SCCACHE_REGION: auto
-      AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
       CARGO_BUILD_JOBS: "8"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Rust env
+        uses: ./.github/actions/rust-env
+        with:
+          sccache-bucket: ${{ secrets.SCCACHE_BUCKET }}
+          sccache-endpoint: ${{ secrets.SCCACHE_ENDPOINT }}
+          aws-access-key-id: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
 
       # Registry + git only; `release` shared-key disjoint from
       # rust-dev's `dev`. sccache owns the compile artifacts.

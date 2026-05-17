@@ -1,5 +1,21 @@
 name: Release-plz
 
+# ===================== THE RELEASE CONTRACT =========================
+# The ONLY supported way to cut a release:
+#   1. land work on `main` (Conventional Commits)
+#   2. release-plz-pr keeps ONE "chore: release" PR updated
+#   3. you review + MERGE that PR
+#   4. release-plz-release tags `vX.Y.Z` (only because of step 3 —
+#      release_always=false) -> release.yml builds + publishes
+#
+# HARD INVARIANT: never create/move/delete `v*` tags by hand, and never
+# hand-bump crate versions. `main`'s version always equals the last
+# released tag; the ONLY thing that introduces a new untagged version
+# is merging the release PR. Every release outage in this repo's
+# history came from violating this. If a release PR looks wrong, CLOSE
+# it — the next push to main regenerates it.
+# ====================================================================
+#
 # Automated release pipeline (see RELEASE.md / release-plz.toml).
 #
 #   push to main ──▶ release-plz-pr   : opens/updates the "release" PR
