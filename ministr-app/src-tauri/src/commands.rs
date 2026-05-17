@@ -358,9 +358,31 @@ pub struct SetupStatus {
     pub version: String,
 }
 
+/// True only if `p` is a regular file we could actually execute — not a
+/// directory, and on Unix it must carry an exec bit. Guards against
+/// reporting `cli_on_path = true` for a path that `fix_path` would then
+/// fail to spawn.
+fn is_usable_cli(p: &std::path::Path) -> bool {
+    if !p.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 /// Resolve a usable `ministr` CLI the same way the rest of the app does:
 /// canonical `~/.ministr/bin`, the `.pkg`/Linux-package symlink at
-/// `/usr/local/bin`, then `PATH`.
+/// `/usr/local/bin`, then `PATH`. Every candidate must pass
+/// [`is_usable_cli`]; the `PATH` lookup reuses [`which_on_path`], which
+/// is `PATHEXT`-aware (so a Windows `.cmd`/`.bat` shim resolves with its
+/// real extension and `fix_path` can route it through `cmd /c`).
 fn resolve_cli_path() -> Option<std::path::PathBuf> {
     let exe = if cfg!(windows) {
         "ministr.exe"
@@ -374,23 +396,15 @@ fn resolve_cli_path() -> Option<std::path::PathBuf> {
         candidates.push(std::path::PathBuf::from("/usr/local/bin/ministr"));
     }
     for c in candidates {
-        if c.exists() {
+        if is_usable_cli(&c) {
             return Some(c);
         }
     }
 
-    // Last resort: ask the OS to resolve it on PATH.
-    let probe = if cfg!(windows) { "where" } else { "which" };
-    let out = std::process::Command::new(probe)
-        .arg("ministr")
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let line = String::from_utf8_lossy(&out.stdout);
-    let first = line.lines().next()?.trim();
-    (!first.is_empty()).then(|| std::path::PathBuf::from(first))
+    // Last resort: PATH. which_on_path only returns a path that is_file()
+    // and, on Windows, tries PATHEXT so an npm-style `.cmd` shim resolves
+    // with its true extension.
+    which_on_path("ministr").map(std::path::PathBuf::from)
 }
 
 /// Report first-run setup state for the setup wizard.
@@ -414,10 +428,35 @@ pub async fn fix_path() -> Result<String, CommandError> {
         kind: ErrorKind::NotFound,
         message: "ministr CLI not found — reinstall the app and try again".to_string(),
     })?;
-    let out = std::process::Command::new(&cli)
-        .arg("setup")
-        .output()
-        .map_err(CommandError::from)?;
+
+    // A `.cmd`/`.bat` shim (possible when resolved off PATH on Windows)
+    // can't be spawned directly — Rust ≥1.77 hard-errors; it must go via
+    // `cmd /c`. Mirrors `test_via_cli`. Suppress the console flash from
+    // this GUI process.
+    let mut command;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let is_script = cli
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+        if is_script {
+            command = std::process::Command::new("cmd");
+            command.arg("/c").arg(&cli).arg("setup");
+        } else {
+            command = std::process::Command::new(&cli);
+            command.arg("setup");
+        }
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        command = std::process::Command::new(&cli);
+        command.arg("setup");
+    }
+
+    let out = command.output().map_err(CommandError::from)?;
     if !out.status.success() {
         return Err(CommandError {
             kind: ErrorKind::Internal,

@@ -17,14 +17,17 @@ LINK=/usr/local/bin/ministr
 
 # Tauri lays the externalBin sidecar down next to / near the main binary
 # depending on packager. Probe the realistic locations rather than hard-code
-# one, so this keeps working if the bundler layout shifts.
+# one, so this keeps working if the bundler layout shifts. The SAME list is
+# reused below to recognise a symlink we created in a prior version even if
+# the layout moved between releases.
+PROBE_LOCATIONS="\
+/usr/bin/ministr-cli \
+/usr/lib/ministr/ministr-cli \
+/usr/lib/ministr/binaries/ministr-cli \
+/opt/ministr/ministr-cli"
+
 TARGET=""
-for c in \
-  /usr/bin/ministr-cli \
-  /usr/lib/ministr/ministr-cli \
-  /usr/lib/ministr/binaries/ministr-cli \
-  /opt/ministr/ministr-cli
-do
+for c in $PROBE_LOCATIONS; do
   if [ -x "$c" ]; then
     TARGET="$c"
     break
@@ -40,10 +43,24 @@ mkdir -p /usr/local/bin
 
 if [ -L "$LINK" ]; then
   current=$(readlink "$LINK")
-  if [ "$current" = "$TARGET" ]; then
+  # Owned-by-installer if it points at the new target OR at any known
+  # ministr bundle location (a prior version's layout). Refresh those to
+  # the current TARGET; only a symlink to something outside our probe set
+  # is treated as foreign and left alone.
+  owned=0
+  [ "$current" = "$TARGET" ] && owned=1
+  if [ "$owned" -eq 0 ]; then
+    for c in $PROBE_LOCATIONS; do
+      if [ "$current" = "$c" ]; then
+        owned=1
+        break
+      fi
+    done
+  fi
+  if [ "$owned" -eq 1 ]; then
     ln -sf "$TARGET" "$LINK"
   else
-    echo "ministr installer: leaving existing symlink at $LINK unchanged (points to $current, not our bundle)." >&2
+    echo "ministr installer: leaving existing symlink at $LINK unchanged (points to $current, not a ministr bundle)." >&2
   fi
 elif [ -e "$LINK" ]; then
   echo "ministr installer: leaving existing file at $LINK unchanged (not created by this installer)." >&2

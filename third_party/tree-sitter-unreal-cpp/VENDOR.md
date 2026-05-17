@@ -12,6 +12,16 @@ that additionally recognizes Unreal Engine reflection macros (`UCLASS`,
 | Crate version | `0.23.4` |
 | License | MIT (see `LICENSE`) |
 
+> **Note on the `repository` field discrepancy:** the vendored
+> `Cargo.toml` carries `repository = "https://github.com/tree-sitter/tree-sitter-unreal-cpp"`.
+> That is the upstream crate's own (verbatim, unmodified) metadata —
+> `taku25/tree-sitter-unreal-cpp` is a fork of the `tree-sitter`-org
+> grammar and never updated that field. **The authoritative source for
+> refreshing this vendor is the `Upstream` + `Pinned rev` above
+> (`taku25`), not the `repository` field.** We intentionally do not edit
+> the vendored `Cargo.toml` so the copy stays byte-identical to the
+> pinned rev; this note is the reconciliation.
+
 ## Why vendored
 
 It was previously a `git = …` Cargo dependency. The upstream repo is not
