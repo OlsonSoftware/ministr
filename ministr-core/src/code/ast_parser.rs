@@ -119,17 +119,33 @@ pub struct AstParser {
 impl AstParser {
     /// Create a new parser initialized with the Rust language grammar.
     ///
-    /// # Panics
-    ///
-    /// Panics if the tree-sitter Rust grammar cannot be loaded. This should
-    /// never happen with a correctly built `tree-sitter-rust` crate.
+    /// Infallible by construction: loading the statically-linked
+    /// `tree-sitter-rust` grammar only fails on an ABI-version mismatch,
+    /// which is a build-time invariant of the pinned dependency. If it
+    /// ever does fail we log and return a parser with no language set —
+    /// [`parse`](Self::parse) then yields [`ParseError::Failed`] rather
+    /// than panicking. Prefer [`try_new`](Self::try_new) when the caller
+    /// can propagate the error.
     #[must_use]
     pub fn new() -> Self {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .expect("failed to load tree-sitter Rust grammar");
-        Self { parser }
+        Self::try_new().unwrap_or_else(|e| {
+            tracing::error!(error = %e, "failed to load tree-sitter Rust grammar");
+            Self {
+                parser: tree_sitter::Parser::new(),
+            }
+        })
+    }
+
+    /// Create a new parser initialized with the Rust language grammar,
+    /// returning an error instead of degrading if the grammar fails to
+    /// load.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError::Failed`] if the tree-sitter Rust grammar
+    /// cannot be loaded (ABI-version mismatch).
+    pub fn try_new() -> Result<Self, ParseError> {
+        Self::with_language(&tree_sitter_rust::LANGUAGE.into())
     }
 
     /// Create a parser initialized with the specified language grammar.

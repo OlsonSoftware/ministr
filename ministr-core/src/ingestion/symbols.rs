@@ -75,7 +75,9 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
     let is_cpp_family = matches!(language, Some("cpp" | "c"));
 
     let tree = if is_rust {
-        let mut ast_parser = AstParser::new();
+        let Ok(mut ast_parser) = AstParser::try_new() else {
+            return empty_result();
+        };
         match ast_parser.parse(source) {
             Ok(t) => t,
             Err(_) => return empty_result(),

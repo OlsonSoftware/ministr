@@ -71,7 +71,7 @@ impl super::DocumentParser for CodeParser {
         // (Slate widgets, recursive UE traits) shouldn't make a
         // header invisible.
         let tree = if is_rust {
-            let mut ast_parser = AstParser::new();
+            let mut ast_parser = AstParser::try_new()?;
             match ast_parser.parse(source) {
                 Ok(t) => t,
                 Err(e) => {
