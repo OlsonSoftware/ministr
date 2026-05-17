@@ -309,9 +309,9 @@ def cmd_verify_signing(_a: argparse.Namespace) -> None:
     if missing:
         sys.exit("::error::missing/empty Apple secret(s): " + ", ".join(missing))
 
+    import re as _re
+
     rt = Path(env["RUNNER_TEMP"])
-    kc = rt / "preflight.keychain-db"
-    kc_pw = str(uuid.uuid4())
 
     def sh(cmd: list[str], *, redact: bool = False, **kw):
         print(f"+ {cmd[0]} (args redacted)" if redact else "+ " + " ".join(cmd), flush=True)
@@ -319,69 +319,88 @@ def cmd_verify_signing(_a: argparse.Namespace) -> None:
             subprocess.run(cmd, check=True, **kw)
         except subprocess.CalledProcessError as e:
             # CalledProcessError's default text includes the full argv
-            # (cert/keychain/notary password). For redacted calls, exit
-            # with a sanitized message so the secret can't leak to logs.
+            # (cert password). Sanitize redacted calls so it can't leak.
             if redact:
                 raise SystemExit(
                     f"{cmd[0]} failed (exit {e.returncode}) [args redacted]"
                 ) from None
             raise
 
-    try:
-        sh(["security", "create-keychain", "-p", kc_pw, str(kc)], redact=True)
-        sh(["security", "set-keychain-settings", "-lut", "21600", str(kc)])
-        sh(["security", "unlock-keychain", "-p", kc_pw, str(kc)], redact=True)
-        existing = subprocess.check_output(
-            ["security", "list-keychains", "-d", "user"], text=True
-        )
-        kcs = [x.strip().strip('"') for x in existing.split()] + [str(kc)]
-        sh(["security", "list-keychains", "-d", "user", "-s", *kcs])
-        for b64, pwd, name in (
-            ("APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD", "app.p12"),
-            ("APPLE_INSTALLER_CERTIFICATE",
-             "APPLE_INSTALLER_CERTIFICATE_PASSWORD", "inst.p12"),
-        ):
-            p12 = rt / name
-            p12.write_bytes(base64.b64decode(env[b64]))
-            sh([
-                "security", "import", str(p12), "-P", env[pwd],
-                "-f", "pkcs12", "-k", str(kc),
-                "-T", "/usr/bin/productbuild",
-                "-T", "/usr/bin/pkgbuild",
-                "-T", "/usr/bin/codesign",
-            ], redact=True)
-        sh([
-            "security", "set-key-partition-list", "-S",
-            "apple-tool:,apple:,codesign:", "-s", "-k", kc_pw, str(kc),
-        ], redact=True)
-        ids = subprocess.check_output(
-            ["security", "find-identity", "-v", str(kc)], text=True
-        )
-        print(ids)
-        fails = []
-        for label, key in (
-            ("application", "APPLE_SIGNING_IDENTITY"),
-            ("installer", "APPLE_INSTALLER_SIGNING_IDENTITY"),
-        ):
-            if env[key] not in ids:
-                fails.append(
-                    f"{label} signing identity {env[key]!r} not found "
-                    f"among the imported identities above"
-                )
-        if fails:
-            sys.exit(
-                "::error::Apple signing preflight FAILED:\n  - "
-                + "\n  - ".join(fails)
-                + "\nThe *_SIGNING_IDENTITY secret must exactly match the "
-                "certificate's name in its .p12. Fix the secret(s) and "
-                "re-run — no need to wait for the full build."
+    def check(cert_key, pw_key, id_key, policy, label):
+        """Validate ONE cert in its OWN keychain. Isolation is the
+        point: importing app + installer together let a good app cert
+        mask a key-only installer cert (the false pass that wasted a
+        20-min build). `-p <policy>` matches the real tool (codesign =
+        codesigning, productbuild = basic)."""
+        kc = rt / f"preflight-{label}.keychain-db"
+        kc_pw = str(uuid.uuid4())
+        p12 = rt / f"{label}.p12"
+        try:
+            try:
+                p12.write_bytes(base64.b64decode(env[cert_key]))
+            except Exception:
+                return [f"{label}: {cert_key} is not valid base64."]
+            sh(["security", "create-keychain", "-p", kc_pw, str(kc)], redact=True)
+            sh(["security", "set-keychain-settings", "-lut", "21600", str(kc)])
+            sh(["security", "unlock-keychain", "-p", kc_pw, str(kc)], redact=True)
+            existing = subprocess.check_output(
+                ["security", "list-keychains", "-d", "user"], text=True
             )
-        print("Apple signing preflight OK: both identities resolve.")
-    finally:
-        subprocess.run(
-            ["security", "delete-keychain", str(kc)],
-            stderr=subprocess.DEVNULL,
+            kcs = [x.strip().strip('"') for x in existing.split()] + [str(kc)]
+            sh(["security", "list-keychains", "-d", "user", "-s", *kcs])
+            try:
+                sh([
+                    "security", "import", str(p12), "-P", env[pw_key],
+                    "-f", "pkcs12", "-k", str(kc),
+                    "-T", "/usr/bin/productbuild",
+                    "-T", "/usr/bin/pkgbuild",
+                    "-T", "/usr/bin/codesign",
+                ], redact=True)
+            except SystemExit:
+                return [f"{label}: `security import` failed — {cert_key}/"
+                        f"{pw_key} wrong or the .p12 is corrupt."]
+            sh([
+                "security", "set-key-partition-list", "-S",
+                "apple-tool:,apple:,codesign:", "-s", "-k", kc_pw, str(kc),
+            ], redact=True)
+            out = subprocess.check_output(
+                ["security", "find-identity", "-v", "-p", policy, str(kc)],
+                text=True,
+            )
+            print(f"--- {label} identities (policy={policy}) ---\n{out}")
+            m = _re.search(r"(\d+)\s+valid identities found", out)
+            n = int(m.group(1)) if m else 0
+            want = env[id_key]
+            if n < 1:
+                return [f"{label}: 0 valid identities — {cert_key} has no "
+                        f"usable certificate (only a private key imported). "
+                        f"Re-export the cert TOGETHER WITH its private key "
+                        f"as a .p12."]
+            if want not in out:
+                return [f"{label}: {id_key}={want!r} does not match any of "
+                        f"the {n} valid identit{'y' if n == 1 else 'ies'} "
+                        f"above — set {id_key} to the cert's exact name."]
+            return []
+        finally:
+            subprocess.run(
+                ["security", "delete-keychain", str(kc)],
+                stderr=subprocess.DEVNULL,
+            )
+
+    fails = check("APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD",
+                  "APPLE_SIGNING_IDENTITY", "codesigning", "application")
+    fails += check("APPLE_INSTALLER_CERTIFICATE",
+                   "APPLE_INSTALLER_CERTIFICATE_PASSWORD",
+                   "APPLE_INSTALLER_SIGNING_IDENTITY", "basic", "installer")
+    if fails:
+        sys.exit(
+            "::error::Apple signing preflight FAILED:\n  - "
+            + "\n  - ".join(fails)
+            + "\nFix the secret(s) and re-run — this fails in ~1 min so you "
+            "never wait for the full build to learn the creds are wrong."
         )
+    print("Apple signing preflight OK: application + installer identities "
+          "both resolve in isolation.")
 
 
 def main() -> None:
