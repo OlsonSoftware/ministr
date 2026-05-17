@@ -1,16 +1,27 @@
 ---
-title: Core Concepts
-description: The ideas behind ministr's code intelligence — hybrid search, session memory, delta delivery, predictive prefetch, and coherence.
+title: Core concepts
+description: The ideas behind ministr's code intelligence — symbols, references, cross-language bridges, and hybrid search — plus the session efficiency that keeps it lean.
 ---
 
-ministr is built around a few mechanisms. The first is how it understands code; the rest keep delivery efficient so the agent spends its window on the work, not on re-reading.
+ministr's job is to understand a codebase well enough that an agent can ask real questions about it. Four ideas carry that; a few more keep delivery efficient.
 
-| Mechanism | What it does |
+## Code intelligence
+
+| Concept | What it means |
 |---|---|
-| [Hybrid Search](/docs/architecture) | Combines semantic ("meaning") search with keyword search and fuses the rankings |
-| [Session memory](/docs/concepts/session-shadow) | Tracks what the agent has already been sent this session |
-| [Delta delivery](/docs/concepts/coherence) | Sends only the changed lines when a file the agent already saw has been edited |
-| [Predictive prefetch](/docs/concepts/prefetch-engine) | Anticipates the next request and has the result ready before it's asked for |
-| [Coherence](/docs/concepts/coherence) | Notices file changes on disk and flags previously-delivered content as stale |
+| [Symbols](/docs/concepts/symbols) | ministr reads code as structure, not text — it knows a definition from a mention |
+| [References](/docs/concepts/references) | A real graph of who calls, implements, and imports what — not a regex guess |
+| [Cross-language bridges](/docs/concepts/bridges) | It follows a call across a language boundary — the thing grep fundamentally can't do |
+| [Hybrid search](/docs/concepts/search) | Meaning-based and keyword search together, at the right level of detail |
 
-These compose. Session memory tells prefetch what the agent already has (so it warms what's actually next), and coherence uses the same memory to know which sessions are holding something that just changed.
+## Session efficiency
+
+A quiet layer underneath — a bonus, never the headline.
+
+| Concept | What it means |
+|---|---|
+| [Session memory](/docs/concepts/session-shadow) | Remembers what the agent has already been shown this session |
+| [Predictive prefetch](/docs/concepts/prefetch-engine) | Anticipates the next request and has it ready |
+| [Coherence](/docs/concepts/coherence) | Notices when files change and flags anything the agent saw before |
+
+These compose: session memory tells prefetch what's already in hand, and coherence uses the same memory to know which sessions are holding something that just changed — so the agent spends its window on the work, not on re-reading.

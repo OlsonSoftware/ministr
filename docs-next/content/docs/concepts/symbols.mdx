@@ -1,0 +1,24 @@
+---
+title: Symbols
+description: Why ministr reads code as structure instead of text — and what that lets an agent ask.
+---
+
+A **symbol** is a named thing in code: a function, a struct, a class, a trait, an interface, an enum. ministr parses your code into a syntax tree, so it sees those symbols as first-class objects — each with a kind, a signature, a visibility, the module it lives in, and its doc comment.
+
+## Why this beats text matching
+
+Grep matches characters. It can't tell:
+
+- a **definition** of `validate_token` from the dozen places that merely *call* it,
+- a real use from the same word sitting in a comment or a string,
+- `User` the struct from `User` the variable from `user` in prose.
+
+Because ministr works from structure, the agent can ask for *the function itself* — `ministr_symbols` to find it, `ministr_definition` to pull just its body — and get exactly that, not a pile of textual near-misses it then has to read whole files to disambiguate.
+
+## What you get from it
+
+- Find a symbol by name, kind, or module without knowing the file.
+- Jump straight to a definition instead of reading around a grep hit.
+- A stable identifier for each symbol that the other tools ([references](/docs/concepts/references), [bridges](/docs/concepts/bridges)) build on.
+
+This works across 40+ languages. Languages without first-class support still get best-effort symbol extraction, so the agent degrades gracefully rather than falling back to blind text search.

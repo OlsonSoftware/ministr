@@ -16,7 +16,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 
 ```json
 {
-  "budget_status": { /* see envelope */ },
+  "coherence_alerts": [ /* only when content changed; see envelope */ ],
   "result": {
     "results": [
       {
@@ -54,8 +54,6 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 ## Behavior
 
 - Matches across all resolution levels — documents, sections, claims, and code symbols
-- Uses hybrid search (dense embeddings + optional sparse/SPLADE + optional cross-encoder rerank)
-- Results already delivered in this session are filtered out automatically
-- Delivered content is recorded in the session shadow for future deduplication
-- Token counts are added to the running budget
-- Under budget pressure, results are returned at higher resolution (claims instead of full sections)
+- Uses hybrid search: meaning-based and keyword, with optional re-ranking
+- Results already delivered this session are filtered out automatically, so the agent only sees what's new
+- A repeat request for the same content comes back as a pointer rather than the full text again

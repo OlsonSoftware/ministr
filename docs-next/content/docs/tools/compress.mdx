@@ -15,7 +15,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 
 ```json
 {
-  "budget_status": { /* see envelope */ },
+  "coherence_alerts": [ /* only when content changed; see envelope */ ],
   "result": {
     "summaries": [
       {
@@ -52,4 +52,4 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 - Compression is extractive: selects the most information-dense sentences from the section
 - Typically achieves 60-80% token reduction
 - Unknown content IDs are silently skipped (not included in the response)
-- Use this before evicting content — replace the full section with the compressed summary in the agent's context to preserve the gist while freeing budget
+- Use this before dropping content — keep the compact summary in context in place of the full section to preserve the gist while freeing space

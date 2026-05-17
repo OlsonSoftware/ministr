@@ -1,0 +1,18 @@
+---
+title: Hybrid search
+description: Meaning-based and keyword search together, returned at the right level of detail.
+---
+
+Not every question is structural. "Where is rate limiting handled?" or "how does auth work here?" is a question about *meaning*, spread across code and docs. That's what `ministr_survey` is for.
+
+## Meaning and keyword, together
+
+Pure keyword search misses anything phrased differently than you guessed. Pure meaning-based search misses exact identifiers and rare terms. ministr runs both and fuses the rankings, so an exact symbol name and a vague description both land on the right place. An optional re-ranking pass sharpens the top results.
+
+It searches code and prose in one index — a question can be answered by a function, a doc section, or both.
+
+## The right level of detail
+
+Every document is available at several resolutions: a one-line summary, a section, a single atomic fact, a symbol signature, or full source. `ministr_survey` returns the level that fits the question, and the agent can zoom in (`ministr_read`, `ministr_extract`) only as far as it actually needs — instead of pulling whole files up front.
+
+The net effect: the agent gets the exact slice that answers the question, not a file dump it has to read and discard.
