@@ -128,7 +128,18 @@ def cmd_pkg(a: argparse.Namespace) -> None:
     app = REPO / "target/aarch64-apple-darwin/release/bundle/macos/ministr.app"
     if not app.is_dir():
         sys.exit(f"ministr.app not found at {app}")
-    version = env["GITHUB_REF_NAME"].lstrip("v")
+    # Under build-then-tag, this workflow runs on the `main` push BEFORE
+    # any tag exists, so GITHUB_REF_NAME is "main" (was producing
+    # `pkgbuild --version main`). The product version is the single
+    # workspace version in the manifest (same source the release gate
+    # uses); fall back to a tag-style ref only if that can't be read.
+    version = next(
+        (ln.split('"')[1] for ln in
+         (REPO / "ministr-cli" / "Cargo.toml").read_text(encoding="utf-8").splitlines()
+         if ln.startswith('version = "')),
+        env.get("GITHUB_REF_NAME", "0.0.0").lstrip("v"),
+    )
+    print(f"pkg version: {version}", flush=True)
     rt = Path(env["RUNNER_TEMP"])
     keychain = rt / "installer-signing.keychain-db"
     kc_pw = str(uuid.uuid4())
@@ -169,15 +180,30 @@ def cmd_pkg(a: argparse.Namespace) -> None:
         cert.write_bytes(
             __import__("base64").b64decode(env["APPLE_INSTALLER_CERTIFICATE"])
         )
+        # Import the FULL identity (cert + private key) from the .p12.
+        # `-t cert` (the old flag) restricts the import to certificate
+        # items, so the private key is dropped and `productbuild` finds
+        # "no appropriate signing identity". Drop `-t`, and grant the
+        # signing tools access via `-T` instead of blanket `-A`.
         sh([
             "security", "import", str(cert), "-P",
             env["APPLE_INSTALLER_CERTIFICATE_PASSWORD"],
-            "-A", "-t", "cert", "-f", "pkcs12", "-k", str(keychain),
+            "-f", "pkcs12", "-k", str(keychain),
+            "-T", "/usr/bin/productbuild",
+            "-T", "/usr/bin/pkgbuild",
+            "-T", "/usr/bin/codesign",
         ], redact=True)
         sh([
-            "security", "set-key-partition-list", "-S", "apple-tool:,apple:",
+            "security", "set-key-partition-list", "-S",
+            "apple-tool:,apple:,codesign:",
             "-s", "-k", kc_pw, str(keychain),
         ], redact=True)
+        # Diagnostic (non-fatal): list the identities actually present
+        # so a cert/identity-string mismatch in the secrets is obvious
+        # from the log instead of needing another blind iteration.
+        subprocess.run(
+            ["security", "find-identity", "-v", str(keychain)], check=False
+        )
         comp = rt / "ministr-component.pkg"
         sh([
             "pkgbuild", "--component", str(app), "--install-location",
