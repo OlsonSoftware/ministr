@@ -145,6 +145,10 @@ jobs:
           VER: ${{ needs.gate.outputs.version }}
         run: |
           set -euo pipefail
+          # Annotated tags need a committer identity; this fresh
+          # checkout has none (the release-pr job sets its own).
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           if git rev-parse "v$VER" >/dev/null 2>&1; then
             echo "tag v$VER already exists — skipping create"
           else
