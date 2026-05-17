@@ -22,6 +22,15 @@ name: Release automation
 on:
   push:
     branches: [main]
+    # Docs / markdown / asset / workflow-only pushes never bump a version
+    # (git-cliff keys off `feat:`/`fix:`/etc., not `docs:`/`chore:`), so
+    # spinning the release runner for them is pure waste. A code push that
+    # *does* land work will refresh the `chore: release` PR as normal.
+    paths-ignore:
+      - '**.md'
+      - 'docs-next/**'
+      - 'assets/**'
+      - '.github/**'
 
 permissions:
   contents: read
