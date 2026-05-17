@@ -50,20 +50,20 @@ export function Hero() {
               {...stagger(2)}
               className="mt-6 max-w-[48ch] text-[clamp(1.125rem,1.6vw,1.375rem)] leading-snug font-medium text-fd-foreground/95"
             >
-              Codebase intelligence for AI agents.
+              Real codebase understanding for AI coding agents.
             </motion.p>
 
             <motion.p
               {...stagger(3)}
               className="ministr-body mt-4 max-w-[52ch] text-[14.5px] leading-relaxed"
             >
-              Claude Code, Cursor, and Copilot burn through their context
-              window re-grepping and re-reading code they already saw.
-              ministr replaces grep+read with a local semantic index over
-              your codebase &mdash; symbol-level navigation, cross-language
-              bridge detection, exact-section delivery &mdash; and remembers
-              what the agent has seen so the next turn isn&rsquo;t a cold
-              re-fetch.
+              Claude Code, Cursor, and Copilot explore code with grep and
+              read &mdash; text matching that misses meaning and dumps whole
+              files. ministr replaces that with a local code intelligence
+              layer: AST-level semantic search, symbol navigation, real
+              reference graphs, and cross-language bridge detection across
+              ~29 languages. As a bonus, it remembers what the agent has
+              seen and ships only what changed next turn.
             </motion.p>
 
             <motion.div {...stagger(4)} className="mt-8 flex flex-wrap items-center gap-3">

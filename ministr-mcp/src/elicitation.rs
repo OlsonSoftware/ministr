@@ -25,7 +25,7 @@ use tracing::{debug, warn};
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EvictionChoice {
     /// Comma-separated content IDs to evict (from the candidates list).
-    #[schemars(description = "Comma-separated content IDs to evict from context")]
+    #[schemars(description = "Comma-separated content IDs to drop from context")]
     pub content_ids: String,
 }
 rmcp::elicit_safe!(EvictionChoice);
@@ -159,8 +159,8 @@ mod tests {
             .as_str()
             .unwrap_or("");
         assert!(
-            desc.contains("evict"),
-            "expected description to mention eviction, got: {desc}"
+            desc.contains("drop"),
+            "expected description to mention dropping content, got: {desc}"
         );
     }
 

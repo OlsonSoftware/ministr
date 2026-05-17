@@ -1,12 +1,12 @@
 ---
 title: Architecture — The Deep Dive
-description: In-depth walk through the ministr workspace, ingestion pipeline, session shadow, prefetch engine, and embedding backends.
+description: In-depth walk through the ministr workspace, ingestion pipeline, code intelligence (symbols, references, bridges), search backends, and session tracking.
 ---
 
-> **ministr** is a Rust-native MCP server that gives AI coding agents real codebase
-> intelligence — semantic search across code and docs, symbol-level navigation,
-> cross-language bridge detection — paired with session tracking, predictive
-> prefetching, budget awareness, and coherence.
+> **ministr** is a Rust-native code intelligence MCP server. It gives AI coding
+> agents AST-level understanding of a codebase — semantic search across code and
+> docs, symbol-level navigation, real reference graphs, and cross-language bridge
+> detection — backed by session tracking, predictive prefetching, and coherence.
 >
 > ministr does not (and can't) edit the agent's context window directly. It manages
 > *its own output* — what it sends, when, and at what resolution — so the window
@@ -14,7 +14,7 @@ description: In-depth walk through the ministr workspace, ingestion pipeline, se
 
 ## The Big Picture
 
-Think of ministr as a **smart librarian** that sits between an LLM agent and a codebase. Instead of the agent naively reading files and losing track of what it's already seen, ministr indexes everything, tracks what's been delivered, predicts what's needed next, and shapes its own output — resolution, compression, deduplication — so the agent's finite window stays full of signal instead of redundant re-reads.
+Think of ministr as a **smart librarian** that sits between an LLM agent and a codebase. Instead of the agent grepping and reading files blindly, ministr parses everything into an AST, answers in terms of symbols, references, and language bridges, and shapes its own output — resolution and granularity — so the agent's finite window stays full of signal instead of redundant re-reads.
 
 ```mermaid
 flowchart TB

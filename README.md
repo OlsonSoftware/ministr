@@ -1,22 +1,29 @@
 # ministr
 
-ministr is an MCP server that gives AI coding agents real codebase
-intelligence: semantic search across your code and docs, symbol-level
-navigation, and cross-language bridge detection. It also remembers what it has
-already shown the agent, so the same context is never re-fetched on the next
-turn. It runs locally, embeds locally, and works with any MCP client — Claude
-Code, Cursor, VS Code / Copilot.
+**Real codebase understanding for AI coding agents.**
+
+ministr is a code intelligence MCP server. It gives AI coding agents
+AST-level understanding of your codebase — semantic search across code and
+docs, symbol-level navigation, real reference graphs, and cross-language
+bridge detection across ~29 languages. It runs locally, embeds locally, and
+works with any MCP client — Claude Code, Cursor, VS Code / Copilot.
 
 ## What it solves
 
-AI agents burn their context window three ways, and ministr closes each one.
-They re-read the same files every turn — ministr tracks what the agent has seen,
-deduplicates it, and ships only the delta when something changes. They retrieve
-blindly, pulling whole files to answer a narrow question — ministr indexes the
-corpus at multiple resolutions (document, section, claim, symbol, full source)
-and returns only the slice that matters. And they never look ahead — ministr
-predicts the next request and pre-warms it, so the following tool call is
-already in hand instead of a cold fetch.
+Agents explore code with `grep` and `read`. Grep matches text, not meaning,
+and floods the window with near-misses; reading a whole file to answer a
+narrow question wastes most of what comes back. Neither tool knows that a
+function has three callers, that a trait has two implementations, or that a
+Rust `#[pyfunction]` is what Python calls across the boundary.
+
+ministr replaces that with structure. It parses the codebase into an AST,
+indexes it at multiple resolutions (document, section, claim, symbol, full
+source), and answers in terms of symbols, references, and language bridges —
+returning the exact slice that matters instead of a file dump. As a bonus,
+ministr remembers what it has already shown the agent, so on the next turn it
+ships only what changed rather than re-sending context the agent still has —
+less re-reading, faster time to the right context, more of the window left
+for the actual work.
 
 ## Install
 
@@ -77,9 +84,10 @@ HCL/Terraform, SQL, Zig, Protobuf, Svelte, and JSON/YAML/TOML.
 and events, napi-rs, PyO3, wasm-bindgen, HTTP routes (actix-web / axum /
 rocket), cgo (Go ↔ C), JNI, UniFFI, gRPC, and raw FFI.
 
-**Session tracking** carries deduplication, delta delivery, predictive
-prefetch, and budget management — token monitoring, eviction recommendations,
-and compressed summaries when the window is under pressure.
+**Efficient delivery** (a bonus, not the headline) means ministr tracks what
+each agent has already received and, on a repeat request, returns only what
+changed — plus predictive prefetch so the next likely request is ready in
+hand. Less re-reading, more window left for the work.
 
 **Local embeddings** use Candle with the Metal GPU on Apple Silicon by default,
 FastEmbed + DirectML on Windows DirectX 12 GPUs (with the `directml` feature),

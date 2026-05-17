@@ -45,7 +45,7 @@ const STEPS: Step[] = [
     label: 'session-shadow lookup',
     caption: 'shadow: has this agent already seen this section?',
     detail:
-      'Before doing any work, ministr asks Session Shadow: “has this agent already received this section in this turn?” The shadow is a per-session ledger keyed by content ID — section, claim, or symbol — with a content hash stored alongside so ministr can tell if the underlying content has changed since last delivery. If the agent already has it and it is unchanged, ministr returns a trivial pointer instead of re-serving text the agent already paid budget for.',
+      'Before doing any work, ministr asks Session Shadow: “has this agent already received this section in this turn?” The shadow is a per-session ledger keyed by content ID — section, claim, or symbol — with a content hash stored alongside so ministr can tell if the underlying content has changed since last delivery. If the agent already has it and it is unchanged, ministr returns a trivial pointer instead of re-serving text the agent already has.',
     activeLayers: ['daemon'],
     activeMechs: ['shadow', 'budget'],
     mcp: 'idle', query: 'idle', corpus: 'idle',
@@ -315,12 +315,12 @@ function FlowDiagram({
           <MechanismRow label="Predictive Prefetch" detail="warms next likely reads"        active={isActiveMech('prefetch')} />
           <MechanismRow label="Hybrid Search"       detail="dense + sparse at rank-time"    active={isActiveMech('search')} />
           <MechanismRow label="Delta Delivery"      detail="ships only changed lines"       active={isActiveMech('delta')} />
-          <MechanismRow label="Budget & Pressure"   detail="auto-compresses at 80%"         active={isActiveMech('budget')} />
+          <MechanismRow label="Lean Delivery"        detail="tracks usage, compresses on request" active={isActiveMech('budget')} />
           <MechanismRow label="Coherence Watcher"   detail="flags stale deliveries"         active={isActiveMech('coherence')} />
         </div>
       </FlowLayer>
 
-      <Channel label="query · update" sub="read-through cache" direction={step.query} />
+      <Channel label="query · update" sub="read-through path" direction={step.query} />
 
       <FlowLayer
         kicker="Index"

@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Global ~/.ministr/config.toml and per-project .ministr.toml options — corpus paths, embedding model, budget, prefetch, and environment variables.
+description: Global ~/.ministr/config.toml and per-project .ministr.toml options — corpus paths, embedding model, session limits, prefetch, and environment variables.
 ---
 
 ministr uses a two-level configuration system: global settings and per-corpus settings.
@@ -19,7 +19,7 @@ default_model = "all-MiniLM-L6-v2"
 # Log output format: "pretty" or "json"
 log_format = "pretty"
 
-# Default context budget in tokens for new sessions
+# Window size (tokens) the advisory usage estimate is anchored to
 default_context_budget = 100000
 
 [prefetch]
@@ -46,7 +46,7 @@ topic_window = 5
 | `data_dir` | path | `~/.ministr` | Root directory for all ministr data |
 | `default_model` | string | `"all-MiniLM-L6-v2"` | Embedding model for new corpora (see [supported models](#supported-embedding-models)) |
 | `log_format` | string | `"pretty"` | Log format: `"pretty"` or `"json"` |
-| `default_context_budget` | integer | `100000` | Token budget for new sessions |
+| `default_context_budget` | integer | `100000` | Window size the advisory usage estimate is anchored to |
 | `prefetch.enabled` | boolean | `true` | Enable predictive prefetching |
 | `prefetch.cache_size` | integer | `128` | Max prefetch cache entries |
 | `prefetch.topic_window` | integer | `5` | Recent sections for topic vector |

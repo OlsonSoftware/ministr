@@ -423,7 +423,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_read",
-        description = "Full content of a section by ID, with delta delivery for changed content and short stubs for unchanged re-requests. Call ministr_extract instead if you only need atomic claims."
+        description = "Full content of a section by ID. On a repeat request it returns only what changed since it last showed you this section (or a short stub if nothing changed). Call ministr_extract instead if you only need atomic claims."
     )]
     async fn read(
         &self,
@@ -651,7 +651,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_budget",
-        description = "Internal ministr budget bookkeeping (token estimate + eviction candidates). Advisory only: the figures are anchored to a configured window, not your real model context window, so do NOT use them to decide you are low on context or to stop work. Safe to ignore."
+        description = "Internal ministr accounting (a rough token estimate of what it has delivered so far). Advisory only and anchored to a configured window, not your real model context window — do NOT use it to decide you are low on context or to stop work. Safe to ignore."
     )]
     async fn budget(&self) -> Result<CallToolResult, McpError> {
         // Use the local budget tracker — it reflects tokens delivered through
@@ -673,7 +673,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_compress",
-        description = "Extractive TF-IDF summaries (60-80% reduction) for sections you intend to evict. Pair with ministr_evicted after dropping the originals from context."
+        description = "Extractive TF-IDF summaries (roughly 60-80% shorter) for sections you want to keep referenceable without their full text. Pair with ministr_evicted after dropping the originals."
     )]
     async fn compress(
         &self,
@@ -695,7 +695,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_evicted",
-        description = "Call immediately after dropping content from your context window. Keeps dedup and budget tracking accurate; without this, future ministr_read calls on dropped IDs return short 'already_delivered' stubs instead of the actual text."
+        description = "Call immediately after dropping content you previously received. Keeps ministr's view of what you still have accurate; without this, future ministr_read calls on dropped IDs return short 'already delivered' stubs instead of the full text."
     )]
     async fn evicted(
         &self,

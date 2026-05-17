@@ -1,9 +1,9 @@
 ---
 title: Tool Reference
-description: All MCP tools ministr exposes — search, code navigation, budget management, and multi-source corpus ingestion.
+description: All MCP tools ministr exposes — semantic search, code navigation, cross-language bridges, session efficiency, and multi-source corpus ingestion.
 ---
 
-ministr exposes MCP tools that give the agent explicit control over context retrieval. The tools cover document search, code navigation, cross-language bridges, budget management, and multi-source corpus ingestion.
+ministr exposes MCP tools that give the agent code intelligence and explicit control over retrieval. The tools cover semantic search, code navigation, cross-language bridges, session efficiency, and multi-source corpus ingestion.
 
 ## Search & retrieval
 
@@ -24,13 +24,13 @@ ministr exposes MCP tools that give the agent explicit control over context retr
 | [`ministr_references`](/docs/tools/references) | Find callers, implementors, importers | 50-300 |
 | [`ministr_bridge`](/docs/tools/bridge) | Query cross-language bindings | 50-200 |
 
-## Budget management
+## Session efficiency
 
 | Tool | Purpose | Typical Token Cost |
 |---|---|---|
-| [`ministr_budget`](/docs/tools/budget) | Check budget status | minimal |
-| [`ministr_compress`](/docs/tools/compress) | Get compressed summaries | 50-200 |
-| [`ministr_evicted`](/docs/tools/evicted) | Signal evicted content | minimal |
+| [`ministr_budget`](/docs/tools/budget) | Advisory token-usage estimate | minimal |
+| [`ministr_compress`](/docs/tools/compress) | Get compact summaries of sections | 50-200 |
+| [`ministr_evicted`](/docs/tools/evicted) | Signal content dropped from context | minimal |
 
 ## Multi-source corpora
 
@@ -55,7 +55,7 @@ Every MCP tool returns a `ToolResponse<T>` envelope. The tool-specific payload l
   "coherence_alerts": [ /* present only when underlying content has changed */ ],
   "indexing_in_progress": true,
   "indexing_message": "Checking 12/42 files",
-  "eviction_recommendations": [ /* present when budget pressure is elevated or critical */ ],
+  "eviction_recommendations": [ /* advisory; present when the configured-window estimate runs high */ ],
   "result": {
     /* tool-specific payload — shape varies per tool */
   }
@@ -64,11 +64,11 @@ Every MCP tool returns a `ToolResponse<T>` envelope. The tool-specific payload l
 
 | Wrapper field | Always present? | Description |
 |---|---|---|
-| `budget_status` | ✅ always | Current token-budget snapshot (`tokens_used`, `tokens_remaining`, `pressure_level`, `utilization`) |
+| `budget_status` | ✅ always | Advisory token-usage estimate (`tokens_used`, `tokens_remaining`, `pressure_level`, `utilization`) — internal accounting, anchored to the configured window, not a stop signal |
 | `coherence_alerts` | only when non-empty | Notifications for sections whose underlying content changed since last delivery |
 | `indexing_in_progress` | only when `true` | Background corpus ingestion is still running |
 | `indexing_message` | only when present | Human-readable ingestion status (e.g. `"Checking 12/42 files"`) |
-| `eviction_recommendations` | only when budget is elevated/critical | Proactive eviction candidates — same shape as the `eviction_candidates` field in [`ministr_budget`](/docs/tools/budget) |
+| `eviction_recommendations` | only when the window estimate runs high | Advisory list of content ministr suggests dropping first — same shape as the `eviction_candidates` field in [`ministr_budget`](/docs/tools/budget) |
 | `result` | ✅ always | Tool-specific payload — see each tool's reference page for its shape |
 
 The per-tool reference pages below show the full envelope in their `Response` examples for clarity. Field tables describe the `result` payload (shape varies per tool) and reference this envelope for the wrapper fields.
@@ -85,6 +85,6 @@ budget ← compress ← evicted
 2. **Read** specific sections identified by the survey
 3. **Extract** claims for surgical precision
 4. **Related** to follow reasoning chains
-5. **Budget** to check pressure and get eviction recommendations
-6. **Compress** sections before evicting them
+5. **Budget** for an advisory token-usage estimate (optional)
+6. **Compress** sections into compact summaries when useful
 7. **Evicted** to tell ministr what was dropped (improves tracking accuracy)

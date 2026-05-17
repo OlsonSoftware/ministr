@@ -6,10 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "MCP server adapter for ministr — a context cache for LLM agents"
+description = "MCP server adapter for ministr — code intelligence for AI coding agents"
 readme = "../README.md"
 categories = ["development-tools", "web-programming"]
-keywords = ["mcp", "llm", "context", "server"]
+keywords = ["mcp", "code-intelligence", "llm", "server"]
 
 [lints]
 workspace = true

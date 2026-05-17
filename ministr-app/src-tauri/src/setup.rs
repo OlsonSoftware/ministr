@@ -286,7 +286,7 @@ fn install_linux_desktop_entry() -> Result<(), Box<dyn std::error::Error>> {
         "[Desktop Entry]",
         "Type=Application",
         "Name=ministr",
-        "Comment=Context cache for LLM agents",
+        "Comment=Code intelligence MCP server for AI coding agents",
         &format!("Exec={exec_value}"),
         "Icon=ai.ministr",
         "Terminal=false",

@@ -13,11 +13,11 @@ export const metadata: Metadata = {
   // docs page so the tab title reads e.g. "Architecture — ministr"
   // without each MDX file having to spell it out.
   title: {
-    default: 'ministr — a local index for AI coding agents',
+    default: 'ministr — real codebase understanding for AI coding agents',
     template: '%s — ministr',
   },
   description:
-    'ministr stops Claude Code, Cursor, and Copilot from re-grepping and re-reading your code. A local MCP server that ships the exact section your agent needs — once — then tracks what it has and skips it on the next turn.',
+    'ministr is a code intelligence MCP server for Claude Code, Cursor, and Copilot. AST-level semantic search, symbol navigation, reference graphs, and cross-language bridge detection across ~29 languages — all local.',
   applicationName: 'ministr',
   authors: [{ name: 'Alrik Olson' }],
   keywords: [
@@ -28,7 +28,8 @@ export const metadata: Metadata = {
     'Copilot',
     'AI coding agent',
     'semantic code search',
-    'context cache',
+    'code intelligence',
+    'cross-language bridges',
     'local-first',
     'Rust',
   ],
@@ -39,9 +40,9 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     siteName: 'ministr',
-    title: 'ministr — a local index for AI coding agents',
+    title: 'ministr — real codebase understanding for AI coding agents',
     description:
-      'A local MCP server that ships the exact section your agent needs — once — then tracks what it has and skips it on the next turn.',
+      'A local code intelligence MCP server: AST-level semantic search, symbol navigation, reference graphs, and cross-language bridge detection.',
     url: 'https://ministr.ai',
     // No image set yet; Fumadocs generates per-doc OG at /og/docs/<slug>.
     // The landing falls back to no-image until a real asset exists —
@@ -49,9 +50,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary',
-    title: 'ministr — a local index for AI coding agents',
+    title: 'ministr — real codebase understanding for AI coding agents',
     description:
-      'Stop your agent from re-reading the same files. Local MCP server, no API calls.',
+      'Code intelligence MCP server: semantic search, symbol navigation, and cross-language bridges. Local, no API calls.',
   },
 };
 

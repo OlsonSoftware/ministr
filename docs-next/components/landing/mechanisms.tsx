@@ -13,14 +13,29 @@ export function Mechanisms() {
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
         <p className="ministr-eyebrow">What ministr does</p>
         <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
-          Six jobs your agent doesn&rsquo;t have to do.
+          Understanding first. Efficiency for free.
         </h2>
         <p className="ministr-body mt-4 max-w-[60ch] text-[15.5px]">
-          Each one fixes a specific way AI coding agents waste their context
-          window. Defaults are sensible &mdash; most users never touch a knob.
+          The first jobs are code intelligence &mdash; how ministr understands
+          your codebase. The rest keep delivery lean so the agent spends its
+          window on the work. Defaults are sensible; most users never touch a knob.
         </p>
 
         <div className="mt-12 grid grid-cols-1 gap-5 md:grid-cols-2">
+          <MechanismTile
+            title="Keyword + meaning search"
+            technical="Hybrid Search"
+            copy="Pairs semantic embeddings with token-level keyword matching and fuses the rankings — so you find the function whether you search by what it does or what it's called."
+          >
+            <HybridVisual />
+          </MechanismTile>
+          <MechanismTile
+            title="Links code across languages"
+            technical="Bridge Detection"
+            copy="Auto-detects Tauri, napi-rs, PyO3, wasm-bindgen, gRPC, HTTP and raw FFI boundaries and links each export to the callers on the other side — something grep simply cannot see."
+          >
+            <BridgeVisual />
+          </MechanismTile>
           <MechanismTile
             title="Remembers what was sent"
             technical="Session Shadow"
@@ -43,25 +58,11 @@ export function Mechanisms() {
             <PrefetchVisual />
           </MechanismTile>
           <MechanismTile
-            title="Watches the token budget"
-            technical="Budget & Pressure"
-            copy="Tracks how much context your agent has used. As it fills up, ministr auto-compresses responses and picks what to drop first."
-          >
-            <BudgetVisual />
-          </MechanismTile>
-          <MechanismTile
             title="Flags stale content"
             technical="Coherence Watcher"
             copy="If a file changes on disk after your agent read it, ministr marks that content stale so the agent re-reads the new version instead of reasoning off rot."
           >
             <CoherenceVisual />
-          </MechanismTile>
-          <MechanismTile
-            title="Keyword + meaning search"
-            technical="Hybrid Search"
-            copy="Pairs semantic embeddings with token-level keyword matching and fuses the rankings — so you find the function whether you search by what it does or what it's called."
-          >
-            <HybridVisual />
           </MechanismTile>
         </div>
       </div>
@@ -273,46 +274,39 @@ function PrefetchVisual() {
   );
 }
 
-/** Budget & Pressure — live token meter with threshold and auto-compress signal. */
-function BudgetVisual() {
+/** Bridge Detection — a resolved cross-language binding: a Rust export
+ *  linked to its Python caller across the PyO3 boundary. */
+function BridgeVisual() {
   return (
-    <PanelShell label="context budget">
-      <div className="flex items-baseline justify-between">
-        <div className="flex items-baseline gap-2">
-          <span className="font-mono text-[clamp(1.5rem,2.6vw,2rem)] font-semibold tabular-nums text-fd-foreground">
-            84<span className="text-fd-muted-foreground">,237</span>
+    <PanelShell label='ministr_bridge("create_user")'>
+      <div className="font-mono text-[11px] leading-[1.6]">
+        <div className="flex items-center gap-2">
+          <span className="w-12 shrink-0 rounded border border-[color-mix(in_oklch,var(--color-ministr-400)_45%,transparent)] bg-[color-mix(in_oklch,var(--color-ministr-400)_14%,transparent)] px-1.5 py-px text-center text-[9.5px] uppercase tracking-wider text-[var(--ministr-accent-text)]">
+            rust
           </span>
-          <span className="text-[11px] text-fd-muted-foreground">/ 100,000 tokens</span>
+          <span className="truncate text-fd-foreground">
+            #[pyfunction] fn create_user(..)
+          </span>
         </div>
-        <span className="rounded-full border border-[color-mix(in_oklch,var(--color-warning)_40%,transparent)] bg-[color-mix(in_oklch,var(--color-warning)_12%,transparent)] px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-[var(--color-warning)]">
-          pressure elevated
-        </span>
+        <div className="my-1.5 flex items-center gap-2 pl-[3.25rem] text-[10px] text-fd-muted-foreground">
+          <span aria-hidden>↳</span>
+          <span className="rounded bg-[color-mix(in_oklch,var(--color-ministr-500)_20%,transparent)] px-1 py-px text-[9px] uppercase tracking-wider text-[var(--ministr-accent-text)]">
+            PyO3 bridge
+          </span>
+          <span>linked · 1 export → 2 callers</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-12 shrink-0 rounded border border-fd-border/50 px-1.5 py-px text-center text-[9.5px] uppercase tracking-wider text-fd-muted-foreground">
+            python
+          </span>
+          <span className="truncate text-fd-foreground">api/users.py:31 create_user(..)</span>
+        </div>
+        <div className="mt-1 flex items-center gap-2 pl-[3.25rem]">
+          <span className="truncate text-fd-muted-foreground">tests/test_users.py:9 create_user(..)</span>
+        </div>
       </div>
-      <div className="relative mt-3 h-2 overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--ministr-surface-strong)_85%,transparent)]">
-        <div className="absolute inset-y-0 left-0 w-[84%] rounded-full bg-[var(--color-warning)]" />
-        <div
-          aria-label="80% threshold"
-          className="absolute inset-y-[-4px] left-[80%] w-px bg-[var(--color-warning)] opacity-90"
-        />
-      </div>
-      <div className="mt-1 flex justify-between text-[9.5px] font-mono uppercase tracking-wider text-fd-muted-foreground">
-        <span>0</span>
-        <span>threshold · 80%</span>
-        <span>100k</span>
-      </div>
-      <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
-        <div className="rounded bg-[color-mix(in_oklch,var(--ministr-surface-strong)_50%,transparent)] p-2">
-          <div className="text-[9.5px] uppercase tracking-wider text-fd-muted-foreground">auto-compress</div>
-          <div className="font-mono text-[var(--color-success)]">−62%</div>
-        </div>
-        <div className="rounded bg-[color-mix(in_oklch,var(--ministr-surface-strong)_50%,transparent)] p-2">
-          <div className="text-[9.5px] uppercase tracking-wider text-fd-muted-foreground">eviction queue</div>
-          <div className="font-mono text-[var(--ministr-accent-text)]">3 ready</div>
-        </div>
-        <div className="rounded bg-[color-mix(in_oklch,var(--ministr-surface-strong)_50%,transparent)] p-2">
-          <div className="text-[9.5px] uppercase tracking-wider text-fd-muted-foreground">salience</div>
-          <div className="font-mono text-fd-foreground">ranked</div>
-        </div>
+      <div className="mt-3 border-t border-fd-border/30 pt-2 text-[10.5px] text-fd-muted-foreground">
+        grep sees two unrelated functions · ministr sees the boundary
       </div>
     </PanelShell>
   );

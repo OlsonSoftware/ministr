@@ -73,7 +73,7 @@ Once connected, your agent has access to these tools:
 | Tool | Purpose |
 |------|---------|
 | `ministr_survey` | Semantic search across docs and code |
-| `ministr_read` | Read a section by ID (with deduplication & delta delivery) |
+| `ministr_read` | Read a section by ID (returns only what changed on a repeat read) |
 | `ministr_extract` | Get atomic claims from a section |
 | `ministr_related` | Follow dependency chains between claims |
 | `ministr_toc` | Structural overview of the indexed corpus |
@@ -81,8 +81,8 @@ Once connected, your agent has access to these tools:
 | `ministr_definition` | Get full source of a symbol |
 | `ministr_references` | Find callers, implementors, importers |
 | `ministr_bridge` | Query cross-language bindings |
-| `ministr_budget` | Check context budget and get eviction advice |
-| `ministr_compress` | Generate compressed summaries for eviction |
+| `ministr_budget` | Advisory token-usage estimate (internal accounting) |
+| `ministr_compress` | Generate compact summaries of sections |
 | `ministr_evicted` | Signal that content has been dropped |
 | `ministr_fetch` | Fetch a web URL into the corpus |
 | `ministr_clone` | Clone and index a git repository |
@@ -106,4 +106,4 @@ ministr_references("src/auth.rs::validate_token")
   → 3 callers across the codebase
 ```
 
-Each response includes a `budget_status` showing how much context budget has been consumed, so the agent can make informed decisions about what to read next.
+Each response includes a `budget_status` field with an advisory token-usage estimate. Treat it as internal accounting — it is anchored to a configured window, not the agent's real context window, and is not a signal to stop reading.
