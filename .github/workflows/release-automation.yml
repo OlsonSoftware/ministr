@@ -79,6 +79,25 @@ jobs:
           set -euo pipefail
           last_tag="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
           range="${last_tag:+$last_tag..}HEAD"
+          echo "last_tag=${last_tag:-}" >> "$GITHUB_OUTPUT"
+          echo "range=$range" >> "$GITHUB_OUTPUT"
+
+          # CORE INVARIANT (same state check as the `gate` job): in
+          # steady state the manifest version == the last `vX.Y.Z` tag.
+          # If the manifest is ahead and UNTAGGED, a release is already
+          # prepared and in flight (its release PR merged; the
+          # deterministic gate→build→tag path owns it until the tag
+          # lands). Starting another agent session now would prepare a
+          # "next" release on top of an untagged one — exactly the
+          # phantom-pending-release failure mode. Skip until tagged.
+          ver="$(grep -m1 '^version' ministr-cli/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ -n "$ver" ] && \
+             ! git ls-remote --exit-code --tags origin "refs/tags/v$ver" >/dev/null 2>&1; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "v$ver is prepared but not yet tagged — a release is in flight; the deterministic gate/build/tag path owns it. Not starting a new agent session."
+            exit 0
+          fi
+
           # Conventional types that warrant a release (or any breaking
           # `!` / `BREAKING CHANGE`). docs/chore/ci/test/style never bump.
           if git log "$range" --format='%s%n%b' \
@@ -88,8 +107,6 @@ jobs:
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "No releasable commits since ${last_tag:-repo start}; nothing to do."
           fi
-          echo "last_tag=${last_tag:-}" >> "$GITHUB_OUTPUT"
-          echo "range=$range" >> "$GITHUB_OUTPUT"
 
       - name: Skip if a release PR is already open
         id: openpr
