@@ -8970,9 +8970,9 @@ dependencies = [
 [[package]]
 name = "tree-sitter-unreal-cpp"
 version = "0.23.4"
-source = "git+https://github.com/taku25/tree-sitter-unreal-cpp?rev=92eee7d1ac994e408c208bcb1b73170c8746356f#92eee7d1ac994e408c208bcb1b73170c8746356f"
 dependencies = [
  "cc",
+ "tree-sitter",
  "tree-sitter-language",
 ]
 
