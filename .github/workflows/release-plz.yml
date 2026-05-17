@@ -7,13 +7,23 @@ name: Release-plz
 #   merge that PR ─▶ release-plz-release : pushes one `vX.Y.Z` tag
 #       └──────────▶ release.yml (tag trigger) builds artifacts + Release
 #
-# release-plz does NOT publish to crates.io and does NOT create the
-# GitHub Release (release.yml owns that) — release-plz.toml enforces both.
+# Deliberate deviations from the upstream quickstart, all required by
+# *our* setup (private repo, crates.io disabled, custom release.yml):
 #
-# Token: the default GITHUB_TOKEN cannot trigger other workflows, so a
-# tag it pushes would NOT fire release.yml. We use a fine-grained PAT
-# (secret RELEASE_PLZ_TOKEN: Contents RW + Pull requests RW) so both the
-# Release PR's CI and the downstream tag→release.yml run normally.
+#  * No CARGO_REGISTRY_TOKEN — release-plz.toml sets `publish = false`,
+#    so nothing is published to a cargo registry; the token would be
+#    unused. (Upstream's "private registry" note means a private *cargo*
+#    registry, not a private GitHub repo — not our case.)
+#  * RELEASE_PLZ_TOKEN PAT instead of the default GITHUB_TOKEN: a tag
+#    pushed by GITHUB_TOKEN can't trigger another workflow, so
+#    release.yml would never fire. The PAT (Contents: RW, Pull
+#    requests: RW) also lets the Release PR run CI and sidesteps the
+#    "allow Actions to create PRs" org toggle (the PAT's user authors
+#    the PR). If you ever switch back to GITHUB_TOKEN, you must enable
+#    Settings → Actions → "Allow GitHub Actions to create and approve
+#    pull requests".
+#  * git_release_enable=false in release-plz.toml — release.yml already
+#    creates the single GitHub Release with every artifact on the tag.
 
 on:
   push:
@@ -22,20 +32,23 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: release-plz-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   # Open/refresh the release PR: version bump + CHANGELOG from commits.
   release-plz-pr:
     name: Release PR
     runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'OlsonSoftware' }}
     permissions:
       contents: write
       pull-requests: write
+    # Serialize PR runs (never cancel — cancel-in-progress:false) so a
+    # burst of pushes can't race two `release-pr` updates. NOT applied to
+    # the release job: a release must never be skipped/queued away.
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -54,10 +67,12 @@ jobs:
   release-plz-release:
     name: Release tag
     runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'OlsonSoftware' }}
     permissions:
-      contents: write
+      contents: write          # push the tag
+      pull-requests: read      # detect the merged release PR + its commits
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -68,6 +83,4 @@ jobs:
           command: release
           config: release-plz.toml
         env:
-          # PAT (not the default token) so the pushed tag triggers
-          # release.yml. No CARGO_REGISTRY_TOKEN — publishing is off.
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
