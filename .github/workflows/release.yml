@@ -2,33 +2,32 @@ name: Release
 
 # Single workflow → single GitHub Release per version tag.
 #
-# Triggered by `vX.Y.Z` (or `vX.Y.Z-rc.N`) tags. Builds and publishes
-# every artifact a user could want for that version, on every supported
-# platform, in one Release:
+# Triggered by `vX.Y.Z` (or `vX.Y.Z-rc.N`) tags. Builds & publishes
+# every artifact for that version on every supported platform in one
+# Release: CLI tarballs/zip, desktop installers, aggregated SHA256SUMS.
 #
-#   - CLI tarballs / zip:    ministr-<target>.tar.gz / .zip
-#   - Desktop installers:    ministr-desktop-<target>.<dmg|exe|deb|AppImage>
-#   - Aggregated checksums:  SHA256SUMS
+# Architecture (matches ci.yml — see .github/actions/* + scripts/ci/ci.py):
+#   * ALL build logic lives in scripts/ci/ci.py, invoked through the
+#     ./.github/actions/run-ci-py composite — the ONE place the OS
+#     (bash/python3 vs cmd/python) split exists. No per-OS step pairs.
+#   * Toolchain + sccache(R2): ./.github/actions/rust-env on Linux/macOS;
+#     scripts/ci/win_setup.ps1 on Windows — same warm cache as ci.yml,
+#     no container (avoids the empty-image + mutable-:latest footguns).
+#   * macOS .pkg signing is `ci.py pkg` (no inline shell mega-script).
 #
-# The `cli` and `desktop` matrices run in parallel; the final `release`
-# job downloads everything and creates the GitHub Release exactly once
-# (parallel calls to action-gh-release race each other on same-tag
-# uploads — see softprops/action-gh-release issues #445 and #767).
+# RELEASE CONTRACT: this fires only on a `vX.Y.Z` tag, and that tag is
+# only ever created by merging the release-plz PR. Never hand-move tags
+# (see release-plz.yml header).
 
 on:
   push:
-    # Match v0.2.0, v0.2.0-rc.1, v1.0.0+nightly etc.
-    # Reject accidental tags like `vfoo` or pre-existing `v*-app`.
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
 
 concurrency:
   group: release-${{ github.ref }}
-  # Don't cancel in-flight releases — they upload artifacts; killing
-  # mid-upload leaves a half-published Release.
   cancel-in-progress: false
 
-# Default to read-only; the `release` job below elevates to write.
 permissions:
   contents: read
 
@@ -37,19 +36,21 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────
-  # CLI tarballs (headless installs, install.sh, Docker, scripted setups)
+  # CLI tarballs / zip
   # ──────────────────────────────────────────────────────────────────────
   cli:
     name: CLI ${{ matrix.target }}
-    # Per-OS custom-runner routing (each falls back to the matrix's
-    # GitHub-hosted runner when the variable is unset):
-    #   - x86_64 Linux  → vars.CI_RUNNER          (heavy ORT/grammar build)
-    #   - x86_64 Windows → vars.CI_RUNNER_WINDOWS  (slowest release build)
-    # macOS / aarch64-Linux stay OS-bound on their hosted runners.
+    # Custom-runner routing (fallback = the matrix GitHub-hosted runner):
+    #   x86_64 Linux  → vars.CI_RUNNER          (heavy ORT/grammar build)
+    #   x86_64 Windows → vars.CI_RUNNER_WINDOWS  (slowest release build)
     runs-on: >-
       ${{ (matrix.target == 'x86_64-unknown-linux-gnu' && (vars.CI_RUNNER || matrix.os))
        || (matrix.target == 'x86_64-pc-windows-msvc' && (vars.CI_RUNNER_WINDOWS || matrix.os))
        || matrix.os }}
+    # No container: the rust-env composite (Linux/macOS) and
+    # win_setup.ps1 (Windows) provision the identical toolchain+sccache
+    # the ministr-ci image has — without an empty-image-validation
+    # footgun or a mutable `:latest` race against the CI image publish.
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -60,8 +61,8 @@ jobs:
             binary: ministr
             archive: ministr-x86_64-unknown-linux-gnu.tar.gz
 
-          # ARM Linux uses ubuntu-24.04-arm (GitHub-hosted aarch64 runner).
-          # ort-sys 2.0.0-rc.11 prebuilts require glibc 2.38+; 24.04 has 2.39.
+          # ARM Linux: ubuntu-24.04-arm (glibc 2.39 for ort-sys
+          # prebuilts). No container — ministr-ci is an amd64 image.
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
             binary: ministr
@@ -72,11 +73,9 @@ jobs:
             binary: ministr
             archive: ministr-aarch64-apple-darwin.tar.gz
 
-          # x86_64-apple-darwin intentionally omitted: ort-sys 2.0.0-rc.11
-          # dropped prebuilt binaries for that target, and macOS 26 dropped
-          # Intel x86_64 support repo-wide. Apple Silicon is the supported
-          # Mac target; Intel users can run via Rosetta 2 or build from
-          # source.
+          # x86_64-apple-darwin omitted: ort-sys dropped Intel-mac
+          # prebuilts; macOS 26 dropped Intel. Apple Silicon is the
+          # supported Mac target.
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -86,71 +85,47 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # ── Windows path is 100% bash-free ──────────────────────────────
-      # A self-hosted Windows runner's `shell: bash` is the System32 WSL
-      # stub (exits 1, no distro), which also kills dtolnay/rust-toolchain
-      # (its internal step is `shell: bash`). So on Windows we skip
-      # dtolnay and run an idempotent Windows-PowerShell bootstrap
-      # (always present, no WSL) that guarantees Python + Rust, then do
-      # all logic in Python (scripts/ci/ci.py). Linux/macOS shards keep
-      # dtolnay + bash unchanged.
-      - name: Windows runner bootstrap (Python + Rust, idempotent)
+      # Windows: cmd → idempotent PS bootstrap (toolchain+sccache+Defender).
+      - name: Windows bootstrap
         if: runner.os == 'Windows'
-        shell: powershell
-        run: ./scripts/ci/win_setup.ps1 -Target ${{ matrix.target }}
+        shell: cmd
+        env:
+          SCCACHE_BUCKET: ${{ secrets.SCCACHE_BUCKET }}
+          SCCACHE_ENDPOINT: ${{ secrets.SCCACHE_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ci\win_setup.ps1 -Target ${{ matrix.target }}
 
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
+      - name: Rust env (Linux/macOS)
         if: runner.os != 'Windows'
+        uses: ./.github/actions/rust-env
         with:
-          # Pinned by SHA → channel can't be read from the ref; set it.
-          toolchain: stable
           targets: ${{ matrix.target }}
+          sccache-bucket: ${{ secrets.SCCACHE_BUCKET }}
+          sccache-endpoint: ${{ secrets.SCCACHE_ENDPOINT }}
+          aws-access-key-id: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: cli-${{ matrix.target }}
+          cache-targets: "false"
 
-      - name: Disable Defender for build paths (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          Add-MpPreference -ExclusionPath "${env:GITHUB_WORKSPACE}"
-          Add-MpPreference -ExclusionPath "${env:USERPROFILE}\.cargo"
-          Add-MpPreference -ExclusionPath "${env:RUNNER_TEMP}"
-          Add-MpPreference -ExclusionProcess "rustc.exe"
-          Add-MpPreference -ExclusionProcess "cargo.exe"
-          Add-MpPreference -ExclusionProcess "link.exe"
-          Add-MpPreference -ExclusionProcess "lld-link.exe"
-
-      # lld linker — only the Windows target uses it, so it's inherently
-      # a Windows-only step. Python, not bash.
-      - name: Use lld linker (Windows, Python)
+      - name: lld linker (Windows target)
         if: matrix.target == 'x86_64-pc-windows-msvc'
-        shell: powershell
-        run: python scripts/ci/ci.py lld-config
+        uses: ./.github/actions/run-ci-py
+        with:
+          args: lld-config
 
-      - name: Build release binary (Unix, bash)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: cargo build --release --target ${{ matrix.target }} -p ministr-cli
+      - name: Build ministr-cli
+        uses: ./.github/actions/run-ci-py
+        with:
+          args: build --target ${{ matrix.target }} -p ministr-cli
 
-      - name: Build release binary (Windows, Python)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: python scripts/ci/ci.py build --target ${{ matrix.target }} -p ministr-cli
-
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../${{ matrix.archive }} ${{ matrix.binary }}
-          cd ../../..
-          shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
-
-      - name: Package (Windows, Python)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: python scripts/ci/ci.py package-cli --target ${{ matrix.target }} --binary ${{ matrix.binary }} --archive ${{ matrix.archive }}
+      - name: Package
+        uses: ./.github/actions/run-ci-py
+        with:
+          args: package-cli --target ${{ matrix.target }} --binary ${{ matrix.binary }} --archive ${{ matrix.archive }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -161,29 +136,23 @@ jobs:
             ${{ matrix.archive }}.sha256
 
   # ──────────────────────────────────────────────────────────────────────
-  # Desktop installers (Tauri bundles: .dmg / NSIS .exe / .deb / AppImage)
+  # Desktop installers (Tauri: .pkg / NSIS .exe / .deb / .rpm / AppImage)
   # ──────────────────────────────────────────────────────────────────────
   desktop:
     name: Desktop ${{ matrix.platform }}
-    # Per-OS custom-runner routing (fallback = the matrix hosted runner):
-    #   - linux-x86_64   → vars.CI_RUNNER          (Tauri build + bundling)
-    #   - windows-x86_64 → vars.CI_RUNNER_WINDOWS  (slowest desktop build:
-    #                       sidecar + directml + NSIS, Defender scanning)
-    # macOS shard stays OS-bound (signing/notarization needs Apple HW).
     runs-on: >-
       ${{ (matrix.platform == 'linux-x86_64' && (vars.CI_RUNNER || matrix.os))
        || (matrix.platform == 'windows-x86_64' && (vars.CI_RUNNER_WINDOWS || matrix.os))
        || matrix.os }}
+    # No container (see cli job): rust-env / win_setup.ps1 provision the
+    # toolchain+sccache; avoids the empty-image + :latest-race footguns.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macOS ships a signed + notarized .pkg (built post-tauri-action
-          # below). Pass `--bundles app` so Tauri produces only the .app —
-          # we don't ship a .dmg, since the .pkg is a strictly better
-          # install UX (Apple Installer.app + auto CLI symlink) and the
-          # default Tauri DMG bundler is also famously flaky.
+          # macOS: signed+notarized .pkg (built post-tauri-action). Tauri
+          # makes only the .app (`--bundles app`); .pkg via `ci.py pkg`.
           - platform: macos-aarch64
             os: macos-latest
             cli_target: aarch64-apple-darwin
@@ -194,15 +163,12 @@ jobs:
             target_dir: target/aarch64-apple-darwin/release/bundle
             triple: aarch64-apple-darwin
 
-          # Windows builds the CLI sidecar with `--features directml` so the
-          # bundled binary uses DirectX 12 GPU embedding. The bare CLI .zip
-          # from the `cli` job stays non-DirectML (CI/server-friendly).
-          # `--bundles nsis` skips the MSI bundler (which requires a .ico that
-          # we don't ship; PNG icons are sufficient for NSIS).
+          # Windows: sidecar built with directml (DX12 GPU embedding);
+          # `--bundles nsis` (no MSI — needs a .ico we don't ship).
           - platform: windows-x86_64
             os: windows-latest
             cli_target: x86_64-pc-windows-msvc
-            cli_features: "directml"
+            cli_features: directml
             sidecar_bin: ministr.exe
             sidecar_name: ministr-cli-x86_64-pc-windows-msvc.exe
             tauri_args: "--bundles nsis"
@@ -222,46 +188,36 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # Windows path is bash-free (see cli job). Idempotent PowerShell
-      # bootstrap → Python + Rust; dtolnay skipped on Windows because
-      # its internal step is `shell: bash`.
-      - name: Windows runner bootstrap (Python + Rust, idempotent)
+      - name: Windows bootstrap
         if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: ./scripts/ci/win_setup.ps1 -Target ${{ matrix.cli_target }}
+        shell: cmd
+        env:
+          SCCACHE_BUCKET: ${{ secrets.SCCACHE_BUCKET }}
+          SCCACHE_ENDPOINT: ${{ secrets.SCCACHE_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ci\win_setup.ps1 -Target ${{ matrix.cli_target }}
 
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
+      - name: Rust env (Linux/macOS)
         if: matrix.platform != 'windows-x86_64'
+        uses: ./.github/actions/rust-env
         with:
-          # Pinned by SHA → channel can't be read from the ref; set it.
-          toolchain: stable
           targets: ${{ matrix.cli_target }}
+          sccache-bucket: ${{ secrets.SCCACHE_BUCKET }}
+          sccache-endpoint: ${{ secrets.SCCACHE_ENDPOINT }}
+          aws-access-key-id: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: desktop-${{ matrix.platform }}
+          cache-targets: "false"
 
-      # Big Windows speedup: Microsoft Defender real-time-scans every file
-      # `cargo build` writes (hundreds of thousands of small `.rmeta`/`.o`
-      # files). Excluding the work tree + cargo dir + linker processes
-      # cuts wall-clock by ~30% on Windows runners.
-      - name: Disable Defender for build paths (Windows)
+      - name: lld linker (Windows)
         if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: |
-          Add-MpPreference -ExclusionPath "${env:GITHUB_WORKSPACE}"
-          Add-MpPreference -ExclusionPath "${env:USERPROFILE}\.cargo"
-          Add-MpPreference -ExclusionPath "${env:RUNNER_TEMP}"
-          Add-MpPreference -ExclusionProcess "rustc.exe"
-          Add-MpPreference -ExclusionProcess "cargo.exe"
-          Add-MpPreference -ExclusionProcess "link.exe"
-          Add-MpPreference -ExclusionProcess "lld-link.exe"
-
-      # rust-lld instead of MSVC link.exe — Windows-only step, Python.
-      - name: Use lld linker (Windows, Python)
-        if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: python scripts/ci/ci.py lld-config
+        uses: ./.github/actions/run-ci-py
+        with:
+          args: lld-config
 
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
         with:
@@ -277,57 +233,30 @@ jobs:
         working-directory: ministr-app
         run: pnpm install --frozen-lockfile
 
-      - name: Install Linux deps
+      - name: Install Linux desktop deps
         if: matrix.platform == 'linux-x86_64'
+        shell: bash
         run: |
           sudo apt-get update
-          # `rpm` provides rpmbuild, which Tauri's RPM bundler shells out to.
+          # rpm provides rpmbuild for Tauri's RPM bundler. (webkit/rsvg/
+          # appindicator are baked into ministr-ci but re-ensured here so
+          # this also works on a bare host.)
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
 
-      # Tauri's externalBin sidecar must exist at build time, named
-      # `binaries/ministr-cli-<target-triple>` (with `.exe` on Windows).
-      # We compile per-platform with the right --features set.
-      - name: Build CLI sidecar (Unix, bash)
-        if: matrix.platform != 'windows-x86_64'
-        shell: bash
-        run: |
-          if [ -n "${{ matrix.cli_features }}" ]; then
-            cargo build --release --target ${{ matrix.cli_target }} -p ministr-cli --features ${{ matrix.cli_features }}
-          else
-            cargo build --release --target ${{ matrix.cli_target }} -p ministr-cli
-          fi
+      # Tauri externalBin sidecar (per-platform features) — one ci.py path.
+      - name: Build CLI sidecar
+        uses: ./.github/actions/run-ci-py
+        with:
+          args: build --target ${{ matrix.cli_target }} -p ministr-cli ${{ matrix.cli_features != '' && format('--features {0}', matrix.cli_features) || '' }}
 
-      - name: Build CLI sidecar (Windows, Python)
-        if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: python scripts/ci/ci.py build --target ${{ matrix.cli_target }} -p ministr-cli --features "${{ matrix.cli_features }}"
+      - name: Stage sidecar for Tauri externalBin
+        uses: ./.github/actions/run-ci-py
+        with:
+          args: stage-sidecar --target ${{ matrix.cli_target }} --src ${{ matrix.sidecar_bin }} --dst ${{ matrix.sidecar_name }}
 
-      - name: Stage sidecar for Tauri externalBin (Unix, bash)
-        if: matrix.platform != 'windows-x86_64'
-        shell: bash
-        run: |
-          mkdir -p ministr-app/src-tauri/binaries
-          cp "target/${{ matrix.cli_target }}/release/${{ matrix.sidecar_bin }}" "ministr-app/src-tauri/binaries/${{ matrix.sidecar_name }}"
-
-      - name: Stage sidecar for Tauri externalBin (Windows, Python)
-        if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: python scripts/ci/ci.py stage-sidecar --target ${{ matrix.cli_target }} --src ${{ matrix.sidecar_bin }} --dst ${{ matrix.sidecar_name }}
-
-      # Build-only mode: no tagName / releaseName / releaseId means
-      # tauri-action will NOT touch the GitHub Release. We aggregate
-      # everything in the final `release` job below.
-      #
-      # Split into macOS vs. non-macOS steps so the APPLE_* secrets
-      # are only materialized in the macOS runner's process env.
-      # Windows/Linux shards run an identical step minus the env block.
-      #
-      # macOS releases require all nine Apple signing secrets — three for
-      # the Application cert (.app code signing), three for notarization,
-      # and three for the Installer cert (.pkg). With `--bundles app` we
-      # don't ship an unsigned-DMG fallback, so a partial secret config
-      # would silently produce a release with no macOS installer at all.
-      # Validate up front and fail loudly instead.
+      # macOS needs all nine Apple secrets (app cert + notarization +
+      # installer cert). With `--bundles app` there's no unsigned
+      # fallback, so validate up front and fail loudly.
       - name: Validate macOS signing secrets
         if: matrix.platform == 'macos-aarch64'
         shell: bash
@@ -343,29 +272,17 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          missing=()
-          for var in \
-            APPLE_CERTIFICATE \
-            APPLE_CERTIFICATE_PASSWORD \
-            APPLE_SIGNING_IDENTITY \
-            APPLE_INSTALLER_CERTIFICATE \
-            APPLE_INSTALLER_CERTIFICATE_PASSWORD \
-            APPLE_INSTALLER_SIGNING_IDENTITY \
-            APPLE_ID \
-            APPLE_PASSWORD \
-            APPLE_TEAM_ID
-          do
-            [ -n "${!var:-}" ] || missing+=("$var")
+          miss=()
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                   APPLE_INSTALLER_CERTIFICATE APPLE_INSTALLER_CERTIFICATE_PASSWORD \
+                   APPLE_INSTALLER_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v:-}" ] || miss+=("$v")
           done
-          if [ ${#missing[@]} -gt 0 ]; then
-            printf 'Missing required macOS signing secret(s): %s\n' "${missing[*]}" >&2
-            printf 'Bind all nine on the repo (Settings → Secrets and variables → Actions) and re-run.\n' >&2
+          if [ ${#miss[@]} -gt 0 ]; then
+            echo "::error::Missing macOS signing secret(s): ${miss[*]}. Bind all nine (Settings → Secrets → Actions) and re-run." >&2
             exit 1
           fi
 
-      # macOS code-signing + notarization for the .app bundle. tauri-action
-      # reads the APPLE_* env vars below; presence is verified by the
-      # validate step above, so this step doesn't need a separate gate.
       - name: Build Tauri bundles (macOS, signed)
         if: matrix.platform == 'macos-aarch64'
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # action-v0.6.2
@@ -389,22 +306,12 @@ jobs:
           tauriScript: pnpm tauri
           args: ${{ matrix.tauri_args }}
 
-      # Wrap the notarized .app in a signed + notarized .pkg installer.
-      # Tauri 2.x doesn't ship a .pkg target, so we drive Apple's stock
-      # toolchain (pkgbuild → productbuild → notarytool → stapler) directly.
-      #
-      # The postinstall script symlinks the bundled CLI onto PATH at
-      # /usr/local/bin/ministr — so users get a working `ministr` command
-      # the moment the installer finishes, with no shell-rc edits. The
-      # script refuses to clobber a foreign file at that path (e.g. a
-      # Homebrew-managed `ministr`) and only refreshes a symlink that
-      # already points at our app bundle.
-      #
-      # Secrets are validated by the upstream "Validate macOS signing
-      # secrets" step, so this step doesn't need its own env-gated `if:`.
-      - name: Build signed + notarized .pkg installer (macOS)
+      # Wrap the notarized .app in a signed+notarized .pkg — full Python
+      # (scripts/ci/ci.py pkg): pkgbuild→productbuild→notarytool→stapler
+      # + the non-clobbering CLI-symlink postinstall. macOS only.
+      - name: Build signed .pkg (macOS)
         if: matrix.platform == 'macos-aarch64'
-        shell: bash
+        uses: ./.github/actions/run-ci-py
         env:
           APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
           APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
@@ -412,141 +319,18 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
+        with:
+          args: pkg
 
-          VERSION="${GITHUB_REF_NAME#v}"
-
-          APP_BUNDLE="target/aarch64-apple-darwin/release/bundle/macos/ministr.app"
-          test -d "$APP_BUNDLE" || { echo "ministr.app not found at $APP_BUNDLE"; exit 1; }
-
-          # Dedicated temp keychain with a known password. tauri-action's
-          # keychain (used for the Application cert) isn't easily reusable
-          # because its password isn't exposed; an isolated keychain is
-          # cleaner and gets torn down on exit. Add it to the search list
-          # so productbuild's signing identity lookup finds it.
-          KEYCHAIN_PATH="$RUNNER_TEMP/installer-signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-          CERT_PATH="$RUNNER_TEMP/installer-cert.p12"
-          trap 'security delete-keychain "$KEYCHAIN_PATH" >/dev/null 2>&1 || true' EXIT
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          existing=$(security list-keychains -d user | tr -d '"' | xargs)
-          # shellcheck disable=SC2086
-          security list-keychains -d user -s "$KEYCHAIN_PATH" $existing
-
-          # macOS BSD `base64` historically only supports `-D`, not
-          # `--decode`. openssl is universal across BSD/GNU and pre-installed
-          # on every GHA runner.
-          echo "$APPLE_INSTALLER_CERTIFICATE" | openssl base64 -d -A > "$CERT_PATH"
-          security import "$CERT_PATH" \
-            -P "$APPLE_INSTALLER_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: \
-            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
-
-          # Postinstall: symlink CLI onto PATH without clobbering a
-          # user-managed install (Homebrew formula, manual /usr/local/bin
-          # entry, etc.). YAML's `|` block scalar strips the consistent
-          # 10-space indent before bash sees this; the heredoc body lands
-          # at column 0 in the actual script, so the shebang is at byte 0.
-          SCRIPTS_DIR="$RUNNER_TEMP/pkg-scripts"
-          mkdir -p "$SCRIPTS_DIR"
-          cat > "$SCRIPTS_DIR/postinstall" <<'POSTINSTALL'
-          #!/bin/bash
-          set -e
-          TARGET=/Applications/ministr.app/Contents/MacOS/ministr-cli
-          LINK=/usr/local/bin/ministr
-          mkdir -p /usr/local/bin
-          if [ -L "$LINK" ]; then
-            current=$(readlink "$LINK")
-            if [ "$current" = "$TARGET" ]; then
-              ln -sf "$TARGET" "$LINK"
-            else
-              printf 'ministr installer: leaving existing symlink at %s unchanged (points to %s, not our bundle).\n' "$LINK" "$current" >&2
-            fi
-          elif [ -e "$LINK" ]; then
-            printf 'ministr installer: leaving existing file at %s unchanged (not created by this installer).\n' "$LINK" >&2
-          else
-            ln -s "$TARGET" "$LINK"
-          fi
-          exit 0
-          POSTINSTALL
-          chmod +x "$SCRIPTS_DIR/postinstall"
-
-          # Component pkg: the .app + scripts.
-          COMPONENT_PKG="$RUNNER_TEMP/ministr-component.pkg"
-          pkgbuild \
-            --component "$APP_BUNDLE" \
-            --install-location /Applications \
-            --identifier ai.ministr.desktop \
-            --version "$VERSION" \
-            --scripts "$SCRIPTS_DIR" \
-            "$COMPONENT_PKG"
-
-          # Distribution pkg: signed, what end users double-click.
-          mkdir -p _bundles
-          DIST_PKG="_bundles/ministr-desktop-aarch64-apple-darwin.pkg"
-          productbuild \
-            --package "$COMPONENT_PKG" \
-            --sign "$APPLE_INSTALLER_SIGNING_IDENTITY" \
-            --keychain "$KEYCHAIN_PATH" \
-            "$DIST_PKG"
-
-          # Notarize the signed .pkg. notarytool blocks until Apple
-          # responds (typically <2 min for pkgs).
-          xcrun notarytool submit "$DIST_PKG" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-
-          # Staple the notarization ticket so installs work offline.
-          xcrun stapler staple "$DIST_PKG"
-
-          # sha256 companion (matches the rest of the artifact set).
-          shasum -a 256 "$DIST_PKG" > "$DIST_PKG.sha256"
-          ls -la _bundles
-
-      # Rename Tauri's `<productName>_<version>_<arch>.<ext>` outputs to
-      # our `ministr-desktop-<target-triple>.<ext>` convention. Predictable
-      # URLs for the dl.ministr.app Worker and install scripts.
-      #
-      # NOTE: uses `find` (not bash globstar+brace expansion) for macOS
-      # compatibility — macOS ships bash 3.2 which doesn't support `shopt -s
-      # globstar`. `find` is universal across Linux/macOS/Git-Bash on Windows.
-      - name: Collect and rename desktop bundles (Unix, bash)
-        if: matrix.platform != 'windows-x86_64'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p _bundles
-          # Cross-platform sha256: macOS has shasum, Linux has sha256sum.
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256() { sha256sum "$1"; }
-          else
-            sha256() { shasum -a 256 "$1"; }
-          fi
-          while IFS= read -r src; do
-            [ -n "$src" ] || continue
-            ext="${src##*.}"
-            case "$ext" in
-              exe)      dst="_bundles/ministr-desktop-${{ matrix.triple }}-setup.exe" ;;
-              deb)      dst="_bundles/ministr-desktop-${{ matrix.triple }}.deb" ;;
-              rpm)      dst="_bundles/ministr-desktop-${{ matrix.triple }}.rpm" ;;
-              AppImage) dst="_bundles/ministr-desktop-${{ matrix.triple }}.AppImage" ;;
-              *) continue ;;
-            esac
-            cp "$src" "$dst"
-            sha256 "$dst" > "$dst.sha256"
-          done < <(find "${{ matrix.target_dir }}" -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) 2>/dev/null)
-          ls -la _bundles
-
-      - name: Collect and rename desktop bundles (Windows, Python)
-        if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: python scripts/ci/ci.py collect-bundles --target-dir "${{ matrix.target_dir }}" --triple ${{ matrix.triple }}
+      # Rename Tauri outputs to ministr-desktop-<triple>.<ext> + sha256.
+      # macOS is excluded: its only artifact is the .pkg, already placed
+      # in _bundles by `ci.py pkg` (collect-bundles only handles
+      # exe/deb/rpm/AppImage and would error finding none).
+      - name: Collect and rename desktop bundles
+        if: matrix.platform != 'macos-aarch64'
+        uses: ./.github/actions/run-ci-py
+        with:
+          args: collect-bundles --target-dir ${{ matrix.target_dir }} --triple ${{ matrix.triple }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -555,7 +339,7 @@ jobs:
           path: _bundles/*
 
   # ──────────────────────────────────────────────────────────────────────
-  # Single GitHub Release with all artifacts
+  # Single GitHub Release with every artifact
   # ──────────────────────────────────────────────────────────────────────
   release:
     name: Create GitHub Release
@@ -573,20 +357,11 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      # One unified SHA256SUMS over every release artifact, so users can
-      # verify the whole drop with `shasum -a 256 -c SHA256SUMS`. The
-      # per-file `.sha256` companions stay alongside for users who only
-      # download one file.
+      # One unified SHA256SUMS over every artifact (ci.py, not inline sh).
       - name: Aggregate SHA256SUMS
-        run: |
-          set -euo pipefail
-          cd artifacts
-          : > SHA256SUMS
-          for f in *.tar.gz *.zip *.pkg *.exe *.deb *.rpm *.AppImage; do
-            [ -f "$f" ] || continue
-            shasum -a 256 "$f" >> SHA256SUMS
-          done
-          cat SHA256SUMS
+        uses: ./.github/actions/run-ci-py
+        with:
+          args: checksums --dir artifacts
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
