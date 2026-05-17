@@ -368,18 +368,24 @@ def cmd_verify_signing(_a: argparse.Namespace) -> None:
                 text=True,
             )
             print(f"--- {label} identities (policy={policy}) ---\n{out}")
-            m = _re.search(r"(\d+)\s+valid identities found", out)
-            n = int(m.group(1)) if m else 0
+            # Parse the quoted identity names from `find-identity` and
+            # require an EXACT match — a substring test would let a
+            # stale/partial secret (e.g. just "Developer ID Installer")
+            # pass if that text appears anywhere in the output.
+            names = _re.findall(r'"([^"]+)"', out)
             want = env[id_key]
-            if n < 1:
-                return [f"{label}: 0 valid identities — {cert_key} has no "
-                        f"usable certificate (only a private key imported). "
-                        f"Re-export the cert TOGETHER WITH its private key "
-                        f"as a .p12."]
-            if want not in out:
-                return [f"{label}: {id_key}={want!r} does not match any of "
-                        f"the {n} valid identit{'y' if n == 1 else 'ies'} "
-                        f"above — set {id_key} to the cert's exact name."]
+            if not names:
+                return [f"{label}: no usable signing identity for policy "
+                        f"'{policy}'. The .p12 in {cert_key} may contain "
+                        f"only a private key, only a certificate without "
+                        f"its key, or an expired/untrusted cert. Re-export "
+                        f"the certificate TOGETHER WITH its private key and "
+                        f"verify it is valid."]
+            if want not in names:
+                return [f"{label}: {id_key}={want!r} is not an exact match "
+                        f"for any imported identity "
+                        f"({', '.join(map(repr, names))}) — set {id_key} to "
+                        f"the certificate's exact name."]
             return []
         finally:
             subprocess.run(
