@@ -128,17 +128,18 @@ if (-not (Test-Path (Join-Path $tauriIcons 'icon.ico'))) {
     }
 }
 
-# 3. Frontend build (Vite). Install node deps first if node_modules is
-#    missing; skip otherwise to keep re-runs fast.
-if (-not (Test-Path (Join-Path $tauriRoot 'node_modules'))) {
-    Write-Host '   installing frontend dependencies (pnpm install)...'
-    Push-Location $tauriRoot
-    try {
-        & pnpm install
-        Assert-LastExitOk 'pnpm install'
-    } finally {
-        Pop-Location
-    }
+# 3. Frontend build (Vite). Always sync — checking for node_modules
+#    skips a partial install (lockfile drift, interrupted prior run)
+#    and leaves vite to fail at build time. `--frozen-lockfile` is a
+#    no-op when in sync and fails loudly if package.json and
+#    pnpm-lock.yaml disagree.
+Write-Host '   syncing frontend dependencies (pnpm install --frozen-lockfile)...'
+Push-Location $tauriRoot
+try {
+    & pnpm install --frozen-lockfile
+    Assert-LastExitOk 'pnpm install'
+} finally {
+    Pop-Location
 }
 
 Write-Host '   building frontend (vite build)...'
