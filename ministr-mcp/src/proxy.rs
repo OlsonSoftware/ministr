@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use ministr_api::client::DaemonClient;
-use ministr_core::session::{BudgetConfig, BudgetTracker, EvictionPolicy};
+use ministr_core::session::{DropPolicy, UsageConfig, UsageTracker};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData as McpError;
@@ -63,7 +63,7 @@ pub struct ProxyServer {
     tool_router: ToolRouter<Self>,
     /// Local budget tracker — tracks tokens delivered through this proxy
     /// independently of the daemon's session system.
-    local_budget: Arc<Mutex<BudgetTracker>>,
+    local_budget: Arc<Mutex<UsageTracker>>,
     /// Serializes daemon-launch attempts within this proxy process so two
     /// concurrent cold-start tool calls don't both remove the socket and
     /// spawn competing daemons.
@@ -147,7 +147,7 @@ pub struct CompressParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct EvictedParams {
+pub struct DroppedParams {
     pub content_ids: Vec<String>,
 }
 
@@ -156,16 +156,16 @@ impl ProxyServer {
     pub fn new(corpus_paths: Vec<String>) -> Self {
         // Inherit the env-driven window (MINISTR_CONTEXT_WINDOW, else the
         // 200k fallback) rather than pinning a misleadingly small 100k.
-        let budget_config = BudgetConfig::default();
+        let budget_config = UsageConfig::default();
         Self {
             client: Arc::new(DaemonClient::new()),
             corpus_id: Arc::new(Mutex::new(None)),
             session_id: Arc::new(Mutex::new(None)),
             corpus_paths,
             tool_router: Self::tool_router(),
-            local_budget: Arc::new(Mutex::new(BudgetTracker::new(
+            local_budget: Arc::new(Mutex::new(UsageTracker::new(
                 budget_config,
-                EvictionPolicy::Fifo,
+                DropPolicy::Fifo,
             ))),
             launch_mu: Arc::new(Mutex::new(())),
         }
@@ -437,7 +437,7 @@ impl ProxyServer {
             .await
             .map_err(|e| Self::err(&e))?;
 
-        // Track delivered tokens locally so ministr_budget reflects actual usage.
+        // Track delivered tokens locally so ministr_usage reflects actual usage.
         let token_count = ministr_core::token::count_tokens(&resp.text);
         {
             let mut budget = self.local_budget.lock().await;
@@ -448,7 +448,7 @@ impl ProxyServer {
         // from text to save context tokens.
         let mut resp = resp;
         resp.summary = None;
-        resp.budget_status = None;
+        resp.usage_status = None;
         Self::json_result(&resp)
     }
 
@@ -650,19 +650,19 @@ impl ProxyServer {
     }
 
     #[tool(
-        name = "ministr_budget",
+        name = "ministr_usage",
         description = "Internal ministr accounting (a rough token estimate of what it has delivered so far). Advisory only and anchored to a configured window, not your real model context window — do NOT use it to decide you are low on context or to stop work. Safe to ignore."
     )]
-    async fn budget(&self) -> Result<CallToolResult, McpError> {
+    async fn usage(&self) -> Result<CallToolResult, McpError> {
         // Use the local budget tracker — it reflects tokens delivered through
         // this proxy session, independent of the daemon's session system.
         let budget = self.local_budget.lock().await;
-        let status = budget.budget_status();
-        let resp = ministr_api::session::SessionBudgetResponse {
-            pressure_level: match status.pressure_level {
-                ministr_core::session::PressureLevel::Normal => "normal".into(),
-                ministr_core::session::PressureLevel::Elevated => "elevated".into(),
-                ministr_core::session::PressureLevel::Critical => "critical".into(),
+        let status = budget.usage_status();
+        let resp = ministr_api::session::SessionUsageResponse {
+            level: match status.level {
+                ministr_core::session::UsageLevel::Normal => "normal".into(),
+                ministr_core::session::UsageLevel::Elevated => "elevated".into(),
+                ministr_core::session::UsageLevel::Critical => "critical".into(),
             },
             tokens_used: status.tokens_used,
             tokens_remaining: status.tokens_remaining,
@@ -673,7 +673,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_compress",
-        description = "Extractive TF-IDF summaries (roughly 60-80% shorter) for sections you want to keep referenceable without their full text. Pair with ministr_evicted after dropping the originals."
+        description = "Extractive TF-IDF summaries (roughly 60-80% shorter) for sections you want to keep referenceable without their full text. Pair with ministr_dropped after dropping the originals."
     )]
     async fn compress(
         &self,
@@ -694,28 +694,28 @@ impl ProxyServer {
     }
 
     #[tool(
-        name = "ministr_evicted",
+        name = "ministr_dropped",
         description = "Call immediately after dropping content you previously received. Keeps ministr's view of what you still have accurate; without this, future ministr_read calls on dropped IDs return short 'already delivered' stubs instead of the full text."
     )]
-    async fn evicted(
+    async fn dropped(
         &self,
-        Parameters(params): Parameters<EvictedParams>,
+        Parameters(params): Parameters<DroppedParams>,
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
         let sid = self.ensure_session().await?;
-        let req = ministr_api::session::EvictRequest {
+        let req = ministr_api::session::DropRequest {
             content_ids: params.content_ids,
         };
         let resp = self
             .client
-            .evict_content(&cid, &sid, &req)
+            .drop_content(&cid, &sid, &req)
             .await
             .map_err(|e| Self::err(&e))?;
 
-        // Update local budget tracker so ministr_budget reflects the evictions.
+        // Update local budget tracker so ministr_usage reflects the evictions.
         {
             let mut budget = self.local_budget.lock().await;
-            for id in &resp.evicted {
+            for id in &resp.dropped {
                 budget.force_evict(id);
             }
         }

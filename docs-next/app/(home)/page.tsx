@@ -84,7 +84,11 @@ export default function HomePage() {
                 <b>Fig. 1</b> The same task — &ldquo;find and edit{' '}
                 <code>validate_email</code>&rdquo; — asked two ways. Left:
                 what <code>grep</code> + <code>read</code> return. Right:
-                what ministr returns.
+                what ministr returns. The token math is a{' '}
+                <Link href="/docs/benchmarks" className="ms-link">
+                  reproducible benchmark
+                </Link>
+                .
               </>
             }
           >

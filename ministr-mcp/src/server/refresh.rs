@@ -171,7 +171,7 @@ impl MinistrServer {
                 );
 
                 let mut reg = self.registry.lock().await;
-                let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
+                let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                 drop(reg);
 
                 let response = self
@@ -185,7 +185,7 @@ impl MinistrServer {
                             from_cache: clone_result.from_cache,
                             dependency_refs_linked,
                         },
-                        budget_status,
+                        usage_status,
                     )
                     .await;
                 structured_result(&response)
@@ -238,7 +238,7 @@ impl MinistrServer {
         );
 
         let mut reg = self.registry.lock().await;
-        let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
+        let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
         drop(reg);
 
         let response = self
@@ -255,7 +255,7 @@ impl MinistrServer {
                     git_repos_failed: git_failed,
                     git_details,
                 },
-                budget_status,
+                usage_status,
             )
             .await;
         structured_result(&response)

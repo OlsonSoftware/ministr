@@ -11,7 +11,7 @@ use miette::{IntoDiagnostic, Result, WrapErr};
 use sha2::Digest as _;
 
 use ministr_core::index::VectorIndexLoad as _;
-use ministr_core::session::BudgetConfig;
+use ministr_core::session::UsageConfig;
 use ministr_core::storage::Storage as _;
 
 /// Shared infrastructure components initialized at startup.
@@ -279,9 +279,9 @@ pub(crate) async fn build_server(
     let service = Arc::new(service);
 
     let session_id = corpus_session_id(corpus_paths);
-    let budget_config = BudgetConfig {
+    let budget_config = UsageConfig {
         max_context_tokens: config.default_context_budget,
-        ..BudgetConfig::default()
+        ..UsageConfig::default()
     };
 
     let server = ministr_mcp::server::MinistrServer::with_persistence(

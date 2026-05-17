@@ -1,11 +1,10 @@
 #![allow(clippy::uninlined_format_args)]
 //! Budget tracking hypothesis tests.
 //!
-//! Tests each hypothesis for why `ministr_budget` shows 0 tokens after `ministr_read`.
+//! Tests each hypothesis for why `ministr_usage` shows 0 tokens after `ministr_read`.
 
 use ministr_core::session::{
-    AccessMode, BudgetConfig, BudgetTracker, EvictionPolicy, SessionId, SessionRegistry,
-    WindowEstimator,
+    AccessMode, DropPolicy, SessionId, SessionRegistry, UsageConfig, UsageTracker, WindowEstimator,
 };
 use ministr_core::storage::{SqliteStorage, Storage};
 use ministr_core::types::{ContentId, Resolution};
@@ -14,7 +13,7 @@ use ministr_core::types::{ContentId, Resolution};
 
 #[test]
 fn window_estimator_record_updates_tokens() {
-    let mut w = WindowEstimator::new(100_000, EvictionPolicy::Fifo);
+    let mut w = WindowEstimator::new(100_000, DropPolicy::Fifo);
     assert_eq!(w.estimated_used(), 0);
 
     let _ = w.record("sec-1", 500);
@@ -37,21 +36,21 @@ fn window_estimator_record_updates_tokens() {
     );
 }
 
-// ─── Hypothesis 2: BudgetTracker.record_tokens() doesn't delegate to window ──
+// ─── Hypothesis 2: UsageTracker.record_tokens() doesn't delegate to window ──
 
 #[test]
 fn budget_tracker_record_tokens_updates_status() {
-    let config = BudgetConfig {
+    let config = UsageConfig {
         max_context_tokens: 100_000,
-        ..BudgetConfig::default()
+        ..UsageConfig::default()
     };
-    let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
+    let mut tracker = UsageTracker::new(config, DropPolicy::Fifo);
 
-    let status_before = tracker.budget_status();
+    let status_before = tracker.usage_status();
     assert_eq!(status_before.tokens_used, 0);
 
     let _ = tracker.record_tokens("sec-1", 500);
-    let status_after = tracker.budget_status();
+    let status_after = tracker.usage_status();
     assert!(
         status_after.tokens_used > 0,
         "H2 FAIL: record_tokens didn't update budget: {}",
@@ -59,7 +58,7 @@ fn budget_tracker_record_tokens_updates_status() {
     );
 
     eprintln!(
-        "H2 PASS: BudgetTracker.record_tokens() → tokens_used = {}",
+        "H2 PASS: UsageTracker.record_tokens() → tokens_used = {}",
         status_after.tokens_used
     );
 }
@@ -70,9 +69,9 @@ fn budget_tracker_record_tokens_updates_status() {
 async fn restored_session_budget_reflects_previous_deliveries() {
     let storage = SqliteStorage::open_in_memory().unwrap();
 
-    let budget_config = BudgetConfig {
+    let budget_config = UsageConfig {
         max_context_tokens: 100_000,
-        ..BudgetConfig::default()
+        ..UsageConfig::default()
     };
 
     // Phase 1: Create a session and deliver content.
@@ -92,7 +91,7 @@ async fn restored_session_budget_reflects_previous_deliveries() {
             .record_delivery(&cid, Resolution::Section, 500, 1, "hash1".into());
         let _ = entry.budget.record_tokens("sec-1", 500);
 
-        let status = entry.budget.budget_status();
+        let status = entry.budget.usage_status();
         assert_eq!(status.tokens_used, 500, "Phase 1: budget should be 500");
         eprintln!("Phase 1: tokens_used = {} (correct)", status.tokens_used);
 
@@ -124,16 +123,16 @@ async fn restored_session_budget_reflects_previous_deliveries() {
         entry.session = restored;
 
         // Check if the budget tracker knows about the restored content.
-        let status = entry.budget.budget_status();
+        let status = entry.budget.usage_status();
         eprintln!(
-            "Phase 2: tokens_used = {} (BudgetTracker after restore)",
+            "Phase 2: tokens_used = {} (UsageTracker after restore)",
             status.tokens_used
         );
 
         if status.tokens_used == 0 {
-            eprintln!("H3 CONFIRMED: BudgetTracker resets to 0 after session restore!");
-            eprintln!("  The Session has delivered items but the BudgetTracker is fresh.");
-            eprintln!("  This is the root cause: with_persistence creates a new BudgetTracker");
+            eprintln!("H3 CONFIRMED: UsageTracker resets to 0 after session restore!");
+            eprintln!("  The Session has delivered items but the UsageTracker is fresh.");
+            eprintln!("  This is the root cause: with_persistence creates a new UsageTracker");
             eprintln!("  but only restores the Session, not the budget state.");
         }
 
@@ -156,9 +155,9 @@ async fn restored_session_budget_reflects_previous_deliveries() {
 async fn budget_replayed_after_restore() {
     let storage = SqliteStorage::open_in_memory().unwrap();
 
-    let budget_config = BudgetConfig {
+    let budget_config = UsageConfig {
         max_context_tokens: 100_000,
-        ..BudgetConfig::default()
+        ..UsageConfig::default()
     };
 
     // Phase 1: Create session, deliver, persist.
@@ -197,7 +196,7 @@ async fn budget_replayed_after_restore() {
         }
         entry.session = restored;
 
-        let status = entry.budget.budget_status();
+        let status = entry.budget.usage_status();
         eprintln!("H3 FIX: tokens_used after replay = {}", status.tokens_used);
         assert_eq!(
             status.tokens_used, 500,
@@ -214,7 +213,7 @@ async fn is_delivered_true_after_restore() {
     let storage = SqliteStorage::open_in_memory().unwrap();
 
     let session_id = SessionId::from("test-dedup".to_string());
-    let budget_config = BudgetConfig::default();
+    let budget_config = UsageConfig::default();
 
     // Create session, deliver, persist.
     {

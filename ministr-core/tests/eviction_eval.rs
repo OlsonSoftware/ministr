@@ -6,9 +6,9 @@
 //! irrelevant content, then measures which strategy retains more of the
 //! content the agent actually needs.
 
-use ministr_core::session::eviction::EvictionRanker;
+use ministr_core::session::drops::DropRanker;
 use ministr_core::session::memory::{AccessRating, MemoryTracker};
-use ministr_core::session::{EvictionPolicy, Session, SessionId};
+use ministr_core::session::{DropPolicy, Session, SessionId};
 use ministr_core::types::{ContentId, Resolution};
 
 fn cid(s: &str) -> ContentId {
@@ -23,7 +23,7 @@ fn build_eval_session() -> Session {
     let mut session = Session::new(
         SessionId::from("eval-eviction".to_string()),
         100_000,
-        EvictionPolicy::Fifo,
+        DropPolicy::Fifo,
     );
 
     // Turns 1-10: initial context loading (mix of relevant and noise)
@@ -133,7 +133,7 @@ fn build_memory_tracker() -> MemoryTracker {
 /// Higher = better: the strategy is correctly targeting noise for eviction.
 #[allow(clippy::cast_precision_loss)]
 fn noise_eviction_rate(
-    candidates: &[ministr_core::session::eviction::EvictionCandidate],
+    candidates: &[ministr_core::session::drops::DropCandidate],
     n: usize,
 ) -> f64 {
     let top_n: Vec<_> = candidates.iter().take(n).collect();
@@ -152,7 +152,7 @@ fn noise_eviction_rate(
 /// Lower = better: the strategy is protecting task-relevant content.
 #[allow(clippy::cast_precision_loss)]
 fn task_false_eviction_rate(
-    candidates: &[ministr_core::session::eviction::EvictionCandidate],
+    candidates: &[ministr_core::session::drops::DropCandidate],
     n: usize,
 ) -> f64 {
     let top_n: Vec<_> = candidates.iter().take(n).collect();
@@ -176,10 +176,10 @@ fn salience_aware_eviction_retains_more_task_relevant_items() {
     let evict_count = 15;
 
     // Strategy A: salience-aware (with MemoryTracker)
-    let salience_candidates = EvictionRanker::rank(&session, evict_count, Some(&memory));
+    let salience_candidates = DropRanker::rank(&session, evict_count, Some(&memory));
 
     // Strategy B: FSRS-only (no MemoryTracker — falls back to turn-based decay)
-    let fsrs_only_candidates = EvictionRanker::rank(&session, evict_count, None);
+    let fsrs_only_candidates = DropRanker::rank(&session, evict_count, None);
 
     // Both should return candidates
     assert_eq!(salience_candidates.len(), evict_count);
@@ -212,7 +212,7 @@ fn salience_aware_eviction_prioritizes_noise_in_top_candidates() {
     let memory = build_memory_tracker();
 
     // Look at just the top 5 eviction candidates
-    let candidates = EvictionRanker::rank(&session, 5, Some(&memory));
+    let candidates = DropRanker::rank(&session, 5, Some(&memory));
 
     let noise_in_top5 = candidates
         .iter()
@@ -261,8 +261,8 @@ fn eval_token_efficiency_salience_aware_frees_more_noise_tokens() {
     let memory = build_memory_tracker();
 
     let evict_count = 10;
-    let salience_candidates = EvictionRanker::rank(&session, evict_count, Some(&memory));
-    let fsrs_candidates = EvictionRanker::rank(&session, evict_count, None);
+    let salience_candidates = DropRanker::rank(&session, evict_count, Some(&memory));
+    let fsrs_candidates = DropRanker::rank(&session, evict_count, None);
 
     // Sum tokens from noise items in each strategy's eviction list
     let salience_noise_tokens: usize = salience_candidates

@@ -8,8 +8,8 @@
 
 use serde::Serialize;
 
-use super::budget::PressureLevel;
 use super::types::{CompressionTier, DeliveredItem, Session};
+use super::usage::UsageLevel;
 
 /// A recommended tier promotion for a delivered item.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
@@ -52,15 +52,15 @@ pub struct TierPromotion {
 ///
 /// ```
 /// use ministr_core::session::compression::CompressionPipeline;
-/// use ministr_core::session::{CompressionTier, PressureLevel};
+/// use ministr_core::session::{CompressionTier, UsageLevel};
 ///
-/// let next = CompressionPipeline::next_tier(CompressionTier::Full, PressureLevel::Elevated);
+/// let next = CompressionPipeline::next_tier(CompressionTier::Full, UsageLevel::Elevated);
 /// assert_eq!(next, Some(CompressionTier::Extractive));
 ///
-/// let next = CompressionPipeline::next_tier(CompressionTier::Full, PressureLevel::Critical);
+/// let next = CompressionPipeline::next_tier(CompressionTier::Full, UsageLevel::Critical);
 /// assert_eq!(next, Some(CompressionTier::Abstractive));
 ///
-/// let next = CompressionPipeline::next_tier(CompressionTier::Full, PressureLevel::Normal);
+/// let next = CompressionPipeline::next_tier(CompressionTier::Full, UsageLevel::Normal);
 /// assert_eq!(next, None);
 /// ```
 pub struct CompressionPipeline;
@@ -72,10 +72,10 @@ impl CompressionPipeline {
     /// normal or the content is already at the terminal tier for this
     /// pressure level).
     #[must_use]
-    pub fn next_tier(current: CompressionTier, pressure: PressureLevel) -> Option<CompressionTier> {
+    pub fn next_tier(current: CompressionTier, pressure: UsageLevel) -> Option<CompressionTier> {
         match pressure {
-            PressureLevel::Normal => None,
-            PressureLevel::Elevated => match current {
+            UsageLevel::Normal => None,
+            UsageLevel::Elevated => match current {
                 CompressionTier::Full => Some(CompressionTier::Extractive),
                 // Abstractive is already more compressed than Extractive
                 // (~10% vs ~30% retained). Skip straight to Bookmark rather
@@ -85,7 +85,7 @@ impl CompressionPipeline {
                 }
                 CompressionTier::Bookmark | CompressionTier::Evicted => None,
             },
-            PressureLevel::Critical => match current {
+            UsageLevel::Critical => match current {
                 CompressionTier::Full => Some(CompressionTier::Abstractive),
                 // Same reasoning: Abstractive → Bookmark, not Extractive.
                 CompressionTier::Abstractive | CompressionTier::Extractive => {
@@ -111,10 +111,10 @@ impl CompressionPipeline {
     #[allow(clippy::cast_precision_loss)]
     pub fn recommend_promotions(
         session: &Session,
-        pressure: PressureLevel,
+        pressure: UsageLevel,
         recency_protection_turns: u32,
     ) -> Vec<TierPromotion> {
-        if pressure == PressureLevel::Normal {
+        if pressure == UsageLevel::Normal {
             return Vec::new();
         }
 
@@ -123,7 +123,7 @@ impl CompressionPipeline {
 
         for item in session.delivered_items() {
             // Skip recently accessed items under elevated pressure
-            if pressure == PressureLevel::Elevated {
+            if pressure == UsageLevel::Elevated {
                 let age = current_turn.saturating_sub(item.turn_delivered);
                 if age < recency_protection_turns {
                     continue;
@@ -188,14 +188,14 @@ impl CompressionPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{EvictionPolicy, SessionId};
+    use crate::session::{DropPolicy, SessionId};
     use crate::types::{ContentId, Resolution};
 
     fn make_session() -> Session {
         Session::new(
             SessionId::from("test-compression".to_string()),
             100_000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         )
     }
 
@@ -215,7 +215,7 @@ mod tests {
             CompressionTier::Evicted,
         ] {
             assert_eq!(
-                CompressionPipeline::next_tier(tier, PressureLevel::Normal),
+                CompressionPipeline::next_tier(tier, UsageLevel::Normal),
                 None,
                 "no promotion under normal pressure for {tier:?}"
             );
@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn elevated_promotes_full_to_extractive() {
         assert_eq!(
-            CompressionPipeline::next_tier(CompressionTier::Full, PressureLevel::Elevated),
+            CompressionPipeline::next_tier(CompressionTier::Full, UsageLevel::Elevated),
             Some(CompressionTier::Extractive)
         );
     }
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn elevated_promotes_extractive_to_bookmark() {
         assert_eq!(
-            CompressionPipeline::next_tier(CompressionTier::Extractive, PressureLevel::Elevated),
+            CompressionPipeline::next_tier(CompressionTier::Extractive, UsageLevel::Elevated),
             Some(CompressionTier::Bookmark)
         );
     }
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn elevated_does_not_promote_bookmark() {
         assert_eq!(
-            CompressionPipeline::next_tier(CompressionTier::Bookmark, PressureLevel::Elevated),
+            CompressionPipeline::next_tier(CompressionTier::Bookmark, UsageLevel::Elevated),
             None
         );
     }
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn critical_promotes_full_to_abstractive() {
         assert_eq!(
-            CompressionPipeline::next_tier(CompressionTier::Full, PressureLevel::Critical),
+            CompressionPipeline::next_tier(CompressionTier::Full, UsageLevel::Critical),
             Some(CompressionTier::Abstractive)
         );
     }
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn critical_promotes_bookmark_to_evicted() {
         assert_eq!(
-            CompressionPipeline::next_tier(CompressionTier::Bookmark, PressureLevel::Critical),
+            CompressionPipeline::next_tier(CompressionTier::Bookmark, UsageLevel::Critical),
             Some(CompressionTier::Evicted)
         );
     }
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn critical_does_not_promote_evicted() {
         assert_eq!(
-            CompressionPipeline::next_tier(CompressionTier::Evicted, PressureLevel::Critical),
+            CompressionPipeline::next_tier(CompressionTier::Evicted, UsageLevel::Critical),
             None
         );
     }
@@ -275,7 +275,7 @@ mod tests {
         // Abstractive (~10% retained) must never move to Extractive (~30%).
         // Under Elevated pressure it skips straight to Bookmark.
         assert_eq!(
-            CompressionPipeline::next_tier(CompressionTier::Abstractive, PressureLevel::Elevated),
+            CompressionPipeline::next_tier(CompressionTier::Abstractive, UsageLevel::Elevated),
             Some(CompressionTier::Bookmark)
         );
     }
@@ -284,7 +284,7 @@ mod tests {
     fn critical_promotes_abstractive_to_bookmark() {
         // Same rule under Critical: never decompress Abstractive.
         assert_eq!(
-            CompressionPipeline::next_tier(CompressionTier::Abstractive, PressureLevel::Critical),
+            CompressionPipeline::next_tier(CompressionTier::Abstractive, UsageLevel::Critical),
             Some(CompressionTier::Bookmark)
         );
     }
@@ -296,8 +296,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 500, 1, "h1".into());
 
-        let promotions =
-            CompressionPipeline::recommend_promotions(&session, PressureLevel::Normal, 3);
+        let promotions = CompressionPipeline::recommend_promotions(&session, UsageLevel::Normal, 3);
         assert!(promotions.is_empty());
     }
 
@@ -308,7 +307,7 @@ mod tests {
         session.record_delivery(&cid("recent"), Resolution::Section, 500, 10, "h2".into());
 
         let promotions =
-            CompressionPipeline::recommend_promotions(&session, PressureLevel::Elevated, 3);
+            CompressionPipeline::recommend_promotions(&session, UsageLevel::Elevated, 3);
 
         // Only old item should be promoted (recent is within recency protection)
         assert_eq!(promotions.len(), 1);
@@ -323,7 +322,7 @@ mod tests {
         session.record_delivery(&cid("recent"), Resolution::Section, 500, 10, "h2".into());
 
         let promotions =
-            CompressionPipeline::recommend_promotions(&session, PressureLevel::Critical, 3);
+            CompressionPipeline::recommend_promotions(&session, UsageLevel::Critical, 3);
 
         // Both items should be promoted under critical pressure
         assert_eq!(promotions.len(), 2);
@@ -336,7 +335,7 @@ mod tests {
         session.record_delivery(&cid("large"), Resolution::Section, 2000, 1, "h2".into());
 
         let promotions =
-            CompressionPipeline::recommend_promotions(&session, PressureLevel::Elevated, 0);
+            CompressionPipeline::recommend_promotions(&session, UsageLevel::Elevated, 0);
 
         assert_eq!(promotions.len(), 2);
         assert_eq!(
@@ -353,7 +352,7 @@ mod tests {
         session.mask_to_bookmark(&cid("s1"), &["Chapter 1".into()]);
 
         let promotions =
-            CompressionPipeline::recommend_promotions(&session, PressureLevel::Elevated, 0);
+            CompressionPipeline::recommend_promotions(&session, UsageLevel::Elevated, 0);
         assert!(
             promotions.is_empty(),
             "bookmarked items should not be promoted under elevated pressure"
@@ -367,7 +366,7 @@ mod tests {
         session.mask_to_bookmark(&cid("s1"), &["Chapter 1".into()]);
 
         let promotions =
-            CompressionPipeline::recommend_promotions(&session, PressureLevel::Critical, 0);
+            CompressionPipeline::recommend_promotions(&session, UsageLevel::Critical, 0);
         assert_eq!(promotions.len(), 1);
         assert_eq!(promotions[0].recommended_tier, CompressionTier::Evicted);
     }

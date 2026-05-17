@@ -28,9 +28,9 @@ ministr exposes MCP tools that give the agent code intelligence and explicit con
 
 | Tool | Purpose | Typical Token Cost |
 |---|---|---|
-| [`ministr_budget`](/docs/tools/budget) | Advisory token-usage estimate | minimal |
+| [`ministr_usage`](/docs/tools/usage) | Advisory token-usage estimate | minimal |
 | [`ministr_compress`](/docs/tools/compress) | Get compact summaries of sections | 50-200 |
-| [`ministr_evicted`](/docs/tools/evicted) | Signal content dropped from context | minimal |
+| [`ministr_dropped`](/docs/tools/dropped) | Signal content dropped from context | minimal |
 
 ## Multi-source corpora
 
@@ -64,7 +64,7 @@ Every MCP tool wraps its answer in a small envelope. The tool-specific payload i
 | `indexing_message` | only when present | Human-readable indexing status (e.g. `"Checking 12/42 files"`) |
 | `next_actions` | only when non-empty | Concrete suggested follow-up calls (e.g. re-read a changed section) |
 
-ministr does not inject token-usage figures into tool responses; if you want an advisory estimate, call [`ministr_budget`](/docs/tools/budget) explicitly.
+ministr does not inject token-usage figures into tool responses; if you want an advisory estimate, call [`ministr_usage`](/docs/tools/usage) explicitly.
 
 ## Typical workflow
 
@@ -82,4 +82,4 @@ survey ──▶ symbols ──▶ definition ──▶ references ──▶ bri
 4. **Bridge** — follow a call across a language boundary
 5. **Read / Extract / Related** — pull prose sections, atomic claims, and follow links
 
-`compress` and `evicted` are optional session-efficiency aids — they help ministr keep delivery lean and are never required to get an answer.
+`compress` and `dropped` are optional session-efficiency aids — they help ministr keep delivery lean and are never required to get an answer.

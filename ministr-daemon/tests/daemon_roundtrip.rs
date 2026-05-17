@@ -209,7 +209,7 @@ async fn test_session_lifecycle() {
 
     // Check budget.
     let budget = client
-        .session_budget(&daemon.corpus_id, &session.session_id)
+        .session_usage(&daemon.corpus_id, &session.session_id)
         .await
         .unwrap();
     assert_eq!(budget.tokens_used, 0);
@@ -224,7 +224,7 @@ async fn test_session_lifecycle() {
 
     // Budget should now 404.
     let err = client
-        .session_budget(&daemon.corpus_id, &session.session_id)
+        .session_usage(&daemon.corpus_id, &session.session_id)
         .await;
     assert!(err.is_err(), "destroyed session should return error");
 }
@@ -262,7 +262,7 @@ async fn test_compress_unknown_ids() {
 }
 
 #[tokio::test]
-async fn test_evict_content() {
+async fn test_drop_content() {
     let daemon = TestDaemon::start().await;
     let client = daemon.client();
 
@@ -273,16 +273,16 @@ async fn test_evict_content() {
         .unwrap();
 
     // Evict content IDs (not previously delivered — should be not_found).
-    let req = ministr_api::session::EvictRequest {
+    let req = ministr_api::session::DropRequest {
         content_ids: vec!["docs/auth.md#tokens".into(), "nonexistent".into()],
     };
     let resp = client
-        .evict_content(&daemon.corpus_id, &session.session_id, &req)
+        .drop_content(&daemon.corpus_id, &session.session_id, &req)
         .await
         .unwrap();
 
     // Neither was delivered, so both should be not_found.
-    assert!(resp.evicted.is_empty());
+    assert!(resp.dropped.is_empty());
     assert_eq!(resp.not_found.len(), 2);
 }
 
@@ -291,11 +291,11 @@ async fn test_evict_nonexistent_session() {
     let daemon = TestDaemon::start().await;
     let client = daemon.client();
 
-    let req = ministr_api::session::EvictRequest {
+    let req = ministr_api::session::DropRequest {
         content_ids: vec!["docs/auth.md#tokens".into()],
     };
     let result = client
-        .evict_content(&daemon.corpus_id, "sess-nonexistent", &req)
+        .drop_content(&daemon.corpus_id, "sess-nonexistent", &req)
         .await;
     assert!(result.is_err());
 }

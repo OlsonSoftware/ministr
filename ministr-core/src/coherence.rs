@@ -503,7 +503,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    use crate::session::{EvictionPolicy, SessionId};
+    use crate::session::{DropPolicy, SessionId};
     use crate::types::Resolution;
 
     // --- CoherenceEvent tests ---
@@ -687,7 +687,7 @@ mod tests {
         let mut session = Session::new(
             SessionId::from("test".to_string()),
             100_000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
 
         session.record_delivery(
@@ -999,7 +999,7 @@ mod tests {
             .unwrap();
 
         let mut registry =
-            crate::session::SessionRegistry::new(crate::session::BudgetConfig::default());
+            crate::session::SessionRegistry::new(crate::session::UsageConfig::default());
         registry.create_session("test-session", None, crate::session::AccessMode::ReadWrite);
         let registry = Arc::new(tokio::sync::Mutex::new(registry));
 

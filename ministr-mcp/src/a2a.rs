@@ -85,7 +85,7 @@ pub fn ministr_agent_card() -> AgentCard {
         description: "Code intelligence MCP server with semantic search, symbol navigation, \
                       cross-language bridge tracing, and context-aware budget management"
             .to_string(),
-        url: "https://github.com/anthropics/ministr-rs".to_string(),
+        url: "https://github.com/OlsonSoftware/ministr".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         protocol_version: "0.2.1".to_string(),
         capabilities: AgentCapabilities {

@@ -1144,7 +1144,7 @@ normal shell work.
 /// Used by Copilot CLI, Copilot Chat in VS Code, and Copilot cloud agent.
 const COPILOT_INSTRUCTIONS: &str = r#"# ministr MCP — Codebase Navigation
 
-This project uses [ministr](https://github.com/ministr-rs/ministr) as an MCP server for semantic code search. ministr is the **preferred** tool for codebase *exploration*; it does not restrict normal shell work.
+This project uses [ministr](https://github.com/OlsonSoftware/ministr) as an MCP server for semantic code search. ministr is the **preferred** tool for codebase *exploration*; it does not restrict normal shell work.
 
 ## Policy
 

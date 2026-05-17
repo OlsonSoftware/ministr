@@ -49,7 +49,7 @@ pub struct SurveyResponse {
     pub deduplicated_count: Option<usize>,
     /// Budget status snapshot (present when `session_id` was provided).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget_status: Option<crate::session::SessionBudgetResponse>,
+    pub usage_status: Option<crate::session::SessionUsageResponse>,
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ pub struct SectionDetail {
     pub status: Option<String>,
     /// Budget status snapshot (present when `session_id` was provided).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget_status: Option<crate::session::SessionBudgetResponse>,
+    pub usage_status: Option<crate::session::SessionUsageResponse>,
 }
 
 // ---------------------------------------------------------------------------

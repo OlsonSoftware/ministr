@@ -98,7 +98,7 @@ async fn session_read_updates_budget() {
     let (status, budget) = send(
         &app,
         "GET",
-        &format!("/api/v1/corpora/{corpus_id}/sessions/{session_id}/budget"),
+        &format!("/api/v1/corpora/{corpus_id}/sessions/{session_id}/usage"),
         None,
     )
     .await;

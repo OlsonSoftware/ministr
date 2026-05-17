@@ -2,7 +2,7 @@
 //!
 //! The [`SessionRegistry`] manages multiple named agent sessions that share a
 //! single indexed corpus. Each session has its own [`Session`] shadow,
-//! [`BudgetTracker`], and [`AccessMode`], enabling independent budget tracking
+//! [`UsageTracker`], and [`AccessMode`], enabling independent budget tracking
 //! and isolation policies across concurrent agents.
 //!
 //! # Architecture
@@ -17,10 +17,10 @@
 //!
 //! ```
 //! use ministr_core::session::{
-//!     AccessMode, BudgetConfig, EvictionPolicy, SessionRegistry,
+//!     AccessMode, UsageConfig, DropPolicy, SessionRegistry,
 //! };
 //!
-//! let config = BudgetConfig::default();
+//! let config = UsageConfig::default();
 //! let mut registry = SessionRegistry::new(config);
 //!
 //! // Create two sessions sharing the same corpus
@@ -32,8 +32,8 @@
 
 use std::collections::HashMap;
 
-use super::budget::{BudgetConfig, BudgetTracker};
 use super::types::{AccessMode, Session, SessionId};
+use super::usage::{UsageConfig, UsageTracker};
 
 /// A single session entry in the registry, bundling session state with its
 /// budget tracker and access mode.
@@ -41,7 +41,7 @@ pub struct SessionEntry {
     /// The session shadow tracking delivered content and access patterns.
     pub session: Session,
     /// Independent budget tracker for this session's context window.
-    pub budget: BudgetTracker,
+    pub budget: UsageTracker,
     /// Access mode controlling what operations this session can perform.
     pub access_mode: AccessMode,
     /// FSRS-based memory tracker for importance-aware eviction.
@@ -66,13 +66,13 @@ pub struct SessionRegistry {
     /// Map of session ID string to session entry.
     sessions: HashMap<String, SessionEntry>,
     /// Default budget configuration for new sessions.
-    default_budget_config: BudgetConfig,
+    default_budget_config: UsageConfig,
 }
 
 impl SessionRegistry {
     /// Create a new empty registry with the given default budget configuration.
     #[must_use]
-    pub fn new(default_budget_config: BudgetConfig) -> Self {
+    pub fn new(default_budget_config: UsageConfig) -> Self {
         Self {
             sessions: HashMap::new(),
             default_budget_config,
@@ -91,7 +91,7 @@ impl SessionRegistry {
     pub fn create_session(
         &mut self,
         id: &str,
-        budget_config: Option<BudgetConfig>,
+        budget_config: Option<UsageConfig>,
         access_mode: AccessMode,
     ) -> &mut SessionEntry {
         let config = budget_config.unwrap_or_else(|| self.default_budget_config.clone());
@@ -101,7 +101,7 @@ impl SessionRegistry {
             config.max_context_tokens,
             policy,
         );
-        let budget = BudgetTracker::new(config, policy);
+        let budget = UsageTracker::new(config, policy);
         self.sessions.insert(
             id.to_string(),
             SessionEntry {
@@ -140,7 +140,7 @@ impl SessionRegistry {
     pub fn get_or_create(
         &mut self,
         id: &str,
-        budget_config: Option<BudgetConfig>,
+        budget_config: Option<UsageConfig>,
         access_mode: AccessMode,
     ) -> &mut SessionEntry {
         if self.sessions.contains_key(id) {
@@ -189,7 +189,7 @@ impl SessionRegistry {
 
     /// Get the default budget configuration.
     #[must_use]
-    pub fn default_budget_config(&self) -> &BudgetConfig {
+    pub fn default_budget_config(&self) -> &UsageConfig {
         &self.default_budget_config
     }
 }
@@ -197,19 +197,19 @@ impl SessionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::PressureLevel;
+    use crate::session::UsageLevel;
     use crate::types::{ContentId, Resolution};
 
     fn default_registry() -> SessionRegistry {
-        SessionRegistry::new(BudgetConfig::default())
+        SessionRegistry::new(UsageConfig::default())
     }
 
     fn small_registry() -> SessionRegistry {
-        SessionRegistry::new(BudgetConfig {
+        SessionRegistry::new(UsageConfig {
             max_context_tokens: 1000,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
-            ..BudgetConfig::default()
+            ..UsageConfig::default()
         })
     }
 
@@ -235,11 +235,11 @@ mod tests {
     #[test]
     fn create_session_with_custom_budget() {
         let mut registry = default_registry();
-        let custom = BudgetConfig {
+        let custom = UsageConfig {
             max_context_tokens: 5000,
             pressure_threshold: 0.7,
             critical_threshold: 0.9,
-            ..BudgetConfig::default()
+            ..UsageConfig::default()
         };
         registry.create_session("agent-1", Some(custom), AccessMode::ReadWrite);
 
@@ -298,7 +298,7 @@ mod tests {
 
         let entry = registry.get_session("agent-1").unwrap();
         assert_eq!(entry.session.delivered_count(), 1);
-        assert_eq!(entry.budget.budget_status().tokens_used, 100);
+        assert_eq!(entry.budget.usage_status().tokens_used, 100);
     }
 
     #[test]
@@ -369,12 +369,12 @@ mod tests {
         // Record tokens only in agent-1
         let entry1 = registry.get_session_mut("agent-1").unwrap();
         let _ = entry1.budget.record_tokens("s1", 900);
-        assert_eq!(entry1.budget.pressure_level(), PressureLevel::Elevated);
+        assert_eq!(entry1.budget.level(), UsageLevel::Elevated);
 
         // agent-2 should still be at normal
         let entry2 = registry.get_session("agent-2").unwrap();
-        assert_eq!(entry2.budget.pressure_level(), PressureLevel::Normal);
-        assert_eq!(entry2.budget.budget_status().tokens_used, 0);
+        assert_eq!(entry2.budget.level(), UsageLevel::Normal);
+        assert_eq!(entry2.budget.usage_status().tokens_used, 0);
     }
 
     #[test]
@@ -523,17 +523,17 @@ mod tests {
     fn sessions_with_different_budget_configs() {
         let mut registry = default_registry();
 
-        let small_budget = BudgetConfig {
+        let small_budget = UsageConfig {
             max_context_tokens: 500,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
-            ..BudgetConfig::default()
+            ..UsageConfig::default()
         };
-        let large_budget = BudgetConfig {
+        let large_budget = UsageConfig {
             max_context_tokens: 100_000,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
-            ..BudgetConfig::default()
+            ..UsageConfig::default()
         };
 
         registry.create_session("small", Some(small_budget), AccessMode::ReadWrite);
@@ -547,20 +547,12 @@ mod tests {
 
         // small should be elevated, large should be normal
         assert_eq!(
-            registry
-                .get_session("small")
-                .unwrap()
-                .budget
-                .pressure_level(),
-            PressureLevel::Elevated
+            registry.get_session("small").unwrap().budget.level(),
+            UsageLevel::Elevated
         );
         assert_eq!(
-            registry
-                .get_session("large")
-                .unwrap()
-                .budget
-                .pressure_level(),
-            PressureLevel::Normal
+            registry.get_session("large").unwrap().budget.level(),
+            UsageLevel::Normal
         );
     }
 
@@ -568,11 +560,11 @@ mod tests {
 
     #[test]
     fn default_budget_config_accessor() {
-        let config = BudgetConfig {
+        let config = UsageConfig {
             max_context_tokens: 42_000,
             pressure_threshold: 0.75,
             critical_threshold: 0.9,
-            ..BudgetConfig::default()
+            ..UsageConfig::default()
         };
         let registry = SessionRegistry::new(config.clone());
         assert_eq!(registry.default_budget_config().max_context_tokens, 42_000);
