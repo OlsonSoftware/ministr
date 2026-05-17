@@ -1,9 +1,9 @@
 ---
-title: Architecture Overview
-description: How ministr turns a codebase into an AST model — workspace layout, the code-intelligence pipeline, and the on-disk format.
+title: Architecture
+description: How ministr is put together at a glance — a local code-intelligence engine behind an MCP interface.
 ---
 
-ministr is a code intelligence MCP server. Its job is to turn a repository into a queryable model — symbols, references, cross-language bridges, and meaning-ranked text — and serve that model to an AI coding agent over MCP. This page is the map: how the crates fit together, how code becomes that model, and where it all lives on disk. For the step-by-step walkthrough see the [deep dive](/docs/architecture-deep-dive); for the runtime topology see [Daemon & Tray](/docs/architecture-daemon).
+ministr is a code intelligence MCP server. It turns a repository into a queryable model — symbols, references, cross-language bridges, and meaning-ranked text — and serves that model to an AI coding agent over MCP. This page is the conceptual shape of the thing; it is intentionally a black-box overview, not an implementation tour.
 
 ## The shape of it
 
@@ -11,109 +11,37 @@ ministr is a code intelligence MCP server. Its job is to turn a repository into 
 flowchart TB
   agent["AI coding agent<br/>ministr_symbols · ministr_references · ministr_bridge · ministr_survey"]
 
-  subgraph transport["ministr-mcp — transport"]
-    server["MinistrServer / ProxyServer<br/>tool routing · session tracking"]
+  subgraph engine["ministr — local code-intelligence engine"]
+    intel["Code model<br/>symbols · references · cross-language bridges"]
+    retr["Semantic retrieval<br/>meaning + keyword, ranked"]
+    sess["Session tracking<br/>skip re-sends · ship deltas"]
+    index[("Local index")]
+    intel --> index
+    retr --> index
   end
 
-  subgraph core["ministr-core — domain logic"]
-    query["QueryService<br/>the API facade"]
-
-    subgraph ci["Code intelligence"]
-      parser["tree-sitter parser"]
-      symbols["Symbol table"]
-      refs["Reference graph"]
-      bridges["Bridge linker"]
-      parser --> symbols --> refs
-      symbols --> bridges
-    end
-
-    subgraph retr["Semantic retrieval"]
-      hybrid["Hybrid search<br/>dense + sparse + rerank"]
-    end
-
-    sessions["Session tracking<br/>skip-resend · delta · prefetch"]
-    store[("SQLite + HNSW")]
-
-    query --> ci
-    query --> retr
-    query --> sessions
-    ci --> store
-    retr --> store
-  end
-
-  agent -->|"MCP (stdio or HTTP)"| transport
-  transport --> query
+  agent -->|"MCP · stdio or HTTP"| engine
 ```
 
-The agent never sees files. It sees the model: ask `ministr_symbols` for a function, `ministr_references` for its callers, `ministr_bridge` for what calls it across a language boundary, `ministr_survey` for "where is rate limiting handled" — and ministr resolves each against the indexed AST and vector store, returning the exact slice rather than a file dump.
+The agent never works with raw files. It works with the model: ask for a symbol, its callers, what calls it across a language boundary, or "where is rate limiting handled" — and ministr resolves each against a local index, returning the exact slice rather than a file dump. Everything runs on your machine.
 
-## Workspace structure
+## Two query surfaces
 
-ministr is a Cargo workspace of six crates with a strict dependency direction:
+The model exposes two surfaces that compose:
 
-```text
-ministr-core/          — domain logic: parsing, code intelligence, search, sessions. No transport deps.
-ministr-api/           — pure wire types + DaemonClient. No dependency on ministr-core.
-ministr-daemon/        — long-running engine: HTTP over a local socket, owns model + indexes.
-ministr-mcp/           — MCP adapter (rmcp): tool handlers, routing, response shaping.
-ministr-cli/            — binary entry point: arg parsing, config, transport startup.
-ministr-app/src-tauri/ — Tauri v2 desktop app: dashboard + system tray over the daemon.
-```
+- **Structural** — `ministr_symbols`, `ministr_definition`, `ministr_references`, `ministr_bridge`. ministr parses code into an abstract syntax tree, so it answers in terms of real program structure: a symbol's kind and signature, its actual callers and implementors, and cross-language bindings linked across **13 bridge kinds** (Tauri, napi-rs, PyO3, wasm-bindgen, gRPC, HTTP, FFI, and more). A regex can't tell a definition from a mention, or that a Rust export is what some Python file calls across the boundary; this surface can.
+- **Semantic** — `ministr_survey`, `ministr_read`, `ministr_extract`. Meaning-based search fused with keyword matching and ranked, with every document available at several resolutions so the agent gets the right granularity — a summary, a section, a single fact, or a symbol — instead of a whole file.
 
-- **ministr-core** is where the intelligence lives — tree-sitter parsing, symbol/reference extraction, the cross-language bridge linker, hybrid search, and session tracking. It knows nothing about MCP or any transport.
-- **ministr-api** is pure types plus `DaemonClient`, the client that talks to the daemon over `~/.ministr/ministrd.sock`. It deliberately does *not* depend on ministr-core, so the boundary is enforced by the compiler.
-- **ministr-daemon** is the always-on engine that owns the heavy resources (ONNX model, HNSW indexes, SQLite) and exposes them over a local socket so multiple clients share one process.
-- **ministr-mcp** adapts `QueryService` to MCP. It ships in two flavours: a standalone `MinistrServer` that owns its own storage/index, and a `ProxyServer` that forwards to the daemon so a second agent doesn't load a second copy of the model into RAM.
-- **ministr-cli** parses arguments, loads config, and starts the MCP server over stdio (Claude Code) or streamable HTTP (remote).
-- **ministr-app** wraps the daemon in a desktop GUI and tray icon.
+Underneath both, **session tracking** is a quiet efficiency layer: ministr remembers what it has already shown the agent this session, so a repeat request comes back as a pointer or just the lines that changed. It is a bonus, not the headline.
 
-## How code becomes a model
+## Local by default
 
-Indexing runs in three stages; the middle one is what separates ministr from grep:
+ministr indexes, embeds, and searches entirely on the local machine — no code is sent to any API. Parsing covers **40+ languages**; the only outbound calls happen when you explicitly ask a fetch or clone tool to pull an external source. The model lives in a local index directory; nothing about it leaves the machine.
 
-1. **Discover** — walk the corpus, filter by extension, hash each file so unchanged files are skipped on re-ingest.
-2. **Parse & extract** — route each file to a parser (Markdown / HTML / PDF / **code**). Code files go through tree-sitter into an AST, then ministr extracts **symbols** (kind, visibility, signature, doc comment, complexity), resolves **references** (caller→callee, impl→trait, importer→importee), and runs the **bridge linker** to match cross-language exports to their callers.
-3. **Embed & store** — embed text locally (ONNX), insert dense vectors into HNSW and sparse terms into the inverted index, pull atomic claims and relationships, and persist everything to SQLite.
+A background engine builds and holds that model once and shares it, so multiple MCP clients (and the desktop app) query the same index instead of each loading their own copy into memory. To an MCP client this is invisible — it speaks ordinary MCP over stdio or HTTP and gets answers.
 
-The result is a model with two query surfaces that compose:
+## Where to go next
 
-- **Structural** — `ministr_symbols`, `ministr_definition`, `ministr_references`, `ministr_bridge`. Backed by the symbol table, reference graph, and bridge links. Knows that a function has three callers and that a Rust `#[pyfunction]` is what Python imports across the boundary — things text search cannot answer.
-- **Semantic** — `ministr_survey`, `ministr_read`, `ministr_extract`. Backed by hybrid retrieval: dense embeddings (HNSW) fused with sparse keyword matching (SPLADE) via reciprocal-rank fusion, then reranked. Every document is indexed at multiple resolutions — summary, section, claim, symbol stub, full source — so the agent gets the granularity it asked for, not a whole file.
-
-Sitting underneath both surfaces is **session tracking**: ministr records what it has already sent each session, so a repeat request returns a pointer or just the changed lines, and predictive prefetch warms the next likely lookup. This is an efficiency layer, not the headline — see the deep dive's [session tracking](/docs/architecture-deep-dive#session-tracking-the-efficiency-layer) section.
-
-## On-disk layout
-
-```text
-~/.ministr/
-├── config.toml                       # Global configuration
-├── corpora.json                      # Daemon's registered-corpus manifest
-├── ministrd.sock                     # Daemon socket (UDS on macOS/Linux; named pipe on Windows)
-├── ministrd.pid                      # Daemon PID file
-└── corpora/
-    └── <corpus-id>/                  # Stable hash derived from corpus paths
-        ├── meta.toml                 # Per-corpus config (name, model, watch flag, …)
-        ├── content.db                # SQLite: documents, sections, claims, symbols,
-        │                             #   symbol_refs, bridge_endpoints/links, sessions
-        ├── sessions/                 # Persisted session state
-        └── index/
-            ├── ministr_hnsw.hnsw.data  # HNSW vector dump
-            ├── ministr_hnsw.hnsw.graph
-            └── id_map.json           # Section ID ↔ vector slot mapping
-```
-
-The single `content.db` holds both the prose skeleton (documents / sections / claims) and the code-intelligence model (`symbols`, `symbol_refs`, `bridge_endpoints`, `bridge_links`), so a structural query and a semantic query hit the same store. Schema and table-by-table breakdown are in the [deep dive](/docs/architecture-deep-dive#what-gets-stored).
-
-## Key dependencies
-
-| Purpose | Crate |
-|---|---|
-| Code parsing | `tree-sitter` (~29 language grammars) |
-| Embeddings | `fastembed` (ONNX, local) / `candle` (Metal GPU on Apple Silicon) |
-| Vector search | HNSW index (in-memory, memory-mapped) |
-| Storage | `rusqlite` (SQLite) |
-| MCP protocol | `rmcp` |
-| Document parsing | `comrak` (Markdown), `scraper` (HTML), `pdf-extract` (PDF) |
-| Async runtime | `tokio` |
-| File watching | `notify` |
-| Observability | `tracing` |
+- [Core concepts](/docs/concepts) — the ideas behind semantic retrieval, session tracking, and coherence, in plain terms.
+- [Tool reference](/docs/tools) — every MCP tool ministr exposes, with parameters and examples.
+- [Getting started](/docs/getting-started) — install, index a project, and connect your agent.

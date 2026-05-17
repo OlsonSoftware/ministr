@@ -1,51 +1,33 @@
 ---
-title: Predictive Prefetch
-description: The six prefetch strategies ministr uses to have the agent's likely next tool call already ready — four after every read, two after every survey.
+title: Predictive prefetch
+description: How ministr has the agent's likely next request ready before it asks — predicted, not LLM-generated.
 ---
 
-The **predictive prefetch** engine predicts what the agent will ask for next and pre-computes it, so follow-up calls return instantly instead of running a fresh search.
+Predictive prefetch guesses what the agent will ask for next and prepares it in advance, so the follow-up call returns immediately instead of running a fresh search.
 
-## Why Prefetch Matters
+## Why it matters
 
-Every tool call round-trip costs latency, tokens, and money. If ministr can guess what the agent will ask for next and have it ready, the interaction feels instantaneous — and the next response can skip an embed-and-search cycle entirely.
+Every tool round-trip costs latency and tokens. If ministr can anticipate the next request and have the answer ready, the interaction feels instant and the next response skips a full search cycle. Prediction itself uses no LLM — if guessing took a model call, it would defeat the purpose.
 
-No LLM is in the loop for prediction itself. If guessing what to prefetch took 500ms of inference, it would defeat the purpose.
+## What it predicts from
 
-## The Six Strategies
+Prefetch reasons from where the agent already is, at two moments:
 
-Prefetch runs at two distinct moments in the agent's workflow. Four strategies fire after every `ministr_read` (sequential, structural, topical, cross-session); two fire after every `ministr_survey` (survey-expand, agent-plan).
+- **After a read** — the agent is usually moving through related code: the next part of the same file, neighbouring sections, work on the same topic, and things that, in past sessions, were frequently read alongside what was just read.
+- **After a search** — the natural next step is to open the strongest results, so ministr pre-warms those, plus a small, capped set of sections the query implies the agent is heading toward.
 
-### After a read
-
-**Sequential locality.** When the agent reads section N of a document, pre-warm section N+1 (and a short window beyond). This mirrors hardware prefetch streaming.
-
-**Structural locality.** Pre-warm sibling sections at the same depth around the current read position, so "read through a doc" and "look at the next thing in the outline" both serve warm.
-
-**Topical locality.** Keep a running "topic vector" — a weighted average of the embedding vectors of the last K sections the agent accessed — and query HNSW for its nearest un-read neighbours. Analogous to stride-based prefetching, generalised to a high-dimensional embedding space.
-
-**Cross-session analytics.** Pull sections that, across previous sessions, have often been read together with the one the agent just read. Only runs in ministr's default single-process mode today; the daemon-proxy path has this scaffolded but not yet wired.
-
-### After a survey
-
-**Survey expand.** When a survey returns claim-level hits, pre-warm each hit's parent section — so the typical `survey → read` follow-up is already in cache.
-
-**Agent plan (intent-based).** Cheaply analyse the query plus the top survey hits to infer what the agent is likely to ask for next, and pre-warm a small capped list. Capped to avoid wasted prefetching.
-
-## Cache
-
-Pre-warmed results live in an in-memory LRU cache (default size: 128 items). Each entry holds the pre-computed text, token count, relevance score, and a tag recording which strategy warmed it — so hit-rate metrics break down per strategy and you can see which predictions actually pay off.
+It stays conservative: predictions are capped so prefetch never does more work than it saves.
 
 ## Configuration
+
+A few `.ministr.toml` knobs; the defaults are sensible and most users never touch them.
 
 ```toml
 [prefetch]
 enabled = true                   # Toggle prefetching on/off
-cache_size = 128                 # Max items in the prefetch cache
-topic_window = 5                 # Recent sections used for the topic vector
-alpha = 0.3                      # EMA weight on the most recent section (optional)
-adaptive_alpha = true            # Auto-tune alpha when the topic stabilises (optional)
-speculative = false              # Run prefetch proactively during agent idle (optional)
-max_candidates_per_strategy = 5  # Cap per strategy per cycle (optional)
+cache_size = 128                 # Max pre-warmed items kept in memory
+topic_window = 5                 # Recent sections used to infer the current topic
+max_candidates_per_strategy = 5  # Cap on how much each prediction prepares
 ```
 
-Prefetching can be disabled entirely with `enabled = false`. `cache_size` controls memory usage (each cached item holds a full section or claim). The optional fields are fine-tuning knobs — most users never touch them.
+Set `enabled = false` to turn it off entirely. See [Configuration](/docs/configuration) for the full list.

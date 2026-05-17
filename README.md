@@ -5,7 +5,7 @@
 ministr is a code intelligence MCP server. It gives AI coding agents
 AST-level understanding of your codebase — semantic search across code and
 docs, symbol-level navigation, real reference graphs, and cross-language
-bridge detection across ~29 languages. It runs locally, embeds locally, and
+bridge detection across 40+ languages. It runs locally, embeds locally, and
 works with any MCP client — Claude Code, Cursor, VS Code / Copilot.
 
 ## What it solves
@@ -76,9 +76,11 @@ sentence of fact pulled from a section). Code adds two more levels: a symbol
 stub (signature plus doc) and full source.
 
 **Symbol navigation** finds and traces structs, functions, and traits across
-~29 languages via tree-sitter — Rust, Python, JS/TS, Go, Java, C/C++, C#, Ruby,
+40+ languages via tree-sitter — Rust, Python, JS/TS, Go, Java, C/C++, C#, Ruby,
 Swift, Kotlin, PHP, Scala, Bash, Lua, Elixir, Haskell, OCaml, Dart, R,
-HCL/Terraform, SQL, Zig, Protobuf, Svelte, and JSON/YAML/TOML.
+HCL/Terraform, SQL, Zig, Protobuf, Svelte, plus CSS, GraphQL, Groovy, Nix,
+Erlang, PowerShell, Solidity, Objective-C, Julia, CMake, Make, and
+JSON/YAML/TOML.
 
 **Cross-language bridge detection** links bindings automatically: Tauri commands
 and events, napi-rs, PyO3, wasm-bindgen, HTTP routes (actix-web / axum /
@@ -101,6 +103,6 @@ command palette, and system-tray controls (Tauri v2; macOS, Windows, Linux).
 - [Docs home](https://ministr.ai/) — full overview
 - [Install](https://ministr.ai/install) — desktop installers and CLI scripts
 - [Tool reference](https://ministr.ai/docs/tools/) — every MCP tool, with parameters and examples
-- [Architecture](https://ministr.ai/docs/architecture-deep-dive/) — system and subsystem deep dive
+- [Architecture](https://ministr.ai/docs/architecture/) — how ministr is put together
 - [Configuration](https://ministr.ai/docs/configuration/) — `.ministr.toml` options and CLI flags
 - [Changelog](CHANGELOG.md)

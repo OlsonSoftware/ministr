@@ -1,23 +1,15 @@
 ---
 title: Coherence
-description: How ministr detects underlying document changes and notifies active sessions holding stale content so the agent doesn't reason off rotted context.
+description: How ministr keeps the agent's view in sync with the code on disk, so it never reasons off stale context.
 ---
 
-Coherence keeps the agent's view of your codebase in sync with what's actually on disk. When the underlying documents change, ministr detects the change and notifies active sessions that hold stale content.
+Coherence keeps the agent's view of your codebase in sync with what's actually on disk. When files change, ministr notices, updates its model, and tells any active session that was holding the old version.
 
-## How It Works
+## How it works
 
-### File Watching
+While ministr is serving a project it watches the source for changes. When a file is modified, ministr re-reads it and updates the model — incrementally, so the work is proportional to the size of the change, not the size of the codebase. Deleted files are removed from the model.
 
-When ministr runs as a server (`ministr serve`), it monitors every registered corpus's source directories for changes using the `notify` crate. When a file is modified:
-
-1. The file is re-parsed and re-indexed. Only changed sections are re-embedded and re-inserted.
-2. The session shadow is consulted — if any active session references a changed section, a coherence alert is generated.
-3. Deleted files have their sections removed from the index and marked as invalidated.
-
-### Coherence Alerts
-
-Alerts are attached to tool responses when the agent next calls any ministr tool:
+If a session had already been shown something that just changed, the agent gets a small **coherence alert** on its next tool call:
 
 ```json
 {
@@ -31,25 +23,8 @@ Alerts are attached to tool responses when the agent next calls any ministr tool
 }
 ```
 
-This allows the agent to decide whether to re-read the changed section or continue with potentially stale context.
+The agent can then decide to re-read the changed part or carry on. And if it does re-read something it already had, ministr returns just the lines that changed rather than the whole section again — current context, minimal cost.
 
-### Delta Delivery
+## When watching runs
 
-When the agent reads a section it previously received, and that section has changed, ministr returns a line-level delta instead of the full text. This shows exactly what was added, removed, or modified — minimizing token cost while keeping the agent's context current.
-
-## Incremental Re-Indexing
-
-ministr tracks file hashes to enable incremental updates:
-
-- Only modified files are re-parsed
-- Only changed sections within those files are re-embedded
-- The HNSW vector index is updated in place (supports deletion and re-insertion)
-- Unchanged content retains its existing embeddings and index positions
-
-This makes re-indexing fast even for large corpora — proportional to the size of the change, not the size of the corpus.
-
-## When Does Watching Run?
-
-File watching is on by default whenever `ministr serve` is running. If you just want a one-shot index (no watcher, no MCP server), use `ministr index` instead — it runs ingestion synchronously and exits.
-
-Each registered corpus gets its own daemon-generated metadata file at `~/.ministr/corpora/<corpus-id>/meta.toml` with a `watch: bool` flag (defaults to `true`). This is daemon-managed internal state — you don't usually edit it directly.
+Watching is on whenever `ministr serve` is running. If you only want a one-shot index — no watcher, no server — use `ministr index` instead; it runs once and exits. Per-project watching can be turned off in configuration.

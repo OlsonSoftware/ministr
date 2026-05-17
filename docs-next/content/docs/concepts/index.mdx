@@ -1,16 +1,16 @@
 ---
 title: Core Concepts
-description: The mechanisms behind ministr's code intelligence — hybrid search, session shadow, delta delivery, predictive prefetch, and coherence.
+description: The ideas behind ministr's code intelligence — hybrid search, session memory, delta delivery, predictive prefetch, and coherence.
 ---
 
 ministr is built around a few mechanisms. The first is how it understands code; the rest keep delivery efficient so the agent spends its window on the work, not on re-reading.
 
 | Mechanism | What it does |
 |---|---|
-| [Hybrid Search](/docs/architecture-deep-dive#the-embedding-stack) | Combines semantic ("meaning") search with keyword search and fuses the rankings |
-| [Session Shadow](/docs/concepts/session-shadow) | Tracks what your agent has already been sent this session |
-| [Delta Delivery](/docs/concepts/coherence#delta-delivery) | Sends only the changed lines when a file the agent already saw has been edited |
-| [Predictive Prefetch](/docs/concepts/prefetch-engine) | Guesses the agent's next read and has the result ready before it's asked for |
-| [Coherence Watcher](/docs/concepts/coherence) | Notices file changes on disk and flags previously-delivered content as stale |
+| [Hybrid Search](/docs/architecture) | Combines semantic ("meaning") search with keyword search and fuses the rankings |
+| [Session memory](/docs/concepts/session-shadow) | Tracks what the agent has already been sent this session |
+| [Delta delivery](/docs/concepts/coherence) | Sends only the changed lines when a file the agent already saw has been edited |
+| [Predictive prefetch](/docs/concepts/prefetch-engine) | Anticipates the next request and has the result ready before it's asked for |
+| [Coherence](/docs/concepts/coherence) | Notices file changes on disk and flags previously-delivered content as stale |
 
-These mechanisms compose. The session shadow feeds the prefetch engine (knowing what was already delivered informs what to pre-warm), and the coherence watcher uses the shadow to figure out which sessions hold stale content after a file changes.
+These compose. Session memory tells prefetch what the agent already has (so it warms what's actually next), and coherence uses the same memory to know which sessions are holding something that just changed.

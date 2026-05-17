@@ -141,7 +141,7 @@ export function InstallClient() {
         <Rule className="my-16 sm:my-20" />
 
         {/* ── §2 All installers ────────────────────────────── */}
-        <Section folio="§ 2" title="All desktop installers" wide>
+        <Section folio="§ 2" title="All desktop installers">
           <p className="ms-p">
             Every platform bundle attached to the latest release
             {latest ? <> ({latest.tag})</> : null}. Copy a direct URL for
@@ -270,8 +270,8 @@ export function InstallClient() {
 
         <Rule className="my-16 sm:my-20" />
 
-        <footer className="ms-col text-center">
-          <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-[14px]">
+        <footer className="ms-col">
+          <nav className="flex flex-wrap gap-x-6 gap-y-2 text-[14px]">
             <Link href="/" className="ms-link">
               Home
             </Link>
@@ -285,9 +285,7 @@ export function InstallClient() {
               Tool reference
             </Link>
           </nav>
-          <p className="ms-folio mt-8 justify-center">
-            Local · Rust · no API calls
-          </p>
+          <p className="ms-folio mt-8">Local · Rust · no API calls</p>
         </footer>
       </article>
     </main>
@@ -306,15 +304,13 @@ function Section({
   folio,
   title,
   children,
-  wide,
 }: {
   folio: string;
   title: string;
   children: React.ReactNode;
-  wide?: boolean;
 }) {
   return (
-    <section className={'ms-col' + (wide ? ' ms-col-wide' : '')}>
+    <section className="ms-col">
       <p className="ms-folio">{folio}</p>
       <h2 className="ms-h">{title}</h2>
       <div className="mt-5">{children}</div>

@@ -1,44 +1,18 @@
 ---
-title: Session Shadow
-description: A per-session ledger of every chunk of context ministr has delivered to the agent — so it skips re-sending what the agent already has and ships only what changed.
+title: Session memory
+description: How ministr remembers what it has already shown an agent, so it skips re-sends and ships only what changed.
 ---
 
-The session shadow is a per-session ledger of everything ministr has delivered to the agent. It tracks exactly what context has been sent, enabling three capabilities that no existing retrieval system provides.
+ministr keeps a per-session memory of everything it has shown the agent. That memory is what makes delivery lean — it is a quiet efficiency layer beneath the code intelligence, not the headline.
 
-## What It Tracks
+## What it enables
 
-For every piece of content delivered, the shadow records:
+- **Skip repeats.** If the agent searches for something ministr already provided, it returns a pointer instead of the same text again — the agent gets only what's new.
+- **Ship deltas.** If a section was sent earlier and the file has since changed, ministr sends just the changed lines, not the whole thing again. The agent sees exactly what moved.
+- **Re-supply what was dropped.** ministr keeps a rough sense of how much it has sent relative to the agent's window, so if the agent asks again for context it likely pushed out, ministr can re-deliver it.
 
-- **Content ID** — which summary, section, or claim was sent
-- **Resolution** — at what level (summary, section, or claim)
-- **Token count** — how many tokens it consumed
-- **Turn number** — when in the conversation it was delivered
-- **Content hash** — for detecting changes to the underlying document
+## Why a rough estimate is enough
 
-## Capabilities
+ministr can't see the agent's real context window — MCP doesn't expose it — so it works from an estimate, corrected as it goes: if the agent re-requests something it was already given, ministr treats that as a signal the content was dropped and re-supplies it. The estimate doesn't need to be exact. Even a loose one prevents the most wasteful failure mode — re-sending identical context every turn — and it self-corrects with use.
 
-### Skip Repeats
-
-When the agent searches for a topic that ministr already provided context for, the shadow filters out previously-delivered content. The agent receives only new information, not copies of what it already has.
-
-### Delta Updates
-
-If a section was delivered earlier but the underlying document has changed, ministr detects the hash mismatch and returns a line-level delta instead of re-delivering the full text. The agent sees exactly what changed.
-
-### Drop Estimation
-
-Based on the configured window size and cumulative token delivery, ministr makes a rough estimate of what the agent has likely dropped from its window, so it can re-deliver critical context if the agent asks for it again.
-
-## Window Estimation
-
-ministr does not have direct access to the agent's actual context window (MCP does not expose this). Instead, it maintains an estimate based on:
-
-1. **Cumulative token count** — when delivery exceeds the configured window size, older items are assumed dropped (FIFO by default, or FSRS-based when a `MemoryTracker` is wired in and sessions record with retrievability scores)
-2. **Fault-based correction** — if the agent re-requests content ministr already delivered, this is treated as a signal that it was dropped. The window estimate is corrected and the content is re-delivered.
-3. **Explicit signals** — the agent can call `ministr_evicted` to tell ministr what it dropped, improving accuracy
-
-The estimate does not need to be perfect. Even a rough approximation prevents the most wasteful failure mode (re-delivering identical context every turn) while fault-based correction converges on accuracy over time.
-
-## Persistence
-
-Session shadows are persisted to SQLite so sessions can survive process restarts. When ministr starts with an existing session ID, the shadow is restored from storage.
+This memory survives across restarts, so reconnecting to a session doesn't start the agent over from scratch.
