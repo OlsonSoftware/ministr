@@ -117,10 +117,12 @@ pub fn detect_parser_kind(path: &Path) -> Option<ParserKind> {
     if filename == "Dockerfile"
         || filename.starts_with("Dockerfile.")
         || filename == "Makefile"
+        || filename == "GNUmakefile"
         || filename == "Justfile"
         || filename == "justfile"
         || filename == "Rakefile"
         || filename == "Gemfile"
+        || filename == "CMakeLists.txt"
     {
         return Some(ParserKind::Code);
     }

@@ -7,6 +7,7 @@ import {
   EntitySectionEmpty,
   EntitySectionLoading,
 } from "./EntitySection";
+import { MetricTile } from "../ui/metric-tile";
 import type { BridgeLink, SymbolInfo } from "../../lib/types";
 
 interface Props {
@@ -130,13 +131,15 @@ export function BridgeView({ entity }: Props) {
     <div className="flex flex-col gap-4">
       {/* §1 Meta */}
       <EntitySection chapter={1} title="Meta">
-        <div className="grid grid-cols-3">
-          <Stat label="Kind" value={link.kind.toUpperCase()} />
-          <Stat
+        <div className="grid grid-cols-3 divide-x divide-border-soft">
+          <MetricTile variant="cell" label="Kind" value={link.kind.toUpperCase()} />
+          <MetricTile
+            variant="cell"
             label="Confidence"
             value={`${(link.confidence * 100).toFixed(0)}%`}
           />
-          <Stat
+          <MetricTile
+            variant="cell"
             label="Langs"
             value={`${link.export_language.toUpperCase()} → ${link.import_language.toUpperCase()}`}
           />
@@ -232,19 +235,6 @@ export function BridgeView({ entity }: Props) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border-r border-border-soft last:border-r-0 px-3 py-2">
-      <p className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
-        {label}
-      </p>
-      <p className="font-mono text-sm font-semibold tabular-nums text-text mt-0.5 truncate">
-        {value}
-      </p>
-    </div>
-  );
-}
-
 function CodePane({
   title,
   file,
@@ -270,10 +260,10 @@ function CodePane({
   return (
     <div className="border border-border-soft bg-surface flex flex-col min-h-0">
       <div className="flex items-baseline justify-between border-b border-border-soft bg-surface-overlay px-3 py-2 shrink-0">
-        <span className="font-serif text-base font-bold text-text">
+        <span className="font-sans text-base font-bold text-text">
           {title}
         </span>
-        <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
           {language}
         </span>
       </div>
@@ -286,7 +276,7 @@ function CodePane({
         </p>
       </div>
       {loading ? (
-        <p className="px-3 py-2 font-serif text-sm italic text-text-dim">
+        <p className="px-3 py-2 font-sans text-sm italic text-text-dim">
           Loading<span className="ministr-blink">_</span>
         </p>
       ) : (
@@ -294,7 +284,7 @@ function CodePane({
           {source ?? "// (no source)"}
         </pre>
       )}
-      <p className="px-3 py-1 font-serif text-xs italic text-text-dim border-t border-border-soft">
+      <p className="px-3 py-1 font-sans text-xs italic text-text-dim border-t border-border-soft">
         Starting at line {startLine}.
       </p>
     </div>

@@ -1,6 +1,6 @@
 [package]
 name = "ministr-core"
-version = "0.2.2"
+version = "0.2.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -59,6 +59,34 @@ tree-sitter-ruby = { workspace = true, optional = true }
 tree-sitter-c-sharp = { workspace = true, optional = true }
 tree-sitter-swift = { workspace = true, optional = true }
 tree-sitter-kotlin-ng = { workspace = true, optional = true }
+tree-sitter-bash = { workspace = true, optional = true }
+tree-sitter-php = { workspace = true, optional = true }
+tree-sitter-scala = { workspace = true, optional = true }
+tree-sitter-lua = { workspace = true, optional = true }
+tree-sitter-elixir = { workspace = true, optional = true }
+tree-sitter-haskell = { workspace = true, optional = true }
+tree-sitter-ocaml = { workspace = true, optional = true }
+tree-sitter-dart = { workspace = true, optional = true }
+tree-sitter-r = { workspace = true, optional = true }
+tree-sitter-hcl = { workspace = true, optional = true }
+tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-yaml = { workspace = true, optional = true }
+tree-sitter-toml-ng = { workspace = true, optional = true }
+tree-sitter-sequel = { workspace = true, optional = true }
+tree-sitter-zig = { workspace = true, optional = true }
+tree-sitter-proto = { workspace = true, optional = true }
+tree-sitter-svelte-ng = { workspace = true, optional = true }
+tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-graphql = { workspace = true, optional = true }
+tree-sitter-groovy = { workspace = true, optional = true }
+tree-sitter-nix = { workspace = true, optional = true }
+tree-sitter-erlang = { workspace = true, optional = true }
+tree-sitter-powershell = { workspace = true, optional = true }
+tree-sitter-solidity = { workspace = true, optional = true }
+tree-sitter-objc = { workspace = true, optional = true }
+tree-sitter-julia = { workspace = true, optional = true }
+tree-sitter-cmake = { workspace = true, optional = true }
+tree-sitter-make = { workspace = true, optional = true }
 tar.workspace = true
 zstd.workspace = true
 tempfile.workspace = true
@@ -90,6 +118,34 @@ lang-all = [
     "lang-csharp",
     "lang-swift",
     "lang-kotlin",
+    "lang-bash",
+    "lang-php",
+    "lang-scala",
+    "lang-lua",
+    "lang-elixir",
+    "lang-haskell",
+    "lang-ocaml",
+    "lang-dart",
+    "lang-r",
+    "lang-hcl",
+    "lang-json",
+    "lang-yaml",
+    "lang-toml",
+    "lang-sql",
+    "lang-zig",
+    "lang-proto",
+    "lang-svelte",
+    "lang-css",
+    "lang-graphql",
+    "lang-groovy",
+    "lang-nix",
+    "lang-erlang",
+    "lang-powershell",
+    "lang-solidity",
+    "lang-objc",
+    "lang-julia",
+    "lang-cmake",
+    "lang-make",
 ]
 lang-python = ["dep:tree-sitter-python"]
 lang-javascript = ["dep:tree-sitter-javascript"]
@@ -102,6 +158,34 @@ lang-ruby = ["dep:tree-sitter-ruby"]
 lang-csharp = ["dep:tree-sitter-c-sharp"]
 lang-swift = ["dep:tree-sitter-swift"]
 lang-kotlin = ["dep:tree-sitter-kotlin-ng"]
+lang-bash = ["dep:tree-sitter-bash"]
+lang-php = ["dep:tree-sitter-php"]
+lang-scala = ["dep:tree-sitter-scala"]
+lang-lua = ["dep:tree-sitter-lua"]
+lang-elixir = ["dep:tree-sitter-elixir"]
+lang-haskell = ["dep:tree-sitter-haskell"]
+lang-ocaml = ["dep:tree-sitter-ocaml"]
+lang-dart = ["dep:tree-sitter-dart"]
+lang-r = ["dep:tree-sitter-r"]
+lang-hcl = ["dep:tree-sitter-hcl"]
+lang-json = ["dep:tree-sitter-json"]
+lang-yaml = ["dep:tree-sitter-yaml"]
+lang-toml = ["dep:tree-sitter-toml-ng"]
+lang-sql = ["dep:tree-sitter-sequel"]
+lang-zig = ["dep:tree-sitter-zig"]
+lang-proto = ["dep:tree-sitter-proto"]
+lang-svelte = ["dep:tree-sitter-svelte-ng"]
+lang-css = ["dep:tree-sitter-css"]
+lang-graphql = ["dep:tree-sitter-graphql"]
+lang-groovy = ["dep:tree-sitter-groovy"]
+lang-nix = ["dep:tree-sitter-nix"]
+lang-erlang = ["dep:tree-sitter-erlang"]
+lang-powershell = ["dep:tree-sitter-powershell"]
+lang-solidity = ["dep:tree-sitter-solidity"]
+lang-objc = ["dep:tree-sitter-objc"]
+lang-julia = ["dep:tree-sitter-julia"]
+lang-cmake = ["dep:tree-sitter-cmake"]
+lang-make = ["dep:tree-sitter-make"]
 
 [dev-dependencies]
 serde_json.workspace = true

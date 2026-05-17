@@ -1,16 +1,13 @@
-import {
-  Zap,
-  Gauge,
-  Copy,
-  TrendingDown,
-  AlertTriangle,
-} from "lucide-react";
+import { memo } from "react";
+import { Zap, Gauge, Copy, TrendingDown, AlertTriangle } from "lucide-react";
 import type { CorpusInfo, SessionDetail } from "../../lib/types";
 import { corpusLabelById } from "../../lib/corpus";
-import { pressureTone, toneTextClass } from "../../lib/status";
+import { toneBgClass, toneTextClass } from "../../lib/status";
+import { clampPct, statusLabel, utilizationTone } from "../../lib/sessions";
 import { cn } from "../../lib/utils";
 import { formatTokens } from "../../lib/format";
 import { MetricTile } from "./metric-tile";
+import { BudgetBar } from "./budget-bar";
 import { StatusDot } from "./status-dot";
 
 interface TurnBlockProps {
@@ -24,31 +21,55 @@ interface TurnBlockProps {
   className?: string;
 }
 
-export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnBlockProps) {
-  const tone = pressureTone(session.pressure_level);
-  const pressureColor = toneTextClass(tone);
-  const utilPct = (session.utilization * 100).toFixed(0);
+/**
+ * Session card. Pressure colour is derived from utilization (via
+ * `lib/sessions`), not the raw enum — so it can't regress to grey. A
+ * persistent left identity edge carries the status colour at a glance;
+ * the budget bar is the framed `BudgetBar`, not a 1.5px sliver.
+ * `React.memo`'d: the shared store hands a stable session ref when
+ * unchanged, so untouched cards skip re-render under poll.
+ */
+function TurnBlockImpl({
+  session,
+  corpora,
+  fresh,
+  onClick,
+  className,
+}: TurnBlockProps) {
+  const tone = utilizationTone(session.utilization);
+  const utilPct = clampPct(session.utilization * 100);
   const sessionShort = session.session_id.slice(0, 8);
+  const critical = tone === "danger";
 
   return (
     <div
       onClick={onClick}
       className={cn(
-        "group relative border border-border-soft bg-surface p-3 transition-none",
+        "group relative rounded-lg border border-border bg-surface p-3 pl-3.5",
+        "transition-[border-color,box-shadow,transform] duration-150 ease-out",
         onClick &&
-          "cursor-pointer hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-[4px_4px_0_0_var(--shadow-color)]",
-        fresh && "ministr-flash",
+          "cursor-pointer hover:-translate-y-0.5 hover:border-border-hover hover:shadow-md",
+        fresh && "ministr-pulse",
         className,
       )}
     >
-      {/* Header row: session glyph + id + turn + pressure */}
+      {/* Persistent identity edge — status colour at a glance. */}
+      <span
+        className={cn(
+          "absolute left-0 top-0 bottom-0 w-0.5",
+          toneBgClass(tone),
+        )}
+        aria-hidden="true"
+      />
+
+      {/* Header row: session glyph + id + turn + status */}
       <div className="flex items-center gap-2 mb-2">
         <StatusDot tone={tone} pulse={fresh ? "live" : "off"} size="md" />
-        <span className="font-mono text-[0.6875rem] text-text-muted truncate">
+        <span className="font-mono text-mono-mini text-text-muted truncate">
           {sessionShort}
         </span>
-        <span className="font-mono text-[0.6875rem] text-text-dim">·</span>
-        <span className="font-mono text-[0.6875rem] text-text truncate">
+        <span className="font-mono text-mono-mini text-text-dim">·</span>
+        <span className="font-mono text-mono-mini text-text truncate">
           turn {session.current_turn}
         </span>
         {session.parent_session_id && (
@@ -66,15 +87,30 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
           </span>
         )}
         <div className="flex-1" />
-        <span className={cn("font-mono text-[0.6875rem] font-bold uppercase tracking-[0.05em]", pressureColor)}>
-          {session.pressure_level}
+        <span
+          className={cn(
+            "font-mono text-mono-mini font-bold uppercase tracking-[0.08em]",
+            toneTextClass(tone),
+          )}
+        >
+          {statusLabel(tone)}
         </span>
       </div>
 
       {/* Metrics row */}
-      <div className="grid grid-cols-4 gap-2 text-[0.6875rem]">
-        <MetricTile variant="compact" icon={Gauge} value={`${utilPct}%`} label="budget" />
-        <MetricTile variant="compact" icon={Zap} value={formatTokens(session.tokens_used)} label="tokens" />
+      <div className="grid grid-cols-4 gap-2 text-mono-mini">
+        <MetricTile
+          variant="compact"
+          icon={Gauge}
+          value={`${utilPct}%`}
+          label="budget"
+        />
+        <MetricTile
+          variant="compact"
+          icon={Zap}
+          value={formatTokens(session.tokens_used)}
+          label="tokens"
+        />
         <MetricTile
           variant="compact"
           icon={TrendingDown}
@@ -85,40 +121,32 @@ export function TurnBlock({ session, corpora, fresh, onClick, className }: TurnB
         <MetricTile
           variant="compact"
           icon={Copy}
-          value={session.dedup_hits.toString()}
-          label="dedup"
+          value={session.dedup_hits.toLocaleString()}
+          label="repeats"
           tone="accent"
         />
       </div>
 
-      {/* Budget bar sliver — sharp, no rounded ends. */}
-      <div className="mt-2.5 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden">
-        <div
-          className={cn(
-            "h-full transition-none",
-            session.pressure_level === "critical" && "bg-danger",
-            session.pressure_level === "high" && "bg-warning",
-            (session.pressure_level === "medium"
-              || session.pressure_level === "low"
-              || session.pressure_level === "none") && "bg-accent",
-          )}
-          style={{ width: `${utilPct}%` }}
-        />
+      {/* Budget bar — framed, colour from utilization, % at the edge. */}
+      <div className="mt-2.5">
+        <BudgetBar utilization={session.utilization} size="card" showValue />
       </div>
 
-      {/* Footer: corpus name */}
+      {/* Footer: project name */}
       <div className="mt-2 flex items-center gap-1.5 text-xs font-mono text-text-dim truncate">
-        <span className="uppercase tracking-[0.05em]">corpus</span>
+        <span className="uppercase tracking-[0.08em]">project</span>
         <span className="text-text-muted truncate">
           {corpusLabelById(corpora, session.corpus_id)}
         </span>
-        {session.pressure_level === "critical" && (
-          <span className="inline-flex items-center gap-1 ml-auto text-danger uppercase tracking-[0.05em] font-semibold">
-            <AlertTriangle className="h-3 w-3" strokeWidth={2.5}/>
-            evict
+        {critical && (
+          <span className="inline-flex items-center gap-1 ml-auto text-danger uppercase tracking-[0.08em] font-semibold">
+            <AlertTriangle className="h-3 w-3" strokeWidth={2.5} />
+            evicting
           </span>
         )}
       </div>
     </div>
   );
 }
+
+export const TurnBlock = memo(TurnBlockImpl);

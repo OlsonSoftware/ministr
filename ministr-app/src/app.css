@@ -1,174 +1,138 @@
 @import "tailwindcss";
 
-/* ------------------------------------------------------------------
-   Ministr design tokens — neo-brutalist (loud), monochrome + accent.
-   Sharp 0px corners, 2px solid borders, hard offset shadows (no blur).
-   Black/white/grays + a single oklch-equivalent purple accent.
-   ------------------------------------------------------------------ */
+/* ==================================================================
+   ministr — "Cockpit" design language.
+
+   A dark-first observability cockpit for watching live LLM-agent
+   sessions and corpora. Depth comes from layered elevation tiers +
+   soft shadow + hairline borders (not hard 2px brutalist edges).
+   Single violet accent with a live "glow". Motion is a first-class
+   citizen (see lib/motion.ts) — this file owns only the easing /
+   duration tokens and the reduced-motion kill-switch.
+   ================================================================== */
 
 :root {
-  /* Light theme — faint warm-paper bg + bright surface lift evokes the
-     datasheet/manpage reference; cards now have visible separation from page. */
-  --color-bg: #fafaf7;
-  --color-surface: #ffffff;
+  /* ---- Elevation tiers (light theme — inverted structure of dark) ---- */
+  --color-bg: #f6f6f4;          /* app canvas */
+  --color-surface: #ffffff;     /* tier 1 — panels */
   --color-surface-raised: #ffffff;
-  --color-surface-overlay: #f1f1ed;
-  --color-surface-sunken: #ebebe6;
-  --color-border: #000000;
-  --color-border-soft: #b8b8b3;
-  --color-border-hover: #000000;
-  --color-text: #000000;
-  --color-text-muted: #404040;
-  --color-text-dim: #707070;
+  --color-surface-overlay: #eeeeec; /* tier 2 — headers, hover */
+  --color-surface-sunken: #e7e7e3;  /* inset — code, voids */
+  --color-surface-pinned: #f1eefb;  /* "kept" tint */
+
+  --color-border: #d6d6d2;      /* hairline */
+  --color-border-soft: #e3e3df; /* faintest divider */
+  --color-border-hover: #b9b9b3;
+
+  --color-text: #16161a;
+  --color-text-muted: #4a4a52;
+  --color-text-dim: #76767e;
 
   --color-accent: #6b3aff;
   --color-accent-hover: #5325f5;
   --color-accent-fg-on: #ffffff;
-  /* Compatibility shims so legacy callers don't crash mid-refactor.
-     They resolve to solid accent — no transparency. */
+  /* Live glow — a soft accent halo for active/streaming elements. */
+  --color-accent-glow: 107 58 255;        /* rgb triplet for box-shadow */
+  --glow-soft: 0 0 0 1px rgb(var(--color-accent-glow) / 0.35),
+               0 0 16px -2px rgb(var(--color-accent-glow) / 0.45);
+  /* Legacy shims so unmigrated callers don't crash mid-refactor. */
   --color-accent-ring: var(--color-accent);
-  --color-accent-soft: var(--color-accent);
+  --color-accent-soft: color-mix(in oklab, var(--color-accent) 16%, transparent);
 
-  /* Low-chroma semantics — muted versions of the previous pure hues, used
-     only for status dots / log-level chips / leading edges. */
-  --color-success: #2f6f4f;
-  --color-warning: #8a5a00;
-  --color-danger: #9a2028;
+  /* ---- Semantic tones (carried over from status.ts contract) ---- */
+  --color-success: #1f8a5b;
+  --color-warning: #b07400;
+  --color-danger: #d23b46;
+  --color-info: #1f7a96;
 
-  /* Role-specific corner radii.
-     - Data surfaces (tables, code, treemap cells, status grids) keep 0px
-       to communicate "structured / fixed-width data".
-     - Interactive controls (buttons, inputs, chips, pills) get 2px so they
-       read as hand-touchable without breaking the brutalist edge. */
-  --radius-button: 2px;
-  --radius-input: 2px;
-  --radius-pill: 2px;
-  --radius-card: 0;
-  --radius-data: 0;
-  /* Tailwind's `rounded-{sm,md,lg,xl}` utilities resolve through these.
-     `rounded-md` etc. in legacy callers now read 2px (control-friendly);
-     anything that needs 0 should use `rounded-none`. */
-  --radius-sm: 2px;
-  --radius-md: 2px;
-  --radius-lg: 2px;
-  --radius-xl: 2px;
+  /* ---- Radius — soft, modern. Data surfaces slightly tighter. ---- */
+  --radius-button: 8px;
+  --radius-input: 8px;
+  --radius-pill: 999px;
+  --radius-card: 12px;
+  --radius-data: 8px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
 
-  /* Hard offset shadows. No blur, no spread, full alpha.
-     The offset values are themselves variables so high-DPI media queries
-     can bump them — keeps the brutalist signature visible at 2x/3x DPI. */
-  --shadow-color: #000000;
-  --shadow-offset-xs: 1px;
-  --shadow-offset-sm: 2px;
-  --shadow-offset-md: 4px;
-  --shadow-offset-lg: 6px;
-  --shadow-xs: var(--shadow-offset-xs) var(--shadow-offset-xs) 0 0 var(--shadow-color);
-  --shadow-sm: var(--shadow-offset-sm) var(--shadow-offset-sm) 0 0 var(--shadow-color);
-  --shadow-md: var(--shadow-offset-md) var(--shadow-offset-md) 0 0 var(--shadow-color);
-  --shadow-lg: var(--shadow-offset-lg) var(--shadow-offset-lg) 0 0 var(--shadow-color);
+  /* ---- Shadow — soft layered depth, not hard offsets. ---- */
+  --shadow-color: 16 16 26;
+  --shadow-xs: 0 1px 2px rgb(var(--shadow-color) / 0.06);
+  --shadow-sm: 0 2px 6px rgb(var(--shadow-color) / 0.08);
+  --shadow-md: 0 8px 24px -6px rgb(var(--shadow-color) / 0.14);
+  --shadow-lg: 0 20px 48px -12px rgb(var(--shadow-color) / 0.22);
 
-  --border-width-default: 2px;
-  --border-width-thick: 3px;
+  --border-width-default: 1px;
+  --border-width-thick: 2px;
+  --border-width-strong: 2px;
 
-  /* Fluid type tokens — clamp(min, fluid, max). Used per-component when
-     a label would otherwise be hardcoded text-[Npx]. Floor stays at 10px
-     for true micro-labels; the upper end grows on big monitors / high DPI. */
+  /* ---- Motion tokens (mirrored in lib/motion.ts) ----
+     `swift`  — chrome / hover / nav (snappy).
+     `flow`   — panels, surface transitions.
+     `spring` — used by the JS motion lib; CSS fallbacks use `flow`. */
+  --motion-swift-duration: 140ms;
+  --motion-flow-duration: 240ms;
+  --motion-data-duration: 240ms; /* legacy alias */
+  --ease-swift: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-flow: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-data-easing: var(--ease-flow); /* legacy alias */
+
+  /* ---- Fluid type scale — clamp(min, fluid, max). ---- */
+  --text-display: clamp(26px, 2.2vw + 14px, 40px);
   --text-mono-xs: clamp(10px, 0.5vw + 9px, 12px);
   --text-mono-sm: clamp(11px, 0.55vw + 10px, 13px);
   --text-mono-base: clamp(12px, 0.6vw + 11px, 14px);
   --text-sans-sm: clamp(12px, 0.6vw + 11px, 14px);
   --text-sans-base: clamp(13px, 0.7vw + 12px, 16px);
-
-  --grain-opacity: 0;
 }
 
 .dark {
-  /* Dark theme — page bg slightly deeper than surface so cards visibly lift. */
-  --color-bg: #0c0c0c;
-  --color-surface: #141414;
-  --color-surface-raised: #1c1c1c;
-  --color-surface-overlay: #232323;
-  --color-surface-sunken: #080808;
-  --color-border: #ffffff;
-  --color-border-soft: #3a3a3a;
-  --color-border-hover: #ffffff;
-  --color-text: #ffffff;
-  --color-text-muted: #c8c8c8;
-  --color-text-dim: #a0a0a0;
+  --color-bg: #08080b;          /* near-black canvas */
+  --color-surface: #111116;     /* tier 1 */
+  --color-surface-raised: #16161c;
+  --color-surface-overlay: #1d1d25; /* tier 2 */
+  --color-surface-sunken: #060608;  /* inset */
+  --color-surface-pinned: #1a1730;
 
-  --color-accent: #a17dff;
-  --color-accent-hover: #b896ff;
-  --color-accent-fg-on: #000000;
-  --color-accent-ring: var(--color-accent);
-  --color-accent-soft: var(--color-accent);
+  --color-border: #2a2a33;
+  --color-border-soft: #1f1f27;
+  --color-border-hover: #3a3a46;
 
-  /* Low-chroma semantics for dark. */
-  --color-success: #4ad295;
-  --color-warning: #f5c452;
-  --color-danger: #ea6770;
+  --color-text: #f4f4f7;
+  --color-text-muted: #b4b4c0;
+  --color-text-dim: #7c7c8a;
 
-  /* Signature dark-mode move: shadow color = accent purple, not white.
-     Keeps the ministr identity present and avoids the washed-out look
-     of pure white on near-black. (Offset vars inherit from :root.) */
-  --shadow-color: var(--color-accent);
-  --shadow-xs: var(--shadow-offset-xs) var(--shadow-offset-xs) 0 0 var(--shadow-color);
-  --shadow-sm: var(--shadow-offset-sm) var(--shadow-offset-sm) 0 0 var(--shadow-color);
-  --shadow-md: var(--shadow-offset-md) var(--shadow-offset-md) 0 0 var(--shadow-color);
-  --shadow-lg: var(--shadow-offset-lg) var(--shadow-offset-lg) 0 0 var(--shadow-color);
+  --color-accent: #9d7bff;
+  --color-accent-hover: #b298ff;
+  --color-accent-fg-on: #0a0712;
+  --color-accent-glow: 157 123 255;
+  --color-accent-soft: color-mix(in oklab, var(--color-accent) 22%, transparent);
 
-  --grain-opacity: 0;
+  --color-success: #3fcf8e;
+  --color-warning: #f2c14e;
+  --color-danger: #ef5d68;
+  --color-info: #5ec9e8;
+
+  /* Dark depth: shadows go darker + an accent rim picks up the glow. */
+  --shadow-color: 0 0 0;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 2px 8px rgb(0 0 0 / 0.45);
+  --shadow-md: 0 10px 30px -8px rgb(0 0 0 / 0.6);
+  --shadow-lg: 0 24px 60px -16px rgb(0 0 0 / 0.7);
 }
 
 /* ------------------------------------------------------------------
-   Resolution-aware scaling — the html base font-size IS the scale lever.
-   Tailwind v4's spacing/text/sizing scale is rem-based, so bumping the
-   root font-size proportionally scales every `p-3`, `text-xs`, `gap-2`,
-   `h-9`, etc. The `text-[Npx]` arbitrary-pixel classes are converted to
-   rem equivalents elsewhere so they participate too.
-
-   Two axes drive the scale:
-   1. Viewport width — a 4K monitor at 100% Windows scaling shows as a
-      very wide normal-DPI viewport. We bump aggressively above 1600px.
-   2. Pixel density — high-DPI (retina) displays at any resolution get a
-      modest baseline bump, layered with the viewport tier.
+   Resolution-aware scaling — the html base font-size IS the scale
+   lever (Tailwind v4 spacing/text is rem-based). Preserved from the
+   previous system.
    ------------------------------------------------------------------ */
-
-/* Default (≤1600px): 14px root. */
-html {
-  font-size: 14px;
-}
-
-/* Viewport-width tiers — primary scale lever for big monitors. */
-@media (min-width: 1600px) {
-  html { font-size: 15px; }
-}
-@media (min-width: 2000px) {
-  html { font-size: 16px; }
-}
-@media (min-width: 2560px) {
-  html { font-size: 18px; }
-}
-@media (min-width: 3200px) {
-  html { font-size: 20px; }
-}
-@media (min-width: 3840px) {
-  html { font-size: 22px; }
-}
-
-/* DPI tier — bump shadow offsets so the brutalist signature stays
-   visible on retina-class displays. Layered on top of viewport tier. */
-@media (min-resolution: 1.5dppx) {
-  :root,
-  .dark {
-    --shadow-offset-xs: 1px;
-    --shadow-offset-sm: 3px;
-    --shadow-offset-md: 5px;
-    --shadow-offset-lg: 7px;
-  }
-}
-
-/* At 4K with retina density (rare combo, e.g. 5K iMac), the viewport
-   tier already pushes us to 22-24px; further high-DPI bumps would
-   cause overflow. We rely on the viewport tier instead. */
+html { font-size: 14px; }
+@media (min-width: 1600px) { html { font-size: 15px; } }
+@media (min-width: 2000px) { html { font-size: 16px; } }
+@media (min-width: 2560px) { html { font-size: 18px; } }
+@media (min-width: 3200px) { html { font-size: 20px; } }
+@media (min-width: 3840px) { html { font-size: 22px; } }
 
 @theme {
   --color-bg: var(--color-bg);
@@ -176,6 +140,7 @@ html {
   --color-surface-raised: var(--color-surface-raised);
   --color-surface-overlay: var(--color-surface-overlay);
   --color-surface-sunken: var(--color-surface-sunken);
+  --color-surface-pinned: var(--color-surface-pinned);
   --color-border: var(--color-border);
   --color-border-soft: var(--color-border-soft);
   --color-border-hover: var(--color-border-hover);
@@ -190,12 +155,28 @@ html {
   --color-success: var(--color-success);
   --color-warning: var(--color-warning);
   --color-danger: var(--color-danger);
+  --color-info: var(--color-info);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  --text-mono-micro: var(--text-mono-xs);
+  --text-mono-mini: var(--text-mono-sm);
+  --text-display: var(--text-display);
 
   --font-sans:
     "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
   --font-serif:
-    "IBM Plex Serif", "Iowan Old Style", "Cambria", Georgia, serif;
+    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
   --font-mono:
     "JetBrains Mono", "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas,
     monospace;
@@ -204,17 +185,12 @@ html {
 /* ------------------------------------------------------------------
    Base
    ------------------------------------------------------------------ */
-
-html,
-body,
-#root {
-  height: 100%;
-}
+html, body, #root { height: 100%; }
 
 body {
   margin: 0;
   font-family: var(--font-sans);
-  font-weight: 500;
+  font-weight: 450;
   background: var(--color-bg);
   color: var(--color-text);
   -webkit-font-smoothing: antialiased;
@@ -222,103 +198,157 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-#root {
-  position: relative;
-  z-index: 1;
-}
+#root { position: relative; z-index: 1; }
 
-/* ------------------------------------------------------------------
-   Scrollbar — sharp, opaque, no rounded thumb.
-   ------------------------------------------------------------------ */
-
-::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
-}
-::-webkit-scrollbar-track {
-  background: var(--color-surface-overlay);
-  border-left: 2px solid var(--color-border);
-}
+/* Scrollbar — thin, rounded, fades to accent on hover. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border: 2px solid var(--color-surface-overlay);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-accent);
-}
-
-/* ------------------------------------------------------------------
-   Selection
-   ------------------------------------------------------------------ */
+::-webkit-scrollbar-thumb:hover { background: var(--color-border-hover); }
 
 ::selection {
   background: var(--color-accent);
   color: var(--color-accent-fg-on);
 }
 
-/* ------------------------------------------------------------------
-   Focus rings — sharp 2px outline, no offset radius.
-   ------------------------------------------------------------------ */
-
 :focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* ------------------------------------------------------------------
-   Brand — flat lowercase mono wordmark with a thick accent underbar.
+   Brand — lowercase mono wordmark with an accent dot.
    ------------------------------------------------------------------ */
-
 .ministr-wordmark {
   font-family: var(--font-mono);
-  font-weight: 700;
-  /* Scales with root font-size (rem-based) so it grows on big monitors. */
-  font-size: 1.143rem;
-  letter-spacing: -0.04em;
+  font-weight: 600;
+  font-size: 1.07rem;
+  letter-spacing: -0.03em;
   color: var(--color-text);
-  border-bottom: 0.25rem solid var(--color-accent);
-  padding-bottom: 0.125rem;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32em;
+}
+.ministr-wordmark::after {
+  content: "";
+  width: 0.34em;
+  height: 0.34em;
+  border-radius: 999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 8px -1px rgb(var(--color-accent-glow) / 0.7);
 }
 
 /* ------------------------------------------------------------------
-   Keyframes — only hard-step animations. No easing.
+   Keyframes — caret blink, live pulse, shimmer for streaming skeletons.
    ------------------------------------------------------------------ */
-
-@keyframes ministr-flash {
-  0%,
-  99% {
-    background-color: var(--color-accent);
-    color: var(--color-accent-fg-on);
-  }
-  100% {
-    background-color: transparent;
-    color: inherit;
-  }
-}
-
 @keyframes ministr-blink {
-  0%,
-  49% {
-    opacity: 1;
-  }
-  50%,
-  100% {
-    opacity: 0;
-  }
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.ministr-blink { animation: ministr-blink 1s steps(1) infinite; }
+
+@keyframes ministr-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(var(--color-accent-glow) / 0.5); }
+  50%      { box-shadow: 0 0 0 5px rgb(var(--color-accent-glow) / 0); }
+}
+/* Designed "fresh" pulse — the single sanctioned just-changed cue. */
+.ministr-pulse { animation: ministr-pulse 1.4s var(--ease-flow) infinite; }
+
+@keyframes ministr-shimmer {
+  100% { transform: translateX(100%); }
+}
+.ministr-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-surface-overlay);
+  border-radius: var(--radius-sm);
+}
+.ministr-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--color-text) 8%, transparent),
+    transparent
+  );
+  animation: ministr-shimmer 1.4s var(--ease-flow) infinite;
 }
 
-.ministr-flash {
-  animation: ministr-flash 600ms steps(1) both;
+/* Live accent fill — active phase strip / budget meter under retrieval. */
+.bg-accent-live {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-accent) 0%,
+    color-mix(in oklab, var(--color-accent) 55%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: ministr-shimmer-bg 1.6s linear infinite;
+}
+@keyframes ministr-shimmer-bg {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
 }
 
-.ministr-blink {
-  animation: ministr-blink 1s steps(1) infinite;
+/* Glow utility — opt-in halo for live/active elements. */
+.glow-accent { box-shadow: var(--glow-soft); }
+
+/* Strong-border utility (compat with workspace dividers). */
+.border-strong { border-width: var(--border-width-strong); }
+
+/* Workspace pane resizer — slim, accent on hover/drag. */
+.workspace-resizer {
+  width: 6px;
+  background: transparent;
+  cursor: col-resize;
+  user-select: none;
+  flex-shrink: 0;
+  position: relative;
+}
+.workspace-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  border-radius: 999px;
+  background: var(--color-border-soft);
+  transition: background var(--motion-swift-duration) var(--ease-swift);
+}
+.workspace-resizer:hover::before,
+.workspace-resizer[data-active="true"]::before {
+  background: var(--color-accent);
 }
 
+/* Display type — hero state for empty Ask + onboarding headline. */
+.text-display {
+  font-family: var(--font-sans);
+  font-size: var(--text-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+}
+
+/* ------------------------------------------------------------------
+   Reduced motion — global kill-switch. The JS motion lib also reads
+   prefers-reduced-motion (see lib/motion.ts MotionProvider).
+   ------------------------------------------------------------------ */
 @media (prefers-reduced-motion: reduce) {
-  .ministr-flash,
-  .ministr-blink {
+  .ministr-blink,
+  .ministr-pulse,
+  .ministr-skeleton::after,
+  .bg-accent-live {
     animation: none !important;
+  }
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

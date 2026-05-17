@@ -1,105 +1,170 @@
+import { useCallback, useRef, useState } from "react";
 import { ChevronRight, X } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   entityKindLabel,
   entityLabel,
   useEntityPanel,
   type Entity,
 } from "../hooks/useEntityPanel";
+import { scrim, slideOver, spring } from "../lib/motion";
+import { useDialog } from "../hooks/useDialog";
 import { cn } from "../lib/utils";
 import { SymbolView } from "./entity/SymbolView";
 import { SectionView } from "./entity/SectionView";
 import { BridgeView } from "./entity/BridgeView";
 import { FileView } from "./entity/FileView";
-import { SessionView } from "./entity/SessionView";
+import { SessionView } from "./entity/session/SessionView";
 import { CorpusView } from "./entity/CorpusView";
 
+const MIN_W = 560;
+const MAX_W = 1280;
+const DEFAULT_W = 760;
+
 /**
- * Universal entity-detail drawer. Slides in from the right; on narrow
- * windows takes the full screen. Brutalist 2px border + hard accent shadow.
- *
- * The panel is rendered at the App.tsx root so any page can call
- * `openEntity()` from anywhere via `useEntityPanel()`.
+ * Universal entity inspector. Spring slide-over from the right; resizable
+ * by dragging its left edge; full-screen on narrow windows. Stacked
+ * navigation via `useEntityPanel` (unchanged API).
  */
 export function EntityPanel() {
   const { current, stack, popTo, close } = useEntityPanel();
+  const [width, setWidth] = useState(DEFAULT_W);
+  const dragging = useRef(false);
+  // Escape now actually closes (the header's "Close · Esc" affordance
+  // was a lie), focus enters the panel and is restored on close, and
+  // Tab is trapped inside it.
+  const panelRef = useDialog<HTMLElement>(Boolean(current), close);
 
-  if (!current) return null;
+  const onResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragging.current = true;
+      const startX = e.clientX;
+      const startW = width;
+      const onMove = (ev: MouseEvent) => {
+        if (!dragging.current) return;
+        const next = Math.min(
+          MAX_W,
+          Math.max(MIN_W, startW + (startX - ev.clientX)),
+        );
+        setWidth(next);
+      };
+      const onUp = () => {
+        dragging.current = false;
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [width],
+  );
 
-  const trail: Entity[] = [...stack, current];
+  const trail: Entity[] = current ? [...stack, current] : [];
 
   return (
-    <>
-      {/* Backdrop — click to close. */}
-      <div
-        className="fixed inset-0 z-[1200] bg-black/40"
-        onClick={close}
-        aria-hidden="true"
-      />
-
-      {/* Drawer — the one signature shadow on screen when open. */}
-      <aside
-        className={cn(
-          "fixed top-0 right-0 bottom-0 z-[1201] bg-surface flex flex-col",
-          "border-l-2 border-border shadow-[var(--shadow-lg)]",
-          // Wide: ~58% width capped at 1200px. Narrow: full screen.
-          "w-full @max-[1023px]/page:w-full",
-          "min-[1024px]:w-[clamp(720px,58vw,1200px)]",
-        )}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Entity detail"
-      >
-        {/* Header — breadcrumbs + close. Hairline below, no 2px frame. */}
-        <header className="flex items-center gap-3 border-b border-border-soft bg-surface-overlay px-4 py-2.5 shrink-0">
-          <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-1">
-            {trail.map((e, i) => {
-              const isLast = i === trail.length - 1;
-              return (
-                <div key={i} className="flex items-center gap-1.5 min-w-0">
-                  <button
-                    onClick={() => popTo(i)}
-                    disabled={isLast}
-                    className={cn(
-                      "inline-flex items-baseline gap-1.5 px-1 py-0.5 font-mono text-xs transition-none",
-                      isLast
-                        ? "text-text font-bold border-b-2 border-accent cursor-default"
-                        : "text-text-muted hover:text-text border-b border-transparent hover:border-border cursor-pointer",
-                    )}
-                  >
-                    <span className="text-text-dim text-[0.6875rem] uppercase tracking-[0.05em]">
-                      {entityKindLabel(e)}
-                    </span>
-                    <span className="truncate max-w-[200px]">
-                      {entityLabel(e)}
-                    </span>
-                  </button>
-                  {!isLast && (
-                    <ChevronRight
-                      className="h-3 w-3 text-text-dim shrink-0"
-                      strokeWidth={2}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <button
+    <AnimatePresence>
+      {current && (
+        <>
+          <motion.div
+            key="scrim"
+            variants={scrim}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="fixed inset-0 z-[1200] bg-black/50 backdrop-blur-[2px]"
             onClick={close}
-            aria-label="Close panel"
-            title="Close · Esc"
-            className="grid h-7 w-7 shrink-0 place-items-center border border-border bg-surface text-text-muted hover:text-text hover:border-border-hover cursor-pointer transition-none"
-            style={{ borderRadius: "var(--radius-button)" }}
-          >
-            <X className="h-3.5 w-3.5" strokeWidth={2} />
-          </button>
-        </header>
+            aria-hidden="true"
+          />
 
-        {/* Body — dispatch on entity kind */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <EntityBody entity={current} />
-        </div>
-      </aside>
-    </>
+          <motion.aside
+            key="panel"
+            ref={panelRef}
+            variants={slideOver}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            style={{ width: `min(100vw, ${width}px)` }}
+            className={cn(
+              "fixed top-0 right-0 bottom-0 z-[1201] bg-surface flex flex-col",
+              "border-l border-border shadow-lg",
+            )}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Entity detail"
+          >
+            {/* Resize handle — left edge. */}
+            <div
+              onMouseDown={onResizeStart}
+              className="workspace-resizer absolute left-0 top-0 bottom-0 -ml-[3px] hidden min-[900px]:block"
+              aria-hidden="true"
+            />
+
+            <header className="flex items-center gap-3 border-b border-border bg-surface-overlay px-4 py-2.5 shrink-0">
+              <div className="flex items-center gap-1 flex-wrap min-w-0 flex-1">
+                {trail.map((e, i) => {
+                  const isLast = i === trail.length - 1;
+                  return (
+                    <div
+                      key={i}
+                      className="flex items-center gap-1 min-w-0"
+                    >
+                      <motion.button
+                        layout
+                        onClick={() => popTo(i)}
+                        disabled={isLast}
+                        className={cn(
+                          "inline-flex items-baseline gap-1.5 px-1.5 py-1 rounded-md font-mono text-xs",
+                          "transition-colors duration-150",
+                          isLast
+                            ? "text-text font-semibold bg-surface cursor-default"
+                            : "text-text-muted hover:text-text hover:bg-surface cursor-pointer",
+                        )}
+                      >
+                        <span className="text-text-dim text-mono-mini uppercase tracking-[0.08em]">
+                          {entityKindLabel(e)}
+                        </span>
+                        <span className="truncate max-w-[220px]">
+                          {entityLabel(e)}
+                        </span>
+                      </motion.button>
+                      {!isLast && (
+                        <ChevronRight
+                          className="h-3 w-3 text-text-dim shrink-0"
+                          strokeWidth={2}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <button
+                onClick={close}
+                aria-label="Close panel"
+                title="Close · Esc"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-border bg-surface text-text-muted hover:text-text hover:border-border-hover cursor-pointer transition-colors duration-150"
+              >
+                <X className="h-3.5 w-3.5" strokeWidth={2} />
+              </button>
+            </header>
+
+            <div className="flex-1 min-h-0 overflow-y-auto px-5 py-5">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={trail.length}
+                  initial={{ opacity: 0, x: 16 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -16 }}
+                  transition={spring}
+                >
+                  <EntityBody entity={current} />
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
 

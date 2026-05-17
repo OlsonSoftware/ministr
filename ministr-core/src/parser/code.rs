@@ -71,7 +71,7 @@ impl super::DocumentParser for CodeParser {
         // (Slate widgets, recursive UE traits) shouldn't make a
         // header invisible.
         let tree = if is_rust {
-            let mut ast_parser = AstParser::new();
+            let mut ast_parser = AstParser::try_new()?;
             match ast_parser.parse(source) {
                 Ok(t) => t,
                 Err(e) => {
@@ -888,7 +888,9 @@ fn internal_helper() {}
     fn parse_unknown_extension_produces_fallback() {
         let parser = CodeParser::new();
         let source = "some content in an unknown language";
-        let tree = parser.parse(Path::new("file.zig"), source).unwrap();
+        // `.asm` is routed to the Code parser but has no tree-sitter
+        // grammar registered, so it must hit the text fallback path.
+        let tree = parser.parse(Path::new("file.asm"), source).unwrap();
 
         // Fallback: single section with full content, no symbol children
         assert_eq!(tree.sections.len(), 1);

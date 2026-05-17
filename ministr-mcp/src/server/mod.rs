@@ -98,8 +98,7 @@ ministr is a context cache for LLM agents — it indexes a corpus once, then \
 serves you semantic search, code navigation, and atomic claim extraction \
 without re-reading files. Prefer it over Read/Grep/Glob for any exploration: \
 ministr's responses are deduplicated against a session shadow, so re-asking \
-for content you already have is cheap, and budget-aware compression keeps \
-your context lean.
+for content you already have is cheap.
 
 # Where to start
 - Vague concept question → ministr_survey
@@ -115,32 +114,26 @@ Zero references means safe to delete; non-zero means you have to update each cal
 → ministr_bridge first to see every cross-language call site.
 
 # Read the response wrapper
-Every tool response includes metadata you should react to:
+Some tool responses include metadata worth reacting to:
 - `coherence_alerts` non-empty → underlying file changed since last delivery; \
 re-call ministr_read on the listed sections to get the delta.
 - `indexing_in_progress: true` → results may be incomplete; consider re-running \
 search-style tools when it clears.
-- `eviction_recommendations` non-empty → budget pressure is elevated; act on these.
 - `next_actions` array → concrete suggested next tool calls with arguments and reasons. \
 Treat as advisory but high-signal; the server picked them based on session state.
 
-# Budget protocol (when pressure ≥ elevated)
-Call ministr_budget any time you want a current snapshot. When pressure rises:
-1. Call ministr_compress on large sections you no longer need full text for — \
-returns extractive summaries (~60–80% smaller).
-2. Drop the originals from your context, keeping the summaries.
-3. Call ministr_evicted with the dropped IDs so dedup and budget tracking stay accurate.
-
-If you skip step 3, future ministr_read calls on those IDs return short \
-'already_delivered' stubs instead of the actual text — the server still thinks \
-you have the content. The `next_actions` field will queue compress + evicted \
-calls for you when pressure rises; following them in order is the cheapest path.
+Note: ministr does NOT report context-budget pressure to you. It tracks \
+token accounting internally (for dedup and optional compression) but \
+deliberately does not surface budget numbers — they were anchored to a \
+configured window, not your real model context window, and caused agents \
+to wrongly believe they were running out of room. Manage your own context \
+as you normally would; do not treat ministr as a signal that you are low \
+on context.
 
 # Anti-patterns
 - Don't shell out to grep/rg/find/ag/cat for search — use ministr_survey or ministr_symbols.
 - Don't Read a file just to explore — use ministr_read so the session shadow tracks delivery \
 and dedup works on subsequent calls.
-- Don't re-request a section after dropping it from context without first calling ministr_evicted.
 ";
 
 /// Minimum survey score for a top-result follow-up suggestion.
@@ -1303,7 +1296,7 @@ impl MinistrServer {
     /// to understand budget health and decide what to evict.
     #[tool(
         name = "ministr_budget",
-        description = "Current context-window budget, pressure level, and eviction candidates. Call when you suspect pressure is high; then act on eviction_candidates with ministr_compress + ministr_evicted.",
+        description = "Internal ministr budget bookkeeping (token estimate + eviction candidates). Advisory only: the figures are anchored to a configured window, not your real model context window, so do NOT use them to decide you are low on context or to stop work. Safe to ignore.",
         output_schema = tool_output_schema::<BudgetResponse>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2384,12 +2377,15 @@ mod tests {
     // ── Steering surface: instructions + next_action helpers ──────────
 
     #[test]
-    fn default_instructions_covers_eviction_protocol() {
-        // Smoke test: the playbook must mention the budget protocol so agents
-        // know to call ministr_evicted after dropping content.
-        assert!(DEFAULT_INSTRUCTIONS.contains("ministr_evicted"));
-        assert!(DEFAULT_INSTRUCTIONS.contains("ministr_compress"));
-        assert!(DEFAULT_INSTRUCTIONS.contains("already_delivered"));
+    fn default_instructions_do_not_push_budget_protocol() {
+        // Regression: the playbook must NOT advertise a budget protocol or
+        // tell agents to react to pressure — that made agents wrongly
+        // conclude they were low on context. It should instead explicitly
+        // state that ministr does not surface budget pressure.
+        assert!(!DEFAULT_INSTRUCTIONS.contains("ministr_budget"));
+        assert!(!DEFAULT_INSTRUCTIONS.contains("Budget protocol"));
+        assert!(!DEFAULT_INSTRUCTIONS.contains("eviction_recommendations"));
+        assert!(DEFAULT_INSTRUCTIONS.contains("does NOT report context-budget pressure"));
     }
 
     #[test]
@@ -2803,10 +2799,40 @@ mod tests {
         assert!(!result.compression);
     }
 
-    // --- Budget status tests ---
+    // --- Budget-hint suppression tests ---
+    //
+    // Budget is tracked internally (so compression/dedup keep working and
+    // `ministr_budget` can still report it on explicit request) but is
+    // never injected into ordinary tool responses — the per-call numbers
+    // made agents wrongly believe they were almost out of context.
+
+    /// Pull `estimated_used` out of a `ministr_budget` tool result. The
+    /// budget tool serializes `BudgetResponse` directly (no `ToolResponse`
+    /// wrapper), so the field is top-level.
+    fn extract_estimated_used(result: &rmcp::model::CallToolResult) -> u64 {
+        let text = extract_text(&result.content);
+        let parsed: serde_json::Value = serde_json::from_str(text)
+            .unwrap_or_else(|e| panic!("ministr_budget should be valid JSON: {e}\n{text}"));
+        parsed["estimated_used"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("ministr_budget should report estimated_used: {parsed}"))
+    }
+
+    /// The serialized fields an agent must never see in a normal response.
+    fn assert_no_budget_hints(parsed: &serde_json::Value) {
+        assert!(
+            parsed.get("budget_status").is_none() || parsed["budget_status"].is_null(),
+            "budget_status must not be surfaced to the agent, got: {parsed}"
+        );
+        assert!(
+            parsed.get("eviction_recommendations").is_none()
+                || parsed["eviction_recommendations"].is_null(),
+            "eviction_recommendations must not be surfaced to the agent, got: {parsed}"
+        );
+    }
 
     #[tokio::test]
-    async fn survey_response_includes_budget_status() {
+    async fn survey_response_omits_budget_status() {
         let server = setup_server().await;
         let params = SurveyParams {
             query: "JWT authentication tokens".to_string(),
@@ -2820,30 +2846,13 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(text)
             .unwrap_or_else(|e| panic!("should be valid JSON: {e}\n{text}"));
 
-        assert!(
-            parsed["budget_status"].is_object(),
-            "response should include budget_status"
-        );
-        assert!(
-            parsed["budget_status"]["tokens_used"].is_number(),
-            "budget_status should have tokens_used"
-        );
-        assert!(
-            parsed["budget_status"]["tokens_remaining"].is_number(),
-            "budget_status should have tokens_remaining"
-        );
-        assert!(
-            parsed["budget_status"]["pressure_level"].is_string(),
-            "budget_status should have pressure_level"
-        );
-        assert!(
-            parsed["budget_status"]["utilization"].is_number(),
-            "budget_status should have utilization"
-        );
+        assert_no_budget_hints(&parsed);
+        // The actual payload is still present.
+        assert!(parsed["result"]["results"].is_array());
     }
 
     #[tokio::test]
-    async fn read_response_includes_budget_status() {
+    async fn read_response_omits_budget_status() {
         let server = setup_server().await;
         let params = ReadParams {
             section_id: "docs/auth.md#tokens".to_string(),
@@ -2853,12 +2862,12 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert!(parsed["budget_status"].is_object());
-        assert!(parsed["budget_status"]["tokens_used"].as_u64().unwrap() > 0);
+        assert_no_budget_hints(&parsed);
+        assert!(parsed["result"]["text"].is_string());
     }
 
     #[tokio::test]
-    async fn extract_response_includes_budget_status() {
+    async fn extract_response_omits_budget_status() {
         let server = setup_server().await;
         let params = ExtractParams {
             section_id: "docs/auth.md#tokens".to_string(),
@@ -2869,39 +2878,35 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert!(parsed["budget_status"].is_object());
+        assert_no_budget_hints(&parsed);
     }
 
+    /// Internal accumulation still works — it's just only observable via
+    /// the explicit `ministr_budget` tool, not injected into every reply.
     #[tokio::test]
-    async fn budget_accumulates_across_tool_calls() {
+    async fn budget_accumulates_internally_across_tool_calls() {
         let server = setup_server().await;
 
-        // First call — read a section
-        let result1 = server
+        server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
             }))
             .await
             .unwrap();
-        let text1 = extract_text(&result1.content);
-        let parsed1: serde_json::Value = serde_json::from_str(text1).unwrap();
-        let used_after_read = parsed1["budget_status"]["tokens_used"].as_u64().unwrap();
-        assert!(used_after_read > 0, "should track tokens after read");
+        let after_read = extract_estimated_used(&server.budget().await.unwrap());
+        assert!(after_read > 0, "should track tokens after read");
 
-        // Second call — extract claims
-        let result2 = server
+        server
             .extract(Parameters(ExtractParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 query: None,
             }))
             .await
             .unwrap();
-        let text2 = extract_text(&result2.content);
-        let parsed2: serde_json::Value = serde_json::from_str(text2).unwrap();
-        let used_after_extract = parsed2["budget_status"]["tokens_used"].as_u64().unwrap();
+        let after_extract = extract_estimated_used(&server.budget().await.unwrap());
         assert!(
-            used_after_extract > used_after_read,
-            "budget should accumulate: {used_after_extract} > {used_after_read}"
+            after_extract > after_read,
+            "internal budget should accumulate: {after_extract} > {after_read}"
         );
     }
 
@@ -2982,10 +2987,7 @@ mod tests {
             parsed2["result"]["text"].is_null(),
             "re-request should not include full text"
         );
-        assert!(
-            parsed2["budget_status"].is_object(),
-            "response should include budget_status"
-        );
+        assert_no_budget_hints(&parsed2);
         assert!(
             parsed2["result"]["claims_available"].is_number(),
             "response should include claims_available"
@@ -3018,7 +3020,7 @@ mod tests {
     // --- Read response format tests ---
 
     #[tokio::test]
-    async fn read_returns_section_with_budget_status() {
+    async fn read_returns_section_without_budget_status() {
         let server = setup_server().await;
         let params = ReadParams {
             section_id: "docs/auth.md#tokens".to_string(),
@@ -3037,7 +3039,7 @@ mod tests {
                 .unwrap()
                 .contains("JWT tokens")
         );
-        assert!(parsed["budget_status"].is_object());
+        assert_no_budget_hints(&parsed);
     }
 
     #[tokio::test]
@@ -3194,11 +3196,13 @@ mod tests {
 
         assert_eq!(parsed["result"]["evicted"].as_array().unwrap().len(), 1);
         assert_eq!(parsed["result"]["not_found"].as_array().unwrap().len(), 0);
-        assert!(parsed["budget_status"].is_object());
+        assert_no_budget_hints(&parsed);
+        // The eviction really happened — confirmed via the explicit
+        // budget tool, not via a field injected into the evict reply.
         assert_eq!(
-            parsed["budget_status"]["tokens_used"].as_u64().unwrap(),
+            extract_estimated_used(&server.budget().await.unwrap()),
             0,
-            "budget should be zero after evicting all content"
+            "internal budget should be zero after evicting all content"
         );
     }
 
@@ -3278,9 +3282,8 @@ mod tests {
             }))
             .await
             .unwrap();
-        let text1 = extract_text(&result1.content);
-        let parsed1: serde_json::Value = serde_json::from_str(text1).unwrap();
-        let used_after_first = parsed1["budget_status"]["tokens_used"].as_u64().unwrap();
+        let _ = extract_text(&result1.content);
+        let used_after_first = extract_estimated_used(&server.budget().await.unwrap());
         assert!(used_after_first > 0, "first read should use tokens");
 
         // Second read (re-request) — triggers fault correction (force_evict)
@@ -3297,39 +3300,45 @@ mod tests {
             parsed2["result"]["status"], "already_delivered",
             "re-request should skip re-delivery"
         );
+        assert_no_budget_hints(&parsed2);
 
-        // After fault correction, budget should be 0 — force_evict removed the
-        // entry and no re-delivery occurred
-        let used_after_second = parsed2["budget_status"]["tokens_used"].as_u64().unwrap();
+        // After fault correction the internal budget is back to 0 —
+        // force_evict removed the entry and no re-delivery occurred.
+        // Observed via the explicit budget tool, not an injected field.
         assert_eq!(
-            used_after_second, 0,
-            "budget should be zero after fault correction without re-delivery"
+            extract_estimated_used(&server.budget().await.unwrap()),
+            0,
+            "internal budget should be zero after fault correction"
         );
     }
 
+    /// The instructions must NOT push a budget protocol at the agent.
+    /// `ministr_budget` stays callable, but the prose no longer advertises
+    /// it or instructs agents to react to pressure — that's what made
+    /// agents wrongly conclude they were low on context.
     #[test]
-    fn server_instructions_include_evicted_tool() {
+    fn server_instructions_do_not_advertise_budget_protocol() {
         let server = setup_server_sync();
         let info = server.get_info();
         let instructions = info.instructions.unwrap();
-        assert!(
-            instructions.contains("ministr_evicted"),
-            "instructions should mention ministr_evicted"
-        );
-    }
 
-    #[test]
-    fn server_instructions_include_budget_and_compress_tools() {
-        let server = setup_server_sync();
-        let info = server.get_info();
-        let instructions = info.instructions.unwrap();
         assert!(
-            instructions.contains("ministr_budget"),
-            "instructions should mention ministr_budget"
+            !instructions.contains("ministr_budget"),
+            "instructions must not advertise ministr_budget"
         );
         assert!(
-            instructions.contains("ministr_compress"),
-            "instructions should mention ministr_compress"
+            !instructions.contains("Budget protocol"),
+            "instructions must not contain a budget protocol section"
+        );
+        assert!(
+            !instructions.contains("eviction_recommendations"),
+            "instructions must not tell the agent to act on eviction_recommendations"
+        );
+        // It should explicitly tell the agent ministr is not a
+        // low-context signal.
+        assert!(
+            instructions.contains("does NOT report context-budget pressure"),
+            "instructions should state budget pressure is not surfaced"
         );
     }
 
@@ -3472,7 +3481,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compress_includes_budget_status() {
+    async fn compress_omits_budget_status() {
         let server = setup_server().await;
         let params = CompressParams {
             content_ids: vec!["docs/auth.md#tokens".to_string()],
@@ -3482,10 +3491,7 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert!(
-            parsed["budget_status"].is_object(),
-            "compress response should include budget_status"
-        );
+        assert_no_budget_hints(&parsed);
     }
 
     #[tokio::test]
@@ -3766,7 +3772,13 @@ mod tests {
     // Progress notification tests removed — Peer::new() is pub(crate) in rmcp 0.16.
     // Progress behavior is exercised by the e2e tests through the MCP protocol layer.
 
-    // --- Proactive eviction recommendation tests ---
+    // --- Budget-pressure suppression tests ---
+    //
+    // These used to assert that eviction_recommendations + budget_status
+    // appeared in responses under pressure. The new contract is the
+    // opposite: even with a tiny budget that is provably saturated, none
+    // of it is surfaced to the agent. Internal tracking still runs (the
+    // `ministr_budget` tool can still report real numbers on request).
 
     /// Helper: create a server with a tiny budget so any delivery triggers pressure.
     async fn setup_pressured_server() -> MinistrServer {
@@ -3798,10 +3810,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_eviction_recommendations_at_normal_pressure() {
+    async fn no_budget_hints_at_normal_pressure() {
         let server = setup_server().await;
 
-        // TOC doesn't deliver content, so budget stays normal
         let result = server
             .toc(Parameters(TocParams {
                 document_id: None,
@@ -3813,21 +3824,17 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(
-            parsed["budget_status"]["pressure_level"], "normal",
-            "pressure should be normal"
-        );
-        assert!(
-            parsed.get("eviction_recommendations").is_none(),
-            "should not include eviction_recommendations at normal pressure"
-        );
+        assert_no_budget_hints(&parsed);
     }
 
+    /// The key regression: a provably-saturated budget must STILL leak
+    /// nothing to the agent. Internal pressure is real here (tiny 20-token
+    /// window, content delivered) — yet the response carries no
+    /// `budget_status` and no `eviction_recommendations`.
     #[tokio::test]
-    async fn eviction_recommendations_included_under_elevated_pressure() {
+    async fn saturated_budget_still_leaks_no_hints_via_toc() {
         let server = setup_pressured_server().await;
 
-        // Read a section to push past the pressure threshold
         server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
@@ -3835,8 +3842,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Now call toc — a tool that doesn't deliver content itself
-        // but should still include eviction recommendations
         let result = server
             .toc(Parameters(TocParams {
                 document_id: None,
@@ -3848,34 +3853,24 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_ne!(
-            parsed["budget_status"]["pressure_level"], "normal",
-            "pressure should be elevated or critical"
-        );
-        let recommendations = parsed["eviction_recommendations"]
-            .as_array()
-            .expect("should have eviction_recommendations array");
-        assert!(
-            !recommendations.is_empty(),
-            "should have at least one eviction recommendation"
-        );
+        assert_no_budget_hints(&parsed);
 
-        // Verify recommendation structure
-        let rec = &recommendations[0];
-        assert!(rec["content_id"].is_string(), "should have content_id");
-        assert!(rec["reason"].is_string(), "should have reason");
-        assert!(
-            rec["tokens_recoverable"].is_number(),
-            "should have tokens_recoverable"
+        // Internal tracking is genuinely under pressure — confirm via the
+        // explicit budget tool so this isn't a false-negative from the
+        // budget simply not being exercised.
+        let budget = server.budget().await.unwrap();
+        let btext = extract_text(&budget.content);
+        let bparsed: serde_json::Value = serde_json::from_str(btext).unwrap();
+        assert_ne!(
+            bparsed["pressure_level"], "normal",
+            "internal budget should actually be under pressure"
         );
-        assert!(rec["score"].is_number(), "should have score");
     }
 
     #[tokio::test]
-    async fn eviction_recommendations_in_survey_response_under_pressure() {
+    async fn saturated_budget_still_leaks_no_hints_via_survey() {
         let server = setup_pressured_server().await;
 
-        // First survey fills the budget
         let result = server
             .survey(Parameters(SurveyParams {
                 query: "JWT tokens".to_string(),
@@ -3886,16 +3881,7 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        // With a 20-token budget the first survey should push past the threshold
-        if parsed["budget_status"]["pressure_level"] != "normal" {
-            let recommendations = parsed["eviction_recommendations"]
-                .as_array()
-                .expect("should have eviction_recommendations");
-            assert!(
-                !recommendations.is_empty(),
-                "survey response should include eviction recommendations under pressure"
-            );
-        }
+        assert_no_budget_hints(&parsed);
     }
 
     // --- Resource subscription tests ---
@@ -4281,10 +4267,15 @@ mod tests {
             .as_ref()
             .expect("ministr_survey should return structured_content");
 
-        // The structured content should be a JSON object with expected fields
+        // The structured content wraps the payload under `result`; the
+        // budget fields are deliberately absent.
         assert!(
-            sc.get("results").is_some() || sc.get("budget_status").is_some(),
-            "structured_content should contain results or budget_status, got: {sc:?}"
+            sc.get("result").is_some(),
+            "structured_content should contain result, got: {sc:?}"
+        );
+        assert!(
+            sc.get("budget_status").is_none(),
+            "structured_content must not surface budget_status, got: {sc:?}"
         );
 
         // Must also have text fallback
@@ -4974,9 +4965,10 @@ mod tests {
 
         // `result` should be a nested object, not flattened
         assert!(obj.contains_key("result"), "should have 'result' key");
+        // budget_status is tracked internally but must not be serialized.
         assert!(
-            obj.contains_key("budget_status"),
-            "should have 'budget_status' key"
+            !obj.contains_key("budget_status"),
+            "budget_status must not be serialized to the agent"
         );
         // Flattened fields should NOT appear at top level
         assert!(
@@ -5022,11 +5014,15 @@ mod tests {
         );
         assert!(
             !obj.contains_key("eviction_recommendations"),
-            "empty recs should be skipped"
+            "eviction_recommendations must never be serialized"
+        );
+        assert!(
+            !obj.contains_key("budget_status"),
+            "budget_status must never be serialized"
         );
 
-        // Only budget_status and result should remain
-        assert_eq!(obj.len(), 2, "should only have budget_status and result");
+        // Only `result` remains — budget hints are gone entirely.
+        assert_eq!(obj.len(), 1, "should only have result");
     }
 
     // --- Lazy tool registration (prune_tools) tests ---

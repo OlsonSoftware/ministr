@@ -87,6 +87,17 @@ const CONNECT_RETRY_BACKOFFS: [std::time::Duration; 3] = [
     std::time::Duration::from_secs(1),
 ];
 
+/// Backoff schedule for retrying a transient *server* fault (5xx or
+/// timeout) on an idempotent GET. Distinct from
+/// [`CONNECT_RETRY_BACKOFFS`], which covers pre-write connect failures
+/// for all verbs; these retries replay a fully-sent request and so are
+/// gated to GET only.
+const SERVER_RETRY_BACKOFFS: [std::time::Duration; 3] = [
+    std::time::Duration::from_millis(200),
+    std::time::Duration::from_millis(500),
+    std::time::Duration::from_secs(1),
+];
+
 /// HTTP client for the ministr daemon API over its native IPC transport.
 ///
 /// All methods are async and return typed responses. The client is bound
@@ -645,8 +656,37 @@ impl DaemonClient {
     // -- HTTP primitives over UDS --
 
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
-        let (code, body) = self.raw_request("GET", path, None).await?;
+        // GET is safe + idempotent, so a transient 5xx or a timeout can
+        // be retried without risk of double-applying a side effect.
+        let (code, body) = self.get_with_retry(path).await?;
         Self::parse_response(code, &body)
+    }
+
+    /// `GET` with bounded backoff retry for transient server faults.
+    ///
+    /// Retries only on a 5xx response or a [`ClientError::Timeout`] —
+    /// both of which a safe, idempotent GET can replay. Any other error
+    /// (connect failure, 4xx, decode) is returned with its kind intact,
+    /// never retried. Non-idempotent verbs (POST/PUT/DELETE) bypass this
+    /// entirely and are issued exactly once.
+    async fn get_with_retry(&self, path: &str) -> Result<(u16, Vec<u8>), ClientError> {
+        fn is_transient(outcome: &Result<(u16, Vec<u8>), ClientError>) -> bool {
+            matches!(outcome, Ok((code, _)) if (500..600).contains(code))
+                || matches!(outcome, Err(ClientError::Timeout { .. }))
+        }
+
+        let mut outcome = self.raw_request("GET", path, None).await;
+        for backoff in SERVER_RETRY_BACKOFFS {
+            if !is_transient(&outcome) {
+                return outcome;
+            }
+            // `ministr-api` is intentionally dependency-light (no
+            // `tracing`); the retry is silent and the final error, if
+            // any, reaches the caller with its kind intact.
+            tokio::time::sleep(backoff).await;
+            outcome = self.raw_request("GET", path, None).await;
+        }
+        outcome
     }
 
     async fn post<T: DeserializeOwned>(

@@ -11,6 +11,7 @@ import {
   ScrollText,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { H1 } from "./ui/heading";
 import { cn } from "../lib/utils";
 import { useToast } from "./shell/ToastTray";
 
@@ -237,10 +238,8 @@ export function LogViewer() {
       {/* Header */}
       <header className="flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div>
-          <h2 className="font-serif text-2xl font-normal text-text leading-tight ">
-            Logs
-          </h2>
-          <p className="font-sans text-xs tracking-[0.05em] text-text-dim mt-1">
+          <H1>Logs</H1>
+          <p className="font-sans text-xs tracking-[0.08em] text-text-dim mt-1">
             Daemon tail
           </p>
         </div>
@@ -261,7 +260,7 @@ export function LogViewer() {
                   key={key}
                   onClick={() => toggleLevel(key)}
                   className={cn(
-                    "inline-flex items-center gap-1 border border-border-soft px-2 py-1 text-sm font-sans font-medium transition-none cursor-pointer -ml-[1px] first:ml-0",
+                    "inline-flex items-center gap-1 border border-border-soft px-2 py-1 text-sm font-sans font-medium transition-colors duration-150 ease-out cursor-pointer -ml-[1px] first:ml-0",
                     active
                       ? "border-accent bg-surface-overlay text-text z-10 relative"
                       : "bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
@@ -275,7 +274,7 @@ export function LogViewer() {
             <button
               onClick={invertLevels}
               title="Invert severity selection"
-              className="border border-border-soft px-2 py-1 text-sm font-sans font-medium transition-none cursor-pointer -ml-[1px] bg-surface text-text-muted hover:bg-surface-overlay hover:text-text"
+              className="border border-border-soft px-2 py-1 text-sm font-sans font-medium transition-colors duration-150 ease-out cursor-pointer -ml-[1px] bg-surface text-text-muted hover:bg-surface-overlay hover:text-text"
             >
               Invert
             </button>
@@ -289,7 +288,7 @@ export function LogViewer() {
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               className={cn(
-                "h-8 w-44 px-2 text-sm border bg-surface text-text placeholder:text-text-dim font-sans focus:outline-none focus:border-accent transition-none",
+                "h-8 w-44 px-2 text-sm border bg-surface text-text placeholder:text-text-dim font-sans focus:outline-none focus:border-accent transition-colors duration-150 ease-out",
                 filterRegex?.invalid ? "border-danger" : "border-border-soft",
               )}
             />
@@ -297,7 +296,7 @@ export function LogViewer() {
               onClick={() => setRegex((v) => !v)}
               title={regex ? "Regex on" : "Regex off"}
               className={cn(
-                "border border-border-soft px-1.5 text-xs font-mono font-semibold uppercase tracking-[0.05em] transition-none cursor-pointer -ml-[1px]",
+                "border border-border-soft px-1.5 text-xs font-mono font-semibold uppercase tracking-[0.08em] transition-colors duration-150 ease-out cursor-pointer -ml-[1px]",
                 regex
                   ? "border-accent bg-surface-overlay text-text z-10 relative"
                   : "bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
@@ -309,7 +308,7 @@ export function LogViewer() {
               onClick={() => setCaseSensitive((v) => !v)}
               title={caseSensitive ? "Case-sensitive" : "Case-insensitive"}
               className={cn(
-                "border border-border-soft px-1.5 text-xs font-mono font-semibold transition-none cursor-pointer -ml-[1px]",
+                "border border-border-soft px-1.5 text-xs font-mono font-semibold transition-colors duration-150 ease-out cursor-pointer -ml-[1px]",
                 caseSensitive
                   ? "border-accent bg-surface-overlay text-text z-10 relative"
                   : "bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
@@ -356,9 +355,9 @@ export function LogViewer() {
           <button
             onClick={() => (paused ? resumeFeed() : setPaused(true))}
             className={cn(
-              "inline-flex items-center gap-1.5 border-2 border-border px-2 py-1 font-mono text-xs font-bold uppercase tracking-[0.05em] cursor-pointer transition-none",
+              "inline-flex items-center gap-1.5 border border-border px-2 py-1 font-mono text-xs font-bold uppercase tracking-[0.08em] cursor-pointer transition-colors duration-150 ease-out",
               paused
-                ? "bg-warning text-[var(--color-accent-fg-on)] shadow-[2px_2px_0_0_var(--shadow-color)]"
+                ? "bg-warning text-[var(--color-accent-fg-on)] shadow-sm"
                 : "bg-surface text-text hover:bg-surface-overlay",
             )}
             title={paused ? "Resume feed" : "Pause feed"}
@@ -378,7 +377,7 @@ export function LogViewer() {
       {/* Log body */}
       <div
         ref={containerRef}
-        className="relative flex-1 overflow-y-auto border border-border-soft bg-surface-sunken font-mono text-[0.6875rem] leading-relaxed"
+        className="relative flex-1 overflow-y-auto border border-border-soft bg-surface-sunken font-mono text-mono-mini leading-relaxed"
       >
         {noLogFile ? (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-10">
@@ -386,7 +385,7 @@ export function LogViewer() {
               <ScrollText className="h-5 w-5" strokeWidth={2.5} />
             </div>
             <div className="space-y-1">
-              <p className="font-sans text-sm font-bold tracking-[0.05em] text-text">
+              <p className="font-sans text-sm font-bold tracking-[0.08em] text-text">
                 No log file yet
               </p>
               <p className="max-w-md text-xs text-text-dim font-sans leading-relaxed">
@@ -401,7 +400,7 @@ export function LogViewer() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex h-full items-center justify-center">
-            <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+            <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
               No matching lines
             </p>
           </div>
@@ -422,7 +421,7 @@ export function LogViewer() {
         {showJump && (
           <button
             onClick={jumpToBottom}
-            className="sticky bottom-3 left-auto right-3 ml-auto block border-2 border-border bg-accent text-[var(--color-accent-fg-on)] shadow-[2px_2px_0_0_var(--shadow-color)] px-2 py-1 font-mono text-xs font-bold uppercase tracking-[0.05em] cursor-pointer transition-none"
+            className="sticky bottom-3 left-auto right-3 ml-auto block border border-border bg-accent text-[var(--color-accent-fg-on)] shadow-sm px-2 py-1 font-mono text-xs font-bold uppercase tracking-[0.08em] cursor-pointer transition-colors duration-150 ease-out"
           >
             ↓ {newLineCount} NEW · CLICK TO JUMP
           </button>
@@ -430,7 +429,7 @@ export function LogViewer() {
       </div>
 
       {/* Footer */}
-      <footer className="flex items-center justify-between gap-3 border-t-2 border-border bg-surface-overlay px-3 py-1 shrink-0 font-mono text-xs uppercase tracking-[0.05em] text-text-dim">
+      <footer className="flex items-center justify-between gap-3 border-t-2 border-border bg-surface-overlay px-3 py-1 shrink-0 font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
         <span>
           TAIL · {filtered.length}/{logs.length} LINES
         </span>
@@ -472,7 +471,7 @@ function LogRow({
     <div
       onClick={onToggleExpand}
       className={cn(
-        "group relative flex items-start gap-2 border-l-2 pl-2 pr-2 py-0.5 cursor-pointer transition-none",
+        "group relative flex items-start gap-2 border-l-2 pl-2 pr-2 py-0.5 cursor-pointer transition-colors duration-150 ease-out",
         stripeClass,
         expanded
           ? "whitespace-pre-wrap break-all"
@@ -502,7 +501,7 @@ function LogRow({
           onCopy();
         }}
         title="Copy line"
-        className="opacity-0 group-hover:opacity-100 shrink-0 border-2 border-border bg-surface text-text px-1 py-0 font-mono text-[0.5625rem] font-bold uppercase tracking-[0.05em] cursor-pointer transition-none hover:bg-surface-overlay hover:text-text"
+        className="opacity-0 group-hover:opacity-100 shrink-0 border border-border bg-surface text-text px-1 py-0 font-mono text-mono-micro font-bold uppercase tracking-[0.08em] cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text"
       >
         COPY
       </button>

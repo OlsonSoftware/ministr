@@ -11,19 +11,40 @@ use ministr_core::service::{CompressedItem, RelatedClaimResult, SurveyResult, Sy
 use ministr_core::session::eviction::EvictionCandidate;
 use ministr_core::session::{BudgetStatus, CoherenceAlert};
 
-/// Tool response wrapper that includes budget status alongside the result data.
+/// Tool response wrapper.
 ///
-/// Every tool response is serialized as a JSON object with a `data` field
-/// containing the tool-specific result and a `budget_status` field with
-/// the current token budget snapshot.
+/// Carries the tool-specific `result` plus a few genuinely actionable
+/// signals (coherence alerts when content changed underneath the agent,
+/// ingestion progress, concrete follow-up hints).
 ///
-/// Fields are ordered for KV-cache prefix stability: stable metadata first,
-/// varying tool-specific payload last. LLM providers cache KV tensors for
-/// matching prompt prefixes, so consecutive tool calls with the same budget
-/// status share a prefix up to the `result` field.
+/// **Budget is deliberately not surfaced here.** `budget_status` and
+/// `eviction_recommendations` are still tracked internally (the
+/// `BudgetTracker` keeps recording so compression and dedup keep working),
+/// but they are no longer serialized to the agent: the per-response
+/// numbers were anchored to an arbitrary window and were causing agents
+/// to wrongly conclude they were almost out of context and abandon work.
+/// Both fields are retained on the struct (constructors/tests still set
+/// them) and marked `#[serde(skip_serializing)]` so nothing reaches the
+/// model. An agent that genuinely wants the figure can still call
+/// `ministr_budget` explicitly.
+///
+/// Fields are ordered for KV-cache prefix stability: stable metadata
+/// first, varying tool-specific payload last.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct ToolResponse<T: Serialize + schemars::JsonSchema> {
-    /// Current budget status snapshot (stable across consecutive calls).
+    /// Internal budget snapshot — tracked, never sent to the agent.
+    /// See the struct-level note on why this is `skip_serializing`.
+    ///
+    /// Constructed by every `build_response` call (keeping that
+    /// signature stable across all tool handlers) but deliberately not
+    /// read back out — the agent-facing path is gone and internal
+    /// pressure tracking lives in `BudgetTracker`, not here.
+    #[expect(
+        dead_code,
+        reason = "retained so build_response's contract is unchanged; intentionally not serialized"
+    )]
+    #[serde(skip_serializing)]
+    #[schemars(skip)]
     pub(crate) budget_status: BudgetStatus,
     /// Pending coherence alerts (present when underlying content has changed).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -37,16 +58,21 @@ pub(crate) struct ToolResponse<T: Serialize + schemars::JsonSchema> {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     #[schemars(default)]
     pub(crate) indexing_message: Option<String>,
-    /// Proactive eviction recommendations when budget pressure is elevated or critical.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    #[schemars(default)]
+    /// Internal eviction candidates — never sent to the agent. Always
+    /// empty now (`build_response_with` stopped computing them); kept as
+    /// a field so the struct shape and constructors are unchanged.
+    #[expect(
+        dead_code,
+        reason = "no longer populated or surfaced; field retained to avoid churning all constructors"
+    )]
+    #[serde(skip_serializing)]
+    #[schemars(skip)]
     pub(crate) eviction_recommendations: Vec<EvictionCandidate>,
     /// Concrete next-tool-call suggestions, in priority order.
     ///
-    /// Populated by `build_response` from session state (pressure level,
-    /// coherence alerts) and optionally by per-handler hints (e.g. survey's
-    /// top-result follow-up). Empty under normal pressure with no alerts
-    /// and no per-handler hints.
+    /// Coherence-driven (re-read changed sections) plus any per-handler
+    /// hints (e.g. survey's top-result follow-up). Budget pressure no
+    /// longer contributes entries here — see the struct-level note.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     #[schemars(default)]
     pub(crate) next_actions: Vec<NextAction>,

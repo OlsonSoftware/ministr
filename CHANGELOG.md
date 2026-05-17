@@ -9,6 +9,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Language & tech-stack coverage
+- Tree-sitter grammars for 17 more languages, all default-on: Bash/Shell,
+  PHP, Scala, Lua, Elixir, Haskell, OCaml (impl + interface), Dart, R,
+  HCL/Terraform, JSON, YAML, TOML, SQL, Zig, Protobuf, and Svelte
+  (single-file components). These file types previously fell back to
+  text-only chunking; `ministr_symbols` / `ministr_definition` /
+  `ministr_references` now work across ~29 languages. (Dockerfile, Vue,
+  and Astro have no ABI-current Rust grammar and keep the lossless text
+  fallback.)
+- **Activated the dormant `LanguageRefinement` system** — `refinement_for`
+  was defined but never called, so every non-Rust language used only the
+  generic heuristic. It is now wired into the extractor, with refinements
+  for Protobuf (`message`/`enum`/`service`), HCL/Terraform (`resource.`/
+  `module.`/`variable.`/`output.` block addresses), and SQL (`CREATE
+  TABLE`/`VIEW`/`FUNCTION`/…).
+- Import cross-references for PHP, Kotlin, and Scala (`ministr_references`).
+- `ministr_bridge` — four new bridge kinds (11 total): **cgo** (Go
+  `C.func` ↔ C), **JNI** (Java/Kotlin `native` ↔ C/C++ `Java_*`),
+  **UniFFI** (Rust `#[uniffi::export]` ↔ Swift/Kotlin/Python), and
+  **gRPC** (`.proto` `service` ↔ generated stubs), with framework
+  auto-detection signals for each.
+- `ministr init` language rules now also cover PHP and Ruby.
+
+#### Maximal coverage expansion
+- Tree-sitter grammars for **11 more languages**, all default-on: CSS/SCSS,
+  GraphQL, Groovy/Gradle, Nix, Erlang, PowerShell, Solidity, Objective-C
+  (+ObjC++), Julia, CMake, and Make. `ministr_symbols` /
+  `ministr_definition` / `ministr_references` now work across ~40
+  languages. (Markdown and HTML keep their dedicated prose/markup
+  parsers, which outperform a code AST; Clojure has no ABI-current Rust
+  grammar — its crates.io latest hard-pins legacy tree-sitter — so it
+  keeps the lossless text fallback, alongside Dockerfile/Vue/Astro.)
+- **21 new `LanguageRefinement` implementations** so previously
+  generic-heuristic languages get accurate symbol kinds: Ruby, PHP,
+  Scala, C#, JavaScript, Bash, Lua, Haskell, OCaml, Dart, R, Zig, plus
+  the structure-heavy newcomers CSS, GraphQL, Groovy, Solidity, Erlang,
+  Julia, CMake, and Make. (Delegate-on-unknown — never a regression.)
+- Import cross-references for **Java, C#, Swift, and Ruby**
+  (`ministr_references`) — JVM-style dotted imports and Ruby
+  `require`/`require_relative`/`load`/`autoload`.
+- `ministr_bridge` — **two new bridge kinds (13 total)**: **Flutter
+  platform channels** (Dart `MethodChannel`/`EventChannel`/
+  `BasicMessageChannel` ↔ native Kotlin/Java/Swift/ObjC) and **Electron
+  IPC** (`ipcMain.handle`/`on` ↔ `ipcRenderer.invoke`/`send`/`on`), with
+  `pubspec.yaml` and `electron`-in-`package.json` auto-detection.
+- `ministr init` language rules now also cover C#, Kotlin, Swift, Scala,
+  C/C++, Elixir, and JavaScript (manifest-detected via `*.csproj`/`*.sln`,
+  `*.gradle.kts`, `Package.swift`, `build.sbt`, `CMakeLists.txt`,
+  `mix.exs`, and tsconfig-less `package.json`) — 13 languages total.
+
+#### Smarter project / ignore autodetection
+- Global ignore overhaul (sourced from the canonical `github/gitignore`
+  templates). `ALWAYS_IGNORE_DIRS` now prunes committed vendored-dep
+  trees (`3rdparty`, `third_party`, `extern`, `deps`, `_deps`,
+  `bower_components`, …) and per-ecosystem cache/build dirs
+  (`.dart_tool`, `.svelte-kit`, `.turbo`, `CMakeFiles`, `Pods`,
+  `DerivedData`, `.elixir_ls`, `.eggs`, …). New directory *glob*
+  ignores: `bazel-*`, `cmake-build-*`, `*.egg-info`, `*.xcodeproj`,
+  `*.xcworkspace`, `*.framework`. New generated-binding file ignores
+  (`*.pb.go`, `*_pb2.py`, `*_pb2_grpc.py`, `*.pb.cc/.h`, `*.g.dart`,
+  `*.Designer.cs`, `moc_*.cpp`, …). A vendored-dep C/C++ tree no longer
+  drowns the real engine code in semantic/symbol search.
+- Project-type-gated ignores in `ministr init`: `bin/`+`obj/` for .NET,
+  `Library/`/`Temp/`/`Obj/`/`Logs/` for Unity, `Binaries/`/
+  `Intermediate/`/`Saved/`/`DerivedDataCache/` for Unreal, `.build/`
+  for SwiftPM — names too generic to ignore globally, unambiguous once
+  the project type is known.
+- `detect_source_paths` is now polyglot: conventional source roots for
+  every detected language (Go `cmd`/`internal`/`pkg`, JVM
+  `src/main/{java,kotlin,scala}`, C/C++ `src`/`include`/`Source`, Swift
+  `Sources`, Elixir/Dart `lib`, …) instead of the old rust/node/python
+  trio — additive only, so a misdetection can never hide real code.
+- Informal polyglot monorepos (≥2 language ecosystems at the root with
+  no workspace manifest) are now classified as `Monorepo`.
+
 ### Changed
 
 ### Fixed

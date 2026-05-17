@@ -41,9 +41,15 @@ const CARGO_MARKERS: &[(&str, &[BridgeKind])] = &[
     // FFI: native interop — function loaders, JNI, and C-bindings generators.
     ("libloading", &[BridgeKind::Ffi]),
     ("libffi", &[BridgeKind::Ffi]),
-    ("jni", &[BridgeKind::Ffi]),
+    ("jni", &[BridgeKind::Ffi, BridgeKind::Jni]),
     ("bindgen", &[BridgeKind::Ffi]),
     ("cbindgen", &[BridgeKind::Ffi]),
+    // UniFFI (Rust ↔ Swift/Kotlin/Python mobile bindings).
+    ("uniffi", &[BridgeKind::UniFfi]),
+    // gRPC (Rust tonic/prost).
+    ("tonic", &[BridgeKind::Grpc]),
+    ("prost", &[BridgeKind::Grpc]),
+    ("grpcio", &[BridgeKind::Grpc]),
 ];
 
 /// `package.json` dependency markers.
@@ -59,6 +65,11 @@ const NPM_MARKERS: &[(&str, &[BridgeKind])] = &[
     ("ffi-napi", &[BridgeKind::Ffi]),
     ("koffi", &[BridgeKind::Ffi]),
     ("node-ffi", &[BridgeKind::Ffi]),
+    ("@grpc/grpc-js", &[BridgeKind::Grpc]),
+    ("@grpc/proto-loader", &[BridgeKind::Grpc]),
+    // Electron — quoted to avoid matching substrings like
+    // `electron-builder` only; the dependency key is `"electron"`.
+    ("\"electron\"", &[BridgeKind::ElectronIpc]),
 ];
 
 /// `pyproject.toml` dependency markers.
@@ -72,6 +83,8 @@ const PYTHON_MARKERS: &[(&str, &[BridgeKind])] = &[
     // the stdlib and won't appear here; bare ctypes-only projects are picked
     // up by the C/C++ source-presence fallback in `detect()` instead.
     ("cffi", &[BridgeKind::Ffi]),
+    ("grpcio", &[BridgeKind::Grpc]),
+    ("grpcio-tools", &[BridgeKind::Grpc]),
 ];
 
 impl FrameworkDetector {
@@ -85,12 +98,17 @@ impl FrameworkDetector {
     pub fn detect(start_dir: &Path) -> Vec<BridgeKind> {
         let mut kinds = BTreeSet::new();
         let mut dir = start_dir.to_path_buf();
+        let mut go_mod_seen = false;
 
         loop {
             Self::scan_cargo_toml(&dir, &mut kinds);
             Self::scan_package_json(&dir, &mut kinds);
             Self::scan_pyproject_toml(&dir, &mut kinds);
             Self::scan_tauri_conf(&dir, &mut kinds);
+            Self::scan_pubspec(&dir, &mut kinds);
+            if dir.join("go.mod").exists() {
+                go_mod_seen = true;
+            }
 
             // Stop at the ministr project root or VCS boundary.
             if dir.join(".ministr.toml").exists() || dir.join(".git").exists() {
@@ -108,6 +126,17 @@ impl FrameworkDetector {
         // filesystem-driven rather than manifest-driven.
         if Self::has_c_or_cpp_sources(start_dir) {
             kinds.insert(BridgeKind::Ffi);
+            // A Go module that also ships C sources is almost certainly
+            // using cgo (the only first-class Go↔C mechanism).
+            if go_mod_seen {
+                kinds.insert(BridgeKind::Cgo);
+            }
+        }
+
+        // `.proto` files present → gRPC is in play (generated stubs
+        // are matched name-only, so this is the activation signal).
+        if Self::has_ext(start_dir, &["proto"]) {
+            kinds.insert(BridgeKind::Grpc);
         }
 
         kinds.into_iter().collect()
@@ -120,13 +149,19 @@ impl FrameworkDetector {
     /// corpus root, and recursing the whole tree would dominate detection
     /// time on large projects.
     fn has_c_or_cpp_sources(dir: &Path) -> bool {
-        const C_LIKE_EXTS: &[&str] = &["c", "cpp", "cc", "cxx", "h", "hpp", "hh", "hxx"];
+        Self::has_ext(dir, &["c", "cpp", "cc", "cxx", "h", "hpp", "hh", "hxx"])
+    }
+
+    /// Whether `dir` contains any top-level file with one of `exts`.
+    /// Cheap one-level scan (no recursion) — same rationale as the
+    /// C/C++ fallback.
+    fn has_ext(dir: &Path, exts: &[&str]) -> bool {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return false;
         };
         for entry in entries.flatten() {
             if let Some(ext) = entry.path().extension().and_then(|e| e.to_str())
-                && C_LIKE_EXTS.contains(&ext)
+                && exts.contains(&ext)
             {
                 return true;
             }
@@ -160,6 +195,18 @@ impl FrameworkDetector {
             if content.contains(marker) {
                 kinds.extend(bridge_kinds);
             }
+        }
+    }
+
+    /// Scan for `pubspec.yaml` — its presence indicates a Flutter/Dart
+    /// project, which (when it has native platform code) uses platform
+    /// channels. The `flutter:` key narrows it to Flutter specifically.
+    fn scan_pubspec(root: &Path, kinds: &mut BTreeSet<BridgeKind>) {
+        let Ok(content) = std::fs::read_to_string(root.join("pubspec.yaml")) else {
+            return;
+        };
+        if content.contains("flutter:") || content.contains("sdk: flutter") {
+            kinds.insert(BridgeKind::FlutterChannel);
         }
     }
 
@@ -450,6 +497,85 @@ napi-derive = "2"
             kinds.contains(&BridgeKind::Ffi),
             "bare C++ header should trigger FFI detection, got: {kinds:?}"
         );
+    }
+
+    #[test]
+    fn detect_cgo_from_go_mod_plus_c_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("go.mod"),
+            "module example.com/m\n\ngo 1.22\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("bridge.c"), "int work(void){return 0;}\n").unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::Cgo), "got {kinds:?}");
+    }
+
+    #[test]
+    fn no_cgo_without_c_sources() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("go.mod"), "module example.com/m\n").unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(!kinds.contains(&BridgeKind::Cgo), "got {kinds:?}");
+    }
+
+    #[test]
+    fn detect_grpc_from_proto_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("svc.proto"), "service S {}\n").unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::Grpc), "got {kinds:?}");
+    }
+
+    #[test]
+    fn detect_uniffi_and_grpc_from_cargo() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[dependencies]\nuniffi = \"0.28\"\ntonic = \"0.12\"\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::UniFfi), "got {kinds:?}");
+        assert!(kinds.contains(&BridgeKind::Grpc), "got {kinds:?}");
+    }
+
+    #[test]
+    fn detect_jni_kind_from_cargo() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[dependencies]\njni = \"0.21\"\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::Jni), "got {kinds:?}");
+        assert!(kinds.contains(&BridgeKind::Ffi), "got {kinds:?}");
+    }
+
+    #[test]
+    fn detect_flutter_from_pubspec() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("pubspec.yaml"),
+            "name: app\ndependencies:\n  flutter:\n    sdk: flutter\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::FlutterChannel), "got {kinds:?}");
+    }
+
+    #[test]
+    fn detect_electron_from_package_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("package.json"),
+            "{\n  \"devDependencies\": { \"electron\": \"^30.0.0\" }\n}\n",
+        )
+        .unwrap();
+        let kinds = FrameworkDetector::detect(tmp.path());
+        assert!(kinds.contains(&BridgeKind::ElectronIpc), "got {kinds:?}");
     }
 
     #[test]

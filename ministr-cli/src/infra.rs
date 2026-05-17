@@ -10,7 +10,6 @@ use miette::{IntoDiagnostic, Result, WrapErr};
 
 use sha2::Digest as _;
 
-use ministr_core::index::VectorIndex as _;
 use ministr_core::index::VectorIndexLoad as _;
 use ministr_core::session::BudgetConfig;
 use ministr_core::storage::Storage as _;
@@ -48,6 +47,8 @@ pub(crate) async fn init_infrastructure(
 
     let corpus_dir = config.data_dir.join("corpora").join(&corpus_name);
     let db_path = corpus_dir.join("content.db");
+
+    migrate_legacy_corpus_dir(config, corpus_paths, &corpus_name, &corpus_dir);
 
     // Create corpus directory if it doesn't exist.
     std::fs::create_dir_all(&corpus_dir)
@@ -175,43 +176,49 @@ fn load_or_create_index(
 ) -> Result<Arc<dyn ministr_core::index::VectorIndex>> {
     if index_dir.exists() {
         match ministr_core::index::HnswIndex::load(index_dir) {
-            Ok(loaded) => {
-                let dim_mismatch = loaded.dimension() != dim;
-                let model_mismatch = loaded
-                    .model_name()
-                    .as_ref()
-                    .is_some_and(|old| old != model_name);
-
-                if dim_mismatch || model_mismatch {
-                    let old_model = loaded.model_name().unwrap_or_else(|| "unknown".to_owned());
+            Ok(loaded) => match loaded.check_compatible(dim, model_name, index_dir) {
+                Ok(()) => {
+                    // Compatible. A legacy index with no stored model
+                    // name is adopted under the current model.
+                    if loaded.model_name().is_none() {
+                        tracing::info!(
+                            model = %model_name,
+                            "upgrading legacy index with model name tracking"
+                        );
+                        loaded.set_model_name(model_name);
+                    }
+                    return Ok(Arc::new(loaded));
+                }
+                Err(e) => {
                     tracing::warn!(
-                        old_model = %old_model,
-                        new_model = %model_name,
-                        old_dim = loaded.dimension(),
-                        new_dim = dim,
+                        error = %e,
                         "embedding model changed — discarding old index for re-indexing"
                     );
                     drop(loaded);
-                    let _ = std::fs::remove_dir_all(index_dir);
-                    return create_fresh_index(dim, model_name);
+                    discard_index_dir(index_dir);
                 }
-                // Legacy index without model name — adopt current model
-                if loaded.model_name().is_none() {
-                    tracing::info!(
-                        model = %model_name,
-                        "upgrading legacy index with model name tracking"
-                    );
-                    loaded.set_model_name(model_name);
-                }
-                return Ok(Arc::new(loaded));
-            }
+            },
             Err(e) => {
                 tracing::warn!(error = %e, "corrupted vector index — discarding and rebuilding");
-                let _ = std::fs::remove_dir_all(index_dir);
+                discard_index_dir(index_dir);
             }
         }
     }
     create_fresh_index(dim, model_name)
+}
+
+/// Remove an index directory that is corrupt or incompatible so a fresh
+/// one can be built. Uses the Windows-robust retrying remove and logs
+/// (rather than silently swallowing) a removal failure — a stale dir
+/// left behind would otherwise be re-loaded on the next run.
+fn discard_index_dir(index_dir: &Path) {
+    if let Err(e) = ministr_core::fs_util::remove_dir_all_robust_sync(index_dir) {
+        tracing::warn!(
+            error = %e,
+            dir = %index_dir.display(),
+            "failed to remove stale index directory; a rebuild will overwrite it"
+        );
+    }
 }
 
 /// Create a fresh HNSW index with the given dimension and model name.
@@ -432,17 +439,71 @@ pub(crate) fn corpus_session_id(corpus_paths: &[String]) -> Option<String> {
 }
 
 /// Derive a stable data directory name from corpus paths.
+///
+/// Delegates to [`ministr_core::corpus_id::corpus_id_from_paths`] — the
+/// single source of truth shared with the daemon's registry. The CLI and
+/// daemon both resolve a corpus to `<data_dir>/corpora/<this name>`, so
+/// they MUST agree: a divergence silently splits one project's index
+/// across two directories (data loss with no error). Empty / invalid
+/// path sets fall back to `"default"`, matching the caller's own
+/// empty-slice handling in [`init_infrastructure`].
 pub(crate) fn corpus_data_dir_name(corpus_paths: &[String]) -> String {
+    ministr_core::corpus_id::corpus_id_from_paths(corpus_paths)
+        .unwrap_or_else(|_| "default".to_owned())
+}
+
+/// One-time migration from the pre-unification directory scheme.
+///
+/// If the canonical dir doesn't exist yet but an older CLI already
+/// indexed this project under the legacy name, move it across so we
+/// reuse the existing index instead of silently re-indexing from
+/// scratch. Best-effort: a collision (both dirs present) or rename
+/// failure just leaves the legacy dir untouched — never overwrite
+/// live data.
+fn migrate_legacy_corpus_dir(
+    config: &ministr_core::config::MinistrConfig,
+    corpus_paths: &[String],
+    corpus_name: &str,
+    corpus_dir: &Path,
+) {
+    if corpus_paths.is_empty() || corpus_dir.exists() {
+        return;
+    }
+    let legacy_name = legacy_corpus_data_dir_name(corpus_paths);
+    if legacy_name == corpus_name {
+        return;
+    }
+    let legacy_dir = config.data_dir.join("corpora").join(&legacy_name);
+    if !legacy_dir.is_dir() {
+        return;
+    }
+    match std::fs::rename(&legacy_dir, corpus_dir) {
+        Ok(()) => tracing::info!(
+            legacy = %legacy_dir.display(),
+            canonical = %corpus_dir.display(),
+            "migrated corpus dir to canonical id"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            legacy = %legacy_dir.display(),
+            "failed to migrate legacy corpus dir; re-indexing under canonical id"
+        ),
+    }
+}
+
+/// The pre-unification directory-name scheme.
+///
+/// Retained solely so [`init_infrastructure`] can migrate an existing
+/// on-disk corpus (indexed by an older CLI) to the canonical name instead
+/// of orphaning it and silently re-indexing from scratch.
+fn legacy_corpus_data_dir_name(corpus_paths: &[String]) -> String {
     if corpus_paths.len() == 1 {
-        // Single path: use the last component for human readability.
         let p = &corpus_paths[0];
         let name = p.rsplit('/').find(|s| !s.is_empty()).unwrap_or(p);
-        // Only use the name if it looks like a simple path component (no scheme).
         if !name.contains("://") && !name.contains(':') {
             return name.to_owned();
         }
     }
-    // Multiple paths or URL: hash all paths.
     let mut hasher = sha2::Sha256::new();
     for p in corpus_paths {
         sha2::Digest::update(&mut hasher, p.as_bytes());

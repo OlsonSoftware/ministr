@@ -59,7 +59,7 @@ export function ActivityFeed({
     return (
       <div
         className={cn(
-          "flex items-center justify-center border-2 border-dotted border-border bg-surface px-4 py-10 text-[0.6875rem] font-mono uppercase tracking-[0.05em] text-text-dim",
+          "flex items-center justify-center rounded-lg border border-dashed border-border bg-surface px-4 py-10 text-mono-mini font-mono uppercase tracking-[0.08em] text-text-dim",
           className,
         )}
       >
@@ -83,14 +83,14 @@ export function ActivityFeed({
           <li
             key={`${ev.timestamp_ms}-${ev.tool}-${ev.corpus_id}`}
             className={cn(
-              "flex items-center gap-2 border-l-2 border-y-2 border-r-2 border-border bg-surface pl-2 pr-2 py-1.5 text-[0.6875rem] transition-none",
+              "flex items-center gap-2 rounded-md border border-l-2 border-border bg-surface pl-2 pr-2 py-1.5 text-mono-mini",
               pressureBorder,
-              fresh && "ministr-flash",
+              fresh && "ministr-pulse",
             )}
           >
             <span
               className={cn(
-                "inline-flex h-5 w-5 shrink-0 items-center justify-center border border-border-soft font-mono text-[0.75rem]",
+                "inline-flex h-5 w-5 shrink-0 items-center justify-center border border-border-soft font-mono text-xs",
                 ev.cache_hit
                   ? "bg-success text-[var(--color-accent-fg-on)]"
                   : "bg-accent text-[var(--color-accent-fg-on)]",
@@ -109,11 +109,11 @@ export function ActivityFeed({
             </span>
 
             {ev.cache_hit ? (
-              <span className="font-mono text-xs uppercase tracking-[0.05em] border-2 border-success bg-surface px-1.5 py-0 text-success">
+              <span className="font-mono text-xs uppercase tracking-[0.08em] rounded-full border border-success/40 bg-surface px-2 py-0 text-success">
                 hit
               </span>
             ) : typeof ev.tokens_delta === "number" && ev.tokens_delta > 0 ? (
-              <span className="font-mono text-xs tabular-nums border-2 border-accent bg-surface px-1.5 py-0 text-accent">
+              <span className="font-mono text-xs tabular-nums rounded-full border border-accent/40 bg-surface px-2 py-0 text-accent">
                 +{formatTokens(ev.tokens_delta)}
               </span>
             ) : null}

@@ -71,6 +71,15 @@ export interface SessionDetail {
   total_compressions: number;
   dedup_hits: number;
   compression_ratio: number;
+  /** Token-level split + budget config. Added in a newer daemon — present
+   *  only once it has been rebuilt & the MCP session reconnected, so these
+   *  are optional and every consumer reads them defensively. */
+  cumulative_tokens_evicted?: number;
+  cumulative_tokens_compressed?: number;
+  delta_updates?: number;
+  context_window_tokens?: number;
+  pressure_threshold?: number;
+  critical_threshold?: number;
   /** Parent session id when this session was created on behalf of a
    *  subagent (e.g. Claude Code's Task tool spawning a sub-claude).
    *  Drives parent/child indenting in tray + SessionDashboard. */
@@ -174,6 +183,19 @@ export interface ActivityEvent {
   cache_hit: boolean;
   resolution?: string;
   duration_ms: number;
+}
+
+/** Result of the `repair_agent_config` command — one idempotent pass
+ *  re-scaffolding every AI-assistant config file across all corpus roots. */
+export interface RepairReport {
+  /** Project roots that were scaffolded/healed. */
+  roots: string[];
+  /** Newly created files (were missing). */
+  created: number;
+  /** Stale machine-generated hook files overwritten with the current template. */
+  healed: number;
+  /** Custom rules injected from `.ministr.toml [agent] rules`. */
+  custom_rules: number;
 }
 
 /** File-system change the daemon's watcher observed. */

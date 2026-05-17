@@ -206,6 +206,340 @@ impl GrammarRegistry {
             tree_sitter_kotlin_ng::LANGUAGE.into(),
         );
 
+        // Bash / Shell
+        #[cfg(feature = "lang-bash")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "bash",
+            &["sh", "bash", "zsh"],
+            tree_sitter_bash::LANGUAGE.into(),
+        );
+
+        // PHP
+        #[cfg(feature = "lang-php")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "php",
+            &["php"],
+            tree_sitter_php::LANGUAGE_PHP.into(),
+        );
+
+        // Scala
+        #[cfg(feature = "lang-scala")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "scala",
+            &["scala", "sc"],
+            tree_sitter_scala::LANGUAGE.into(),
+        );
+
+        // Lua
+        #[cfg(feature = "lang-lua")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "lua",
+            &["lua"],
+            tree_sitter_lua::LANGUAGE.into(),
+        );
+
+        // Elixir
+        #[cfg(feature = "lang-elixir")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "elixir",
+            &["ex", "exs"],
+            tree_sitter_elixir::LANGUAGE.into(),
+        );
+
+        // Haskell
+        #[cfg(feature = "lang-haskell")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "haskell",
+            &["hs"],
+            tree_sitter_haskell::LANGUAGE.into(),
+        );
+
+        // OCaml — separate grammars for implementations (.ml) and
+        // interfaces (.mli).
+        #[cfg(feature = "lang-ocaml")]
+        {
+            register_language(
+                &mut ext_to_lang,
+                &mut languages,
+                &mut grammars,
+                "ocaml",
+                &["ml"],
+                tree_sitter_ocaml::LANGUAGE_OCAML.into(),
+            );
+            register_language(
+                &mut ext_to_lang,
+                &mut languages,
+                &mut grammars,
+                "ocaml_interface",
+                &["mli"],
+                tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
+            );
+        }
+
+        // Dart
+        #[cfg(feature = "lang-dart")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "dart",
+            &["dart"],
+            tree_sitter_dart::language(),
+        );
+
+        // R
+        #[cfg(feature = "lang-r")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "r",
+            &["r", "R"],
+            tree_sitter_r::LANGUAGE.into(),
+        );
+
+        // HCL / Terraform
+        #[cfg(feature = "lang-hcl")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "hcl",
+            &["tf", "hcl"],
+            tree_sitter_hcl::LANGUAGE.into(),
+        );
+
+        // JSON
+        #[cfg(feature = "lang-json")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "json",
+            &["json", "jsonc"],
+            tree_sitter_json::LANGUAGE.into(),
+        );
+
+        // YAML
+        #[cfg(feature = "lang-yaml")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "yaml",
+            &["yml", "yaml"],
+            tree_sitter_yaml::LANGUAGE.into(),
+        );
+
+        // TOML
+        #[cfg(feature = "lang-toml")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "toml",
+            &["toml"],
+            tree_sitter_toml_ng::LANGUAGE.into(),
+        );
+
+        // SQL
+        #[cfg(feature = "lang-sql")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "sql",
+            &["sql"],
+            tree_sitter_sequel::LANGUAGE.into(),
+        );
+
+        // Zig
+        #[cfg(feature = "lang-zig")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "zig",
+            &["zig"],
+            tree_sitter_zig::LANGUAGE.into(),
+        );
+
+        // Protobuf
+        #[cfg(feature = "lang-proto")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "proto",
+            &["proto"],
+            tree_sitter_proto::LANGUAGE.into(),
+        );
+
+        // Svelte — a composite single-file component grammar (markup +
+        // embedded <script>/<style>). The host grammar models the SFC
+        // structure; deep JS/CSS injection is a follow-up.
+        #[cfg(feature = "lang-svelte")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "svelte",
+            &["svelte"],
+            tree_sitter_svelte_ng::LANGUAGE.into(),
+        );
+
+        // --- Maximal coverage expansion -------------------------------
+        // All use the tree-sitter-language 0.1 ABI shim (tree-sitter
+        // only a dev-dep upstream), so they link cleanly against our
+        // 0.26 core. Clojure/Dockerfile/Vue/Astro lack an ABI-current
+        // grammar and keep the text fallback (see root Cargo.toml).
+
+        // CSS / SCSS
+        #[cfg(feature = "lang-css")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "css",
+            &["css", "scss"],
+            tree_sitter_css::LANGUAGE.into(),
+        );
+
+        // (Markdown and HTML intentionally NOT registered here:
+        // `detect_parser_kind` routes .md/.markdown → ParserKind::Markdown
+        // and .html/.htm → ParserKind::Html *before* the code path, so
+        // their dedicated prose/markup parsers — better than a code AST
+        // for those formats — always take precedence. A code grammar
+        // here would be unreachable dead weight.)
+
+        // GraphQL
+        #[cfg(feature = "lang-graphql")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "graphql",
+            &["graphql", "gql"],
+            tree_sitter_graphql::LANGUAGE.into(),
+        );
+
+        // Groovy / Gradle
+        #[cfg(feature = "lang-groovy")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "groovy",
+            &["groovy", "gradle"],
+            tree_sitter_groovy::LANGUAGE.into(),
+        );
+
+        // Nix
+        #[cfg(feature = "lang-nix")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "nix",
+            &["nix"],
+            tree_sitter_nix::LANGUAGE.into(),
+        );
+
+        // Erlang
+        #[cfg(feature = "lang-erlang")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "erlang",
+            &["erl", "hrl"],
+            tree_sitter_erlang::LANGUAGE.into(),
+        );
+
+        // PowerShell
+        #[cfg(feature = "lang-powershell")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "powershell",
+            &["ps1", "psm1", "psd1"],
+            tree_sitter_powershell::LANGUAGE.into(),
+        );
+
+        // Solidity
+        #[cfg(feature = "lang-solidity")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "solidity",
+            &["sol"],
+            tree_sitter_solidity::LANGUAGE.into(),
+        );
+
+        // Objective-C
+        #[cfg(feature = "lang-objc")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "objc",
+            &["m", "mm"],
+            tree_sitter_objc::LANGUAGE.into(),
+        );
+
+        // Julia
+        #[cfg(feature = "lang-julia")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "julia",
+            &["jl"],
+            tree_sitter_julia::LANGUAGE.into(),
+        );
+
+        // CMake
+        #[cfg(feature = "lang-cmake")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "cmake",
+            &["cmake"],
+            tree_sitter_cmake::LANGUAGE.into(),
+        );
+
+        // Make
+        #[cfg(feature = "lang-make")]
+        register_language(
+            &mut ext_to_lang,
+            &mut languages,
+            &mut grammars,
+            "make",
+            &["mk", "make"],
+            tree_sitter_make::LANGUAGE.into(),
+        );
+
         Self {
             ext_to_lang,
             languages,
@@ -371,6 +705,12 @@ pub const ALL_CODE_EXTENSIONS: &[&str] = &[
     "dockerfile",
     // Protobuf
     "proto",
+    // Composite / single-file components. `.svelte` has a registered
+    // grammar; `.vue`/`.astro` route here for text-level indexing until
+    // ABI-current grammars exist.
+    "svelte",
+    "vue",
+    "astro",
     // Assembly
     "asm",
     "s",
@@ -409,6 +749,36 @@ pub const ALL_CODE_EXTENSIONS: &[&str] = &[
     "metal",
     // WebGPU Shading Language
     "wgsl",
+    // --- Maximal coverage expansion (registered grammars) ---
+    // CSS / SCSS
+    "css",
+    "scss",
+    // GraphQL
+    "graphql",
+    "gql",
+    // Groovy / Gradle
+    "groovy",
+    "gradle",
+    // Nix
+    "nix",
+    // Erlang
+    "erl",
+    "hrl",
+    // PowerShell
+    "ps1",
+    "psm1",
+    "psd1",
+    // Solidity
+    "sol",
+    // Objective-C / Objective-C++
+    "m",
+    "mm",
+    // Julia
+    "jl",
+    // CMake (also `CMakeLists.txt` via filename detection)
+    "cmake",
+    // Make (also `Makefile` via filename detection)
+    "mk",
 ];
 
 #[cfg(test)]
@@ -474,6 +844,111 @@ mod tests {
     #[test]
     fn all_code_extensions_is_nonempty() {
         assert!(ALL_CODE_EXTENSIONS.len() > 30);
+    }
+
+    #[test]
+    fn coverage_expansion_extensions_recognized() {
+        for ext in &[
+            "css", "scss", "graphql", "gql", "groovy", "gradle", "nix", "erl", "hrl", "ps1",
+            "psm1", "psd1", "sol", "m", "mm", "jl", "cmake", "mk",
+        ] {
+            assert!(
+                ALL_CODE_EXTENSIONS.contains(ext),
+                "coverage extension '{ext}' missing from ALL_CODE_EXTENSIONS"
+            );
+        }
+    }
+
+    #[cfg(feature = "lang-css")]
+    #[test]
+    fn css_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("css"));
+        assert!(reg.supports_extension("scss"));
+        assert!(reg.language_by_name("css").is_some());
+    }
+
+    #[cfg(feature = "lang-graphql")]
+    #[test]
+    fn graphql_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("graphql"));
+        assert!(reg.supports_extension("gql"));
+        assert!(reg.language_by_name("graphql").is_some());
+    }
+
+    #[cfg(feature = "lang-groovy")]
+    #[test]
+    fn groovy_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("groovy"));
+        assert!(reg.supports_extension("gradle"));
+        assert!(reg.language_by_name("groovy").is_some());
+    }
+
+    #[cfg(feature = "lang-nix")]
+    #[test]
+    fn nix_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("nix"));
+        assert!(reg.language_by_name("nix").is_some());
+    }
+
+    #[cfg(feature = "lang-erlang")]
+    #[test]
+    fn erlang_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("erl"));
+        assert!(reg.language_by_name("erlang").is_some());
+    }
+
+    #[cfg(feature = "lang-powershell")]
+    #[test]
+    fn powershell_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("ps1"));
+        assert!(reg.language_by_name("powershell").is_some());
+    }
+
+    #[cfg(feature = "lang-solidity")]
+    #[test]
+    fn solidity_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("sol"));
+        assert!(reg.language_by_name("solidity").is_some());
+    }
+
+    #[cfg(feature = "lang-objc")]
+    #[test]
+    fn objc_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("m"));
+        assert!(reg.supports_extension("mm"));
+        assert!(reg.language_by_name("objc").is_some());
+    }
+
+    #[cfg(feature = "lang-julia")]
+    #[test]
+    fn julia_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("jl"));
+        assert!(reg.language_by_name("julia").is_some());
+    }
+
+    #[cfg(feature = "lang-cmake")]
+    #[test]
+    fn cmake_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("cmake"));
+        assert!(reg.language_by_name("cmake").is_some());
+    }
+
+    #[cfg(feature = "lang-make")]
+    #[test]
+    fn make_registered_when_feature_enabled() {
+        let reg = GrammarRegistry::global();
+        assert!(reg.supports_extension("mk"));
+        assert!(reg.language_by_name("make").is_some());
     }
 
     #[test]

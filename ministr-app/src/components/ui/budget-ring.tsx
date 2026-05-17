@@ -83,7 +83,7 @@ export function BudgetRing({
             strokeDashoffset={c - c * w}
           />
         )}
-        {/* Primary utilization arc — instant snap, no drop-shadow. */}
+        {/* Primary utilization arc — eases to its new value on poll. */}
         <circle
           cx={cx}
           cy={cy}
@@ -91,8 +91,12 @@ export function BudgetRing({
           fill="none"
           stroke={primaryColor}
           strokeWidth={stroke}
+          strokeLinecap="round"
           strokeDasharray={c}
           strokeDashoffset={c - c * u}
+          style={{
+            transition: "stroke-dashoffset 0.45s cubic-bezier(0.22,1,0.36,1)",
+          }}
         />
       </svg>
 

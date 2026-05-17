@@ -25,7 +25,7 @@ export function LabeledRow({
         bordered && "py-1.5 border-b border-border-soft last:border-0",
       )}
     >
-      <span className="font-mono tracking-[0.05em] text-xs text-text-dim">
+      <span className="font-mono tracking-[0.08em] text-xs text-text-dim">
         {label}
       </span>
       <span className={cn("text-text", mono && "font-mono tabular-nums")}>

@@ -151,19 +151,12 @@ pub struct EvictedParams {
     pub content_ids: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct AskParams {
-    /// Natural-language question about the codebase.
-    pub query: String,
-}
-
 impl ProxyServer {
     #[must_use]
     pub fn new(corpus_paths: Vec<String>) -> Self {
-        let budget_config = BudgetConfig {
-            max_context_tokens: 100_000,
-            ..BudgetConfig::default()
-        };
+        // Inherit the env-driven window (MINISTR_CONTEXT_WINDOW, else the
+        // 200k fallback) rather than pinning a misleadingly small 100k.
+        let budget_config = BudgetConfig::default();
         Self {
             client: Arc::new(DaemonClient::new()),
             corpus_id: Arc::new(Mutex::new(None)),
@@ -658,7 +651,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_budget",
-        description = "Current context-window budget, pressure level, and eviction candidates. Call when you suspect pressure is high; then act on eviction_candidates with ministr_compress + ministr_evicted."
+        description = "Internal ministr budget bookkeeping (token estimate + eviction candidates). Advisory only: the figures are anchored to a configured window, not your real model context window, so do NOT use them to decide you are low on context or to stop work. Safe to ignore."
     )]
     async fn budget(&self) -> Result<CallToolResult, McpError> {
         // Use the local budget tracker — it reflects tokens delivered through
@@ -727,24 +720,6 @@ impl ProxyServer {
             }
         }
 
-        Self::json_result(&resp)
-    }
-
-    #[tool(
-        name = "ministr_ask",
-        description = "Ask a question about the codebase and get a synthesized answer. Uses cached sub-inference — much cheaper than manually surveying + reading multiple sections."
-    )]
-    async fn ask(
-        &self,
-        Parameters(params): Parameters<AskParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
-        let resp = self
-            .client
-            .ask(&cid, &params.query, Some(&sid))
-            .await
-            .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
     }
 }

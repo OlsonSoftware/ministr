@@ -9,6 +9,7 @@
 //! fallback for languages without specific support.
 
 use crate::code::ast_parser::ItemKind;
+use crate::code::lang::{LanguageRefinement, refinement_for};
 use crate::code::symbol::{Symbol, Visibility};
 
 /// Extract symbols from a parsed tree using language-agnostic heuristics.
@@ -36,12 +37,33 @@ pub fn generic_extract_symbols(
     file_path: &str,
     module_path: &[&str],
 ) -> Vec<Symbol> {
+    generic_extract_symbols_for(tree, source, file_path, module_path, None)
+}
+
+/// Like [`generic_extract_symbols`], but applies the per-language
+/// [`LanguageRefinement`] (if one exists for `language`) as an override
+/// on top of the generic node-kind heuristics.
+///
+/// This is what activates the `code::lang` refinement registry —
+/// languages with non-standard or wrapper-heavy ASTs (Protobuf, HCL/
+/// Terraform, SQL, …) get accurate symbols instead of the heuristic
+/// best-effort. `language` is the canonical grammar name (e.g. `"hcl"`).
+#[must_use]
+pub fn generic_extract_symbols_for(
+    tree: &tree_sitter::Tree,
+    source: &[u8],
+    file_path: &str,
+    module_path: &[&str],
+    language: Option<&str>,
+) -> Vec<Symbol> {
+    let refinement = language.and_then(refinement_for);
+    let refine = refinement.as_deref();
     let root = tree.root_node();
     let mut symbols = Vec::new();
     let mut cursor = root.walk();
 
     for child in root.children(&mut cursor) {
-        extract_from_node(&child, source, file_path, module_path, &mut symbols);
+        extract_from_node(&child, source, file_path, module_path, refine, &mut symbols);
     }
 
     symbols
@@ -53,6 +75,7 @@ fn extract_from_node(
     source: &[u8],
     file_path: &str,
     module_path: &[&str],
+    refine: Option<&dyn LanguageRefinement>,
     symbols: &mut Vec<Symbol>,
 ) {
     let node_kind = node.kind();
@@ -66,13 +89,20 @@ fn extract_from_node(
             // (e.g. template_declaration -> alias_declaration, or
             //  field_declaration_list -> field_declaration).
             let inner_kind = inner.kind();
-            let recurse = classify_node_kind(inner_kind).is_some()
+            let recurse = classify_refined(refine, inner_kind).is_some()
                 || is_wrapper_node(inner_kind)
                 || is_function_decl_node(&inner);
             if recurse {
                 // Inherit visibility from the wrapper (e.g. export_statement)
                 let mut inner_symbols = Vec::new();
-                extract_from_node(&inner, source, file_path, module_path, &mut inner_symbols);
+                extract_from_node(
+                    &inner,
+                    source,
+                    file_path,
+                    module_path,
+                    refine,
+                    &mut inner_symbols,
+                );
                 // If wrapper is an export, mark children as public
                 if node_kind == "export_statement" {
                     for sym in &mut inner_symbols {
@@ -118,11 +148,13 @@ fn extract_from_node(
         return;
     }
 
-    let Some(item_kind) = classify_node_kind(node_kind) else {
+    let Some(item_kind) = classify_refined(refine, node_kind) else {
         return;
     };
 
-    let name = extract_name_generic(node, source);
+    let name = refine
+        .and_then(|r| r.extract_name(node, source))
+        .unwrap_or_else(|| extract_name_generic(node, source));
     if name.is_empty() || name == "<unknown>" {
         return;
     }
@@ -154,7 +186,25 @@ fn extract_from_node(
         || item_kind == ItemKind::Trait
         || item_kind == ItemKind::Module
     {
-        extract_nested_members(node, source, file_path, module_path, &sym_name, symbols);
+        extract_nested_members(
+            node,
+            source,
+            file_path,
+            module_path,
+            &sym_name,
+            refine,
+            symbols,
+        );
+    }
+}
+
+/// Classify a node kind, consulting the language refinement first
+/// (`Some(Some)` = classified, `Some(None)` = explicitly skip, `None` =
+/// delegate) and falling back to the generic heuristic.
+fn classify_refined(refine: Option<&dyn LanguageRefinement>, node_kind: &str) -> Option<ItemKind> {
+    match refine.and_then(|r| r.classify_node_kind(node_kind)) {
+        Some(opt) => opt,
+        None => classify_node_kind(node_kind),
     }
 }
 
@@ -180,6 +230,13 @@ fn is_wrapper_node(kind: &str) -> bool {
             | "preproc_else"
             | "preproc_elif"
             | "linkage_specification"
+            // Wrapper layers for refinement-driven languages: SQL
+            // `program > statement > create_*`, HCL `config_file > body
+            // > block`. Harmless elsewhere — unwrapping only emits
+            // classifiable children.
+            | "statement"
+            | "config_file"
+            | "body"
     )
 }
 
@@ -453,6 +510,7 @@ fn extract_nested_members(
     file_path: &str,
     parent_module: &[&str],
     parent_name: &str,
+    refine: Option<&dyn LanguageRefinement>,
     symbols: &mut Vec<Symbol>,
 ) {
     let body = node
@@ -480,7 +538,7 @@ fn extract_nested_members(
 
     let mut body_cursor = body_node.walk();
     for child in body_node.children(&mut body_cursor) {
-        extract_from_node(&child, source, file_path, &nested_module, symbols);
+        extract_from_node(&child, source, file_path, &nested_module, refine, symbols);
     }
 }
 

@@ -202,10 +202,12 @@ pub(crate) fn build_instructions(router: &ToolRouter<MinistrServer>) -> String {
             "ministr_related",
             "ministr_related to follow dependency chains between claims",
         ),
-        (
-            "ministr_budget",
-            "ministr_budget to check context budget status and get eviction recommendations",
-        ),
+        // ministr_budget is intentionally not advertised here. It remains
+        // callable for deliberate use, but surfacing it in the agent
+        // instructions made agents proactively "check budget" and then
+        // wrongly conclude they were almost out of context. Context
+        // pressure is tracked internally for compression/dedup; it is no
+        // longer pushed at the agent.
         (
             "ministr_compress",
             "ministr_compress to generate compressed summaries of content you want to evict",

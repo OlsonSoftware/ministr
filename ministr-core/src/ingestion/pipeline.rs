@@ -1828,7 +1828,9 @@ impl IngestionPipeline {
                 continue;
             };
 
-            let mut ast_parser = AstParser::new();
+            let Ok(mut ast_parser) = AstParser::try_new() else {
+                continue;
+            };
             let Ok(tree) = ast_parser.parse(content.as_slice()) else {
                 continue;
             };

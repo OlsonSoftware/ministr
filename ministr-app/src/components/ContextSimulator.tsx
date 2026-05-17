@@ -97,7 +97,7 @@ export function ContextSimulator() {
 
       <Card hover="lift" className="p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <span className="text-[0.6875rem] font-medium uppercase tracking-[0.05em] text-text-dim">
+          <span className="text-mono-mini font-medium uppercase tracking-[0.08em] text-text-dim">
             Token budget
           </span>
           <span className="text-sm font-mono font-semibold tabular-nums text-text">
@@ -121,7 +121,7 @@ export function ContextSimulator() {
 
       <Card hover="lift" className="p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <span className="flex items-center gap-1.5 text-[0.6875rem] font-medium uppercase tracking-[0.05em] text-text-dim">
+          <span className="flex items-center gap-1.5 text-mono-mini font-medium uppercase tracking-[0.08em] text-text-dim">
             <Gauge className="h-3 w-3" strokeWidth={2.5}/>
             Context usage
           </span>
@@ -144,7 +144,7 @@ export function ContextSimulator() {
             <span className="text-text-dim">remaining</span>
           </div>
         </div>
-        <div className="text-[0.6875rem] text-text-dim">
+        <div className="text-mono-mini text-text-dim">
           {context.length} section{context.length === 1 ? "" : "s"} loaded ·{" "}
           {(utilization * 100).toFixed(1)}% utilization
         </div>

@@ -3,7 +3,7 @@ import { type Tone, toneBgClass } from "../../lib/status";
 
 interface StatusDotProps {
   tone?: Tone;
-  /** `"live"` runs the hard-step blink; `"off"` is static. */
+  /** `"live"` runs the soft accent-glow pulse; `"off"` is static. */
   pulse?: "live" | "off";
   /** Bigger dot for headers. */
   size?: "sm" | "md";
@@ -11,8 +11,8 @@ interface StatusDotProps {
 }
 
 /**
- * Brutalist status indicator — square (not circle), hard-step blink (not
- * a smooth pulse).
+ * Cockpit status indicator — a round dot with an optional soft pulse
+ * (designed glow ring, not the old hard-step blink).
  */
 export function StatusDot({
   tone = "muted",
@@ -21,14 +21,13 @@ export function StatusDot({
   className,
 }: StatusDotProps) {
   const dim = size === "md" ? "h-2.5 w-2.5" : "h-2 w-2";
-  const bg = toneBgClass(tone);
   return (
     <span
       className={cn(
-        "inline-block shrink-0",
+        "inline-block shrink-0 rounded-full",
         dim,
-        bg,
-        pulse === "live" && "ministr-blink",
+        toneBgClass(tone),
+        pulse === "live" && "ministr-pulse",
         className,
       )}
       aria-hidden="true"

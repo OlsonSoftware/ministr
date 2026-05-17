@@ -73,6 +73,25 @@ pub struct ProjectDetection {
     pub has_go: bool,
     /// Whether a Java/Kotlin project was detected (`pom.xml` or `build.gradle`).
     pub has_java: bool,
+    /// Whether a PHP project was detected (`composer.json` present).
+    pub has_php: bool,
+    /// Whether a Ruby project was detected (`Gemfile` or `*.gemspec`).
+    pub has_ruby: bool,
+    /// Whether a C# project was detected (`*.csproj` or `*.sln`).
+    pub has_csharp: bool,
+    /// Whether a Kotlin project was detected (`*.gradle.kts`).
+    pub has_kotlin: bool,
+    /// Whether a Swift package was detected (`Package.swift`).
+    pub has_swift: bool,
+    /// Whether a Scala project was detected (`build.sbt`).
+    pub has_scala: bool,
+    /// Whether a C/C++ project was detected (`CMakeLists.txt`).
+    pub has_cpp: bool,
+    /// Whether an Elixir project was detected (`mix.exs`).
+    pub has_elixir: bool,
+    /// Whether a JavaScript (non-TypeScript) project was detected
+    /// (`package.json` present, no `tsconfig.json`).
+    pub has_javascript: bool,
     /// Relative paths to source directories.
     pub source_paths: Vec<String>,
     /// Relative paths to documentation files/directories.
@@ -86,9 +105,18 @@ pub struct ProjectDetection {
 pub enum Language {
     Rust,
     TypeScript,
+    JavaScript,
     Python,
     Go,
     Java,
+    Php,
+    Ruby,
+    Csharp,
+    Kotlin,
+    Swift,
+    Scala,
+    Cpp,
+    Elixir,
 }
 
 impl ProjectDetection {
@@ -102,6 +130,10 @@ impl ProjectDetection {
         if self.has_node {
             langs.push(Language::TypeScript);
         }
+        // A Node project with no tsconfig.json also gets JS guidance.
+        if self.has_javascript {
+            langs.push(Language::JavaScript);
+        }
         if self.has_python {
             langs.push(Language::Python);
         }
@@ -110,6 +142,30 @@ impl ProjectDetection {
         }
         if self.has_java {
             langs.push(Language::Java);
+        }
+        if self.has_php {
+            langs.push(Language::Php);
+        }
+        if self.has_ruby {
+            langs.push(Language::Ruby);
+        }
+        if self.has_csharp {
+            langs.push(Language::Csharp);
+        }
+        if self.has_kotlin {
+            langs.push(Language::Kotlin);
+        }
+        if self.has_swift {
+            langs.push(Language::Swift);
+        }
+        if self.has_scala {
+            langs.push(Language::Scala);
+        }
+        if self.has_cpp {
+            langs.push(Language::Cpp);
+        }
+        if self.has_elixir {
+            langs.push(Language::Elixir);
         }
         langs
     }
@@ -134,6 +190,19 @@ pub enum InitError {
     },
 }
 
+/// Whether the top level of `root` contains a file with any of the given
+/// extensions (case-sensitive, no leading dot).
+fn dir_has_extension(root: &Path, exts: &[&str]) -> bool {
+    std::fs::read_dir(root).is_ok_and(|entries| {
+        entries.flatten().any(|e| {
+            e.path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .is_some_and(|x| exts.contains(&x))
+        })
+    })
+}
+
 /// Detect project structure at `root` and build a [`ProjectDetection`].
 ///
 /// Scans for manifests, workspace layouts, bridge frameworks, source
@@ -151,14 +220,36 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
     let has_java = root.join("pom.xml").exists()
         || root.join("build.gradle").exists()
         || root.join("build.gradle.kts").exists();
+    let has_php = root.join("composer.json").exists();
+    let has_ruby = root.join("Gemfile").exists()
+        || std::fs::read_dir(root).is_ok_and(|entries| {
+            entries.flatten().any(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .is_some_and(|x| x == "gemspec")
+            })
+        });
+
+    let has_csharp = dir_has_extension(root, &["csproj", "sln"]);
+    let has_kotlin =
+        root.join("build.gradle.kts").exists() || root.join("settings.gradle.kts").exists();
+    let has_swift = root.join("Package.swift").exists();
+    let has_scala = root.join("build.sbt").exists();
+    let has_cpp = root.join("CMakeLists.txt").exists();
+    let has_elixir = root.join("mix.exs").exists();
+    // Node project with no TypeScript config → treat as JavaScript.
+    let has_javascript = has_node && !root.join("tsconfig.json").exists();
 
     let project_name = derive_project_name(root);
-    let source_paths = detect_source_paths(root, &workspaces, has_rust, has_node, has_python);
     let doc_paths = detect_doc_paths(root);
-    let ignore_patterns = default_ignore_patterns(has_rust, has_node, has_python);
-    let project_type = classify_project_type(root, &workspaces, &bridges, has_rust, has_node);
+    let mut project_type = classify_project_type(root, &workspaces, &bridges, has_rust, has_node);
 
-    ProjectDetection {
+    // Build the detection with empty path lists first, then derive
+    // source/ignore paths from the full picture (every detected
+    // language, the project type, the workspace layout) rather than the
+    // old rust/node/python-only trio.
+    let mut detection = ProjectDetection {
         project_name,
         project_type,
         workspaces,
@@ -168,10 +259,54 @@ pub fn detect_project(root: &Path) -> ProjectDetection {
         has_python,
         has_go,
         has_java,
-        source_paths,
+        has_php,
+        has_ruby,
+        has_csharp,
+        has_kotlin,
+        has_swift,
+        has_scala,
+        has_cpp,
+        has_elixir,
+        has_javascript,
+        source_paths: Vec::new(),
         doc_paths,
-        ignore_patterns,
+        ignore_patterns: Vec::new(),
+    };
+
+    // Smarter polyglot classification: a repo mixing ≥2 independent
+    // language ecosystems at the root (no formal workspace file) is
+    // effectively a monorepo for indexing purposes.
+    if matches!(project_type, ProjectType::Unknown) && ecosystem_count(&detection) >= 2 {
+        project_type = ProjectType::Monorepo;
+        detection.project_type = project_type;
     }
+
+    detection.source_paths = detect_source_paths(root, &detection);
+    detection.ignore_patterns = default_ignore_patterns(root, &detection);
+    detection
+}
+
+/// Number of independent language ecosystems detected at the root. Used
+/// to recognise informal polyglot monorepos (multiple stacks side by
+/// side without a Cargo/npm/pnpm/Nx workspace manifest).
+fn ecosystem_count(d: &ProjectDetection) -> usize {
+    [
+        d.has_rust,
+        d.has_node,
+        d.has_python,
+        d.has_go,
+        d.has_java,
+        d.has_php,
+        d.has_ruby,
+        d.has_csharp,
+        d.has_swift,
+        d.has_scala,
+        d.has_cpp,
+        d.has_elixir,
+    ]
+    .into_iter()
+    .filter(|&b| b)
+    .count()
 }
 
 /// Generate a commented TOML string from a [`ProjectDetection`].
@@ -324,39 +459,132 @@ pub fn write_config(root: &Path, force: bool) -> Result<ProjectDetection, InitEr
     Ok(detection)
 }
 
-/// Write MCP client configuration files for Claude Code, GitHub Copilot, and Cursor.
+/// Identifies a supported MCP client.
 ///
-/// Creates `.mcp.json` (Claude Code), `.vscode/mcp.json` (VS Code / GitHub
-/// Copilot), and `.cursor/mcp.json` (Cursor) if they don't already contain
-/// a ministr entry. Existing files are merged non-destructively — only the
-/// `ministr` key is added.
+/// Used by [`write_mcp_config`] (per-client write) and the Tauri MCP
+/// wizard surface to select which client's config file to touch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum McpClientId {
+    /// Anthropic Claude Code CLI. Reads `.mcp.json` in the project root.
+    ClaudeCode,
+    /// Cursor editor. Reads `.cursor/mcp.json` in the project root.
+    Cursor,
+    /// VS Code GitHub Copilot. Reads `.vscode/mcp.json` in the project root.
+    VsCode,
+    /// OpenAI Codex CLI. Reads `~/.codex/config.toml` (user-level, not
+    /// per-project — see [`write_codex_mcp`] for the path resolution
+    /// rationale).
+    Codex,
+}
+
+impl McpClientId {
+    /// Stable identifier suitable for IPC / config files.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude_code",
+            Self::Cursor => "cursor",
+            Self::VsCode => "vscode",
+            Self::Codex => "codex",
+        }
+    }
+
+    /// Parse from a wire-format identifier produced by [`Self::as_str`].
+    ///
+    /// Named `parse` rather than `from_str` to avoid clashing with
+    /// `std::str::FromStr::from_str`. Implementing FromStr would force a
+    /// concrete error type on every caller, which is overkill for a
+    /// closed enum like this.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "claude_code" => Some(Self::ClaudeCode),
+            "cursor" => Some(Self::Cursor),
+            "vscode" => Some(Self::VsCode),
+            "codex" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
+    /// Human-readable label for display in UI.
+    #[must_use]
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "Claude Code",
+            Self::Cursor => "Cursor",
+            Self::VsCode => "GitHub Copilot (VS Code)",
+            Self::Codex => "Codex",
+        }
+    }
+}
+
+/// Write the MCP config for a single client.
+///
+/// Returns the absolute path of the file that was written so the caller
+/// (typically the Tauri wizard) can show the user *exactly* which file
+/// changed.
+///
+/// `root` is the project root. It is ignored for [`McpClientId::Codex`],
+/// which writes a user-global file.
+///
+/// # Errors
+///
+/// Returns [`InitError::Io`] on filesystem errors.
+pub fn write_mcp_config(client: McpClientId, root: &Path) -> Result<PathBuf, InitError> {
+    match client {
+        McpClientId::ClaudeCode => write_claude_mcp(root),
+        McpClientId::Cursor => write_cursor_mcp(root),
+        McpClientId::VsCode => write_vscode_mcp(root),
+        McpClientId::Codex => write_codex_mcp(),
+    }
+}
+
+/// Write MCP client configuration files for every project-scoped client
+/// (Claude Code, VS Code Copilot, Cursor).
+///
+/// This is the bulk path used by `ministr init` so the user gets every
+/// project file written in one shot. The interactive wizard prefers
+/// [`write_mcp_config`] so it can target a single client at a time.
+///
+/// Codex is **not** included here because it's user-global, not
+/// per-project — `ministr init` shouldn't reach into `~/.codex/`
+/// without explicit consent.
 ///
 /// # Errors
 ///
 /// Returns [`InitError::Io`] on filesystem errors.
 pub fn write_mcp_configs(root: &Path) -> Result<(), InitError> {
-    // Claude Code: .mcp.json
-    write_mcp_json(root, ".mcp.json")?;
+    write_claude_mcp(root)?;
+    write_vscode_mcp(root)?;
+    write_cursor_mcp(root)?;
+    Ok(())
+}
 
-    // GitHub Copilot / VS Code: .vscode/mcp.json
-    let vscode_dir = root.join(".vscode");
-    if !vscode_dir.exists() {
-        std::fs::create_dir_all(&vscode_dir)?;
-    }
-    write_mcp_json(root, ".vscode/mcp.json")?;
+/// Write `.mcp.json` (Claude Code) under `root`.
+fn write_claude_mcp(root: &Path) -> Result<PathBuf, InitError> {
+    write_mcp_json_relative(root, ".mcp.json")
+}
 
-    // Cursor: .cursor/mcp.json
+/// Write `.cursor/mcp.json` (Cursor) under `root`.
+fn write_cursor_mcp(root: &Path) -> Result<PathBuf, InitError> {
     let cursor_dir = root.join(".cursor");
     if !cursor_dir.exists() {
         std::fs::create_dir_all(&cursor_dir)?;
     }
-    write_mcp_json(root, ".cursor/mcp.json")?;
-
-    Ok(())
+    write_mcp_json_relative(root, ".cursor/mcp.json")
 }
 
-/// Write or merge an ministr entry into an MCP JSON config file.
-fn write_mcp_json(root: &Path, relative_path: &str) -> Result<(), InitError> {
+/// Write `.vscode/mcp.json` (VS Code / GitHub Copilot) under `root`.
+fn write_vscode_mcp(root: &Path) -> Result<PathBuf, InitError> {
+    let vscode_dir = root.join(".vscode");
+    if !vscode_dir.exists() {
+        std::fs::create_dir_all(&vscode_dir)?;
+    }
+    write_mcp_json_relative(root, ".vscode/mcp.json")
+}
+
+/// Write or merge an ministr entry into a per-project MCP JSON config file.
+fn write_mcp_json_relative(root: &Path, relative_path: &str) -> Result<PathBuf, InitError> {
     let path = root.join(relative_path);
 
     let ministr_entry = serde_json::json!({
@@ -384,7 +612,89 @@ fn write_mcp_json(root: &Path, relative_path: &str) -> Result<(), InitError> {
         std::fs::write(&path, format!("{json_str}\n"))?;
     }
 
-    Ok(())
+    Ok(path)
+}
+
+/// Write or merge a `[mcp_servers.ministr]` entry into the user-global
+/// Codex CLI config at `~/.codex/config.toml`.
+///
+/// The Codex CLI's MCP support is configured via TOML (not JSON) and
+/// lives under the user's home directory rather than per-project — this
+/// matches the standard OpenAI Codex CLI layout.
+///
+/// We do a simple text patch rather than a full TOML round-trip: if the
+/// file exists and already has a `[mcp_servers.ministr]` section, we
+/// rewrite that block; otherwise we append. This keeps existing user
+/// edits in other sections intact even when our parser would round-trip
+/// poorly (Codex's config doc strings, comments, ordering all matter to
+/// users editing this file by hand).
+fn write_codex_mcp() -> Result<PathBuf, InitError> {
+    let home = home_dir().ok_or_else(|| InitError::Io {
+        source: std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "could not resolve home directory for Codex config",
+        ),
+    })?;
+    let dir = home.join(".codex");
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)?;
+    }
+    let path = dir.join("config.toml");
+
+    let block = "\n[mcp_servers.ministr]\ncommand = \"ministr\"\nargs = [\"serve\", \"--transport\", \"stdio\"]\n";
+
+    let mut existing = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        String::new()
+    };
+
+    if let Some(start) = existing.find("[mcp_servers.ministr]") {
+        // Find end of this section: the next `[` at the start of a line,
+        // or end-of-file. Strip + reappend.
+        let after_header = start + "[mcp_servers.ministr]".len();
+        let rest = &existing[after_header..];
+        let next_section = rest
+            .match_indices('\n')
+            .find_map(|(i, _)| {
+                let line_start = after_header + i + 1;
+                let line = existing[line_start..]
+                    .split_once('\n')
+                    .map_or_else(|| &existing[line_start..], |(line, _)| line);
+                if line.trim_start().starts_with('[') {
+                    Some(line_start)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(existing.len());
+        existing.replace_range(start..next_section, block.trim_start());
+    } else {
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            existing.push('\n');
+        }
+        existing.push_str(block);
+    }
+
+    std::fs::write(&path, existing)?;
+    Ok(path)
+}
+
+/// Cross-platform home-directory lookup. We prefer `HOME` (Unix) and
+/// `USERPROFILE` (Windows) directly to avoid pulling in the `dirs` crate
+/// for one call site.
+fn home_dir() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+    {
+        return Some(PathBuf::from(home));
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE")
+        && !profile.is_empty()
+    {
+        return Some(PathBuf::from(profile));
+    }
+    None
 }
 
 /// Derive the project name from the directory name or a manifest.
@@ -422,14 +732,59 @@ fn npm_package_name(root: &Path) -> Option<String> {
     parsed.get("name")?.as_str().map(String::from)
 }
 
+/// Conventional source roots per detected language. Additive only — a
+/// directory is contributed only when it actually exists, and the `.`
+/// fallback still applies when nothing matched, so a misdetection can
+/// never hide real code. Over-inclusion is harmless because the global
+/// ignore rules already prune vendored/build trees.
+fn conventional_source_dirs(d: &ProjectDetection) -> Vec<&'static str> {
+    let mut dirs: Vec<&'static str> = Vec::new();
+    let mut add = |xs: &[&'static str]| {
+        for x in xs {
+            if !dirs.contains(x) {
+                dirs.push(x);
+            }
+        }
+    };
+    if d.has_rust {
+        add(&["src", "crates"]);
+    }
+    if d.has_go {
+        add(&["cmd", "internal", "pkg"]);
+    }
+    if d.has_java || d.has_kotlin || d.has_scala {
+        add(&["src/main/java", "src/main/kotlin", "src/main/scala", "src"]);
+    }
+    if d.has_csharp {
+        add(&["src", "Source"]);
+    }
+    if d.has_cpp {
+        add(&["src", "source", "Source", "lib", "include"]);
+    }
+    if d.has_swift {
+        add(&["Sources", "src"]);
+    }
+    if d.has_elixir {
+        add(&["lib"]);
+    }
+    if d.has_php {
+        add(&["src", "app"]);
+    }
+    if d.has_ruby {
+        add(&["lib", "app"]);
+    }
+    // Dart/Flutter live under lib/ (has_node==false there; keyed off
+    // the dart_tool/pubspec via has_* is not tracked, so include when
+    // a Flutter bridge is present).
+    if d.bridges.contains(&BridgeKind::FlutterChannel) {
+        add(&["lib"]);
+    }
+    dirs
+}
+
 /// Detect source directories based on project layout.
-fn detect_source_paths(
-    root: &Path,
-    workspaces: &[WorkspaceInfo],
-    has_rust: bool,
-    has_node: bool,
-    has_python: bool,
-) -> Vec<String> {
+fn detect_source_paths(root: &Path, d: &ProjectDetection) -> Vec<String> {
+    let workspaces = &d.workspaces;
     let mut paths = Vec::new();
 
     // Workspace members first
@@ -469,26 +824,34 @@ fn detect_source_paths(
         }
     }
 
-    // If no workspace members contributed paths, check for standalone layouts
+    // If no workspace members contributed paths, check for standalone
+    // layouts. JS/TS and Python get precise subdir resolution; every
+    // other detected language contributes its conventional roots.
     if paths.is_empty() {
-        if has_rust && root.join("src").is_dir() {
-            paths.push("src".to_string());
-        }
-        if has_node
+        if d.has_node
             && let Some(rel) = find_js_source_dir(root, root)
             && !paths.contains(&rel)
         {
             paths.push(rel);
         }
-        if has_python
+        if d.has_python
             && let Some(rel) = find_python_source_dir(root)
             && !paths.contains(&rel)
         {
             paths.push(rel);
         }
+        for dir in conventional_source_dirs(d) {
+            let candidate = dir.to_string();
+            if root.join(dir).is_dir() && !paths.contains(&candidate) {
+                paths.push(candidate);
+            }
+        }
     }
 
-    // Last resort: index everything
+    // Last resort: index everything (also the safety net whenever the
+    // detected roots might be incomplete — a single missed source dir
+    // is worse than indexing a bit extra, since global ignore rules
+    // already strip the noise).
     if paths.is_empty() {
         paths.push(".".to_string());
     }
@@ -544,14 +907,25 @@ fn detect_doc_paths(root: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Build default ignore patterns based on detected languages.
-fn default_ignore_patterns(has_rust: bool, has_node: bool, has_python: bool) -> Vec<String> {
+/// Build default ignore patterns from the full detection.
+///
+/// Two kinds of pattern:
+/// 1. Per-language test/snapshot globs (unchanged intent, now keyed off
+///    every detected language).
+/// 2. Project-type-gated build-output *directories*. These names
+///    (`bin/`, `obj/`, `Library/`, `Binaries/`, …) are too generic to
+///    sit in the global `ALWAYS_IGNORE_DIRS` (they collide with real
+///    authored dirs in unrelated projects), but once we know the
+///    project is Unity / Unreal / .NET / Xcode they are unambiguous
+///    build output. Written into `.ministr.toml` so they apply only to
+///    this scoped corpus.
+fn default_ignore_patterns(root: &Path, d: &ProjectDetection) -> Vec<String> {
     let mut patterns = Vec::new();
 
-    if has_rust {
+    if d.has_rust {
         patterns.push("*.snap".to_string());
     }
-    if has_node {
+    if d.has_node {
         patterns.extend([
             "*.test.ts".to_string(),
             "*.spec.ts".to_string(),
@@ -559,8 +933,48 @@ fn default_ignore_patterns(has_rust: bool, has_node: bool, has_python: bool) -> 
             "*.spec.js".to_string(),
         ]);
     }
-    if has_python {
+    if d.has_python {
         patterns.extend(["*_test.py".to_string(), "test_*.py".to_string()]);
+    }
+    if d.has_go {
+        patterns.push("*_test.go".to_string());
+    }
+
+    // .NET: bin/ and obj/ are build output but far too generic to
+    // ignore globally.
+    if d.has_csharp {
+        patterns.extend(["bin/".to_string(), "obj/".to_string()]);
+    }
+
+    // Unity: ProjectSettings/ + Assets/ (or any *.unity scene) is the
+    // unambiguous signature; Library/Temp/Obj/Logs are pure caches.
+    let is_unity = root.join("ProjectSettings").is_dir()
+        && (root.join("Assets").is_dir() || dir_has_extension(root, &["unity"]));
+    if is_unity {
+        patterns.extend([
+            "Library/".to_string(),
+            "Temp/".to_string(),
+            "Obj/".to_string(),
+            "Logs/".to_string(),
+            "MemoryCaptures/".to_string(),
+        ]);
+    }
+
+    // Unreal Engine: *.uproject/*.uplugin → Binaries/Intermediate/
+    // Saved/DerivedDataCache are all regenerated build artifacts.
+    if crate::ingestion::is_unreal_corpus(root) {
+        patterns.extend([
+            "Binaries/".to_string(),
+            "Intermediate/".to_string(),
+            "Saved/".to_string(),
+            "DerivedDataCache/".to_string(),
+        ]);
+    }
+
+    // Xcode/Swift: .build (SwiftPM) is build output; DerivedData is
+    // already global.
+    if d.has_swift {
+        patterns.push(".build/".to_string());
     }
 
     patterns
@@ -932,13 +1346,64 @@ version = "0.1.0"
 
     #[test]
     fn test_ignore_patterns_per_language() {
-        let patterns = default_ignore_patterns(true, true, false);
-        assert!(patterns.contains(&"*.snap".to_string()));
-        assert!(patterns.contains(&"*.test.ts".to_string()));
-        assert!(!patterns.iter().any(|p| p.contains("_test.py")));
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+        fs::write(root.join("package.json"), r#"{"name":"x"}"#).unwrap();
+        let p = detect_project(root).ignore_patterns;
+        assert!(p.contains(&"*.snap".to_string()));
+        assert!(p.contains(&"*.test.ts".to_string()));
+        assert!(!p.iter().any(|x| x.contains("_test.py")));
 
-        let py_patterns = default_ignore_patterns(false, false, true);
-        assert!(py_patterns.contains(&"*_test.py".to_string()));
+        let tmp2 = TempDir::new().unwrap();
+        fs::write(
+            tmp2.path().join("pyproject.toml"),
+            "[project]\nname=\"x\"\n",
+        )
+        .unwrap();
+        let py = detect_project(tmp2.path()).ignore_patterns;
+        assert!(py.contains(&"*_test.py".to_string()));
+    }
+
+    #[test]
+    fn dotnet_project_gates_bin_obj_ignores() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("App.csproj"), "<Project/>").unwrap();
+        let p = detect_project(tmp.path()).ignore_patterns;
+        assert!(p.contains(&"bin/".to_string()));
+        assert!(p.contains(&"obj/".to_string()));
+    }
+
+    #[test]
+    fn unity_project_gates_library_temp_ignores() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("ProjectSettings")).unwrap();
+        fs::create_dir_all(root.join("Assets")).unwrap();
+        let p = detect_project(root).ignore_patterns;
+        assert!(p.contains(&"Library/".to_string()), "got {p:?}");
+        assert!(p.contains(&"Temp/".to_string()));
+    }
+
+    #[test]
+    fn unreal_project_gates_binaries_intermediate_ignores() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("MyGame.uproject"), "{}").unwrap();
+        let p = detect_project(tmp.path()).ignore_patterns;
+        assert!(p.contains(&"Binaries/".to_string()), "got {p:?}");
+        assert!(p.contains(&"Intermediate/".to_string()));
+        assert!(p.contains(&"Saved/".to_string()));
+    }
+
+    #[test]
+    fn polyglot_root_classified_as_monorepo() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        // Three independent ecosystems, no workspace manifest.
+        fs::write(root.join("go.mod"), "module x\n").unwrap();
+        fs::write(root.join("pyproject.toml"), "[project]\nname=\"x\"\n").unwrap();
+        fs::write(root.join("composer.json"), r#"{"name":"x/y"}"#).unwrap();
+        assert_eq!(detect_project(root).project_type, ProjectType::Monorepo);
     }
 
     // -----------------------------------------------------------------------
@@ -1067,5 +1532,50 @@ version = "0.1.0"
             "should find co-located frontend: {:?}",
             detection.source_paths
         );
+    }
+
+    #[test]
+    fn detects_expanded_languages() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("App.csproj"), "<Project/>").unwrap();
+        fs::write(root.join("build.gradle.kts"), "").unwrap();
+        fs::write(root.join("Package.swift"), "// swift-tools-version:5.9").unwrap();
+        fs::write(root.join("build.sbt"), "").unwrap();
+        fs::write(
+            root.join("CMakeLists.txt"),
+            "cmake_minimum_required(VERSION 3.20)",
+        )
+        .unwrap();
+        fs::write(root.join("mix.exs"), "defmodule M do\nend").unwrap();
+
+        let d = detect_project(root);
+        assert!(d.has_csharp);
+        assert!(d.has_kotlin);
+        assert!(d.has_swift);
+        assert!(d.has_scala);
+        assert!(d.has_cpp);
+        assert!(d.has_elixir);
+
+        let langs = d.detected_languages();
+        for l in [
+            Language::Csharp,
+            Language::Kotlin,
+            Language::Swift,
+            Language::Scala,
+            Language::Cpp,
+            Language::Elixir,
+        ] {
+            assert!(langs.contains(&l), "missing {l:?} in {langs:?}");
+        }
+    }
+
+    #[test]
+    fn node_without_tsconfig_is_javascript() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("package.json"), r#"{"name":"x"}"#).unwrap();
+        let d = detect_project(tmp.path());
+        assert!(d.has_javascript);
+        assert!(d.detected_languages().contains(&Language::JavaScript));
     }
 }
