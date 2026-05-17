@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.2.4](https://github.com/OlsonSoftware/ministr/releases/tag/v0.2.4) - 2026-05-17
+
+### Changed
+- Fix false budget_status claim in getting-started- Tool-reference accuracy + Concepts code-intelligence overhaul- Accuracy, branding, focus + de-expose internals- Rebuild /install page in the manuscript aesthetic ([#104](https://github.com/OlsonSoftware/ministr/pull/104))- Rewrite landing page in a manuscript aesthetic ([#103](https://github.com/OlsonSoftware/ministr/pull/103))- Rewrite Architecture section with code-intelligence focus ([#102](https://github.com/OlsonSoftware/ministr/pull/102))
 ## [0.2.3](https://github.com/OlsonSoftware/ministr/releases/tag/v0.2.3) - 2026-05-17
 
 ### Changed
