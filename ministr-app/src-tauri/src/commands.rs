@@ -384,14 +384,17 @@ fn is_usable_cli(p: &std::path::Path) -> bool {
 /// is `PATHEXT`-aware (so a Windows `.cmd`/`.bat` shim resolves with its
 /// real extension and `fix_path` can route it through `cmd /c`).
 fn resolve_cli_path() -> Option<std::path::PathBuf> {
-    let exe = if cfg!(windows) {
-        "ministr.exe"
-    } else {
-        "ministr"
-    };
     let bin_dir = ministr_api::daemon_data_dir().join("bin");
 
-    let mut candidates = vec![bin_dir.join(exe)];
+    // On Windows the first-run `install_cli_binary` (setup.rs) stages the
+    // sidecar as `ministr` (no extension), while a native installer drops
+    // `ministr.exe` — probe both, mirroring setup.rs::ensure_path, so we
+    // don't false-negative "CLI not found".
+    let mut candidates = if cfg!(windows) {
+        vec![bin_dir.join("ministr.exe"), bin_dir.join("ministr")]
+    } else {
+        vec![bin_dir.join("ministr")]
+    };
     if !cfg!(windows) {
         candidates.push(std::path::PathBuf::from("/usr/local/bin/ministr"));
     }
