@@ -57,7 +57,12 @@ pub enum RegistryError {
 /// Central registry managing all indexed corpora.
 pub struct CorpusRegistry {
     embedder: Arc<dyn Embedder>,
-    corpora: RwLock<HashMap<String, CorpusHandle>>,
+    /// `Arc<CorpusHandle>` (not bare `CorpusHandle`) so `get()` can hand
+    /// a corpus out by cloning the `Arc` and dropping the map guard —
+    /// callers no longer hold a `RwLockReadGuard` across their `.await`s,
+    /// which previously serialised every request behind register /
+    /// unregister and risked lock-order inversion.
+    corpora: RwLock<HashMap<String, Arc<CorpusHandle>>>,
     config: MinistrConfig,
     /// Optional sink for coherence events — wired in by [`AppState::new`]
     /// after construction so `register` can spawn a pusher task that
@@ -188,7 +193,7 @@ impl CorpusRegistry {
     }
 
     /// Internal access to the corpora map (for the indexer and daemon).
-    pub fn corpora(&self) -> &RwLock<HashMap<String, CorpusHandle>> {
+    pub fn corpora(&self) -> &RwLock<HashMap<String, Arc<CorpusHandle>>> {
         &self.corpora
     }
 
@@ -376,7 +381,7 @@ impl CorpusRegistry {
             if map.contains_key(&corpus_id) {
                 return Ok((corpus_id, false));
             }
-            map.insert(corpus_id.clone(), handle);
+            map.insert(corpus_id.clone(), Arc::new(handle));
         }
         info!(corpus_id = %corpus_id, "corpus registered");
 
@@ -603,24 +608,25 @@ impl CorpusRegistry {
         result
     }
 
-    /// Get a read guard to access a corpus by ID.
+    /// Resolve a corpus ID to its handle.
+    ///
+    /// Clones the `Arc<CorpusHandle>` out and drops the map read guard
+    /// before returning — the caller holds only the handle, never a
+    /// `RwLockReadGuard`, so its subsequent `.await`s can't serialise
+    /// register / unregister or invert lock order.
     ///
     /// # Errors
     ///
     /// Returns [`RegistryError::NotFound`] if the corpus does not exist.
-    pub async fn get(
-        &self,
-        corpus_id: &str,
-    ) -> Result<tokio::sync::RwLockReadGuard<'_, HashMap<String, CorpusHandle>>, RegistryError>
-    {
-        let corpora = self.corpora.read().await;
-        if corpora.contains_key(corpus_id) {
-            Ok(corpora)
-        } else {
-            Err(RegistryError::NotFound {
+    pub async fn get(&self, corpus_id: &str) -> Result<Arc<CorpusHandle>, RegistryError> {
+        self.corpora
+            .read()
+            .await
+            .get(corpus_id)
+            .cloned()
+            .ok_or_else(|| RegistryError::NotFound {
                 id: corpus_id.to_string(),
             })
-        }
     }
 
     /// Extract a corpus's `info` handle without holding the corpora-map

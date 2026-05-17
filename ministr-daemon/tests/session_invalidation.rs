@@ -140,7 +140,7 @@ async fn session_invalidation_propagates_on_coherence_broadcast() {
         .corpora()
         .write()
         .await
-        .insert(corpus_id.clone(), handle);
+        .insert(corpus_id.clone(), std::sync::Arc::new(handle));
 
     // Wire the session invalidator the same way `register` does. Keep the
     // join handle alive for the duration of the test.

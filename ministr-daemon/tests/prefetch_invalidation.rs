@@ -140,7 +140,7 @@ async fn prefetch_cache_cleared_after_watcher_reingest() {
         .corpora()
         .write()
         .await
-        .insert(corpus_id.clone(), handle);
+        .insert(corpus_id.clone(), std::sync::Arc::new(handle));
 
     // Initial ingestion.
     ministr_daemon::indexer::run(&registry, &corpus_id, &paths_vec).await;

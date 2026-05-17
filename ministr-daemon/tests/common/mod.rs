@@ -102,7 +102,7 @@ impl TestDaemon {
             .corpora()
             .write()
             .await
-            .insert(corpus_id.clone(), handle);
+            .insert(corpus_id.clone(), std::sync::Arc::new(handle));
 
         let state = AppState::from_arc(registry);
 
