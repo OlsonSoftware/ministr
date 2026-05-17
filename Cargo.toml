@@ -114,7 +114,12 @@ tree-sitter-c = "0.24"
 # crates.io and its git history is pathologically large to clone) —
 # copied verbatim at upstream rev 92eee7d, MIT-licensed. See
 # third_party/tree-sitter-unreal-cpp/ (LICENSE + VENDOR.md).
-tree-sitter-unreal-cpp = { path = "third_party/tree-sitter-unreal-cpp" }
+# `version` required for the same reason as the ministr-* crates below:
+# `cargo package` (run by release-plz for change detection) rejects any
+# path dependency without a version requirement. Matches the vendored
+# crate's own version; release-plz never bumps it (release = false in
+# release-plz.toml), so it stays pinned here.
+tree-sitter-unreal-cpp = { path = "third_party/tree-sitter-unreal-cpp", version = "0.23.4" }
 tree-sitter-ruby = "0.23"
 tree-sitter-c-sharp = "0.23"
 tree-sitter-swift = "0.7"
@@ -198,8 +203,18 @@ axum = "0.8"
 # Testing
 tempfile = "3"
 
-# ministr workspace crates
-ministr-api = { path = "ministr-api" }
-ministr-core = { path = "ministr-core" }
-ministr-daemon = { path = "ministr-daemon" }
-ministr-mcp = { path = "ministr-mcp" }
+# ministr workspace crates.
+#
+# `version` is REQUIRED here, not optional: release-plz runs `cargo
+# package` for change detection, and `cargo package` hard-rejects any
+# path dependency without a version requirement ("all dependencies must
+# have a version requirement specified when packaging"). Without it,
+# release-plz fails at "failed to determine next versions" even though
+# git_only tag detection now works. The value tracks the current
+# workspace version (the last released tag); release-plz rewrites both
+# the crate `version` and these requirements in lockstep on every bump,
+# so this never needs to be hand-edited again.
+ministr-api = { path = "ministr-api", version = "0.2.1" }
+ministr-core = { path = "ministr-core", version = "0.2.1" }
+ministr-daemon = { path = "ministr-daemon", version = "0.2.1" }
+ministr-mcp = { path = "ministr-mcp", version = "0.2.1" }
