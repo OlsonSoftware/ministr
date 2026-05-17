@@ -10,7 +10,6 @@ use miette::{IntoDiagnostic, Result, WrapErr};
 
 use sha2::Digest as _;
 
-use ministr_core::index::VectorIndex as _;
 use ministr_core::index::VectorIndexLoad as _;
 use ministr_core::session::BudgetConfig;
 use ministr_core::storage::Storage as _;
@@ -177,43 +176,49 @@ fn load_or_create_index(
 ) -> Result<Arc<dyn ministr_core::index::VectorIndex>> {
     if index_dir.exists() {
         match ministr_core::index::HnswIndex::load(index_dir) {
-            Ok(loaded) => {
-                let dim_mismatch = loaded.dimension() != dim;
-                let model_mismatch = loaded
-                    .model_name()
-                    .as_ref()
-                    .is_some_and(|old| old != model_name);
-
-                if dim_mismatch || model_mismatch {
-                    let old_model = loaded.model_name().unwrap_or_else(|| "unknown".to_owned());
+            Ok(loaded) => match loaded.check_compatible(dim, model_name, index_dir) {
+                Ok(()) => {
+                    // Compatible. A legacy index with no stored model
+                    // name is adopted under the current model.
+                    if loaded.model_name().is_none() {
+                        tracing::info!(
+                            model = %model_name,
+                            "upgrading legacy index with model name tracking"
+                        );
+                        loaded.set_model_name(model_name);
+                    }
+                    return Ok(Arc::new(loaded));
+                }
+                Err(e) => {
                     tracing::warn!(
-                        old_model = %old_model,
-                        new_model = %model_name,
-                        old_dim = loaded.dimension(),
-                        new_dim = dim,
+                        error = %e,
                         "embedding model changed — discarding old index for re-indexing"
                     );
                     drop(loaded);
-                    let _ = std::fs::remove_dir_all(index_dir);
-                    return create_fresh_index(dim, model_name);
+                    discard_index_dir(index_dir);
                 }
-                // Legacy index without model name — adopt current model
-                if loaded.model_name().is_none() {
-                    tracing::info!(
-                        model = %model_name,
-                        "upgrading legacy index with model name tracking"
-                    );
-                    loaded.set_model_name(model_name);
-                }
-                return Ok(Arc::new(loaded));
-            }
+            },
             Err(e) => {
                 tracing::warn!(error = %e, "corrupted vector index — discarding and rebuilding");
-                let _ = std::fs::remove_dir_all(index_dir);
+                discard_index_dir(index_dir);
             }
         }
     }
     create_fresh_index(dim, model_name)
+}
+
+/// Remove an index directory that is corrupt or incompatible so a fresh
+/// one can be built. Uses the Windows-robust retrying remove and logs
+/// (rather than silently swallowing) a removal failure — a stale dir
+/// left behind would otherwise be re-loaded on the next run.
+fn discard_index_dir(index_dir: &Path) {
+    if let Err(e) = ministr_core::fs_util::remove_dir_all_robust_sync(index_dir) {
+        tracing::warn!(
+            error = %e,
+            dir = %index_dir.display(),
+            "failed to remove stale index directory; a rebuild will overwrite it"
+        );
+    }
 }
 
 /// Create a fresh HNSW index with the given dimension and model name.

@@ -1,6 +1,6 @@
 //! Filesystem helpers hardened for cross-platform reliability.
 
-use std::fs::{self, File};
+use std::fs;
 use std::io;
 use std::path::Path;
 use std::time::Duration;
@@ -42,7 +42,7 @@ pub fn fsync_dir(path: &Path) -> io::Result<()> {
     }
     #[cfg(not(windows))]
     {
-        File::open(path)?.sync_all()
+        fs::File::open(path)?.sync_all()
     }
 }
 

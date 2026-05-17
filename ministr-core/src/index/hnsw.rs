@@ -276,6 +276,45 @@ impl HnswIndex {
             .and_then(|inner| inner.model_name.clone())
     }
 
+    /// Fail fast if this index is incompatible with the active embedder.
+    ///
+    /// A dimension mismatch is always incompatible — the stored vectors
+    /// cannot be searched with `expected_dim`-wide queries. A model-name
+    /// mismatch is incompatible when a name was stored (different model =
+    /// different vector space). A legacy index with no stored model name
+    /// is *adopted*: this returns `Ok(())` and the caller should
+    /// [`set_model_name`](Self::set_model_name) to stamp it.
+    ///
+    /// `path` is only used to populate [`IndexError::ModelMismatch`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::ModelMismatch`] when the stored dimension or
+    /// model name disagrees with the active embedder.
+    pub fn check_compatible(
+        &self,
+        expected_dim: usize,
+        expected_model: &str,
+        path: &Path,
+    ) -> Result<(), IndexError> {
+        let stored_dim = self.dimension();
+        let stored_model = self.model_name();
+        let model_incompatible = matches!(
+            crate::embedding::check_model_compatibility(expected_model, stored_model.as_deref(),),
+            crate::embedding::ModelCompatibility::IncompatibleModel { .. }
+        );
+        if stored_dim != expected_dim || model_incompatible {
+            return Err(IndexError::ModelMismatch {
+                path: path.to_path_buf(),
+                stored_dim,
+                expected_dim,
+                stored_model,
+                expected_model: expected_model.to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     /// Create a new HNSW index with custom configuration.
     ///
     /// # Errors
@@ -1043,6 +1082,57 @@ mod tests {
         let loaded = HnswIndex::load(&index_dir).unwrap();
         assert!(loaded.model_name().is_none());
         assert_eq!(loaded.len(), 1);
+    }
+
+    // --- Model/dimension compatibility guard ---
+
+    #[test]
+    fn check_compatible_ok_when_dim_and_model_match() {
+        let index = HnswIndex::new(4, 100).unwrap();
+        index.set_model_name("all-MiniLM-L6-v2");
+        index
+            .check_compatible(4, "all-MiniLM-L6-v2", Path::new("idx"))
+            .unwrap();
+    }
+
+    #[test]
+    fn check_compatible_rejects_dimension_mismatch() {
+        let index = HnswIndex::new(4, 100).unwrap();
+        index.set_model_name("all-MiniLM-L6-v2");
+        let err = index
+            .check_compatible(8, "all-MiniLM-L6-v2", Path::new("idx"))
+            .unwrap_err();
+        match err {
+            IndexError::ModelMismatch {
+                stored_dim,
+                expected_dim,
+                ..
+            } => {
+                assert_eq!(stored_dim, 4);
+                assert_eq!(expected_dim, 8);
+            }
+            other => panic!("expected ModelMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_compatible_rejects_model_mismatch() {
+        let index = HnswIndex::new(4, 100).unwrap();
+        index.set_model_name("all-MiniLM-L6-v2");
+        let err = index
+            .check_compatible(4, "bge-small-en-v1.5", Path::new("idx"))
+            .unwrap_err();
+        assert!(matches!(err, IndexError::ModelMismatch { .. }));
+    }
+
+    #[test]
+    fn check_compatible_adopts_legacy_index_without_model() {
+        // No stored model name (legacy) — same dim — is compatible.
+        let index = HnswIndex::new(4, 100).unwrap();
+        assert!(index.model_name().is_none());
+        index
+            .check_compatible(4, "all-MiniLM-L6-v2", Path::new("idx"))
+            .unwrap();
     }
 
     // --- Trait object usage ---

@@ -736,7 +736,7 @@ impl CorpusRegistry {
         );
 
         let dim = self.embedder.dimension();
-        let index = load_or_create_index(&index_dir, dim)?;
+        let index = load_or_create_index(&index_dir, dim, &self.config.default_model)?;
 
         let query_storage = SqliteStorage::open(&db_path)
             .map_err(|e| RegistryError::Storage(format!("open query db: {e}")))?;
@@ -870,19 +870,46 @@ pub fn spawn_session_invalidator(
 fn load_or_create_index(
     index_dir: &std::path::Path,
     dim: usize,
+    model_name: &str,
 ) -> Result<Arc<dyn VectorIndex>, RegistryError> {
     if index_dir.exists() {
         match HnswIndex::load(index_dir) {
-            Ok(loaded) => return Ok(Arc::new(loaded)),
+            Ok(loaded) => match loaded.check_compatible(dim, model_name, index_dir) {
+                Ok(()) => {
+                    // Adopt a legacy index that predates model tracking
+                    // so a later model change can actually be detected.
+                    if loaded.model_name().is_none() {
+                        loaded.set_model_name(model_name);
+                    }
+                    return Ok(Arc::new(loaded));
+                }
+                Err(e) => {
+                    warn!(error = %e, "embedding model changed — rebuilding index");
+                    discard_index_dir(index_dir);
+                }
+            },
             Err(e) => {
                 warn!(error = %e, "corrupted index — rebuilding");
-                let _ = std::fs::remove_dir_all(index_dir);
+                discard_index_dir(index_dir);
             }
         }
     }
-    Ok(Arc::new(
-        HnswIndex::new(dim, 100_000).map_err(|e| RegistryError::Index(e.to_string()))?,
-    ))
+    let fresh = HnswIndex::new(dim, 100_000).map_err(|e| RegistryError::Index(e.to_string()))?;
+    fresh.set_model_name(model_name);
+    Ok(Arc::new(fresh))
+}
+
+/// Remove a corrupt/incompatible index dir with the Windows-robust
+/// retrying remove, logging (not swallowing) a failure so a stale dir
+/// that would be re-loaded next start is visible.
+fn discard_index_dir(index_dir: &std::path::Path) {
+    if let Err(e) = ministr_core::fs_util::remove_dir_all_robust_sync(index_dir) {
+        warn!(
+            error = %e,
+            dir = %index_dir.display(),
+            "failed to remove stale index directory; a rebuild will overwrite it"
+        );
+    }
 }
 
 /// Derive a human-readable label for a corpus from its path set.
