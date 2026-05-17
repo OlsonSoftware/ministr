@@ -24,44 +24,44 @@ function Have($name) { $null -ne (Get-Command $name -ErrorAction SilentlyContinu
 Write-Host "== Windows runner bootstrap (target=$Target) =="
 
 # --- Python -------------------------------------------------------------
-# NOTE: do NOT depend on winget. This is a self-hosted, frequently-reset
-# Windows eval VM; winget is often absent (not on Server / fresh dev
-# images, and any manual install is wiped on VM reset). We bootstrap
-# from the official python.org per-user installer via Invoke-WebRequest
-# (same mechanism already used for rustup below) - no winget, no admin,
-# no msstore cert dance. Idempotent: only runs if python is missing.
+# Do NOT use winget OR the python.org installer. This runner is a
+# locked-down, service-account, frequently-reset Windows VM:
+#   * winget is absent (not on Server / fresh dev images; manual
+#     installs are wiped on reset);
+#   * the python.org .exe is an MSI bootstrapper -> fails with 1601
+#     ("Windows Installer service could not be accessed") under a
+#     non-interactive service account.
+# Use python-build-standalone: a fully self-contained CPython that is
+# just EXTRACTED (no installer, no MSI, no admin) and already ships
+# pip. Idempotent: cached under USERPROFILE, only fetched if missing.
 $PyVersion = '3.12.7'
+$PbsTag    = '20241016'
 if (Have 'python') {
   Write-Host "python: $(python --version 2>&1)"
 } else {
-  Write-Host "python: not found - installing $PyVersion from python.org (winget-free, no admin)"
-  $pyExe = Join-Path $env:RUNNER_TEMP "python-$PyVersion-amd64.exe"
-  $pyUrl = "https://www.python.org/ftp/python/$PyVersion/python-$PyVersion-amd64.exe"
-  Invoke-WebRequest -Uri $pyUrl -OutFile $pyExe -UseBasicParsing
-  # Per-user silent install (no admin): installs to
-  # %LOCALAPPDATA%\Programs\Python\Python312.
-  $p = Start-Process -FilePath $pyExe -Wait -PassThru -ArgumentList @(
-    '/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_pip=1',
-    'Include_launcher=1', 'Shortcuts=0', 'AssociateFiles=0'
-  )
-  if ($p.ExitCode -ne 0) { throw "python installer failed ($($p.ExitCode))" }
-  # Installer PATH changes don't apply to the current process. Resolve
-  # the install dir (standard path first; fall back to a search) and
-  # prepend it for this job + persist via GITHUB_PATH.
-  $pyDir = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312'
-  if (-not (Test-Path (Join-Path $pyDir 'python.exe'))) {
-    $found = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Programs\Python') `
-      -Filter 'python.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($found) { $pyDir = $found.DirectoryName }
+  $pyHome = Join-Path $env:USERPROFILE ".python-standalone\$PyVersion-$PbsTag"
+  $pyDir  = Join-Path $pyHome 'python'
+  $pyBin  = Join-Path $pyDir 'python.exe'
+  if (-not (Test-Path $pyBin)) {
+    Write-Host "python: not found - fetching python-build-standalone $PyVersion ($PbsTag)"
+    $tgz = Join-Path $env:RUNNER_TEMP 'python-standalone.tar.gz'
+    $url = "https://github.com/astral-sh/python-build-standalone/releases/download/$PbsTag/cpython-$PyVersion+$PbsTag-x86_64-pc-windows-msvc-install_only.tar.gz"
+    Invoke-WebRequest -Uri $url -OutFile $tgz -UseBasicParsing
+    New-Item -ItemType Directory -Force -Path $pyHome | Out-Null
+    # Windows ships bsdtar as tar.exe; it extracts .tar.gz natively.
+    # The install_only archive unpacks to a top-level 'python\' dir.
+    tar -xf $tgz -C $pyHome
+    if ($LASTEXITCODE -ne 0) { throw "tar extract failed ($LASTEXITCODE)" }
+    if (-not (Test-Path $pyBin)) { throw 'python-build-standalone layout unexpected (no python\python.exe)' }
   }
-  if (Test-Path (Join-Path $pyDir 'python.exe')) {
-    $env:PATH = "$pyDir;$pyDir\Scripts;$env:PATH"
-    if ($env:GITHUB_PATH) {
-      "$pyDir"          | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      "$pyDir\Scripts"  | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-    }
+  # Extract changes no PATH; prepend for this process + persist via
+  # GITHUB_PATH (ASCII: PowerShell 5.1 mis-decodes a UTF-8 BOM here).
+  $env:PATH = "$pyDir;$pyDir\Scripts;$env:PATH"
+  if ($env:GITHUB_PATH) {
+    "$pyDir"         | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
+    "$pyDir\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
   }
-  if (-not (Have 'python')) { throw 'python still not on PATH after install' }
+  if (-not (Have 'python')) { throw 'python still not on PATH after extract' }
   Write-Host "python: $(python --version 2>&1)"
 }
 

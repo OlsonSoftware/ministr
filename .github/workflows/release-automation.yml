@@ -69,8 +69,13 @@ jobs:
           git commit -m "chore: release v$VER"
           git push -f origin "$br"
           body="Automated release PR. Merging it builds every artifact (build-then-tag); only on a fully green build is \`v$VER\` tagged and the GitHub Release published. Changelog + version computed by git-cliff from Conventional Commits."
-          if gh pr view "$br" --json number >/dev/null 2>&1; then
-            gh pr edit "$br" --title "chore: release v$VER" --body "$body"
+          # Only an OPEN PR counts as existing. `gh pr view <branch>`
+          # also returns a MERGED/closed PR for that head, which would
+          # make us silently `gh pr edit` a merged PR and never open a
+          # new one (the "no new release PR" bug).
+          open_pr="$(gh pr list --head "$br" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$open_pr" ]; then
+            gh pr edit "$open_pr" --title "chore: release v$VER" --body "$body"
           else
             gh pr create --base main --head "$br" \
               --title "chore: release v$VER" --body "$body" --label release
