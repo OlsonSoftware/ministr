@@ -1,38 +1,28 @@
-# ministr MCP — Codebase Navigation (MANDATORY)
+# ministr MCP — Codebase Navigation
 
-This project uses [ministr](https://github.com/OlsonSoftware/ministr) as an MCP server for semantic code search.
+This project uses [ministr](https://github.com/OlsonSoftware/ministr) as an MCP server for semantic code search. ministr is the **preferred** tool for codebase *exploration*; it does not restrict normal shell work.
 
-## CRITICAL: Tool Restrictions
+## Policy
 
-**You MUST use ministr MCP tools for ALL codebase exploration.** The following are PROHIBITED:
+- Prefer ministr MCP tools for code discovery, search, and navigation.
+- The built-in **Grep** / **Glob** tools are not for exploration here —
+  use `ministr_survey` / `ministr_toc`.
+- The shell is unrestricted: building, testing, dependency installs,
+  `git`, running the project, and filtering command output
+  (`cargo test | grep`, `cargo build 2>&1 | tail`, `git log | grep`)
+  all run normally. A *leading* `grep`/`find` is auto-allowed with a
+  one-line hint to prefer ministr — it never prompts.
+- Read files only immediately before editing them.
 
-### Prohibited Tools and Patterns
+## Tool Mapping (preferences, not prohibitions)
 
-- ❌ **Grep tool** — use `ministr_survey(query: "...")` instead
-- ❌ **Glob tool** — use `ministr_toc` instead
-- ❌ **`grep`**, **`rg`**, **`ag`**, **`ack`** in Bash/Shell — use `ministr_survey` instead
-- ❌ **`find`**, **`fd`**, **`ls -R`** in Bash/Shell — use `ministr_toc` instead
-- ❌ **`cat | grep`**, **`cmd | head`**, **`cmd | tail`**, **`cmd | wc`** — use ministr tools
-- ❌ **ANY piped shell command** for code exploration — use ministr tools
-- ❌ **Reading files** for exploration — use `ministr_symbols` → `ministr_definition`
-
-### Allowed Uses of Shell/Bash
-
-Shell is ONLY acceptable for: building code, running tests, installing dependencies, git operations, and running the project. NEVER for searching, file discovery, or piped exploration.
-
-### Allowed Uses of file Read
-
-File Read is ONLY acceptable immediately before Edit — never for exploration or discovery.
-
-## Required Tool Mapping
-
-| Instead of… | Use… |
-|-------------|------|
-| `grep` / `Grep` / text search | `ministr_survey(query: "...")` — semantic search across docs and code |
-| `find` / `Glob` / file listing | `ministr_toc` — structural overview of the indexed corpus |
-| Reading a file to find symbols | `ministr_symbols(query: "name")` — find by name/kind/module |
-| Reading a file for a specific function | `ministr_definition(symbol_id: "...")` — get full source |
-| Checking who calls a function | `ministr_references(symbol_id: "...")` — find all callers |
+| For… | Prefer… |
+|------|---------|
+| code / text search | `ministr_survey(query: "...")` — semantic search across docs and code |
+| file / structure discovery | `ministr_toc` — structural overview of the indexed corpus |
+| finding a symbol | `ministr_symbols(query: "name")` — by name/kind/module |
+| a specific function's source | `ministr_definition(symbol_id: "...")` |
+| who calls a function | `ministr_references(symbol_id: "...")` |
 
 ## Workflow
 

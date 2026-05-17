@@ -8,23 +8,22 @@
 //!
 //! - [`Session`] — tracks delivered content, access trajectory, and dedup state
 //! - [`WindowEstimator`] — models context window fill with FIFO/LRU eviction
-//! - [`BudgetTracker`] — threshold-based pressure levels driving response compression
-//! - [`EvictionRanker`] — scores delivered items for eviction priority
+//! - [`UsageTracker`] — threshold-based pressure levels driving response compression
+//! - [`DropRanker`] — scores delivered items for eviction priority
 //! - [`CompressionPipeline`] — multi-tier compression with auto-promotion
 
-mod budget;
 pub mod compression;
 pub mod delta;
-pub mod eviction;
+pub mod drops;
 pub mod memory;
 pub mod prefetch;
 mod registry;
 mod types;
+mod usage;
 mod window;
 
-pub use budget::{BudgetConfig, BudgetStatus, BudgetTracker, PressureLevel};
 pub use compression::{CompressionPipeline, TierPromotion};
-pub use eviction::{EvictionCandidate, EvictionRanker};
+pub use drops::{DropCandidate, DropRanker};
 pub use memory::{AccessRating, MemoryState, MemoryTracker};
 pub use prefetch::{
     CacheEntry, PrefetchEngine, PrefetchMetrics, PrefetchStrategy, PriorityCache, StrategyWeights,
@@ -32,7 +31,8 @@ pub use prefetch::{
 };
 pub use registry::{SessionEntry, SessionRegistry};
 pub use types::{
-    AccessMode, CoherenceAlert, CompressionTier, DeliveredItem, EvictionPolicy, Session, SessionId,
+    AccessMode, CoherenceAlert, CompressionTier, DeliveredItem, DropPolicy, Session, SessionId,
     SessionMetrics,
 };
+pub use usage::{UsageConfig, UsageLevel, UsageStatus, UsageTracker};
 pub use window::{WindowEstimator, WindowStatus};

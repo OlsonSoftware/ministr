@@ -1,7 +1,7 @@
 //! Regression guards for bugs found in the Analytics trace.
 
 use ministr_core::analytics::Analytics;
-use ministr_core::session::{AccessMode, BudgetConfig, SessionRegistry};
+use ministr_core::session::{AccessMode, SessionRegistry, UsageConfig};
 use ministr_core::storage::{SqliteStorage, Storage};
 use ministr_core::types::{ContentId, Resolution, SectionId};
 
@@ -73,7 +73,7 @@ async fn an1_incremental_flush_counts_each_pair_once_per_session() {
 /// API.
 #[tokio::test]
 async fn an1_session_tracks_unflushed_items_correctly() {
-    let mut registry = SessionRegistry::new(BudgetConfig::default());
+    let mut registry = SessionRegistry::new(UsageConfig::default());
     let entry = registry.create_session("agent", None, AccessMode::ReadWrite);
 
     entry

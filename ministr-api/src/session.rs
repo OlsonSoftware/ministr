@@ -23,9 +23,9 @@ pub struct CreateSessionResponse {
 
 /// Budget status snapshot for a session.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SessionBudgetResponse {
+pub struct SessionUsageResponse {
     /// Pressure level: `"normal"`, `"elevated"`, or `"critical"`.
-    pub pressure_level: String,
+    pub level: String,
     /// Estimated tokens consumed by delivered content.
     pub tokens_used: usize,
     /// Estimated tokens remaining before budget pressure.
@@ -93,16 +93,16 @@ pub struct CompressResponse {
 
 /// Request to signal content evicted from the agent's context window.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct EvictRequest {
+pub struct DropRequest {
     /// Content IDs that have been dropped from the agent's context.
     pub content_ids: Vec<String>,
 }
 
 /// Response from the eviction endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct EvictResponse {
+pub struct DropResponse {
     /// Content IDs that were successfully removed from session tracking.
-    pub evicted: Vec<String>,
+    pub dropped: Vec<String>,
     /// Content IDs that were not found in the session.
     pub not_found: Vec<String>,
 }

@@ -114,8 +114,8 @@ enum Command {
         #[arg(long)]
         force: bool,
 
-        /// Run interactive setup wizard with prompts for project type,
-        /// agent platforms, and hook strictness level.
+        /// Run interactive setup: show the detected project type and
+        /// exactly what will be written, then confirm before scaffolding.
         #[arg(long, short)]
         interactive: bool,
     },

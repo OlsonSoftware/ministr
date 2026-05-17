@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+- **BREAKING:** Renamed the `budget`/`eviction` vocabulary to `usage`/`drop`
+  across the public surface and internals. MCP tool ids
+  `ministr_budget` → `ministr_usage` and `ministr_evicted` →
+  `ministr_dropped` (old ids are removed — update any agent rules or saved
+  prompts). The advertised extension id `dev.ministr/budget-protocol` →
+  `dev.ministr/usage-protocol`. Daemon HTTP contract changes:
+  `GET …/sessions/{sid}/budget` → `…/usage`, `POST …/sessions/{sid}/evicted`
+  → `…/dropped`, response field `EvictResponse.evicted` → `DropResponse.dropped`,
+  `SessionBudgetResponse{pressure_level,…}` → `SessionUsageResponse{level,…}`.
+  Internal symbols renamed to match (`BudgetTracker`→`UsageTracker`,
+  `EvictionCandidate`→`DropCandidate`, `session::budget`→`session::usage`,
+  `session::eviction`→`session::drops`, etc.). Docs/tool-reference slugs
+  `/docs/tools/budget` → `/usage` and `/docs/tools/evicted` → `/dropped`.
+
 ## [0.2.4](https://github.com/OlsonSoftware/ministr/releases/tag/v0.2.4) - 2026-05-17
 
 ### Changed

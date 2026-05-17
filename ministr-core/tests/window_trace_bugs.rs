@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use ministr_core::session::{EvictionPolicy, WindowEstimator};
+use ministr_core::session::{DropPolicy, WindowEstimator};
 
 /// FE1 regression — under FSRS, the just-inserted entry must NOT evict
 /// itself when it's missing from the scores map. Previously
@@ -16,7 +16,7 @@ use ministr_core::session::{EvictionPolicy, WindowEstimator};
 /// Older entries with explicit low R are evicted in preference.
 #[test]
 fn fe1_fresh_entry_is_not_self_evicted_under_fsrs() {
-    let mut est = WindowEstimator::new(100, EvictionPolicy::Fsrs);
+    let mut est = WindowEstimator::new(100, DropPolicy::Fsrs);
     let _ = est.record("old_and_forgotten", 40);
     let _ = est.record("old_but_tracked", 40);
 
@@ -48,7 +48,7 @@ fn fe1_fresh_entry_is_not_self_evicted_under_fsrs() {
 /// `fsrs_unknown_content_gets_zero_retrievability`.
 #[test]
 fn fe1_protection_does_not_extend_to_pre_existing_untracked_entries() {
-    let mut est = WindowEstimator::new(100, EvictionPolicy::Fsrs);
+    let mut est = WindowEstimator::new(100, DropPolicy::Fsrs);
     let _ = est.record("known", 40);
     let _ = est.record("pre_existing_untracked", 40);
 
@@ -73,7 +73,7 @@ fn fe1_protection_does_not_extend_to_pre_existing_untracked_entries() {
 /// evict it" — the fix should respect that.
 #[test]
 fn fe1_caller_supplied_low_score_for_new_entry_still_evicts_it() {
-    let mut est = WindowEstimator::new(100, EvictionPolicy::Fsrs);
+    let mut est = WindowEstimator::new(100, DropPolicy::Fsrs);
     let _ = est.record("tracked_high_r", 40);
     let _ = est.record("tracked_mid_r", 40);
 
@@ -108,7 +108,7 @@ fn fe1_caller_supplied_low_score_for_new_entry_still_evicts_it() {
 /// because changing it would have far-reaching implications.
 #[test]
 fn fe2_oversize_record_cascade_evicts_everything_including_itself() {
-    let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+    let mut est = WindowEstimator::new(100, DropPolicy::Fifo);
     let _ = est.record("a", 30);
     let _ = est.record("b", 30);
     let _ = est.record("c", 30);

@@ -12,7 +12,7 @@ use ministr_core::index::{HnswIndex, VectorIndex};
 use ministr_core::ingestion::IngestionProgress;
 use ministr_core::service::QueryService;
 use ministr_core::session::prefetch::PrefetchEngine;
-use ministr_core::session::{BudgetConfig, SessionRegistry};
+use ministr_core::session::{SessionRegistry, UsageConfig};
 use ministr_core::storage::{
     BridgeEndpointRecord, BridgeLinkRecord, SqliteStorage, Storage, SymbolRecord, SymbolRefRecord,
 };
@@ -275,7 +275,7 @@ fn build_corpus_handle(
         index,
         service,
         sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
-            BudgetConfig::default(),
+            UsageConfig::default(),
         ))),
         prefetch: Arc::new(tokio::sync::Mutex::new(
             PrefetchEngine::with_default_capacity(),

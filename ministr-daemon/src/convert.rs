@@ -25,7 +25,7 @@ pub fn section_detail(d: ministr_core::service::SectionDetail) -> query::Section
         summary: d.summary,
         claims_available: d.claims_available,
         status: None,
-        budget_status: None,
+        usage_status: None,
     }
 }
 
@@ -156,11 +156,11 @@ pub fn bundle_manifest(
 }
 
 #[must_use]
-pub fn budget_status(
-    b: &ministr_core::session::BudgetStatus,
-) -> ministr_api::session::SessionBudgetResponse {
-    ministr_api::session::SessionBudgetResponse {
-        pressure_level: format!("{:?}", b.pressure_level).to_lowercase(),
+pub fn usage_status(
+    b: &ministr_core::session::UsageStatus,
+) -> ministr_api::session::SessionUsageResponse {
+    ministr_api::session::SessionUsageResponse {
+        level: format!("{:?}", b.level).to_lowercase(),
         tokens_used: b.tokens_used,
         tokens_remaining: b.tokens_remaining,
         utilization: b.utilization,

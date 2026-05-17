@@ -94,7 +94,7 @@ async fn test_concurrent_session_isolation() {
 
                 // Check budget.
                 let budget = client
-                    .session_budget(&corpus_id, &session.session_id)
+                    .session_usage(&corpus_id, &session.session_id)
                     .await
                     .unwrap();
                 assert_eq!(budget.tokens_used, 0);

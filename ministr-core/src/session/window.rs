@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
-use super::types::EvictionPolicy;
+use super::types::DropPolicy;
 
 /// A record of a single delivery in the window estimator.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,14 +26,14 @@ struct WindowEntry {
 ///
 /// Maintains an ordered queue of deliveries and tracks cumulative token usage.
 /// When the estimated usage exceeds the window capacity, entries are evicted
-/// according to the configured [`EvictionPolicy`].
+/// according to the configured [`DropPolicy`].
 ///
 /// # Examples
 ///
 /// ```
-/// use ministr_core::session::{WindowEstimator, EvictionPolicy};
+/// use ministr_core::session::{WindowEstimator, DropPolicy};
 ///
-/// let mut estimator = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+/// let mut estimator = WindowEstimator::new(1000, DropPolicy::Fifo);
 ///
 /// estimator.record("s1", 300);
 /// estimator.record("s2", 400);
@@ -48,7 +48,7 @@ pub struct WindowEstimator {
     /// Maximum context window capacity in tokens.
     capacity: usize,
     /// Eviction policy to apply when capacity is exceeded.
-    policy: EvictionPolicy,
+    policy: DropPolicy,
     /// Ordered queue of deliveries (front = oldest).
     entries: VecDeque<WindowEntry>,
     /// Current total token count in the estimated window.
@@ -77,7 +77,7 @@ pub struct WindowStatus {
 impl WindowEstimator {
     /// Create a new window estimator with the given capacity and eviction policy.
     #[must_use]
-    pub fn new(capacity: usize, policy: EvictionPolicy) -> Self {
+    pub fn new(capacity: usize, policy: DropPolicy) -> Self {
         Self {
             capacity,
             policy,
@@ -102,7 +102,7 @@ impl WindowEstimator {
 
     /// Record a delivery with optional FSRS retrievability scores.
     ///
-    /// Under [`EvictionPolicy::Fsrs`], eviction selects the entry with the
+    /// Under [`DropPolicy::Fsrs`], eviction selects the entry with the
     /// lowest retrievability score instead of the oldest entry.
     /// FIFO and LRU policies ignore the scores.
     pub fn record_with_scores(
@@ -141,7 +141,7 @@ impl WindowEstimator {
     /// Moves the entry to the back of the queue so it won't be evicted soon.
     /// No-op under FIFO policy.
     pub fn touch(&mut self, content_id: &str) {
-        if self.policy != EvictionPolicy::Lru {
+        if self.policy != DropPolicy::Lru {
             return;
         }
 
@@ -205,7 +205,7 @@ impl WindowEstimator {
     /// Force-evict a specific content ID from the window.
     ///
     /// Used when the agent signals that content has been dropped from its context
-    /// (either explicitly via `ministr_evicted` or implicitly via re-request).
+    /// (either explicitly via `ministr_dropped` or implicitly via re-request).
     /// Returns `true` if the content was found and removed.
     pub fn force_evict(&mut self, content_id: &str) -> bool {
         if let Some(pos) = self.entries.iter().position(|e| e.content_id == content_id)
@@ -238,7 +238,7 @@ impl WindowEstimator {
         let mut evicted_ids = Vec::new();
         while self.current_tokens > self.capacity {
             let victim = match (&self.policy, scores) {
-                (EvictionPolicy::Fsrs, Some(s)) if !self.entries.is_empty() => {
+                (DropPolicy::Fsrs, Some(s)) if !self.entries.is_empty() => {
                     // Find the entry with the lowest retrievability, giving
                     // the freshly-inserted entry (if any) an implicit R=1.0.
                     let score_for = |id: &str| -> f64 {
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn new_estimator_is_empty() {
-        let est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        let est = WindowEstimator::new(1000, DropPolicy::Fifo);
         assert_eq!(est.estimated_used(), 0);
         assert_eq!(est.estimated_remaining(), 1000);
         assert_eq!(est.capacity(), 1000);
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn record_tracks_tokens() {
-        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(1000, DropPolicy::Fifo);
 
         let _ = est.record("s1", 300);
         assert_eq!(est.estimated_used(), 300);
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn fifo_eviction_when_over_capacity() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(500, DropPolicy::Fifo);
 
         let _ = est.record("s1", 200);
         let _ = est.record("s2", 200);
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn fifo_evicts_multiple_entries() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(500, DropPolicy::Fifo);
 
         let _ = est.record("s1", 100);
         let _ = est.record("s2", 100);
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn lru_touch_prevents_eviction() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Lru);
+        let mut est = WindowEstimator::new(500, DropPolicy::Lru);
 
         let _ = est.record("s1", 200);
         let _ = est.record("s2", 200);
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn touch_is_noop_for_fifo() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(500, DropPolicy::Fifo);
 
         let _ = est.record("s1", 200);
         let _ = est.record("s2", 200);
@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn re_recording_updates_existing_entry() {
-        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(1000, DropPolicy::Fifo);
 
         let _ = est.record("s1", 300);
         let _ = est.record("s2", 200);
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn status_snapshot() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(500, DropPolicy::Fifo);
         let _ = est.record("s1", 200);
         let _ = est.record("s2", 200);
 
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn status_after_eviction() {
-        let mut est = WindowEstimator::new(300, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(300, DropPolicy::Fifo);
         let _ = est.record("s1", 200);
         let _ = est.record("s2", 200);
 
@@ -416,13 +416,13 @@ mod tests {
 
     #[test]
     fn is_in_window_for_absent_content() {
-        let est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        let est = WindowEstimator::new(1000, DropPolicy::Fifo);
         assert!(!est.is_in_window("nonexistent"));
     }
 
     #[test]
     fn large_single_entry_evicts_everything() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(500, DropPolicy::Fifo);
         let _ = est.record("s1", 100);
         let _ = est.record("s2", 100);
 
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn touch_nonexistent_is_noop() {
-        let mut est = WindowEstimator::new(1000, EvictionPolicy::Lru);
+        let mut est = WindowEstimator::new(1000, DropPolicy::Lru);
         let _ = est.record("s1", 100);
         est.touch("nonexistent"); // Should not panic
         assert_eq!(est.estimated_used(), 100);
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn lru_multiple_touches_reorder() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Lru);
+        let mut est = WindowEstimator::new(500, DropPolicy::Lru);
 
         let _ = est.record("s1", 150);
         let _ = est.record("s2", 150);
@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn re_recording_moves_to_back() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(500, DropPolicy::Fifo);
 
         let _ = est.record("s1", 150);
         let _ = est.record("s2", 150);
@@ -510,7 +510,7 @@ mod tests {
 
     #[test]
     fn exact_capacity_no_eviction() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(500, DropPolicy::Fifo);
 
         let _ = est.record("s1", 200);
         let _ = est.record("s2", 300);
@@ -525,7 +525,7 @@ mod tests {
 
     #[test]
     fn one_over_capacity_triggers_eviction() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(500, DropPolicy::Fifo);
 
         let _ = est.record("s1", 200);
         let _ = est.record("s2", 301);
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn zero_capacity_evicts_everything() {
-        let mut est = WindowEstimator::new(0, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(0, DropPolicy::Fifo);
 
         let _ = est.record("s1", 10);
         // 10 > 0, evict s1 -> 0
@@ -550,7 +550,7 @@ mod tests {
 
     #[test]
     fn many_small_entries_then_one_large() {
-        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(100, DropPolicy::Fifo);
 
         for i in 0..10 {
             let _ = est.record(&format!("s{i}"), 10);
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn window_status_consistency_after_many_operations() {
-        let mut est = WindowEstimator::new(200, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(200, DropPolicy::Fifo);
 
         // Series of records and re-records
         let _ = est.record("a", 50);
@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn lru_touch_then_fifo_eviction_order() {
         // Touch should be no-op for FIFO
-        let mut est = WindowEstimator::new(300, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(300, DropPolicy::Fifo);
 
         let _ = est.record("s1", 100);
         let _ = est.record("s2", 100);
@@ -610,7 +610,7 @@ mod tests {
 
     #[test]
     fn zero_token_record() {
-        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(100, DropPolicy::Fifo);
 
         let _ = est.record("empty", 0);
         assert!(est.is_in_window("empty"));
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn estimated_remaining_saturates_at_zero() {
-        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(100, DropPolicy::Fifo);
 
         let _ = est.record("s1", 100);
         assert_eq!(est.estimated_remaining(), 0);
@@ -633,7 +633,7 @@ mod tests {
 
     #[test]
     fn force_evict_removes_entry_and_frees_tokens() {
-        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(1000, DropPolicy::Fifo);
 
         let _ = est.record("s1", 300);
         let _ = est.record("s2", 200);
@@ -649,7 +649,7 @@ mod tests {
 
     #[test]
     fn force_evict_nonexistent_returns_false() {
-        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(1000, DropPolicy::Fifo);
         let _ = est.record("s1", 100);
 
         let removed = est.force_evict("nonexistent");
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn force_evict_already_evicted_returns_false() {
-        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(100, DropPolicy::Fifo);
         let _ = est.record("s1", 60);
         let _ = est.record("s2", 60);
         // s1 auto-evicted (120 > 100)
@@ -671,7 +671,7 @@ mod tests {
 
     #[test]
     fn force_evict_middle_entry() {
-        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(1000, DropPolicy::Fifo);
         let _ = est.record("s1", 100);
         let _ = est.record("s2", 200);
         let _ = est.record("s3", 300);
@@ -685,7 +685,7 @@ mod tests {
 
     #[test]
     fn force_evict_updates_status() {
-        let mut est = WindowEstimator::new(500, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(500, DropPolicy::Fifo);
         let _ = est.record("s1", 200);
         let _ = est.record("s2", 200);
 
@@ -700,7 +700,7 @@ mod tests {
 
     #[test]
     fn record_returns_evicted_ids() {
-        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(100, DropPolicy::Fifo);
 
         // Fill to capacity — no eviction yet
         let evicted = est.record("s1", 60);
@@ -716,7 +716,7 @@ mod tests {
 
     #[test]
     fn record_returns_multiple_evicted_ids() {
-        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(100, DropPolicy::Fifo);
 
         let _ = est.record("s1", 30);
         let _ = est.record("s2", 30);
@@ -730,7 +730,7 @@ mod tests {
 
     #[test]
     fn evict_to_capacity_returns_empty_when_under_capacity() {
-        let mut est = WindowEstimator::new(1000, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(1000, DropPolicy::Fifo);
         let _ = est.record("s1", 100);
         // Under capacity — no eviction
         let evicted = est.record("s2", 100);
@@ -741,7 +741,7 @@ mod tests {
 
     #[test]
     fn fsrs_evicts_lowest_retrievability_first() {
-        let mut est = WindowEstimator::new(100, EvictionPolicy::Fsrs);
+        let mut est = WindowEstimator::new(100, DropPolicy::Fsrs);
         let _ = est.record("a", 40);
         let _ = est.record("b", 40);
 
@@ -757,7 +757,7 @@ mod tests {
 
     #[test]
     fn fsrs_without_scores_falls_back_to_fifo() {
-        let mut est = WindowEstimator::new(100, EvictionPolicy::Fsrs);
+        let mut est = WindowEstimator::new(100, DropPolicy::Fsrs);
         let _ = est.record("a", 40);
         let _ = est.record("b", 40);
 
@@ -768,7 +768,7 @@ mod tests {
 
     #[test]
     fn fifo_ignores_scores() {
-        let mut est = WindowEstimator::new(100, EvictionPolicy::Fifo);
+        let mut est = WindowEstimator::new(100, DropPolicy::Fifo);
         let _ = est.record("a", 40);
         let _ = est.record("b", 40);
 
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn fsrs_unknown_content_gets_zero_retrievability() {
-        let mut est = WindowEstimator::new(100, EvictionPolicy::Fsrs);
+        let mut est = WindowEstimator::new(100, DropPolicy::Fsrs);
         let _ = est.record("known", 40);
         let _ = est.record("unknown", 40);
 

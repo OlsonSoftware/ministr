@@ -342,7 +342,7 @@ impl DaemonClient {
     /// Read a section with session tracking (records delivery in budget).
     ///
     /// Like [`read_section`](Self::read_section) but also records the delivery
-    /// in the session shadow and budget tracker so `session_budget` reflects
+    /// in the session shadow and budget tracker so `session_usage` reflects
     /// actual token usage.
     ///
     /// # Errors
@@ -520,13 +520,13 @@ impl DaemonClient {
     /// # Errors
     ///
     /// Returns [`ClientError`] on connection, request, or deserialization failure.
-    pub async fn session_budget(
+    pub async fn session_usage(
         &self,
         corpus_id: &str,
         session_id: &str,
-    ) -> Result<crate::session::SessionBudgetResponse, ClientError> {
+    ) -> Result<crate::session::SessionUsageResponse, ClientError> {
         self.get(&format!(
-            "/api/v1/corpora/{corpus_id}/sessions/{session_id}/budget"
+            "/api/v1/corpora/{corpus_id}/sessions/{session_id}/usage"
         ))
         .await
     }
@@ -567,14 +567,14 @@ impl DaemonClient {
     /// # Errors
     ///
     /// Returns [`ClientError`] on connection, request, or deserialization failure.
-    pub async fn evict_content(
+    pub async fn drop_content(
         &self,
         corpus_id: &str,
         session_id: &str,
-        req: &crate::session::EvictRequest,
-    ) -> Result<crate::session::EvictResponse, ClientError> {
+        req: &crate::session::DropRequest,
+    ) -> Result<crate::session::DropResponse, ClientError> {
         self.post(
-            &format!("/api/v1/corpora/{corpus_id}/sessions/{session_id}/evicted"),
+            &format!("/api/v1/corpora/{corpus_id}/sessions/{session_id}/dropped"),
             req,
         )
         .await

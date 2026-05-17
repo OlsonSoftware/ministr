@@ -24,7 +24,7 @@ use super::types::{DeliveredItem, Session};
 
 /// A candidate for eviction from the agent's context window.
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
-pub struct EvictionCandidate {
+pub struct DropCandidate {
     /// The content ID of the item to evict.
     pub content_id: String,
     /// Human-readable reason for the eviction recommendation.
@@ -36,7 +36,7 @@ pub struct EvictionCandidate {
     /// Breakdown of individual factor scores (for explainability).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
-    pub factors: Option<EvictionFactors>,
+    pub factors: Option<DropFactors>,
 }
 
 /// Individual factor scores that compose the eviction score.
@@ -44,7 +44,7 @@ pub struct EvictionCandidate {
 /// All values are in `[0.0, 1.0]`. Higher = stronger signal to evict
 /// (except `salience`, which is inverted: high salience = keep).
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
-pub struct EvictionFactors {
+pub struct DropFactors {
     /// Recency/forgetting factor (1.0 = very old, 0.0 = just accessed).
     pub recency: f64,
     /// Token weight factor (1.0 = largest item, 0.0 = smallest).
@@ -82,14 +82,14 @@ pub struct EvictionFactors {
 /// # Examples
 ///
 /// ```
-/// use ministr_core::session::{Session, SessionId, EvictionPolicy};
-/// use ministr_core::session::eviction::EvictionRanker;
+/// use ministr_core::session::{Session, SessionId, DropPolicy};
+/// use ministr_core::session::drops::DropRanker;
 /// use ministr_core::types::{ContentId, Resolution};
 ///
 /// let mut session = Session::new(
 ///     SessionId::from("test".to_string()),
 ///     100_000,
-///     EvictionPolicy::Fifo,
+///     DropPolicy::Fifo,
 /// );
 ///
 /// session.record_delivery(
@@ -107,14 +107,14 @@ pub struct EvictionFactors {
 ///     "hash2".to_string(),
 /// );
 ///
-/// let candidates = EvictionRanker::rank(&session, 5, None);
+/// let candidates = DropRanker::rank(&session, 5, None);
 /// assert!(!candidates.is_empty());
 /// // Old section should rank higher (better eviction candidate)
 /// assert_eq!(candidates[0].content_id, "old-section");
 /// ```
-pub struct EvictionRanker;
+pub struct DropRanker;
 
-impl EvictionRanker {
+impl DropRanker {
     /// Rank delivered items by eviction priority.
     ///
     /// When a [`MemoryTracker`] is provided, the recency factor uses FSRS
@@ -132,7 +132,7 @@ impl EvictionRanker {
         session: &Session,
         max_candidates: usize,
         memory: Option<&super::memory::MemoryTracker>,
-    ) -> Vec<EvictionCandidate> {
+    ) -> Vec<DropCandidate> {
         let current_turn = session.current_turn();
         let items: Vec<&DeliveredItem> = session.delivered_items().collect();
 
@@ -168,7 +168,7 @@ impl EvictionRanker {
         sorted_items.sort_by_key(|item| item.turn_delivered);
 
         // Pass 1: compute base scores with factor breakdown (without contiguity)
-        let scored: Vec<(f64, EvictionFactors)> = sorted_items
+        let scored: Vec<(f64, DropFactors)> = sorted_items
             .iter()
             .map(|item| {
                 Self::compute_base_score(
@@ -185,13 +185,13 @@ impl EvictionRanker {
 
         let base_scores: Vec<f64> = scored.iter().map(|(s, _)| *s).collect();
 
-        let mut candidates: Vec<EvictionCandidate> = sorted_items
+        let mut candidates: Vec<DropCandidate> = sorted_items
             .iter()
             .zip(&scored)
             .map(|(item, (score, factors))| {
                 let reason =
                     Self::describe_reason(item, current_turn, min_turn, max_turn, &task_keywords);
-                EvictionCandidate {
+                DropCandidate {
                     content_id: item.content_id.0.clone(),
                     reason,
                     tokens_recoverable: item.token_count,
@@ -233,7 +233,7 @@ impl EvictionRanker {
         max_turn: u32,
         memory: Option<&super::memory::MemoryTracker>,
         task_keywords: &[String],
-    ) -> (f64, EvictionFactors) {
+    ) -> (f64, DropFactors) {
         const RECENCY_WEIGHT: f64 = 0.30;
         const TOKEN_WEIGHT: f64 = 0.15;
         const POSITION_WEIGHT: f64 = 0.15;
@@ -288,7 +288,7 @@ impl EvictionRanker {
             + resolution_score * RESOLUTION_WEIGHT
             + salience_score * SALIENCE_WEIGHT;
 
-        let factors = EvictionFactors {
+        let factors = DropFactors {
             recency,
             token_weight: token_score,
             position: position_score,
@@ -311,7 +311,7 @@ impl EvictionRanker {
     /// The bonus for each item is the average base score of its immediate
     /// neighbors (previous and next in turn order), weighted by
     /// `CONTIGUITY_WEIGHT`.
-    fn apply_contiguity_bonus(candidates: &mut [EvictionCandidate], base_scores: &[f64]) {
+    fn apply_contiguity_bonus(candidates: &mut [DropCandidate], base_scores: &[f64]) {
         const CONTIGUITY_WEIGHT: f64 = 0.1;
 
         if candidates.len() <= 1 {
@@ -464,7 +464,7 @@ fn extract_task_keywords(queries: &VecDeque<String>) -> Vec<String> {
 /// Returns 0.0 (no salience) to 1.0 (highly salient). Uses keyword overlap
 /// between the content ID (typically a file path or heading path) and the
 /// extracted task keywords. This is a cheap heuristic — content IDs in ministr
-/// encode semantic meaning (e.g., "session/eviction.rs#EvictionRanker").
+/// encode semantic meaning (e.g., "session/eviction.rs#DropRanker").
 fn salience_for_item(content_id: &str, task_keywords: &[String]) -> f64 {
     if task_keywords.is_empty() {
         return 0.0;
@@ -484,14 +484,14 @@ fn salience_for_item(content_id: &str, task_keywords: &[String]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{EvictionPolicy, SessionId};
+    use crate::session::{DropPolicy, SessionId};
     use crate::types::{ContentId, Resolution};
 
     fn make_session() -> Session {
         Session::new(
             SessionId::from("test-eviction".to_string()),
             100_000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         )
     }
 
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn empty_session_returns_no_candidates() {
         let session = make_session();
-        let candidates = EvictionRanker::rank(&session, 5, None);
+        let candidates = DropRanker::rank(&session, 5, None);
         assert!(candidates.is_empty());
     }
 
@@ -510,7 +510,7 @@ mod tests {
     fn zero_max_candidates_returns_empty() {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
-        let candidates = EvictionRanker::rank(&session, 0, None);
+        let candidates = DropRanker::rank(&session, 0, None);
         assert!(candidates.is_empty());
     }
 
@@ -521,7 +521,7 @@ mod tests {
         session.record_delivery(&cid("old"), Resolution::Section, 200, 1, "h1".into());
         session.record_delivery(&cid("recent"), Resolution::Section, 200, 10, "h2".into());
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
         assert_eq!(candidates.len(), 2);
         assert_eq!(
             candidates[0].content_id, "old",
@@ -537,7 +537,7 @@ mod tests {
         session.record_delivery(&cid("small"), Resolution::Section, 50, 5, "h1".into());
         session.record_delivery(&cid("large"), Resolution::Section, 2000, 5, "h2".into());
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
         assert_eq!(candidates.len(), 2);
         assert_eq!(
             candidates[0].content_id, "large",
@@ -553,7 +553,7 @@ mod tests {
         session.record_delivery(&cid("claim"), Resolution::Claim, 100, 5, "h1".into());
         session.record_delivery(&cid("summary"), Resolution::Summary, 100, 5, "h2".into());
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
         assert_eq!(candidates.len(), 2);
         assert_eq!(
             candidates[0].content_id, "summary",
@@ -575,7 +575,7 @@ mod tests {
             );
         }
 
-        let candidates = EvictionRanker::rank(&session, 3, None);
+        let candidates = DropRanker::rank(&session, 3, None);
         assert_eq!(candidates.len(), 3);
     }
 
@@ -584,7 +584,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 350, 1, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 5, None);
+        let candidates = DropRanker::rank(&session, 5, None);
         assert_eq!(candidates[0].tokens_recoverable, 350);
     }
 
@@ -595,7 +595,7 @@ mod tests {
         // Advance turn significantly
         session.record_delivery(&cid("new"), Resolution::Claim, 10, 10, "h2".into());
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
         let old_candidate = candidates.iter().find(|c| c.content_id == "old").unwrap();
         assert!(
             old_candidate.reason.contains("stale"),
@@ -609,7 +609,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("big"), Resolution::Section, 1000, 1, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 5, None);
+        let candidates = DropRanker::rank(&session, 5, None);
         assert!(
             candidates[0].reason.contains("Large")
                 || candidates[0].reason.contains("stale")
@@ -624,7 +624,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("only"), Resolution::Section, 300, 1, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 5, None);
+        let candidates = DropRanker::rank(&session, 5, None);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].content_id, "only");
     }
@@ -660,7 +660,7 @@ mod tests {
         // Advance turn
         session.record_delivery(&cid("current"), Resolution::Claim, 10, 10, "h4".into());
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
         assert_eq!(
             candidates[0].content_id, "old-big-summary",
             "old + large + summary should be the top eviction candidate"
@@ -672,7 +672,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 100, 0, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 5, None);
+        let candidates = DropRanker::rank(&session, 5, None);
         for c in &candidates {
             assert!(c.score >= 0.0, "score should be non-negative: {}", c.score);
         }
@@ -680,12 +680,12 @@ mod tests {
 
     #[test]
     fn candidate_serializes_to_json() {
-        let candidate = EvictionCandidate {
+        let candidate = DropCandidate {
             content_id: "test-id".into(),
             reason: "stale content".into(),
             tokens_recoverable: 200,
             score: 0.75,
-            factors: Some(EvictionFactors {
+            factors: Some(DropFactors {
                 recency: 0.8,
                 token_weight: 0.5,
                 position: 0.3,
@@ -704,7 +704,7 @@ mod tests {
 
     #[test]
     fn candidate_without_factors_omits_field() {
-        let candidate = EvictionCandidate {
+        let candidate = DropCandidate {
             content_id: "test-id".into(),
             reason: "stale content".into(),
             tokens_recoverable: 200,
@@ -727,7 +727,7 @@ mod tests {
         session.record_delivery(&cid("middle"), Resolution::Section, 200, 5, "h2".into());
         session.record_delivery(&cid("end"), Resolution::Section, 200, 10, "h3".into());
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
 
         // Find scores for each
         let _start_score = candidates
@@ -758,7 +758,7 @@ mod tests {
     #[test]
     fn position_score_is_zero_for_single_item() {
         // Single item means no position spread — position score should be 0
-        let score = EvictionRanker::position_score(5, 5, 5);
+        let score = DropRanker::position_score(5, 5, 5);
         assert!(
             (score - 0.0).abs() < f64::EPSILON,
             "position score should be 0 for single turn: {score}"
@@ -768,7 +768,7 @@ mod tests {
     #[test]
     fn position_score_peaks_at_middle() {
         // Turn 5 is exactly in the middle of [0, 10]
-        let score = EvictionRanker::position_score(5, 0, 10);
+        let score = DropRanker::position_score(5, 0, 10);
         assert!(
             (score - 1.0).abs() < f64::EPSILON,
             "position score should be 1.0 at exact middle: {score}"
@@ -777,8 +777,8 @@ mod tests {
 
     #[test]
     fn position_score_is_zero_at_boundaries() {
-        let start_score = EvictionRanker::position_score(0, 0, 10);
-        let end_score = EvictionRanker::position_score(10, 0, 10);
+        let start_score = DropRanker::position_score(0, 0, 10);
+        let end_score = DropRanker::position_score(10, 0, 10);
 
         assert!(
             start_score.abs() < f64::EPSILON,
@@ -793,8 +793,8 @@ mod tests {
     #[test]
     fn position_score_is_symmetric() {
         // 25% from start == 25% from end
-        let score_quarter = EvictionRanker::position_score(25, 0, 100);
-        let score_three_quarter = EvictionRanker::position_score(75, 0, 100);
+        let score_quarter = DropRanker::position_score(25, 0, 100);
+        let score_three_quarter = DropRanker::position_score(75, 0, 100);
 
         assert!(
             (score_quarter - score_three_quarter).abs() < f64::EPSILON,
@@ -817,7 +817,7 @@ mod tests {
             );
         }
 
-        let candidates = EvictionRanker::rank(&session, 20, None);
+        let candidates = DropRanker::rank(&session, 20, None);
         // Items around turn 10 (middle) should mention mid-context in reason
         let mid_candidate = candidates.iter().find(|c| c.content_id == "s10").unwrap();
         assert!(
@@ -830,8 +830,8 @@ mod tests {
     #[test]
     fn two_items_have_zero_position_scores() {
         // With only 2 items at turns 0 and 10, both are at boundaries
-        let score_start = EvictionRanker::position_score(0, 0, 10);
-        let score_end = EvictionRanker::position_score(10, 0, 10);
+        let score_start = DropRanker::position_score(0, 0, 10);
+        let score_end = DropRanker::position_score(10, 0, 10);
 
         assert!(score_start.abs() < f64::EPSILON);
         assert!(score_end.abs() < f64::EPSILON);
@@ -851,7 +851,7 @@ mod tests {
         // One isolated item far away
         session.record_delivery(&cid("lone"), Resolution::Section, 200, 20, "h4".into());
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
 
         // Find scores for adjacent group vs isolated item
         let a_score = candidates
@@ -885,7 +885,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("only"), Resolution::Section, 200, 1, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 5, None);
+        let candidates = DropRanker::rank(&session, 5, None);
         assert_eq!(candidates.len(), 1);
         // Single item has no neighbors, so contiguity bonus should be 0
         // Score should equal the base score only
@@ -902,7 +902,7 @@ mod tests {
         // Recent, small, claim — poor eviction candidate
         session.record_delivery(&cid("new"), Resolution::Claim, 20, 20, "h3".into());
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
 
         // Old summaries should still rank above the new claim even with contiguity
         let new_score = candidates
@@ -924,9 +924,9 @@ mod tests {
 
     #[test]
     fn apply_contiguity_bonus_empty_is_noop() {
-        let mut candidates: Vec<EvictionCandidate> = Vec::new();
+        let mut candidates: Vec<DropCandidate> = Vec::new();
         let base_scores: Vec<f64> = Vec::new();
-        EvictionRanker::apply_contiguity_bonus(&mut candidates, &base_scores);
+        DropRanker::apply_contiguity_bonus(&mut candidates, &base_scores);
         assert!(candidates.is_empty());
     }
 
@@ -963,14 +963,14 @@ mod tests {
 
     #[test]
     fn salience_for_item_returns_zero_with_no_keywords() {
-        let score = salience_for_item("session/eviction.rs#EvictionRanker", &[]);
+        let score = salience_for_item("session/eviction.rs#DropRanker", &[]);
         assert!((score - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn salience_for_item_matches_path_segments() {
         let kw = vec!["eviction".into(), "ranker".into(), "session".into()];
-        let score = salience_for_item("session/eviction.rs#EvictionRanker", &kw);
+        let score = salience_for_item("session/eviction.rs#DropRanker", &kw);
         assert!(
             score > 0.9,
             "3+ keyword matches should yield near-1.0 salience: {score}"
@@ -980,7 +980,7 @@ mod tests {
     #[test]
     fn salience_for_item_partial_match() {
         let kw = vec!["scaffold".into(), "hooks".into(), "cursor".into()];
-        let score = salience_for_item("session/eviction.rs#EvictionRanker", &kw);
+        let score = salience_for_item("session/eviction.rs#DropRanker", &kw);
         assert!(
             score < 0.1,
             "no keyword overlap should yield near-0 salience: {score}"
@@ -993,7 +993,7 @@ mod tests {
 
         // Two items: same age, size, resolution — only path differs
         session.record_delivery(
-            &cid("session/eviction.rs#EvictionRanker"),
+            &cid("session/eviction.rs#DropRanker"),
             Resolution::Section,
             200,
             5,
@@ -1010,10 +1010,10 @@ mod tests {
         // Record queries about eviction
         session.record_query("eviction ranker session");
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
         let eviction_score = candidates
             .iter()
-            .find(|c| c.content_id == "session/eviction.rs#EvictionRanker")
+            .find(|c| c.content_id == "session/eviction.rs#DropRanker")
             .unwrap()
             .score;
         let readme_score = candidates
@@ -1032,7 +1032,7 @@ mod tests {
     fn salience_reason_mentions_task_relevant() {
         let mut session = make_session();
         session.record_delivery(
-            &cid("session/eviction.rs#EvictionRanker"),
+            &cid("session/eviction.rs#DropRanker"),
             Resolution::Section,
             200,
             1,
@@ -1040,7 +1040,7 @@ mod tests {
         );
         session.record_query("eviction ranker session scoring");
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
         let candidate = &candidates[0];
         assert!(
             candidate.reason.contains("Task-relevant") || candidate.reason.contains("protected"),
@@ -1056,7 +1056,7 @@ mod tests {
         session.record_delivery(&cid("s2"), Resolution::Section, 200, 5, "h2".into());
 
         // No queries recorded — salience should not affect ordering
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
         assert_eq!(candidates.len(), 2);
         // Older item still ranks higher
         assert_eq!(
@@ -1073,7 +1073,7 @@ mod tests {
         session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
         session.record_delivery(&cid("s2"), Resolution::Summary, 500, 5, "h2".into());
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
         for c in &candidates {
             let factors = c
                 .factors
@@ -1093,7 +1093,7 @@ mod tests {
         let mut session = make_session();
         session.record_delivery(&cid("s1"), Resolution::Section, 200, 1, "h1".into());
 
-        let candidates = EvictionRanker::rank(&session, 10, None);
+        let candidates = DropRanker::rank(&session, 10, None);
         let c = &candidates[0];
         let factors = c.factors.as_ref().unwrap();
 

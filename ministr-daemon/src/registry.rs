@@ -21,7 +21,7 @@ use ministr_core::index::{HnswIndex, VectorIndex, VectorIndexLoad};
 use ministr_core::ingestion::IngestionProgress;
 use ministr_core::service::QueryService;
 use ministr_core::session::prefetch::PrefetchEngine;
-use ministr_core::session::{BudgetConfig, SessionRegistry};
+use ministr_core::session::{SessionRegistry, UsageConfig};
 use ministr_core::storage::{SqliteStorage, Storage};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -771,7 +771,7 @@ impl CorpusRegistry {
             index,
             service,
             sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
-                BudgetConfig::default(),
+                UsageConfig::default(),
             ))),
             prefetch: Arc::new(tokio::sync::Mutex::new(
                 PrefetchEngine::with_default_capacity(),

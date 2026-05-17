@@ -7,7 +7,7 @@
 use serde::Serialize;
 
 use ministr_core::session::{
-    AccessMode, BudgetStatus, CompressionTier, SessionEntry, SessionId, SessionRegistry,
+    AccessMode, CompressionTier, SessionEntry, SessionId, SessionRegistry, UsageStatus,
 };
 use ministr_core::token::count_tokens;
 use ministr_core::types::{ContentId, Resolution};
@@ -65,7 +65,7 @@ impl MinistrServer {
         section_id: &str,
         text: &str,
         content_hash: String,
-    ) -> BudgetStatus {
+    ) -> UsageStatus {
         let token_count = count_tokens(text);
         let content_id = ContentId(section_id.to_string());
         let mut reg = self.registry.lock().await;
@@ -80,7 +80,7 @@ impl MinistrServer {
         );
         let evicted_ids = entry.budget.record_tokens(section_id, token_count);
 
-        let status = entry.budget.budget_status();
+        let status = entry.budget.usage_status();
         drop(reg);
 
         // Phase 1: bookmark compression for evicted entries.
@@ -131,13 +131,13 @@ impl MinistrServer {
     ///
     /// When budget pressure is elevated or critical, proactively includes
     /// eviction recommendations so the agent can free context tokens without
-    /// having to call `ministr_budget` explicitly.
+    /// having to call `ministr_usage` explicitly.
     pub(super) async fn build_response<T: Serialize + rmcp::schemars::JsonSchema>(
         &self,
         data: T,
-        budget_status: BudgetStatus,
+        usage_status: UsageStatus,
     ) -> ToolResponse<T> {
-        self.build_response_with(data, budget_status, Vec::new())
+        self.build_response_with(data, usage_status, Vec::new())
             .await
     }
 
@@ -151,7 +151,7 @@ impl MinistrServer {
     pub(super) async fn build_response_with<T: Serialize + rmcp::schemars::JsonSchema>(
         &self,
         data: T,
-        budget_status: BudgetStatus,
+        usage_status: UsageStatus,
         extra_next_actions: Vec<NextAction>,
     ) -> ToolResponse<T> {
         let mut reg = self.registry.lock().await;
@@ -159,12 +159,12 @@ impl MinistrServer {
         let alerts = entry.session.drain_alerts();
         drop(reg);
 
-        // Budget pressure is tracked internally (BudgetTracker keeps
+        // Budget pressure is tracked internally (UsageTracker keeps
         // recording for compression/dedup) but never surfaced to the
         // agent — the injected numbers were making agents wrongly think
         // they were out of context. So no eviction recommendations are
         // computed or sent, regardless of pressure level.
-        let eviction_recommendations = Vec::new();
+        let drop_suggestions = Vec::new();
 
         let progress = &self.ingestion_progress;
         let indexing = progress.is_running();
@@ -179,11 +179,11 @@ impl MinistrServer {
         let next_actions = build_next_actions(&alerts, extra_next_actions);
 
         ToolResponse {
-            budget_status,
+            usage_status,
             coherence_alerts: alerts,
             indexing_in_progress: indexing,
             indexing_message,
-            eviction_recommendations,
+            drop_suggestions,
             next_actions,
             result: data,
         }
@@ -263,7 +263,7 @@ mod tests {
         assert!(
             actions
                 .iter()
-                .all(|a| a.action != "ministr_compress" && a.action != "ministr_evicted"),
+                .all(|a| a.action != "ministr_compress" && a.action != "ministr_dropped"),
             "budget pressure must not inject compress/evict next-actions",
         );
         assert_eq!(actions.len(), 1);

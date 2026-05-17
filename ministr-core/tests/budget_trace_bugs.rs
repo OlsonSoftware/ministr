@@ -1,11 +1,11 @@
 //! Regression-guard tests for bugs found in the budget manager /
 //! eviction ranker trace.
 
-use ministr_core::session::eviction::EvictionRanker;
-use ministr_core::session::{EvictionPolicy, Session, SessionId};
+use ministr_core::session::drops::DropRanker;
+use ministr_core::session::{DropPolicy, Session, SessionId};
 use ministr_core::types::{ContentId, Resolution};
 
-/// BG1 — Before the fix, `EvictionRanker::compute_base_score` did raw
+/// BG1 — Before the fix, `DropRanker::compute_base_score` did raw
 /// `u32 - u32` on `current_turn - item.turn_delivered` with no guard.
 /// `Session::restore` took `current_turn` and `delivered` as independent
 /// arguments with zero validation, so an inconsistent persistence record
@@ -39,7 +39,7 @@ fn bg1_ranker_handles_current_turn_below_turn_delivered() {
     let session = Session::restore(
         SessionId::from("restored".to_string()),
         100_000,
-        EvictionPolicy::Fifo,
+        DropPolicy::Fifo,
         delivered,
         vec![ContentId(cid.to_string())],
         5, // current_turn < turn_delivered
@@ -47,7 +47,7 @@ fn bg1_ranker_handles_current_turn_below_turn_delivered() {
 
     // Pre-fix: this line panics (debug) or returns nonsense scores (release).
     // Post-fix: returns a single candidate with recency clamped to 0.0.
-    let candidates = EvictionRanker::rank(&session, 5, None);
+    let candidates = DropRanker::rank(&session, 5, None);
 
     assert_eq!(candidates.len(), 1);
     let factors = candidates[0].factors.as_ref().expect("factors present");
@@ -91,13 +91,13 @@ fn bg1_zero_current_turn_short_circuit_is_safe() {
     let session = Session::restore(
         SessionId::from("restored-zero".to_string()),
         100_000,
-        EvictionPolicy::Fifo,
+        DropPolicy::Fifo,
         delivered,
         vec![ContentId(cid.to_string())],
         0,
     );
 
-    let candidates = EvictionRanker::rank(&session, 5, None);
+    let candidates = DropRanker::rank(&session, 5, None);
     assert_eq!(candidates.len(), 1);
     let factors = candidates[0].factors.as_ref().unwrap();
     assert!(

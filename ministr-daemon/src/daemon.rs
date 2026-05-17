@@ -69,16 +69,16 @@ pub fn router(state: AppState) -> Router {
             post(create_session).delete(clear_sessions),
         )
         .route(
-            "/api/v1/corpora/{id}/sessions/{sid}/budget",
-            get(session_budget),
+            "/api/v1/corpora/{id}/sessions/{sid}/usage",
+            get(session_usage),
         )
         .route(
             "/api/v1/corpora/{id}/sessions/{sid}/read/{section}",
             get(session_read_section),
         )
         .route(
-            "/api/v1/corpora/{id}/sessions/{sid}/evicted",
-            post(evict_content),
+            "/api/v1/corpora/{id}/sessions/{sid}/dropped",
+            post(drop_content),
         )
         .route(
             "/api/v1/corpora/{id}/sessions/{sid}",
@@ -409,7 +409,7 @@ async fn survey(
             let body = query::SurveyResponse {
                 results: results.into_iter().map(convert::survey_result).collect(),
                 deduplicated_count: None,
-                budget_status: None,
+                usage_status: None,
             };
             if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "survey", response_tokens(&body)).await;
@@ -563,7 +563,7 @@ async fn read_section(
 
 /// Session-aware read: records delivery in the session shadow + budget tracker.
 ///
-/// Used by the MCP proxy so that `ministr_budget` reflects actual token usage.
+/// Used by the MCP proxy so that `ministr_usage` reflects actual token usage.
 async fn session_read_section(
     State(state): State<AppState>,
     Path((id, sid, section)): Path<(String, String, String)>,
@@ -625,7 +625,7 @@ async fn session_read_section(
                     content_hash,
                 );
                 // Populate the FSRS memory tracker so retrievability scores
-                // exist for eviction decisions under `EvictionPolicy::Fsrs`.
+                // exist for eviction decisions under `DropPolicy::Fsrs`.
                 entry.memory.record_access(&section, turn, rating);
                 // Use the memory-aware variant so FSRS actually consults
                 // retrievability. FIFO/LRU ignore the scores, so this call
@@ -1246,9 +1246,9 @@ async fn create_session(
     let data_dir = handle.data_dir.clone();
 
     let mut sessions = handle.sessions.lock().await;
-    let budget_config = ministr_core::session::BudgetConfig {
+    let budget_config = ministr_core::session::UsageConfig {
         max_context_tokens: budget_tokens,
-        ..ministr_core::session::BudgetConfig::default()
+        ..ministr_core::session::UsageConfig::default()
     };
     sessions.get_or_create(&session_id, Some(budget_config), AccessMode::ReadWrite);
     drop(sessions);
@@ -1274,7 +1274,7 @@ async fn create_session(
         .into_response()
 }
 
-async fn session_budget(
+async fn session_usage(
     State(state): State<AppState>,
     Path((id, sid)): Path<(String, String)>,
 ) -> impl IntoResponse {
@@ -1284,7 +1284,7 @@ async fn session_budget(
     // If session exists in memory but budget is 0, try reconstructing from
     // persisted delivered items (handles daemon restart with stale budget).
     if let Some(entry) = sessions.get_session_mut(&sid) {
-        let status = entry.budget.budget_status();
+        let status = entry.budget.usage_status();
         if status.tokens_used == 0 && entry.session.delivered_count() > 0 {
             // Budget was reset (daemon restart) but session has deliveries.
             // Replay delivered items to reconstruct the budget.
@@ -1294,8 +1294,8 @@ async fn session_budget(
                     .record_tokens(item.content_id.as_ref(), item.token_count);
             }
         }
-        let status = entry.budget.budget_status();
-        return Json(convert::budget_status(&status)).into_response();
+        let status = entry.budget.usage_status();
+        return Json(convert::usage_status(&status)).into_response();
     }
 
     // Session not in memory — try loading from SQLite.
@@ -1308,8 +1308,8 @@ async fn session_budget(
                 .record_tokens(item.content_id.as_ref(), item.token_count);
         }
         entry.session = restored;
-        let status = entry.budget.budget_status();
-        return Json(convert::budget_status(&status)).into_response();
+        let status = entry.budget.usage_status();
+        return Json(convert::usage_status(&status)).into_response();
     }
 
     err(
@@ -1374,30 +1374,30 @@ async fn clear_sessions(
     StatusCode::NO_CONTENT.into_response()
 }
 
-async fn evict_content(
+async fn drop_content(
     State(state): State<AppState>,
     Path((id, sid)): Path<(String, String)>,
-    Json(req): Json<ministr_api::session::EvictRequest>,
+    Json(req): Json<ministr_api::session::DropRequest>,
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
 
     let mut sessions = handle.sessions.lock().await;
     match sessions.get_session_mut(&sid) {
         Some(entry) => {
-            let mut evicted = Vec::new();
+            let mut dropped = Vec::new();
             let mut not_found = Vec::new();
 
             for id_str in &req.content_ids {
                 let content_id = ministr_core::types::ContentId(id_str.clone());
                 if entry.session.remove_delivered(&content_id).is_some() {
                     entry.budget.force_evict(id_str);
-                    evicted.push(id_str.clone());
+                    dropped.push(id_str.clone());
                 } else {
                     not_found.push(id_str.clone());
                 }
             }
 
-            Json(ministr_api::session::EvictResponse { evicted, not_found }).into_response()
+            Json(ministr_api::session::DropResponse { dropped, not_found }).into_response()
         }
         None => err(
             StatusCode::NOT_FOUND,

@@ -16,7 +16,7 @@ use ministr_core::index::VectorIndex;
 use ministr_core::ingestion::{IngestionPipeline, IngestionProgress};
 use ministr_core::service::QueryService;
 use ministr_core::session::prefetch::PrefetchEngine;
-use ministr_core::session::{AccessMode, BudgetConfig, SessionId, SessionRegistry};
+use ministr_core::session::{AccessMode, SessionId, SessionRegistry, UsageConfig};
 use ministr_core::storage::{SqliteStorage, Storage};
 use ministr_core::web::fetcher::WebFetcher;
 
@@ -45,12 +45,12 @@ impl MinistrServer {
     /// configuration.
     #[must_use]
     pub fn new(service: Arc<QueryService>) -> Self {
-        Self::with_budget_config(service, BudgetConfig::default())
+        Self::with_budget_config(service, UsageConfig::default())
     }
 
     /// Create a new ministr MCP server with custom budget configuration.
     #[must_use]
-    pub fn with_budget_config(service: Arc<QueryService>, budget_config: BudgetConfig) -> Self {
+    pub fn with_budget_config(service: Arc<QueryService>, budget_config: UsageConfig) -> Self {
         let session_id = uuid_v4();
         let mut registry = SessionRegistry::new(budget_config);
         registry.create_session(&session_id, None, AccessMode::ReadWrite);
@@ -87,7 +87,7 @@ impl MinistrServer {
     /// each tool call that modifies session state.
     pub async fn with_persistence(
         service: Arc<QueryService>,
-        budget_config: BudgetConfig,
+        budget_config: UsageConfig,
         storage: Arc<SqliteStorage>,
         session_id: Option<String>,
     ) -> Self {

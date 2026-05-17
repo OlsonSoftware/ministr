@@ -3,7 +3,7 @@
 //! These tests run against real `SQLite` databases (not mocks) to verify
 //! CRUD operations, concurrent access, WAL behavior, and migrations.
 
-use ministr_core::session::{EvictionPolicy, Session, SessionId};
+use ministr_core::session::{DropPolicy, Session, SessionId};
 use ministr_core::storage::traits::CorpusMerkleRecord;
 use ministr_core::storage::{
     BridgeEndpointRecord, BridgeLinkRecord, SqliteStorage, Storage, SymbolFilter, SymbolRecord,
@@ -574,7 +574,7 @@ fn make_test_session() -> Session {
     let mut session = Session::new(
         SessionId::from("test-session".to_string()),
         100_000,
-        EvictionPolicy::Fifo,
+        DropPolicy::Fifo,
     );
 
     session.record_delivery(
@@ -712,7 +712,7 @@ async fn session_trajectory_ordering_preserved() {
     let mut session = Session::new(
         SessionId::from("traj-test".to_string()),
         50_000,
-        EvictionPolicy::Fifo,
+        DropPolicy::Fifo,
     );
 
     // Deliver in specific order

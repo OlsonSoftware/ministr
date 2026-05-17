@@ -174,7 +174,7 @@ impl MinistrServer {
                     "session_ids": reg.session_ids(),
                 },
             },
-            "budget": entry.budget.budget_status(),
+            "budget": entry.budget.usage_status(),
         });
 
         if let Some(stats) = analytics_stats {

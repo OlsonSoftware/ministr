@@ -481,7 +481,7 @@ mod tests {
     #[test]
     fn classify_content_detects_code() {
         assert_eq!(
-            classify_content("ministr-core/src/session/eviction.rs#EvictionRanker"),
+            classify_content("ministr-core/src/session/eviction.rs#DropRanker"),
             ContentType::Code
         );
         assert_eq!(classify_content("src/main.py"), ContentType::Code);

@@ -115,7 +115,7 @@ fn classify_route(path: &str) -> Option<RouteInfo> {
         }
         if inner == "evicted" {
             return Some(RouteInfo {
-                tool: "ministr_evicted",
+                tool: "ministr_dropped",
                 corpus_id,
                 session_id,
                 path_summary: String::new(),
@@ -191,6 +191,6 @@ mod tests {
         assert!(classify_route("/api/v1/status").is_none());
         assert!(classify_route("/api/v1/corpora/abc").is_none());
         assert!(classify_route("/api/v1/corpora/abc/progress").is_none());
-        assert!(classify_route("/api/v1/corpora/abc/sessions/sess-1/budget").is_none());
+        assert!(classify_route("/api/v1/corpora/abc/sessions/sess-1/usage").is_none());
     }
 }

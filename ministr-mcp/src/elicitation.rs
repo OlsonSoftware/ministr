@@ -23,14 +23,14 @@ use tracing::{debug, warn};
 /// Uses a comma-separated string for content IDs because MCP elicitation
 /// schemas require flat objects with primitive properties only.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct EvictionChoice {
+pub struct DropChoice {
     /// Comma-separated content IDs to evict (from the candidates list).
     #[schemars(description = "Comma-separated content IDs to drop from context")]
     pub content_ids: String,
 }
-rmcp::elicit_safe!(EvictionChoice);
+rmcp::elicit_safe!(DropChoice);
 
-impl EvictionChoice {
+impl DropChoice {
     /// Parse the comma-separated `content_ids` into individual IDs.
     #[must_use]
     pub fn ids(&self) -> Vec<String> {
@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn eviction_choice_schema_is_object() {
-        let schema = schemars::schema_for!(EvictionChoice);
+        let schema = schemars::schema_for!(DropChoice);
         let root = serde_json::to_value(schema).unwrap();
         assert_eq!(root["type"], "object");
         assert!(root["properties"]["content_ids"].is_object());
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn eviction_choice_schema_has_description() {
-        let schema = schemars::schema_for!(EvictionChoice);
+        let schema = schemars::schema_for!(DropChoice);
         let root = serde_json::to_value(schema).unwrap();
         let desc = root["properties"]["content_ids"]["description"]
             .as_str()
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn eviction_choice_content_ids_is_string_type() {
-        let schema = schemars::schema_for!(EvictionChoice);
+        let schema = schemars::schema_for!(DropChoice);
         let root = serde_json::to_value(schema).unwrap();
         assert_eq!(
             root["properties"]["content_ids"]["type"], "string",
@@ -190,11 +190,11 @@ mod tests {
 
     #[test]
     fn eviction_choice_roundtrip() {
-        let original = EvictionChoice {
+        let original = DropChoice {
             content_ids: "docs/auth.md#tokens, docs/api.md#rate-limits".into(),
         };
         let json = serde_json::to_value(&original).unwrap();
-        let parsed: EvictionChoice = serde_json::from_value(json).unwrap();
+        let parsed: DropChoice = serde_json::from_value(json).unwrap();
         let ids = parsed.ids();
         assert_eq!(ids.len(), 2);
         assert_eq!(ids[0], "docs/auth.md#tokens");
@@ -258,13 +258,13 @@ mod tests {
         let json = serde_json::json!({
             "content_ids": ""
         });
-        let parsed: EvictionChoice = serde_json::from_value(json).unwrap();
+        let parsed: DropChoice = serde_json::from_value(json).unwrap();
         assert!(parsed.ids().is_empty());
     }
 
     #[test]
     fn eviction_choice_ids_trims_whitespace() {
-        let choice = EvictionChoice {
+        let choice = DropChoice {
             content_ids: " foo , bar , baz ".into(),
         };
         let ids = choice.ids();
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn eviction_choice_ids_single() {
-        let choice = EvictionChoice {
+        let choice = DropChoice {
             content_ids: "docs/auth.md#tokens".into(),
         };
         let ids = choice.ids();
@@ -286,10 +286,10 @@ mod tests {
 
     #[test]
     fn eviction_choice_rmcp_schema() {
-        let schema = rmcp::model::ElicitationSchema::from_type::<EvictionChoice>();
+        let schema = rmcp::model::ElicitationSchema::from_type::<DropChoice>();
         assert!(
             schema.is_ok(),
-            "EvictionChoice should produce a valid ElicitationSchema"
+            "DropChoice should produce a valid ElicitationSchema"
         );
     }
 

@@ -25,7 +25,7 @@ use ministr_core::index::{HnswIndex, VectorIndex};
 use ministr_core::ingestion::IngestionProgress;
 use ministr_core::service::QueryService;
 use ministr_core::session::prefetch::PrefetchEngine;
-use ministr_core::session::{AccessMode, BudgetConfig, SessionRegistry};
+use ministr_core::session::{AccessMode, SessionRegistry, UsageConfig};
 use ministr_core::storage::SqliteStorage;
 use ministr_core::types::{ContentId, Resolution};
 use ministr_daemon::registry::{CorpusHandle, CorpusRegistry};
@@ -88,7 +88,7 @@ fn build_handle(
         index,
         service,
         sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
-            BudgetConfig::default(),
+            UsageConfig::default(),
         ))),
         prefetch: Arc::new(tokio::sync::Mutex::new(
             PrefetchEngine::with_default_capacity(),
