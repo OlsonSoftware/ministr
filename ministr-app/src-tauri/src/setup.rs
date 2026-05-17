@@ -57,7 +57,13 @@ pub fn run_first_launch_setup(app: &tauri::App) -> Result<(), Box<dyn std::error
     }
 
     // 5. Write setup version marker
-    let _ = fs::write(&version_path, current_version);
+    if let Err(e) = fs::write(&version_path, current_version) {
+        warn!(
+            error = %e,
+            path = %version_path.display(),
+            "could not write setup version marker; first-launch setup may re-run"
+        );
+    }
 
     info!("first-launch setup complete");
     Ok(())
@@ -184,11 +190,21 @@ fn install_launchd_plist() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&plist_dest, plist_content)?;
     info!(path = %plist_dest.display(), "installed launchd plist");
 
-    // Load the agent (non-fatal if this fails).
-    let _ = std::process::Command::new("launchctl")
+    // Load the agent (non-fatal if this fails — the plist is installed
+    // and will load on next login regardless).
+    match std::process::Command::new("launchctl")
         .args(["load", "-w"])
         .arg(&plist_dest)
-        .output();
+        .output()
+    {
+        Ok(out) if !out.status.success() => warn!(
+            status = ?out.status.code(),
+            stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+            "launchctl load returned non-zero; agent will load on next login"
+        ),
+        Err(e) => warn!(error = %e, "failed to invoke launchctl; agent will load on next login"),
+        Ok(_) => {}
+    }
 
     Ok(())
 }

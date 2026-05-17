@@ -141,6 +141,19 @@ fn main() {
 
 /// Scan common project directories for `.ministr.toml` files on first launch.
 async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
+    /// Mark first-launch auto-detect as done. A failed write isn't
+    /// fatal (the scan just re-runs next launch) but must not be silent
+    /// — a persistently unwritable data dir is worth surfacing.
+    fn mark_done(sentinel: &std::path::Path) {
+        if let Err(e) = std::fs::write(sentinel, "") {
+            tracing::warn!(
+                error = %e,
+                path = %sentinel.display(),
+                "failed to write first-launch sentinel; auto-detect will re-run next launch"
+            );
+        }
+    }
+
     let sentinel = ministr_api::daemon_data_dir().join("first_launch_done");
 
     if sentinel.exists() {
@@ -149,7 +162,7 @@ async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
 
     // Only scan if no corpora are currently registered.
     if !state.registry.list().await.is_empty() {
-        let _ = std::fs::write(&sentinel, "");
+        mark_done(&sentinel);
         return;
     }
 
@@ -162,7 +175,7 @@ async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
             Ok(projects) => projects.into_iter().map(|p| p.path).collect(),
             Err(e) => {
                 tracing::warn!(error = %e, "project auto-detect scan task failed");
-                let _ = std::fs::write(&sentinel, "");
+                mark_done(&sentinel);
                 return;
             }
         };
@@ -185,5 +198,5 @@ async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
         }
     }
 
-    let _ = std::fs::write(&sentinel, "");
+    mark_done(&sentinel);
 }

@@ -54,8 +54,16 @@ pub fn handle_event(app: &AppHandle, event_id: &str) {
             // Windows named pipes are torn down automatically when the
             // owning process exits.
             #[cfg(unix)]
-            let _ = std::fs::remove_file(ministr_api::daemon_socket_path());
-            let _ = std::fs::remove_file(ministr_api::daemon_pid_path());
+            if let Err(e) = std::fs::remove_file(ministr_api::daemon_socket_path())
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(error = %e, "failed to remove daemon socket on quit");
+            }
+            if let Err(e) = std::fs::remove_file(ministr_api::daemon_pid_path())
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(error = %e, "failed to remove daemon pid file on quit");
+            }
             app.exit(0);
         }
         _ => {}
