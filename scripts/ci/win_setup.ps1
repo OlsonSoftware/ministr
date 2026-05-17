@@ -37,7 +37,7 @@ Write-Host "== Windows runner bootstrap (target=$Target) =="
 $PyVersion = '3.12.7'
 $PbsTag    = '20241016'
 if (Have 'python') {
-  Write-Host "python: $(python --version 2>&1)"
+  Write-Host "python: $(python --version 2>$null)"
 } else {
   $pyHome = Join-Path $env:USERPROFILE ".python-standalone\$PyVersion-$PbsTag"
   $pyDir  = Join-Path $pyHome 'python'
@@ -62,7 +62,7 @@ if (Have 'python') {
     "$pyDir\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
   }
   if (-not (Have 'python')) { throw 'python still not on PATH after extract' }
-  Write-Host "python: $(python --version 2>&1)"
+  Write-Host "python: $(python --version 2>$null)"
 }
 
 # --- Rust (rustup) ------------------------------------------------------
@@ -76,7 +76,7 @@ if (-not (Have 'rustup')) {
   $env:PATH = "$cargoBin;$env:PATH"
   "$cargoBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 }
-Write-Host "rustup: $(rustup --version 2>&1)"
+Write-Host "rustup: $(rustup --version 2>$null)"
 
 # Ensure stable + the requested target (idempotent - rustup is a no-op
 # if already present/up to date).
@@ -86,7 +86,7 @@ rustup default stable
 rustup target add $Target
 if ($LASTEXITCODE -ne 0) { throw "rustup target add $Target failed ($LASTEXITCODE)" }
 
-Write-Host "rustc: $(rustc --version 2>&1)"
+Write-Host "rustc: $(rustc --version 2>$null)"
 
 # --- Defender exclusions (idempotent; folded in from the old separate
 #     workflow step so all Windows prep lives in one script). Non-fatal:
@@ -116,7 +116,7 @@ if (-not (Have 'sccache')) {
     cargo install sccache --locked
   }
 }
-Write-Host "sccache: $(sccache --version 2>&1)"
+Write-Host "sccache: $(sccache --version 2>$null)"
 if ($env:GITHUB_ENV) {
   Add-Content -Path $env:GITHUB_ENV -Value 'RUSTC_WRAPPER=sccache'
   Add-Content -Path $env:GITHUB_ENV -Value 'SCCACHE_REGION=auto'
