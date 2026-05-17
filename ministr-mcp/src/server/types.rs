@@ -179,9 +179,7 @@ pub struct ExtractParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompressParams {
     /// Content IDs to generate compressed summaries for.
-    #[schemars(
-        description = "Content IDs (section IDs) to generate compressed summaries for"
-    )]
+    #[schemars(description = "Content IDs (section IDs) to generate compressed summaries for")]
     pub content_ids: Vec<String>,
 }
 

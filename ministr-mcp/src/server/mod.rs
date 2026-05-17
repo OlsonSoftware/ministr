@@ -2385,7 +2385,10 @@ mod tests {
         assert!(!DEFAULT_INSTRUCTIONS.contains("ministr_budget"));
         assert!(!DEFAULT_INSTRUCTIONS.contains("Budget protocol"));
         assert!(!DEFAULT_INSTRUCTIONS.contains("eviction_recommendations"));
-        assert!(DEFAULT_INSTRUCTIONS.contains("do not treat ministr as a signal that you are low on room"));
+        assert!(
+            DEFAULT_INSTRUCTIONS
+                .contains("do not treat ministr as a signal that you are low on room")
+        );
     }
 
     #[test]

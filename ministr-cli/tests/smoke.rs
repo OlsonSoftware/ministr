@@ -20,7 +20,9 @@ fn help_flag_exits_successfully() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("code intelligence") || stdout.contains("ministr") || stdout.contains("corpus"),
+        stdout.contains("code intelligence")
+            || stdout.contains("ministr")
+            || stdout.contains("corpus"),
         "help output should mention ministr functionality, got: {stdout}"
     );
 }
