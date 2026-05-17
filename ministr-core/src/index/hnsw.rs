@@ -10,15 +10,16 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::BufWriter;
-use std::path::Path;
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use hnsw_rs::prelude::{AnnT, DistCosine, Hnsw, HnswIo, Neighbour};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 
 use crate::error::IndexError;
+use crate::fs_util;
 
 use super::{SearchResult, VectorIndex, VectorIndexLoad};
 
@@ -39,6 +40,85 @@ const DEFAULT_EF_CONSTRUCTION: usize = 200;
 
 /// Default `ef_search` parameter (search width during queries).
 const DEFAULT_EF_SEARCH: usize = 50;
+
+/// The crash-recovery sibling left by an interrupted atomic [`persist`].
+///
+/// [`persist`] swaps a fully-staged index into `dir` via a rename dance
+/// (`dir` → `dir.bak`, `tmp` → `dir`, rm `dir.bak`). If the process dies
+/// mid-swap, `<dir>.bak` still holds the previous *consistent* index and
+/// [`load`] falls back to it.
+///
+/// [`persist`]: HnswIndex::persist
+/// [`load`]: HnswIndex::load
+fn backup_dir(dir: &Path) -> Option<PathBuf> {
+    let parent = dir.parent()?;
+    let name = dir.file_name()?;
+    let mut bak = name.to_os_string();
+    bak.push(".bak");
+    Some(parent.join(bak))
+}
+
+/// Whether `dir` contains a readable ID-map sidecar (the sentinel for a
+/// complete on-disk index).
+fn has_id_map(dir: &Path) -> bool {
+    dir.join(ID_MAP_FILE).is_file()
+}
+
+/// Stage a complete, durably-flushed index into `tmp`.
+///
+/// Dumps the HNSW graph, writes the ID-map sidecar, then fsyncs every
+/// staged file and the directory itself so the subsequent rename swap
+/// can never expose a torn file after a power loss.
+fn stage_index(inner: &HnswInner, tmp: &Path) -> Result<(), IndexError> {
+    inner
+        .hnsw
+        .file_dump(tmp, DUMP_BASENAME)
+        .map_err(|e| IndexError::LoadFailed {
+            path: tmp.to_path_buf(),
+            reason: format!("failed to dump HNSW: {e}"),
+        })?;
+
+    let id_map = IdMapData {
+        dim: inner.dim,
+        ef_search: inner.ef_search,
+        id_to_int: inner.id_to_int.clone(),
+        deleted: inner.deleted.iter().copied().collect(),
+        next_id: inner.next_id,
+        model_name: inner.model_name.clone(),
+    };
+    let map_path = tmp.join(ID_MAP_FILE);
+    {
+        let file = File::create(&map_path).map_err(|e| IndexError::LoadFailed {
+            path: map_path.clone(),
+            reason: format!("failed to create ID map file: {e}"),
+        })?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer(&mut writer, &id_map).map_err(|e| IndexError::LoadFailed {
+            path: map_path.clone(),
+            reason: format!("failed to write ID map: {e}"),
+        })?;
+        writer.flush().map_err(|e| IndexError::LoadFailed {
+            path: map_path.clone(),
+            reason: format!("failed to flush ID map: {e}"),
+        })?;
+    }
+
+    if let Ok(entries) = fs::read_dir(tmp) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                fs_util::fsync_file(&p).map_err(|e| IndexError::LoadFailed {
+                    path: p.clone(),
+                    reason: format!("failed to fsync staged file: {e}"),
+                })?;
+            }
+        }
+    }
+    fs_util::fsync_dir(tmp).map_err(|e| IndexError::LoadFailed {
+        path: tmp.to_path_buf(),
+        reason: format!("failed to fsync temp directory: {e}"),
+    })
+}
 
 /// HNSW-based approximate nearest-neighbor index with cosine similarity.
 ///
@@ -334,6 +414,14 @@ impl VectorIndex for HnswIndex {
         }
     }
 
+    /// Atomically persist the index.
+    ///
+    /// The full new index (HNSW dump + ID-map sidecar) is staged and
+    /// fsynced in a fresh sibling temp dir, then swapped into place with
+    /// a rename dance: `dir` → `dir.bak`, `tmp` → `dir`, rm `dir.bak`.
+    /// A crash at any step leaves either the untouched prior `dir` or a
+    /// consistent `dir.bak` (which [`load`](Self::load) recovers from) —
+    /// never a half-written index or dumps without a matching id-map.
     #[instrument(skip(self), fields(dir = %dir.display()))]
     fn persist(&self, dir: &Path) -> Result<(), IndexError> {
         let inner = self.inner.read().map_err(|e| IndexError::LoadFailed {
@@ -341,60 +429,74 @@ impl VectorIndex for HnswIndex {
             reason: format!("index lock poisoned: {e}"),
         })?;
 
-        fs::create_dir_all(dir).map_err(|e| IndexError::LoadFailed {
+        let parent = dir.parent().ok_or_else(|| IndexError::LoadFailed {
             path: dir.to_path_buf(),
-            reason: format!("failed to create directory: {e}"),
+            reason: "index directory has no parent".to_owned(),
         })?;
-
-        // Clean up stale HNSW dump files from previous persists.
-        // `file_dump()` creates new files with a unique numeric suffix each
-        // time, so old dump files accumulate indefinitely without this cleanup.
-        let mut cleaned = 0usize;
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with(DUMP_BASENAME)
-                    && name_str.contains(".hnsw.")
-                    && fs::remove_file(entry.path()).is_ok()
-                {
-                    cleaned += 1;
-                }
-            }
-        }
-        if cleaned > 0 {
-            debug!(cleaned, "removed stale HNSW dump files before persist");
-        }
-
-        // Dump the HNSW graph and data
-        inner
-            .hnsw
-            .file_dump(dir, DUMP_BASENAME)
-            .map_err(|e| IndexError::LoadFailed {
+        let dir_name = dir
+            .file_name()
+            .ok_or_else(|| IndexError::LoadFailed {
                 path: dir.to_path_buf(),
-                reason: format!("failed to dump HNSW: {e}"),
-            })?;
-
-        // Save ID mapping as JSON sidecar
-        let id_map = IdMapData {
-            dim: inner.dim,
-            ef_search: inner.ef_search,
-            id_to_int: inner.id_to_int.clone(),
-            deleted: inner.deleted.iter().copied().collect(),
-            next_id: inner.next_id,
-            model_name: inner.model_name.clone(),
-        };
-
-        let map_path = dir.join(ID_MAP_FILE);
-        let file = File::create(&map_path).map_err(|e| IndexError::LoadFailed {
-            path: map_path.clone(),
-            reason: format!("failed to create ID map file: {e}"),
+                reason: "index directory has no final component".to_owned(),
+            })?
+            .to_string_lossy()
+            .into_owned();
+        let bak = backup_dir(dir).ok_or_else(|| IndexError::LoadFailed {
+            path: dir.to_path_buf(),
+            reason: "cannot derive backup path".to_owned(),
         })?;
-        let writer = BufWriter::new(file);
-        serde_json::to_writer(writer, &id_map).map_err(|e| IndexError::LoadFailed {
-            path: map_path,
-            reason: format!("failed to write ID map: {e}"),
+
+        fs::create_dir_all(parent).map_err(|e| IndexError::LoadFailed {
+            path: parent.to_path_buf(),
+            reason: format!("failed to create parent directory: {e}"),
         })?;
+
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let tmp = parent.join(format!("{dir_name}.tmp.{pid}.{nanos}"));
+
+        // A leftover tmp from a previously-killed persist must not
+        // poison this one.
+        let _ = fs_util::remove_dir_all_robust_sync(&tmp);
+        fs::create_dir_all(&tmp).map_err(|e| IndexError::LoadFailed {
+            path: tmp.clone(),
+            reason: format!("failed to create temp directory: {e}"),
+        })?;
+
+        if let Err(e) = stage_index(&inner, &tmp) {
+            let _ = fs_util::remove_dir_all_robust_sync(&tmp);
+            return Err(e);
+        }
+
+        // Atomic swap. Clear any stale backup first so the renames have
+        // a clear target.
+        let _ = fs_util::remove_dir_all_robust_sync(&bak);
+        let dir_existed = dir.exists();
+        if dir_existed && let Err(e) = fs_util::rename_robust(dir, &bak) {
+            let _ = fs_util::remove_dir_all_robust_sync(&tmp);
+            return Err(IndexError::LoadFailed {
+                path: dir.to_path_buf(),
+                reason: format!("failed to move current index aside: {e}"),
+            });
+        }
+        if let Err(e) = fs_util::rename_robust(&tmp, dir) {
+            // Roll back so the corpus is never left without a live dir.
+            if dir_existed {
+                let _ = fs_util::rename_robust(&bak, dir);
+            }
+            let _ = fs_util::remove_dir_all_robust_sync(&tmp);
+            return Err(IndexError::LoadFailed {
+                path: dir.to_path_buf(),
+                reason: format!("failed to swap new index into place: {e}"),
+            });
+        }
+
+        // New index is durably in place; drop the backup and flush the
+        // parent so the rename pair itself is durable.
+        let _ = fs_util::remove_dir_all_robust_sync(&bak);
+        let _ = fs_util::fsync_dir(parent);
 
         info!(
             vectors = inner.int_to_id.len(),
@@ -417,6 +519,27 @@ impl VectorIndex for HnswIndex {
 impl VectorIndexLoad for HnswIndex {
     #[instrument(skip_all, fields(dir = %dir.display()))]
     fn load(dir: &Path) -> Result<Self, IndexError> {
+        // Prefer the live directory; fall back to the crash-recovery
+        // backup left by an interrupted atomic persist. Either way the
+        // index is loaded exactly once per process (the `Box::leak`
+        // contract below is unaffected — only the source path differs).
+        let src = if has_id_map(dir) {
+            dir.to_path_buf()
+        } else if let Some(bak) = backup_dir(dir).filter(|b| has_id_map(b)) {
+            warn!(
+                dir = %dir.display(),
+                bak = %bak.display(),
+                "primary index missing id_map; recovering from backup"
+            );
+            bak
+        } else {
+            return Err(IndexError::LoadFailed {
+                path: dir.join(ID_MAP_FILE),
+                reason: "no id_map.json in index directory or backup".to_owned(),
+            });
+        };
+        let dir = src.as_path();
+
         // Load ID mapping
         let map_path = dir.join(ID_MAP_FILE);
         let map_content = fs::read_to_string(&map_path).map_err(|e| IndexError::LoadFailed {
@@ -796,6 +919,69 @@ mod tests {
     fn load_nonexistent_fails() {
         let err = HnswIndex::load(Path::new("/nonexistent/path")).unwrap_err();
         assert!(matches!(err, IndexError::LoadFailed { .. }));
+    }
+
+    #[test]
+    fn load_recovers_from_backup_when_primary_torn() {
+        let index = HnswIndex::new(4, 100).unwrap();
+        index.insert("v1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let index_dir = tmp.path().join("idx");
+        index.persist(&index_dir).unwrap();
+
+        // Simulate a crash mid-swap: the consistent index is in
+        // `<dir>.bak`, and `dir` is a torn directory with no id-map.
+        let bak = backup_dir(&index_dir).unwrap();
+        fs::rename(&index_dir, &bak).unwrap();
+        fs::create_dir_all(&index_dir).unwrap();
+        fs::write(index_dir.join("ministr_hnsw.hnsw.data"), b"garbage").unwrap();
+
+        let loaded = HnswIndex::load(&index_dir).unwrap();
+        assert_eq!(loaded.len(), 1);
+    }
+
+    #[test]
+    fn load_recovers_from_backup_when_primary_missing() {
+        let index = HnswIndex::new(4, 100).unwrap();
+        index.insert("v1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let index_dir = tmp.path().join("idx");
+        index.persist(&index_dir).unwrap();
+
+        let bak = backup_dir(&index_dir).unwrap();
+        fs::rename(&index_dir, &bak).unwrap();
+        assert!(!index_dir.exists());
+
+        let loaded = HnswIndex::load(&index_dir).unwrap();
+        assert_eq!(loaded.len(), 1);
+    }
+
+    #[test]
+    fn persist_leaves_no_backup_or_temp_on_success() {
+        let index = HnswIndex::new(4, 100).unwrap();
+        index.insert("v1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let index_dir = tmp.path().join("idx");
+        index.persist(&index_dir).unwrap();
+        index.insert("v2", &[0.0, 1.0, 0.0, 0.0]).unwrap();
+        index.persist(&index_dir).unwrap();
+
+        let bak = backup_dir(&index_dir).unwrap();
+        assert!(
+            !bak.exists(),
+            "backup must be removed after a successful persist"
+        );
+        let leftover_tmp = fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| e.file_name().to_string_lossy().contains(".tmp."));
+        assert!(!leftover_tmp, "no .tmp staging dir should remain");
+
+        let loaded = HnswIndex::load(&index_dir).unwrap();
+        assert_eq!(loaded.len(), 2);
     }
 
     // --- Model name tracking ---

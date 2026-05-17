@@ -1,7 +1,110 @@
 //! Filesystem helpers hardened for cross-platform reliability.
 
+use std::fs::{self, File};
+use std::io;
 use std::path::Path;
 use std::time::Duration;
+
+/// fsync a file's contents and metadata to durable storage.
+///
+/// Used by the atomic-persist path so a power loss after the swap can
+/// never expose a torn dump file.
+///
+/// # Errors
+///
+/// Returns the underlying [`std::io::Error`] if the file cannot be
+/// opened or the sync fails.
+pub fn fsync_file(path: &Path) -> io::Result<()> {
+    // Windows `FlushFileBuffers` requires a handle with write access, so
+    // a read-only `File::open` fails with `Access is denied`. Open for
+    // write (without truncating) to get a syncable handle on every
+    // platform.
+    fs::OpenOptions::new().write(true).open(path)?.sync_all()
+}
+
+/// fsync a directory so a contained rename/create/delete is durable.
+///
+/// No-op on Windows: there is no portable directory-fsync there (you
+/// cannot `CreateFile` a directory for `FlushFileBuffers` without
+/// `FILE_FLAG_BACKUP_SEMANTICS`, which std does not expose), and NTFS
+/// journals metadata operations so the ordering guarantee we need for
+/// the rename swap holds without an explicit flush.
+///
+/// # Errors
+///
+/// Returns the underlying [`std::io::Error`] on non-Windows platforms
+/// if the directory cannot be opened or synced.
+pub fn fsync_dir(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        File::open(path)?.sync_all()
+    }
+}
+
+/// `std::fs::rename`, retrying transient Windows sharing/lock failures
+/// with bounded exponential backoff.
+///
+/// This is the synchronous sibling of [`remove_dir_all_robust`] for the
+/// index-persistence path, which runs on a blocking thread (the indexer
+/// / CLI ingestion), so a blocking sleep is correct here.
+///
+/// # Errors
+///
+/// Returns the last [`std::io::Error`] if the rename did not succeed
+/// within the retry budget.
+pub fn rename_robust(from: &Path, to: &Path) -> io::Result<()> {
+    const MAX_ATTEMPTS: u32 = 6;
+    for attempt in 0..MAX_ATTEMPTS {
+        match fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if attempt + 1 == MAX_ATTEMPTS || !is_transient(&e) {
+                    return Err(e);
+                }
+                tracing::debug!(
+                    from = %from.display(),
+                    to = %to.display(),
+                    attempt = attempt + 1,
+                    error = %e,
+                    "rename transient failure; retrying"
+                );
+                std::thread::sleep(Duration::from_millis(50u64 << attempt));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Synchronous, retrying directory-tree removal.
+///
+/// Same retry policy as [`remove_dir_all_robust`] but blocking, for use
+/// from synchronous persistence code. `NotFound` is success.
+///
+/// # Errors
+///
+/// Returns the last [`std::io::Error`] if the tree could not be removed
+/// within the retry budget.
+pub fn remove_dir_all_robust_sync(path: &Path) -> io::Result<()> {
+    const MAX_ATTEMPTS: u32 = 6;
+    for attempt in 0..MAX_ATTEMPTS {
+        match fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                if attempt + 1 == MAX_ATTEMPTS || !is_transient(&e) {
+                    return Err(e);
+                }
+                std::thread::sleep(Duration::from_millis(50u64 << attempt));
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Remove a directory tree, retrying transient Windows failures.
 ///
