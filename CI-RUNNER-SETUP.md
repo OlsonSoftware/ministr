@@ -10,7 +10,10 @@ You configure two things:
 1. **A large runner** the heavy jobs target (self-hosted *or* GitHub-hosted larger).
 2. **A Cloudflare R2 bucket** for the shared `sccache` compile cache.
 
-Then you set **one Actions variable + four secrets** so the workflows pick it all up. No YAML edits on your side — the workflows read `vars.CI_RUNNER` and the `SCCACHE_*` secrets.
+Then you set **one Actions variable + four secrets** (plus an optional
+second variable for a Windows release runner) so the workflows pick it
+all up. No YAML edits on your side — the workflows read `vars.CI_RUNNER`,
+the optional `vars.CI_RUNNER_WINDOWS`, and the `SCCACHE_*` secrets.
 
 > Why: only 3 CI jobs (`rust-dev`, `rust-release`, `docker-build`) compile
 > the Rust workspace; they're path-gated so they only run on Rust-source
@@ -110,6 +113,40 @@ The debug `--all-targets` tree is large. Add a weekly prune as `gha`:
 
 ---
 
+## Path C — Windows release runner (optional, recommended)
+
+`release.yml`'s **Windows** shards (CLI `.zip` + the Tauri desktop
+`.exe`: sidecar build with `directml` + NSIS bundling, all while
+Defender real-time-scans every `.rmeta`) are **by far the slowest
+release build**. Only runs on `v*` tags, so it's infrequent — but when
+it runs it dominates the release wall-clock. Speeding it up is the
+single biggest release-time win after the Linux runner.
+
+You **cannot** fold this into the Linux box — Windows artifacts need a
+Windows host. Pick one:
+
+**C-i. GitHub-hosted Windows larger runner** (zero ops)
+1. Org → Settings → Actions → Runners → **New GitHub-hosted runner**.
+2. Name: `ministr-windows`. Platform: **Windows**, Image: Windows Server 2025.
+3. Size: **8-vcpu (32 GB)** — the build is I/O- and Defender-bound more than RAM-bound; 8 vCPU is the sweet spot.
+4. Runner group `ministr-rust` (or a new one), repository access → `OlsonSoftware/ministr`.
+5. Label = its name: `ministr-windows`.
+
+**C-ii. Self-hosted Windows box**
+- Any Windows 11 / Server 2022+ machine, 8+ vCPU / 32 GB / 150 GB SSD.
+- Install the Actions runner as a service with `--labels ministr-windows`.
+- Add a Defender exclusion for the work dir (the workflow also does this per-run, but a permanent host exclusion compounds the speedup):
+  ```powershell
+  Add-MpPreference -ExclusionPath "C:\actions-runner\_work"
+  ```
+
+Either way the **label/name is `ministr-windows`** — that's all the
+workflow needs.
+
+→ Continue to **Shared steps** below.
+
+---
+
 ## Shared steps (both paths)
 
 ### S1. Create the Cloudflare R2 bucket (sccache backend)
@@ -125,9 +162,10 @@ On **OlsonSoftware/ministr** → **Settings** → **Secrets and variables** → 
 
 **Variables** tab → **New repository variable**:
 
-| Name | Value |
-|---|---|
-| `CI_RUNNER` | `ministr-rust` |
+| Name | Value | Notes |
+|---|---|---|
+| `CI_RUNNER` | `ministr-rust` | Linux heavy jobs + Linux release shards |
+| `CI_RUNNER_WINDOWS` | `ministr-windows` | *Optional* — only if you did Path C. Routes the slow Windows release shards. Unset → stays on hosted `windows-latest`. |
 
 **Secrets** tab → **New repository secret** (×4):
 
@@ -138,7 +176,7 @@ On **OlsonSoftware/ministr** → **Settings** → **Secrets and variables** → 
 | `SCCACHE_R2_ACCESS_KEY_ID` | R2 token Access Key ID |
 | `SCCACHE_R2_SECRET_ACCESS_KEY` | R2 token Secret Access Key |
 
-> The workflows read `vars.CI_RUNNER` for `runs-on` (fallback `ubuntu-latest` if unset) and the `SCCACHE_*` secrets for the compile cache (sccache silently falls back to a local cache if they're absent). So a partial setup degrades gracefully — it never breaks CI.
+> Every input is independently optional. `vars.CI_RUNNER` falls back to `ubuntu-latest`, `vars.CI_RUNNER_WINDOWS` to hosted `windows-latest`, and the `SCCACHE_*` secrets to a local cache. A partial setup degrades gracefully — it never breaks CI; it's just slower until complete.
 
 ### S3. (If you use branch protection) required checks
 The single required status check is **`ci complete`** (job `ci-complete`).
@@ -147,7 +185,7 @@ confirm it's still the required check after these workflow updates land.
 
 ### S4. Verify
 1. Push a trivial Rust change (e.g. a comment in `ministr-core/src/lib.rs`) on a branch → open a PR.
-2. Actions tab: `rust-dev` / `rust-release` should run **on `ministr-rust`** (check the runner name in the job log header), `fmt` / `security` / `changes` on `ubuntu-latest`.
+2. Actions tab: `rust-dev` / `rust-release` should run **on `ministr-rust`** (check the runner name in the job log header), `fmt` / `security` / `changes` on `ubuntu-latest`. (Windows routing only shows on a `v*` tag release run — confirm the `Desktop windows-x86_64` / `CLI …windows…` shards land on `ministr-windows` if you set `CI_RUNNER_WINDOWS`.)
 3. First run is a cold sccache (slow-ish). Second push on the same branch should show `sccache` cache hits in the `rust-dev` log and finish in ~3–5 min.
 4. Docs-only or markdown pushes: confirm `rust-*` are **skipped** (no big-runner spend).
 

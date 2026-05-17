@@ -222,8 +222,8 @@ fn install_launchd_plist() -> Result<(), Box<dyn std::error::Error>> {
 /// Install a per-user XDG desktop entry + icon so the app appears in the
 /// Linux application menu.
 ///
-/// Only meaningful for the AppImage distribution: a double-clicked
-/// AppImage is a single self-contained file with no installer and no
+/// Only meaningful for the `AppImage` distribution: a double-clicked
+/// `AppImage` is a single self-contained file with no installer and no
 /// menu integration. The `.deb` / `.rpm` packages already register a
 /// system-wide `.desktop` through Tauri's bundler, so we detect that
 /// case (binary living under a system prefix) and skip — mirroring the

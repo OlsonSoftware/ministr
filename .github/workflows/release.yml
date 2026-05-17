@@ -41,11 +41,15 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   cli:
     name: CLI ${{ matrix.target }}
-    # The x86_64 Linux shard is a heavy ORT/tokenizers/grammar release
-    # compile — route it to the large runner (vars.CI_RUNNER) when set,
-    # else fall back to the matrix's ubuntu-latest. macOS/Windows/ARM
-    # shards stay on their OS-bound GitHub-hosted runners.
-    runs-on: ${{ (matrix.target == 'x86_64-unknown-linux-gnu' && vars.CI_RUNNER) || matrix.os }}
+    # Per-OS custom-runner routing (each falls back to the matrix's
+    # GitHub-hosted runner when the variable is unset):
+    #   - x86_64 Linux  → vars.CI_RUNNER          (heavy ORT/grammar build)
+    #   - x86_64 Windows → vars.CI_RUNNER_WINDOWS  (slowest release build)
+    # macOS / aarch64-Linux stay OS-bound on their hosted runners.
+    runs-on: >-
+      ${{ (matrix.target == 'x86_64-unknown-linux-gnu' && (vars.CI_RUNNER || matrix.os))
+       || (matrix.target == 'x86_64-pc-windows-msvc' && (vars.CI_RUNNER_WINDOWS || matrix.os))
+       || matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -146,10 +150,15 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   desktop:
     name: Desktop ${{ matrix.platform }}
-    # Linux desktop shard = Tauri release build + sidecar release + deb/
-    # rpm/AppImage bundling — heavy. Route to the large runner when set;
-    # macOS/Windows shards stay on their OS-bound hosted runners.
-    runs-on: ${{ (matrix.platform == 'linux-x86_64' && vars.CI_RUNNER) || matrix.os }}
+    # Per-OS custom-runner routing (fallback = the matrix hosted runner):
+    #   - linux-x86_64   → vars.CI_RUNNER          (Tauri build + bundling)
+    #   - windows-x86_64 → vars.CI_RUNNER_WINDOWS  (slowest desktop build:
+    #                       sidecar + directml + NSIS, Defender scanning)
+    # macOS shard stays OS-bound (signing/notarization needs Apple HW).
+    runs-on: >-
+      ${{ (matrix.platform == 'linux-x86_64' && (vars.CI_RUNNER || matrix.os))
+       || (matrix.platform == 'windows-x86_64' && (vars.CI_RUNNER_WINDOWS || matrix.os))
+       || matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
