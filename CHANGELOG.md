@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/OlsonSoftware/ministr/releases/tag/v0.2.1) - 2026-05-17
+
+### Added
+
+- *(install)* centralize install funnel on /install — single source of truth
+- *(cli)* `ministr setup` subcommand wraps onpath; consolidate PATH writes ([#33](https://github.com/OlsonSoftware/ministr/pull/33))
+- *(installer)* Windows desktop NSIS installer + curl-iex install.ps1 ([#32](https://github.com/OlsonSoftware/ministr/pull/32))
+- *(release)* serve binaries via dl.ministr.app Worker proxy ([#24](https://github.com/OlsonSoftware/ministr/pull/24))
+
+### Changed
+
+- UI transformation ([#59](https://github.com/OlsonSoftware/ministr/pull/59))
+- *(indexer)* UE5-grade index speedup (6 phases) ([#47](https://github.com/OlsonSoftware/ministr/pull/47))
+- *(positioning)* second pass — strip remaining cache + OSS leaks
+- *(positioning)* drop OSS signals + reframe focal point as codebase intelligence
+- animated session trace + VHS terminal demo for landing
+- polish pass — accurate on-disk layout, honest install options, tool-page icons, 404, OG card
+- stop overclaiming — iris doesn't manage the agent's context window
+- replace all ASCII box diagrams with D2
+- redesign README with centered hero and tighter structure
+- overhaul README and user-facing presentation
+- rewrite README for open source launch and add CONTRIBUTING.md
+- add dual MIT/Apache-2.0 licenses, README, and repository metadata
+
+### Fixed
+
+- restore version invariant (0.2.3 → 0.2.1) so release-plz can run ([#75](https://github.com/OlsonSoftware/ministr/pull/75))
+- subagent session isolation + Tauri UI cleanup ([#37](https://github.com/OlsonSoftware/ministr/pull/37))
+- *(installer)* NSIS hook works (uses nsExec, not EnVar) + reinstall recipes via ministr setup ([#34](https://github.com/OlsonSoftware/ministr/pull/34))
+- replace alrik/iris-rs with AlrikOlson/iris-rs everywhere
+
 ## [0.2.0] - 2026-04-28
 
 ### Added
