@@ -5,7 +5,7 @@
   Why this exists: a self-hosted Windows runner has no guaranteed
   toolchain, and `shell: bash` there resolves to the System32 WSL stub
   (exits 1 with no distro). So the Windows release path uses ZERO bash:
-  this script (Windows PowerShell 5.1 — always present, no WSL, no pwsh
+  this script (Windows PowerShell 5.1 - always present, no WSL, no pwsh
   dependency) guarantees Python + the Rust toolchain, and everything
   after it is Python (scripts/ci/ci.py). dtolnay/rust-toolchain is
   skipped on Windows precisely because its internal step is `shell:
@@ -28,13 +28,13 @@ Write-Host "== Windows runner bootstrap (target=$Target) =="
 # Windows eval VM; winget is often absent (not on Server / fresh dev
 # images, and any manual install is wiped on VM reset). We bootstrap
 # from the official python.org per-user installer via Invoke-WebRequest
-# (same mechanism already used for rustup below) — no winget, no admin,
+# (same mechanism already used for rustup below) - no winget, no admin,
 # no msstore cert dance. Idempotent: only runs if python is missing.
 $PyVersion = '3.12.7'
 if (Have 'python') {
   Write-Host "python: $(python --version 2>&1)"
 } else {
-  Write-Host "python: not found — installing $PyVersion from python.org (winget-free, no admin)"
+  Write-Host "python: not found - installing $PyVersion from python.org (winget-free, no admin)"
   $pyExe = Join-Path $env:RUNNER_TEMP "python-$PyVersion-amd64.exe"
   $pyUrl = "https://www.python.org/ftp/python/$PyVersion/python-$PyVersion-amd64.exe"
   Invoke-WebRequest -Uri $pyUrl -OutFile $pyExe -UseBasicParsing
@@ -67,7 +67,7 @@ if (Have 'python') {
 
 # --- Rust (rustup) ------------------------------------------------------
 if (-not (Have 'rustup')) {
-  Write-Host 'rustup: not found — installing'
+  Write-Host 'rustup: not found - installing'
   $ri = Join-Path $env:RUNNER_TEMP 'rustup-init.exe'
   Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $ri -UseBasicParsing
   & $ri -y --default-toolchain stable --profile minimal --no-modify-path
@@ -78,7 +78,7 @@ if (-not (Have 'rustup')) {
 }
 Write-Host "rustup: $(rustup --version 2>&1)"
 
-# Ensure stable + the requested target (idempotent — rustup is a no-op
+# Ensure stable + the requested target (idempotent - rustup is a no-op
 # if already present/up to date).
 rustup toolchain install stable --profile minimal --no-self-update
 if ($LASTEXITCODE -ne 0) { throw "rustup toolchain install failed ($LASTEXITCODE)" }
@@ -106,10 +106,10 @@ try {
 
 # --- sccache + R2 wiring (parity with the Linux/macOS rust-env action)
 #     so Windows release compiles are warm-cached too. Secrets arrive
-#     via the step `env:` block; absent → sccache falls back to a local
+#     via the step `env:` block; absent -> sccache falls back to a local
 #     on-disk cache (harmless).
 if (-not (Have 'sccache')) {
-  Write-Host 'sccache: not found — installing'
+  Write-Host 'sccache: not found - installing'
   if (Have 'cargo-binstall') {
     cargo binstall --no-confirm --no-symlinks sccache
   } else {
