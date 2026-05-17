@@ -404,10 +404,13 @@ fn resolve_cli_path() -> Option<std::path::PathBuf> {
         }
     }
 
-    // Last resort: PATH. which_on_path only returns a path that is_file()
-    // and, on Windows, tries PATHEXT so an npm-style `.cmd` shim resolves
-    // with its true extension.
-    which_on_path("ministr").map(std::path::PathBuf::from)
+    // Last resort: PATH. which_on_path is PATHEXT-aware on Windows, but
+    // only guarantees is_file() — re-run is_usable_cli so a
+    // non-executable Unix file on PATH can't make cli_on_path=true and
+    // then EACCES in fix_path.
+    which_on_path("ministr")
+        .map(std::path::PathBuf::from)
+        .filter(|p| is_usable_cli(p))
 }
 
 /// Report first-run setup state for the setup wizard.

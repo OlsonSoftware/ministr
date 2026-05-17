@@ -365,7 +365,9 @@ jobs:
         with:
           shared-key: dev
           cache-targets: "false"
-          cache-directories: /usr/local/cargo/registry /usr/local/cargo/git
+          cache-directories: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
 
       - name: Stub Tauri bundle artifacts
         # tauri-build / `tauri::generate_context!()` probe for the
@@ -457,7 +459,9 @@ jobs:
         with:
           shared-key: release
           cache-targets: "false"
-          cache-directories: /usr/local/cargo/registry /usr/local/cargo/git
+          cache-directories: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
 
       - name: Build release ministr-cli
         run: cargo build --release -p ministr-cli --locked
@@ -543,7 +547,9 @@ jobs:
         with:
           shared-key: dev
           save-if: false
-          cache-directories: /usr/local/cargo/registry /usr/local/cargo/git
+          cache-directories: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
       - run: cargo deny check
       - run: cargo audit
 

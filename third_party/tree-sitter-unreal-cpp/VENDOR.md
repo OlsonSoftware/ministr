@@ -50,5 +50,8 @@ feature.
 To bump to a newer upstream rev, re-copy the same file set from a
 checkout of the new commit (do **not** add a git submodule or
 dependency — the clone cost is the whole reason this is vendored),
-update the rev/version above, and run `cargo update -p
-tree-sitter-unreal-cpp`.
+update the rev/version above, then run:
+
+```sh
+cargo update -p tree-sitter-unreal-cpp
+```
