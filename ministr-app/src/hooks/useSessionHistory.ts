@@ -88,14 +88,24 @@ export function useSessionHistory() {
     // Other tabs / the store writing in this tab won't fire `storage`
     // for same-tab writes; a light interval keeps it fresh enough for a
     // history list without coupling to the session store internals.
-    const id = setInterval(refresh, 5000);
+    // ministr lives in the tray, so skip the tick while the window is
+    // hidden and catch up the moment it's shown again — consistent with
+    // the daemon-status / session pollers.
+    const id = window.setInterval(() => {
+      if (!document.hidden) refresh();
+    }, 5000);
     const onStorage = (e: StorageEvent) => {
       if (e.key === KEY) refresh();
     };
+    const onVisibility = () => {
+      if (!document.hidden) refresh();
+    };
     window.addEventListener("storage", onStorage);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       clearInterval(id);
       window.removeEventListener("storage", onStorage);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [refresh]);
 
