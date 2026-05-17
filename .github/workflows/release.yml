@@ -86,7 +86,21 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # ── Windows path is 100% bash-free ──────────────────────────────
+      # A self-hosted Windows runner's `shell: bash` is the System32 WSL
+      # stub (exits 1, no distro), which also kills dtolnay/rust-toolchain
+      # (its internal step is `shell: bash`). So on Windows we skip
+      # dtolnay and run an idempotent Windows-PowerShell bootstrap
+      # (always present, no WSL) that guarantees Python + Rust, then do
+      # all logic in Python (scripts/ci/ci.py). Linux/macOS shards keep
+      # dtolnay + bash unchanged.
+      - name: Windows runner bootstrap (Python + Rust, idempotent)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/ci/win_setup.ps1 -Target ${{ matrix.target }}
+
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
+        if: runner.os != 'Windows'
         with:
           # Pinned by SHA → channel can't be read from the ref; set it.
           toolchain: stable
@@ -98,7 +112,7 @@ jobs:
 
       - name: Disable Defender for build paths (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           Add-MpPreference -ExclusionPath "${env:GITHUB_WORKSPACE}"
           Add-MpPreference -ExclusionPath "${env:USERPROFILE}\.cargo"
@@ -108,37 +122,22 @@ jobs:
           Add-MpPreference -ExclusionProcess "link.exe"
           Add-MpPreference -ExclusionProcess "lld-link.exe"
 
-      # On a self-hosted Windows runner `shell: bash` resolves to
-      # C:\Windows\System32\bash.exe (the WSL launcher) which exits 1
-      # when no WSL distro is installed. Prepend Git's bin (real Git
-      # Bash) to PATH so every later `shell: bash` step uses it — the
-      # same bash GitHub-hosted runners use. No-op-safe on hosted.
-      - name: Prefer Git Bash over WSL for shell:bash (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $gitRoot = Split-Path (Split-Path (Get-Command git).Source)
-          $bin = Join-Path $gitRoot 'bin'
-          if (-not (Test-Path (Join-Path $bin 'bash.exe'))) {
-            throw "Git Bash not found at $bin — install Git for Windows on this runner (see CI-RUNNER-SETUP.md C1)."
-          }
-          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          Write-Host "PATH-prepended $bin so shell:bash uses Git Bash, not System32 WSL bash."
-
-      - name: Use lld linker on Windows
+      # lld linker — only the Windows target uses it, so it's inherently
+      # a Windows-only step. Python, not bash.
+      - name: Use lld linker (Windows, Python)
         if: matrix.target == 'x86_64-pc-windows-msvc'
-        shell: bash
-        run: |
-          mkdir -p "$HOME/.cargo"
-          cat >> "$HOME/.cargo/config.toml" <<'EOF'
-          [target.x86_64-pc-windows-msvc]
-          linker = "rust-lld"
-          rustflags = ["-Clink-arg=-fuse-ld=lld"]
-          EOF
+        shell: powershell
+        run: python scripts/ci/ci.py lld-config
 
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} -p ministr-cli
+      - name: Build release binary (Unix, bash)
+        if: runner.os != 'Windows'
         shell: bash
+        run: cargo build --release --target ${{ matrix.target }} -p ministr-cli
+
+      - name: Build release binary (Windows, Python)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: python scripts/ci/ci.py build --target ${{ matrix.target }} -p ministr-cli
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -148,13 +147,10 @@ jobs:
           cd ../../..
           shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
 
-      - name: Package (Windows)
+      - name: Package (Windows, Python)
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path "target/${{ matrix.target }}/release/${{ matrix.binary }}" -DestinationPath "${{ matrix.archive }}"
-          $hash = (Get-FileHash -Algorithm SHA256 "${{ matrix.archive }}").Hash.ToLower()
-          "$hash  ${{ matrix.archive }}" | Out-File -Encoding ascii "${{ matrix.archive }}.sha256"
+        shell: powershell
+        run: python scripts/ci/ci.py package-cli --target ${{ matrix.target }} --binary ${{ matrix.binary }} --archive ${{ matrix.archive }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -226,7 +222,16 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # Windows path is bash-free (see cli job). Idempotent PowerShell
+      # bootstrap → Python + Rust; dtolnay skipped on Windows because
+      # its internal step is `shell: bash`.
+      - name: Windows runner bootstrap (Python + Rust, idempotent)
+        if: matrix.platform == 'windows-x86_64'
+        shell: powershell
+        run: ./scripts/ci/win_setup.ps1 -Target ${{ matrix.cli_target }}
+
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
+        if: matrix.platform != 'windows-x86_64'
         with:
           # Pinned by SHA → channel can't be read from the ref; set it.
           toolchain: stable
@@ -242,7 +247,7 @@ jobs:
       # cuts wall-clock by ~30% on Windows runners.
       - name: Disable Defender for build paths (Windows)
         if: matrix.platform == 'windows-x86_64'
-        shell: pwsh
+        shell: powershell
         run: |
           Add-MpPreference -ExclusionPath "${env:GITHUB_WORKSPACE}"
           Add-MpPreference -ExclusionPath "${env:USERPROFILE}\.cargo"
@@ -252,31 +257,11 @@ jobs:
           Add-MpPreference -ExclusionProcess "link.exe"
           Add-MpPreference -ExclusionProcess "lld-link.exe"
 
-      # See cli job: force `shell: bash` to Git Bash, not System32 WSL.
-      - name: Prefer Git Bash over WSL for shell:bash (Windows)
+      # rust-lld instead of MSVC link.exe — Windows-only step, Python.
+      - name: Use lld linker (Windows, Python)
         if: matrix.platform == 'windows-x86_64'
-        shell: pwsh
-        run: |
-          $gitRoot = Split-Path (Split-Path (Get-Command git).Source)
-          $bin = Join-Path $gitRoot 'bin'
-          if (-not (Test-Path (Join-Path $bin 'bash.exe'))) {
-            throw "Git Bash not found at $bin — install Git for Windows on this runner (see CI-RUNNER-SETUP.md C1)."
-          }
-          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          Write-Host "PATH-prepended $bin so shell:bash uses Git Bash, not System32 WSL bash."
-
-      # Use rust-lld instead of MSVC link.exe on Windows. Faster final-link
-      # phase, no quality difference for our binaries.
-      - name: Use lld linker on Windows
-        if: matrix.platform == 'windows-x86_64'
-        shell: bash
-        run: |
-          mkdir -p "$HOME/.cargo"
-          cat >> "$HOME/.cargo/config.toml" <<'EOF'
-          [target.x86_64-pc-windows-msvc]
-          linker = "rust-lld"
-          rustflags = ["-Clink-arg=-fuse-ld=lld"]
-          EOF
+        shell: powershell
+        run: python scripts/ci/ci.py lld-config
 
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
         with:
@@ -302,7 +287,8 @@ jobs:
       # Tauri's externalBin sidecar must exist at build time, named
       # `binaries/ministr-cli-<target-triple>` (with `.exe` on Windows).
       # We compile per-platform with the right --features set.
-      - name: Build CLI sidecar
+      - name: Build CLI sidecar (Unix, bash)
+        if: matrix.platform != 'windows-x86_64'
         shell: bash
         run: |
           if [ -n "${{ matrix.cli_features }}" ]; then
@@ -311,11 +297,22 @@ jobs:
             cargo build --release --target ${{ matrix.cli_target }} -p ministr-cli
           fi
 
-      - name: Stage sidecar for Tauri externalBin
+      - name: Build CLI sidecar (Windows, Python)
+        if: matrix.platform == 'windows-x86_64'
+        shell: powershell
+        run: python scripts/ci/ci.py build --target ${{ matrix.cli_target }} -p ministr-cli --features "${{ matrix.cli_features }}"
+
+      - name: Stage sidecar for Tauri externalBin (Unix, bash)
+        if: matrix.platform != 'windows-x86_64'
         shell: bash
         run: |
           mkdir -p ministr-app/src-tauri/binaries
           cp "target/${{ matrix.cli_target }}/release/${{ matrix.sidecar_bin }}" "ministr-app/src-tauri/binaries/${{ matrix.sidecar_name }}"
+
+      - name: Stage sidecar for Tauri externalBin (Windows, Python)
+        if: matrix.platform == 'windows-x86_64'
+        shell: powershell
+        run: python scripts/ci/ci.py stage-sidecar --target ${{ matrix.cli_target }} --src ${{ matrix.sidecar_bin }} --dst ${{ matrix.sidecar_name }}
 
       # Build-only mode: no tagName / releaseName / releaseId means
       # tauri-action will NOT touch the GitHub Release. We aggregate
@@ -519,13 +516,13 @@ jobs:
       # NOTE: uses `find` (not bash globstar+brace expansion) for macOS
       # compatibility — macOS ships bash 3.2 which doesn't support `shopt -s
       # globstar`. `find` is universal across Linux/macOS/Git-Bash on Windows.
-      - name: Collect and rename desktop bundles
+      - name: Collect and rename desktop bundles (Unix, bash)
+        if: matrix.platform != 'windows-x86_64'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p _bundles
-          # Cross-platform sha256: macOS has shasum, Linux + Git-Bash on
-          # Windows have sha256sum. Pick whichever is on PATH.
+          # Cross-platform sha256: macOS has shasum, Linux has sha256sum.
           if command -v sha256sum >/dev/null 2>&1; then
             sha256() { sha256sum "$1"; }
           else
@@ -545,6 +542,11 @@ jobs:
             sha256 "$dst" > "$dst.sha256"
           done < <(find "${{ matrix.target_dir }}" -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) 2>/dev/null)
           ls -la _bundles
+
+      - name: Collect and rename desktop bundles (Windows, Python)
+        if: matrix.platform == 'windows-x86_64'
+        shell: powershell
+        run: python scripts/ci/ci.py collect-bundles --target-dir "${{ matrix.target_dir }}" --triple ${{ matrix.triple }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
