@@ -16,7 +16,7 @@
 # github.com/OlsonSoftware/ministr/releases/download/... directly.
 
 class Ministr < Formula
-  desc "Context cache controller for LLM agents — MCP server with session tracking, prefetch, and budget management"
+  desc "Code intelligence MCP server for AI coding agents — semantic code search, symbol navigation, and cross-language bridge detection"
   homepage "https://ministr.ai"
   version "0.1.0"
   license any_of: ["MIT", "Apache-2.0"]

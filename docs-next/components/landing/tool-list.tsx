@@ -24,11 +24,11 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    label: 'Budget',
+    label: 'Session efficiency',
     tools: [
-      { name: 'ministr_budget', slug: 'budget', description: 'Current context budget status.' },
-      { name: 'ministr_compress', slug: 'compress', description: 'Generate compressed summaries for eviction.' },
-      { name: 'ministr_evicted', slug: 'evicted', description: 'Signal that content has been evicted.' },
+      { name: 'ministr_budget', slug: 'budget', description: 'Advisory token-usage estimate (internal accounting).' },
+      { name: 'ministr_compress', slug: 'compress', description: 'Generate compact summaries of sections.' },
+      { name: 'ministr_evicted', slug: 'evicted', description: 'Signal that content was dropped from context.' },
     ],
   },
   {

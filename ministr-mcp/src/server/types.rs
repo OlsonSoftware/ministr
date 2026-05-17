@@ -159,7 +159,7 @@ pub struct ReadParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EvictedParams {
     /// Content IDs that the agent has dropped from its context window.
-    #[schemars(description = "Content IDs that have been evicted from the agent's context window")]
+    #[schemars(description = "Content IDs the agent has dropped from its context")]
     pub content_ids: Vec<String>,
 }
 
@@ -179,9 +179,7 @@ pub struct ExtractParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompressParams {
     /// Content IDs to generate compressed summaries for.
-    #[schemars(
-        description = "Content IDs (section IDs) to generate compressed summaries for eviction"
-    )]
+    #[schemars(description = "Content IDs (section IDs) to generate compressed summaries for")]
     pub content_ids: Vec<String>,
 }
 

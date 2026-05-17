@@ -8,7 +8,7 @@ repository.workspace = true
 description = "ministr daemon — HTTP API over Unix domain socket for corpus management and querying."
 readme = "../README.md"
 homepage.workspace = true
-keywords = ["mcp", "ministr", "daemon", "cache", "ipc"]
+keywords = ["mcp", "ministr", "daemon", "ipc"]
 categories = ["development-tools", "caching"]
 
 [lints]

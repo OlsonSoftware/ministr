@@ -1,17 +1,17 @@
 ---
 title: ministr
-description: Codebase intelligence for AI agents — MCP server with semantic search, symbol navigation, cross-language bridges, and session-aware context delivery.
+description: Real codebase understanding for AI coding agents — a code intelligence MCP server with semantic search, symbol navigation, reference graphs, and cross-language bridge detection.
 ---
 
-ministr is an MCP server that gives AI agents real codebase intelligence: semantic search across code and docs, symbol-level navigation, cross-language bridge detection (Tauri, napi-rs, PyO3, wasm-bindgen, HTTP routes, FFI), and session memory so the same context isn't re-fetched on every turn.
+ministr is a code intelligence MCP server. It gives AI coding agents AST-level understanding of your codebase: semantic search across code and docs, symbol-level navigation, real reference graphs, and cross-language bridge detection (Tauri, napi-rs, PyO3, wasm-bindgen, HTTP routes, FFI) — across ~29 languages, all local.
 
 ## What ministr gives your agent
 
 - **Semantic search** across your codebase and docs via `ministr_survey`
-- **Code symbol navigation** — find and trace functions, types, callers via `ministr_symbols` / `ministr_references`
-- **Session memory** — remembers what it sent; skips repeats; ships deltas on change
-- **Predictive prefetch** — warms what it thinks you'll ask for next
-- **Budget awareness** — tracks usage; compresses instead of silently dropping
+- **Symbol navigation** — find and trace functions, types, and callers via `ministr_symbols` / `ministr_references`
+- **Cross-language bridge detection** — links Tauri / napi-rs / PyO3 / wasm-bindgen / gRPC / HTTP / FFI boundaries via `ministr_bridge`
+- **Multi-resolution results** — summary, section, claim, symbol, or full source — the slice that matters, not a file dump
+- **Efficient delivery (a bonus)** — remembers what it already sent and ships only what changed on the next turn
 
 ## Start here
 

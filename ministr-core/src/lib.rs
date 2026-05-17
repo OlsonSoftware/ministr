@@ -1,4 +1,4 @@
-//! ministr-core — domain logic for the ministr context cache.
+//! ministr-core — domain logic for the ministr code intelligence server.
 //!
 //! This crate contains the core types, error definitions, and service traits
 //! for ministr. It has no transport dependencies and no knowledge of MCP.
