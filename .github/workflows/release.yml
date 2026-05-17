@@ -11,9 +11,8 @@ name: Release
 #     ./.github/actions/run-ci-py composite — the ONE place the OS
 #     (bash/python3 vs cmd/python) split exists. No per-OS step pairs.
 #   * Toolchain + sccache(R2): ./.github/actions/rust-env on Linux/macOS;
-#     scripts/ci/win_setup.ps1 on Windows. Identical warm cache as CI.
-#   * The heavy x86_64-Linux shards run inside the `ministr-ci`
-#     container (toolchain/sccache baked) for parity with ci.yml.
+#     scripts/ci/win_setup.ps1 on Windows — same warm cache as ci.yml,
+#     no container (avoids the empty-image + mutable-:latest footguns).
 #   * macOS .pkg signing is `ci.py pkg` (no inline shell mega-script).
 #
 # RELEASE CONTRACT: this fires only on a `vX.Y.Z` tag, and that tag is
@@ -31,7 +30,6 @@ concurrency:
 
 permissions:
   contents: read
-  packages: read   # pull the private ministr-ci image from GHCR
 
 env:
   CARGO_TERM_COLOR: always
@@ -49,13 +47,10 @@ jobs:
       ${{ (matrix.target == 'x86_64-unknown-linux-gnu' && (vars.CI_RUNNER || matrix.os))
        || (matrix.target == 'x86_64-pc-windows-msvc' && (vars.CI_RUNNER_WINDOWS || matrix.os))
        || matrix.os }}
-    # Heavy x86_64-Linux shard runs in the same baked image as ci.yml
-    # (empty container ⇒ run directly on the host for every other shard).
-    container:
-      image: ${{ matrix.container }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+    # No container: the rust-env composite (Linux/macOS) and
+    # win_setup.ps1 (Windows) provision the identical toolchain+sccache
+    # the ministr-ci image has — without an empty-image-validation
+    # footgun or a mutable `:latest` race against the CI image publish.
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -63,7 +58,6 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            container: ghcr.io/olsonsoftware/ministr-ci:latest
             binary: ministr
             archive: ministr-x86_64-unknown-linux-gnu.tar.gz
 
@@ -71,13 +65,11 @@ jobs:
           # prebuilts). No container — ministr-ci is an amd64 image.
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
-            container: ""
             binary: ministr
             archive: ministr-aarch64-unknown-linux-gnu.tar.gz
 
           - target: aarch64-apple-darwin
             os: macos-latest
-            container: ""
             binary: ministr
             archive: ministr-aarch64-apple-darwin.tar.gz
 
@@ -87,7 +79,6 @@ jobs:
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            container: ""
             binary: ministr.exe
             archive: ministr-x86_64-pc-windows-msvc.zip
 
@@ -153,11 +144,8 @@ jobs:
       ${{ (matrix.platform == 'linux-x86_64' && (vars.CI_RUNNER || matrix.os))
        || (matrix.platform == 'windows-x86_64' && (vars.CI_RUNNER_WINDOWS || matrix.os))
        || matrix.os }}
-    container:
-      image: ${{ matrix.container }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+    # No container (see cli job): rust-env / win_setup.ps1 provision the
+    # toolchain+sccache; avoids the empty-image + :latest-race footguns.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -167,7 +155,6 @@ jobs:
           # makes only the .app (`--bundles app`); .pkg via `ci.py pkg`.
           - platform: macos-aarch64
             os: macos-latest
-            container: ""
             cli_target: aarch64-apple-darwin
             cli_features: ""
             sidecar_bin: ministr
@@ -180,7 +167,6 @@ jobs:
           # `--bundles nsis` (no MSI — needs a .ico we don't ship).
           - platform: windows-x86_64
             os: windows-latest
-            container: ""
             cli_target: x86_64-pc-windows-msvc
             cli_features: directml
             sidecar_bin: ministr.exe
@@ -191,7 +177,6 @@ jobs:
 
           - platform: linux-x86_64
             os: ubuntu-latest
-            container: ghcr.io/olsonsoftware/ministr-ci:latest
             cli_target: x86_64-unknown-linux-gnu
             cli_features: ""
             sidecar_bin: ministr
@@ -276,21 +261,25 @@ jobs:
         if: matrix.platform == 'macos-aarch64'
         shell: bash
         env:
-          A1: ${{ secrets.APPLE_CERTIFICATE }}
-          A2: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          A3: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          A4: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
-          A5: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
-          A6: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
-          A7: ${{ secrets.APPLE_ID }}
-          A8: ${{ secrets.APPLE_PASSWORD }}
-          A9: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           miss=()
-          for v in A1 A2 A3 A4 A5 A6 A7 A8 A9; do [ -n "${!v:-}" ] || miss+=("$v"); done
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                   APPLE_INSTALLER_CERTIFICATE APPLE_INSTALLER_CERTIFICATE_PASSWORD \
+                   APPLE_INSTALLER_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v:-}" ] || miss+=("$v")
+          done
           if [ ${#miss[@]} -gt 0 ]; then
-            echo "::error::Missing macOS signing secret(s) (slots: ${miss[*]}). Bind all nine and re-run." >&2
+            echo "::error::Missing macOS signing secret(s): ${miss[*]}. Bind all nine (Settings → Secrets → Actions) and re-run." >&2
             exit 1
           fi
 
@@ -334,7 +323,11 @@ jobs:
           args: pkg
 
       # Rename Tauri outputs to ministr-desktop-<triple>.<ext> + sha256.
+      # macOS is excluded: its only artifact is the .pkg, already placed
+      # in _bundles by `ci.py pkg` (collect-bundles only handles
+      # exe/deb/rpm/AppImage and would error finding none).
       - name: Collect and rename desktop bundles
+        if: matrix.platform != 'macos-aarch64'
         uses: ./.github/actions/run-ci-py
         with:
           args: collect-bundles --target-dir ${{ matrix.target_dir }} --triple ${{ matrix.triple }}

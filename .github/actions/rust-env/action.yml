@@ -76,20 +76,28 @@ runs:
 
     - name: Wire sccache → R2 (or local fallback)
       shell: bash
+      # Inputs come in via env (NOT interpolated into the script body) so
+      # values with shell metacharacters can't break or inject. Written
+      # to GITHUB_ENV with printf '%s' — exact bytes, no expansion.
+      env:
+        IN_BUCKET: ${{ inputs.sccache-bucket }}
+        IN_ENDPOINT: ${{ inputs.sccache-endpoint }}
+        IN_AKID: ${{ inputs.aws-access-key-id }}
+        IN_SECRET: ${{ inputs.aws-secret-access-key }}
       run: |
         set -euo pipefail
         {
           echo "RUSTC_WRAPPER=sccache"
           echo "SCCACHE_REGION=auto"
         } >> "$GITHUB_ENV"
-        if [ -n "${{ inputs.sccache-bucket }}" ]; then
+        if [ -n "$IN_BUCKET" ]; then
           {
-            echo "SCCACHE_BUCKET=${{ inputs.sccache-bucket }}"
-            echo "SCCACHE_ENDPOINT=${{ inputs.sccache-endpoint }}"
-            echo "AWS_ACCESS_KEY_ID=${{ inputs.aws-access-key-id }}"
-            echo "AWS_SECRET_ACCESS_KEY=${{ inputs.aws-secret-access-key }}"
+            printf 'SCCACHE_BUCKET=%s\n' "$IN_BUCKET"
+            printf 'SCCACHE_ENDPOINT=%s\n' "$IN_ENDPOINT"
+            printf 'AWS_ACCESS_KEY_ID=%s\n' "$IN_AKID"
+            printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$IN_SECRET"
           } >> "$GITHUB_ENV"
-          echo "sccache → R2 bucket '${{ inputs.sccache-bucket }}'"
+          echo "sccache → R2 bucket configured"
         else
           echo "sccache → local on-disk cache (no R2 secrets configured)"
         fi

@@ -122,7 +122,6 @@ def cmd_pkg(a: argparse.Namespace) -> None:
     secrets (same names as before). macOS only."""
     if sys.platform != "darwin":
         sys.exit("pkg is macOS-only")
-    import tempfile
     import uuid
 
     env = os.environ
@@ -150,14 +149,18 @@ def cmd_pkg(a: argparse.Namespace) -> None:
     )
     os.chmod(scripts / "postinstall", 0o755)
 
-    def sh(cmd: list[str], **kw):
-        print("+ " + " ".join(cmd), flush=True)
+    def sh(cmd: list[str], *, redact: bool = False, **kw):
+        # Never echo a command line that contains a secret arg (cert
+        # password / keychain password / Apple notary password). GitHub
+        # masks known secret strings, but don't rely on that — print
+        # only the program name for redacted calls.
+        print(f"+ {cmd[0]} (args redacted)" if redact else "+ " + " ".join(cmd), flush=True)
         subprocess.run(cmd, check=True, **kw)
 
     try:
-        sh(["security", "create-keychain", "-p", kc_pw, str(keychain)])
+        sh(["security", "create-keychain", "-p", kc_pw, str(keychain)], redact=True)
         sh(["security", "set-keychain-settings", "-lut", "21600", str(keychain)])
-        sh(["security", "unlock-keychain", "-p", kc_pw, str(keychain)])
+        sh(["security", "unlock-keychain", "-p", kc_pw, str(keychain)], redact=True)
         existing = subprocess.check_output(
             ["security", "list-keychains", "-d", "user"], text=True
         )
@@ -170,11 +173,11 @@ def cmd_pkg(a: argparse.Namespace) -> None:
             "security", "import", str(cert), "-P",
             env["APPLE_INSTALLER_CERTIFICATE_PASSWORD"],
             "-A", "-t", "cert", "-f", "pkcs12", "-k", str(keychain),
-        ])
+        ], redact=True)
         sh([
             "security", "set-key-partition-list", "-S", "apple-tool:,apple:",
             "-s", "-k", kc_pw, str(keychain),
-        ])
+        ], redact=True)
         comp = rt / "ministr-component.pkg"
         sh([
             "pkgbuild", "--component", str(app), "--install-location",
@@ -193,7 +196,7 @@ def cmd_pkg(a: argparse.Namespace) -> None:
             "xcrun", "notarytool", "submit", str(dist), "--apple-id",
             env["APPLE_ID"], "--password", env["APPLE_PASSWORD"],
             "--team-id", env["APPLE_TEAM_ID"], "--wait",
-        ])
+        ], redact=True)
         sh(["xcrun", "stapler", "staple", str(dist)])
         sha256_companion(dist)
     finally:
