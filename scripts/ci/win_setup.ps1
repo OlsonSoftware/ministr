@@ -84,6 +84,38 @@ if (Have 'python') {
   Show-Version 'python' { python --version }
 }
 
+# --- Node ---------------------------------------------------------------
+# Same story as Python: this runner ships no Node/npm, and
+# pnpm/action-setup's self-installer shells out to `npm` (fails even
+# with standalone:true). Extract the official nodejs.org zip (no
+# installer, no admin) so npm/npx/corepack are on PATH before the
+# pnpm/action-setup workflow step runs. Idempotent; cached under
+# USERPROFILE.
+$NodeVersion = '22.11.0'
+if (Have 'node') {
+  Show-Version 'node' { node --version }
+} else {
+  $nodeHome = Join-Path $env:USERPROFILE ".node-standalone\$NodeVersion"
+  $nodeDir  = Join-Path $nodeHome "node-v$NodeVersion-win-x64"
+  $nodeExe  = Join-Path $nodeDir 'node.exe'
+  if (-not (Test-Path $nodeExe)) {
+    Write-Host "node: not found - fetching Node $NodeVersion (nodejs.org, no installer)"
+    $zip = Join-Path $env:RUNNER_TEMP 'node.zip'
+    $url = "https://nodejs.org/dist/v$NodeVersion/node-v$NodeVersion-win-x64.zip"
+    Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+    New-Item -ItemType Directory -Force -Path $nodeHome | Out-Null
+    # Windows bsdtar (tar.exe) extracts .zip too; archive unpacks to a
+    # top-level node-v<ver>-win-x64\ dir (node.exe, npm, npx, corepack).
+    tar -xf $zip -C $nodeHome
+    if ($LASTEXITCODE -ne 0) { throw "node unzip failed ($LASTEXITCODE)" }
+    if (-not (Test-Path $nodeExe)) { throw 'node zip layout unexpected (no node.exe)' }
+  }
+  $env:PATH = "$nodeDir;$env:PATH"
+  if ($env:GITHUB_PATH) { "$nodeDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append }
+  Show-Version 'node' { node --version }
+  Show-Version 'npm'  { npm --version }
+}
+
 # --- Rust (rustup) ------------------------------------------------------
 if (-not (Have 'rustup')) {
   Write-Host 'rustup: not found - installing'
