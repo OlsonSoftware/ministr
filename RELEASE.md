@@ -1,51 +1,64 @@
 # Releasing ministr
 
-End-to-end checklist for cutting a release. The repo is private and
-distribution is intentionally limited to a single GitHub Release per
-version, fronted by the `dl.ministr.app` Cloudflare Worker. crates.io
-publishing and the Homebrew tap are explicitly disabled — those would
-require making the source repo public again.
+Releases are **automated by [release-plz](https://release-plz.dev)**
+(config: [`release-plz.toml`](release-plz.toml), workflow:
+[`.github/workflows/release-plz.yml`](.github/workflows/release-plz.yml)).
+You don't hand-bump versions or hand-write the changelog or tag — you
+just merge a bot PR. The repo is private and distribution is
+intentionally limited to a single GitHub Release per version, fronted by
+the `dl.ministr.app` Cloudflare Worker; crates.io publishing and the
+Homebrew tap stay disabled (`publish = false`).
 
-## 1. Pre-flight
+## How it works
 
-```sh
-just validate               # fmt-check + lint + test, must be green
-just deny                   # license + advisory checks
-cargo audit                 # vulnerability scan
-just eval-gate              # retrieval quality regression gate
-just docs-typecheck         # docs-next types
-just docs-build             # docs-next static export
+```
+push to main ─▶ release-plz-pr     keeps a "release" PR updated:
+  (Conventional               version bump (all 6 crates, lockstep)
+   Commit msgs)               + CHANGELOG.md from the commit log
+        │
+   merge that PR ─▶ release-plz-release   pushes ONE `vX.Y.Z` tag
+        │                                  (no crates.io, no GH Release)
+        ▼
+  release.yml (tag trigger)   builds every artifact + SHA256SUMS and
+                              creates the single GitHub Release
 ```
 
-All must exit 0. Fix anything red before continuing.
+- **Conventional Commits drive everything.** `feat:` → minor + *Added*,
+  `fix:` → patch + *Fixed*, `feat!:`/`BREAKING CHANGE:` → major;
+  `ci:`/`chore:`/`build:`/`test:` are kept out of the changelog.
+- All six crates (ministr-api/core/daemon/mcp/cli/app) are pinned to one
+  shared version via `version_group` — a single product version, exactly
+  like before. Tauri reads its bundle version from
+  `ministr-app/src-tauri/Cargo.toml`, so the lockstep bump covers it.
+- Exactly one tag, `vX.Y.Z` (ministr-cli owns it), so the existing
+  `release.yml` tag filter fires unchanged.
 
-## 2. Bump the version
+## 1. Land changes on `main`
 
-```sh
-just release X.Y.Z
-```
+Use Conventional Commit messages. As commits land, the **Release PR**
+(labelled `release`) is opened/refreshed automatically with the computed
+version and the generated `CHANGELOG.md` diff. Review that PR's
+changelog as you would any PR.
 
-This recipe:
-- Updates `version = ...` in all six workspace crates (ministr-api,
-  ministr-core, ministr-daemon, ministr-mcp, ministr-cli,
-  ministr-app/src-tauri). Tauri reads its bundle version straight from
-  `ministr-app/src-tauri/Cargo.toml` (no `version` field in
-  `tauri.conf.json`), so this single bump is enough.
-- Prepends a `## [X.Y.Z] — YYYY-MM-DD` section to `CHANGELOG.md` with
-  empty `### Added / Changed / Fixed` subsections.
-- Runs `cargo check --workspace` so the bump compiles.
-- Creates a `release: vX.Y.Z` commit and a `vX.Y.Z` tag.
-
-**Review the generated CHANGELOG section before pushing.** Move any
-items from the `[Unreleased]` section into the new `[X.Y.Z]` section,
-and fill in anything the auto-generated template missed. Amend the
-release commit if you edit it.
-
-## 3. Trigger the unified release
+## 2. Pre-flight, then merge the Release PR
 
 ```sh
-git push origin main vX.Y.Z
+just release-preflight      # validate + deny + eval-gate + audit + docs
 ```
+
+All must exit 0. Then **merge the Release PR**. That's the entire
+release action — `release-plz-release` then pushes the `vX.Y.Z` tag.
+
+> Preview locally any time without side effects:
+> `release-plz update --config release-plz.toml` (prints the version +
+> changelog diff it would make).
+
+> **Token:** the workflow needs the `RELEASE_PLZ_TOKEN` repo secret (a
+> fine-grained PAT with *Contents: RW* + *Pull requests: RW*). The
+> default `GITHUB_TOKEN` cannot trigger other workflows, so without the
+> PAT the pushed tag would not start `release.yml`.
+
+## 3. The tag-triggered build (unchanged)
 
 `.github/workflows/release.yml` fires on `vX.Y.Z` tags. One workflow,
 three job groups, one GitHub Release:

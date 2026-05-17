@@ -114,6 +114,8 @@ fn main() {
             commands::should_show_onboarding,
             commands::dismiss_onboarding,
             commands::reset_onboarding,
+            commands::setup_status,
+            commands::fix_path,
             commands::list_sessions,
             commands::list_corpus_files,
             commands::search_corpus,

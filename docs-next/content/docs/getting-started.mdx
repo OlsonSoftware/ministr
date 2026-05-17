@@ -7,7 +7,9 @@ description: Install ministr, initialize .ministr.toml in your project, and wire
 
 ### 1. Install ministr
 
-Pick your platform on **[ministr.ai/install](/install)** — desktop installers for macOS / Windows / Linux, plus a one-line CLI install. The page auto-detects your OS, leads with the matching desktop installer, and offers a CLI tab for headless installs.
+Pick your platform on **[ministr.ai/install](/install)** — a double-click installer for macOS (`.pkg`), Windows (`.exe`), and Linux (`.deb` / `.rpm` / `.AppImage`). The page auto-detects your OS and leads with the matching installer; a CLI one-liner is available below it for headless installs.
+
+Every installer does the same thing: lays down the desktop app and adds the `ministr` CLI to your PATH. On first launch the app opens a short **Setup** screen — identical on macOS, Windows, and Linux — that confirms the CLI is wired up (with one-click repair if it isn't), then walks you through indexing a project and connecting your agent. No terminal step required.
 
 ### 2. Initialize ministr in your project (`ministr init`)
 
