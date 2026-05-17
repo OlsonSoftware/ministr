@@ -520,6 +520,245 @@ h1.ministr-gradient-text,
   --term-color-15: #6e7781;
 }
 
+/* =====================================================
+   ministr landing — manuscript layer
+   -----------------------------------------------------
+   A single editorial column. No motion, no glass, no
+   playback. Hairline rules, numbered sections, figures
+   as bordered monospace schematics with captions. The
+   amber accent appears sparingly — a printed-page feel,
+   not a product splash.
+   ===================================================== */
+
+.ministr-ms {
+  --ms-measure: 38rem;          /* ~66 chars at this size — book measure */
+  --ms-rule: color-mix(in oklch, var(--fd-foreground) 16%, transparent);
+  --ms-rule-faint: color-mix(in oklch, var(--fd-foreground) 9%, transparent);
+}
+
+/* The reading column. Everything centers on one measure;
+   figures may break out one step wider for legibility. */
+.ministr-ms .ms-col {
+  width: 100%;
+  max-width: var(--ms-measure);
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+.ministr-ms .ms-col-wide {
+  max-width: calc(var(--ms-measure) + 9rem);
+}
+
+/* Masthead wordmark — large, tight, ink. The period is the
+   only amber on the masthead. */
+.ministr-ms .ms-wordmark {
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+  font-size: clamp(3rem, 9vw, 5.5rem);
+  color: var(--fd-foreground);
+}
+.ministr-ms .ms-wordmark span {
+  color: var(--color-ministr-500);
+}
+
+/* Standfirst — the one-line thesis under the mark. Larger
+   than body, lighter weight, the only "display" prose. */
+.ministr-ms .ms-standfirst {
+  font-size: clamp(1.2rem, 2.2vw, 1.6rem);
+  line-height: 1.35;
+  font-weight: 450;
+  text-wrap: balance;
+  color: color-mix(in oklch, var(--fd-foreground) 92%, transparent);
+}
+
+/* Section number — small caps mono marker, e.g. "§ 2".
+   Sits above each section heading like a manuscript folio. */
+.ministr-ms .ms-folio {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ministr-accent-text);
+}
+
+.ministr-ms .ms-h {
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  text-wrap: balance;
+  color: var(--fd-foreground);
+  margin-top: 0.5rem;
+}
+
+/* Body prose — generous leading, pretty wrapping. */
+.ministr-ms .ms-p {
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  color: color-mix(in oklch, var(--fd-foreground) 84%, transparent);
+  text-wrap: pretty;
+}
+.ministr-ms .ms-p + .ms-p { margin-top: 1.1rem; }
+.ministr-ms .ms-p strong {
+  font-weight: 600;
+  color: var(--fd-foreground);
+}
+.ministr-ms .ms-p code,
+.ministr-ms .ms-figure code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--ministr-accent-text);
+}
+
+/* Hairline rules — the primary structural device. */
+.ministr-ms .ms-rule-line {
+  height: 1px;
+  background: var(--ms-rule-faint);
+  border: 0;
+}
+
+/* Figure — a bordered, low-fidelity schematic. Monospace
+   inside; a thin rule, a hairline frame, no fill, no shadow.
+   Reads like a figure plate in a printed paper. */
+.ministr-ms .ms-figure {
+  border: 1px solid var(--ms-rule);
+  border-radius: 2px;
+  padding: 1.25rem 1.25rem 0.9rem;
+  background: transparent;
+}
+.ministr-ms .ms-figure pre,
+.ministr-ms .ms-figure .ms-mono {
+  font-family: var(--font-mono);
+  font-size: clamp(11px, 1.4vw, 13px);
+  line-height: 1.65;
+  color: color-mix(in oklch, var(--fd-foreground) 88%, transparent);
+  overflow-x: auto;
+  white-space: pre;
+}
+.ministr-ms .ms-figcap {
+  margin-top: 0.85rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--ms-rule-faint);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: color-mix(in oklch, var(--fd-foreground) 62%, transparent);
+}
+.ministr-ms .ms-figcap b {
+  font-weight: 600;
+  color: var(--ministr-accent-text);
+  font-variant: all-small-caps;
+  letter-spacing: 0.06em;
+  margin-right: 0.4rem;
+}
+
+/* Two-column compare figure (grep vs ministr): plain,
+   hairline-separated, no cards. */
+.ministr-ms .ms-compare {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+@container (width > 32rem) {
+  .ministr-ms .ms-compare { grid-template-columns: 1fr 1fr; }
+}
+.ministr-ms .ms-compare > div { padding: 0.25rem 0; }
+.ministr-ms .ms-compare > div + div {
+  border-top: 1px solid var(--ms-rule-faint);
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+@container (width > 32rem) {
+  .ministr-ms .ms-compare > div + div {
+    border-top: 0;
+    border-left: 1px solid var(--ms-rule);
+    padding-top: 0.25rem;
+    padding-left: 1.5rem;
+    margin-top: 0;
+  }
+}
+.ministr-ms .ms-compare h4 {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ministr-accent-text);
+  margin-bottom: 0.6rem;
+}
+.ministr-ms .ms-compare li {
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: color-mix(in oklch, var(--fd-foreground) 80%, transparent);
+  padding-left: 1.1rem;
+  position: relative;
+  margin-top: 0.4rem;
+}
+.ministr-ms .ms-compare li::before {
+  content: '—';
+  position: absolute;
+  left: 0;
+  color: color-mix(in oklch, var(--fd-foreground) 40%, transparent);
+}
+
+/* Numbered manuscript list (mechanisms / pipeline steps). */
+.ministr-ms .ms-list { counter-reset: ms; }
+.ministr-ms .ms-item {
+  display: grid;
+  grid-template-columns: 2.25rem 1fr;
+  gap: 0.5rem 1rem;
+  padding: 1.1rem 0;
+  border-top: 1px solid var(--ms-rule-faint);
+}
+.ministr-ms .ms-item:first-child { border-top: 0; }
+.ministr-ms .ms-item::before {
+  counter-increment: ms;
+  content: counter(ms, decimal-leading-zero);
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--ministr-accent-text);
+  padding-top: 0.15rem;
+}
+.ministr-ms .ms-item h3 { grid-column: 2; }
+.ministr-ms .ms-item p  { grid-column: 2; }
+.ministr-ms .ms-item h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--fd-foreground);
+  letter-spacing: -0.01em;
+}
+.ministr-ms .ms-item p {
+  margin-top: 0.3rem;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: color-mix(in oklch, var(--fd-foreground) 74%, transparent);
+}
+
+/* Inline primary link — underlined ink, amber on hover.
+   No pill, no shadow; a manuscript cross-reference. */
+.ministr-ms .ms-link {
+  color: var(--fd-foreground);
+  text-decoration: underline;
+  text-decoration-color: var(--ministr-accent-text);
+  text-underline-offset: 4px;
+  text-decoration-thickness: 1px;
+  transition: color 160ms ease;
+}
+.ministr-ms .ms-link:hover { color: var(--ministr-accent-text); }
+
+.ministr-ms .ms-cli {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  border: 1px solid var(--ms-rule);
+  border-radius: 2px;
+  padding: 0.6rem 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: color-mix(in oklch, var(--fd-foreground) 85%, transparent);
+}
+.ministr-ms .ms-cli .ms-prompt { color: var(--ministr-accent-text); user-select: none; }
+
 /* Stage aspect-ratio should match the cast's claimed dimensions so
    asciinema-player fills without pillarbox/letterbox. The cast header
    was rewritten to height=32 rows (from the 50 it was recorded at) —
