@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, RotateCw, FileText } from "lucide-react";
+import { Button } from "./components/ui/button";
 import { AnimatePresence, motion } from "motion/react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useTheme } from "./hooks/useTheme";
@@ -311,10 +312,15 @@ function AppInner() {
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              className="flex items-center gap-2 overflow-hidden border-b border-danger/50 bg-danger/10 px-5 py-2 text-xs font-mono text-danger shrink-0"
+              className="overflow-hidden border-b border-danger/50 bg-danger/10 shrink-0"
             >
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
-              <span>{error}</span>
+              <DaemonErrorBanner
+                error={error}
+                unreachable={!status}
+                onRetry={refresh}
+                onOpenLogs={onOpenLogs}
+                hasLogPath={Boolean(status?.log_path)}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -430,6 +436,62 @@ function SurfaceBody({
       onRefresh={onRefresh}
       onOpenLogs={onOpenLogs}
     />
+  );
+}
+
+/**
+ * The top-of-shell error band. Distinguishes a daemon we can't reach
+ * (no status yet — likely stopped or still starting) from a transient
+ * command failure (status present, one call errored), and gives the
+ * user the two things that actually help — retry and the logs — instead
+ * of a dead string.
+ */
+function DaemonErrorBanner({
+  error,
+  unreachable,
+  onRetry,
+  onOpenLogs,
+  hasLogPath,
+}: {
+  error: string;
+  unreachable: boolean;
+  onRetry: () => void;
+  onOpenLogs: () => void;
+  hasLogPath: boolean;
+}) {
+  const title = unreachable
+    ? "Can’t reach the ministr daemon"
+    : "A daemon request failed";
+  return (
+    <div className="flex items-center gap-3 px-5 py-2 text-danger">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+      <div className="min-w-0 flex-1">
+        <span className="text-xs font-sans font-medium">{title}</span>
+        <span className="ml-2 text-xs font-mono text-danger/70 truncate">
+          {error}
+        </span>
+      </div>
+      <Button
+        variant="subtle"
+        size="sm"
+        onClick={onRetry}
+        className="shrink-0"
+      >
+        <RotateCw className="h-3.5 w-3.5" strokeWidth={2} />
+        Retry
+      </Button>
+      {hasLogPath && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onOpenLogs}
+          className="shrink-0"
+        >
+          <FileText className="h-3.5 w-3.5" strokeWidth={2} />
+          Logs
+        </Button>
+      )}
+    </div>
   );
 }
 
