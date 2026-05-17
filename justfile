@@ -152,10 +152,12 @@ reinstall:
     # tauri.conf.json (`../dist`) at compile time, so the Vite output
     # must exist before `cargo build -p ministr-app`. `tauri build` would
     # run beforeBuildCommand for us; raw cargo doesn't.
-    if [ ! -d ministr-app/node_modules ]; then
-        echo "==> Installing frontend deps (pnpm install)..."
-        (cd ministr-app && pnpm install --frozen-lockfile)
-    fi
+    # Always sync — checking `-d node_modules` skips a partial install
+    # (lockfile drift, interrupted prior run) and leaves vite to fail at
+    # build time. `--frozen-lockfile` is a no-op when in sync and fails
+    # loudly if package.json and pnpm-lock.yaml disagree.
+    echo "==> Syncing frontend deps (pnpm install --frozen-lockfile)..."
+    (cd ministr-app && pnpm install --frozen-lockfile)
     echo "==> Building frontend (vite)..."
     (cd ministr-app && pnpm run build)
     cargo build --release -p ministr-app
