@@ -86,18 +86,19 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # ── Windows path is 100% bash-free ──────────────────────────────
-      # A self-hosted Windows runner's `shell: bash` is the System32 WSL
-      # stub (exits 1, no distro), which also kills dtolnay/rust-toolchain
-      # (its internal step is `shell: bash`). So on Windows we skip
-      # dtolnay and run an idempotent Windows-PowerShell bootstrap
-      # (always present, no WSL) that guarantees Python + Rust, then do
-      # all logic in Python (scripts/ci/ci.py). Linux/macOS shards keep
-      # dtolnay + bash unchanged.
+      # ── Windows path: no bash, no PS-script-execution-policy, no WSL ──
+      # Self-hosted Windows defaults to ExecutionPolicy=Restricted (.ps1
+      # blocked) and `shell: bash` = the System32 WSL stub (exits 1).
+      # So every Windows step uses `shell: cmd` (always present, no
+      # policy, no WSL); PowerShell is invoked only with explicit
+      # -ExecutionPolicy Bypass. dtolnay is skipped on Windows (its
+      # internal step is `shell: bash`); one idempotent script does all
+      # setup (toolchain + Defender). Logic is Python (scripts/ci/ci.py).
+      # Linux/macOS shards keep dtolnay + bash byte-identical.
       - name: Windows runner bootstrap (Python + Rust, idempotent)
         if: runner.os == 'Windows'
-        shell: powershell
-        run: ./scripts/ci/win_setup.ps1 -Target ${{ matrix.target }}
+        shell: cmd
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ci\win_setup.ps1 -Target ${{ matrix.target }}
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
         if: runner.os != 'Windows'
@@ -110,24 +111,11 @@ jobs:
         with:
           key: cli-${{ matrix.target }}
 
-      - name: Disable Defender for build paths (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          Add-MpPreference -ExclusionPath "${env:GITHUB_WORKSPACE}"
-          Add-MpPreference -ExclusionPath "${env:USERPROFILE}\.cargo"
-          Add-MpPreference -ExclusionPath "${env:RUNNER_TEMP}"
-          Add-MpPreference -ExclusionProcess "rustc.exe"
-          Add-MpPreference -ExclusionProcess "cargo.exe"
-          Add-MpPreference -ExclusionProcess "link.exe"
-          Add-MpPreference -ExclusionProcess "lld-link.exe"
-
-      # lld linker — only the Windows target uses it, so it's inherently
-      # a Windows-only step. Python, not bash.
+      # lld linker — only the Windows target uses it.
       - name: Use lld linker (Windows, Python)
         if: matrix.target == 'x86_64-pc-windows-msvc'
-        shell: powershell
-        run: python scripts/ci/ci.py lld-config
+        shell: cmd
+        run: python scripts\ci\ci.py lld-config
 
       - name: Build release binary (Unix, bash)
         if: runner.os != 'Windows'
@@ -136,8 +124,8 @@ jobs:
 
       - name: Build release binary (Windows, Python)
         if: runner.os == 'Windows'
-        shell: powershell
-        run: python scripts/ci/ci.py build --target ${{ matrix.target }} -p ministr-cli
+        shell: cmd
+        run: python scripts\ci\ci.py build --target ${{ matrix.target }} -p ministr-cli
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -149,8 +137,8 @@ jobs:
 
       - name: Package (Windows, Python)
         if: runner.os == 'Windows'
-        shell: powershell
-        run: python scripts/ci/ci.py package-cli --target ${{ matrix.target }} --binary ${{ matrix.binary }} --archive ${{ matrix.archive }}
+        shell: cmd
+        run: python scripts\ci\ci.py package-cli --target ${{ matrix.target }} --binary ${{ matrix.binary }} --archive ${{ matrix.archive }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -222,13 +210,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # Windows path is bash-free (see cli job). Idempotent PowerShell
-      # bootstrap → Python + Rust; dtolnay skipped on Windows because
-      # its internal step is `shell: bash`.
+      # Windows path: cmd-only, no PS execution policy, no WSL, no bash
+      # (see cli job). One idempotent script does toolchain + Defender;
+      # dtolnay skipped on Windows (its internal step is `shell: bash`).
       - name: Windows runner bootstrap (Python + Rust, idempotent)
         if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: ./scripts/ci/win_setup.ps1 -Target ${{ matrix.cli_target }}
+        shell: cmd
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ci\win_setup.ps1 -Target ${{ matrix.cli_target }}
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
         if: matrix.platform != 'windows-x86_64'
@@ -241,27 +229,14 @@ jobs:
         with:
           key: desktop-${{ matrix.platform }}
 
-      # Big Windows speedup: Microsoft Defender real-time-scans every file
-      # `cargo build` writes (hundreds of thousands of small `.rmeta`/`.o`
-      # files). Excluding the work tree + cargo dir + linker processes
-      # cuts wall-clock by ~30% on Windows runners.
-      - name: Disable Defender for build paths (Windows)
-        if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: |
-          Add-MpPreference -ExclusionPath "${env:GITHUB_WORKSPACE}"
-          Add-MpPreference -ExclusionPath "${env:USERPROFILE}\.cargo"
-          Add-MpPreference -ExclusionPath "${env:RUNNER_TEMP}"
-          Add-MpPreference -ExclusionProcess "rustc.exe"
-          Add-MpPreference -ExclusionProcess "cargo.exe"
-          Add-MpPreference -ExclusionProcess "link.exe"
-          Add-MpPreference -ExclusionProcess "lld-link.exe"
+      # (Defender exclusions are handled idempotently inside
+      # scripts/ci/win_setup.ps1 — one place for all Windows prep.)
 
       # rust-lld instead of MSVC link.exe — Windows-only step, Python.
       - name: Use lld linker (Windows, Python)
         if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: python scripts/ci/ci.py lld-config
+        shell: cmd
+        run: python scripts\ci\ci.py lld-config
 
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
         with:
@@ -299,8 +274,8 @@ jobs:
 
       - name: Build CLI sidecar (Windows, Python)
         if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: python scripts/ci/ci.py build --target ${{ matrix.cli_target }} -p ministr-cli --features "${{ matrix.cli_features }}"
+        shell: cmd
+        run: python scripts\ci\ci.py build --target ${{ matrix.cli_target }} -p ministr-cli --features "${{ matrix.cli_features }}"
 
       - name: Stage sidecar for Tauri externalBin (Unix, bash)
         if: matrix.platform != 'windows-x86_64'
@@ -311,8 +286,8 @@ jobs:
 
       - name: Stage sidecar for Tauri externalBin (Windows, Python)
         if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: python scripts/ci/ci.py stage-sidecar --target ${{ matrix.cli_target }} --src ${{ matrix.sidecar_bin }} --dst ${{ matrix.sidecar_name }}
+        shell: cmd
+        run: python scripts\ci\ci.py stage-sidecar --target ${{ matrix.cli_target }} --src ${{ matrix.sidecar_bin }} --dst ${{ matrix.sidecar_name }}
 
       # Build-only mode: no tagName / releaseName / releaseId means
       # tauri-action will NOT touch the GitHub Release. We aggregate
@@ -545,8 +520,8 @@ jobs:
 
       - name: Collect and rename desktop bundles (Windows, Python)
         if: matrix.platform == 'windows-x86_64'
-        shell: powershell
-        run: python scripts/ci/ci.py collect-bundles --target-dir "${{ matrix.target_dir }}" --triple ${{ matrix.triple }}
+        shell: cmd
+        run: python scripts\ci\ci.py collect-bundles --target-dir "${{ matrix.target_dir }}" --triple ${{ matrix.triple }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

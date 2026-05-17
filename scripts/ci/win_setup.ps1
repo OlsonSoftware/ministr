@@ -64,4 +64,21 @@ rustup target add $Target
 if ($LASTEXITCODE -ne 0) { throw "rustup target add $Target failed ($LASTEXITCODE)" }
 
 Write-Host "rustc: $(rustc --version 2>&1)"
+
+# --- Defender exclusions (idempotent; folded in from the old separate
+#     workflow step so all Windows prep lives in one script). Non-fatal:
+#     a runner without Defender / without admin must not break the build.
+try {
+  $work = $env:GITHUB_WORKSPACE
+  foreach ($p in @($work, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup", $env:RUNNER_TEMP)) {
+    if ($p) { Add-MpPreference -ExclusionPath $p -ErrorAction Stop }
+  }
+  foreach ($x in 'rustc.exe','cargo.exe','link.exe','lld-link.exe','sccache.exe','python.exe') {
+    Add-MpPreference -ExclusionProcess $x -ErrorAction Stop
+  }
+  Write-Host 'Defender exclusions applied.'
+} catch {
+  Write-Host "Defender exclusions skipped (non-fatal): $($_.Exception.Message)"
+}
+
 Write-Host '== bootstrap OK =='
