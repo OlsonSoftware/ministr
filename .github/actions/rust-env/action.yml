@@ -1,0 +1,95 @@
+name: Rust build env (toolchain + sccache)
+description: |
+  Single source of truth for the Rust build substrate on Linux/macOS
+  runners. Ensures a stable toolchain (no-op when one is already
+  present — e.g. inside the ministr-ci container) and wires sccache to
+  the Cloudflare R2 shared cache so EVERY heavy compile (ci.yml AND
+  release.yml) is warm, not cold.
+
+  Windows does NOT use this action — `shell: bash` there is the broken
+  System32 WSL stub. The equivalent setup for Windows lives in
+  scripts/ci/win_setup.ps1 (toolchain + sccache + env), invoked via
+  `cmd`. Build *logic* on every OS is scripts/ci/ci.py.
+
+inputs:
+  targets:
+    description: Comma-separated rustup targets to ensure.
+    required: false
+    default: ""
+  components:
+    description: Comma-separated rustup components (e.g. "clippy,rustfmt").
+    required: false
+    default: ""
+  sccache-bucket:
+    description: R2 bucket for sccache. Empty → sccache uses a local cache.
+    required: false
+    default: ""
+  sccache-endpoint:
+    description: R2 S3 endpoint URL.
+    required: false
+    default: ""
+  aws-access-key-id:
+    required: false
+    default: ""
+  aws-secret-access-key:
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure Rust toolchain (no-op if already present)
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        export PATH="$HOME/.cargo/bin:$PATH"
+        if ! command -v rustup >/dev/null 2>&1; then
+          echo "rustup not found — installing"
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path
+        fi
+        rustup default stable
+        if [ -n "${{ inputs.components }}" ]; then
+          rustup component add $(echo "${{ inputs.components }}" | tr ',' ' ')
+        fi
+        if [ -n "${{ inputs.targets }}" ]; then
+          for t in $(echo "${{ inputs.targets }}" | tr ',' ' '); do
+            rustup target add "$t"
+          done
+        fi
+        rustc --version
+
+    - name: Ensure sccache (no-op if already present, e.g. ministr-ci image)
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v sccache >/dev/null 2>&1; then
+          echo "sccache not found — installing via cargo-binstall/cargo"
+          if command -v cargo-binstall >/dev/null 2>&1; then
+            cargo binstall --no-confirm --no-symlinks sccache
+          else
+            cargo install sccache --locked
+          fi
+        fi
+        sccache --version
+
+    - name: Wire sccache → R2 (or local fallback)
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          echo "RUSTC_WRAPPER=sccache"
+          echo "SCCACHE_REGION=auto"
+        } >> "$GITHUB_ENV"
+        if [ -n "${{ inputs.sccache-bucket }}" ]; then
+          {
+            echo "SCCACHE_BUCKET=${{ inputs.sccache-bucket }}"
+            echo "SCCACHE_ENDPOINT=${{ inputs.sccache-endpoint }}"
+            echo "AWS_ACCESS_KEY_ID=${{ inputs.aws-access-key-id }}"
+            echo "AWS_SECRET_ACCESS_KEY=${{ inputs.aws-secret-access-key }}"
+          } >> "$GITHUB_ENV"
+          echo "sccache → R2 bucket '${{ inputs.sccache-bucket }}'"
+        else
+          echo "sccache → local on-disk cache (no R2 secrets configured)"
+        fi
