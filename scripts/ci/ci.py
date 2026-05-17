@@ -133,12 +133,16 @@ def cmd_pkg(a: argparse.Namespace) -> None:
     # `pkgbuild --version main`). The product version is the single
     # workspace version in the manifest (same source the release gate
     # uses); fall back to a tag-style ref only if that can't be read.
-    version = next(
-        (ln.split('"')[1] for ln in
-         (REPO / "ministr-cli" / "Cargo.toml").read_text(encoding="utf-8").splitlines()
-         if ln.startswith('version = "')),
-        env.get("GITHUB_REF_NAME", "0.0.0").lstrip("v"),
-    )
+    try:
+        version = next(
+            ln.split('"')[1] for ln in
+            (REPO / "ministr-cli" / "Cargo.toml")
+            .read_text(encoding="utf-8").splitlines()
+            if ln.startswith('version = "')
+        )
+    except (OSError, UnicodeDecodeError, StopIteration):
+        # Manifest unreadable / no version line — fall back to the ref.
+        version = env.get("GITHUB_REF_NAME", "0.0.0").lstrip("v")
     print(f"pkg version: {version}", flush=True)
     rt = Path(env["RUNNER_TEMP"])
     keychain = rt / "installer-signing.keychain-db"
@@ -166,7 +170,17 @@ def cmd_pkg(a: argparse.Namespace) -> None:
         # masks known secret strings, but don't rely on that — print
         # only the program name for redacted calls.
         print(f"+ {cmd[0]} (args redacted)" if redact else "+ " + " ".join(cmd), flush=True)
-        subprocess.run(cmd, check=True, **kw)
+        try:
+            subprocess.run(cmd, check=True, **kw)
+        except subprocess.CalledProcessError as e:
+            # CalledProcessError's default text includes the full argv
+            # (cert/keychain/notary password). For redacted calls, exit
+            # with a sanitized message so the secret can't leak to logs.
+            if redact:
+                raise SystemExit(
+                    f"{cmd[0]} failed (exit {e.returncode}) [args redacted]"
+                ) from None
+            raise
 
     try:
         sh(["security", "create-keychain", "-p", kc_pw, str(keychain)], redact=True)
@@ -301,7 +315,17 @@ def cmd_verify_signing(_a: argparse.Namespace) -> None:
 
     def sh(cmd: list[str], *, redact: bool = False, **kw):
         print(f"+ {cmd[0]} (args redacted)" if redact else "+ " + " ".join(cmd), flush=True)
-        subprocess.run(cmd, check=True, **kw)
+        try:
+            subprocess.run(cmd, check=True, **kw)
+        except subprocess.CalledProcessError as e:
+            # CalledProcessError's default text includes the full argv
+            # (cert/keychain/notary password). For redacted calls, exit
+            # with a sanitized message so the secret can't leak to logs.
+            if redact:
+                raise SystemExit(
+                    f"{cmd[0]} failed (exit {e.returncode}) [args redacted]"
+                ) from None
+            raise
 
     try:
         sh(["security", "create-keychain", "-p", kc_pw, str(kc)], redact=True)
