@@ -13,8 +13,16 @@ publish = false
 # release.yml already creates the GitHub Release with every artifact when
 # the tag lands — don't let release-plz create a second, empty one.
 git_release_enable = false
-# Default-off so we don't emit six `<pkg>-vX.Y.Z` tags; exactly one
-# package (ministr-cli) re-enables it below to emit a single `vX.Y.Z`.
+# cargo-semver-checks builds rustdoc for the whole workspace (ort,
+# candle, tokenizers, …) — minutes of pointless work for crates we
+# never publish. Off: this is what made `release-pr` look "stuck".
+semver_check = false
+# Single `v{{version}}` tag scheme for ALL packages. This is what
+# release-plz uses to find the *last* release (so it diffs commits
+# since `v0.2.3` and bumps from there) AND to name the new tag.
+# Creation is still gated to one package via git_tag_enable below, so
+# we get exactly one tag, not six.
+git_tag_name = "v{{ version }}"
 git_tag_enable = false
 # One aggregated changelog at the repo root.
 changelog_update = true
@@ -26,11 +34,18 @@ pr_labels = ["release"]
 # (mirrors the old `just release`: a single product version, not
 # independent per-crate semver). ministr-cli owns the single tag.
 
+# The vendored grammar is a path dependency, not ours to release —
+# fully exclude it (no version bump, changelog, or tag).
+[[package]]
+name = "tree-sitter-unreal-cpp"
+release = false
+
+# ministr-cli is the single tag-emitting package (inherits the
+# `v{{version}}` name from [workspace]).
 [[package]]
 name = "ministr-cli"
 version_group = "ministr"
 git_tag_enable = true
-git_tag_name = "v{{ version }}"
 
 [[package]]
 name = "ministr-api"
