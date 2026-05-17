@@ -16,19 +16,14 @@
  */
 
 export type ShortcutAction =
-  // navigation
-  | "nav:search"
-  | "nav:symbols"
-  | "nav:bridge"
+  // navigation — three surfaces only after the M1 IA collapse.
+  | "nav:ask"
   | "nav:projects"
-  | "nav:structure"
   | "nav:sessions"
-  | "nav:logs"
   | "nav:settings"
   // chrome toggles
   | "toggle:palette"
-  | "toggle:shortcuts"
-  | "toggle:rail";
+  | "toggle:shortcuts";
 
 export type ShortcutGroup = "Navigation" | "Interface";
 
@@ -64,31 +59,11 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     label: "Show this sheet",
     group: "Interface",
   },
-  {
-    id: "toggle:rail",
-    keys: ["\\"],
-    label: "Toggle sidebar",
-    group: "Interface",
-  },
   // ── g-prefixed navigation ───────────────────────────────────────────
   {
-    id: "nav:search",
-    keys: ["g", "s"],
-    label: "Search",
-    group: "Navigation",
-    prefixed: true,
-  },
-  {
-    id: "nav:symbols",
-    keys: ["g", "y"],
-    label: "Symbols",
-    group: "Navigation",
-    prefixed: true,
-  },
-  {
-    id: "nav:bridge",
-    keys: ["g", "b"],
-    label: "Bridge",
+    id: "nav:ask",
+    keys: ["g", "a"],
+    label: "Ask",
     group: "Navigation",
     prefixed: true,
   },
@@ -100,23 +75,9 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     prefixed: true,
   },
   {
-    id: "nav:structure",
-    keys: ["g", "t"],
-    label: "Structure",
-    group: "Navigation",
-    prefixed: true,
-  },
-  {
     id: "nav:sessions",
-    keys: ["g", "e"],
+    keys: ["g", "s"],
     label: "Sessions",
-    group: "Navigation",
-    prefixed: true,
-  },
-  {
-    id: "nav:logs",
-    keys: ["g", "l"],
-    label: "Logs",
     group: "Navigation",
     prefixed: true,
   },
@@ -171,7 +132,7 @@ export function shortcutGroups(): { title: ShortcutGroup; items: ShortcutDef[] }
  *     user just hit `g`; this function returns the matched action and the
  *     caller resets pending. For first-keystroke `g`, returns the special
  *     `_pending:g` sentinel so the caller knows to start the timer.
- *   - For chrome shortcuts (⌘K, ?, \\) it matches directly.
+ *   - For chrome shortcuts (⌘K, ?) it matches directly.
  *
  * Returns the matched action id or null.
  */
@@ -191,11 +152,6 @@ export function matchShortcut(
   // ? (or shift+/) → cheat sheet.
   if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
     return "toggle:shortcuts";
-  }
-
-  // \ → rail toggle.
-  if (e.key === "\\") {
-    return "toggle:rail";
   }
 
   // Two-stroke `g {x}` navigation.

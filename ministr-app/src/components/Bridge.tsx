@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronRight, Download, ExternalLink, X } from "lucide-react";
 import { Button } from "./ui/button";
+import { FilterPill } from "./ui/filter-pill";
+import { H1 } from "./ui/heading";
 import { cn } from "../lib/utils";
+import { corpusRelative } from "../lib/path";
 import { useEntityPanel } from "../hooks/useEntityPanel";
-import type { BridgeLink, DaemonStatus } from "../lib/types";
+import type { BridgeLink, CorpusInfo, DaemonStatus } from "../lib/types";
 
 /** Stable identity for a bridge link — used as the key in the multi-select
  *  set. The DB doesn't expose a numeric ID; this composite uniquely picks
@@ -96,6 +99,10 @@ interface ExcerptState {
 export function Bridge({ status, activeCorpusId }: Props) {
   const { openEntity } = useEntityPanel();
   const corpusId = activeCorpusId ?? status.corpora[0]?.id ?? "";
+  const selectedCorpus = useMemo(
+    () => status.corpora.find((c) => c.id === corpusId) ?? null,
+    [status.corpora, corpusId],
+  );
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<string | null>(null);
   const [language, setLanguage] = useState<string | null>(null);
@@ -231,10 +238,8 @@ export function Bridge({ status, activeCorpusId }: Props) {
   return (
     <div className="@container/page flex flex-col h-full gap-3 min-h-0">
       <header>
-        <h2 className="font-serif text-2xl font-normal text-text leading-tight ">
-          Cross-language bridge
-        </h2>
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim mt-1">
+        <H1>Cross-language bridge</H1>
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim mt-1">
           Tauri · PyO3 · NAPI · wasm-bindgen · HTTP routes · raw FFI
         </p>
       </header>
@@ -292,7 +297,7 @@ export function Bridge({ status, activeCorpusId }: Props) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="filter (optional)"
-            className="h-9 w-56 border-2 border-border bg-surface px-2 text-xs font-mono text-text placeholder:text-text-dim focus:outline-none focus:bg-surface-overlay focus:text-text transition-none"
+            className="h-9 w-56 border border-border bg-surface px-2 text-xs font-mono text-text placeholder:text-text-dim focus:outline-none focus:bg-surface-overlay focus:text-text transition-colors duration-150 ease-out"
           />
           <Button type="submit" disabled={loading} size="sm">
             {loading ? "…" : "RUN"}
@@ -313,16 +318,14 @@ export function Bridge({ status, activeCorpusId }: Props) {
           <span className="w-px h-5 bg-border-soft" />
           <button
             onClick={() => exportJson(selectedRows)}
-            className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-            style={{ borderRadius: "var(--radius-button)" }}
+            className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
           >
             <Download className="h-3.5 w-3.5" strokeWidth={2} />
             Export JSON
           </button>
           <button
             onClick={() => exportCsv(selectedRows)}
-            className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-            style={{ borderRadius: "var(--radius-button)" }}
+            className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
           >
             <Download className="h-3.5 w-3.5" strokeWidth={2} />
             Export CSV
@@ -330,13 +333,13 @@ export function Bridge({ status, activeCorpusId }: Props) {
           <button
             onClick={() => exportJson(links)}
             title="Export all visible bridges (ignoring selection)"
-            className="font-serif text-sm italic text-text-dim hover:text-text-muted cursor-pointer transition-none border-b border-transparent hover:border-text-muted"
+            className="font-sans text-sm italic text-text-dim hover:text-text-muted cursor-pointer transition-colors duration-150 ease-out border-b border-transparent hover:border-text-muted"
           >
             Export all visible
           </button>
           <button
             onClick={clearSelection}
-            className="ml-auto font-sans text-sm font-medium text-text-muted hover:text-text border-b border-transparent hover:border-text cursor-pointer transition-none"
+            className="ml-auto font-sans text-sm font-medium text-text-muted hover:text-text border-b border-transparent hover:border-text cursor-pointer transition-colors duration-150 ease-out"
           >
             Clear
           </button>
@@ -366,6 +369,7 @@ export function Bridge({ status, activeCorpusId }: Props) {
         <ConnectionPreview
           link={selected}
           excerpt={excerpt}
+          corpus={selectedCorpus}
           onClose={() => setSelected(null)}
           onOpenFullPanel={() =>
             openEntity({ kind: "bridge", corpusId, link: selected })
@@ -412,7 +416,7 @@ function KindSummary({
     // 32px ribbon when a row is selected.
     return (
       <div className="flex items-center gap-2 border border-border-soft bg-surface px-2 py-1 shrink-0 overflow-x-auto">
-        <span className="font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-text-dim shrink-0">
+        <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim shrink-0">
           Surface
         </span>
         {rows.map(({ kind, count }) => {
@@ -422,12 +426,11 @@ function KindSummary({
               key={kind}
               onClick={() => onPick(kind)}
               className={cn(
-                "inline-flex items-center gap-1 border px-2 py-0.5 font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none shrink-0",
+                "inline-flex items-center gap-1 border px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] cursor-pointer transition-colors duration-150 ease-out shrink-0",
                 active
                   ? "border-accent bg-surface-overlay text-text"
                   : "border-border-soft bg-surface text-text-muted hover:border-border hover:text-text",
-              )}
-              style={{ borderRadius: "var(--radius-pill)" }}
+              "rounded-md")}
             >
               <span>{kind}</span>
               <span className="opacity-70 tabular-nums">{count}</span>
@@ -442,7 +445,7 @@ function KindSummary({
   return (
     <div className="border border-border-soft bg-surface shrink-0">
       <div className="flex items-baseline justify-between border-b border-border-soft bg-surface-overlay px-3 py-2">
-        <h3 className="font-serif text-base font-bold text-text">
+        <h3 className="font-sans text-base font-bold text-text">
           Surface
         </h3>
         <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -461,14 +464,14 @@ function KindSummary({
               onClick={() => onPick(kind)}
               title={`${kind} · ${count} (${pct.toFixed(1)}%)`}
               className={cn(
-                "flex flex-col items-start justify-center border border-border-soft px-2 cursor-pointer transition-none -ml-[1px] first:ml-0 min-w-0",
+                "flex flex-col items-start justify-center border border-border-soft px-2 cursor-pointer transition-colors duration-150 ease-out -ml-[1px] first:ml-0 min-w-0",
                 active
                   ? "border-accent bg-surface-overlay text-text z-10 relative"
                   : "bg-surface text-text-muted hover:text-text hover:border-border",
               )}
               style={{ width, flexBasis: width }}
             >
-              <span className="font-mono text-[0.625rem] font-semibold uppercase tracking-[0.05em] text-text-dim truncate w-full">
+              <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim truncate w-full">
                 {kind}
               </span>
               <span className="font-mono text-base font-semibold tabular-nums leading-none mt-0.5 text-text">
@@ -529,15 +532,14 @@ function BridgeTable({
         <HeaderCell>Import</HeaderCell>
         <HeaderCell align="right">Lang</HeaderCell>
         <div className="flex items-center justify-end gap-1 px-2 py-2">
-          <span className="font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim">
             Conf
           </span>
           <button
             onClick={onShowConfHelp}
             aria-label="Confidence help"
             title="What does confidence mean?"
-            className="grid h-4 w-4 place-items-center border border-border-soft bg-surface font-serif text-[0.6875rem] text-text-dim hover:text-text hover:border-border cursor-pointer transition-none"
-            style={{ borderRadius: "var(--radius-button)" }}
+            className="grid h-4 w-4 place-items-center border border-border-soft bg-surface font-sans text-mono-mini text-text-dim hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
           >
             ?
           </button>
@@ -565,7 +567,7 @@ function BridgeTable({
       </div>
 
       {links.length === 0 ? (
-        <div className="px-3 py-8 font-serif text-base italic text-text-dim text-center">
+        <div className="px-3 py-8 font-sans text-base italic text-text-dim text-center">
           {loading ? "Querying…" : "No bridges found."}
         </div>
       ) : (
@@ -573,7 +575,7 @@ function BridgeTable({
           const isSel = selected === l;
           const isChecked = selectedIds.has(bridgeKey(l));
           const cls = cn(
-            "relative w-full text-left transition-none border-b border-border-soft",
+            "relative w-full text-left transition-colors duration-150 ease-out border-b border-border-soft",
             isSel
               ? "bg-surface-overlay text-text"
               : isChecked
@@ -616,7 +618,7 @@ function BridgeTable({
                   />
                 </div>
                 <Cell>
-                  <span className="font-mono text-xs font-semibold uppercase tracking-[0.05em] text-text-muted">
+                  <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-dim">
                     {l.kind}
                   </span>
                 </Cell>
@@ -634,7 +636,7 @@ function BridgeTable({
                   </span>
                 </Cell>
                 <Cell align="right">
-                  <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim">
+                  <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
                     {l.export_language}/{l.import_language}
                   </span>
                 </Cell>
@@ -668,13 +670,13 @@ function BridgeTable({
                   />
                 </div>
                 <Cell>
-                  <span className="font-mono text-xs font-semibold uppercase tracking-[0.05em] text-text-muted">
+                  <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-dim">
                     {l.kind}
                   </span>
                 </Cell>
                 <Cell>
                   <span className="inline-flex items-center gap-1 min-w-0">
-                    <span className="border border-border-soft px-1 font-mono text-[0.625rem] uppercase tracking-[0.05em] text-text-dim shrink-0">
+                    <span className="border border-border-soft px-1 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
                       {l.export_language}
                     </span>
                     <span className="font-mono text-sm truncate">
@@ -687,7 +689,7 @@ function BridgeTable({
                 </Cell>
                 <Cell>
                   <span className="inline-flex items-center gap-1 min-w-0">
-                    <span className="border border-border-soft px-1 font-mono text-[0.625rem] uppercase tracking-[0.05em] text-text-dim shrink-0">
+                    <span className="border border-border-soft px-1 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
                       {l.import_language}
                     </span>
                     <span className="font-mono text-sm truncate">
@@ -714,11 +716,13 @@ function BridgeTable({
 function ConnectionPreview({
   link,
   excerpt,
+  corpus,
   onClose,
   onOpenFullPanel,
 }: {
   link: BridgeLink;
   excerpt: ExcerptState;
+  corpus: CorpusInfo | null;
   onClose: () => void;
   onOpenFullPanel?: () => void;
 }) {
@@ -726,10 +730,10 @@ function ConnectionPreview({
     <section className="flex-1 min-h-0 flex flex-col gap-2 border border-border-soft bg-surface border-l-[6px] border-l-accent">
       <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-2 shrink-0">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent">
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
             CONNECTION
           </span>
-          <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
             {link.kind}
           </span>
         </div>
@@ -737,7 +741,7 @@ function ConnectionPreview({
           {onOpenFullPanel && (
             <button
               onClick={onOpenFullPanel}
-              className="inline-flex items-center gap-1 border-2 border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.05em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
+              className="inline-flex items-center gap-1 border border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
               title="Open full panel"
             >
               <ExternalLink className="h-3 w-3" strokeWidth={2.5} />
@@ -746,7 +750,7 @@ function ConnectionPreview({
           )}
           <button
             onClick={onClose}
-            className="grid h-6 w-6 place-items-center border-2 border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
+            className="grid h-6 w-6 place-items-center border border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
             aria-label="Close preview"
           >
             <X className="h-3 w-3" strokeWidth={2.5} />
@@ -765,6 +769,7 @@ function ConnectionPreview({
           source={excerpt.exportSrc}
           startLine={excerpt.exportStart}
           loading={excerpt.loading}
+          corpus={corpus}
         />
 
         <Connector />
@@ -779,11 +784,12 @@ function ConnectionPreview({
           source={excerpt.importSrc}
           startLine={excerpt.importStart}
           loading={excerpt.loading}
+          corpus={corpus}
         />
       </div>
 
       <div className="border-t-2 border-border bg-surface-overlay px-3 py-1.5 flex items-center justify-between shrink-0">
-        <span className="font-mono text-xs uppercase tracking-[0.05em] text-text">
+        <span className="font-mono text-xs uppercase tracking-[0.08em] text-text">
           {link.kind} · {link.export_symbol || link.export_binding_key}
         </span>
         <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -804,6 +810,7 @@ function CodePane({
   source,
   startLine,
   loading,
+  corpus,
 }: {
   title: string;
   language: string;
@@ -814,12 +821,9 @@ function CodePane({
   source: string | null;
   startLine: number | null;
   loading: boolean;
+  corpus: CorpusInfo | null;
 }) {
-  const tail = file
-    .replace(/\\/g, "/")
-    .split("/")
-    .slice(-2)
-    .join("/");
+  const tail = corpusRelative(file, corpus);
 
   // Split source into lines with explicit numbers.
   const numbered = useMemo(() => {
@@ -838,10 +842,10 @@ function CodePane({
     <div className="flex-1 min-w-0 flex flex-col border border-border-soft bg-surface">
       <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1.5 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent shrink-0">
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent shrink-0">
             {title}
           </span>
-          <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim shrink-0">
+          <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-dim shrink-0">
             {language}
           </span>
         </div>
@@ -856,7 +860,7 @@ function CodePane({
         </span>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto bg-surface-sunken font-mono text-[0.6875rem] leading-relaxed">
+      <div className="flex-1 min-h-0 overflow-auto bg-surface-sunken font-mono text-mono-mini leading-relaxed">
         {loading || !numbered ? (
           <div className="px-3 py-2 text-text">
             LOADING<span className="ministr-blink">_</span>
@@ -925,17 +929,17 @@ function ConfidenceHelpModal({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md border border-border-soft bg-surface shadow-[6px_6px_0_0_var(--shadow-color)]"
+        className="w-full max-w-md border border-border-soft bg-surface shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-2">
-          <span className="font-mono text-[0.6875rem] font-bold uppercase tracking-[0.05em] text-text">
+          <span className="font-mono text-mono-mini font-bold uppercase tracking-[0.08em] text-text">
             CONFIDENCE
           </span>
           <button
             onClick={onClose}
             aria-label="Close"
-            className="grid h-6 w-6 place-items-center border-2 border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
+            className="grid h-6 w-6 place-items-center border border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
           >
             <X className="h-3 w-3" strokeWidth={2.5} />
           </button>
@@ -948,37 +952,7 @@ function ConfidenceHelpModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ─── FILTERS / TABLE PRIMITIVES ────────────────────────────────────────────
-
-function FilterPill({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  label: string;
-  count?: number;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "border px-2 py-0.5 text-[0.6875rem] font-mono font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none",
-        active
-          ? "border-accent bg-surface-overlay text-text"
-          : "border-border-soft bg-surface text-text-muted hover:border-border hover:text-text",
-      )}
-      style={{ borderRadius: "var(--radius-pill)" }}
-    >
-      {label}
-      {typeof count === "number" && count > 0 && (
-        <span className="ml-1 tabular-nums opacity-70">{count}</span>
-      )}
-    </button>
-  );
-}
+// ─── TABLE PRIMITIVES ──────────────────────────────────────────────────────
 
 function HeaderCell({
   children,
@@ -990,7 +964,7 @@ function HeaderCell({
   return (
     <div
       className={cn(
-        "font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-text-dim px-2 py-2",
+        "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim px-2 py-2",
         align === "right" && "text-right",
       )}
     >

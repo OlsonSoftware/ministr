@@ -102,7 +102,7 @@ impl TestDaemon {
             .corpora()
             .write()
             .await
-            .insert(corpus_id.clone(), handle);
+            .insert(corpus_id.clone(), std::sync::Arc::new(handle));
 
         let state = AppState::from_arc(registry);
 
@@ -274,13 +274,16 @@ fn build_corpus_handle(
         storage,
         index,
         service,
-        sessions: tokio::sync::Mutex::new(SessionRegistry::new(BudgetConfig::default())),
+        sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
+            BudgetConfig::default(),
+        ))),
         prefetch: Arc::new(tokio::sync::Mutex::new(
             PrefetchEngine::with_default_capacity(),
         )),
         progress: Arc::new(IngestionProgress::new()),
         cancel: CancellationToken::new(),
         data_dir,
+        tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
         coherence_tx: tokio::sync::broadcast::channel(16).0,
     }
 }

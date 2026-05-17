@@ -15,15 +15,15 @@ use std::sync::Arc;
 use ministr_api::coherence::CoherenceEvent;
 use ministr_api::corpus::{CorpusInfo, IndexingStatus};
 use ministr_core::config::MinistrConfig;
+use ministr_core::corpus_id::{CorpusIdError, canonical_corpus_paths, corpus_id_from_paths};
 use ministr_core::embedding::Embedder;
 use ministr_core::index::{HnswIndex, VectorIndex, VectorIndexLoad};
 use ministr_core::ingestion::IngestionProgress;
 use ministr_core::service::QueryService;
 use ministr_core::session::prefetch::PrefetchEngine;
 use ministr_core::session::{BudgetConfig, SessionRegistry};
-use ministr_core::storage::SqliteStorage;
+use ministr_core::storage::{SqliteStorage, Storage};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -50,12 +50,19 @@ pub enum RegistryError {
     NotFound { id: String },
     #[error("identity changed: paths canonicalise to {actual}, expected {expected}")]
     IdentityChanged { expected: String, actual: String },
+    #[error("invalid corpus paths: {0}")]
+    InvalidPath(#[from] CorpusIdError),
 }
 
 /// Central registry managing all indexed corpora.
 pub struct CorpusRegistry {
     embedder: Arc<dyn Embedder>,
-    corpora: RwLock<HashMap<String, CorpusHandle>>,
+    /// `Arc<CorpusHandle>` (not bare `CorpusHandle`) so `get()` can hand
+    /// a corpus out by cloning the `Arc` and dropping the map guard —
+    /// callers no longer hold a `RwLockReadGuard` across their `.await`s,
+    /// which previously serialised every request behind register /
+    /// unregister and risked lock-order inversion.
+    corpora: RwLock<HashMap<String, Arc<CorpusHandle>>>,
     config: MinistrConfig,
     /// Optional sink for coherence events — wired in by [`AppState::new`]
     /// after construction so `register` can spawn a pusher task that
@@ -75,11 +82,27 @@ pub struct CorpusHandle {
     pub storage: Arc<SqliteStorage>,
     pub index: Arc<dyn VectorIndex>,
     pub service: QueryService,
-    pub sessions: tokio::sync::Mutex<SessionRegistry>,
+    /// `Arc` so `list()` (and any read-mostly status path) can clone the
+    /// handle out and drop the corpora-map guard *before* awaiting the
+    /// session lock. Accessors are unchanged — `Arc` derefs to the
+    /// `Mutex` for `.lock()`/`.try_lock()`.
+    pub sessions: Arc<tokio::sync::Mutex<SessionRegistry>>,
     pub prefetch: Arc<tokio::sync::Mutex<PrefetchEngine>>,
     pub progress: Arc<IngestionProgress>,
     pub cancel: CancellationToken,
     pub data_dir: PathBuf,
+    /// Join handles for every background task spawned for this corpus
+    /// (cache/session invalidators, coherence sink pusher, indexer +
+    /// watcher). `unregister` awaits these *after* `cancel` so the tasks
+    /// have actually exited — and released their `SQLite` / watcher file
+    /// handles — before the caller deletes `data_dir`. Without this,
+    /// `remove_dir_all` races open handles and fails on Windows.
+    ///
+    /// `Arc<std::sync::Mutex<…>>` (not the corpus `RwLock`): handles are
+    /// pushed from `register` after the corpus is in the map, and the
+    /// lock is only ever held for a `Vec` push / `mem::take`, never
+    /// across an `.await`.
+    pub tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     /// Broadcast channel for coherence notifications — one event per
     /// file-system change the watcher observed, carrying path, kind, and
     /// the list of affected section IDs.
@@ -170,7 +193,7 @@ impl CorpusRegistry {
     }
 
     /// Internal access to the corpora map (for the indexer and daemon).
-    pub fn corpora(&self) -> &RwLock<HashMap<String, CorpusHandle>> {
+    pub fn corpora(&self) -> &RwLock<HashMap<String, Arc<CorpusHandle>>> {
         &self.corpora
     }
 
@@ -213,7 +236,7 @@ impl CorpusRegistry {
         let migration_entries: Vec<(String, String)> = entries
             .iter()
             .filter_map(|e| {
-                let new_id = corpus_id_from_paths(&e.paths);
+                let new_id = corpus_id_from_paths(&e.paths).ok()?;
                 (new_id != e.id).then_some((e.id.clone(), new_id))
             })
             .collect();
@@ -251,9 +274,47 @@ impl CorpusRegistry {
             .await;
         }
 
-        for entry in &entries {
+        // Partition into live vs dead entries. An entry is *dead* when
+        // every one of its paths is a local path that no longer exists
+        // (e.g. a `/tmp/ministr-e2e-test` left by a test run, or a project
+        // the user deleted). Remote sources (http/git) can't be stat'd, so
+        // any remote path keeps the entry alive.
+        let (live, dead): (Vec<&ManifestEntry>, Vec<&ManifestEntry>) =
+            entries.iter().partition(|e| entry_is_live(&e.paths));
+
+        for entry in &live {
             if let Err(e) = self.register(&entry.paths).await {
                 warn!(corpus_id = %entry.id, error = %e, "failed to restore corpus");
+            }
+        }
+
+        // Self-heal: drop dead entries from the manifest and best-effort
+        // remove their orphaned corpus dirs, so a stale test/deleted
+        // project stops reappearing after every restart / `just reinstall`.
+        if !dead.is_empty() {
+            for entry in &dead {
+                info!(
+                    corpus_id = %entry.id,
+                    paths = ?entry.paths,
+                    "pruning dead corpus entry (source paths gone)"
+                );
+            }
+            let dead_dirs: Vec<PathBuf> = dead.iter().map(|e| corpora_dir.join(&e.id)).collect();
+            tokio::spawn(async move {
+                for dir in dead_dirs {
+                    if dir.exists()
+                        && let Err(e) = ministr_core::fs_util::remove_dir_all_robust(&dir).await
+                    {
+                        warn!(error = %e, path = %dir.display(), "failed to remove dead corpus dir");
+                    }
+                }
+            });
+            // Persisting the live set drops the dead entries even if no
+            // live corpus is present to trigger a save via `register`.
+            if live.is_empty()
+                && let Err(e) = self.save_manifest().await
+            {
+                warn!(error = %e, "failed to persist pruned corpus manifest");
             }
         }
     }
@@ -274,8 +335,8 @@ impl CorpusRegistry {
         self: &Arc<Self>,
         paths: &[String],
     ) -> Result<(String, bool), RegistryError> {
-        let canonical = canonical_corpus_paths(paths);
-        let corpus_id = corpus_id_from_paths(&canonical);
+        let canonical = canonical_corpus_paths(paths)?;
+        let corpus_id = corpus_id_from_paths(&canonical)?;
 
         if self.corpora.read().await.contains_key(&corpus_id) {
             return Ok((corpus_id, false));
@@ -302,37 +363,77 @@ impl CorpusRegistry {
         // Clone the corpus cancellation token before the handle is moved
         // into the map so `spawn_watcher` can stop cleanly on unregister.
         let watcher_cancel = handle.cancel.clone();
+        // Clone the task-handle sink before the handle moves into the map
+        // so the tasks spawned just below can be registered for awaited
+        // teardown in `unregister`.
+        let tasks = Arc::clone(&handle.tasks);
 
-        self.corpora.write().await.insert(corpus_id.clone(), handle);
+        // Snapshot storage + index for a post-insert integrity probe
+        // (the loaded-from-disk state, before the background indexer
+        // gets a chance to rebuild it).
+        let integrity_storage = Arc::clone(&handle.storage);
+        let integrity_index = Arc::clone(&handle.index);
+
+        // Atomic check-and-insert. The early `contains_key` above is only
+        // a fast path; the authoritative test happens here under the
+        // write lock so two concurrent `register`s of the same id can't
+        // both pass and have the second overwrite (and orphan) the
+        // first's handle. The loser discards its freshly-created handle —
+        // no background tasks have been spawned yet, so its `Drop` just
+        // closes the (idempotently-opened) SQLite/index and returns the
+        // idempotent `(id, false)`.
+        {
+            let mut map = self.corpora.write().await;
+            if map.contains_key(&corpus_id) {
+                return Ok((corpus_id, false));
+            }
+            map.insert(corpus_id.clone(), Arc::new(handle));
+        }
         info!(corpus_id = %corpus_id, "corpus registered");
 
-        self.save_manifest().await;
+        check_index_integrity(&corpus_id, &integrity_storage, integrity_index.len()).await;
+
+        // Manifest persistence failure is non-fatal for the in-memory
+        // registration (the corpus is usable this session) but must not
+        // be silent — surface it so a restart-loses-corpus is diagnosable.
+        if let Err(e) = self.save_manifest().await {
+            warn!(corpus_id = %corpus_id, error = %e, "failed to persist corpus manifest after register");
+        }
+
+        let mut spawned: Vec<tokio::task::JoinHandle<()>> = Vec::with_capacity(4);
 
         // Spawn answer cache invalidation on coherence events.
-        tokio::spawn(async move {
+        spawned.push(tokio::spawn(async move {
             crate::ask::spawn_cache_invalidator(cache_storage, coherence_rx, cache_cid).await;
-        });
+        }));
 
         // Spawn session invalidation on coherence events. Without this,
         // delivered items in every session appear fresh across file edits
         // and no `CoherenceAlert` is enqueued for the MCP client — the
         // documented `SessionRegistry::invalidate_all` path had no
         // production caller.
-        spawn_session_invalidator(Arc::clone(self), corpus_id.clone());
+        spawned.push(spawn_session_invalidator(
+            Arc::clone(self),
+            corpus_id.clone(),
+        ));
 
         if let Some(sink) = sink_opt {
-            tokio::spawn(spawn_coherence_sink_pusher(sink, sink_rx));
+            spawned.push(tokio::spawn(spawn_coherence_sink_pusher(sink, sink_rx)));
         }
 
         // Spawn background indexing (delegated to indexer module).
         let registry = Arc::clone(self);
         let cid = corpus_id.clone();
         let owned_paths = canonical.clone();
-        tokio::spawn(async move {
+        spawned.push(tokio::spawn(async move {
             indexer::run(&registry, &cid, &owned_paths).await;
             // After initial indexing, start watching for file changes.
             indexer::spawn_watcher(registry, cid, owned_paths, watcher_cancel);
-        });
+        }));
+
+        if let Ok(mut guard) = tasks.lock() {
+            guard.extend(spawned);
+        }
 
         Ok((corpus_id, true))
     }
@@ -360,8 +461,8 @@ impl CorpusRegistry {
         corpus_id: &str,
         new_paths: &[String],
     ) -> Result<(), RegistryError> {
-        let canonical = canonical_corpus_paths(new_paths);
-        let new_id = corpus_id_from_paths(&canonical);
+        let canonical = canonical_corpus_paths(new_paths)?;
+        let new_id = corpus_id_from_paths(&canonical)?;
         if new_id != corpus_id {
             return Err(RegistryError::IdentityChanged {
                 expected: corpus_id.to_string(),
@@ -376,14 +477,14 @@ impl CorpusRegistry {
         // info write. Holding `corpora.read()` across `info.write().await`
         // would block concurrent register/unregister writers for the
         // duration of the info write.
-        let info_lock = {
+        let (info_lock, tasks) = {
             let corpora = self.corpora.read().await;
             let handle = corpora
                 .get(corpus_id)
                 .ok_or_else(|| RegistryError::NotFound {
                     id: corpus_id.to_string(),
                 })?;
-            Arc::clone(&handle.info)
+            (Arc::clone(&handle.info), Arc::clone(&handle.tasks))
         };
 
         let added: Vec<String> = {
@@ -399,77 +500,162 @@ impl CorpusRegistry {
             added
         };
 
-        self.save_manifest().await;
+        self.save_manifest().await?;
 
         if !added.is_empty() {
             let registry = Arc::clone(self);
             let cid = corpus_id.to_string();
-            tokio::spawn(async move {
+            let h = tokio::spawn(async move {
                 indexer::run(&registry, &cid, &added).await;
             });
+            // Track the re-ingest task so a later `unregister` awaits it
+            // before deleting the corpus dir.
+            if let Ok(mut guard) = tasks.lock() {
+                guard.push(h);
+            }
         }
 
         Ok(())
     }
 
-    /// Unregister a corpus, cancelling any background work.
+    /// Unregister a corpus, cancelling background work and awaiting its
+    /// teardown so the caller can safely delete the corpus directory.
+    ///
+    /// After signalling `cancel`, this awaits every spawned task (with a
+    /// bounded timeout) so their `SQLite` connections and the directory
+    /// watcher are actually closed before returning. Skipping this is the
+    /// root cause of `remove_dir_all` failing on Windows with a sharing
+    /// violation right after unregister.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError::NotFound`] if the corpus does not exist.
+    /// - [`RegistryError::NotFound`] if the corpus does not exist.
+    /// - [`RegistryError::Storage`] if the manifest could not be persisted.
     pub async fn unregister(&self, corpus_id: &str) -> Result<(), RegistryError> {
         // Extract from the map first, releasing the write lock before
         // save_manifest (which needs a read lock — same RwLock, not reentrant).
         let removed = self.corpora.write().await.remove(corpus_id);
-        match removed {
-            Some(handle) => {
-                handle.cancel.cancel();
-                info!(corpus_id, "corpus unregistered");
-                self.save_manifest().await;
-                Ok(())
-            }
-            None => Err(RegistryError::NotFound {
+        let Some(handle) = removed else {
+            return Err(RegistryError::NotFound {
                 id: corpus_id.to_string(),
-            }),
+            });
+        };
+
+        // Signal all background tasks to stop, then await their actual
+        // exit so file handles are released. Dropping the broadcast
+        // sender (held by `handle`) also unblocks the receiver-driven
+        // tasks; the cancellation token covers the indexer/watcher.
+        handle.cancel.cancel();
+        let pending: Vec<tokio::task::JoinHandle<()>> = handle
+            .tasks
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default();
+
+        if !pending.is_empty() {
+            // Bounded: a task wedged on a slow filesystem must not hang
+            // unregister forever. The token + dropped sender make a
+            // clean exit the overwhelmingly common case.
+            const TEARDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+            let join_all = async {
+                for h in pending {
+                    let _ = h.await;
+                }
+            };
+            if tokio::time::timeout(TEARDOWN_TIMEOUT, join_all)
+                .await
+                .is_err()
+            {
+                warn!(
+                    corpus_id,
+                    "background tasks did not exit within teardown timeout; \
+                     directory deletion may transiently fail on Windows"
+                );
+            }
         }
+
+        info!(corpus_id, "corpus unregistered");
+        self.save_manifest().await?;
+        Ok(())
     }
 
     /// List all registered corpora with current status.
+    ///
+    /// Snapshots each corpus's `Arc` fields under the map read guard,
+    /// then **drops the guard** before awaiting any per-corpus lock —
+    /// so a concurrent `register`/`unregister` (map write lock) is never
+    /// serialised behind N per-corpus `info`/`sessions` awaits.
     pub async fn list(&self) -> Vec<CorpusInfo> {
-        let corpora = self.corpora.read().await;
-        let mut result = Vec::with_capacity(corpora.len());
-        for handle in corpora.values() {
-            let mut info = handle.current_info().await;
-            info.active_sessions = handle.sessions.lock().await.session_count();
-            result.push(info);
+        type Snap = (
+            Arc<RwLock<CorpusInfo>>,
+            Arc<IngestionProgress>,
+            Arc<dyn VectorIndex>,
+            Arc<tokio::sync::Mutex<SessionRegistry>>,
+        );
+        let snap: Vec<Snap> = {
+            let corpora = self.corpora.read().await;
+            corpora
+                .values()
+                .map(|h| {
+                    (
+                        Arc::clone(&h.info),
+                        Arc::clone(&h.progress),
+                        Arc::clone(&h.index),
+                        Arc::clone(&h.sessions),
+                    )
+                })
+                .collect()
+        };
+
+        let mut result = Vec::with_capacity(snap.len());
+        for (info, progress, index, sessions) in snap {
+            let mut ci = merge_live_info(info.read().await.clone(), &progress, index.len());
+            ci.active_sessions = sessions.lock().await.session_count();
+            result.push(ci);
         }
         result
     }
 
-    /// Get a read guard to access a corpus by ID.
+    /// Resolve a corpus ID to its handle.
+    ///
+    /// Clones the `Arc<CorpusHandle>` out and drops the map read guard
+    /// before returning — the caller holds only the handle, never a
+    /// `RwLockReadGuard`, so its subsequent `.await`s can't serialise
+    /// register / unregister or invert lock order.
     ///
     /// # Errors
     ///
     /// Returns [`RegistryError::NotFound`] if the corpus does not exist.
-    pub async fn get(
-        &self,
-        corpus_id: &str,
-    ) -> Result<tokio::sync::RwLockReadGuard<'_, HashMap<String, CorpusHandle>>, RegistryError>
-    {
-        let corpora = self.corpora.read().await;
-        if corpora.contains_key(corpus_id) {
-            Ok(corpora)
-        } else {
-            Err(RegistryError::NotFound {
+    pub async fn get(&self, corpus_id: &str) -> Result<Arc<CorpusHandle>, RegistryError> {
+        self.corpora
+            .read()
+            .await
+            .get(corpus_id)
+            .cloned()
+            .ok_or_else(|| RegistryError::NotFound {
                 id: corpus_id.to_string(),
             })
-        }
+    }
+
+    /// Extract a corpus's `info` handle without holding the corpora-map
+    /// guard across the subsequent `.await`.
+    ///
+    /// The indexer calls `set_status`/`update_stats`/`update_symbols_count`
+    /// repeatedly *while* a `register`/`unregister`/`restore` may be
+    /// taking the map write lock. Holding `corpora.read()` across
+    /// `info.write().await` serialises those writers behind every
+    /// per-corpus info write (and risks lock-order inversion). `info` is
+    /// an `Arc<RwLock<…>>` precisely so we can clone it out, drop the map
+    /// guard, *then* await.
+    async fn info_handle(&self, corpus_id: &str) -> Option<Arc<RwLock<CorpusInfo>>> {
+        let guard = self.corpora.read().await;
+        guard.get(corpus_id).map(|h| Arc::clone(&h.info))
     }
 
     /// Update indexing status for a corpus.
     pub async fn set_status(&self, corpus_id: &str, status: IndexingStatus) {
-        if let Some(handle) = self.corpora.read().await.get(corpus_id) {
-            handle.info.write().await.status = status;
+        if let Some(info) = self.info_handle(corpus_id).await {
+            info.write().await.status = status;
         }
     }
 
@@ -481,8 +667,8 @@ impl CorpusRegistry {
         sections_count: usize,
         embeddings_count: usize,
     ) {
-        if let Some(handle) = self.corpora.read().await.get(corpus_id) {
-            let mut info = handle.info.write().await;
+        if let Some(info) = self.info_handle(corpus_id).await {
+            let mut info = info.write().await;
             info.status = IndexingStatus::Idle;
             info.files_indexed = files_indexed;
             info.sections_count = sections_count;
@@ -497,8 +683,8 @@ impl CorpusRegistry {
 
     /// Update the symbols count for a corpus (called after symbol extraction).
     pub async fn update_symbols_count(&self, corpus_id: &str, symbols_count: usize) {
-        if let Some(handle) = self.corpora.read().await.get(corpus_id) {
-            handle.info.write().await.symbols_count = symbols_count;
+        if let Some(info) = self.info_handle(corpus_id).await {
+            info.write().await.symbols_count = symbols_count;
         }
     }
 
@@ -509,7 +695,14 @@ impl CorpusRegistry {
     }
 
     /// Persist the current corpus registrations to disk.
-    async fn save_manifest(&self) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::Storage`] if the manifest could not be
+    /// serialized or written — callers decide whether that is fatal
+    /// (`unregister`/`update_corpus_paths` propagate; `register` logs and
+    /// continues since the in-memory corpus is still usable).
+    async fn save_manifest(&self) -> Result<(), RegistryError> {
         let entries: Vec<ManifestEntry> = {
             let corpora = self.corpora.read().await;
             let mut entries = Vec::with_capacity(corpora.len());
@@ -524,14 +717,12 @@ impl CorpusRegistry {
         };
 
         let path = self.manifest_path();
-        match serde_json::to_string_pretty(&entries) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(&path, json) {
-                    warn!(error = %e, "failed to write corpus manifest");
-                }
-            }
-            Err(e) => warn!(error = %e, "failed to serialize corpus manifest"),
-        }
+        let json = serde_json::to_string_pretty(&entries)
+            .map_err(|e| RegistryError::Storage(format!("serialize manifest: {e}")))?;
+        std::fs::write(&path, json).map_err(|e| {
+            RegistryError::Storage(format!("write manifest {}: {e}", path.display()))
+        })?;
+        Ok(())
     }
 
     fn create_handle(
@@ -553,7 +744,7 @@ impl CorpusRegistry {
         );
 
         let dim = self.embedder.dimension();
-        let index = load_or_create_index(&index_dir, dim)?;
+        let index = load_or_create_index(&index_dir, dim, &self.config.default_model)?;
 
         let query_storage = SqliteStorage::open(&db_path)
             .map_err(|e| RegistryError::Storage(format!("open query db: {e}")))?;
@@ -579,13 +770,16 @@ impl CorpusRegistry {
             storage,
             index,
             service,
-            sessions: tokio::sync::Mutex::new(SessionRegistry::new(BudgetConfig::default())),
+            sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
+                BudgetConfig::default(),
+            ))),
             prefetch: Arc::new(tokio::sync::Mutex::new(
                 PrefetchEngine::with_default_capacity(),
             )),
             progress: Arc::new(IngestionProgress::new()),
             cancel: CancellationToken::new(),
             data_dir: corpus_dir,
+            tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             coherence_tx: tokio::sync::broadcast::channel(16).0,
         })
     }
@@ -627,7 +821,25 @@ async fn spawn_coherence_sink_pusher(
 /// Runs until the broadcast sender is dropped (corpus unregistered) or
 /// the corpus is removed from the registry. Lag drops are ignored — a
 /// missed alert is a bounded cost and the feed stays live.
-pub fn spawn_session_invalidator(registry: Arc<CorpusRegistry>, corpus_id: String) {
+/// Whether a manifest entry should be restored.
+///
+/// `true` unless **every** path is a local path that no longer exists.
+/// Remote sources (`http`/`git`) can't be stat'd, so any remote path
+/// keeps the entry alive. An empty path set is dead.
+fn entry_is_live(paths: &[String]) -> bool {
+    use ministr_core::config::{CorpusSource, classify_corpus_path};
+    !paths.is_empty()
+        && paths.iter().any(|p| match classify_corpus_path(p) {
+            CorpusSource::Local(pb) => pb.exists(),
+            CorpusSource::Web(_) | CorpusSource::Git(_) => true,
+        })
+}
+
+#[must_use]
+pub fn spawn_session_invalidator(
+    registry: Arc<CorpusRegistry>,
+    corpus_id: String,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut rx = {
             let corpora = registry.corpora.read().await;
@@ -660,25 +872,84 @@ pub fn spawn_session_invalidator(registry: Arc<CorpusRegistry>, corpus_id: Strin
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
             }
         }
-    });
+    })
 }
 
 fn load_or_create_index(
     index_dir: &std::path::Path,
     dim: usize,
+    model_name: &str,
 ) -> Result<Arc<dyn VectorIndex>, RegistryError> {
     if index_dir.exists() {
         match HnswIndex::load(index_dir) {
-            Ok(loaded) => return Ok(Arc::new(loaded)),
+            Ok(loaded) => match loaded.check_compatible(dim, model_name, index_dir) {
+                Ok(()) => {
+                    // Adopt a legacy index that predates model tracking
+                    // so a later model change can actually be detected.
+                    if loaded.model_name().is_none() {
+                        loaded.set_model_name(model_name);
+                    }
+                    return Ok(Arc::new(loaded));
+                }
+                Err(e) => {
+                    warn!(error = %e, "embedding model changed — rebuilding index");
+                    discard_index_dir(index_dir);
+                }
+            },
             Err(e) => {
                 warn!(error = %e, "corrupted index — rebuilding");
-                let _ = std::fs::remove_dir_all(index_dir);
+                discard_index_dir(index_dir);
             }
         }
     }
-    Ok(Arc::new(
-        HnswIndex::new(dim, 100_000).map_err(|e| RegistryError::Index(e.to_string()))?,
-    ))
+    let fresh = HnswIndex::new(dim, 100_000).map_err(|e| RegistryError::Index(e.to_string()))?;
+    fresh.set_model_name(model_name);
+    Ok(Arc::new(fresh))
+}
+
+/// Lightweight desync probe: warn (with an actionable repair path) when
+/// the persisted `SQLite` content and the on-disk vector index are
+/// grossly out of sync at registration time — i.e. one side is empty
+/// while the other is not. This catches an index whose dump was lost or
+/// failed to load (search silently returns nothing despite indexed
+/// content) and an orphaned index left without backing content. It
+/// never deletes anything: the background indexer reconciles a real
+/// content drift; a stale-merkle short-circuit is the case that would
+/// otherwise leave this broken until the user forces a re-index.
+async fn check_index_integrity(corpus_id: &str, storage: &SqliteStorage, vector_count: usize) {
+    let sections = match storage.section_count().await {
+        Ok(n) => n,
+        Err(e) => {
+            // Can't probe — don't block registration over a stats query.
+            tracing::debug!(corpus_id, error = %e, "integrity probe: section_count failed");
+            return;
+        }
+    };
+
+    let desynced = (sections > 0 && vector_count == 0) || (sections == 0 && vector_count > 0);
+    if desynced {
+        warn!(
+            corpus_id,
+            sections,
+            vectors = vector_count,
+            "index/content desync detected — semantic search will be \
+             degraded for this corpus. Re-index to repair: \
+             `ministr reindex` (CLI) or the Re-index button in the app."
+        );
+    }
+}
+
+/// Remove a corrupt/incompatible index dir with the Windows-robust
+/// retrying remove, logging (not swallowing) a failure so a stale dir
+/// that would be re-loaded next start is visible.
+fn discard_index_dir(index_dir: &std::path::Path) {
+    if let Err(e) = ministr_core::fs_util::remove_dir_all_robust_sync(index_dir) {
+        warn!(
+            error = %e,
+            dir = %index_dir.display(),
+            "failed to remove stale index directory; a rebuild will overwrite it"
+        );
+    }
 }
 
 /// Derive a human-readable label for a corpus from its path set.
@@ -724,173 +995,13 @@ pub fn display_name_from_paths(paths: &[String]) -> String {
     basename.unwrap_or(root)
 }
 
-/// Lexically canonicalise a single corpus path string.
-///
-/// For paths classified as [`CorpusSource::Local`](ministr_core::config::CorpusSource):
-///
-/// - `\` becomes `/` so Windows and Unix forms hash identically.
-/// - Trailing `/` is stripped (but the lone `/` root is preserved).
-/// - On Windows, the result is lowercased — NTFS is case-insensitive,
-///   and we don't want `D:/Code/foo` and `d:/code/foo` to be treated as
-///   different corpora.
-///
-/// Non-local paths (HTTP, git, github://) pass through unchanged so
-/// remote-URL identity isn't accidentally rewritten.
-fn canonical_corpus_path(raw: &str) -> String {
-    use ministr_core::config::{CorpusSource, classify_corpus_path};
-
-    if !matches!(classify_corpus_path(raw), CorpusSource::Local(_)) {
-        return raw.to_owned();
-    }
-
-    let mut s = raw.replace('\\', "/");
-
-    while s.len() > 1 && s.ends_with('/') {
-        s.pop();
-    }
-
-    #[cfg(windows)]
-    {
-        s = s.to_lowercase();
-    }
-
-    s
-}
-
-/// Canonicalise, sort, and dedup a corpus path set.
-///
-/// The result is the input both to [`corpus_id_from_paths`] and to the
-/// stored `CorpusInfo.paths` — so two equivalent path sets produce
-/// identical ids, identical on-disk dirs, and identical manifest entries.
-#[must_use]
-pub fn canonical_corpus_paths(paths: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = paths.iter().map(|p| canonical_corpus_path(p)).collect();
-    out.sort();
-    out.dedup();
-    out
-}
-
-/// Derive a deterministic corpus ID from a path set.
-///
-/// Paths are canonicalised first via [`canonical_corpus_paths`] so that
-/// equivalent inputs (case, separator, trailing-slash variants) hash to
-/// the same id.
-#[must_use]
-pub fn corpus_id_from_paths(paths: &[String]) -> String {
-    use std::fmt::Write;
-    let canonical = canonical_corpus_paths(paths);
-    let hash = Sha256::digest(canonical.join("\n").as_bytes());
-    let hex = hash.iter().fold(String::new(), |mut acc, b| {
-        let _ = write!(acc, "{b:02x}");
-        acc
-    });
-    format!("multi-{}", &hex[..8])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn corpus_id_deterministic() {
-        let a = corpus_id_from_paths(&["b".into(), "a".into()]);
-        let b = corpus_id_from_paths(&["a".into(), "b".into()]);
-        assert_eq!(a, b, "order should not matter");
-    }
-
-    #[test]
-    fn corpus_id_changes_with_paths() {
-        let a = corpus_id_from_paths(&["src".into()]);
-        let b = corpus_id_from_paths(&["src".into(), "docs".into()]);
-        assert_ne!(a, b, "different path sets should produce different IDs");
-    }
-
-    #[test]
-    fn canonical_strips_trailing_slash() {
-        // Use a lowercase fixture so the assertion holds on both case-
-        // sensitive and case-insensitive (Windows) builds.
-        assert_eq!(canonical_corpus_path("/users/x/foo/"), "/users/x/foo");
-        assert_eq!(canonical_corpus_path("/users/x/foo"), "/users/x/foo");
-        // Lone root preserved.
-        assert_eq!(canonical_corpus_path("/"), "/");
-    }
-
-    #[test]
-    fn canonical_normalises_separators() {
-        // Backslash → forward slash on every platform; the canonical hash
-        // input must be cross-platform-stable so a project committed on
-        // Windows resolves to the same id on macOS / Linux.
-        assert!(
-            canonical_corpus_path("D:\\Code\\ministr").ends_with("d:/code/ministr")
-                || canonical_corpus_path("D:\\Code\\ministr") == "D:/Code/ministr"
-        );
-    }
-
-    #[test]
-    fn canonical_passes_through_remote_urls() {
-        // `classify_corpus_path` recognises https:// as a Web source —
-        // we don't want to lowercase or rewrite it.
-        let raw = "https://Example.com/Some/Path/";
-        assert_eq!(canonical_corpus_path(raw), raw);
-        let git = "git@github.com:User/Repo.git";
-        assert_eq!(canonical_corpus_path(git), git);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn canonical_lowercases_on_windows() {
-        // NTFS is case-insensitive — ids must collapse case so users
-        // who type the drive letter or path differently land on the
-        // same corpus.
-        assert_eq!(
-            canonical_corpus_path("D:\\Code\\Ministr"),
-            "d:/code/ministr"
-        );
-    }
-
-    #[test]
-    fn corpus_id_idempotent_across_path_forms() {
-        // The whole point of the canonicalisation: every equivalent
-        // expression of the same project must hash to the same id.
-        let trailing = corpus_id_from_paths(&["/Users/x/foo/".into()]);
-        let no_trailing = corpus_id_from_paths(&["/Users/x/foo".into()]);
-        assert_eq!(trailing, no_trailing, "trailing slash should not matter");
-
-        let unsorted = corpus_id_from_paths(&["b".into(), "a".into()]);
-        let sorted = corpus_id_from_paths(&["a".into(), "b".into()]);
-        assert_eq!(unsorted, sorted, "input order should not matter");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn corpus_id_idempotent_across_windows_path_forms() {
-        let backslash = corpus_id_from_paths(&["D:\\Code\\Ministr".into()]);
-        let forward = corpus_id_from_paths(&["D:/Code/ministr".into()]);
-        let mixed = corpus_id_from_paths(&["d:\\Code/Ministr/".into()]);
-        assert_eq!(backslash, forward);
-        assert_eq!(backslash, mixed);
-    }
-
-    #[test]
-    fn corpus_id_distinct_for_sibling_projects() {
-        // Two sibling projects under the same parent dir must hash to
-        // distinct ids — registering one must never collide with another.
-        // This is the case the old `project_root_from_paths` heuristic
-        // got disastrously wrong.
-        let a = corpus_id_from_paths(&["/Users/x/Code/projectA".into()]);
-        let b = corpus_id_from_paths(&["/Users/x/Code/projectB".into()]);
-        assert_ne!(a, b);
-    }
-
-    #[test]
-    fn canonical_dedups() {
-        let out = canonical_corpus_paths(&[
-            "/users/x/foo/".into(),
-            "/users/x/foo".into(),
-            "/users/x/bar".into(),
-        ]);
-        assert_eq!(out, vec!["/users/x/bar".to_string(), "/users/x/foo".into()]);
-    }
+    // Corpus-identity canonicalisation is now owned and unit-tested by
+    // `ministr_core::corpus_id` (the single source of truth shared with
+    // the CLI). The tests below cover daemon-local behaviour only.
 
     fn snapshot_with(status: IndexingStatus) -> CorpusInfo {
         CorpusInfo {

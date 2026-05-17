@@ -1054,23 +1054,60 @@ pub(crate) fn cmd_hooks_test(root: &Path) {
 /// `install.ps1` and the Tauri NSIS installer hook target, so re-running is
 /// idempotent regardless of how the user got here.
 ///
-/// `bin_dir` defaults to the parent of the running `ministr` binary so a
-/// fresh `~/.ministr/bin/ministr setup` after `install.sh` Just Works
-/// without the user having to know the path.
+/// This is the **single source of truth** for where the ministr CLI
+/// lives and what is on `PATH`. Every channel funnels through it: the
+/// dev `just reinstall` scripts, the Tauri app's first-launch
+/// `setup.rs`, and the NSIS installer hooks. They used to each PATH-add
+/// a *different* directory (dev → `~/.ministr/bin`, packaged →
+/// `%LOCALAPPDATA%\ministr`), and nothing ever removed the stale one —
+/// so an old build permanently shadowed the new one on `PATH` and no
+/// amount of reinstalling helped. Consolidating here fixes that
+/// structurally:
 ///
-/// `uninstall=true` calls `onpath::remove` instead of `add` — used by the
-/// NSIS uninstaller hook before tearing down the install dir.
+/// 1. The canonical location is always `<daemon_data_dir>/bin`
+///    (`~/.ministr/bin`), independent of where the running binary sits.
+///    The legacy `--bin-dir` argument is accepted for compatibility but
+///    no longer changes the target — every caller converges here.
+/// 2. The running binary is staged into the canonical dir (so the
+///    packaged app / NSIS, whose `ministr` lives elsewhere, still puts
+///    the *current* binary on the canonical `PATH`).
+/// 3. Known legacy / duplicate ministr install roots are de-PATHed and
+///    their shadowing binaries refreshed with the current one, so a
+///    stale copy can never win `PATH` resolution again.
+///
+/// `uninstall=true` removes the canonical dir from `PATH` (NSIS
+/// uninstaller hook) and skips staging / legacy refresh.
 pub(crate) fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool, uninstall: bool) -> Result<()> {
-    let bin_dir = if let Some(p) = bin_dir {
-        p.to_path_buf()
+    // Canonical, channel-independent install location. `--bin-dir` is
+    // intentionally ignored for the target (kept only so existing
+    // callers / NSIS hooks don't break) — the whole point of this
+    // routine is that every entry point lands in the same place.
+    let _ = bin_dir; // legacy arg — no longer changes the target (see above)
+    let bin_dir = ministr_api::daemon_data_dir().join("bin");
+    let exe_name = if cfg!(windows) {
+        "ministr.exe"
     } else {
-        let exe = std::env::current_exe()
-            .into_diagnostic()
-            .wrap_err("failed to resolve current executable for default --bin-dir")?;
-        exe.parent()
-            .ok_or_else(|| miette::miette!("running binary has no parent dir; pass --bin-dir"))?
-            .to_path_buf()
+        "ministr"
     };
+    let canonical_exe = bin_dir.join(exe_name);
+
+    // Stage the running binary into the canonical dir (best-effort —
+    // a locked target on Windows must not abort PATH wiring; the next
+    // run heals it).
+    if !uninstall
+        && !dry_run
+        && let Ok(current) = std::env::current_exe()
+        && current != canonical_exe
+    {
+        if let Err(e) = std::fs::create_dir_all(&bin_dir) {
+            eprintln!("warning: could not create {}: {e}", bin_dir.display());
+        } else if let Err(e) = std::fs::copy(&current, &canonical_exe) {
+            eprintln!(
+                "warning: could not stage ministr into {}: {e}",
+                canonical_exe.display()
+            );
+        }
+    }
 
     let manager = onpath::PathManager::new(&bin_dir, "ministr").dry_run(dry_run);
     let (verb, report) = if uninstall {
@@ -1084,6 +1121,11 @@ pub(crate) fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool, uninstall: bool) 
             .add()
             .into_diagnostic()
             .wrap_err_with(|| format!("onpath failed to add {} to PATH", bin_dir.display()))?;
+        // De-PATH legacy/duplicate install roots and refresh any
+        // shadowing binaries so a stale copy can't win resolution.
+        if !dry_run {
+            neutralize_legacy_ministr(&bin_dir, &canonical_exe);
+        }
         ("add", r)
     };
 
@@ -1101,6 +1143,74 @@ pub(crate) fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool, uninstall: bool) 
     }
 
     Ok(())
+}
+
+/// De-PATH known legacy / duplicate ministr install roots and refresh
+/// any shadowing `ministr` binaries with the canonical one, so a stale
+/// copy can never win `PATH` resolution again. Best-effort throughout:
+/// a missing dir, a locked file, or a failed `PATH` edit must not break
+/// `setup` — the canonical dir is already wired by the caller.
+fn neutralize_legacy_ministr(canonical_bin: &Path, canonical_exe: &Path) {
+    // ministr-DEDICATED legacy dirs → safe to drop from PATH entirely.
+    // These are Windows-only (the packaged-bundle `%LOCALAPPDATA%\ministr`
+    // root + its `bin`, from an older installer that shadowed the dev
+    // install on PATH).
+    #[cfg(windows)]
+    if let Some(lad) = std::env::var_os("LOCALAPPDATA") {
+        let root = std::path::PathBuf::from(lad).join("ministr");
+        for dir in [root.join("bin"), root] {
+            if dir.as_path() == canonical_bin || !dir.exists() {
+                continue;
+            }
+            let _ = onpath::PathManager::new(&dir, "ministr").remove();
+            refresh_shadowing_binaries(&dir, canonical_exe);
+        }
+    }
+
+    // Shared dirs (hold other tools) → never de-PATH; only refresh a
+    // stale `ministr` so it isn't an old build if still resolved first.
+    let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    if let Some(home) = std::env::var_os(home_var) {
+        let cargo_bin = std::path::PathBuf::from(home).join(".cargo").join("bin");
+        if cargo_bin.as_path() != canonical_bin {
+            refresh_shadowing_binaries(&cargo_bin, canonical_exe);
+        }
+    }
+}
+
+/// Overwrite any CLI `ministr` executable in `dir` with the canonical
+/// binary (never touches `ministr-app.exe` — a different program).
+///
+/// Windows blocks overwriting a *running* `.exe` (the stale copy is
+/// exactly the one being executed via PATH, so it is loaded), but it
+/// *does* allow renaming it. So on a plain-copy failure we move the
+/// locked file aside (`<name>.stale`) and copy the fresh binary into
+/// place — the rename succeeds even while the old image runs, and the
+/// orphan is swept on the next pass once nothing holds it. Best-effort.
+fn refresh_shadowing_binaries(dir: &Path, canonical_exe: &Path) {
+    for name in ["ministr.exe", "ministr-cli.exe", "ministr"] {
+        let f = dir.join(name);
+        if !f.is_file() || f.as_path() == canonical_exe {
+            continue;
+        }
+        if std::fs::copy(canonical_exe, &f).is_ok() {
+            continue;
+        }
+        // Locked (running) target: rename aside, then copy fresh in.
+        let aside = dir.join(format!("{name}.stale"));
+        let _ = std::fs::remove_file(&aside);
+        if std::fs::rename(&f, &aside).is_ok() {
+            let _ = std::fs::copy(canonical_exe, &f);
+        }
+    }
+    // Sweep any `.stale` orphans from a previous locked pass.
+    for name in [
+        "ministr.exe.stale",
+        "ministr-cli.exe.stale",
+        "ministr.stale",
+    ] {
+        let _ = std::fs::remove_file(dir.join(name));
+    }
 }
 
 /// Check if the Claude Code hooks would block a given tool/args combination.

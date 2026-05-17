@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { spring } from "../../lib/motion";
 import { cn } from "../../lib/utils";
 
 export type ToastTone = "info" | "success" | "danger";
@@ -19,11 +27,8 @@ const ToastCtx = createContext<ToastContextShape | null>(null);
 let nextId = 1;
 
 /**
- * Brutalist toast tray.
- *
- * Bottom-left, fixed, 2px-bordered, accent left-bar, 2-second auto-dismiss.
- * Tone determines the left bar color: info=accent, success=success, danger=danger.
- * Content is mono uppercase. No fades — toasts disappear in zero ms.
+ * Cockpit toast tray. Bottom-left, spring-stacked, accent rim, soft
+ * surface, 2.4s auto-dismiss. Tone drives the rim color.
  */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -32,49 +37,64 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setToasts((list) => list.filter((t) => t.id !== id));
   }, []);
 
-  const toast = useCallback<ToastContextShape["toast"]>((label, opts) => {
-    const id = nextId++;
-    const t: Toast = {
-      id,
-      label,
-      detail: opts?.detail,
-      tone: opts?.tone ?? "info",
-    };
-    setToasts((list) => [...list, t]);
-    setTimeout(() => dismiss(id), 2000);
-  }, [dismiss]);
+  const toast = useCallback<ToastContextShape["toast"]>(
+    (label, opts) => {
+      const id = nextId++;
+      setToasts((list) => [
+        ...list,
+        { id, label, detail: opts?.detail, tone: opts?.tone ?? "info" },
+      ]);
+      setTimeout(() => dismiss(id), 2400);
+    },
+    [dismiss],
+  );
 
   return (
     <ToastCtx.Provider value={{ toast }}>
       {children}
       <div
-        className="fixed bottom-3 left-3 z-[1100] flex flex-col gap-2 pointer-events-none"
+        className="fixed bottom-4 left-4 z-[1100] flex flex-col gap-2 pointer-events-none"
         aria-live="polite"
       >
-        {toasts.map((t) => (
-          <ToastItem key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
-        ))}
+        <AnimatePresence initial={false}>
+          {toasts.map((t) => (
+            <ToastItem key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
+          ))}
+        </AnimatePresence>
       </div>
     </ToastCtx.Provider>
   );
 }
 
-function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
-  const barClass =
+function ToastItem({
+  toast,
+  onDismiss,
+}: {
+  toast: Toast;
+  onDismiss: () => void;
+}) {
+  const rim =
     toast.tone === "success"
-      ? "bg-success"
+      ? "before:bg-success"
       : toast.tone === "danger"
-        ? "bg-danger"
-        : "bg-accent";
+        ? "before:bg-danger"
+        : "before:bg-accent";
   return (
-    <button
+    <motion.button
+      layout
+      initial={{ opacity: 0, x: -24, scale: 0.96 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      exit={{ opacity: 0, x: -24, scale: 0.96 }}
+      transition={spring}
       onClick={onDismiss}
       className={cn(
-        "pointer-events-auto flex items-stretch border border-border-soft bg-surface shadow-[var(--shadow-sm)] cursor-pointer transition-none text-left",
+        "pointer-events-auto relative overflow-hidden text-left",
+        "rounded-lg border border-border bg-surface shadow-md backdrop-blur-sm",
+        "before:absolute before:inset-y-0 before:left-0 before:w-[3px]",
+        rim,
       )}
     >
-      <div className={cn("w-[3px] shrink-0", barClass)} />
-      <div className="px-3 py-2 min-w-[220px] max-w-[420px]">
+      <div className="pl-4 pr-3 py-2.5 min-w-[220px] max-w-[420px]">
         <div className="font-sans text-sm font-semibold text-text">
           {toast.label}
         </div>
@@ -84,7 +104,7 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
           </div>
         )}
       </div>
-    </button>
+    </motion.button>
   );
 }
 

@@ -19,14 +19,20 @@
 //! The [`detector`] submodule provides [`FrameworkDetector`] for auto-detecting
 //! which bridge frameworks are present in a project.
 
+pub mod cgo;
 pub mod detector;
+pub mod electron;
 pub mod ffi;
+pub mod flutter;
+pub mod grpc;
 pub mod http_route;
+pub mod jni;
 pub mod linker;
 pub mod napi;
 pub mod pyo3;
 pub mod semantic;
 pub mod tauri;
+pub mod uniffi;
 mod util;
 pub mod wasm_bindgen;
 
@@ -69,6 +75,21 @@ pub enum BridgeKind {
     HttpRoute,
     /// Foreign function interface: `extern "C"`, ctypes, JNI, etc.
     Ffi,
+    /// cgo: Go `C.func(...)` calls ↔ C function definitions.
+    Cgo,
+    /// JNI: Java/Kotlin `native`/`external` ↔ C/C++ `Java_*` exports.
+    Jni,
+    /// UniFFI: Rust `#[uniffi::export]` ↔ Swift/Kotlin/Python bindings.
+    UniFfi,
+    /// gRPC: `.proto` `service` ↔ generated client/stub references.
+    Grpc,
+    /// Flutter platform channels: Dart `MethodChannel('name')` /
+    /// `EventChannel` ↔ native (Kotlin/Java/Swift/ObjC) channel of the
+    /// same name string.
+    FlutterChannel,
+    /// Electron IPC: renderer `ipcRenderer.invoke/send('chan')` /
+    /// `contextBridge` ↔ main-process `ipcMain.handle/on('chan')`.
+    ElectronIpc,
 }
 
 impl BridgeKind {
@@ -83,6 +104,12 @@ impl BridgeKind {
             Self::PyO3 => "pyo3",
             Self::HttpRoute => "http_route",
             Self::Ffi => "ffi",
+            Self::Cgo => "cgo",
+            Self::Jni => "jni",
+            Self::UniFfi => "uniffi",
+            Self::Grpc => "grpc",
+            Self::FlutterChannel => "flutter_channel",
+            Self::ElectronIpc => "electron_ipc",
         }
     }
 
@@ -107,6 +134,12 @@ impl BridgeKind {
             "pyo3" => Some(Self::PyO3),
             "http_route" => Some(Self::HttpRoute),
             "ffi" => Some(Self::Ffi),
+            "cgo" => Some(Self::Cgo),
+            "jni" => Some(Self::Jni),
+            "uniffi" => Some(Self::UniFfi),
+            "grpc" => Some(Self::Grpc),
+            "flutter_channel" => Some(Self::FlutterChannel),
+            "electron_ipc" => Some(Self::ElectronIpc),
             _ => None,
         }
     }
@@ -396,6 +429,16 @@ pub fn create_linker_for_kinds(kinds: &[BridgeKind]) -> Option<linker::BridgeLin
             }
             BridgeKind::HttpRoute => linker.register(Box::new(http_route::HttpRouteExtractor)),
             BridgeKind::Ffi => linker.register(Box::new(ffi::FfiExtractor)),
+            BridgeKind::Cgo => linker.register(Box::new(cgo::CgoExtractor)),
+            BridgeKind::Jni => linker.register(Box::new(jni::JniExtractor)),
+            BridgeKind::UniFfi => linker.register(Box::new(uniffi::UniffiExtractor)),
+            BridgeKind::Grpc => linker.register(Box::new(grpc::GrpcExtractor)),
+            BridgeKind::FlutterChannel => {
+                linker.register(Box::new(flutter::FlutterChannelExtractor));
+            }
+            BridgeKind::ElectronIpc => {
+                linker.register(Box::new(electron::ElectronIpcExtractor));
+            }
         }
     }
     Some(linker)
@@ -501,6 +544,10 @@ mod tests {
             BridgeKind::PyO3,
             BridgeKind::HttpRoute,
             BridgeKind::Ffi,
+            BridgeKind::Cgo,
+            BridgeKind::Jni,
+            BridgeKind::UniFfi,
+            BridgeKind::Grpc,
         ];
         for kind in kinds {
             let s = kind.as_str();

@@ -20,11 +20,12 @@ export function Toggle({ enabled, onToggle, ariaLabel }: ToggleProps) {
       aria-checked={!!enabled}
       aria-label={ariaLabel}
       className={cn(
-        "inline-flex h-7 min-w-[60px] items-center justify-center border-2 border-border px-2 text-[0.6875rem] font-mono font-semibold uppercase tracking-[0.05em] cursor-pointer transition-none",
+        "inline-flex h-7 min-w-[60px] items-center justify-center rounded-full border border-border px-3 text-mono-mini font-mono font-medium uppercase tracking-[0.08em] cursor-pointer",
+        "transition-colors duration-150 ease-out",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         enabled
-          ? "bg-accent text-[var(--color-accent-fg-on)] shadow-[2px_2px_0_0_var(--shadow-color)]"
-          : "bg-surface text-text-muted",
+          ? "bg-accent border-accent text-[var(--color-accent-fg-on)] shadow-[var(--glow-soft)]"
+          : "bg-surface text-text-muted hover:border-border-hover",
         enabled === null && "opacity-50 cursor-wait",
       )}
     >

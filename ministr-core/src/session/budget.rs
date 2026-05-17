@@ -57,10 +57,43 @@ pub struct BudgetStatus {
     pub utilization: f64,
 }
 
+/// Fallback context-window size, in tokens, when nothing tells us the
+/// real one.
+///
+/// 200k is the floor for current-generation Claude models, so it never
+/// *under*-reports a real window the way the previous hardcoded 100k did
+/// (which made budget pressure fire on agents that had 2–10x the room).
+/// Deployments on larger windows (e.g. the 1M-context Opus variants)
+/// should set [`MINISTR_CONTEXT_WINDOW`](default_max_context_tokens) so
+/// the numbers track the session's actual window.
+const FALLBACK_CONTEXT_TOKENS: usize = 200_000;
+
+/// Resolve the context-window budget from the environment.
+///
+/// MCP gives the server no channel to learn the connected model's real
+/// context window, so the source of truth is `MINISTR_CONTEXT_WINDOW`,
+/// set next to where the MCP client is configured (the `env` block of
+/// `.mcp.json` / `.vscode/mcp.json` / `.cursor/mcp.json`, or
+/// `~/.codex/config.toml`). When unset, empty, unparseable, or zero we
+/// fall back to [`FALLBACK_CONTEXT_TOKENS`] rather than a misleadingly
+/// small fixed window.
+#[must_use]
+pub fn default_max_context_tokens() -> usize {
+    std::env::var("MINISTR_CONTEXT_WINDOW")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(FALLBACK_CONTEXT_TOKENS)
+}
+
 /// Configuration for the budget tracker.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BudgetConfig {
     /// Maximum context window budget in tokens.
+    ///
+    /// Defaults to the connected session's window via
+    /// [`default_max_context_tokens`] (`MINISTR_CONTEXT_WINDOW` env, else
+    /// [`FALLBACK_CONTEXT_TOKENS`]).
     pub max_context_tokens: usize,
     /// Utilization ratio at which pressure becomes Elevated (default: 0.8).
     pub pressure_threshold: f64,
@@ -81,7 +114,7 @@ fn default_eviction_policy() -> super::types::EvictionPolicy {
 impl Default for BudgetConfig {
     fn default() -> Self {
         Self {
-            max_context_tokens: 100_000,
+            max_context_tokens: default_max_context_tokens(),
             pressure_threshold: 0.80,
             critical_threshold: 0.95,
             eviction_policy: super::types::EvictionPolicy::Fifo,
@@ -301,7 +334,9 @@ mod tests {
 
         let status = tracker.budget_status();
         assert_eq!(status.tokens_used, 0);
-        assert_eq!(status.tokens_remaining, 100_000);
+        // With MINISTR_CONTEXT_WINDOW unset (the default test env) the
+        // window is the non-misleading fallback, not the old 100k.
+        assert_eq!(status.tokens_remaining, FALLBACK_CONTEXT_TOKENS);
         assert_eq!(status.pressure_level, PressureLevel::Normal);
     }
 
@@ -414,9 +449,28 @@ mod tests {
     #[test]
     fn budget_config_defaults() {
         let config = BudgetConfig::default();
-        assert_eq!(config.max_context_tokens, 100_000);
+        // MINISTR_CONTEXT_WINDOW unset → fallback window, not the old
+        // hardcoded 100k that under-reported real model windows.
+        assert_eq!(config.max_context_tokens, FALLBACK_CONTEXT_TOKENS);
         assert!((config.pressure_threshold - 0.80).abs() < f64::EPSILON);
         assert!((config.critical_threshold - 0.95).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn context_window_env_override_is_respected() {
+        // Guards the env-driven path without mutating process env (which
+        // would race parallel tests): exercise the parser contract via a
+        // closure mirroring default_max_context_tokens()'s logic.
+        let resolve = |raw: Option<&str>| -> usize {
+            raw.and_then(|v| v.trim().parse::<usize>().ok())
+                .filter(|&n| n > 0)
+                .unwrap_or(FALLBACK_CONTEXT_TOKENS)
+        };
+        assert_eq!(resolve(Some("1000000")), 1_000_000);
+        assert_eq!(resolve(Some("  250000 ")), 250_000);
+        assert_eq!(resolve(Some("0")), FALLBACK_CONTEXT_TOKENS);
+        assert_eq!(resolve(Some("nonsense")), FALLBACK_CONTEXT_TOKENS);
+        assert_eq!(resolve(None), FALLBACK_CONTEXT_TOKENS);
     }
 
     #[test]

@@ -1,70 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Search, AlertTriangle } from "lucide-react";
-import {
-  BrutalSearch,
-  BrutalSymbols,
-  BrutalBridge,
-  BrutalProjects,
-  BrutalStructure,
-  BrutalSessions,
-  BrutalLogs,
-  BrutalSettings,
-} from "./components/ui/brutal-icons";
+import { AlertTriangle, RotateCw, FileText } from "lucide-react";
+import { Button } from "./components/ui/button";
+import { AnimatePresence, motion } from "motion/react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useTheme } from "./hooks/useTheme";
 import { useCorpusContext } from "./hooks/useCorpusContext";
-import { useDefaultTab, useDensity } from "./hooks/usePreferences";
-import { ProjectList } from "./components/ProjectList";
-import { ProjectDetail } from "./components/ProjectDetail";
-import { Settings } from "./components/Settings";
-import { LogViewer } from "./components/LogViewer";
+import { useDensity, useDefaultTab } from "./hooks/usePreferences";
 import { Onboarding } from "./components/Onboarding";
-import { SessionDashboard } from "./components/SessionDashboard";
-import { QueryPlayground } from "./components/QueryPlayground";
-import { CorpusTreemap } from "./components/CorpusTreemap";
-import { SymbolGraph } from "./components/SymbolGraph";
-import { Bridge } from "./components/Bridge";
-import { ContextSimulator } from "./components/ContextSimulator";
-import { CommandPalette } from "./components/CommandPalette";
+import { AskSurface } from "./components/surfaces/ask/AskSurface";
+import { SessionsSurface } from "./components/surfaces/SessionsSurface";
 import { ShortcutSheet } from "./components/ShortcutSheet";
-import { CorpusPill } from "./components/shell/CorpusPill";
-import { DaemonDot } from "./components/shell/DaemonDot";
-import { VitalsChip } from "./components/shell/VitalsChip";
 import { ToastProvider, useToast } from "./components/shell/ToastTray";
 import { EntityPanelProvider } from "./hooks/useEntityPanel";
 import { EntityPanel } from "./components/EntityPanel";
-import { cn } from "./lib/utils";
+import { Sidebar, type SurfaceId } from "./components/chrome/Sidebar";
+import { TopBar } from "./components/chrome/TopBar";
+import { CommandPalette } from "./components/chrome/CommandPalette";
+import { ProjectsSurface } from "./components/surfaces/ProjectsSurface";
+import { SettingsSurface } from "./components/surfaces/SettingsSurface";
+import { corpusLabel } from "./lib/corpus";
+import { useLiveEvents } from "./lib/liveBus";
+import { fade } from "./lib/motion";
 import {
   matchShortcut,
   firesWhileTyping,
   type ShortcutAction,
 } from "./lib/shortcuts";
 
-type Tab =
-  | "search"
-  | "symbols"
-  | "bridge"
-  | "projects"
-  | "structure"
-  | "sessions"
-  | "simulator"
-  | "logs"
-  | "settings";
-
-const VALID_TABS: Tab[] = [
-  "search",
-  "symbols",
-  "bridge",
-  "projects",
-  "structure",
-  "sessions",
-  "simulator",
-  "logs",
-  "settings",
-];
-
+/**
+ * App shell — the Cockpit. Four top-level surfaces (Ask / Projects /
+ * Sessions / Settings) behind a nav rail + context-aware top bar, a
+ * global command palette, and a stacked entity inspector. Surface
+ * switches animate; a small back/forward history backs ⌘[ / ⌘].
+ */
 export function App() {
   return (
     <ToastProvider>
@@ -78,17 +48,42 @@ export function App() {
 function AppInner() {
   const { status, error, refresh } = useDaemonStatus();
   const { theme, setTheme } = useTheme();
-  const { activeCorpus, activeCorpusId, setActiveCorpusId } =
-    useCorpusContext(status);
-  const { defaultTab } = useDefaultTab();
-  // Initialize density preference (sets data-density on <html>).
+  const { activeCorpusId, setActiveCorpusId } = useCorpusContext(status);
   useDensity();
+  const { defaultTab } = useDefaultTab();
   const { toast } = useToast();
-  const [tab, setTab] = useState<Tab>(defaultTab as Tab);
+
+  // Surface + a small navigation history (back/forward).
+  const [history, setHistory] = useState<SurfaceId[]>([defaultTab]);
+  const [cursor, setCursor] = useState(0);
+  const surface = history[cursor];
+
+  // Refs so the keyboard/event handlers always see the latest state
+  // without re-binding listeners on every navigation.
+  const historyRef = useRef(history);
+  const cursorRef = useRef(cursor);
+  historyRef.current = history;
+  cursorRef.current = cursor;
+
+  const navigate = useCallback((next: SurfaceId) => {
+    const h = historyRef.current;
+    const c = cursorRef.current;
+    if (h[c] === next) return;
+    const nh = [...h.slice(0, c + 1), next];
+    setHistory(nh);
+    setCursor(nh.length - 1);
+  }, []);
+
+  const back = useCallback(() => setCursor((c) => Math.max(0, c - 1)), []);
+  const forward = useCallback(
+    () => setCursor((c) => Math.min(historyRef.current.length - 1, c + 1)),
+    [],
+  );
+
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
   const gPending = useRef(false);
   const gTimer = useRef<number | null>(null);
 
@@ -96,21 +91,60 @@ function AppInner() {
     invoke<boolean>("should_show_onboarding").then(setShowOnboarding);
   }, []);
 
+  // Ambient liveness — surface session lifecycle moments as toasts.
+  useLiveEvents(
+    useCallback(
+      (e) => {
+        if (e.kind === "session-started") {
+          toast("Agent connected", {
+            detail: e.session.session_id.slice(0, 12),
+            tone: "success",
+          });
+        } else if (e.kind === "session-ended") {
+          toast("Session ended", {
+            detail: e.sessionId.slice(0, 12),
+            tone: "info",
+          });
+        } else if (e.kind === "pressure-critical") {
+          toast("Context critical", {
+            detail: e.session.session_id.slice(0, 12),
+            tone: "danger",
+          });
+        }
+      },
+      [toast],
+    ),
+  );
+
+  // External navigation events from tray menu / deep links.
   useEffect(() => {
     const unlistenNav = listen<string>("navigate", (event) => {
-      const target = event.payload as Tab;
-      if (VALID_TABS.includes(target)) setTab(target);
+      const t = event.payload;
+      if (
+        t === "ask" ||
+        t === "projects" ||
+        t === "sessions" ||
+        t === "settings"
+      ) {
+        navigate(t);
+      } else if (t === "explore") {
+        navigate("settings");
+      }
     });
     const unlistenSelect = listen<string>("select-corpus", (event) => {
       if (typeof event.payload === "string") {
         setActiveCorpusId(event.payload);
       }
     });
-    // In-app navigation requests from components (e.g. LogViewer deep-links).
     function onWindowNavigate(e: Event) {
       const detail = (e as CustomEvent).detail;
-      if (typeof detail === "string" && VALID_TABS.includes(detail as Tab)) {
-        setTab(detail as Tab);
+      if (
+        detail === "ask" ||
+        detail === "projects" ||
+        detail === "sessions" ||
+        detail === "settings"
+      ) {
+        navigate(detail);
       }
     }
     window.addEventListener("ministr-navigate", onWindowNavigate);
@@ -119,9 +153,9 @@ function AppInner() {
       unlistenSelect.then((fn) => fn());
       window.removeEventListener("ministr-navigate", onWindowNavigate);
     };
-  }, [setActiveCorpusId]);
+  }, [setActiveCorpusId, navigate]);
 
-  // Global keyboard shortcuts
+  // Global keyboard shortcuts.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
@@ -130,17 +164,17 @@ function AppInner() {
         target?.tagName === "TEXTAREA" ||
         target?.isContentEditable;
 
-      // Single source of truth: the shortcut config decides what happens.
+      // ⌘[ / ⌘] — history back/forward (works even while typing is fine).
+      if ((e.metaKey || e.ctrlKey) && (e.key === "[" || e.key === "]")) {
+        e.preventDefault();
+        if (e.key === "[") back();
+        else forward();
+        return;
+      }
+
       const result = matchShortcut(e, gPending.current);
 
-      // First pass — actions flagged firesWhileTyping bypass the typing
-      // bail below (currently just ⌘K / Ctrl+K so the palette is always
-      // reachable from inside any input).
-      if (
-        result &&
-        result !== "_pending:g" &&
-        firesWhileTyping(result)
-      ) {
+      if (result && result !== "_pending:g" && firesWhileTyping(result)) {
         e.preventDefault();
         dispatchShortcut(result);
         return;
@@ -149,10 +183,6 @@ function AppInner() {
       if (typing) return;
 
       if (e.key === "Escape") {
-        // Stop propagation so EntityPanel's window-level Esc handler
-        // (mounted from useEntityPanel) doesn't ALSO fire and close the
-        // entity drawer underneath whichever overlay we just dismissed.
-        // Topmost-modal-first wins.
         if (paletteOpen) {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -186,34 +216,18 @@ function AppInner() {
           case "toggle:shortcuts":
             setShortcutsOpen((o) => !o);
             return;
-          case "toggle:rail":
-            setRailCollapsed((c) => !c);
-            return;
-          case "nav:search":
-            setTab("search");
-            return;
-          case "nav:symbols":
-            setTab("symbols");
-            return;
-          case "nav:bridge":
-            setTab("bridge");
+          case "nav:ask":
+            navigate("ask");
             return;
           case "nav:projects":
-            setTab("projects");
-            return;
-          case "nav:structure":
-            setTab("structure");
+            navigate("projects");
             return;
           case "nav:sessions":
-            setTab("sessions");
-            return;
-          case "nav:logs":
-            setTab("logs");
+            navigate("sessions");
             return;
           case "nav:settings":
-            setTab("settings");
+            navigate("settings");
             return;
-          // toggle:palette handled in the meta+K branch above.
           case "toggle:palette":
             setPaletteOpen((o) => !o);
             return;
@@ -223,377 +237,302 @@ function AppInner() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [paletteOpen, shortcutsOpen]);
+  }, [shortcutsOpen, paletteOpen, navigate, back, forward]);
 
   const openAddProject = useCallback(async () => {
     try {
-      await invoke("add_project_dialog");
+      // Cancelling the folder picker resolves to `null` (not an error).
+      // The old code toasted "Project added" + refreshed even on cancel,
+      // and silently swallowed real failures as "user cancelled".
+      const res = await invoke<{ corpus_id: string } | null>(
+        "add_project_dialog",
+      );
+      if (!res) return;
       refresh();
-      toast("PROJECT ADDED", { tone: "success" });
-    } catch {
-      /* ignore */
+      toast("Project added", { tone: "success" });
+    } catch (e) {
+      toast("Couldn’t add project", {
+        detail: String(e),
+        tone: "danger",
+      });
     }
   }, [refresh, toast]);
 
-  function onSelectCorpus(id: string) {
-    const c = status?.corpora.find((x) => x.id === id);
-    setActiveCorpusId(id);
-    if (c) toast("CORPUS", { detail: c.id, tone: "info" });
-  }
+  const onSelectCorpus = useCallback(
+    (id: string) => {
+      const c = status?.corpora.find((x) => x.id === id);
+      setActiveCorpusId(id);
+      if (c) toast("Project", { detail: corpusLabel(c), tone: "info" });
+    },
+    [status, setActiveCorpusId, toast],
+  );
 
-  function onThemeChange(t: "system" | "dark" | "light") {
-    setTheme(t);
-    toast("THEME", { detail: t.toUpperCase(), tone: "info" });
-  }
+  const onThemeChange = useCallback(
+    (t: "system" | "dark" | "light") => {
+      setTheme(t);
+      toast("Theme", { detail: t.toUpperCase(), tone: "info" });
+    },
+    [setTheme, toast],
+  );
+
+  const onOpenLogs = useCallback(async () => {
+    if (!status?.log_path) return;
+    try {
+      await invoke("open_path", { path: status.log_path });
+    } catch (e) {
+      toast("Couldn’t open logs", { detail: String(e), tone: "danger" });
+    }
+  }, [status, toast]);
+
+  const onReindexActive = useCallback(async () => {
+    if (!activeCorpusId) {
+      toast("No active project", {
+        detail: "Select a project first",
+        tone: "info",
+      });
+      return;
+    }
+    try {
+      await invoke("trigger_reindex", { corpusId: activeCorpusId });
+      toast("Re-indexing started", { tone: "info" });
+      refresh();
+    } catch (e) {
+      toast("Re-index failed", { detail: String(e), tone: "danger" });
+    }
+  }, [activeCorpusId, toast, refresh]);
+
+  const onCycleTheme = useCallback(() => {
+    const order = ["system", "dark", "light"] as const;
+    const next = order[(order.indexOf(theme) + 1) % order.length];
+    onThemeChange(next);
+  }, [theme, onThemeChange]);
+
+  const corpora = status?.corpora ?? [];
+  const hasCorpora = corpora.length > 0;
+
+  // Cold install with no projects → bounce to Projects so the empty
+  // state's CTA is the obvious next step.
+  useEffect(() => {
+    if (status && !hasCorpora && surface === "ask") {
+      navigate("projects");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasCorpora, status]);
 
   if (showOnboarding) {
     return <Onboarding onDismiss={() => setShowOnboarding(false)} />;
   }
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-text">
-      <TopBar
-        status={status}
-        error={error}
-        activeCorpus={activeCorpus}
-        onSelectCorpus={onSelectCorpus}
-        onPaletteOpen={() => setPaletteOpen(true)}
-        onShortcutsOpen={() => setShortcutsOpen(true)}
-        onOpenLogs={async () => {
-          // The DaemonDot popover button reads "Open log file" — that
-          // promise is the *file on disk*, not the Logs tab. Hand the
-          // log path off to the OS opener and surface the toast based
-          // on the actual outcome, so a failed open doesn't announce
-          // success. Always switch to the in-app Logs view too — the
-          // user wants to see the log either way.
-          if (status?.log_path) {
-            try {
-              await invoke("open_path", { path: status.log_path });
-              toast("Open log file", {
-                detail: status.log_path,
-                tone: "info",
-              });
-            } catch (e) {
-              console.error("open_path(log) failed", e);
-              toast("Could not open log file", {
-                detail: status.log_path,
-                tone: "danger",
-              });
-            }
-          }
-          setTab("logs");
-        }}
-      />
+    <>
+      <div className="flex flex-col h-screen min-h-0 bg-bg">
+        <TopBar
+          status={status}
+          error={error}
+          corpora={corpora}
+          activeCorpusId={activeCorpusId}
+          onSelectCorpus={onSelectCorpus}
+          onAddProject={openAddProject}
+          onOpenLogs={onOpenLogs}
+          onOpenPalette={() => setPaletteOpen(true)}
+        />
 
-      {error && (
-        <div className="flex items-center gap-2 border-b-2 border-danger bg-surface px-5 py-2 text-xs font-mono tracking-[0.05em] text-danger shrink-0">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} />
-          <span>{error}</span>
-        </div>
-      )}
-
-      <div className="flex flex-1 min-h-0">
-        <Rail tab={tab} onSelect={setTab} collapsed={railCollapsed} />
-
-        <main className="flex-1 overflow-y-auto p-5">
-          {!status ? (
-            <ConnectingState error={error ?? null} />
-          ) : tab === "search" ? (
-            <QueryPlayground
-              status={status}
-              activeCorpusId={activeCorpusId}
-              setActiveCorpusId={setActiveCorpusId}
-            />
-          ) : tab === "symbols" ? (
-            <SymbolGraph
-              status={status}
-              activeCorpusId={activeCorpusId}
-              setActiveCorpusId={setActiveCorpusId}
-            />
-          ) : tab === "bridge" ? (
-            <Bridge
-              status={status}
-              activeCorpusId={activeCorpusId}
-              setActiveCorpusId={setActiveCorpusId}
-            />
-          ) : tab === "projects" ? (
-            <div className="@container/page flex gap-4 h-full min-h-0">
-              <div
-                className={cn(
-                  "flex-1 min-w-0 min-h-0 overflow-y-auto",
-                  activeCorpus &&
-                    "@min-[1024px]/page:max-w-[clamp(360px,55%,720px)]",
-                )}
-              >
-                <ProjectList
-                  corpora={status.corpora}
-                  onRefresh={refresh}
-                  onSelect={setActiveCorpusId}
-                  selectedId={activeCorpusId}
-                />
-              </div>
-              {activeCorpus && (
-                <div className="flex-1 min-w-0 min-h-0 overflow-y-auto hidden @min-[1024px]/page:block">
-                  <ProjectDetail
-                    corpus={activeCorpus}
-                    status={status}
-                    onNavigate={(target) => setTab(target)}
-                  />
-                </div>
-              )}
-            </div>
-          ) : tab === "structure" ? (
-            <CorpusTreemap
-              status={status}
-              activeCorpusId={activeCorpusId}
-              setActiveCorpusId={setActiveCorpusId}
-              onNavigate={(target) => setTab(target)}
-            />
-          ) : tab === "sessions" ? (
-            <SessionDashboard status={status} />
-          ) : tab === "simulator" ? (
-            <ContextSimulator />
-          ) : tab === "logs" ? (
-            <LogViewer />
-          ) : (
-            <Settings
-              status={status}
-              theme={theme}
-              onThemeChange={onThemeChange}
-              onShowOnboarding={() => setShowOnboarding(true)}
-              onRefresh={refresh}
-              onOpenLogs={() => setTab("logs")}
-            />
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden border-b border-danger/50 bg-danger/10 shrink-0"
+            >
+              <DaemonErrorBanner
+                error={error}
+                unreachable={!status}
+                onRetry={refresh}
+                onOpenLogs={onOpenLogs}
+                hasLogPath={Boolean(status?.log_path)}
+              />
+            </motion.div>
           )}
-        </main>
+        </AnimatePresence>
+
+        <div className="flex flex-1 min-h-0">
+          <Sidebar active={surface} onSelect={navigate} />
+
+          <main className="flex-1 min-w-0 min-h-0 bg-bg" role="main">
+            {!status ? (
+              <ConnectingState error={error} />
+            ) : (
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={surface}
+                  variants={fade}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  className="h-full"
+                >
+                  <SurfaceBody
+                    surface={surface}
+                    status={status}
+                    activeCorpusId={activeCorpusId}
+                    setActiveCorpusId={setActiveCorpusId}
+                    onSelectCorpus={onSelectCorpus}
+                    onRefresh={refresh}
+                    theme={theme}
+                    onThemeChange={onThemeChange}
+                    onShowOnboarding={() => setShowOnboarding(true)}
+                    onOpenLogs={onOpenLogs}
+                  />
+                </motion.div>
+              </AnimatePresence>
+            )}
+          </main>
+        </div>
       </div>
+
+      <ShortcutSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
-        status={status}
-        onNavigate={(t) => setTab(t as Tab)}
-        onAddProject={openAddProject}
+        corpora={status?.corpora ?? []}
+        activeCorpusId={activeCorpusId}
+        onNavigate={navigate}
         onSelectCorpus={onSelectCorpus}
-        onShowShortcuts={() => setShortcutsOpen(true)}
-        onThemeChange={onThemeChange}
-        onRefresh={refresh}
-      />
-      <ShortcutSheet
-        open={shortcutsOpen}
-        onClose={() => setShortcutsOpen(false)}
+        onAddProject={openAddProject}
+        onOpenLogs={onOpenLogs}
+        onReindexActive={onReindexActive}
+        onCycleTheme={onCycleTheme}
       />
 
-      {/* Universal entity-detail drawer — provider lives above us, panel
-          renders here so it overlays every page. */}
       <EntityPanel />
-    </div>
+    </>
   );
 }
 
-function TopBar({
+function SurfaceBody({
+  surface,
   status,
-  error,
-  activeCorpus,
+  activeCorpusId,
+  setActiveCorpusId,
   onSelectCorpus,
-  onPaletteOpen,
-  onShortcutsOpen,
+  onRefresh,
+  theme,
+  onThemeChange,
+  onShowOnboarding,
   onOpenLogs,
 }: {
-  status: import("./lib/types").DaemonStatus | null;
-  error: string | null;
-  activeCorpus: import("./lib/types").CorpusInfo | null;
+  surface: SurfaceId;
+  status: import("./lib/types").DaemonStatus;
+  activeCorpusId: string | null;
+  setActiveCorpusId: (id: string | null) => void;
   onSelectCorpus: (id: string) => void;
-  onPaletteOpen: () => void;
-  onShortcutsOpen: () => void;
+  onRefresh: () => void;
+  theme: "system" | "dark" | "light";
+  onThemeChange: (t: "system" | "dark" | "light") => void;
+  onShowOnboarding: () => void;
   onOpenLogs: () => void;
 }) {
-  const totalSymbols = status?.corpora.reduce(
-    (s, c) => s + (c.symbols_count ?? 0),
-    0,
-  );
+  if (surface === "ask") {
+    return (
+      <div className="h-full overflow-hidden p-5">
+        <AskSurface status={status} activeCorpusId={activeCorpusId} />
+      </div>
+    );
+  }
+
+  if (surface === "projects") {
+    return (
+      <ProjectsSurface
+        corpora={status.corpora}
+        activeCorpusId={activeCorpusId}
+        onSelectCorpus={onSelectCorpus}
+        onRefresh={onRefresh}
+      />
+    );
+  }
+
+  if (surface === "sessions") {
+    return (
+      <SessionsSurface status={status} activeCorpusId={activeCorpusId} />
+    );
+  }
+
   return (
-    <header className="flex items-center justify-between gap-4 border-b-2 border-border bg-surface px-5 py-2.5 shrink-0">
-      <div className="flex items-center gap-3 min-w-0">
-        <span
-          className="ministr-wordmark"
-          title={status ? `ministr v${status.version}` : "ministr"}
-        >
-          ministr
-        </span>
-        <span className="font-mono text-xs font-semibold tracking-[0.05em] text-text-dim hidden md:inline">
-          CODE INTELLIGENCE
-        </span>
-        <DaemonDot status={status} error={error} onOpenLogs={onOpenLogs} />
-        <span className="hidden md:inline-block w-px h-4 bg-border opacity-50" />
-        <CorpusPill
-          corpora={status?.corpora ?? []}
-          activeCorpus={activeCorpus}
-          onSelect={onSelectCorpus}
-        />
-      </div>
-
-      {status && (
-        <div className="flex items-center gap-1 min-w-0">
-          {/* Sessions chip is highest-signal — always visible. */}
-          {status.total_sessions > 0 && (
-            <VitalsChip
-              label="SESSIONS"
-              value={status.total_sessions}
-              accent
-            />
-          )}
-          {/* Below xl: drop CORPORA + SYMBOLS to save horizontal space. */}
-          <span className="hidden xl:inline-flex">
-            <VitalsChip label="CORPORA" value={status.corpora.length} />
-          </span>
-          {totalSymbols !== undefined && totalSymbols > 0 && (
-            <span className="hidden xl:inline-flex">
-              <VitalsChip
-                label="SYMBOLS"
-                value={totalSymbols.toLocaleString()}
-              />
-            </span>
-          )}
-          {/* Below lg: drop MEM. */}
-          <span className="hidden lg:inline-flex">
-            <VitalsChip label="MEM" value={`${status.memory_mb.toFixed(0)}MB`} />
-          </span>
-        </div>
-      )}
-
-      <div className="flex items-center gap-2 shrink-0">
-        <button
-          onClick={onPaletteOpen}
-          title="Command palette (⌘K)"
-          className="inline-flex items-center gap-2 border border-border-soft bg-surface px-2.5 py-1 text-sm font-sans font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-          style={{ borderRadius: "var(--radius-button)" }}
-        >
-          <Search className="h-3.5 w-3.5" strokeWidth={2} />
-          {/* Hide the "Search" text below md so the button collapses to icon + ⌘K. */}
-          <span className="hidden md:inline">Search</span>
-          <kbd
-            className="border border-border-soft bg-surface-overlay px-1 text-[0.6875rem] font-mono text-text-dim"
-            style={{ borderRadius: "var(--radius-pill)" }}
-          >
-            ⌘K
-          </kbd>
-        </button>
-        <button
-          onClick={onShortcutsOpen}
-          title="Shortcuts (?)"
-          className="inline-flex h-7 items-center justify-center border border-border-soft bg-surface px-2 text-sm font-serif font-normal text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-          style={{ borderRadius: "var(--radius-button)" }}
-        >
-          ?
-        </button>
-      </div>
-    </header>
+    <SettingsSurface
+      status={status}
+      activeCorpusId={activeCorpusId}
+      setActiveCorpusId={setActiveCorpusId}
+      theme={theme}
+      onThemeChange={onThemeChange}
+      onShowOnboarding={onShowOnboarding}
+      onRefresh={onRefresh}
+      onOpenLogs={onOpenLogs}
+    />
   );
 }
 
-function Rail({
-  tab,
-  onSelect,
-  collapsed,
+/**
+ * The top-of-shell error band. Distinguishes a daemon we can't reach
+ * (no status yet — likely stopped or still starting) from a transient
+ * command failure (status present, one call errored), and gives the
+ * user the two things that actually help — retry and the logs — instead
+ * of a dead string.
+ */
+function DaemonErrorBanner({
+  error,
+  unreachable,
+  onRetry,
+  onOpenLogs,
+  hasLogPath,
 }: {
-  tab: Tab;
-  onSelect: (t: Tab) => void;
-  collapsed: boolean;
+  error: string;
+  unreachable: boolean;
+  onRetry: () => void;
+  onOpenLogs: () => void;
+  hasLogPath: boolean;
 }) {
-  if (collapsed) return null;
-
+  const title = unreachable
+    ? "Can’t reach the ministr daemon"
+    : "A daemon request failed";
   return (
-    <nav className="hidden sm:flex flex-col w-14 border-r border-border bg-surface py-3 items-center gap-1 shrink-0">
-      <RailItem
-        icon={BrutalSearch}
-        active={tab === "search"}
-        label="Search"
-        onClick={() => onSelect("search")}
-      />
-      <RailItem
-        icon={BrutalSymbols}
-        active={tab === "symbols"}
-        label="Symbols"
-        onClick={() => onSelect("symbols")}
-      />
-      <RailItem
-        icon={BrutalBridge}
-        active={tab === "bridge"}
-        label="Bridge"
-        onClick={() => onSelect("bridge")}
-      />
-      <RailItem
-        icon={BrutalProjects}
-        active={tab === "projects"}
-        label="Projects"
-        onClick={() => onSelect("projects")}
-      />
-      <RailItem
-        icon={BrutalStructure}
-        active={tab === "structure"}
-        label="Structure"
-        onClick={() => onSelect("structure")}
-      />
-      <RailItem
-        icon={BrutalSessions}
-        active={tab === "sessions"}
-        label="Sessions"
-        onClick={() => onSelect("sessions")}
-      />
-      <RailItem
-        icon={BrutalLogs}
-        active={tab === "logs"}
-        label="Logs"
-        onClick={() => onSelect("logs")}
-      />
-      <div className="flex-1" />
-      <RailItem
-        icon={BrutalSettings}
-        active={tab === "settings"}
-        label="Settings"
-        onClick={() => onSelect("settings")}
-      />
-    </nav>
-  );
-}
-
-function RailItem({
-  icon: Icon,
-  active,
-  onClick,
-  label,
-}: {
-  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
-  active: boolean;
-  onClick: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      className={cn(
-        "relative grid place-items-center h-10 w-10 cursor-pointer transition-none",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-        active
-          ? "bg-surface-overlay text-text"
-          : "text-text-dim hover:text-text hover:bg-surface-overlay",
+    <div className="flex items-center gap-3 px-5 py-2 text-danger">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+      <div className="min-w-0 flex-1">
+        <span className="text-xs font-sans font-medium">{title}</span>
+        <span className="ml-2 text-xs font-mono text-danger/70 truncate">
+          {error}
+        </span>
+      </div>
+      <Button
+        variant="subtle"
+        size="sm"
+        onClick={onRetry}
+        className="shrink-0"
+      >
+        <RotateCw className="h-3.5 w-3.5" strokeWidth={2} />
+        Retry
+      </Button>
+      {hasLogPath && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onOpenLogs}
+          className="shrink-0"
+        >
+          <FileText className="h-3.5 w-3.5" strokeWidth={2} />
+          Logs
+        </Button>
       )}
-    >
-      {active && (
-        <span className="absolute -left-[2px] top-1/2 h-6 w-[3px] -translate-y-1/2 bg-accent" />
-      )}
-      <Icon className="h-[18px] w-[18px]" />
-    </button>
+    </div>
   );
 }
 
 function ConnectingState({ error }: { error: string | null }) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4">
-      <div className="font-serif text-2xl font-normal text-text">
+      <div className="text-display text-text">
         Connecting<span className="ministr-blink">_</span>
       </div>
       {error && (

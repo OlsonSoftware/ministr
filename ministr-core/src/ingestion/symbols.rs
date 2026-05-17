@@ -8,7 +8,7 @@ use crate::code::bridge::BridgeEndpoint;
 use crate::code::bridge::linker::{BridgeLinker, SourceFile as BridgeSourceFile};
 use crate::code::package_graph::PackageGraph;
 use crate::code::refs::extract_refs;
-use crate::code::{AstParser, GrammarRegistry, extract_symbols, generic_extract_symbols};
+use crate::code::{AstParser, GrammarRegistry, extract_symbols, generic_extract_symbols_for};
 use crate::error::IngestionError;
 use crate::storage::traits::{
     BridgeEndpointRecord, BridgeLinkRecord, PendingRefRecord, Storage, SymbolFilter, SymbolRecord,
@@ -75,7 +75,9 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
     let is_cpp_family = matches!(language, Some("cpp" | "c"));
 
     let tree = if is_rust {
-        let mut ast_parser = AstParser::new();
+        let Ok(mut ast_parser) = AstParser::try_new() else {
+            return empty_result();
+        };
         match ast_parser.parse(source) {
             Ok(t) => t,
             Err(_) => return empty_result(),
@@ -106,7 +108,7 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
     let symbols = if is_rust {
         extract_symbols(&tree, source, relative_path, &module_path)
     } else {
-        generic_extract_symbols(&tree, source, relative_path, &module_path)
+        generic_extract_symbols_for(&tree, source, relative_path, &module_path, language)
     };
 
     if symbols.is_empty() {

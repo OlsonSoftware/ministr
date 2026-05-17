@@ -1,6 +1,7 @@
 import type React from "react";
 import { Card } from "./card";
 import { cn } from "../../lib/utils";
+import { headingChapter } from "../../lib/ui-tokens";
 
 interface EmptyStateProps {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
@@ -31,19 +32,17 @@ export function EmptyState({
     >
       <div
         className={cn(
-          "grid place-items-center border border-border-soft mb-2",
+          "grid place-items-center rounded-xl border mb-2",
           accent
-            ? "h-14 w-14 bg-accent text-[var(--color-accent-fg-on)]"
-            : "h-12 w-12 bg-surface-overlay text-text-muted",
+            ? "h-14 w-14 bg-accent text-[var(--color-accent-fg-on)] border-transparent shadow-[var(--glow-soft)]"
+            : "h-12 w-12 bg-surface-overlay text-text-muted border-border",
         )}
       >
         <Icon className={accent ? "h-6 w-6" : "h-5 w-5"} strokeWidth={2} />
       </div>
-      <p className="font-serif text-lg font-bold text-text leading-snug">
-        {title}
-      </p>
+      <p className={headingChapter}>{title}</p>
       {hint && (
-        <p className="max-w-sm font-serif text-sm italic text-text-dim leading-snug">
+        <p className="max-w-sm font-sans text-sm text-text-dim leading-relaxed">
           {hint}
         </p>
       )}

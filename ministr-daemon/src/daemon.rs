@@ -266,12 +266,14 @@ fn err(status: StatusCode, code: &str, msg: impl std::fmt::Display) -> impl Into
     )
 }
 
-/// Resolve a corpus ID to its handle, returning a 404 response on failure.
-/// The caller must hold the returned guard for the duration of use.
+/// Resolve a corpus ID to its `Arc<CorpusHandle>`, returning a 404
+/// response on failure. The handle is detached from the registry map —
+/// no `RwLockReadGuard` is held, so the handler's `.await`s never
+/// serialise register / unregister.
 macro_rules! get_corpus {
     ($state:expr, $id:expr) => {
         match $state.registry.get($id).await {
-            Ok(guard) => guard,
+            Ok(handle) => handle,
             Err(e) => return err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
         }
     };
@@ -295,10 +297,7 @@ async fn tick_session_turn(
     tool: &str,
     response_tokens: usize,
 ) {
-    let Ok(corpora) = state.registry.get(corpus_id).await else {
-        return;
-    };
-    let Some(handle) = corpora.get(corpus_id) else {
+    let Ok(handle) = state.registry.get(corpus_id).await else {
         return;
     };
     let content_id = format!(
@@ -400,11 +399,11 @@ async fn survey(
     Json(req): Json<query::SurveyRequest>,
 ) -> impl IntoResponse {
     let _permit = state.query_semaphore.acquire().await;
-    let guard = get_corpus!(&state, &id);
+    let handle = get_corpus!(&state, &id);
     let top_k = req.top_k.unwrap_or(10);
     let session_id = req.session_id.clone();
-    let result = guard[&id].service.survey(&req.query, top_k).await;
-    drop(guard);
+    let result = handle.service.survey(&req.query, top_k).await;
+    drop(handle);
     match result {
         Ok(results) => {
             let body = query::SurveyResponse {
@@ -427,7 +426,7 @@ async fn symbols(
     Json(req): Json<query::SymbolsRequest>,
 ) -> impl IntoResponse {
     let _permit = state.query_semaphore.acquire().await;
-    let guard = get_corpus!(&state, &id);
+    let handle = get_corpus!(&state, &id);
     let limit = req.limit.unwrap_or(20);
     let session_id = req.session_id.clone();
     let filter = SymbolFilter {
@@ -438,8 +437,8 @@ async fn symbols(
         module: req.module,
         file_path: None,
     };
-    let result = guard[&id].service.search_symbols(&filter).await;
-    drop(guard);
+    let result = handle.service.search_symbols(&filter).await;
+    drop(handle);
     match result {
         Ok(records) => {
             let body = query::SymbolsResponse {
@@ -471,9 +470,9 @@ async fn definition(
     Path((id, sym)): Path<(String, String)>,
     Query(q): Query<SessionQuery>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
-    let result = guard[&id].service.get_symbol_definition(&sym).await;
-    drop(guard);
+    let handle = get_corpus!(&state, &id);
+    let result = handle.service.get_symbol_definition(&sym).await;
+    drop(handle);
     match result {
         Ok(def) => {
             let body = convert::symbol_definition(def);
@@ -491,9 +490,9 @@ async fn references(
     Path((id, sym)): Path<(String, String)>,
     Query(q): Query<SessionQuery>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
-    let result = guard[&id].service.get_symbol_references(&sym, None).await;
-    drop(guard);
+    let handle = get_corpus!(&state, &id);
+    let result = handle.service.get_symbol_references(&sym, None).await;
+    drop(handle);
     match result {
         Ok(refs) => {
             let body = query::ReferencesResponse {
@@ -512,8 +511,7 @@ async fn read_section(
     State(state): State<AppState>,
     Path((id, section)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
-    let handle = &guard[&id];
+    let handle = get_corpus!(&state, &id);
 
     // Check prefetch cache for a warm hit.
     let warm_detail = {
@@ -544,7 +542,7 @@ async fn read_section(
             let index = Arc::clone(&handle.index);
             let embedder = Arc::clone(state.registry.embedder());
             let section_clone = section.clone();
-            drop(guard);
+            drop(handle);
 
             // Spawn background prefetch (don't block the response).
             tokio::spawn(async move {
@@ -570,8 +568,7 @@ async fn session_read_section(
     State(state): State<AppState>,
     Path((id, sid, section)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
-    let handle = &guard[&id];
+    let handle = get_corpus!(&state, &id);
 
     // Check prefetch cache for a warm hit.
     let warm_detail = {
@@ -656,7 +653,7 @@ async fn session_read_section(
             let index = Arc::clone(&handle.index);
             let embedder = Arc::clone(state.registry.embedder());
             let section_clone = section.clone();
-            drop(guard);
+            drop(handle);
 
             // Spawn background prefetch (don't block the response).
             tokio::spawn(async move {
@@ -680,13 +677,13 @@ async fn extract(
     Path(id): Path<String>,
     Json(req): Json<query::ExtractRequest>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
+    let handle = get_corpus!(&state, &id);
     let session_id = req.session_id.clone();
-    let result = guard[&id]
+    let result = handle
         .service
         .extract_claims(&req.section_id, req.query.as_deref())
         .await;
-    drop(guard);
+    drop(handle);
     match result {
         Ok(claims) => {
             let body = query::ExtractResponse {
@@ -706,12 +703,12 @@ async fn toc(
     Path(id): Path<String>,
     Json(req): Json<query::TocRequest>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
+    let handle = get_corpus!(&state, &id);
     let offset = req.offset.unwrap_or(0);
     let limit = req.limit.unwrap_or(100);
     let session_id = req.session_id.clone();
-    let result = guard[&id].service.toc(req.document_id.as_deref()).await;
-    drop(guard);
+    let result = handle.service.toc(req.document_id.as_deref()).await;
+    drop(handle);
     match result {
         Ok(entries) => {
             let total = entries.len();
@@ -738,7 +735,7 @@ async fn related(
     Path(id): Path<String>,
     Json(req): Json<query::RelatedRequest>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
+    let handle = get_corpus!(&state, &id);
     let relation_types: Option<Vec<RelationType>> = if req.relation_types.is_empty() {
         None
     } else {
@@ -750,11 +747,11 @@ async fn related(
         )
     };
     let session_id = req.session_id.clone();
-    let result = guard[&id]
+    let result = handle
         .service
         .related_claims(&req.claim_id, relation_types.as_deref())
         .await;
-    drop(guard);
+    drop(handle);
     match result {
         Ok(claims) => {
             let body = query::RelatedResponse {
@@ -774,10 +771,10 @@ async fn bridge(
     Path(id): Path<String>,
     Json(req): Json<query::BridgeRequest>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
+    let handle = get_corpus!(&state, &id);
     let limit = req.limit.unwrap_or(50);
     let session_id = req.session_id.clone();
-    let result = guard[&id]
+    let result = handle
         .service
         .query_bridges(
             req.query.as_deref(),
@@ -786,7 +783,7 @@ async fn bridge(
             None,
         )
         .await;
-    drop(guard);
+    drop(handle);
     match result {
         Ok(links) => {
             let body = query::BridgeResponse {
@@ -815,10 +812,10 @@ async fn compress_content(
     Json(req): Json<ministr_api::session::CompressRequest>,
 ) -> impl IntoResponse {
     let _permit = state.query_semaphore.acquire().await;
-    let guard = get_corpus!(&state, &id);
+    let handle = get_corpus!(&state, &id);
     let session_id = req.session_id.clone();
-    let result = guard[&id].service.compress_content(&req.content_ids).await;
-    drop(guard);
+    let result = handle.service.compress_content(&req.content_ids).await;
+    drop(handle);
     match result {
         Ok(items) => {
             let body = ministr_api::session::CompressResponse {
@@ -843,8 +840,7 @@ async fn ask_handler(
     Json(req): Json<query::AskRequest>,
 ) -> impl IntoResponse {
     let _permit = state.query_semaphore.acquire().await;
-    let guard = get_corpus!(&state, &id);
-    let handle = &guard[&id];
+    let handle = get_corpus!(&state, &id);
     let session_id = req.session_id.clone();
 
     let result = crate::ask::ask(
@@ -854,7 +850,7 @@ async fn ask_handler(
         state.inference.as_ref(),
     )
     .await;
-    drop(guard);
+    drop(handle);
     match result {
         Ok(result) => {
             let body = query::AskResponse {
@@ -1206,8 +1202,7 @@ async fn prefetch_metrics(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
-    let handle = &guard[&id];
+    let handle = get_corpus!(&state, &id);
     let pf = handle.prefetch.lock().await;
     let metrics = pf.metrics();
     let size = pf.cache().len();
@@ -1244,8 +1239,7 @@ async fn create_session(
     Path(id): Path<String>,
     Json(req): Json<CreateSessionRequest>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
-    let handle = &guard[&id];
+    let handle = get_corpus!(&state, &id);
 
     let session_id = generate_session_id();
     let budget_tokens = req.budget_tokens.unwrap_or(100_000);
@@ -1284,8 +1278,7 @@ async fn session_budget(
     State(state): State<AppState>,
     Path((id, sid)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
-    let handle = &guard[&id];
+    let handle = get_corpus!(&state, &id);
 
     let mut sessions = handle.sessions.lock().await;
     // If session exists in memory but budget is 0, try reconstructing from
@@ -1331,8 +1324,7 @@ async fn destroy_session(
     State(state): State<AppState>,
     Path((id, sid)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
-    let handle = &guard[&id];
+    let handle = get_corpus!(&state, &id);
     let data_dir = handle.data_dir.clone();
 
     let mut sessions = handle.sessions.lock().await;
@@ -1359,8 +1351,7 @@ async fn clear_sessions(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
-    let handle = &guard[&id];
+    let handle = get_corpus!(&state, &id);
     let data_dir = handle.data_dir.clone();
 
     let mut sessions = handle.sessions.lock().await;
@@ -1388,8 +1379,7 @@ async fn evict_content(
     Path((id, sid)): Path<(String, String)>,
     Json(req): Json<ministr_api::session::EvictRequest>,
 ) -> impl IntoResponse {
-    let guard = get_corpus!(&state, &id);
-    let handle = &guard[&id];
+    let handle = get_corpus!(&state, &id);
 
     let mut sessions = handle.sessions.lock().await;
     match sessions.get_session_mut(&sid) {

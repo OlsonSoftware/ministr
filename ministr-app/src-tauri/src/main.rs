@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod error;
 mod setup;
 mod tray;
 
@@ -107,6 +108,7 @@ fn main() {
             commands::add_project_dialog,
             commands::remove_project,
             commands::trigger_reindex,
+            commands::repair_agent_config,
             commands::set_autostart,
             commands::read_logs,
             commands::should_show_onboarding,
@@ -122,10 +124,17 @@ fn main() {
             commands::read_source_excerpt,
             commands::open_path,
             commands::ingestion_progress,
+            commands::indexing_progress_events,
             commands::recent_activity,
             commands::recent_coherence_events,
             commands::detect_projects,
             commands::register_projects_batch,
+            commands::ask_corpus,
+            commands::inference_health,
+            commands::read_section,
+            commands::mcp_detect_clients,
+            commands::mcp_write_config,
+            commands::mcp_test_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ministr app");
@@ -133,6 +142,19 @@ fn main() {
 
 /// Scan common project directories for `.ministr.toml` files on first launch.
 async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
+    /// Mark first-launch auto-detect as done. A failed write isn't
+    /// fatal (the scan just re-runs next launch) but must not be silent
+    /// — a persistently unwritable data dir is worth surfacing.
+    fn mark_done(sentinel: &std::path::Path) {
+        if let Err(e) = std::fs::write(sentinel, "") {
+            tracing::warn!(
+                error = %e,
+                path = %sentinel.display(),
+                "failed to write first-launch sentinel; auto-detect will re-run next launch"
+            );
+        }
+    }
+
     let sentinel = ministr_api::daemon_data_dir().join("first_launch_done");
 
     if sentinel.exists() {
@@ -141,34 +163,23 @@ async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
 
     // Only scan if no corpora are currently registered.
     if !state.registry.list().await.is_empty() {
-        let _ = std::fs::write(&sentinel, "");
+        mark_done(&sentinel);
         return;
     }
 
-    let home = std::env::var("HOME").unwrap_or_default();
-    let scan_dirs = [
-        format!("{home}/Code"),
-        format!("{home}/Projects"),
-        format!("{home}/Developer"),
-        format!("{home}/src"),
-    ];
-
-    let mut found_paths = Vec::new();
-    for dir in &scan_dirs {
-        let dir_path = std::path::Path::new(dir);
-        if !dir_path.is_dir() {
-            continue;
-        }
-        // Only scan one level deep.
-        if let Ok(entries) = std::fs::read_dir(dir_path) {
-            for entry in entries.flatten() {
-                let toml_path = entry.path().join(".ministr.toml");
-                if toml_path.exists() {
-                    found_paths.push(entry.path().display().to_string());
-                }
+    // Reuse the shared, cross-platform scanner on a blocking thread so
+    // the `read_dir`/`exists` syscalls don't stall the async runtime.
+    // First-launch auto-detect excludes the bare home root (too broad
+    // to scan unattended) — that's `include_home_root = false`.
+    let found_paths: Vec<String> =
+        match tokio::task::spawn_blocking(|| commands::scan_ministr_projects(false)).await {
+            Ok(projects) => projects.into_iter().map(|p| p.path).collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "project auto-detect scan task failed");
+                mark_done(&sentinel);
+                return;
             }
-        }
-    }
+        };
 
     for path in &found_paths {
         info!(path, "auto-detected project with .ministr.toml");
@@ -188,5 +199,5 @@ async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
         }
     }
 
-    let _ = std::fs::write(&sentinel, "");
+    mark_done(&sentinel);
 }

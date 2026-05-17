@@ -89,7 +89,7 @@ export function SectionView({ entity }: Props) {
       <EntitySection chapter={1} title="Overview">
         <div className="px-3 py-3 space-y-1.5">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="font-mono text-xs font-semibold tabular-nums text-text-muted">
+            <span className="font-mono text-xs font-semibold tabular-nums text-text-dim">
               {(result.score * 100).toFixed(0)}%
             </span>
             <span className="font-mono text-sm text-text break-all">

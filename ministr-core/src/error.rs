@@ -24,6 +24,27 @@ pub enum IndexError {
     /// Attempted to access a vector ID that does not exist.
     #[error("vector not found: {id}")]
     VectorNotFound { id: String },
+
+    /// The persisted index was built with a different embedding model
+    /// (or vector dimension) than the active embedder, so its vectors
+    /// live in an incompatible space and must be rebuilt.
+    #[error(
+        "index at {path} is incompatible with the active embedder \
+         (stored: dim={stored_dim} model={stored_model:?}, \
+         expected: dim={expected_dim} model={expected_model}); re-index required"
+    )]
+    ModelMismatch {
+        /// Index directory whose stored vectors are incompatible.
+        path: PathBuf,
+        /// Vector dimension recorded in the stored index.
+        stored_dim: usize,
+        /// Vector dimension the active embedder produces.
+        expected_dim: usize,
+        /// Embedding model name recorded in the stored index, if any.
+        stored_model: Option<String>,
+        /// Embedding model name the active embedder uses.
+        expected_model: String,
+    },
 }
 
 /// Errors from session shadow tracking and budget management.

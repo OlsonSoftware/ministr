@@ -3,8 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangle, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
+import { FilterPill } from "./ui/filter-pill";
 import { cn } from "../lib/utils";
 import { relative } from "../lib/time";
+import { corpusRelative } from "../lib/path";
 import { useEntityPanel } from "../hooks/useEntityPanel";
 import type {
   BridgeLink,
@@ -14,7 +16,6 @@ import type {
   DaemonStatus,
   FileInfo,
   SearchResult,
-  SymbolDefinitionDetail,
   SymbolInfo,
 } from "../lib/types";
 
@@ -25,12 +26,6 @@ interface Props {
 }
 
 type KindFilter = "all" | "sections" | "symbols" | "bridges";
-
-interface DetailState {
-  kind: "section" | "symbol" | "bridge";
-  title: string;
-  body: React.ReactNode;
-}
 
 const FALLBACK_PROBES = [
   "authentication",
@@ -54,9 +49,6 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
   const [bridges, setBridges] = useState<BridgeLink[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Detail surface moved to the global EntityPanel; the kept setDetail
-  // refs below are now no-ops awaiting cleanup.
-  const setDetail = (_: unknown) => {};
   const [compact, setCompact] = useState(false);
   const [browse, setBrowse] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
@@ -149,7 +141,6 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
     setResults([]);
     setSymbols([]);
     setBridges([]);
-    setDetail(null);
   }
 
   /**
@@ -163,7 +154,6 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
     if (!q) return;
     setLoading(true);
     setError(null);
-    setDetail(null);
     setBrowse(false);
     lastQueryRef.current = q;
 
@@ -219,7 +209,6 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
     if (!corpusId) return;
     setLoading(true);
     setError(null);
-    setDetail(null);
     setBrowse(false);
     try {
       const r = await invoke<SymbolInfo[]>("search_symbols", {
@@ -243,7 +232,6 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
     if (!corpusId) return;
     setLoading(true);
     setError(null);
-    setDetail(null);
     setBrowse(false);
     try {
       const r = await invoke<BridgeLink[]>("bridge_query", {
@@ -310,7 +298,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
                 if (e.target.value === "") clearResults();
               }}
               placeholder="search anything · sections, symbols, bridges"
-              className="h-12 flex-1 border border-border-soft bg-surface px-3 text-base font-sans text-text placeholder:text-text-dim placeholder:normal-case focus:outline-none focus:border-accent transition-none"
+              className="h-12 flex-1 border border-border-soft bg-surface px-3 text-base font-sans text-text placeholder:text-text-dim placeholder:normal-case focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
             />
             <Button type="submit" size="lg" disabled={loading}>
               {loading ? "…" : "Run"}
@@ -332,7 +320,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
         {/* History pills — visible only on focus and only when input is empty. */}
         {inputFocused && !query.trim() && history.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim shrink-0">
+            <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
               Recent
             </span>
             {history.map((h, i) => (
@@ -342,10 +330,9 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
                   setQuery(h);
                   submit(h);
                 }}
-                className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-                style={{ borderRadius: "var(--radius-pill)" }}
+                className="inline-flex items-center gap-1.5 border border-border-soft bg-surface px-2 py-0.5 font-sans text-sm text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
               >
-                <span className="font-mono text-[0.6875rem] text-text-dim tabular-nums">{i + 1}</span>
+                <span className="font-mono text-mono-mini text-text-dim tabular-nums">{i + 1}</span>
                 <span className="font-mono">{h}</span>
               </button>
             ))}
@@ -354,15 +341,14 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
 
         {/* Quick probes — always visible. Click prefills + auto-runs. */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-mono text-[0.6875rem] uppercase tracking-[0.05em] text-text-dim shrink-0">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
             Probes
           </span>
           {probes.map((p) => (
             <button
               key={p}
               onClick={() => applyProbe(p)}
-              className="border border-border-soft bg-surface px-2 py-0.5 font-mono text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-none"
-              style={{ borderRadius: "var(--radius-pill)" }}
+              className="border border-border-soft bg-surface px-2 py-0.5 font-mono text-sm font-medium text-text-muted hover:text-text hover:border-border cursor-pointer transition-colors duration-150 ease-out rounded-md"
             >
               {p}
             </button>
@@ -374,7 +360,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
           <div className="border border-danger bg-surface p-3 flex items-start gap-3 border-l-2">
             <AlertTriangle className="h-4 w-4 text-danger shrink-0 mt-0.5" strokeWidth={2} />
             <div className="flex-1 min-w-0">
-              <p className="font-serif text-base font-bold text-danger">
+              <p className="font-sans text-base font-bold text-danger">
                 Query failed
               </p>
               <p className="font-sans text-sm text-text-muted mt-1 break-words">
@@ -428,7 +414,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
               bridges={bridges}
               compact={compact}
               filter={kindFilter}
-              corpusId={corpusId}
+              corpus={selectedCorpus}
               onOpenSection={openSectionDetail}
               onOpenSymbol={openSymbolDetail}
               onOpenBridge={openBridgeDetail}
@@ -502,8 +488,8 @@ function UnifiedLanding({
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
       <SymbolKindDashboard symbols={allSyms} corpusId={corpus.id} />
       <BridgesTile bridges={bridges} onJumpToKind={onJumpToBridgeKind} />
-      <HotFilesTile files={files} onJumpToFile={onJumpToFile} />
-      <RecentChangesTile events={coherence} corpusId={corpus.id} />
+      <HotFilesTile files={files} corpus={corpus} onJumpToFile={onJumpToFile} />
+      <RecentChangesTile events={coherence} corpus={corpus} />
     </div>
   );
 }
@@ -538,7 +524,7 @@ function KindFilterStrip({
             onClick={() => onChange(key)}
             disabled={key !== "all" && count === 0}
             className={cn(
-              "border border-border-soft px-3 py-1.5 font-sans text-sm font-medium cursor-pointer transition-none -ml-[1px] first:ml-0 inline-flex items-center gap-1.5",
+              "border border-border-soft px-3 py-1.5 font-sans text-sm font-medium cursor-pointer transition-colors duration-150 ease-out -ml-[1px] first:ml-0 inline-flex items-center gap-1.5",
               active
                 ? "border-accent bg-surface-overlay text-text z-10 relative"
                 : "bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
@@ -565,7 +551,7 @@ function BlendedResults({
   bridges,
   compact,
   filter,
-  corpusId,
+  corpus,
   onOpenSection,
   onOpenSymbol,
   onOpenBridge,
@@ -576,13 +562,12 @@ function BlendedResults({
   bridges: BridgeLink[];
   compact: boolean;
   filter: KindFilter;
-  corpusId: string;
+  corpus: CorpusInfo | null;
   onOpenSection: (r: SearchResult) => void;
   onOpenSymbol: (s: SymbolInfo) => void;
   onOpenBridge: (b: BridgeLink) => void;
 }) {
   void query;
-  void corpusId;
   const showSections = filter === "all" || filter === "sections";
   const showSymbols = filter === "all" || filter === "symbols";
   const showBridges = filter === "all" || filter === "bridges";
@@ -601,6 +586,7 @@ function BlendedResults({
                 key={`${r.content_id}-${i}`}
                 result={r}
                 compact={compact}
+                corpus={corpus}
                 onClick={() => onOpenSection(r)}
               />
             ))}
@@ -630,21 +616,21 @@ function BlendedResults({
               <button
                 key={`${b.kind}-${i}`}
                 onClick={() => onOpenBridge(b)}
-                className="w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-none border-b border-border-soft last:border-b-0 hover:bg-surface-overlay hover:text-text items-center"
+                className="w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-colors duration-150 ease-out border-b border-border-soft last:border-b-0 hover:bg-surface-overlay hover:text-text items-center"
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-[0.5625rem] uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.08em] opacity-70 shrink-0">
                     {b.export_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
                     {b.export_symbol || b.export_binding_key}
                   </span>
                 </span>
-                <span className="font-mono text-xs uppercase tracking-[0.05em] opacity-70 shrink-0">
+                <span className="font-mono text-xs uppercase tracking-[0.08em] opacity-70 shrink-0">
                   {b.kind}
                 </span>
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-[0.5625rem] uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.08em] opacity-70 shrink-0">
                     {b.import_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
@@ -691,10 +677,10 @@ function BlendedGroup({
   return (
     <section>
       <header className="flex items-baseline gap-3 border-b border-border-soft bg-surface-overlay px-3 py-2 mb-2">
-        <span className="font-serif text-base font-normal text-text-dim tabular-nums shrink-0 w-6">
+        <span className="font-sans text-base font-normal text-text-dim tabular-nums shrink-0 w-6">
           §{idx}
         </span>
-        <h3 className="font-serif text-base font-bold text-text flex-1 min-w-0">
+        <h3 className="font-sans text-base font-bold text-text flex-1 min-w-0">
           {sentence}
         </h3>
         <span className="font-mono text-xs tabular-nums text-text-dim shrink-0">
@@ -731,7 +717,7 @@ function SymbolKindDashboard({
   if (symbols.length === 0)
     return (
       <Tile title="KIND DASHBOARD" subtitle="0">
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
           No symbols indexed
         </p>
       </Tile>
@@ -753,7 +739,7 @@ function SymbolKindDashboard({
             className="border border-border-soft bg-surface px-3 py-2 -m-[1px] flex flex-col"
           >
             <div className="flex items-baseline justify-between">
-              <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent">
+              <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
                 {kind}
               </span>
               <span className="font-mono text-base font-bold tabular-nums text-text">
@@ -766,7 +752,7 @@ function SymbolKindDashboard({
                 style={{ width: `${pct}%` }}
               />
             </div>
-            <span className="font-mono text-[0.5625rem] tabular-nums text-text-dim mt-0.5">
+            <span className="font-mono text-mono-micro tabular-nums text-text-dim mt-0.5">
               {pct.toFixed(1)}%
             </span>
           </div>
@@ -792,7 +778,7 @@ function ConfidenceRibbonTile({
   if (bridges.length === 0)
     return (
       <Tile title="CONFIDENCE" subtitle="0">
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
           No bridges detected
         </p>
       </Tile>
@@ -828,7 +814,7 @@ function ConfidenceRibbonTile({
                   style={{ height: `${pct}%` }}
                 />
               </div>
-              <span className="font-mono text-[0.5625rem] tracking-[0.05em] text-text-dim">
+              <span className="font-mono text-mono-micro tracking-[0.08em] text-text-dim">
                 {labels[i]}
               </span>
             </div>
@@ -891,7 +877,7 @@ function SurveyResults({
       {/* Score histogram strip */}
       <div className="border border-border-soft bg-surface">
         <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
-          <span className="font-sans text-xs font-bold tracking-[0.05em] text-text">
+          <span className="font-sans text-xs font-bold tracking-[0.08em] text-text">
             Score distribution
           </span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -924,20 +910,20 @@ function SurveyResults({
         {facets.length > 1 && (
           <aside className="w-44 shrink-0 border border-border-soft bg-surface self-start">
             <div className="border-b-2 border-border bg-surface-overlay px-2 py-1">
-              <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text">
+              <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">
                 FACETS
               </span>
             </div>
             <button
               onClick={() => setActiveFacet(null)}
               className={cn(
-                "w-full flex items-center justify-between border-b-2 border-border px-2 py-1 cursor-pointer transition-none",
+                "w-full flex items-center justify-between border-b-2 border-border px-2 py-1 cursor-pointer transition-colors duration-150 ease-out",
                 activeFacet === null
                   ? "bg-accent text-[var(--color-accent-fg-on)]"
                   : "bg-surface text-text hover:bg-surface-overlay",
               )}
             >
-              <span className="font-mono text-xs uppercase tracking-[0.05em] truncate">
+              <span className="font-mono text-xs uppercase tracking-[0.08em] truncate">
                 ALL
               </span>
               <span className="font-mono text-xs tabular-nums shrink-0">
@@ -952,13 +938,13 @@ function SurveyResults({
                     setActiveFacet(activeFacet === root ? null : root)
                   }
                   className={cn(
-                    "w-full flex items-center justify-between border-b-2 border-border last:border-b-0 px-2 py-1 cursor-pointer transition-none text-left",
+                    "w-full flex items-center justify-between border-b-2 border-border last:border-b-0 px-2 py-1 cursor-pointer transition-colors duration-150 ease-out text-left",
                     activeFacet === root
                       ? "bg-accent text-[var(--color-accent-fg-on)]"
                       : "bg-surface text-text hover:bg-surface-overlay",
                   )}
                 >
-                  <span className="font-mono text-xs tracking-[0.05em] truncate">
+                  <span className="font-mono text-xs tracking-[0.08em] truncate">
                     {root}
                   </span>
                   <span className="font-mono text-xs tabular-nums shrink-0">
@@ -1040,7 +1026,7 @@ function SymbolsResults({
       {/* Kind-count strip */}
       <div className="border border-border-soft bg-surface shrink-0">
         <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text">Kind breakdown</span>
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Kind breakdown</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
             {visible.length} / {symbols.length} SYMBOLS
           </span>
@@ -1053,13 +1039,13 @@ function SymbolsResults({
                 key={kind}
                 onClick={() => toggleKind(kind)}
                 className={cn(
-                  "border-2 border-border px-3 py-1.5 cursor-pointer transition-none -m-[1px] flex items-baseline gap-1.5",
+                  "border border-border px-3 py-1.5 cursor-pointer transition-colors duration-150 ease-out -m-[1px] flex items-baseline gap-1.5",
                   active
                     ? "bg-accent text-[var(--color-accent-fg-on)] z-10 relative"
                     : "bg-surface text-text hover:bg-surface-overlay",
                 )}
               >
-                <span className="font-mono text-xs font-bold uppercase tracking-[0.05em]">
+                <span className="font-mono text-xs font-bold uppercase tracking-[0.08em]">
                   {kind}
                 </span>
                 <span className="font-mono text-sm font-bold tabular-nums">
@@ -1085,8 +1071,7 @@ function SymbolsResults({
                     onDoubleClick={() => onOpenDetail(s)}
                     className={cn(
                       "cursor-pointer",
-                      isPreviewed &&
-                        "shadow-[4px_4px_0_0_var(--color-accent)] -translate-x-[2px] -translate-y-[2px]",
+                      isPreviewed && "ring-1 ring-accent border-accent",
                     )}
                     title={isPreviewed ? "Double-click for full source" : "Click to preview"}
                   >
@@ -1106,33 +1091,33 @@ function SymbolsResults({
           {previewed ? (
             <div className="border border-border-soft bg-surface">
               <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-2 sticky top-0 z-10">
-                <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent">
+                <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
                   PREVIEW
                 </span>
                 <button
                   onClick={() => onOpenDetail(previewed)}
-                  className="border-2 border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.05em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-none"
+                  className="border border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
                 >Full source →</button>
               </div>
               <div className="p-3 space-y-2">
                 <div className="font-mono text-xs font-bold text-text break-words">
                   {previewed.signature}
                 </div>
-                <div className="font-mono text-xs tracking-[0.05em] text-text-dim">
+                <div className="font-mono text-xs tracking-[0.08em] text-text-dim">
                   {previewed.module_path}
                 </div>
                 <div className="font-mono text-xs text-text-dim break-all">
                   {previewed.file_path}
                 </div>
                 {previewed.doc_comment && (
-                  <div className="border-l-2 border-accent bg-surface-overlay px-2 py-1.5 font-mono text-[0.6875rem] text-text-muted whitespace-pre-wrap">
+                  <div className="border-l-2 border-accent bg-surface-overlay px-2 py-1.5 font-mono text-mono-mini text-text-muted whitespace-pre-wrap">
                     {previewed.doc_comment}
                   </div>
                 )}
               </div>
             </div>
           ) : (
-            <div className="border-2 border-dotted border-border bg-surface px-3 py-6 text-center font-sans text-xs tracking-[0.05em] text-text-dim">
+            <div className="border border-dotted border-border bg-surface px-3 py-6 text-center font-sans text-xs tracking-[0.08em] text-text-dim">
               Select a symbol to preview
             </div>
           )}
@@ -1219,7 +1204,7 @@ function BridgeResults({
       {/* Kind summary strip — proportional blocks */}
       <div className="border border-border-soft bg-surface shrink-0">
         <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text">Bridge surface</span>
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Bridge surface</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
             {visible.length} / {bridges.length} LINKS
           </span>
@@ -1234,14 +1219,14 @@ function BridgeResults({
                 onClick={() => setActiveKind(activeKind === kind ? null : kind)}
                 title={`${kind} · ${count} (${pct.toFixed(1)}%)`}
                 className={cn(
-                  "flex flex-col items-start justify-center border-2 border-border px-2 cursor-pointer transition-none -ml-[2px] first:ml-0 min-w-0",
+                  "flex flex-col items-start justify-center border border-border px-2 cursor-pointer transition-colors duration-150 ease-out -ml-[2px] first:ml-0 min-w-0",
                   active
                     ? "bg-accent text-[var(--color-accent-fg-on)] z-10 relative"
                     : "bg-surface text-text hover:bg-surface-overlay",
                 )}
                 style={{ width: `max(7%, ${pct}%)` }}
               >
-                <span className="font-mono text-[0.5625rem] font-bold uppercase tracking-[0.05em] opacity-70 truncate w-full">
+                <span className="font-mono text-mono-micro font-bold uppercase tracking-[0.08em] opacity-70 truncate w-full">
                   {kind}
                 </span>
                 <span className="font-mono text-base font-bold tabular-nums leading-none mt-0.5">
@@ -1256,7 +1241,7 @@ function BridgeResults({
       {/* Visual rows: EXPORT — connector — IMPORT, click expands inline */}
       <div className="flex-1 min-h-0 overflow-y-auto border border-border-soft bg-surface">
         <div className="border-b-2 border-border bg-surface-overlay px-2 py-1 sticky top-0 z-10 flex items-center justify-between">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text">Bridge links</span>
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Bridge links</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
             Click to expand
           </span>
@@ -1268,25 +1253,25 @@ function BridgeResults({
               <button
                 onClick={() => setExpandedIdx(expanded ? null : i)}
                 className={cn(
-                  "w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-none items-center",
+                  "w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-colors duration-150 ease-out items-center",
                   expanded
                     ? "bg-accent text-[var(--color-accent-fg-on)]"
                     : "bg-surface text-text hover:bg-surface-overlay",
                 )}
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-[0.5625rem] uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.08em] opacity-70 shrink-0">
                     {b.export_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
                     {b.export_symbol || b.export_binding_key}
                   </span>
                 </span>
-                <span className="font-mono text-xs uppercase tracking-[0.05em] opacity-70 shrink-0">
+                <span className="font-mono text-xs uppercase tracking-[0.08em] opacity-70 shrink-0">
                   {b.kind}
                 </span>
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="border border-border-soft px-1 font-mono text-[0.5625rem] uppercase tracking-[0.05em] opacity-70 shrink-0">
+                  <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.08em] opacity-70 shrink-0">
                     {b.import_language}
                   </span>
                   <span className="font-mono text-xs font-bold truncate">
@@ -1294,7 +1279,7 @@ function BridgeResults({
                   </span>
                 </span>
                 <ChevronRight
-                  className={cn("h-3 w-3 shrink-0 transition-none", expanded && "rotate-90")}
+                  className={cn("h-3 w-3 shrink-0 transition-colors duration-150 ease-out", expanded && "rotate-90")}
                   strokeWidth={2.5}
                 />
                 <span className="font-mono text-xs tabular-nums text-right shrink-0">
@@ -1344,14 +1329,14 @@ function CodeExcerptPane({
   return (
     <div className="border border-border-soft bg-surface">
       <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
-        <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent">
+        <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
           {title}
         </span>
         <span className="font-mono text-xs text-text-dim truncate ml-2">
           {tail}:{line}
         </span>
       </div>
-      <pre className="bg-surface-sunken px-3 py-2 font-mono text-[0.6875rem] leading-relaxed text-text whitespace-pre overflow-x-auto m-0 max-h-48 overflow-y-auto">
+      <pre className="bg-surface-sunken px-3 py-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre overflow-x-auto m-0 max-h-48 overflow-y-auto">
         {loading
           ? "LOADING_"
           : (source ?? "// (no source available)")}
@@ -1414,8 +1399,8 @@ function LandingTiles({
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
       <StructureTile corpus={corpus} files={files} />
       <BridgesTile bridges={bridges} onJumpToKind={onJumpToBridgeKind} />
-      <HotFilesTile files={files} onJumpToFile={onJumpToFile} />
-      <RecentChangesTile events={coherence} corpusId={corpus.id} />
+      <HotFilesTile files={files} corpus={corpus} onJumpToFile={onJumpToFile} />
+      <RecentChangesTile events={coherence} corpus={corpus} />
     </div>
   );
 }
@@ -1465,7 +1450,7 @@ function StructureTile({
 
       {langMix.length > 0 && (
         <div className="mt-3 pt-3 border-t-2 border-border">
-          <div className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-text-dim mb-1.5">Lang mix</div>
+          <div className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text-dim mb-1.5">Lang mix</div>
           <div className="flex h-3 border border-border-soft bg-surface-overlay overflow-hidden">
             {langMix.map(({ ext, pct }, i) => (
               <div
@@ -1504,7 +1489,7 @@ function StatRow({
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   return (
     <div className="flex items-center gap-2">
-      <span className="font-mono text-xs tracking-[0.05em] text-text-dim w-16 shrink-0">
+      <span className="font-mono text-xs tracking-[0.08em] text-text-dim w-16 shrink-0">
         {label}
       </span>
       <span className="font-mono text-xs font-bold tabular-nums text-text w-16 shrink-0 text-right">
@@ -1541,7 +1526,7 @@ function BridgesTile({
   if (grouped && grouped.total === 0) {
     return (
       <Tile title="BRIDGES" subtitle="0">
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
           No cross-language links detected
         </p>
       </Tile>
@@ -1561,9 +1546,9 @@ function BridgesTile({
             <button
               key={kind}
               onClick={() => onJumpToKind(kind)}
-              className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-none -mx-1"
+              className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out -mx-1"
             >
-              <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] w-32 shrink-0 text-left">
+              <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] w-32 shrink-0 text-left">
                 {kind}
               </span>
               <span className="font-mono text-xs font-bold tabular-nums w-10 shrink-0 text-right">
@@ -1584,9 +1569,11 @@ function BridgesTile({
 
 function HotFilesTile({
   files,
+  corpus,
   onJumpToFile,
 }: {
   files: FileInfo[] | null;
+  corpus: CorpusInfo;
   onJumpToFile: (filePath: string) => void;
 }) {
   const top = useMemo(() => {
@@ -1602,7 +1589,7 @@ function HotFilesTile({
   if (!top || top.length === 0) {
     return (
       <Tile title="HOT FILES" subtitle="0">
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
           No indexed files
         </p>
       </Tile>
@@ -1618,15 +1605,15 @@ function HotFilesTile({
       <div className="flex flex-col">
         {top.map((f) => {
           const pct = max > 0 ? (f.section_count / max) * 100 : 0;
-          const tail = f.path.split(/[\\/]/).slice(-2).join("/");
+          const tail = corpusRelative(f.path, corpus);
           return (
             <button
               key={f.path}
               onClick={() => onJumpToFile(f.path)}
               title={f.path}
-              className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-none -mx-1"
+              className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out -mx-1"
             >
-              <span className="font-mono text-[0.6875rem] truncate flex-1 text-left">
+              <span className="font-mono text-mono-mini truncate flex-1 text-left">
                 {tail}
               </span>
               <div className="w-20 h-2 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">
@@ -1653,23 +1640,23 @@ const COHERENCE_GLYPH: Record<CoherenceKind, string> = {
 
 function RecentChangesTile({
   events,
-  corpusId,
+  corpus,
 }: {
   events: CoherenceEvent[] | null;
-  corpusId: string;
+  corpus: CorpusInfo;
 }) {
   const filtered = useMemo(() => {
     if (!events) return null;
     return events
-      .filter((e) => e.corpus_id === corpusId)
+      .filter((e) => e.corpus_id === corpus.id)
       .slice(0, 10);
-  }, [events, corpusId]);
+  }, [events, corpus.id]);
 
   if (events === null) return <Tile title="RECENT CHANGES"><LoadingRow /></Tile>;
   if (!filtered || filtered.length === 0) {
     return (
       <Tile title="RECENT CHANGES" subtitle="0">
-        <p className="font-sans text-xs tracking-[0.05em] text-text-dim">
+        <p className="font-sans text-xs tracking-[0.08em] text-text-dim">
           No recent file changes
         </p>
       </Tile>
@@ -1689,10 +1676,10 @@ function RecentChangesTile({
               {COHERENCE_GLYPH[ev.kind]}
             </span>
             <span
-              className="font-mono text-[0.6875rem] text-text truncate flex-1"
+              className="font-mono text-mono-mini text-text truncate flex-1"
               title={ev.path}
             >
-              {ev.path.split(/[\\/]/).slice(-2).join("/")}
+              {corpusRelative(ev.path, corpus)}
             </span>
             <span className="font-mono text-xs tabular-nums text-text-dim shrink-0">
               {relative(now, ev.timestamp_ms)}
@@ -1709,10 +1696,10 @@ function RecentChangesTile({
 function EmptyCorpusTile() {
   return (
     <div className="border border-border-soft bg-surface p-8 text-center">
-      <h3 className="font-sans text-base font-bold tracking-[0.05em] text-text">
+      <h3 className="font-sans text-base font-bold tracking-[0.08em] text-text">
         Add a project to begin
       </h3>
-      <p className="mt-3 font-sans text-xs tracking-[0.05em] text-text-dim">
+      <p className="mt-3 font-sans text-xs tracking-[0.08em] text-text-dim">
         Open the Projects tab and add a directory — ministr will index it for survey, symbols, and bridge.
       </p>
     </div>
@@ -1740,12 +1727,12 @@ function Tile({
   return (
     <section className="border border-border-soft bg-surface flex flex-col">
       <header className="flex items-baseline justify-between gap-2 border-b border-border-soft bg-surface-overlay px-3 py-2">
-        <h3 className="font-serif text-base font-bold text-text">
+        <h3 className="font-sans text-base font-bold text-text">
           {sentence}
         </h3>
         <div className="flex items-center gap-2">
           {hint && (
-            <span className="font-serif text-xs italic text-text-dim">
+            <span className="font-sans text-xs italic text-text-dim">
               {hint}
             </span>
           )}
@@ -1763,7 +1750,7 @@ function Tile({
 
 function LoadingRow() {
   return (
-    <p className="font-serif text-base italic text-text-dim">
+    <p className="font-sans text-base italic text-text-dim">
       Loading<span className="ministr-blink">_</span>
     </p>
   );
@@ -1786,7 +1773,7 @@ function ResultSection({
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between border-b border-border-soft bg-surface-overlay px-3 py-2">
-        <h3 className="font-serif text-base font-bold text-text">
+        <h3 className="font-sans text-base font-bold text-text">
           {sentence}
         </h3>
         <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -1798,23 +1785,49 @@ function ResultSection({
   );
 }
 
+/** Strip the corpus root from a `content_id` like
+ *  `D:/code/foo/src/lib.rs#mod::Bar:c0` so the small mono badge shows
+ *  the project-relative path plus the section anchor. Falls back to the
+ *  original id (basename + anchor) when no corpus is available. */
+function shortContentId(
+  contentId: string,
+  corpus: CorpusInfo | null,
+): string {
+  const norm = contentId.replace(/\\/g, "/");
+  // Symbol ids (`sym-…`) carry the file path before `::`. Preserve that.
+  const stripped = norm.replace(/^sym-/, "");
+  const hashIdx = stripped.indexOf("#");
+  const colonIdx = stripped.indexOf("::");
+  const splitIdx =
+    hashIdx >= 0 && (colonIdx < 0 || hashIdx < colonIdx)
+      ? hashIdx
+      : colonIdx;
+  if (splitIdx < 0) {
+    return corpusRelative(stripped, corpus);
+  }
+  const filePart = stripped.slice(0, splitIdx);
+  const tail = stripped.slice(splitIdx);
+  const rel = corpusRelative(filePart, corpus);
+  return `${rel}${tail}`;
+}
+
 // ─── SURVEY CARD ───────────────────────────────────────────────────────────
 
 function SurveyCard({
   result,
   compact,
+  corpus,
   onClick,
 }: {
   result: SearchResult;
   compact?: boolean;
+  /** Optional. When provided, the card's small mono badge shows a
+   *  corpus-relative path. Falls back to last-2-segments otherwise. */
+  corpus?: CorpusInfo | null;
   onClick: () => void;
 }) {
   const pct = Math.max(0, Math.min(100, result.score * 100));
-  const shortId = result.content_id
-    .replace(/\\/g, "/")
-    .split("/")
-    .slice(-3)
-    .join("/");
+  const shortId = shortContentId(result.content_id, corpus ?? null);
   const excerptLines = (result.text ?? "")
     .split("\n")
     .filter((l) => l.trim().length > 0)
@@ -1829,15 +1842,15 @@ function SurveyCard({
     return (
       <button
         onClick={onClick}
-        className="text-left flex items-center gap-2 border-b border-border-soft bg-surface px-3 py-1.5 cursor-pointer transition-none hover:bg-surface-overlay hover:text-text"
+        className="text-left flex items-center gap-2 border-b border-border-soft bg-surface px-3 py-1.5 cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text"
       >
-        <span className="font-mono text-xs font-semibold tabular-nums w-10 shrink-0 text-text-muted">
+        <span className="font-mono text-xs font-semibold tabular-nums w-10 shrink-0 text-text-dim">
           {pct.toFixed(0)}%
         </span>
         <div className="w-16 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">
           <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
         </div>
-        <span className="font-mono text-xs truncate w-48 shrink-0 text-text-muted">
+        <span className="font-mono text-xs truncate w-48 shrink-0 text-text-dim">
           {shortId}
         </span>
         <span className="font-sans text-sm text-text-dim truncate flex-1">
@@ -1850,7 +1863,7 @@ function SurveyCard({
   return (
     <button
       onClick={onClick}
-      className="text-left border border-border-soft bg-surface cursor-pointer transition-none hover:border-border hover:bg-surface-overlay"
+      className="text-left border border-border-soft bg-surface cursor-pointer transition-colors duration-150 ease-out hover:border-border hover:bg-surface-overlay"
     >
       <div className="flex items-center gap-2 border-b border-border-soft bg-surface-overlay px-3 py-1.5">
         <span className="font-mono text-xs font-bold tabular-nums text-text w-10 shrink-0">
@@ -1859,13 +1872,13 @@ function SurveyCard({
         <div className="w-24 h-2 border border-border-soft bg-surface overflow-hidden shrink-0">
           <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
         </div>
-        <span className="font-mono text-[0.6875rem] text-text truncate">
+        <span className="font-mono text-mono-mini text-text truncate">
           {shortId}
         </span>
       </div>
 
       {result.heading_path.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-1 border-b-2 border-border font-mono text-xs uppercase tracking-[0.05em] text-text-dim flex-wrap">
+        <div className="flex items-center gap-1 px-2 py-1 border-b-2 border-border font-mono text-xs uppercase tracking-[0.08em] text-text-dim flex-wrap">
           {result.heading_path.map((h, j) => (
             <span key={j} className="flex items-center gap-1">
               {j > 0 && (
@@ -1878,7 +1891,7 @@ function SurveyCard({
       )}
 
       {excerptLines.length > 0 && (
-        <pre className="border-l-2 border-accent bg-surface-sunken px-3 py-2 font-mono text-[0.6875rem] leading-relaxed text-text whitespace-pre-wrap line-clamp-3 m-0">
+        <pre className="border-l-2 border-accent bg-surface-sunken px-3 py-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre-wrap line-clamp-3 m-0">
           {excerptLines}
         </pre>
       )}
@@ -1907,9 +1920,9 @@ function SymbolCard({
     return (
       <button
         onClick={onClick}
-        className="text-left flex items-center gap-2 border-b-2 border-border bg-surface px-2 py-1.5 cursor-pointer transition-none hover:bg-surface-overlay hover:text-text hover:translate-x-[2px]"
+        className="text-left flex items-center gap-2 border-b-2 border-border bg-surface px-2 py-1.5 cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text hover:translate-x-[2px]"
       >
-        <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent w-12 shrink-0">
+        <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent w-12 shrink-0">
           {symbol.kind}
         </span>
         <span className="font-mono text-xs font-bold truncate w-48 shrink-0">
@@ -1928,24 +1941,24 @@ function SymbolCard({
   return (
     <button
       onClick={onClick}
-      className="text-left border-2 border-border bg-surface cursor-pointer transition-none hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-[4px_4px_0_0_var(--shadow-color)]"
+      className="text-left border border-border bg-surface cursor-pointer transition-colors duration-150 ease-out hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-md"
     >
       <div className="flex items-center gap-2 border-b-2 border-border bg-surface-overlay px-2 py-1.5">
-        <span className="font-mono text-xs font-bold uppercase tracking-[0.05em] text-accent w-14 shrink-0">
+        <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent w-14 shrink-0">
           {symbol.kind}
         </span>
         <span className="font-mono text-sm font-bold text-text truncate flex-1">
           {symbol.name}
         </span>
         {symbol.visibility && (
-          <span className="font-mono text-xs uppercase tracking-[0.05em] text-text-dim shrink-0">
+          <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-dim shrink-0">
             {symbol.visibility}
           </span>
         )}
       </div>
 
       {symbol.signature && (
-        <pre className="border-b-2 border-border bg-surface-sunken px-3 py-2 font-mono text-[0.6875rem] leading-relaxed text-text whitespace-pre-wrap break-words m-0">
+        <pre className="border-b-2 border-border bg-surface-sunken px-3 py-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre-wrap break-words m-0">
           {symbol.signature}
         </pre>
       )}
@@ -1970,21 +1983,16 @@ function ViewToggle({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <FilterPill
+      tone="sans"
+      size="md"
+      active={active}
       disabled={disabled}
-      className={cn(
-        "border px-2.5 h-9 font-sans text-sm font-medium cursor-pointer transition-none shrink-0",
-        active
-          ? "border-accent bg-surface-overlay text-text"
-          : "border-border-soft bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
-        disabled && "opacity-40 cursor-not-allowed",
-      )}
-      style={{ borderRadius: "var(--radius-button)" }}
+      onClick={onClick}
+      className="shrink-0"
     >
       {label}
-    </button>
+    </FilterPill>
   );
 }
 
@@ -1999,7 +2007,7 @@ function ResultRow({
     <div
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2 border-b border-border-soft px-3 py-2 transition-none",
+        "flex items-center gap-2 border-b border-border-soft px-3 py-2 transition-colors duration-150 ease-out",
         onClick && "cursor-pointer hover:bg-surface-overlay hover:text-text",
       )}
     >
@@ -2008,92 +2016,3 @@ function ResultRow({
   );
 }
 
-function SymbolDetailPane({ def }: { def: SymbolDefinitionDetail }) {
-  return (
-    <div className="space-y-3 font-mono text-xs">
-      <div className="space-y-1">
-        <div className="text-xs tracking-[0.05em] text-text-dim">
-          {def.heading_path.join(" / ")}
-        </div>
-        <div className="font-bold text-text">{def.signature}</div>
-        <div className="text-xs text-text-dim">
-          {def.file_path}:{def.line_start}-{def.line_end}
-        </div>
-      </div>
-      {def.doc_comment && (
-        <div className="border-l-2 border-accent bg-surface-overlay px-2 py-1.5 text-text-muted whitespace-pre-wrap">
-          {def.doc_comment}
-        </div>
-      )}
-      <pre className="border border-border-soft bg-surface-sunken p-2 text-[0.6875rem] leading-relaxed text-text whitespace-pre overflow-x-auto">
-        {def.source_context}
-      </pre>
-    </div>
-  );
-}
-
-function BridgeDetailPane({ link }: { link: BridgeLink }) {
-  return (
-    <div className="space-y-3 font-mono text-xs">
-      <div className="border border-border-soft bg-surface-overlay px-2 py-1.5 flex items-center justify-between">
-        <span className="text-xs uppercase tracking-[0.05em] text-text">
-          {link.kind}
-        </span>
-        <span className="text-xs tabular-nums text-text-dim">
-          confidence {(link.confidence * 100).toFixed(0)}%
-        </span>
-      </div>
-
-      <BridgeEndpoint
-        title="EXPORT"
-        symbol={link.export_symbol}
-        binding={link.export_binding_key}
-        language={link.export_language}
-        file={link.export_file}
-        line={link.export_line}
-      />
-      <BridgeEndpoint
-        title="IMPORT"
-        symbol={link.import_symbol}
-        binding={link.import_binding_key}
-        language={link.import_language}
-        file={link.import_file}
-        line={link.import_line}
-      />
-    </div>
-  );
-}
-
-function BridgeEndpoint({
-  title,
-  symbol,
-  binding,
-  language,
-  file,
-  line,
-}: {
-  title: string;
-  symbol: string;
-  binding: string;
-  language: string;
-  file: string;
-  line: number;
-}) {
-  return (
-    <div className="border border-border-soft bg-surface p-2 space-y-1">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-bold uppercase tracking-[0.05em] text-accent">
-          {title}
-        </span>
-        <span className="text-xs uppercase tracking-[0.05em] text-text-dim">
-          {language}
-        </span>
-      </div>
-      <div className="font-bold text-text">{symbol}</div>
-      <div className="text-xs text-text-dim">{binding}</div>
-      <div className="text-xs text-text-dim">
-        {file}:{line}
-      </div>
-    </div>
-  );
-}

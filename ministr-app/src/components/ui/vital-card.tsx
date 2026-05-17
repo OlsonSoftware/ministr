@@ -33,14 +33,14 @@ export function VitalCard({
         <div>
           <h3 className={labelSmallCap}>{title}</h3>
           {subtitle && (
-            <p className="text-[0.6875rem] text-text-dim mt-0.5 font-mono">{subtitle}</p>
+            <p className="text-mono-mini text-text-dim mt-0.5 font-mono">{subtitle}</p>
           )}
         </div>
         {right}
       </div>
       {empty ? (
         <div className="flex h-[118px] items-center justify-center">
-          <span className="font-mono text-xs tracking-[0.05em] text-text-dim">
+          <span className="font-mono text-xs tracking-[0.08em] text-text-dim">
             {emptyLabel}
           </span>
         </div>

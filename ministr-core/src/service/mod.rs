@@ -252,6 +252,17 @@ impl QueryService {
         self
     }
 
+    /// Borrow the configured cross-encoder reranker, if any.
+    ///
+    /// Exposed so adjacent pipelines (e.g. the daemon's `ask`
+    /// verification stage) can re-use the same loaded model as a
+    /// premise-vs-hypothesis entailment scorer without paying for a
+    /// second model load.
+    #[must_use]
+    pub fn reranker(&self) -> Option<&Arc<dyn Reranker>> {
+        self.reranker.as_ref()
+    }
+
     /// Access the embedder for external use (e.g. topical prefetch).
     #[must_use]
     pub fn embedder(&self) -> &dyn Embedder {

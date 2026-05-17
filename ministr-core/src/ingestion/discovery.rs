@@ -5,42 +5,116 @@ use std::path::{Path, PathBuf};
 use crate::error::IngestionError;
 use crate::parser::detect_parser_kind;
 
+/// Directory names that are ~never an authored source root and are safe to
+/// prune globally (no `.ministr.toml` needed). Anything ambiguous — `bin`,
+/// `obj`, `Library`, `Debug`, `Release` — is deliberately NOT here; those are
+/// gated behind project-type detection in `init::default_ignore_patterns`
+/// instead, because they collide with legitimate authored directory names.
 const ALWAYS_IGNORE_DIRS: &[&str] = &[
+    // VCS / editor / tooling
+    ".git",
+    ".svn",
+    ".hg",
+    ".jj",
+    ".idea",
+    ".vs",
+    ".vscode",
+    ".zed",
+    ".fleet",
+    ".cache",
+    ".ccls-cache",
+    ".clangd",
+    ".fastembed_cache",
+    ".onnx_cache",
+    ".ministr",
+    // Rust / generic
     "target",
+    "out",
+    "dist",
+    "coverage",
+    // Vendored third-party trees (committed deps — the big one).
+    "vendor",
+    "3rdparty",
+    "third_party",
+    "third-party",
+    "thirdparty",
+    "extern",
+    "external",
+    "externals",
+    "deps",
+    "_deps",
+    // Node / web
     "node_modules",
+    "bower_components",
+    "jspm_packages",
+    "web_modules",
     ".next",
     ".nuxt",
     ".output",
+    ".svelte-kit",
+    ".turbo",
+    ".parcel-cache",
+    ".vite",
+    ".angular",
+    ".docusaurus",
+    ".serverless",
+    ".nyc_output",
+    ".pnpm-store",
+    // Python
     "__pycache__",
     ".venv",
     "venv",
     "env",
     ".tox",
+    ".nox",
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
+    ".hypothesis",
+    ".ipynb_checkpoints",
+    ".eggs",
+    "develop-eggs",
+    "__pypackages__",
+    "site-packages",
+    "htmlcov",
+    // JVM / Gradle / Maven
     ".gradle",
     ".mvn",
+    // Go
     ".go",
-    "dist",
-    "build",
-    "out",
-    ".git",
-    ".svn",
-    ".hg",
-    ".idea",
-    ".vs",
-    ".vscode",
-    ".zed",
-    ".cache",
-    ".fastembed_cache",
-    ".onnx_cache",
-    ".ministr",
-    "vendor",
-    "coverage",
-    ".nyc_output",
-    "htmlcov",
+    // Elixir / Erlang / OCaml-dune
+    ".elixir_ls",
+    "_build",
+    // Haskell
+    ".stack-work",
+    ".cargo",
+    // Dart / Flutter
+    ".dart_tool",
+    // C / C++ / CMake
+    "CMakeFiles",
+    "CMakeScripts",
+    // Apple / Swift
+    "Pods",
+    "Carthage",
+    "DerivedData",
+    "xcuserdata",
+    ".swiftpm",
+    // IaC
     ".terraform",
+];
+
+/// Directory-name *glob* patterns (the exact-match list above can't express
+/// these). Supports a single leading or trailing `*`. Covers Bazel symlink
+/// trees, CMake/CLion out-of-source build dirs, and macOS bundle dirs that
+/// are really just build output (`*.xcodeproj`, `*.framework`, …).
+const ALWAYS_IGNORE_DIR_GLOBS: &[&str] = &[
+    "bazel-*",
+    "cmake-build-*",
+    "*.egg-info",
+    "*.xcodeproj",
+    "*.xcworkspace",
+    "*.framework",
+    "*.xcassets",
 ];
 
 const ALWAYS_IGNORE_PATTERNS: &[&str] = &[
@@ -68,32 +142,77 @@ const ALWAYS_IGNORE_PATTERNS: &[&str] = &[
     // any other codebase either.
     "*.generated.h",
     "*.gen.cpp",
+    // Generated serialization / RPC bindings — machine-emitted, ~zero
+    // authored content, and they pollute symbol search with thousands
+    // of stub identifiers (the WebWowViewerCpp class of problem).
+    "*.pb.go",
+    "*_pb2.py",
+    "*_pb2.pyi",
+    "*_pb2_grpc.py",
+    "*.pb.cc",
+    "*.pb.h",
+    "*_pb.rb",
+    "*_pb.dart",
+    "*.pb.swift",
+    "*.pbobjc.h",
+    "*.pbobjc.m",
+    "*_grpc.pb.cc",
+    "*_grpc.pb.h",
+    "*.g.dart",
+    "*.freezed.dart",
+    "*.g.cs",
+    "*.Designer.cs",
+    "*.generated.cs",
+    // Qt / parser-generator output.
+    "moc_*.cpp",
+    "qrc_*.cpp",
+    "ui_*.h",
+    "*.tab.c",
+    "*.yy.c",
+    // Build metadata that is not source.
+    "*.tsbuildinfo",
+    "compile_commands.json",
+    "CMakeCache.txt",
 ];
 
-/// Hard guard: reject files inside always-ignored directories.
-pub(super) fn is_in_ignored_dir(path: &Path) -> bool {
-    for component in path.components() {
-        if let std::path::Component::Normal(name) = component
-            && let Some(name_str) = name.to_str()
-            && ALWAYS_IGNORE_DIRS.contains(&name_str)
-        {
-            return true;
-        }
+/// Match a directory name against the simple glob vocabulary used by
+/// [`ALWAYS_IGNORE_DIR_GLOBS`]: a single leading `*` (suffix match) or a
+/// single trailing `*` (prefix match). Exact strings match exactly.
+fn dir_glob_match(name: &str, pattern: &str) -> bool {
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        name.ends_with(suffix)
+    } else if let Some(prefix) = pattern.strip_suffix('*') {
+        name.starts_with(prefix)
+    } else {
+        name == pattern
     }
-    false
 }
 
-/// Discover all supported files in a directory recursively.
+/// Whether a single path component (directory name) should always be pruned.
+fn dir_name_is_ignored(name: &str) -> bool {
+    ALWAYS_IGNORE_DIRS.contains(&name)
+        || ALWAYS_IGNORE_DIR_GLOBS
+            .iter()
+            .any(|p| dir_glob_match(name, p))
+}
+
+/// Build the shared ignore-aware directory walker.
 ///
-/// Respects `.gitignore` rules and skips well-known junk directories and file patterns.
-#[must_use = "returns discovered files"]
-pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
+/// Used by both [`discover_files`] and [`compute_corpus_stat_merkle`] so the
+/// indexed file set and the change-detection fingerprint can never drift
+/// apart. Applies, in order: `.gitignore`/global/exclude rules, the
+/// always-ignore file-glob overrides, the always-ignore directory-glob
+/// overrides, and an exact+glob directory-name `filter_entry` prune.
+fn ignored_walk(dir: &Path) -> Result<ignore::Walk, IngestionError> {
     use ignore::WalkBuilder;
     use ignore::overrides::OverrideBuilder;
 
     let mut overrides = OverrideBuilder::new(dir);
     for pattern in ALWAYS_IGNORE_PATTERNS {
         let _ = overrides.add(&format!("!{pattern}"));
+    }
+    for pattern in ALWAYS_IGNORE_DIR_GLOBS {
+        let _ = overrides.add(&format!("!**/{pattern}"));
     }
     let overrides = overrides.build().map_err(|e| IngestionError::Io {
         path: dir.to_path_buf(),
@@ -109,17 +228,32 @@ pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
         .git_exclude(true)
         .overrides(overrides)
         .filter_entry(|entry| {
-            if entry.file_type().is_some_and(|ft| ft.is_dir())
-                && let Some(name) = entry.file_name().to_str()
-                && ALWAYS_IGNORE_DIRS.contains(&name)
-            {
-                return false;
-            }
-            true
+            !(entry.file_type().is_some_and(|ft| ft.is_dir())
+                && entry.file_name().to_str().is_some_and(dir_name_is_ignored))
         });
+    Ok(walker.build())
+}
 
+/// Hard guard: reject files inside always-ignored directories.
+pub(super) fn is_in_ignored_dir(path: &Path) -> bool {
+    for component in path.components() {
+        if let std::path::Component::Normal(name) = component
+            && let Some(name_str) = name.to_str()
+            && dir_name_is_ignored(name_str)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Discover all supported files in a directory recursively.
+///
+/// Respects `.gitignore` rules and skips well-known junk directories and file patterns.
+#[must_use = "returns discovered files"]
+pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
     let mut files = Vec::new();
-    for result in walker.build() {
+    for result in ignored_walk(dir)? {
         let entry = result.map_err(|e| IngestionError::Io {
             path: dir.to_path_buf(),
             source: std::io::Error::other(format!("walk error: {e}")),
@@ -290,42 +424,14 @@ pub fn is_unreal_corpus(root: &Path) -> bool {
 /// metadata cannot be read.
 #[must_use = "returns (root_hash, files)"]
 pub fn compute_corpus_stat_merkle(dir: &Path) -> Result<(String, Vec<PathBuf>), IngestionError> {
-    use ignore::WalkBuilder;
-    use ignore::overrides::OverrideBuilder;
-
-    let mut overrides = OverrideBuilder::new(dir);
-    for pattern in ALWAYS_IGNORE_PATTERNS {
-        let _ = overrides.add(&format!("!{pattern}"));
-    }
-    let overrides = overrides.build().map_err(|e| IngestionError::Io {
-        path: dir.to_path_buf(),
-        source: std::io::Error::other(format!("invalid ignore pattern: {e}")),
-    })?;
-
-    let mut walker = WalkBuilder::new(dir);
-    walker
-        .hidden(false)
-        .parents(true)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .overrides(overrides)
-        .filter_entry(|entry| {
-            if entry.file_type().is_some_and(|ft| ft.is_dir())
-                && let Some(name) = entry.file_name().to_str()
-                && ALWAYS_IGNORE_DIRS.contains(&name)
-            {
-                return false;
-            }
-            true
-        });
+    let walk = ignored_walk(dir)?;
 
     // Collect (rel_path, abs_path, mtime_ns, size) tuples; we need both
     // the relative form (for the fingerprint, so absolute paths don't
     // poison the hash on a different machine) and the absolute form
     // (for the returned file list).
     let mut entries: Vec<(String, PathBuf, i64, u64)> = Vec::new();
-    for result in walker.build() {
+    for result in walk {
         let entry = result.map_err(|e| IngestionError::Io {
             path: dir.to_path_buf(),
             source: std::io::Error::other(format!("walk error: {e}")),
@@ -446,6 +552,64 @@ mod tests {
         assert!(names.contains(&"MyClass.h".to_string()));
         assert!(!names.iter().any(|n| n.ends_with(".generated.h")));
         assert!(!names.iter().any(|n| n.ends_with(".gen.cpp")));
+    }
+
+    #[test]
+    fn dir_glob_match_vocabulary() {
+        assert!(dir_glob_match("bazel-out", "bazel-*"));
+        assert!(dir_glob_match("bazel-bin", "bazel-*"));
+        assert!(!dir_glob_match("bazelisk", "bazel-*"));
+        assert!(dir_glob_match("cmake-build-debug", "cmake-build-*"));
+        assert!(dir_glob_match("mylib.egg-info", "*.egg-info"));
+        assert!(dir_glob_match("App.xcodeproj", "*.xcodeproj"));
+        assert!(!dir_glob_match("src", "*.xcodeproj"));
+    }
+
+    #[test]
+    fn vendored_and_build_dirs_are_pruned() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("src/main.rs"), "fn main(){}");
+        // Vendored / build trees that must NOT be indexed.
+        write(&tmp.path().join("3rdparty/glew/glew.c"), "int x;");
+        write(&tmp.path().join("third_party/protobuf/x.cc"), "int y;");
+        write(&tmp.path().join("extern/dep/d.c"), "int z;");
+        write(&tmp.path().join("deps/foo/foo.ex"), "defmodule F do\nend");
+        write(&tmp.path().join("bazel-out/gen.go"), "package m");
+        write(
+            &tmp.path().join("cmake-build-debug/CMakeFiles/x.cpp"),
+            "int q;",
+        );
+        write(&tmp.path().join("mylib.egg-info/top.py"), "x=1");
+        write(&tmp.path().join(".dart_tool/pkg.dart"), "void m(){}");
+
+        let files = discover_files(tmp.path()).unwrap();
+        let rels: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(tmp.path())
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rels, vec!["src/main.rs".to_string()], "got {rels:?}");
+    }
+
+    #[test]
+    fn generated_bindings_are_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("svc.go"), "package svc");
+        write(&tmp.path().join("svc.pb.go"), "package svc // generated");
+        write(&tmp.path().join("svc_pb2.py"), "# generated");
+        write(&tmp.path().join("svc_pb2_grpc.py"), "# generated");
+        write(&tmp.path().join("model.g.dart"), "// generated");
+        write(&tmp.path().join("View.Designer.cs"), "// generated");
+        let files = discover_files(tmp.path()).unwrap();
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["svc.go".to_string()], "got {names:?}");
     }
 
     #[test]

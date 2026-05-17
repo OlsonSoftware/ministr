@@ -47,6 +47,17 @@ const TONE_BG: Record<Tone, string> = {
   muted: "bg-text-dim",
 };
 
+/** Raw CSS custom property a tone resolves to. For SVG `stroke`/`fill`
+ *  where a Tailwind class can't be applied (sparkline, economics bar,
+ *  budget ring). Mirrors the `--color-*` tokens in App.css. */
+const TONE_CSS_VAR: Record<Tone, string> = {
+  success: "var(--color-success)",
+  warning: "var(--color-warning)",
+  danger: "var(--color-danger)",
+  accent: "var(--color-accent)",
+  muted: "var(--color-text-dim)",
+};
+
 /** Tone for an IndexingStatus alone (no session activity). */
 export function indexingTone(status: IndexingStatus): Tone {
   return INDEXING_TONE[status.state];
@@ -87,6 +98,11 @@ export function toneTextClass(tone: Tone): string {
 /** Tailwind background-color class for a tone. */
 export function toneBgClass(tone: Tone): string {
   return TONE_BG[tone];
+}
+
+/** Raw `var(--color-*)` string for a tone — for SVG fill/stroke. */
+export function toneCssVar(tone: Tone): string {
+  return TONE_CSS_VAR[tone];
 }
 
 /** Map a Tone to the closest Badge variant. `accent` maps to

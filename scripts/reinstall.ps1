@@ -69,7 +69,9 @@ Assert-LastExitOk 'cargo clean'
 Assert-LastExitOk 'cargo build (ministr-cli)'
 
 Write-Host "==> Installing CLI to $binPath (canonical dev location)..."
-Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:USERPROFILE '.cargo\bin\ministr.exe')
+# Legacy/duplicate install roots (~/.cargo\bin, %LOCALAPPDATA%\ministr)
+# are no longer cleaned here — `ministr setup` below is the single
+# source of truth: it de-PATHs and refreshes every stale shadow.
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 Copy-Item -Force -Path 'target\release\ministr.exe' -Destination $binPath
 
@@ -89,7 +91,7 @@ Copy-Item -Force -Path 'target\release\ministr.exe' -Destination $binPath
 Write-Host '==> Adding ministr to PATH via `ministr setup`...'
 $setupLaunchError = $null
 try {
-    & $binPath setup --bin-dir $binDir
+    & $binPath setup
 } catch {
     $setupLaunchError = $_.Exception.Message
 }

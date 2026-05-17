@@ -67,17 +67,15 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
               ? "Indexing"
               : "Daemon connected"
         }
-        className={cn(
-          "grid place-items-center h-5 w-5 cursor-pointer transition-none",
-        )}
+        className={cn("grid place-items-center h-5 w-5 cursor-pointer")}
       >
         <StatusDot tone={tone} pulse={tone === "warning" ? "live" : "off"} size="md" />
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 w-[300px] border border-border-soft bg-surface shadow-[var(--shadow-md)]">
-          <div className="border-b border-border-soft bg-surface-overlay px-3 py-2">
-            <span className="font-serif text-base font-bold text-text">
+        <div className="absolute top-full right-0 mt-2 z-50 w-[300px] overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+          <div className="border-b border-border bg-surface-overlay px-3 py-2">
+            <span className="font-sans text-sm font-semibold text-text">
               Daemon
             </span>
           </div>
@@ -102,7 +100,7 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
               </>
             )}
             {error && (
-              <div className="border-l-2 border-danger bg-surface-overlay px-2 py-1 mt-2 font-mono text-xs text-danger break-words">
+              <div className="rounded-md border border-danger/40 bg-surface-overlay px-2 py-1.5 mt-2 font-mono text-xs text-danger break-words">
                 {error}
               </div>
             )}
@@ -117,7 +115,7 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
                 onOpenLogs();
                 setOpen(false);
               }}
-              className="w-full border-t border-border-soft bg-surface text-text-muted hover:text-text hover:bg-surface-overlay cursor-pointer transition-none px-3 py-2 font-sans text-sm font-medium text-left"
+              className="w-full border-t border-border bg-surface text-text-muted hover:text-text hover:bg-surface-overlay cursor-pointer transition-colors duration-150 px-3 py-2 font-sans text-sm font-medium text-left"
             >
               Open log file →
             </button>
@@ -139,12 +137,12 @@ function Row({
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="font-mono text-xs tracking-[0.05em] text-text-dim shrink-0">
+      <span className="font-mono text-xs tracking-[0.08em] text-text-dim shrink-0">
         {label}
       </span>
       <span
         className={cn(
-          "font-mono text-[0.6875rem] tabular-nums text-text",
+          "font-mono text-mono-mini tabular-nums text-text",
           truncate && "truncate",
         )}
       >
