@@ -23,15 +23,11 @@ This sets up ministr for every major agent platform in your project at once. `mi
 - **`.ministr.toml`** — corpus paths and config, auto-detected from project manifests (`Cargo.toml`, `package.json`, `pyproject.toml`)
 - **MCP configs** — `.mcp.json` (Claude Code), `.cursor/mcp.json` (Cursor), and `.vscode/mcp.json` (VS Code / GitHub Copilot). Each existing file is merged non-destructively — only the `ministr` key is added.
 - **Agent rules** — `.claude/rules/`, `.cursor/rules/ministr.mdc`, `windsurf/rules/ministr.md`, `.continue/rules/ministr.md`, `.github/copilot-instructions.md`, and a platform-neutral `AGENTS.md`. These teach each agent about the ministr tools and their intended workflow.
-- **PreToolUse hooks** — `.claude/settings.json`, `.cursor/hooks.json`, `.windsurf/hooks.json`, and `.github/hooks/`. These **block `Grep`, `Glob`, `find`, and shell-pipe search** in agents that support hooks, redirecting the agent to `ministr_survey` / `ministr_symbols` instead. If you don't want the hooks, delete those files after running `init` — the advisory `.md` / `.mdc` rules stay.
-
-<Callout type="info" title="Don't want the agent tool blocking?">
-The hook files above are what enforce the "no Grep / no Glob / use ministr instead" policy. They're machine-generated JSON and auto-healed by `ministr init` to the current template. To opt out for a given platform, delete that platform's hook file — the advisory markdown rules still nudge the agent toward ministr tools, but won't block the built-ins.
-</Callout>
+- **PreToolUse hooks** — `.claude/settings.json` plus `.claude/hooks/steer-to-ministr.sh`, `.cursor/hooks.json`, `.windsurf/hooks.json`, and `.github/hooks/ministr-enforce.json`. These **steer** the agent rather than wall it off: on platforms that support tool-level hooks (Claude Code, Copilot) the built-in `Grep` / `Glob` tools are declined with a one-line pointer to `ministr_survey` / `ministr_symbols`; a leading shell `grep`/`find` is **allowed** with an advisory hint (never a prompt); and piping through grep (`cargo test | grep …`) is never intercepted. Cursor and Windsurf hooks are advisory only — they print a hint and always allow. To opt a platform out entirely, delete its hook file; the advisory rules stay.
 
 Advisory markdown files (`.md`, `.mdc`) are created once and **never overwritten** so you can customise them. Hook JSON files are auto-healed — running `ministr init` again brings them back to the current template.
 
-To verify what's installed, run `ministr hooks test` — it simulates common tool calls and reports which would be blocked on which platforms.
+To verify what's installed, run `ministr hooks test` — it checks each platform's hook files and simulates common tool calls so you can see how each one is steered.
 
 Or, if you only want the corpus config without the agent scaffolding, create `.ministr.toml` manually:
 

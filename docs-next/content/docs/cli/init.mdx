@@ -30,56 +30,45 @@ ministr init --interactive
 
 | Platform | Rules File | Hooks File | Format |
 |----------|-----------|------------|--------|
-| Claude Code | `.claude/rules/ministr-scope.md`, `ministr-playbook.md`, `tools.md` | `.claude/settings.json` | Markdown rules + JSON PreToolUse hooks |
+| Claude Code | `.claude/rules/ministr-scope.md`, `ministr-playbook.md`, `tools.md` | `.claude/settings.json` + `.claude/hooks/steer-to-ministr.sh` | Markdown rules + JSON PreToolUse hooks |
 | Cursor | `.cursor/rules/ministr.mdc` | `.cursor/hooks.json` | MDC rules + JSON hooks |
 | GitHub Copilot | `.github/copilot-instructions.md` | `.github/hooks/ministr-enforce.json` | Markdown instructions + JSON hooks |
-| Windsurf | `.windsurf/rules/ministr.md` | `.windsurf/hooks.json` | Markdown rules + JSON hooks |
+| Windsurf | `windsurf/rules/ministr.md` | `.windsurf/hooks.json` | Markdown rules + JSON hooks |
 | Continue.dev | `.continue/rules/ministr.md` | — | Markdown rules only |
 | Universal | `AGENTS.md` | — | Markdown (agent-agnostic) |
 
-## Hook Formats
+(Windsurf rules live in `windsurf/rules/` — no leading dot — while its hooks file is `.windsurf/hooks.json`. Project-language and `[agent]` custom rules, when present, are added alongside the rules above as `ministr-lang-rules.md` / `ministr-custom.md`.)
 
-### Claude Code (`.claude/settings.json`)
+## How the hooks behave
 
-PreToolUse hooks block Glob, Grep, and Bash search commands, forcing agents to use ministr semantic search tools instead.
+The hooks **steer**, they don't wall. The intent is to make ministr the path of least resistance without ever blocking legitimate work or prompting an autonomous agent for a yes/no.
 
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Glob|Grep",
-        "command": "...",
-        "action": "deny"
-      }
-    ]
-  }
-}
-```
+### Claude Code (`.claude/settings.json` + `.claude/hooks/steer-to-ministr.sh`)
 
-### Cursor (`.cursor/hooks.json`)
+`settings.json` registers PreToolUse matchers that delegate every decision to the committed `steer-to-ministr.sh` script:
 
-Blocks shell-based search and find commands in terminal tool calls.
+- The built-in **`Grep` / `Glob` tools are declined**, with a one-line pointer to `ministr_survey` / `ministr_symbols` (ministr always has an equivalent, so this is frictionless).
+- A **leading** shell `grep`/`rg`/`find`/etc. is **allowed** with an advisory hint — never blocked, never a prompt.
+- Pipelines and compound commands (`cargo test | grep`, `git log | tail`) are **not intercepted** at all.
 
 ### GitHub Copilot (`.github/hooks/ministr-enforce.json`)
 
-Same enforcement pattern adapted for Copilot CLI and Copilot cloud agents.
+Same model as Claude, adapted for Copilot CLI and cloud agents: the `Grep`/`Glob` tools are declined; leading shell `grep`/`find` is allowed with a hint.
+
+### Cursor (`.cursor/hooks.json`) and Windsurf (`.windsurf/hooks.json`)
+
+Advisory only. These platforms expose a shell hook but no tool-level deny, so the hook prints a "prefer ministr" hint on a leading `grep`/`find` and always allows the command.
 
 ## File Behavior
 
 - **Advisory files** (`.md`, `.mdc`) are created if missing but **never overwritten** — you can customize them freely.
-- **Machine-generated hook files** (`.json`) are **auto-healed** — if the on-disk content differs from the current template, ministr overwrites it to ensure enforcement stays current.
+- **Machine-generated hook files** (the `.json` files and the steer script) are **auto-healed** — if the on-disk content differs from the current template, `ministr init` rewrites it so the steering stays current.
 
 ## Interactive Mode
 
-`ministr init --interactive` launches a guided wizard that prompts for:
+`ministr init --interactive` launches a guided wizard that walks through project-type confirmation and a review of the platforms it will configure, then writes `.ministr.toml` and scaffolds the agent configs.
 
-1. **Project type confirmation** — auto-detected, with option to override
-2. **Agent platforms** — multi-select checkboxes for which platforms to configure
-3. **Hook strictness level**:
-   - **Strict** — block Grep/Glob/Bash search outright (recommended)
-   - **Moderate** — warn on blocked tools, allow with confirmation
-   - **Advisory** — suggest ministr tools, never block
+The scaffold itself is the single steering design described in [How the hooks behave](#how-the-hooks-behave) — there is no separate "hard-block" mode. `--interactive` is a confirmation flow around the same output as plain `ministr init`; non-interactive `ministr init` is the common path.
 
 ## Custom Rules
 
@@ -104,8 +93,8 @@ ministr auto-detects project languages and generates `ministr-lang-rules.md` wit
 **Q: `.ministr.toml` already exists**
 Use `--force` to overwrite, or edit it manually.
 
-**Q: Hooks aren't blocking search tools**
-Run `ministr hooks test` to validate hook installation and simulate tool calls.
+**Q: The agent still ran `grep` / `find`**
+That's expected — leading shell `grep`/`find` is allowed with a hint, not blocked, and pipelines are never intercepted. Only the built-in `Grep`/`Glob` tools are declined (Claude Code, Copilot). Run `ministr hooks test` to see exactly how each platform is steered.
 
 **Q: Agent ignores ministr rules**
 Check that your agent platform reads from the correct rules directory. Run `ministr init` again to re-scaffold (advisory files are preserved, hooks are auto-healed).
