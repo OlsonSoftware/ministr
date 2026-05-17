@@ -5,15 +5,18 @@ this **before** the optimized workflows can use the big runner; until you
 do, every job falls back to free `ubuntu-latest` (correct, just slow / may
 OOM on the 3 heavy jobs).
 
-You configure two things:
+You configure up to three things:
 
-1. **A large runner** the heavy jobs target (self-hosted *or* GitHub-hosted larger).
-2. **A Cloudflare R2 bucket** for the shared `sccache` compile cache.
+1. **A large Linux runner** the heavy CI jobs target — **Path A** (self-hosted) or **Path B** (GitHub-hosted larger).
+2. **A Cloudflare R2 bucket** for the shared `sccache` compile cache (S1).
+3. *(Optional, recommended)* **A self-hosted Windows runner on your own machine** — **Path C** — for the slow tagged-release Windows builds.
 
-Then you set **one Actions variable + four secrets** (plus an optional
-second variable for a Windows release runner) so the workflows pick it
-all up. No YAML edits on your side — the workflows read `vars.CI_RUNNER`,
-the optional `vars.CI_RUNNER_WINDOWS`, and the `SCCACHE_*` secrets.
+Then you set the Actions **variables + secrets** in S2 so the workflows
+pick it all up. No YAML edits on your side — the workflows read
+`vars.CI_RUNNER`, the optional `vars.CI_RUNNER_WINDOWS`, and the
+`SCCACHE_*` secrets. Every input is independent and optional: an unset
+variable just falls back to a GitHub-hosted runner, so partial setup
+never breaks CI.
 
 > Why: only 3 CI jobs (`rust-dev`, `rust-release`, `docker-build`) compile
 > the Rust workspace; they're path-gated so they only run on Rust-source
@@ -113,37 +116,203 @@ The debug `--all-targets` tree is large. Add a weekly prune as `gha`:
 
 ---
 
-## Path C — Windows release runner (optional, recommended)
+## Path C — Self-hosted Windows runner (your local machine)
 
-`release.yml`'s **Windows** shards (CLI `.zip` + the Tauri desktop
-`.exe`: sidecar build with `directml` + NSIS bundling, all while
-Defender real-time-scans every `.rmeta`) are **by far the slowest
-release build**. Only runs on `v*` tags, so it's infrequent — but when
-it runs it dominates the release wall-clock. Speeding it up is the
-single biggest release-time win after the Linux runner.
+`release.yml`'s **Windows** shards are **by far the slowest release
+build**: the CLI `.zip` plus the Tauri desktop `.exe` (CLI sidecar
+compiled with `--features directml`, then NSIS bundling) — all while
+Defender real-time-scans every `.rmeta`/`.obj`. They only run on `v*`
+tags, so the runner is **idle ~all the time** and only works during a
+release. Running it on your own Windows 11 box (the one this repo lives
+on) is the single biggest release-time win after the Linux runner, at
+zero recurring cost.
 
-You **cannot** fold this into the Linux box — Windows artifacts need a
-Windows host. Pick one:
+> **Scope:** this runner serves **only** the two Windows shards in
+> `release.yml` (`cli` → `x86_64-pc-windows-msvc`, `desktop` →
+> `windows-x86_64`). It does **not** run `ci.yml` — those jobs execute
+> inside a Linux `container:` and require a Linux runner. So nothing
+> here affects day-to-day PR CI; it just makes tagged releases fast.
 
-**C-i. GitHub-hosted Windows larger runner** (zero ops)
-1. Org → Settings → Actions → Runners → **New GitHub-hosted runner**.
-2. Name: `ministr-windows`. Platform: **Windows**, Image: Windows Server 2025.
-3. Size: **8-vcpu (32 GB)** — the build is I/O- and Defender-bound more than RAM-bound; 8 vCPU is the sweet spot.
-4. Runner group `ministr-rust` (or a new one), repository access → `OlsonSoftware/ministr`.
-5. Label = its name: `ministr-windows`.
+### C0. (Recommended) Isolate the runner
 
-**C-ii. Self-hosted Windows box**
-- Any Windows 11 / Server 2022+ machine, 8+ vCPU / 32 GB / 150 GB SSD.
-- Install the Actions runner as a service with `--labels ministr-windows`.
-- Add a Defender exclusion for the work dir (the workflow also does this per-run, but a permanent host exclusion compounds the speedup):
+A self-hosted runner executes whatever the workflow + every build
+script + every transitive crate's `build.rs` does, with your user's
+privileges. The repo is private (org-only authors), so the realistic
+threat is **supply-chain / build-script** rather than fork PRs — but
+you still don't want that touching your dev box directly. Windows 11
+**Pro** (what you run) gives you two native, no-cost sandboxes:
+
+| | **Hyper-V VM** — recommended | **Windows Sandbox** |
+|---|---|---|
+| Persistence | Yes (warm toolchain, runs as a boot service) | None — wiped on close |
+| Isolation | Full VM (separate kernel/disk/network) | Full VM, disposable |
+| Best for | A runner that's online for releases | One-off "spin up just before tagging" |
+| Cost | $0 | $0 |
+
+**Recommended: a dedicated Hyper-V VM.** It's a real, isolated machine
+that keeps the toolchain warm and runs the runner service at boot, with
+none of the build touching your host:
+
+1. Enable Hyper-V (elevated PowerShell, one-time, reboots):
+   ```powershell
+   Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
+   ```
+2. Hyper-V Manager → **Quick Create** → *Windows 11 dev environment*
+   (or your own Win11 ISO). Give it **8 vCPU / 16 GB / 120 GB** dynamic
+   disk, Default Switch (NAT networking is enough — the runner only
+   makes outbound HTTPS to GitHub).
+3. **Snapshot** ("checkpoint") the clean VM before installing anything,
+   so you can revert after a bad dependency.
+4. Do **C1–C4 below inside the VM**, not on your host. The host stays
+   pristine; the only thing crossing the boundary is the runner's
+   outbound connection to GitHub.
+
+**Alternative: Windows Sandbox** (fully disposable, zero residue) — good
+if you'd rather have *nothing* persist and just launch it before a
+release. Caveats tailored to our build: it's **ephemeral**, so every
+release is a cold build (no cargo/sccache cache survives — acceptable
+since Windows releases are infrequent), and you must auto-provision it
+each launch via a `.wsb` config with a `<LogonCommand>` that installs
+the prereqs + registers an `--ephemeral` runner with a fresh token.
+Enable once with:
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName "Containers-DisposableClientVM" -All
+```
+Then C1–C4 run inside the Sandbox session (add `--ephemeral` to the
+`config.cmd` in C4 so the runner deregisters after one job and the
+next launch starts clean).
+
+> No GPU is needed in either sandbox: `--features directml` only
+> *compiles* the DirectML bindings; nothing in the Windows release
+> shards runs GPU inference. Plain VM/Sandbox CPU is fine.
+
+If you accept the risk and skip isolation, run C1–C4 directly on the
+host — the Defender exclusions in C2 are then scoped as tightly as
+possible, but the build still runs as your user.
+
+### C1. Prerequisites (install once, in order)
+
+> If you chose C0's Hyper-V VM or Windows Sandbox, run **C1–C4 inside
+> that sandbox**, not on the host.
+
+Run an **elevated PowerShell** (`Win+X` → *Terminal (Admin)*). These
+match exactly what the `release.yml` Windows steps assume a runner has —
+GitHub's hosted `windows-latest` ships them; your box must too.
+
+```powershell
+# winget is built into Windows 11 Pro. Accept source agreements once.
+winget install --id Git.Git              -e --accept-source-agreements --accept-package-agreements
+winget install --id Microsoft.PowerShell -e   # `pwsh` 7 — release.yml has `shell: pwsh` steps
+winget install --id Kitware.CMake        -e   # ort-sys / tree-sitter build scripts
+winget install --id Rustlang.Rustup      -e
+# C/C++ toolchain for the native deps (ort-sys, tokenizers/esaxx C++,
+# tree-sitter C, libsqlite3-sys). The C++ workload includes MSVC + the
+# Windows 11 SDK.
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+Then, in a **new** terminal so PATH refreshes:
+
+```powershell
+rustup default stable
+rustup target add x86_64-pc-windows-msvc      # the only target these shards build
+rustc --version ; cmake --version ; bash --version ; pwsh --version
+```
+
+Why each matters (don't skip — each maps to a real `release.yml` step):
+
+- **Git for Windows** → provides `bash`. `release.yml`'s "Build release
+  binary" and "Use lld linker" steps are `shell: bash`; without Git
+  Bash on PATH they fail outright.
+- **PowerShell 7 (`pwsh`)** → the "Disable Defender" and "Package
+  (Windows)" steps are `shell: pwsh` (not Windows PowerShell 5.1, which
+  is all Win11 ships by default).
+- **VS 2022 Build Tools (VCTools)** → MSVC `cl.exe` + Windows SDK for
+  the native C/C++ crates. (Linking itself uses bundled `rust-lld`,
+  which the workflow configures and which ships with the Rust
+  toolchain — no extra install.)
+- **CMake** → `ort-sys` and several `tree-sitter-*` build scripts.
+- **WebView2 Runtime** → required by the Tauri desktop bundle. Windows
+  11 ships the Evergreen runtime preinstalled; verify with:
   ```powershell
-  Add-MpPreference -ExclusionPath "C:\actions-runner\_work"
+  Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" -EA SilentlyContinue
   ```
+  If that returns nothing, install **Microsoft Edge WebView2 Runtime**
+  (Evergreen Standalone) from Microsoft.
+- **Node / pnpm** → *not* preinstalled here on purpose: the desktop
+  shard's `actions/setup-node@v4` (Node 22) and `pnpm/action-setup@v4`
+  (pnpm 10) provision them per-run and work fine on a self-hosted
+  runner. Leave it to the workflow.
 
-Either way the **label/name is `ministr-windows`** — that's all the
-workflow needs.
+### C2. Permanent Defender exclusions
 
-→ Continue to **Shared steps** below.
+`release.yml` adds these per-run, but setting them **permanently** on
+the host removes the scan tax from the *entire* build, not just after
+the exclusion step runs. Elevated PowerShell:
+
+```powershell
+$work = "C:\actions-runner\_work"
+New-Item -ItemType Directory -Force -Path $work | Out-Null
+Add-MpPreference -ExclusionPath $work
+Add-MpPreference -ExclusionPath "$env:USERPROFILE\.cargo"
+Add-MpPreference -ExclusionPath "$env:USERPROFILE\.rustup"
+foreach ($p in 'rustc.exe','cargo.exe','link.exe','lld-link.exe','cl.exe','sccache.exe') {
+  Add-MpPreference -ExclusionProcess $p
+}
+```
+
+> This is your dev machine — these exclusions are scoped to the runner
+> work dir + the Rust toolchain dirs + compiler processes, not
+> system-wide. Keep ≥ 30 GB free where the runner lives (release
+> `target/` for ORT/tokenizers/tauri is ~10 GB).
+
+### C3. Create the org runner group (scoped to this repo)
+
+GitHub → **OlsonSoftware org** → **Settings** → **Actions** → **Runner
+groups**. Reuse **`ministr-rust`** if you already made it for the Linux
+runner (it's already scoped to `OlsonSoftware/ministr`); otherwise
+create it now with *Repository access → Selected → OlsonSoftware/ministr*.
+
+### C4. Register the runner as a Windows service
+
+GitHub → org → Settings → Actions → Runners → **New runner** → **New
+self-hosted runner** → **Windows / x64**. Copy the registration token it
+shows, then in an **elevated PowerShell**:
+
+```powershell
+mkdir C:\actions-runner; cd C:\actions-runner
+$ver = (Invoke-RestMethod https://api.github.com/repos/actions/runner/releases/latest).tag_name.TrimStart('v')
+Invoke-WebRequest -Uri "https://github.com/actions/runner/releases/download/v$ver/actions-runner-win-x64-$ver.zip" -OutFile runner.zip
+Expand-Archive -Path runner.zip -DestinationPath . -Force; Remove-Item runner.zip
+
+.\config.cmd `
+  --url https://github.com/OlsonSoftware/ministr `
+  --token <REGISTRATION_TOKEN> `
+  --runnergroup ministr-rust `
+  --labels ministr-windows `
+  --name "ministr-win-$env:COMPUTERNAME" `
+  --work _work `
+  --runasservice `
+  --unattended --replace
+```
+
+- `--runasservice` installs it as the `actions.runner.*` Windows
+  service → it auto-starts at boot and is online whenever your machine
+  is, with no console window. Manage it later via `services.msc` or
+  `.\svc.cmd status|stop|start`.
+- The **label `ministr-windows`** is the only thing the workflow keys
+  off (via `vars.CI_RUNNER_WINDOWS`).
+- Get a fresh `<REGISTRATION_TOKEN>` from the *New runner* page each
+  time (single-use, ~1 h TTL).
+
+> Optional — parallelism: a tagged release runs the **cli** and
+> **desktop** Windows shards concurrently. One runner service runs them
+> one-after-the-other (fine; releases are rare). For true parallel,
+> repeat C4 into `C:\actions-runner-2` with `--name ministr-win-2`
+> (same label/group).
+
+→ Continue to **Shared steps** below (S2 is where you set
+`CI_RUNNER_WINDOWS = ministr-windows`).
 
 ---
 
@@ -184,10 +353,16 @@ No change needed — it stays green when path-gated jobs are skipped. Just
 confirm it's still the required check after these workflow updates land.
 
 ### S4. Verify
+
+**Linux runner / sccache:**
 1. Push a trivial Rust change (e.g. a comment in `ministr-core/src/lib.rs`) on a branch → open a PR.
-2. Actions tab: `rust-dev` / `rust-release` should run **on `ministr-rust`** (check the runner name in the job log header), `fmt` / `security` / `changes` on `ubuntu-latest`. (Windows routing only shows on a `v*` tag release run — confirm the `Desktop windows-x86_64` / `CLI …windows…` shards land on `ministr-windows` if you set `CI_RUNNER_WINDOWS`.)
-3. First run is a cold sccache (slow-ish). Second push on the same branch should show `sccache` cache hits in the `rust-dev` log and finish in ~3–5 min.
-4. Docs-only or markdown pushes: confirm `rust-*` are **skipped** (no big-runner spend).
+2. Actions tab: `rust-dev` / `rust-release` run **on `ministr-rust`** (check the runner name in the job log header); `fmt` / `security` / `changes` on `ubuntu-latest`.
+3. First run is a cold sccache. A second push on the same branch should show `sccache` hits in the `rust-dev` log and finish in ~3–5 min.
+4. Docs-only / markdown pushes: confirm `rust-*` are **skipped** (no big-runner spend).
+
+**Windows runner (Path C):**
+5. Confirm the runner is **Idle** (green) at org → Settings → Actions → Runners — it stays idle until a tag.
+6. Cut a prerelease tag to exercise it without shipping: `git tag v0.0.0-rc.test && git push origin v0.0.0-rc.test`. In the **Release** workflow run, the `CLI x86_64-pc-windows-msvc` and `Desktop windows-x86_64` jobs should show your machine's runner name (`ministr-win-…`); the other shards stay on hosted macOS/Linux. Delete the test tag/release afterwards (`git push origin :v0.0.0-rc.test`).
 
 ---
 
@@ -198,9 +373,12 @@ confirm it's still the required check after these workflow updates land.
 | A: Hetzner CCX43 self-hosted | ~$77 flat + ~$7 platform fee | $0 marginal |
 | A: Hetzner CCX33 (8/32) | ~$40 flat | $0 marginal |
 | B: GitHub 16-vcpu larger | $0 idle | ~$0.30–0.60 (sccache-warm) |
+| C: Windows on your own box | **$0** (electricity) | $0 — only runs on `v*` tags |
 | Non-Rust / docs pushes | — | $0 (path-gated) |
 | R2 sccache storage | ~$0 (a few GB, no egress) | — |
 
-Once `CI_RUNNER` is set and the secrets exist, the optimized workflows
-(already committed on the `feat/unified-installer-experience` branch) use
-all of this automatically.
+Once `CI_RUNNER` / `CI_RUNNER_WINDOWS` are set (and the secrets exist),
+the optimized workflows — already committed on the
+`feat/unified-installer-experience` branch — use all of this
+automatically. Every input is optional and degrades gracefully: an
+unset variable just falls back to the GitHub-hosted runner.
