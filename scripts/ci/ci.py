@@ -74,14 +74,133 @@ def cmd_build(a: argparse.Namespace) -> None:
 
 
 def cmd_package_cli(a: argparse.Namespace) -> None:
+    """Archive the built CLI binary. `.zip` (Windows) or `.tar.gz`
+    (Unix) is chosen by the archive name — ONE cross-platform path,
+    no per-OS workflow steps."""
     src = REPO / "target" / a.target / "release" / a.binary
     if not src.is_file():
         sys.exit(f"binary not found: {src}")
     dst = REPO / a.archive
-    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
-        z.write(src, arcname=src.name)
+    if a.archive.endswith(".zip"):
+        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(src, arcname=src.name)
+    elif a.archive.endswith((".tar.gz", ".tgz")):
+        import tarfile
+
+        with tarfile.open(dst, "w:gz") as t:
+            t.add(src, arcname=src.name)
+    else:
+        sys.exit(f"unsupported archive type: {a.archive}")
     print(f"packaged {src} -> {dst}")
     sha256_companion(dst)
+
+
+def cmd_checksums(a: argparse.Namespace) -> None:
+    """Aggregate one SHA256SUMS over every release artifact in a dir
+    (replaces the inline bash in release.yml's `release` job)."""
+    d = Path(a.dir).resolve()
+    exts = (".tar.gz", ".tgz", ".zip", ".pkg", ".exe", ".deb", ".rpm", ".AppImage")
+    lines: list[str] = []
+    for p in sorted(d.iterdir()):
+        if p.is_file() and p.name.endswith(exts):
+            h = hashlib.sha256()
+            with p.open("rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            lines.append(f"{h.hexdigest()}  {p.name}")
+    out = d / "SHA256SUMS"
+    out.write_text("\n".join(lines) + "\n", encoding="ascii")
+    print(out.read_text(encoding="ascii"))
+
+
+def cmd_pkg(a: argparse.Namespace) -> None:
+    """Build a signed + notarized macOS .pkg from the Tauri .app.
+
+    Single Python implementation of the old inline release.yml bash:
+    pkgbuild (component + postinstall CLI symlink) -> productbuild
+    (signed) -> notarytool --wait -> stapler. Env carries the Apple
+    secrets (same names as before). macOS only."""
+    if sys.platform != "darwin":
+        sys.exit("pkg is macOS-only")
+    import tempfile
+    import uuid
+
+    env = os.environ
+    app = REPO / "target/aarch64-apple-darwin/release/bundle/macos/ministr.app"
+    if not app.is_dir():
+        sys.exit(f"ministr.app not found at {app}")
+    version = env["GITHUB_REF_NAME"].lstrip("v")
+    rt = Path(env["RUNNER_TEMP"])
+    keychain = rt / "installer-signing.keychain-db"
+    kc_pw = str(uuid.uuid4())
+    cert = rt / "installer-cert.p12"
+    scripts = rt / "pkg-scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "postinstall").write_text(
+        "#!/bin/bash\nset -e\n"
+        "TARGET=/Applications/ministr.app/Contents/MacOS/ministr-cli\n"
+        "LINK=/usr/local/bin/ministr\nmkdir -p /usr/local/bin\n"
+        'if [ -L "$LINK" ]; then\n'
+        '  cur=$(readlink "$LINK")\n'
+        '  if [ "$cur" = "$TARGET" ]; then ln -sf "$TARGET" "$LINK"; '
+        'else echo "ministr: leaving $LINK ($cur)" >&2; fi\n'
+        'elif [ -e "$LINK" ]; then echo "ministr: leaving $LINK" >&2\n'
+        'else ln -s "$TARGET" "$LINK"; fi\nexit 0\n',
+        encoding="utf-8",
+    )
+    os.chmod(scripts / "postinstall", 0o755)
+
+    def sh(cmd: list[str], **kw):
+        print("+ " + " ".join(cmd), flush=True)
+        subprocess.run(cmd, check=True, **kw)
+
+    try:
+        sh(["security", "create-keychain", "-p", kc_pw, str(keychain)])
+        sh(["security", "set-keychain-settings", "-lut", "21600", str(keychain)])
+        sh(["security", "unlock-keychain", "-p", kc_pw, str(keychain)])
+        existing = subprocess.check_output(
+            ["security", "list-keychains", "-d", "user"], text=True
+        )
+        kcs = [x.strip().strip('"') for x in existing.split()] + [str(keychain)]
+        sh(["security", "list-keychains", "-d", "user", "-s", *kcs])
+        cert.write_bytes(
+            __import__("base64").b64decode(env["APPLE_INSTALLER_CERTIFICATE"])
+        )
+        sh([
+            "security", "import", str(cert), "-P",
+            env["APPLE_INSTALLER_CERTIFICATE_PASSWORD"],
+            "-A", "-t", "cert", "-f", "pkcs12", "-k", str(keychain),
+        ])
+        sh([
+            "security", "set-key-partition-list", "-S", "apple-tool:,apple:",
+            "-s", "-k", kc_pw, str(keychain),
+        ])
+        comp = rt / "ministr-component.pkg"
+        sh([
+            "pkgbuild", "--component", str(app), "--install-location",
+            "/Applications", "--identifier", "ai.ministr.desktop",
+            "--version", version, "--scripts", str(scripts), str(comp),
+        ])
+        out = REPO / "_bundles"
+        out.mkdir(exist_ok=True)
+        dist = out / "ministr-desktop-aarch64-apple-darwin.pkg"
+        sh([
+            "productbuild", "--package", str(comp), "--sign",
+            env["APPLE_INSTALLER_SIGNING_IDENTITY"], "--keychain",
+            str(keychain), str(dist),
+        ])
+        sh([
+            "xcrun", "notarytool", "submit", str(dist), "--apple-id",
+            env["APPLE_ID"], "--password", env["APPLE_PASSWORD"],
+            "--team-id", env["APPLE_TEAM_ID"], "--wait",
+        ])
+        sh(["xcrun", "stapler", "staple", str(dist)])
+        sha256_companion(dist)
+    finally:
+        subprocess.run(
+            ["security", "delete-keychain", str(keychain)],
+            stderr=subprocess.DEVNULL,
+        )
 
 
 def cmd_stage_sidecar(a: argparse.Namespace) -> None:
@@ -151,6 +270,12 @@ def main() -> None:
     cb.add_argument("--target-dir", required=True)
     cb.add_argument("--triple", required=True)
     cb.set_defaults(fn=cmd_collect_bundles)
+
+    ck = sub.add_parser("checksums")
+    ck.add_argument("--dir", required=True)
+    ck.set_defaults(fn=cmd_checksums)
+
+    sub.add_parser("pkg").set_defaults(fn=cmd_pkg)
 
     args = p.parse_args()
     args.fn(args)

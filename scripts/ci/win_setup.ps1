@@ -81,4 +81,31 @@ try {
   Write-Host "Defender exclusions skipped (non-fatal): $($_.Exception.Message)"
 }
 
+# --- sccache + R2 wiring (parity with the Linux/macOS rust-env action)
+#     so Windows release compiles are warm-cached too. Secrets arrive
+#     via the step `env:` block; absent → sccache falls back to a local
+#     on-disk cache (harmless).
+if (-not (Have 'sccache')) {
+  Write-Host 'sccache: not found — installing'
+  if (Have 'cargo-binstall') {
+    cargo binstall --no-confirm --no-symlinks sccache
+  } else {
+    cargo install sccache --locked
+  }
+}
+Write-Host "sccache: $(sccache --version 2>&1)"
+if ($env:GITHUB_ENV) {
+  Add-Content -Path $env:GITHUB_ENV -Value 'RUSTC_WRAPPER=sccache'
+  Add-Content -Path $env:GITHUB_ENV -Value 'SCCACHE_REGION=auto'
+  if ($env:SCCACHE_BUCKET) {
+    Add-Content -Path $env:GITHUB_ENV -Value "SCCACHE_BUCKET=$env:SCCACHE_BUCKET"
+    Add-Content -Path $env:GITHUB_ENV -Value "SCCACHE_ENDPOINT=$env:SCCACHE_ENDPOINT"
+    Add-Content -Path $env:GITHUB_ENV -Value "AWS_ACCESS_KEY_ID=$env:AWS_ACCESS_KEY_ID"
+    Add-Content -Path $env:GITHUB_ENV -Value "AWS_SECRET_ACCESS_KEY=$env:AWS_SECRET_ACCESS_KEY"
+    Write-Host "sccache -> R2 bucket '$env:SCCACHE_BUCKET'"
+  } else {
+    Write-Host 'sccache -> local on-disk cache (no R2 secrets)'
+  }
+}
+
 Write-Host '== bootstrap OK =='
