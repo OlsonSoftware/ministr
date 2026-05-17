@@ -1,0 +1,94 @@
+name: Release-plz
+
+# Automated release pipeline (see RELEASE.md / release-plz.toml).
+#
+#   push to main ──▶ release-plz-pr   : opens/updates the "release" PR
+#                                       (version bump + CHANGELOG)
+#   merge that PR ─▶ release-plz-release : pushes one `vX.Y.Z` tag
+#       └──────────▶ release.yml (tag trigger) builds artifacts + Release
+#
+# Deliberate deviations from the upstream quickstart, all required by
+# *our* setup (private repo, crates.io disabled, custom release.yml):
+#
+#  * No CARGO_REGISTRY_TOKEN — release-plz.toml sets `publish = false`,
+#    so nothing is published to a cargo registry; the token would be
+#    unused. (Upstream's "private registry" note means a private *cargo*
+#    registry, not a private GitHub repo — not our case.)
+#  * RELEASE_PLZ_TOKEN PAT instead of the default GITHUB_TOKEN: a tag
+#    pushed by GITHUB_TOKEN can't trigger another workflow, so
+#    release.yml would never fire. The PAT (Contents: RW, Pull
+#    requests: RW) also lets the Release PR run CI and sidesteps the
+#    "allow Actions to create PRs" org toggle (the PAT's user authors
+#    the PR). If you ever switch back to GITHUB_TOKEN, you must enable
+#    Settings → Actions → "Allow GitHub Actions to create and approve
+#    pull requests".
+#  * git_release_enable=false in release-plz.toml — release.yml already
+#    creates the single GitHub Release with every artifact on the tag.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # Open/refresh the release PR: version bump + CHANGELOG from commits.
+  release-plz-pr:
+    name: Release PR
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'OlsonSoftware' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    # Serialize PR runs (never cancel — cancel-in-progress:false) so a
+    # burst of pushes can't race two `release-pr` updates. NOT applied to
+    # the release job: a release must never be skipped/queued away.
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
+        with:
+          # Required when pinned by SHA: the action infers the channel
+          # from the `@stable` ref name, which a commit SHA can't convey.
+          toolchain: stable
+      - uses: release-plz/action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5.129
+        with:
+          command: release-pr
+          config: release-plz.toml
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+  # After the release PR merges, push the single `vX.Y.Z` tag. No
+  # crates.io publish (release-plz.toml `publish = false`), no GitHub
+  # Release here (release.yml makes it on the tag).
+  release-plz-release:
+    name: Release tag
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'OlsonSoftware' }}
+    permissions:
+      contents: write          # push the tag
+      pull-requests: read      # detect the merged release PR + its commits
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
+        with:
+          # Required when pinned by SHA: the action infers the channel
+          # from the `@stable` ref name, which a commit SHA can't convey.
+          toolchain: stable
+      - uses: release-plz/action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5.129
+        with:
+          command: release
+          config: release-plz.toml
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}

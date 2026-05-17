@@ -65,7 +65,16 @@
           "libwebkit2gtk-4.1-0",
           "libgtk-3-0"
         ],
-        "section": "utils"
+        "section": "utils",
+        "postInstallScript": "scripts/linux-postinstall.sh"
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3"
+        ],
+        "release": "1",
+        "postInstallScript": "scripts/linux-postinstall.sh"
       },
       "appimage": {
         "bundleMediaFramework": true

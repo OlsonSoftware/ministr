@@ -6,6 +6,11 @@
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
 
+# Vendored third-party source — exclude from language stats and collapse
+# the huge generated tree-sitter parser.c in diffs/reviews.
+third_party/** linguist-vendored
+third_party/tree-sitter-unreal-cpp/src/parser.c -diff -merge
+
 # Binary files — no line ending conversion.
 *.exe binary
 *.dll binary

@@ -342,6 +342,139 @@ pub async fn should_show_onboarding() -> Result<bool, CommandError> {
     Ok(!sentinel.exists())
 }
 
+/// First-run setup state, surfaced to the branded setup wizard so it can
+/// show real status (and a "Fix PATH" affordance) instead of guessing.
+/// Rendered identically on macOS / Windows / Linux.
+#[derive(Serialize)]
+pub struct SetupStatus {
+    /// A working `ministr` binary is resolvable (canonical bin dir,
+    /// `/usr/local/bin`, or on `PATH`).
+    pub cli_on_path: bool,
+    /// Absolute path to the resolved CLI, when found.
+    pub cli_path: Option<String>,
+    /// `~/.ministr` — where corpora, the daemon socket, and markers live.
+    pub data_dir: String,
+    /// The app/CLI version this build expects.
+    pub version: String,
+}
+
+/// True only if `p` is a regular file we could actually execute — not a
+/// directory, and on Unix it must carry an exec bit. Guards against
+/// reporting `cli_on_path = true` for a path that `fix_path` would then
+/// fail to spawn.
+fn is_usable_cli(p: &std::path::Path) -> bool {
+    if !p.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// Resolve a usable `ministr` CLI the same way the rest of the app does:
+/// canonical `~/.ministr/bin`, the `.pkg`/Linux-package symlink at
+/// `/usr/local/bin`, then `PATH`. Every candidate must pass
+/// [`is_usable_cli`]; the `PATH` lookup reuses [`which_on_path`], which
+/// is `PATHEXT`-aware (so a Windows `.cmd`/`.bat` shim resolves with its
+/// real extension and `fix_path` can route it through `cmd /c`).
+fn resolve_cli_path() -> Option<std::path::PathBuf> {
+    let bin_dir = ministr_api::daemon_data_dir().join("bin");
+
+    // On Windows the first-run `install_cli_binary` (setup.rs) stages the
+    // sidecar as `ministr` (no extension), while a native installer drops
+    // `ministr.exe` — probe both, mirroring setup.rs::ensure_path, so we
+    // don't false-negative "CLI not found".
+    let mut candidates = if cfg!(windows) {
+        vec![bin_dir.join("ministr.exe"), bin_dir.join("ministr")]
+    } else {
+        vec![bin_dir.join("ministr")]
+    };
+    if !cfg!(windows) {
+        candidates.push(std::path::PathBuf::from("/usr/local/bin/ministr"));
+    }
+    for c in candidates {
+        if is_usable_cli(&c) {
+            return Some(c);
+        }
+    }
+
+    // Last resort: PATH. which_on_path is PATHEXT-aware on Windows, but
+    // only guarantees is_file() — re-run is_usable_cli so a
+    // non-executable Unix file on PATH can't make cli_on_path=true and
+    // then EACCES in fix_path.
+    which_on_path("ministr")
+        .map(std::path::PathBuf::from)
+        .filter(|p| is_usable_cli(p))
+}
+
+/// Report first-run setup state for the setup wizard.
+#[tauri::command]
+pub async fn setup_status() -> Result<SetupStatus, CommandError> {
+    let cli = resolve_cli_path();
+    Ok(SetupStatus {
+        cli_on_path: cli.is_some(),
+        cli_path: cli.map(|p| p.display().to_string()),
+        data_dir: ministr_api::daemon_data_dir().display().to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+/// Wire `ministr` onto the user's PATH by invoking the CLI's own `setup`
+/// subcommand (the `onpath` crate — same surface the installers use, so
+/// re-running is idempotent). Backs the wizard's "Fix PATH" action.
+#[tauri::command]
+pub async fn fix_path() -> Result<String, CommandError> {
+    let cli = resolve_cli_path().ok_or_else(|| CommandError {
+        kind: ErrorKind::NotFound,
+        message: "ministr CLI not found — reinstall the app and try again".to_string(),
+    })?;
+
+    // A `.cmd`/`.bat` shim (possible when resolved off PATH on Windows)
+    // can't be spawned directly — Rust ≥1.77 hard-errors; it must go via
+    // `cmd /c`. Mirrors `test_via_cli`. Suppress the console flash from
+    // this GUI process.
+    let mut command;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let is_script = cli
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+        if is_script {
+            command = std::process::Command::new("cmd");
+            command.arg("/c").arg(&cli).arg("setup");
+        } else {
+            command = std::process::Command::new(&cli);
+            command.arg("setup");
+        }
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        command = std::process::Command::new(&cli);
+        command.arg("setup");
+    }
+
+    let out = command.output().map_err(CommandError::from)?;
+    if !out.status.success() {
+        return Err(CommandError {
+            kind: ErrorKind::Internal,
+            message: format!(
+                "`ministr setup` failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 /// Dismiss the onboarding screen.
 #[tauri::command]
 pub async fn dismiss_onboarding() -> Result<(), CommandError> {
@@ -1177,8 +1310,7 @@ pub async fn indexing_progress_events(
             let now_ms = u64::try_from(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0),
+                    .map_or(0, |d| d.as_millis()),
             )
             .unwrap_or(u64::MAX);
 

@@ -1,0 +1,50 @@
+{
+  "grammars": [
+    {
+      "name": "cpp",
+      "camelcase": "CPP",
+      "scope": "source.cpp",
+      "path": ".",
+      "class-name": "TreeSitterCpp",
+      "abi": 15,
+      "file-types": [
+        "cc",
+        "cpp",
+        "cxx",
+        "hpp",
+        "hxx",
+        "h"
+      ],
+      "highlights": [
+        "node_modules/tree-sitter-c/queries/highlights.scm",
+        "queries/highlights.scm",
+        "after/queries/cpp/highlights.scm"
+      ],
+      "injections": "queries/injections.scm",
+      "tags": "queries/tags.scm",
+      "injection-regex": "^(cc|cpp)$"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "C++ grammar for tree-sitter with Unreal",
+    "authors": [
+     {
+        "name": "taku25",
+        "email": "taku36@gmail.com"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/taku25/tree-sitter-unreal-cpp"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": true,
+    "node": true,
+    "python": true,
+    "rust": true,
+    "swift": true
+  }
+}
