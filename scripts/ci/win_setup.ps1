@@ -1,0 +1,67 @@
+<#
+.SYNOPSIS
+  Idempotent bootstrap for the self-hosted Windows release runner.
+
+  Why this exists: a self-hosted Windows runner has no guaranteed
+  toolchain, and `shell: bash` there resolves to the System32 WSL stub
+  (exits 1 with no distro). So the Windows release path uses ZERO bash:
+  this script (Windows PowerShell 5.1 — always present, no WSL, no pwsh
+  dependency) guarantees Python + the Rust toolchain, and everything
+  after it is Python (scripts/ci/ci.py). dtolnay/rust-toolchain is
+  skipped on Windows precisely because its internal step is `shell:
+  bash`.
+
+  Safe to re-run: every action is guarded (install only if missing).
+
+.PARAMETER Target
+  Rust target triple to ensure is installed (e.g. x86_64-pc-windows-msvc).
+#>
+param([Parameter(Mandatory = $true)][string]$Target)
+
+$ErrorActionPreference = 'Stop'
+function Have($name) { $null -ne (Get-Command $name -ErrorAction SilentlyContinue) }
+
+Write-Host "== Windows runner bootstrap (target=$Target) =="
+
+# --- Python -------------------------------------------------------------
+if (Have 'python') {
+  Write-Host "python: $(python --version 2>&1)"
+} else {
+  Write-Host 'python: not found — installing via winget (--source winget avoids the msstore cert error on fresh VMs)'
+  winget install --id Python.Python.3.12 --source winget -e --silent `
+    --accept-source-agreements --accept-package-agreements
+  # winget PATH changes don't apply to the current process; add the
+  # standard per-user install dir so the rest of this job sees python.
+  $pyDir = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312'
+  if (Test-Path $pyDir) {
+    $env:PATH = "$pyDir;$pyDir\Scripts;$env:PATH"
+    "$pyDir"          | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    "$pyDir\Scripts"  | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+  }
+  if (-not (Have 'python')) { throw 'python still not on PATH after install' }
+  Write-Host "python: $(python --version 2>&1)"
+}
+
+# --- Rust (rustup) ------------------------------------------------------
+if (-not (Have 'rustup')) {
+  Write-Host 'rustup: not found — installing'
+  $ri = Join-Path $env:RUNNER_TEMP 'rustup-init.exe'
+  Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $ri -UseBasicParsing
+  & $ri -y --default-toolchain stable --profile minimal --no-modify-path
+  if ($LASTEXITCODE -ne 0) { throw "rustup-init failed ($LASTEXITCODE)" }
+  $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+  $env:PATH = "$cargoBin;$env:PATH"
+  "$cargoBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+}
+Write-Host "rustup: $(rustup --version 2>&1)"
+
+# Ensure stable + the requested target (idempotent — rustup is a no-op
+# if already present/up to date).
+rustup toolchain install stable --profile minimal --no-self-update
+if ($LASTEXITCODE -ne 0) { throw "rustup toolchain install failed ($LASTEXITCODE)" }
+rustup default stable
+rustup target add $Target
+if ($LASTEXITCODE -ne 0) { throw "rustup target add $Target failed ($LASTEXITCODE)" }
+
+Write-Host "rustc: $(rustc --version 2>&1)"
+Write-Host '== bootstrap OK =='
