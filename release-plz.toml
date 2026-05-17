@@ -10,6 +10,19 @@
 [workspace]
 # Private repo: crates.io publishing stays disabled (was the old policy).
 publish = false
+# THE fix for "release-plz keeps re-proposing the current version with the
+# whole git history as the changelog." `publish = false` ALONE is not
+# enough: with `git_only` unset (default `false`), release-plz still
+# determines the *previous* version from the cargo registry. Nothing is
+# ever published, so it finds nothing and — per the release-plz docs —
+# "the package is treated as an initial release": it proposes the current
+# Cargo.toml version verbatim, no bump, full-history CHANGELOG, and on
+# merge would re-push an already-existing tag. `git_only = true` switches
+# version detection to git tags matching `git_tag_name` below (so it sees
+# `v0.2.1`, diffs commits since it, and bumps correctly). `git_only` and
+# `publish` may not both be true; `publish = false` + `git_only = true`
+# is the supported "git tags are the source of truth" combination.
+git_only = true
 # GUARD: never tag/release on an arbitrary push — only when the commit
 # is a MERGED release-plz PR. Default `true` releases any untagged
 # manifest version on every push (the footgun that auto-released a
