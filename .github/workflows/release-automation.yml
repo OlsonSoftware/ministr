@@ -1,31 +1,47 @@
 name: Release automation
 
 # ===================== THE RELEASE CONTRACT =========================
-# Replaces release-plz. The ONLY supported way to cut a release:
+# Releases are AGENT-MANAGED. The brittle deterministic step (git-cliff
+# computing a version + concatenating a CHANGELOG from squashed commit
+# subjects) is gone — it collapsed multi-change squashes into one vague
+# line and clobbered hand-written migration notes. The ONLY supported
+# way to cut a release:
+#
 #   1. land work on `main` (Conventional Commits)
-#   2. `release-pr` keeps ONE `chore: release vX.Y.Z` PR updated
-#      (git-cliff computes the version + CHANGELOG — seconds, no cargo
-#      packaging; that `cargo package` change-detection was every
-#      release-plz hang/failure this repo ever had)
+#   2. `request-release` detects releasable commits since the last tag
+#      and hands the job to the GitHub Copilot cloud agent via a single
+#      tracking issue: the agent decides the semver bump, bumps every
+#      crate version + the workspace path-dep requirements in lockstep,
+#      authors a high-quality CHANGELOG section (with explicit
+#      Breaking/Migration notes), and opens ONE
+#      `chore: release vX.Y.Z` PR — then requests review.
 #   3. you review + MERGE that PR
-#   4. build-then-tag, on the merge commit:
-#        gate  → is HEAD the merged `chore: release` commit?
+#   4. build-then-tag, on the merge commit (UNCHANGED — this is the
+#      deterministic safety net and must stay deterministic):
+#        gate  → is the manifest version still un-tagged?
 #        build → call release.yml; build EVERY artifact, no tag yet
 #        tag   → ONLY if the build is fully green: push the `vX.Y.Z`
 #                tag, then create the GitHub Release with the
 #                already-built artifacts attached.
 #
 # A failed build never strands a tag (nothing is tagged until green).
-# Tags are a *consequence of a green build* — never hand-made.
+# Tags are a *consequence of a green build* — never hand-made. The
+# agent only ever AUTHORS the release PR; it can merge nothing and tag
+# nothing. Humans gate the merge; CI gates the tag.
+#
+# Prerequisites: the GitHub Copilot coding agent must be enabled for
+# this repository, and `secrets.RELEASE_PLZ_TOKEN` must be a user PAT
+# with read/write on issues, pull requests, contents and actions
+# (a user identity is required to start a Copilot agent session — the
+# default GITHUB_TOKEN cannot).
 # ====================================================================
 
 on:
   push:
     branches: [main]
-    # Docs / markdown / asset / workflow-only pushes never bump a version
-    # (git-cliff keys off `feat:`/`fix:`/etc., not `docs:`/`chore:`), so
-    # spinning the release runner for them is pure waste. A code push that
-    # *does* land work will refresh the `chore: release` PR as normal.
+    # Docs / markdown / asset / workflow-only pushes never bump a
+    # version (Conventional Commits: only feat/fix/perf/revert or any
+    # breaking `!` release), so don't spin the release runner for them.
     paths-ignore:
       - '**.md'
       - 'docs-next/**'
@@ -36,71 +52,190 @@ permissions:
   contents: read
 
 jobs:
-  # git-cliff → next version + CHANGELOG; bump crates; open/refresh the
-  # `chore: release vX.Y.Z` PR. No cargo packaging — ~30s.
-  release-pr:
-    name: Release PR
+  # Detect releasable work since the last tag and delegate the release
+  # PR to the Copilot cloud agent. No version math, no changelog
+  # generation here — the agent owns that judgment.
+  request-release:
+    name: Request release (Copilot agent)
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'OlsonSoftware' }}
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      issues: write
+      pull-requests: read
     concurrency:
-      group: release-pr-${{ github.ref }}
+      group: request-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-      - name: Install git-cliff
-        uses: taiki-e/install-action@ec28e287910af896fd98e04056d31fa68607e7ad
-        with:
-          tool: git-cliff
-      - name: Compute next version + changelog + bump
-        id: prep
-        run: python3 scripts/ci/release_pr.py
-      - name: Open / refresh release PR
-        if: ${{ steps.prep.outputs.release == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          VER: ${{ steps.prep.outputs.version }}
+
+      - name: Detect releasable commits
+        id: detect
+        shell: bash
         run: |
           set -euo pipefail
-          br="release/v$VER"
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git switch -C "$br"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "no changes to propose"; exit 0
-          fi
-          git commit -m "chore: release v$VER"
-          git push -f origin "$br"
-          body="Automated release PR. Merging it builds every artifact (build-then-tag); only on a fully green build is \`v$VER\` tagged and the GitHub Release published. Changelog + version computed by git-cliff from Conventional Commits."
-          # Only an OPEN PR counts as existing. `gh pr view <branch>`
-          # also returns a MERGED/closed PR for that head, which would
-          # make us silently `gh pr edit` a merged PR and never open a
-          # new one (the "no new release PR" bug).
-          open_pr="$(gh pr list --head "$br" --state open --json number --jq '.[0].number // empty')"
-          if [ -n "$open_pr" ]; then
-            gh pr edit "$open_pr" --title "chore: release v$VER" --body "$body"
+          last_tag="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+          range="${last_tag:+$last_tag..}HEAD"
+          # Conventional types that warrant a release (or any breaking
+          # `!` / `BREAKING CHANGE`). docs/chore/ci/test/style never bump.
+          if git log "$range" --format='%s%n%b' \
+              | grep -Eiq '^(feat|fix|perf|revert)(\(.+\))?!?:|^[a-z]+(\(.+\))?!:|BREAKING CHANGE'; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
           else
-            gh pr create --base main --head "$br" \
-              --title "chore: release v$VER" --body "$body" --label release
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "No releasable commits since ${last_tag:-repo start}; nothing to do."
+          fi
+          echo "last_tag=${last_tag:-}" >> "$GITHUB_OUTPUT"
+          echo "range=$range" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if a release PR is already open
+        id: openpr
+        if: ${{ steps.detect.outputs.release == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          n="$(gh pr list --state open --label release \
+                --json number --jq '.[0].number // empty')"
+          if [ -n "$n" ]; then
+            echo "Release PR #$n already open — Copilot owns it; leaving it alone."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Does the manifest version still lack its `v<version>` tag?
+      - name: Verify Copilot coding agent is available
+        id: copilot
+        if: ${{ steps.detect.outputs.release == 'true' && steps.openpr.outputs.skip == 'false' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          login="$(gh api graphql \
+            -H 'GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection' \
+            -f query='query($o:String!,$r:String!){repository(owner:$o,name:$r){suggestedActors(capabilities:[CAN_BE_ASSIGNED],first:50){nodes{login __typename}}}}' \
+            -F o='${{ github.repository_owner }}' -F r="${GITHUB_REPOSITORY#*/}" \
+            --jq '.data.repository.suggestedActors.nodes[]?|select(.login=="copilot-swe-agent")|.login' || true)"
+          if [ "$login" != "copilot-swe-agent" ]; then
+            echo "::error::Copilot coding agent is not assignable here. Enable it in repo/org settings, and ensure RELEASE_PLZ_TOKEN is a user PAT with issues/PR/contents/actions write."
+            exit 1
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Hand the release to the Copilot agent
+        if: ${{ steps.detect.outputs.release == 'true' && steps.openpr.outputs.skip == 'false' && steps.copilot.outputs.ok == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          REPO: ${{ github.repository }}
+          LAST_TAG: ${{ steps.detect.outputs.last_tag }}
+          RANGE: ${{ steps.detect.outputs.range }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Commit log + diffstat since the last tag — the evidence the
+          # agent reasons over to pick the bump and write the changelog.
+          {
+            echo "## Commits since ${LAST_TAG:-repo start}"
+            echo
+            echo '```'
+            git log "$RANGE" --no-merges --format='- %s (%h)'
+            echo '```'
+            echo
+            echo '## Diffstat'
+            echo
+            echo '```'
+            git diff --stat "${LAST_TAG:+$LAST_TAG..}HEAD" | tail -40
+            echo '```'
+          } > /tmp/evidence.md
+
+          PLAYBOOK=$(cat <<'EOF'
+          # Release task — prepare the next version PR
+
+          You are managing this repository's release. Produce ONE pull
+          request that cuts the next version. Do NOT create tags or
+          GitHub Releases — CI does that deterministically only after a
+          fully green build of the merged PR.
+
+          ## Decide the version (SemVer, pre-1.0 aware)
+          - From the commits/diffstat below, pick the next X.Y.Z from the
+            last tag using Conventional Commits: breaking (`!` /
+            `BREAKING CHANGE`) bumps MINOR while 0.x (MAJOR once >= 1.0);
+            `feat` -> MINOR; `fix`/`perf` -> PATCH.
+          - If nothing is actually releasable (docs/chore/ci only),
+            comment saying so and do not open a PR.
+
+          ## Make the change
+          1. Bump the SINGLE product version to the new X.Y.Z in every
+             workspace crate: ministr-api, ministr-core, ministr-daemon,
+             ministr-mcp, ministr-cli, ministr-app/src-tauri (Cargo.toml
+             `version`). Keep tree-sitter-unreal-cpp (vendored) pinned —
+             it is not part of the product version.
+          2. Bump the internal path-dep requirements in the root
+             Cargo.toml [workspace.dependencies] (ministr-api,
+             ministr-core, ministr-daemon, ministr-mcp -> version =
+             "X.Y.Z") in lockstep. Required for cargo package/publish.
+          3. Refresh Cargo.lock for the workspace members only.
+          4. Prepend a new
+             `## [X.Y.Z](https://github.com/OlsonSoftware/ministr/releases/tag/vX.Y.Z) - <UTC date>`
+             section to CHANGELOG.md (Keep a Changelog), with grouped
+             `### Added / Changed / Fixed / Removed` entries written for
+             humans — one bullet per real change, never raw squashed
+             subjects. If there are breaking changes, include a
+             prominent `### Breaking changes — migration` block listing
+             every renamed/removed public API, MCP tool id, HTTP route,
+             response field, config flag, or doc slug as old -> new. Do
+             not leave an empty `[Unreleased]` stub.
+
+          ## Open the PR
+          - Branch: `release/vX.Y.Z`. Base: `main`.
+          - PR title (exact): `chore: release vX.Y.Z`.
+          - Label the PR `release`.
+          - PR body: the bump rationale + the CHANGELOG section; note
+            that merging triggers build-then-tag and only a green build
+            tags `vX.Y.Z`.
+          - Request review when done. Make no other changes.
+          EOF
+          )
+
+          title='release: prepare next version'
+          body="$(printf '%s\n\n%s\n' "$PLAYBOOK" "$(cat /tmp/evidence.md)")"
+
+          # Keep exactly ONE open tracking issue. If it exists, re-ping
+          # the agent with fresh evidence instead of opening a duplicate.
+          issue="$(gh issue list --state open --label release \
+                    --json number,title \
+                    --jq '.[]|select(.title=="'"$title"'")|.number' | head -n1 || true)"
+
+          if [ -n "${issue:-}" ]; then
+            echo "Re-pinging existing release issue #$issue"
+            gh issue comment "$issue" --body "$body"
+          else
+            issue="$(gh issue create --title "$title" --label release \
+                      --body "$body" | grep -oE '[0-9]+$' | tail -n1)"
+            echo "Opened release issue #$issue"
+          fi
+
+          # Assign the Copilot cloud agent. A user-PAT-authored issue is
+          # required for the agent to pick it up.
+          gh api --method POST \
+            -H 'GraphQL-Features: issues_copilot_assignment_api_support' \
+            "repos/$REPO/issues/$issue/assignees" \
+            -f 'assignees[]=copilot-swe-agent[bot]'
+          echo "Assigned the Copilot coding agent to issue #$issue."
+
+  # ── Deterministic safety net (UNCHANGED) ────────────────────────────
   #
-  # This is the whole anti-deadlock: gate fires on the STATE ("there is
-  # a prepared, untagged version"), not on a commit subject. A merged
-  # release PR bumps the manifest with no tag yet -> gate true -> build
-  # -> tag. If the build fails, no tag is created, so the NEXT push to
-  # main still sees an untagged version -> it retries automatically.
-  # Nothing can get stranded in a "prepared but untagged" limbo again.
-  # Normal commits never touch the product version (release_pr.py only
-  # bumps it on the release branch), so gate is false outside a pending
-  # release and we never rebuild artifacts for nothing.
+  # Does the manifest version still lack its `v<version>` tag? Gate
+  # fires on STATE ("a prepared, untagged version"), not a commit
+  # subject. A merged release PR bumps the manifest with no tag yet ->
+  # gate true -> build -> tag. Build fails -> no tag -> the next push
+  # retries. Nothing strands in a "prepared but untagged" limbo.
   gate:
     name: Detect pending release
     runs-on: ubuntu-latest
@@ -155,7 +290,7 @@ jobs:
         run: |
           set -euo pipefail
           # Annotated tags need a committer identity; this fresh
-          # checkout has none (the release-pr job sets its own).
+          # checkout has none.
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if git rev-parse "v$VER" >/dev/null 2>&1; then
