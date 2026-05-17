@@ -359,7 +359,21 @@ impl CorpusRegistry {
         // teardown in `unregister`.
         let tasks = Arc::clone(&handle.tasks);
 
-        self.corpora.write().await.insert(corpus_id.clone(), handle);
+        // Atomic check-and-insert. The early `contains_key` above is only
+        // a fast path; the authoritative test happens here under the
+        // write lock so two concurrent `register`s of the same id can't
+        // both pass and have the second overwrite (and orphan) the
+        // first's handle. The loser discards its freshly-created handle —
+        // no background tasks have been spawned yet, so its `Drop` just
+        // closes the (idempotently-opened) SQLite/index and returns the
+        // idempotent `(id, false)`.
+        {
+            let mut map = self.corpora.write().await;
+            if map.contains_key(&corpus_id) {
+                return Ok((corpus_id, false));
+            }
+            map.insert(corpus_id.clone(), handle);
+        }
         info!(corpus_id = %corpus_id, "corpus registered");
 
         // Manifest persistence failure is non-fatal for the in-memory
