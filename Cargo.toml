@@ -205,15 +205,16 @@ tempfile = "3"
 
 # ministr workspace crates.
 #
-# `version` is REQUIRED here, not optional: release-plz runs `cargo
-# package` for change detection, and `cargo package` hard-rejects any
-# path dependency without a version requirement ("all dependencies must
-# have a version requirement specified when packaging"). Without it,
-# release-plz fails at "failed to determine next versions" even though
-# git_only tag detection now works. The value tracks the current
-# workspace version (the last released tag); release-plz rewrites both
-# the crate `version` and these requirements in lockstep on every bump,
-# so this never needs to be hand-edited again.
+# `version` is REQUIRED here, not optional: `cargo package` / `cargo
+# publish` hard-reject any path dependency without a version requirement
+# ("all dependencies must have a version requirement specified when
+# packaging"), so the workspace would fail packaging checks without it.
+# The value tracks the current workspace version (the last released
+# tag). The git-cliff release automation
+# (`.github/workflows/release-automation.yml`) computes the next version
+# from Conventional Commits and rewrites both the crate `version` and
+# these requirements in lockstep on every bump, so this never needs to
+# be hand-edited.
 ministr-api = { path = "ministr-api", version = "0.3.0" }
 ministr-core = { path = "ministr-core", version = "0.3.0" }
 ministr-daemon = { path = "ministr-daemon", version = "0.3.0" }

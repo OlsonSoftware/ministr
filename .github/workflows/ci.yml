@@ -518,7 +518,7 @@ jobs:
           printf '%s' "$response" | grep -Eq '"id":[[:space:]]*2\b' \
             || { echo "no id:2 frame in stdout"; exit 1; }
           for tool in ministr_survey ministr_read ministr_extract \
-                      ministr_budget ministr_compress ministr_toc; do
+                      ministr_usage ministr_compress ministr_toc; do
             printf '%s' "$response" | grep -q "\"name\":\"$tool\"" \
               || { echo "missing tool: $tool"; exit 1; }
             echo "✓ found tool: $tool"
