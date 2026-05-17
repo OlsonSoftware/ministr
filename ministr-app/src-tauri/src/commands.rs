@@ -13,9 +13,11 @@ use tauri::{AppHandle, Manager, State};
 
 use ministr_daemon::state::AppState;
 
+use crate::error::{CommandError, ErrorKind};
+
 /// List all registered corpora.
 #[tauri::command]
-pub async fn list_corpora(state: State<'_, AppState>) -> Result<Vec<CorpusInfo>, String> {
+pub async fn list_corpora(state: State<'_, AppState>) -> Result<Vec<CorpusInfo>, CommandError> {
     Ok(state.registry.list().await)
 }
 
@@ -24,12 +26,8 @@ pub async fn list_corpora(state: State<'_, AppState>) -> Result<Vec<CorpusInfo>,
 pub async fn register_corpus(
     state: State<'_, AppState>,
     paths: Vec<String>,
-) -> Result<RegisterCorpusResponse, String> {
-    let (corpus_id, indexing_started) = state
-        .registry
-        .register(&paths)
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<RegisterCorpusResponse, CommandError> {
+    let (corpus_id, indexing_started) = state.registry.register(&paths).await?;
     Ok(RegisterCorpusResponse {
         corpus_id,
         indexing_started,
@@ -41,12 +39,12 @@ pub async fn register_corpus(
 pub async fn unregister_corpus(
     state: State<'_, AppState>,
     corpus_id: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     state
         .registry
         .unregister(&corpus_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(CommandError::from)
 }
 
 /// Get daemon status (memory, uptime, corpora, autostart).
@@ -58,7 +56,7 @@ pub async fn unregister_corpus(
 pub async fn daemon_status(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<DaemonStatus, String> {
+) -> Result<DaemonStatus, CommandError> {
     use tauri_plugin_autostart::ManagerExt;
 
     let corpora = state.registry.list().await;
@@ -90,7 +88,7 @@ pub async fn daemon_status(
 pub async fn add_project_dialog(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<Option<RegisterCorpusResponse>, String> {
+) -> Result<Option<RegisterCorpusResponse>, CommandError> {
     use tauri_plugin_dialog::DialogExt;
 
     let picked = app.dialog().file().blocking_pick_folder();
@@ -100,11 +98,7 @@ pub async fn add_project_dialog(
     };
 
     let path = folder.to_string();
-    let (corpus_id, indexing_started) = state
-        .registry
-        .register(&[path])
-        .await
-        .map_err(|e| e.to_string())?;
+    let (corpus_id, indexing_started) = state.registry.register(&[path]).await?;
     Ok(Some(RegisterCorpusResponse {
         corpus_id,
         indexing_started,
@@ -113,7 +107,10 @@ pub async fn add_project_dialog(
 
 /// Remove a project and clean up its index data.
 #[tauri::command]
-pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Result<(), String> {
+pub async fn remove_project(
+    state: State<'_, AppState>,
+    corpus_id: String,
+) -> Result<(), CommandError> {
     tracing::info!(corpus_id = %corpus_id, "remove_project called from frontend");
 
     // Get data_dir before unregistering.
@@ -124,7 +121,7 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
 
     state.registry.unregister(&corpus_id).await.map_err(|e| {
         tracing::error!(corpus_id = %corpus_id, error = %e, "unregister failed");
-        e.to_string()
+        CommandError::from(e)
     })?;
 
     // Clean up index data. `unregister` has already awaited task teardown,
@@ -135,7 +132,10 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
             .await
             .map_err(|e| {
                 tracing::error!(path = %dir.display(), error = %e, "failed to delete corpus data");
-                format!("failed to delete corpus data at {}: {e}", dir.display())
+                CommandError::new(
+                    ErrorKind::Io,
+                    format!("failed to delete corpus data at {}: {e}", dir.display()),
+                )
             })?;
         tracing::info!(path = %dir.display(), "cleaned up corpus data");
     }
@@ -145,7 +145,10 @@ pub async fn remove_project(state: State<'_, AppState>, corpus_id: String) -> Re
 
 /// Trigger a full re-index of a corpus.
 #[tauri::command]
-pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> Result<(), String> {
+pub async fn trigger_reindex(
+    state: State<'_, AppState>,
+    corpus_id: String,
+) -> Result<(), CommandError> {
     tracing::info!(corpus_id = %corpus_id, "trigger_reindex called from frontend");
 
     // Get the paths and data dir for this corpus.
@@ -153,7 +156,9 @@ pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> R
         let guard = state.registry.corpora().read().await;
         let Some(h) = guard.get(&corpus_id) else {
             tracing::warn!(corpus_id = %corpus_id, "trigger_reindex: corpus not found");
-            return Err(format!("corpus '{corpus_id}' not found"));
+            return Err(CommandError::not_found(format!(
+                "corpus '{corpus_id}' not found"
+            )));
         };
         (h.info.read().await.paths.clone(), h.data_dir.clone())
     };
@@ -165,7 +170,7 @@ pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> R
     // sessions) alive alongside a fresh one — split, inconsistent state.
     state.registry.unregister(&corpus_id).await.map_err(|e| {
         tracing::error!(corpus_id = %corpus_id, error = %e, "trigger_reindex: unregister failed");
-        e.to_string()
+        CommandError::from(e)
     })?;
 
     // A re-index is a *rebuild*: purge the on-disk index so stale/orphaned
@@ -175,14 +180,13 @@ pub async fn trigger_reindex(state: State<'_, AppState>, corpus_id: String) -> R
         .await
         .map_err(|e| {
             tracing::error!(path = %data_dir.display(), error = %e, "trigger_reindex: purge failed");
-            format!("failed to purge corpus data at {}: {e}", data_dir.display())
+            CommandError::new(
+                ErrorKind::Io,
+                format!("failed to purge corpus data at {}: {e}", data_dir.display()),
+            )
         })?;
 
-    state
-        .registry
-        .register(&paths)
-        .await
-        .map_err(|e| e.to_string())?;
+    state.registry.register(&paths).await?;
     Ok(())
 }
 
@@ -214,7 +218,7 @@ pub struct RepairReport {
 /// replaced. Nested sub-paths of an already-included root are skipped so
 /// config is written once per project, not scattered into subdirectories.
 #[tauri::command]
-pub async fn repair_agent_config(state: State<'_, AppState>) -> Result<RepairReport, String> {
+pub async fn repair_agent_config(state: State<'_, AppState>) -> Result<RepairReport, CommandError> {
     use ministr_core::config::{CorpusSource, classify_corpus_path};
 
     let corpora = state.registry.list().await;
@@ -240,7 +244,9 @@ pub async fn repair_agent_config(state: State<'_, AppState>) -> Result<RepairRep
         }
     }
     if top.is_empty() {
-        return Err("no local corpus roots registered to repair".to_string());
+        return Err(CommandError::invalid_input(
+            "no local corpus roots registered to repair",
+        ));
     }
 
     let report = tokio::task::spawn_blocking(move || {
@@ -263,7 +269,7 @@ pub async fn repair_agent_config(state: State<'_, AppState>) -> Result<RepairRep
         }
     })
     .await
-    .map_err(|e| format!("repair task failed to join: {e}"))?;
+    .map_err(|e| CommandError::internal(format!("repair task failed to join: {e}")))?;
 
     tracing::info!(
         roots = report.roots.len(),
@@ -299,19 +305,23 @@ pub async fn add_project_from_tray(handle: &AppHandle) {
 
 /// Enable or disable auto-start at login.
 #[tauri::command]
-pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), CommandError> {
     use tauri_plugin_autostart::ManagerExt;
     let manager = app.autolaunch();
     if enabled {
-        manager.enable().map_err(|e| e.to_string())
+        manager
+            .enable()
+            .map_err(|e| CommandError::internal(e.to_string()))
     } else {
-        manager.disable().map_err(|e| e.to_string())
+        manager
+            .disable()
+            .map_err(|e| CommandError::internal(e.to_string()))
     }
 }
 
 /// Read the last N lines from the daemon log file.
 #[tauri::command]
-pub async fn read_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
+pub async fn read_logs(lines: Option<usize>) -> Result<Vec<String>, CommandError> {
     let max_lines = lines.unwrap_or(200);
     let log_path = ministr_api::daemon_data_dir().join("ministr.log");
 
@@ -319,7 +329,7 @@ pub async fn read_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
         return Ok(vec!["No log file found.".to_string()]);
     }
 
-    let content = std::fs::read_to_string(&log_path).map_err(|e| e.to_string())?;
+    let content = std::fs::read_to_string(&log_path).map_err(CommandError::from)?;
     let all_lines: Vec<String> = content.lines().map(String::from).collect();
     let start = all_lines.len().saturating_sub(max_lines);
     Ok(all_lines[start..].to_vec())
@@ -327,24 +337,24 @@ pub async fn read_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
 
 /// Check if first-run onboarding should be shown.
 #[tauri::command]
-pub async fn should_show_onboarding() -> Result<bool, String> {
+pub async fn should_show_onboarding() -> Result<bool, CommandError> {
     let sentinel = ministr_api::daemon_data_dir().join("onboarding_done");
     Ok(!sentinel.exists())
 }
 
 /// Dismiss the onboarding screen.
 #[tauri::command]
-pub async fn dismiss_onboarding() -> Result<(), String> {
+pub async fn dismiss_onboarding() -> Result<(), CommandError> {
     let sentinel = ministr_api::daemon_data_dir().join("onboarding_done");
-    std::fs::write(&sentinel, "").map_err(|e| e.to_string())
+    std::fs::write(&sentinel, "").map_err(CommandError::from)
 }
 
 /// Reset onboarding so it shows again on next visit.
 #[tauri::command]
-pub async fn reset_onboarding() -> Result<(), String> {
+pub async fn reset_onboarding() -> Result<(), CommandError> {
     let sentinel = ministr_api::daemon_data_dir().join("onboarding_done");
     if sentinel.exists() {
-        std::fs::remove_file(&sentinel).map_err(|e| e.to_string())?;
+        std::fs::remove_file(&sentinel).map_err(CommandError::from)?;
     }
     Ok(())
 }
@@ -428,12 +438,12 @@ pub(crate) fn scan_ministr_projects(include_home_root: bool) -> Vec<DetectedProj
 
 /// Scan common directories for projects with `.ministr.toml` files.
 #[tauri::command]
-pub async fn detect_projects() -> Result<Vec<DetectedProject>, String> {
+pub async fn detect_projects() -> Result<Vec<DetectedProject>, CommandError> {
     // The scan does blocking `read_dir`/`exists` syscalls — keep them
     // off the async runtime threads.
     tokio::task::spawn_blocking(|| scan_ministr_projects(true))
         .await
-        .map_err(|e| format!("project scan task failed: {e}"))
+        .map_err(|e| CommandError::internal(format!("project scan task failed: {e}")))
 }
 
 /// Register multiple projects at once (for onboarding batch import).
@@ -445,7 +455,7 @@ pub async fn detect_projects() -> Result<Vec<DetectedProject>, String> {
 pub async fn register_projects_batch(
     state: State<'_, AppState>,
     paths: Vec<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, CommandError> {
     let mut registered = Vec::new();
     for path in &paths {
         let project_dir = std::path::Path::new(path);
@@ -468,7 +478,7 @@ pub async fn register_projects_batch(
 
 /// Remove a project by ID (called from tray menu).
 #[allow(dead_code)]
-pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result<(), String> {
+pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result<(), CommandError> {
     let state = handle.state::<AppState>();
 
     // Get data_dir before unregistering.
@@ -542,7 +552,7 @@ pub struct SessionDetail {
 
 /// List all active sessions across all corpora.
 #[tauri::command]
-pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDetail>, String> {
+pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDetail>, CommandError> {
     let guard = state.registry.corpora().read().await;
     let mut sessions = Vec::new();
 
@@ -613,7 +623,7 @@ pub struct FileInfo {
 pub async fn list_corpus_files(
     state: State<'_, AppState>,
     corpus_id: String,
-) -> Result<Vec<FileInfo>, String> {
+) -> Result<Vec<FileInfo>, CommandError> {
     let guard = state.registry.corpora().read().await;
     let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
     let storage = &handle.storage;
@@ -661,7 +671,7 @@ pub async fn search_corpus(
     corpus_id: String,
     query: String,
     top_k: Option<usize>,
-) -> Result<Vec<SearchResult>, String> {
+) -> Result<Vec<SearchResult>, CommandError> {
     let guard = state.registry.corpora().read().await;
     let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
 
@@ -704,7 +714,7 @@ pub async fn search_symbols(
     query: String,
     kind: Option<String>,
     file_path: Option<String>,
-) -> Result<Vec<SymbolInfo>, String> {
+) -> Result<Vec<SymbolInfo>, CommandError> {
     let guard = state.registry.corpora().read().await;
     let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
 
@@ -754,7 +764,7 @@ pub async fn symbol_references(
     state: State<'_, AppState>,
     corpus_id: String,
     symbol_id: String,
-) -> Result<Vec<SymbolRef>, String> {
+) -> Result<Vec<SymbolRef>, CommandError> {
     let guard = state.registry.corpora().read().await;
     let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
 
@@ -797,7 +807,7 @@ pub async fn recent_coherence_events(
     state: State<'_, AppState>,
     limit: Option<usize>,
     since_ms: Option<u64>,
-) -> Result<Vec<CoherenceEvent>, String> {
+) -> Result<Vec<CoherenceEvent>, CommandError> {
     let limit = limit.unwrap_or(50);
     let events = if let Some(since) = since_ms {
         state.coherence_since(since, limit).await
@@ -818,7 +828,7 @@ pub async fn recent_activity(
     limit: Option<usize>,
     since_ms: Option<u64>,
     session_id: Option<String>,
-) -> Result<Vec<ActivityEvent>, String> {
+) -> Result<Vec<ActivityEvent>, CommandError> {
     let limit = limit.unwrap_or(50);
     let events = if let Some(since) = since_ms {
         state.activity_since(since, limit).await
@@ -865,7 +875,7 @@ pub async fn bridge_query(
     source_language: Option<String>,
     file_path: Option<String>,
     limit: Option<usize>,
-) -> Result<Vec<BridgeLinkOut>, String> {
+) -> Result<Vec<BridgeLinkOut>, CommandError> {
     let guard = state.registry.corpora().read().await;
     let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
 
@@ -927,7 +937,7 @@ pub struct SymbolDefinitionOut {
 /// raw `open` / `explorer.exe` / `xdg-open` syscalls do *not* expand it,
 /// so call sites that pass `~/.ministr/` would otherwise fail silently.
 #[tauri::command]
-pub async fn open_path(path: String) -> Result<(), String> {
+pub async fn open_path(path: String) -> Result<(), CommandError> {
     let resolved = expand_tilde(&path);
 
     #[cfg(target_os = "macos")]
@@ -1006,7 +1016,7 @@ pub async fn read_source_excerpt(
     file_path: String,
     line_start: u32,
     line_end: u32,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     // Snapshot the corpus's root paths under the registry lock, then
     // drop the guard so the canonicalize awaits don't hold it.
     let roots: Vec<String> = {
@@ -1032,7 +1042,7 @@ pub async fn read_source_excerpt(
         }
     }
     if !allowed {
-        return Err("path outside corpus".to_string());
+        return Err(CommandError::invalid_input("path outside corpus"));
     }
 
     let content = tokio::fs::read_to_string(&target)
@@ -1057,7 +1067,7 @@ pub async fn symbol_definition(
     state: State<'_, AppState>,
     corpus_id: String,
     symbol_id: String,
-) -> Result<SymbolDefinitionOut, String> {
+) -> Result<SymbolDefinitionOut, CommandError> {
     let guard = state.registry.corpora().read().await;
     let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
 
@@ -1086,7 +1096,7 @@ pub async fn symbol_definition(
 #[tauri::command]
 pub async fn ingestion_progress(
     state: State<'_, AppState>,
-) -> Result<Vec<IngestionProgressInfo>, String> {
+) -> Result<Vec<IngestionProgressInfo>, CommandError> {
     let guard = state.registry.corpora().read().await;
     Ok(guard
         .iter()
@@ -1143,7 +1153,7 @@ pub struct IndexingProgressEvent {
 pub async fn indexing_progress_events(
     state: State<'_, AppState>,
     on_event: Channel<IndexingProgressEvent>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
@@ -1317,7 +1327,7 @@ pub async fn ask_corpus(
     corpus_id: String,
     query: String,
     progress: Channel<AskPhase>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let started = std::time::Instant::now();
     let _permit = state
         .query_semaphore
@@ -1392,7 +1402,7 @@ pub async fn ask_corpus(
             let _ = progress.send(AskPhase::Error {
                 message: message.clone(),
             });
-            Err(message)
+            Err(CommandError::internal(message))
         }
     }
 }
@@ -1417,7 +1427,9 @@ pub struct InferenceHealth {
 /// `available: false` so users find out about missing dependencies before
 /// typing a question rather than after.
 #[tauri::command]
-pub async fn inference_health(_state: State<'_, AppState>) -> Result<InferenceHealth, String> {
+pub async fn inference_health(
+    _state: State<'_, AppState>,
+) -> Result<InferenceHealth, CommandError> {
     // The default backend is ClaudeCliInference, which spawns `claude -p`.
     // A PATH probe is the cheapest reliable readiness signal.
     let binary = if cfg!(windows) {
@@ -1499,7 +1511,7 @@ pub async fn read_section(
     state: State<'_, AppState>,
     corpus_id: String,
     section_id: String,
-) -> Result<SectionDetailOut, String> {
+) -> Result<SectionDetailOut, CommandError> {
     let guard = state.registry.corpora().read().await;
     let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
 
@@ -1566,7 +1578,7 @@ pub struct McpTestResult {
 /// the destination for per-project clients (Claude Code, Cursor,
 /// VS Code). Codex is user-global; `project_root` is ignored for it.
 #[tauri::command]
-pub async fn mcp_detect_clients(project_root: String) -> Result<Vec<McpClientInfo>, String> {
+pub async fn mcp_detect_clients(project_root: String) -> Result<Vec<McpClientInfo>, CommandError> {
     use ministr_core::init::McpClientId;
     let root = std::path::PathBuf::from(&project_root);
 
@@ -1581,10 +1593,13 @@ pub async fn mcp_detect_clients(project_root: String) -> Result<Vec<McpClientInf
 /// Write the MCP config for a single client. Returns the absolute path
 /// of the file that was written so the wizard can show it to the user.
 #[tauri::command]
-pub async fn mcp_write_config(project_root: String, client_id: String) -> Result<String, String> {
+pub async fn mcp_write_config(
+    project_root: String,
+    client_id: String,
+) -> Result<String, CommandError> {
     use ministr_core::init::{McpClientId, write_mcp_config};
     let client = McpClientId::parse(&client_id)
-        .ok_or_else(|| format!("unknown MCP client id: {client_id}"))?;
+        .ok_or_else(|| CommandError::not_found(format!("unknown MCP client id: {client_id}")))?;
     let root = std::path::PathBuf::from(&project_root);
     let path = write_mcp_config(client, &root).map_err(|e| e.to_string())?;
     Ok(path.display().to_string())
@@ -1600,10 +1615,10 @@ pub async fn mcp_write_config(project_root: String, client_id: String) -> Result
 pub async fn mcp_test_connection(
     project_root: String,
     client_id: String,
-) -> Result<McpTestResult, String> {
+) -> Result<McpTestResult, CommandError> {
     use ministr_core::init::McpClientId;
     let client = McpClientId::parse(&client_id)
-        .ok_or_else(|| format!("unknown MCP client id: {client_id}"))?;
+        .ok_or_else(|| CommandError::not_found(format!("unknown MCP client id: {client_id}")))?;
     let root = std::path::PathBuf::from(&project_root);
 
     Ok(match client {
