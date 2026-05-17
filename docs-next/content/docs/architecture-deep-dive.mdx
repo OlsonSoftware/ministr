@@ -1,104 +1,98 @@
 ---
 title: Architecture — The Deep Dive
-description: In-depth walk through the ministr workspace, ingestion pipeline, code intelligence (symbols, references, bridges), search backends, and session tracking.
+description: A step-by-step walk through ministr — boot, ingestion, the code-intelligence model (symbols, references, bridges), the search stack, and the session-efficiency layer.
 ---
 
 > **ministr** is a Rust-native code intelligence MCP server. It gives AI coding
 > agents AST-level understanding of a codebase — semantic search across code and
 > docs, symbol-level navigation, real reference graphs, and cross-language bridge
-> detection — backed by session tracking, predictive prefetching, and coherence.
->
-> ministr does not (and can't) edit the agent's context window directly. It manages
-> *its own output* — what it sends, when, and at what resolution — so the window
-> fills with signal instead of redundant reads.
+> detection — with session tracking layered on top so the agent's window fills
+> with signal instead of redundant re-reads.
 
-## The Big Picture
+This is the long version of the [overview](/docs/architecture). It follows a single arc: how ministr boots, how it turns files into a model, what that model contains, how queries resolve against it, and how session tracking keeps delivery lean.
 
-Think of ministr as a **smart librarian** that sits between an LLM agent and a codebase. Instead of the agent grepping and reading files blindly, ministr parses everything into an AST, answers in terms of symbols, references, and language bridges, and shapes its own output — resolution and granularity — so the agent's finite window stays full of signal instead of redundant re-reads.
+## The big picture
+
+ministr sits between an agent and a codebase and answers in terms of *structure*, not text. Instead of the agent grepping for a name and reading whole files to find the match, it asks for a symbol, its callers, or its cross-language callers, and gets exactly that.
 
 ```mermaid
 flowchart TB
-  agent["LLM Agent (Claude, etc.)<br/>ministr_survey · ministr_read · ministr_symbols"]
+  agent["AI coding agent"]
 
-  subgraph mcp["ministr-mcp (Transport Layer)"]
+  subgraph mcp["ministr-mcp — transport"]
     server["MinistrServer — tool routing, JSON-RPC"]
-    sessions["SessionRegistry"]
-    prefetch["PrefetchEngine"]
+    sessions["SessionRegistry — what was sent"]
+    prefetch["PrefetchEngine — next likely read"]
     server --> sessions
     server --> prefetch
   end
 
-  subgraph core["ministr-core (Domain Logic)"]
-    query["QueryService — survey, read, extract, symbols, refs"]
-    search["MultiResolutionSearch<br/>dense + sparse + rerank"]
-    ingest["IngestionPipeline<br/>parse → extract → embed"]
-    coherence["CoherenceEngine<br/>file watch → re-index"]
-    embed["Embedding (ONNX)"]
-    storage[("Storage (SQLite)")]
-    index[("Index (HNSW)")]
-    parser["Parser (tree-sitter)"]
+  subgraph core["ministr-core — domain logic"]
+    query["QueryService — survey · read · symbols · references · bridge"]
 
+    subgraph intel["Code-intelligence model"]
+      parser["AstParser (tree-sitter)"]
+      symtab["SymbolTable"]
+      refgraph["Reference graph"]
+      bridge["Bridge linker (13 kinds)"]
+      parser --> symtab
+      symtab --> refgraph
+      symtab --> bridge
+    end
+
+    search["MultiResolutionSearch<br/>dense + sparse + RRF + rerank"]
+    ingest["IngestionPipeline<br/>discover → parse → extract → embed"]
+    coherence["CoherenceEngine<br/>file watch → re-index"]
+    embed["Embedding (ONNX / Metal)"]
+    storage[("SQLite")]
+    index[("HNSW + inverted index")]
+
+    query --> intel
     query --> search
     search --> embed
     search --> index
     ingest --> parser
-    ingest --> storage
+    intel --> storage
+    coherence --> ingest
   end
 
-  agent -->|"MCP Protocol<br/>(stdio or HTTP)"| mcp
-  mcp --> core
+  agent -->|"MCP (stdio or HTTP)"| mcp
+  mcp --> query
 ```
 
-## Workspace Structure
+## Workspace structure
 
 ```text
 ministr/
 ├── ministr-cli/              ← Binary entry point, CLI commands
-│   └── src/
-│       ├── main.rs        ← CLI parsing, subcommand dispatch
-│       ├── commands/      ← serve, index, init, search, export/import, hooks
-│       ├── infra.rs       ← Storage, embedder, index bootstrap
-│       ├── ingestion.rs   ← Corpus ingestion orchestration
-│       ├── instance.rs    ← Single-instance lock, stdio↔HTTP proxy
-│       └── proxy.rs       ← Secondary instance proxy over HTTP
+│   └── src/{main.rs, commands/, infra.rs, ingestion.rs, instance.rs, proxy.rs}
 │
-├── ministr-mcp/              ← MCP server adapter (depends on ministr-core + rmcp)
-│   └── src/
-│       ├── server/        ← MinistrServer: tool handlers, session management
-│       ├── auth.rs        ← OAuth for cloud deployments
-│       ├── proxy.rs       ← Thin proxy that delegates to ministr-daemon
-│       └── error.rs       ← MCP-specific error types
+├── ministr-mcp/              ← MCP adapter (depends on ministr-core + rmcp)
+│   └── src/{server/, auth.rs, proxy.rs, error.rs}
 │
-├── ministr-daemon/           ← HTTP API over Unix domain socket
-│   └── src/
-│       ├── daemon.rs      ← Axum server, lifecycle management
-│       ├── registry.rs    ← CorpusRegistry: manage multiple corpora
-│       ├── ask.rs         ← Query handlers
-│       ├── inference.rs   ← Embedding service
-│       └── state.rs       ← Shared daemon state
+├── ministr-daemon/           ← HTTP API over a local socket
+│   └── src/{daemon.rs, registry.rs, ask.rs, inference.rs, state.rs}
 │
 ├── ministr-api/              ← Shared wire types (no ministr-core dependency)
-│   └── src/
-│       ├── query.rs       ← Request/response types
-│       └── client.rs      ← DaemonClient for UDS communication
+│   └── src/{query.rs, client.rs}
 │
 ├── ministr-core/             ← Pure domain logic, NO transport dependencies
 │   └── src/
 │       ├── service/       ← QueryService: the main API facade
-│       ├── ingestion/     ← File discovery → parse → embed pipeline
-│       ├── coherence.rs   ← File watcher → incremental re-index
-│       ├── session/       ← The "cache controller" brain
-│       ├── embedding/     ← ONNX + optional Candle Metal GPU
+│       ├── ingestion/     ← discover → parse → extract → embed
+│       ├── code/          ← tree-sitter, symbols, refs, cross-language bridges
 │       ├── index/         ← HNSW + inverted index (SPLADE)
+│       ├── embedding/     ← ONNX + optional Candle Metal GPU
 │       ├── storage/       ← SQLite persistence layer
 │       ├── parser/        ← Markdown, HTML, PDF parsers
-│       ├── code/          ← tree-sitter, symbols, cross-lang bridges
-│       └── extraction/    ← Claims, relationships, summaries
+│       ├── extraction/    ← Claims, relationships, summaries
+│       ├── coherence.rs   ← File watcher → incremental re-index
+│       └── session/       ← Session tracking + prefetch
 │
 └── ministr-app/src-tauri/    ← Tauri v2 desktop app with system tray
 ```
 
-### Dependency Rule
+### Dependency rule
 
 ```mermaid
 flowchart LR
@@ -111,235 +105,144 @@ flowchart LR
   app --> core
 ```
 
-`ministr-core` **never** imports MCP types. `ministr-api` never depends on `ministr-core`. The boundaries are enforced structurally.
+`ministr-core` **never** imports MCP types. `ministr-api` never depends on `ministr-core`. The boundaries are enforced structurally, so the code-intelligence engine stays transport-agnostic.
 
-## How It Boots Up
+## How it boots up
 
-When you run `ministr serve`, here's the startup sequence:
+When you run `ministr serve`:
 
 ```text
 main()
-  │
   ├─ 1. Parse CLI args (clap)
-  │
   ├─ 2. Load config (.ministr.toml + ~/.ministr/config.toml)
-  │
-  ├─ 3. Try to acquire the `PrimaryLock` for this corpus
-  │     ├─ Lock acquired → run as the PRIMARY (real server)
-  │     └─ Lock held by another instance → run as a transparent
-  │         stdio→HTTP proxy to that primary (`cmd_serve_stdio`)
-  │
+  ├─ 3. Acquire the PrimaryLock for this corpus
+  │     ├─ Acquired → run as PRIMARY (real server)
+  │     └─ Held elsewhere → run as a transparent stdio→HTTP proxy
   ├─ 4. init_infrastructure()
-  │     ├─ Open/create SQLite database
-  │     ├─ Load embedding backend via `create_embedder` (auto-detects):
-  │     │     ├─ macOS + Apple Silicon: Candle on Metal (when the model
-  │     │     │    is Candle-supported, e.g. all-MiniLM-L6-v2)
-  │     │     ├─ macOS fallback: FastEmbed + CoreML (CPU+GPU compute units)
-  │     │     ├─ Windows + `directml` feature: FastEmbed + DirectML
-  │     │     ├─ Linux / feature-less Windows: FastEmbed + CPU ONNX
-  │     │     └─ Override via MINISTR_BACKEND / MINISTR_DEVICE env vars
-  │     └─ Load/create HnswIndex (384-dim, cosine similarity)
-  │
+  │     ├─ Open/create SQLite (migrate to current schema)
+  │     ├─ create_embedder (auto-detects):
+  │     │     ├─ Apple Silicon: Candle on Metal (Candle-supported models)
+  │     │     ├─ macOS fallback: FastEmbed + CoreML (CPU+GPU)
+  │     │     ├─ Windows + `directml`: FastEmbed + DirectML
+  │     │     ├─ Linux / plain Windows: FastEmbed + CPU ONNX
+  │     │     └─ Override via MINISTR_BACKEND / MINISTR_DEVICE
+  │     └─ Load/create HnswIndex (384-dim, cosine)
   ├─ 5. build_server()
-  │     ├─ Create QueryService(storage, embedder, index)
-  │     ├─ Create MinistrServer(service, registry, prefetch, ...)
-  │     ├─ Enable web fetcher (for ministr_fetch)
-  │     ├─ Enable git fetcher (for ministr_clone)
+  │     ├─ QueryService(storage, embedder, index)
+  │     ├─ MinistrServer(service, registry, prefetch, …)
+  │     ├─ Enable web fetcher / git fetcher
   │     └─ Spawn coherence file watcher
-  │
-  └─ 6. Start transport
-        ├─ stdio: MCP over stdin/stdout (default for Claude Code)
-        └─ http: Streamable HTTP MCP server (for cloud)
+  └─ 6. Start transport (stdio for Claude Code, or streamable HTTP)
 ```
 
-## The Ingestion Pipeline
+## The ingestion pipeline
 
-Before ministr can answer queries, it needs to index the codebase. The pipeline runs in three stages:
+Before ministr can answer anything it builds the model. Three stages:
 
-- **File discovery** — walk directory, filter by extension, hash for incremental, skip unchanged files.
-- **Parse & split** — detect parser (md / html / pdf / code), parse into sections with headings. For code: tree-sitter AST plus extraction of symbols, references, bridges.
-- **Embed & store** — embed text to `Vec<f32>`, insert into HNSW index, extract claims, detect relationships, store in SQLite.
+- **File discovery** — walk the corpus, filter by extension, hash each file (content + mtime + extractor version) so unchanged files are skipped on re-ingest.
+- **Parse & extract** — detect the parser. Markdown / HTML / PDF split into sections with headings. **Code** files parse to a tree-sitter AST, then ministr extracts symbols, resolves references, and links cross-language bridges (the next section).
+- **Embed & store** — embed text to a `Vec<f32>`, insert dense vectors into HNSW and sparse terms into the inverted index, pull atomic claims and relationships, write everything to SQLite.
 
-### What Gets Stored
+### What gets stored
 
-ministr's content database lives at `~/.ministr/corpora/<corpus-id>/content.db` and is currently at schema version 19 (`ministr-core/src/storage/schema.rs`). The tables group into six categories:
+The content database lives at `~/.ministr/corpora/<corpus-id>/content.db` and is at schema version **21** (`ministr-core/src/storage/schema.rs`, `CURRENT_SCHEMA_VERSION`). Tables group into:
 
 **Corpus content**
 - `documents`, `sections`, `claims` — the structural skeleton of every indexed file
-- `claim_relationships` — directed cross-references between claims (references, contradicts, depends_on, updates)
+- `claim_relationships` — directed edges between claims (references, contradicts, depends_on, updates)
 - `file_hashes` — content hash + mtime + extractor version, for incremental re-ingest
 - `corpus_roots` — per-root metadata and language stats
 
 **Code intelligence**
 - `symbols` — extracted symbols with kind, visibility, signature, doc comment, cyclomatic complexity
 - `symbol_refs` — caller→callee, importer→importee, impl→trait edges
-- `pending_refs` — deferred reference resolution queue that survives restarts
+- `pending_refs` — deferred reference-resolution queue that survives restarts
 - `bridge_endpoints`, `bridge_links` — cross-language binding sites and matched export↔import pairs
 
 **Retrieval acceleration**
-- `embedding_cache` — content-addressable vector cache, keyed by `(content_hash, model_name)`
+- `embedding_cache` — content-addressable vector store, keyed by `(content_hash, model_name)`
 - `full_dim_vectors` — un-truncated embeddings for two-stage Matryoshka reranking
 
 **Sessions**
-- `sessions`, `session_deliveries` — persistent session state (delivered items, compression tier, cumulative metrics) so that restarts don't drop what the agent already received
+- `sessions`, `session_deliveries` — persisted delivery state so restarts don't drop what the agent already received
 
 **Cross-session learning**
-- `section_access_stats`, `co_access_patterns` — access frequency and co-access counts feeding cross-session prefetch
+- `section_access_stats`, `co_access_patterns` — frequency / co-access counts feeding cross-session prefetch
 - `section_memory_states` — FSRS stability / difficulty / last-access-turn per section
 
 **External fetches**
-- `web_cache` — URL → ETag, Last-Modified, content hash, for `ministr_fetch` / `ministr_refresh`
-- `git_cache` — repo URL → branch, commit SHA, clone dir, for `ministr_clone`
+- `web_cache`, `git_cache` — ETag / commit-SHA bookkeeping for `ministr_fetch` / `ministr_clone` / `ministr_refresh`
 
-**Sub-inference cache**
-- `answer_cache`, `answer_cache_sources` — cached `ministr_ask` answers with a reverse index from source section back to queries, so a single section change invalidates only the affected answers
+**Sub-inference**
+- `answer_cache`, `answer_cache_sources` — cached `ministr_ask` answers with a reverse index so one section change invalidates only the affected answers
 
-### The Embedding Stack
+## The code-intelligence model
+
+This is the part that makes ministr more than RAG-over-code.
+
+### Symbols
+
+Code files route to `ParserKind::Code`. `AstParser` (`ministr-core/src/code/`) initializes tree-sitter with the file's grammar; `walk_top_level_items` traverses the tree and `extract_symbols` produces `Symbol` records carrying name, kind, visibility, module path, full signature, and the attached doc comment. Rust grammar is always compiled in; the default `lang-all` feature adds ~28 more — Python, JS/TS/TSX, Go, Java, C/C++, Ruby, C#, Swift, Kotlin, Bash, PHP, Scala, Lua, Elixir, Haskell, OCaml, Dart, R, HCL/Terraform, SQL, Zig, Protobuf, and the JSON/YAML/TOML config grammars. Grammars without first-class support fall back to `generic_extract_symbols`, which uses node-kind heuristics common across tree-sitter languages, so symbol extraction degrades gracefully rather than failing.
+
+### References
+
+`extract_refs` (`ministr-core/src/code/refs.rs`) walks the AST for raw cross-reference candidates — calls, imports, impl/trait relationships — which are then matched against the symbol table to produce resolved `SymbolRefRecord` edges. Resolution that can't complete in one pass (forward references, cross-file) is queued in `pending_refs` and retried, and that queue is persisted so it survives a restart. First-class reference extraction currently covers 15 languages (Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, Kotlin, Scala, Java, C#, Swift, Ruby); others get import-level edges via the generic extractor. `ministr_references` then answers "who calls this / implements this / imports this" from real edges, not a regex.
+
+### Cross-language bridges
+
+The differentiator. A two-pass linker (`ministr-core/src/code/bridge/`):
+
+1. **Extract** endpoints from every source file via per-technology extractors (`#[tauri::command]`, `#[napi]`, `#[pyfunction]`, `#[wasm_bindgen]`, HTTP route attributes, `extern "C"`, cgo `C.func`, JNI `Java_*`, UniFFI, gRPC service defs, Flutter `MethodChannel`, Electron `ipcMain`/`ipcRenderer`).
+2. **Link** export↔import pairs by binding key — exact match, then case-normalized, then a semantic fallback — with a confidence score on each link.
+
+`BridgeKind` (`ministr-core/src/code/bridge/mod.rs`) has **13 variants**: `TauriCommand`, `TauriEvent`, `Napi`, `WasmBindgen`, `PyO3`, `HttpRoute`, `Ffi`, `Cgo`, `Jni`, `UniFfi`, `Grpc`, `FlutterChannel`, `ElectronIpc`. Grep sees a Rust function and an unrelated Python function with the same name; `ministr_bridge` sees that the first *is* what the second calls across the boundary.
+
+## The search stack
+
+`ministr_survey` / `ministr_read` ride a hybrid retrieval pipeline:
 
 ```text
-Text → FastEmbedder (all-MiniLM-L6-v2, ONNX Runtime)
-           │
-           ├─ Dense vector: 384-dim float32
-           │     └─ Stored in HNSW index for ANN search
-           │
-           └─ SPLADE sparse embedding (default in hybrid retrieval)
-                 └─ Stored in inverted index for keyword-aware search
+Text → FastEmbedder (all-MiniLM-L6-v2, ONNX)
+           ├─ Dense vector: 384-dim f32 → HNSW (ANN search)
+           └─ SPLADE sparse terms → inverted index (keyword-aware)
 
-Query time:
-  Dense results ─┐
-                 ├─ RRF fusion ─→ Candidates ─→ Cross-encoder rerank ─→ Final results
-  Sparse results ┘
+Query:  dense results ─┐
+                       ├─ RRF fusion → candidates → cross-encoder rerank → results
+        sparse results ┘
 ```
 
-The embeddings are cached in SQLite keyed by content hash — if the text hasn't changed, the embedding is reused without re-running ONNX inference.
+Embeddings are cached in SQLite by content hash — unchanged text reuses its vector without re-running ONNX. Optional two-stage Matryoshka reranking pulls full-dimension vectors from `full_dim_vectors` for a precision pass.
 
-## The Query Path
+### The query path
 
-When the agent calls `ministr_survey`, the flow end-to-end is:
+An end-to-end `ministr_survey` call:
 
-1. **MinistrServer** checks the warm prefetch cache.
+1. **MinistrServer** checks the warm prefetch results.
 2. **SessionRegistry** gets or creates the session (keyed by MCP session ID).
-3. **QueryService.survey_excluding(query, top_k, delivered_ids)** excludes already-delivered content.
-4. **MultiResolutionSearch**: embed → HNSW kNN → optional SPLADE → RRF fusion → optional rerank.
-5. **Storage** resolves content IDs to text, returning `Vec<SurveyResult>`.
-6. **SessionRegistry** records delivery + budget + analytics.
+3. **QueryService.survey_excluding(query, top_k, delivered_ids)** drops content already sent this session.
+4. **MultiResolutionSearch**: embed → HNSW kNN → SPLADE → RRF fusion → optional rerank.
+5. **Storage** resolves content IDs to text → `Vec<SurveyResult>`.
+6. **SessionRegistry** records the delivery and analytics.
 7. **PrefetchEngine** pre-warms predicted next reads.
-8. JSON response + `budget_status` returned to the agent.
+8. The JSON result is returned to the agent.
 
-### Deduplication
+Step 3 is the skip-resend filter: `survey_excluding` removes section IDs the session already has, so the agent never pays twice for the same content.
 
-The `survey_excluding` call filters out section IDs that the session has already delivered. This prevents the agent from getting the same content twice.
+## Content resolution
 
-The real `Session` struct (`ministr-core/src/session/types.rs`) carries quite a bit of state — session ID, budget, eviction policy, turn counter, SessionMetrics, pending coherence alerts, a sliding window of recent queries, and a co-access flush set — but for deduplication the important fields are:
+The `Resolution` enum (`ministr-core/src/types.rs`) has five variants — three for prose, two for code:
 
-- **`delivered: BTreeMap<String, DeliveredItem>`** — what's been sent, keyed by content ID
-- **`trajectory: VecDeque<ContentId>`** — bounded access order (capped so memory doesn't grow unboundedly)
-- **`stale: HashSet<String>`** — content IDs invalidated by file changes on disk
+- **Summary** — 50–400 token compressed summary (document-level hit, or when explicitly compressed)
+- **Section** — full section text with structural context, 200–2000 tokens (default)
+- **Claim** — one atomic factual statement, 10–50 tokens (claim-level survey hit, or compressed)
+- **SymbolStub** — symbol signature + doc comment, 20–100 tokens
+- **SymbolFull** — full source of a symbol, 50–500 tokens
 
-## The Session Shadow: ministr's "Cache Controller" Brain
+Which one the agent gets depends on the call — `ministr_survey` vs `ministr_read` vs `ministr_definition` — and on whether it asked for compaction.
 
-This is the most novel subsystem. It models the agent's context window **from the outside**, predicting what the agent has retained and what's been evicted.
+### Delta delivery
 
-### The Window Estimator
-
-`WindowEstimator` (`ministr-core/src/session/window.rs`) keeps an ordered queue of delivered entries with their token costs and a running total. Each delivery carries a monotonically increasing sequence number so order is preserved across the queue.
-
-When new content is delivered:
-
-1. The entry is pushed onto the back of the queue and its tokens are added to the running total.
-2. If the total exceeds the configured capacity (default `100_000`), entries are evicted from the front of the queue until the total fits again.
-3. The number of evicted entries is tracked (not the content IDs themselves — a count is enough; what the agent actually still has is the un-evicted queue).
-
-The eviction strategy is set by `EvictionPolicy` — `Fifo` by default, `Fsrs` when the session is run with `BudgetTracker::record_tokens_with_memory` and a companion `MemoryTracker` providing retrievability scores.
-
-### Budget Pressure Levels
-
-The budget tracker maps window utilization to three pressure levels:
-
-- **Normal** (0-80%) — full section text at requested resolution
-- **Elevated** (80-95%) — claim-level compression + eviction recommendations
-- **Critical** (95-100%) — summaries only, strong eviction recommendations
-
-This is included in **every response** as `budget_status`:
-
-```json
-{
-  "budget_status": {
-    "pressure_level": "normal",
-    "tokens_used": 4112,
-    "tokens_remaining": 95888,
-    "utilization": 0.041
-  }
-}
-```
-
-## The Prefetch Engine
-
-The prefetch engine has **six strategies**, running at two different moments in the agent's workflow:
-
-**After every `ministr_read`:**
-
-1. **Sequential** (cache line prefetch) — pre-warm section N+1, N+2 in same document
-2. **Structural** (spatial locality) — pre-warm sibling sections at same depth
-3. **Topical** (branch prediction) — query HNSW with running EMA topic vector
-4. **Cross-Session** (shared cache) — pre-warm frequently co-accessed sections from analytics. Runs in ministr's default single-process mode; the daemon-proxy mode has this scaffolded but not yet wired (pending per-section co-access analytics in the storage layer).
-
-**After every `ministr_survey`:**
-
-5. **Survey Expand** (TLB prefetch) — pre-warm parent sections of claim-level survey hits, so a follow-up `ministr_read` for any hit is warm.
-6. **Agent Plan** (intent-based) — analyse the agent's apparent plan from the survey query + results and pre-warm sections it's likely to read next. Capped at a small item budget so the cache doesn't thrash.
-
-In daemon-proxy mode, five fire today; in the default single-process mode, all six.
-
-### The Topic Tracker
-
-The topical prefetch strategy maintains a running "topic vector" using exponential moving average (EMA):
-
-```text
-topic_vector = alpha * latest_embedding + (1 - alpha) * topic_vector
-
-  alpha = 0.3 (configurable)
-
-  Early in session: topic drifts quickly as agent explores
-  Later: topic stabilizes, prefetch becomes more accurate
-```
-
-## The Coherence Engine
-
-When files change on disk, ministr needs to update the index AND notify active sessions.
-
-Flow:
-1. `notify` crate detects a file-system change.
-2. `CoherenceEngine` re-parses, re-extracts claims, re-embeds, updates SQLite, updates HNSW.
-3. `SessionRegistry` marks affected sections stale and queues coherence alerts.
-
-When the agent next calls any ministr tool, it receives pending alerts:
-
-```json
-{
-  "coherence_alerts": [
-    "Section 'src/auth.rs#login' has been modified since last delivery"
-  ]
-}
-```
-
-And `ministr_read` on a stale section delivers only the **delta** (what changed), not the full text again.
-
-## Content Resolution
-
-The `Resolution` enum (`ministr-core/src/types.rs`) has **five variants** — three for prose content, two for code:
-
-- **Summary** — 50-400 token compressed summary of a document or section (served under critical budget pressure, or as a document-level hit)
-- **Section** — full section text with structural context, 200-2000 tokens (default delivery)
-- **Claim** — a single atomic factual statement pulled from a section, 10-50 tokens (served under elevated pressure, or as a claim-level survey hit)
-- **SymbolStub** — code symbol signature + doc comment, 20-100 tokens
-- **SymbolFull** — full source of a code symbol, 50-500 tokens
-
-Which one the agent gets depends on the request (survey vs read vs definition) and on current budget pressure.
-
-### Delta Delivery
-
-When the agent re-reads a section it already has, ministr computes a diff:
+When the agent re-reads a section it already has and the file changed underneath it, ministr computes a diff and ships only that:
 
 ```rust
 ContentDelta {
@@ -354,61 +257,82 @@ ContentDelta {
 }
 ```
 
-This saves massive amounts of context window space — only the changes are delivered.
+Only the changes cross the wire — not the file again.
 
-## Code Intelligence
+## Session tracking: the efficiency layer
 
-ministr doesn't just search text. It builds a rich code model via tree-sitter:
+Code intelligence is the product; session tracking is what keeps it cheap. ministr can't see the agent's real context window (MCP doesn't expose it), so it models its *own output* from the outside.
 
-- **Symbols** — structs, fns, traits, enums, impls — with name, kind, visibility, module, signature, docs
-- **References** — callers, callees, implementors, importers
-- **Languages** — twelve grammars parse to AST today: Rust, TypeScript, JavaScript, Python, Go, Java, C, C++, Ruby, C#, Swift, Kotlin. Per-language post-processing (refined symbol/refs extraction beyond what the raw AST gives you) currently covers nine of those: Rust, TypeScript, Python, Go, Java, C, C++, Swift, Kotlin
+### What the session holds
 
-### Cross-Language Bridges
+The `Session` struct (`ministr-core/src/session/types.rs`) carries the delivery ledger plus bookkeeping. The fields that matter for efficiency:
 
-ministr detects and links cross-language bindings via a two-pass pipeline:
+- **`delivered: BTreeMap<String, DeliveredItem>`** — what's been sent, keyed by content ID
+- **`trajectory: VecDeque<ContentId>`** — bounded access order (capped so memory stays flat)
+- **`stale: HashSet<String>`** — content invalidated by on-disk changes
 
-1. **Extract** endpoints from all source files (`#[napi]`, `#[pyfunction]`, `#[tauri::command]`, `#[wasm_bindgen]`, HTTP route attributes)
-2. **Link** export↔import pairs by binding key (exact match → case-normalized → semantic fallback)
+`survey_excluding` and the `ministr_read` path consult this so repeats become pointers or deltas.
 
-Supported bridge kinds: Tauri commands and events, napi-rs, PyO3, wasm-bindgen, HTTP routes (actix-web / axum / rocket), and raw FFI (seven total, per `BridgeKind` in `ministr-core/src/code/bridge/mod.rs`).
+### The window estimator
 
-## The MCP Server: How Tools Map to Code
+`WindowEstimator` (`ministr-core/src/session/window.rs`) keeps an ordered queue of deliveries with token costs and a running total; when the total exceeds the configured size (default `100_000`) it drops oldest entries to estimate what the agent has likely pushed out. The strategy is `Fifo` by default, or `Fsrs` when run with a companion `MemoryTracker`.
 
-Each ministr MCP tool is an `async fn` on `MinistrServer` (in `ministr-mcp/src/server/mod.rs` and sibling files under `ministr-mcp/src/server/`). Each method parses typed params (e.g. `SurveyParams`, `ReadParams`), delegates to `QueryService` for the actual work, assembles the response, and wraps it in a `CallToolResult` with a `budget_status` attached so the agent always knows how much context budget it has remaining.
+> **This estimate is internal accounting.** Earlier builds attached a `budget_status` block to *every* response; that number was anchored to a configured window, not the agent's real context window, and caused agents to wrongly conclude they were almost out of room and abandon work. It is no longer serialized to the agent (`ToolResponse` marks it `#[serde(skip_serializing)]`). The tracker still runs internally so skip-resend and optional compaction keep working, and an agent that genuinely wants the figure can still call `ministr_budget` explicitly.
 
-See the [Query Path](#the-query-path) section above for an end-to-end trace of a single tool call.
+### The prefetch engine
 
-> **Note:** A sixteenth tool, `ministr_task`, is still registered for backward compatibility (poll-a-background-task status). It's automatically hidden when neither `ministr_fetch`, `ministr_clone`, nor `ministr_refresh` is enabled — which, for most users, means it never shows up in `tools/list`.
+Six strategies at two moments:
 
-## Key Design Decisions
+**After every `ministr_read`:** Sequential (next sections in the document), Structural (sibling sections at the same depth), Topical (HNSW query with a running EMA topic vector), Cross-Session (frequently co-accessed sections from analytics — single-process mode today).
 
-### Why "Like a CPU Cache"?
+**After every `ministr_survey`:** Survey-Expand (parent sections of claim-level hits, so a follow-up read is warm) and Agent-Plan (infer the likely next reads from the query + results, capped so prefetch doesn't waste work).
 
-| CPU Cache Concept | ministr Equivalent |
-|---|---|
-| Cache line | Section (a heading-delimited chunk of content) |
-| L1/L2/L3 hierarchy | Claim → Section → Summary delivery granularity (plus SymbolStub / SymbolFull for code) |
-| Cache hit | Content already in session → skip/delta delivery |
-| Cache miss | Cold read → full retrieval from storage + embedding |
-| Prefetch | Speculative pre-warming of predicted next reads |
-| Write-back | Coherence engine: file changes → re-index + alerts |
-| Cache coherence | Session stale marking across concurrent sessions |
-| Eviction (LRU/FIFO) | Window estimator evicts oldest delivered content |
-| Cache pressure | Budget pressure levels (Normal/Elevated/Critical) |
+The topic vector is an exponential moving average — `topic = α·latest + (1−α)·topic`, α≈0.3 — so it drifts while the agent explores and stabilizes as the task narrows, making topical prefetch more accurate over a session.
+
+## The coherence engine
+
+When files change on disk, the model and active sessions both have to update:
+
+1. `notify` detects a filesystem change.
+2. `CoherenceEngine` re-parses, re-extracts symbols/refs/claims, re-embeds, updates SQLite and HNSW.
+3. `SessionRegistry` marks affected sections stale and queues coherence alerts.
+
+The agent's next tool call carries the pending alerts, and a `ministr_read` on a stale section returns the delta, not the whole file again:
+
+```json
+{ "coherence_alerts": ["Section 'src/auth.rs#login' changed since last delivery"] }
+```
+
+## How tools map to code
+
+Each MCP tool is an `async fn` on `MinistrServer` (`ministr-mcp/src/server/`). It parses typed params (`SymbolsParams`, `ReferencesParams`, `BridgeParams`, `SurveyParams`, …), delegates to `QueryService` for the real work, shapes the result, and wraps it in a `CallToolResult`. The wrapper carries genuinely actionable signals — coherence alerts, ingestion progress, concrete next-action hints — and deliberately *omits* the window estimate (see the note above).
+
+> A `ministr_task` tool is still registered for backward compatibility (poll a background task). It auto-hides when none of `ministr_fetch` / `ministr_clone` / `ministr_refresh` is enabled, so most users never see it in `tools/list`.
+
+## Why this beats grep + read
+
+| The agent needs to… | grep + read | ministr |
+|---|---|---|
+| Find a function by name | regex; every textual match, path-prefixed | `ministr_symbols` — the symbol, its kind, signature, docs |
+| Know who calls it | regex `\bname\(`, false positives everywhere | `ministr_references` — resolved caller/impl/import edges |
+| Follow it across a language boundary | impossible — text can't see FFI | `ministr_bridge` — 13 bridge kinds, export↔import linked |
+| Find "where rate limiting lives" | guess keywords, read whole files | `ministr_survey` — hybrid-ranked, exact section |
+| Re-check something it already saw | re-reads the whole file | pointer or line-level delta |
+
+## Key design decisions
 
 ### Why Rust?
 
 - ONNX inference is CPU-bound — zero-cost abstractions matter
-- SQLite + HNSW are memory-mapped — Rust's ownership model prevents data races
-- MCP server needs to be fast and low-memory for always-on background service
+- SQLite + HNSW are memory-mapped — ownership prevents data races
+- An always-on background engine must be fast and low-memory
 - `tree-sitter` bindings are native C — Rust FFI is zero-overhead
-- `tokio` async runtime for concurrent I/O without threads per connection
+- `tokio` for concurrent I/O without a thread per connection
 
-### Why Local Embeddings (not API)?
+### Why local embeddings (not an API)?
 
 - **Cost** — zero marginal cost per embedding vs per-token API pricing
 - **Privacy** — code never leaves the machine
 - **Offline** — works without internet
-- **Apple Silicon GPU acceleration** — Candle on Metal by default for supported models (typically 7-12× faster than the ONNX path for batch embedding); FastEmbed + CoreML on CPU+GPU compute units for the rest. The Neural Engine path is intentionally **not** routed to — the CoreML/ANE bridge has a known ~12 GB/batch memory leak ([onnxruntime#14455](https://github.com/microsoft/onnxruntime/issues/14455)), so ministr pins the CoreML execution provider to CPU+GPU compute units only
-- **Windows DirectML** — when built with the `directml` cargo feature, FastEmbed runs on any DirectX 12 GPU (NVIDIA / AMD / Intel / Qualcomm), with graceful CPU fallback on init failure
+- **Apple Silicon GPU** — Candle on Metal by default for supported models (typically 7–12× faster than the ONNX path for batch embedding); FastEmbed + CoreML (CPU+GPU) otherwise. The Neural Engine path is intentionally *not* used — the CoreML/ANE bridge has a known ~12 GB/batch leak ([onnxruntime#14455](https://github.com/microsoft/onnxruntime/issues/14455)), so ministr pins CoreML to CPU+GPU compute units
+- **Windows DirectML** — with the `directml` feature, FastEmbed runs on any DirectX 12 GPU (NVIDIA / AMD / Intel / Qualcomm) with graceful CPU fallback
