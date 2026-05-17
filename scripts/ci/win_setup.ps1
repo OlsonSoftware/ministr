@@ -24,19 +24,42 @@ function Have($name) { $null -ne (Get-Command $name -ErrorAction SilentlyContinu
 Write-Host "== Windows runner bootstrap (target=$Target) =="
 
 # --- Python -------------------------------------------------------------
+# NOTE: do NOT depend on winget. This is a self-hosted, frequently-reset
+# Windows eval VM; winget is often absent (not on Server / fresh dev
+# images, and any manual install is wiped on VM reset). We bootstrap
+# from the official python.org per-user installer via Invoke-WebRequest
+# (same mechanism already used for rustup below) — no winget, no admin,
+# no msstore cert dance. Idempotent: only runs if python is missing.
+$PyVersion = '3.12.7'
 if (Have 'python') {
   Write-Host "python: $(python --version 2>&1)"
 } else {
-  Write-Host 'python: not found — installing via winget (--source winget avoids the msstore cert error on fresh VMs)'
-  winget install --id Python.Python.3.12 --source winget -e --silent `
-    --accept-source-agreements --accept-package-agreements
-  # winget PATH changes don't apply to the current process; add the
-  # standard per-user install dir so the rest of this job sees python.
+  Write-Host "python: not found — installing $PyVersion from python.org (winget-free, no admin)"
+  $pyExe = Join-Path $env:RUNNER_TEMP "python-$PyVersion-amd64.exe"
+  $pyUrl = "https://www.python.org/ftp/python/$PyVersion/python-$PyVersion-amd64.exe"
+  Invoke-WebRequest -Uri $pyUrl -OutFile $pyExe -UseBasicParsing
+  # Per-user silent install (no admin): installs to
+  # %LOCALAPPDATA%\Programs\Python\Python312.
+  $p = Start-Process -FilePath $pyExe -Wait -PassThru -ArgumentList @(
+    '/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_pip=1',
+    'Include_launcher=1', 'Shortcuts=0', 'AssociateFiles=0'
+  )
+  if ($p.ExitCode -ne 0) { throw "python installer failed ($($p.ExitCode))" }
+  # Installer PATH changes don't apply to the current process. Resolve
+  # the install dir (standard path first; fall back to a search) and
+  # prepend it for this job + persist via GITHUB_PATH.
   $pyDir = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312'
-  if (Test-Path $pyDir) {
+  if (-not (Test-Path (Join-Path $pyDir 'python.exe'))) {
+    $found = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Programs\Python') `
+      -Filter 'python.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { $pyDir = $found.DirectoryName }
+  }
+  if (Test-Path (Join-Path $pyDir 'python.exe')) {
     $env:PATH = "$pyDir;$pyDir\Scripts;$env:PATH"
-    "$pyDir"          | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-    "$pyDir\Scripts"  | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    if ($env:GITHUB_PATH) {
+      "$pyDir"          | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      "$pyDir\Scripts"  | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    }
   }
   if (-not (Have 'python')) { throw 'python still not on PATH after install' }
   Write-Host "python: $(python --version 2>&1)"

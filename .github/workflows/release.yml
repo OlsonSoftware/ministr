@@ -1,10 +1,16 @@
 name: Release
 
-# Single workflow → single GitHub Release per version tag.
+# Reusable BUILD-ONLY workflow — builds & uploads every release
+# artifact for the CURRENT commit. It creates NO git tag and NO GitHub
+# Release.
 #
-# Triggered by `vX.Y.Z` (or `vX.Y.Z-rc.N`) tags. Builds & publishes
-# every artifact for that version on every supported platform in one
-# Release: CLI tarballs/zip, desktop installers, aggregated SHA256SUMS.
+# build-then-tag: release-plz.yml calls this AFTER a release PR is
+# merged but BEFORE any tag exists. Only if every job here is green does
+# the caller create the tag + GitHub Release. A failed build therefore
+# can no longer strand a tag — there is nothing to delete/recut.
+#
+# Also exposed via workflow_dispatch for an on-demand artifact build of
+# an arbitrary ref (debugging / manual recovery) — still no Release.
 #
 # Architecture (matches ci.yml — see .github/actions/* + scripts/ci/ci.py):
 #   * ALL build logic lives in scripts/ci/ci.py, invoked through the
@@ -14,15 +20,10 @@ name: Release
 #     scripts/ci/win_setup.ps1 on Windows — same warm cache as ci.yml,
 #     no container (avoids the empty-image + mutable-:latest footguns).
 #   * macOS .pkg signing is `ci.py pkg` (no inline shell mega-script).
-#
-# RELEASE CONTRACT: this fires only on a `vX.Y.Z` tag, and that tag is
-# only ever created by merging the release-plz PR. Never hand-move tags
-# (see release-plz.yml header).
 
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_call:
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -339,15 +340,16 @@ jobs:
           path: _bundles/*
 
   # ──────────────────────────────────────────────────────────────────────
-  # Single GitHub Release with every artifact
+  # Bundle every artifact + unified SHA256SUMS into ONE downloadable
+  # artifact. NO GitHub Release here — build-then-tag: the caller
+  # (release-plz.yml) tags and creates the Release only if this whole
+  # workflow is green.
   # ──────────────────────────────────────────────────────────────────────
-  release:
-    name: Create GitHub Release
+  bundle:
+    name: Bundle artifacts
     needs: [cli, desktop]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -363,10 +365,11 @@ jobs:
         with:
           args: checksums --dir artifacts
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+      # Single artifact the caller downloads to attach to the Release it
+      # creates *after* it has pushed the tag.
+      - name: Upload combined release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: artifacts/*
+          name: release-artifacts
+          path: artifacts/*
+          if-no-files-found: error
