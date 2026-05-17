@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.2.2](https://github.com/OlsonSoftware/ministr/releases/tag/v0.2.2) - 2026-05-17
+
+### Added
+- *(release)* Replace release-plz with git-cliff (no cargo packaging) ([#81](https://github.com/OlsonSoftware/ministr/pull/81))
+### Fixed
+- *(release)* Reset main to v0.2.1 — restore manifest==last-tag invariant ([#90](https://github.com/OlsonSoftware/ministr/pull/90))- *(release)* Release-pr stands down while a release is pending ([#89](https://github.com/OlsonSoftware/ministr/pull/89))- *(ci)* Don't merge native stderr into version echoes (NativeCommandError) ([#87](https://github.com/OlsonSoftware/ministr/pull/87))- *(ci)* Python-build-standalone (no MSI) + release-pr open-PR check ([#85](https://github.com/OlsonSoftware/ministr/pull/85))- *(release)* Gate on untagged version, not commit subject ([#84](https://github.com/OlsonSoftware/ministr/pull/84))- *(ci)* Win_setup.ps1 pure ASCII — PowerShell 5.1 mis-decodes em-dash ([#83](https://github.com/OlsonSoftware/ministr/pull/83))- *(release)* Winget-free Windows bootstrap + build-then-tag pipeline ([#80](https://github.com/OlsonSoftware/ministr/pull/80))
 ## [0.2.1](https://github.com/OlsonSoftware/ministr/releases/tag/v0.2.1) - 2026-05-17
 
 ### Added
