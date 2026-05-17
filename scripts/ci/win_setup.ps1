@@ -21,6 +21,25 @@ param([Parameter(Mandatory = $true)][string]$Target)
 $ErrorActionPreference = 'Stop'
 function Have($name) { $null -ne (Get-Command $name -ErrorAction SilentlyContinue) }
 
+# Print a tool's version WITHOUT ever aborting the script. Under
+# $ErrorActionPreference='Stop', PowerShell 5.1 turns a native
+# command's stderr write into a *terminating* NativeCommandError when
+# captured (rustup --version writes an "info:" line to stderr; even
+# `2>$null` did not reliably suppress the throw). Force 'Continue' for
+# the duration and swallow anything: these prints are diagnostic only.
+function Show-Version([string]$label, [scriptblock]$cmd) {
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $v = (& $cmd 2>&1 | Out-String).Trim()
+    Write-Host "${label}: $v"
+  } catch {
+    Write-Host "${label}: (version check skipped: $($_.Exception.Message))"
+  } finally {
+    $ErrorActionPreference = $prev
+  }
+}
+
 Write-Host "== Windows runner bootstrap (target=$Target) =="
 
 # --- Python -------------------------------------------------------------
@@ -37,7 +56,7 @@ Write-Host "== Windows runner bootstrap (target=$Target) =="
 $PyVersion = '3.12.7'
 $PbsTag    = '20241016'
 if (Have 'python') {
-  Write-Host "python: $(python --version 2>$null)"
+  Show-Version 'python' { python --version }
 } else {
   $pyHome = Join-Path $env:USERPROFILE ".python-standalone\$PyVersion-$PbsTag"
   $pyDir  = Join-Path $pyHome 'python'
@@ -62,7 +81,7 @@ if (Have 'python') {
     "$pyDir\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
   }
   if (-not (Have 'python')) { throw 'python still not on PATH after extract' }
-  Write-Host "python: $(python --version 2>$null)"
+  Show-Version 'python' { python --version }
 }
 
 # --- Rust (rustup) ------------------------------------------------------
@@ -76,7 +95,7 @@ if (-not (Have 'rustup')) {
   $env:PATH = "$cargoBin;$env:PATH"
   "$cargoBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 }
-Write-Host "rustup: $(rustup --version 2>$null)"
+Show-Version 'rustup' { rustup --version }
 
 # Ensure stable + the requested target (idempotent - rustup is a no-op
 # if already present/up to date).
@@ -86,7 +105,7 @@ rustup default stable
 rustup target add $Target
 if ($LASTEXITCODE -ne 0) { throw "rustup target add $Target failed ($LASTEXITCODE)" }
 
-Write-Host "rustc: $(rustc --version 2>$null)"
+Show-Version 'rustc' { rustc --version }
 
 # --- Defender exclusions (idempotent; folded in from the old separate
 #     workflow step so all Windows prep lives in one script). Non-fatal:
@@ -116,7 +135,7 @@ if (-not (Have 'sccache')) {
     cargo install sccache --locked
   }
 }
-Write-Host "sccache: $(sccache --version 2>$null)"
+Show-Version 'sccache' { sccache --version }
 if ($env:GITHUB_ENV) {
   Add-Content -Path $env:GITHUB_ENV -Value 'RUSTC_WRAPPER=sccache'
   Add-Content -Path $env:GITHUB_ENV -Value 'SCCACHE_REGION=auto'
