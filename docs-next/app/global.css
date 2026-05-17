@@ -734,6 +734,28 @@ h1.ministr-gradient-text,
   color: color-mix(in oklch, var(--fd-foreground) 74%, transparent);
 }
 
+/* Plain hairline-separated rows — same rhythm as .ms-list but
+   without the leading counter. Used for catalogues (installers,
+   verify steps) where numbering would imply an order that
+   doesn't exist. */
+.ministr-ms .ms-row {
+  padding: 1.1rem 0;
+  border-top: 1px solid var(--ms-rule-faint);
+}
+.ministr-ms .ms-row:first-child { border-top: 0; }
+.ministr-ms .ms-row h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fd-foreground);
+}
+.ministr-ms .ms-row > p {
+  margin-top: 0.35rem;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: color-mix(in oklch, var(--fd-foreground) 74%, transparent);
+}
+
 /* Inline primary link — underlined ink, amber on hover.
    No pill, no shadow; a manuscript cross-reference. */
 .ministr-ms .ms-link {
