@@ -537,15 +537,14 @@ h1.ministr-gradient-text,
 }
 
 /* The reading column. Everything centers on one measure;
-   figures may break out one step wider for legibility. */
+   one fixed measure, so every heading shares the same left edge and
+   the eye tracks a single rail down the page (no per-section width
+   variation — that made headings jump as you scrolled). */
 .ministr-ms .ms-col {
   width: 100%;
   max-width: var(--ms-measure);
   margin-inline: auto;
   padding-inline: 1.25rem;
-}
-.ministr-ms .ms-col-wide {
-  max-width: calc(var(--ms-measure) + 9rem);
 }
 
 /* Masthead wordmark — large, tight, ink. The period is the

@@ -37,7 +37,7 @@ export default function HomePage() {
             misses meaning and returns whole files. ministr replaces that
             with a local model of the codebase: AST-level semantic search,
             symbol navigation, real reference graphs, and cross-language
-            bridge detection across ~29 languages.
+            bridge detection across 40+ languages.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-x-7 gap-y-3 text-[15px]">
             <Link href="/install" className="ms-link font-medium">
@@ -190,21 +190,20 @@ export default function HomePage() {
               </>
             }
           >
-            <pre>{`  ┌─ discover ──────┐   ┌─ parse & extract ───────┐   ┌─ embed & store ─┐
-  │ walk the corpus │   │ tree-sitter → AST       │   │ local embeddings │
-  │ filter + hash   │ ▸ │ symbols · references    │ ▸ │ HNSW + keyword   │
-  │ skip unchanged  │   │ cross-language bridges  │   │ SQLite           │
+            <pre>{`  ┌─ discover ──────┐   ┌─ understand ────────────┐   ┌─ index ─────────┐
+  │ walk the files  │   │ parse to a syntax tree  │   │ meaning + words  │
+  │ skip unchanged  │ ▸ │ symbols · references    │ ▸ │ local, on disk   │
+  │                 │   │ cross-language bridges  │   │                  │
   └─────────────────┘   └─────────────────────────┘   └──────────────────┘
                               the part grep can't do`}</pre>
           </Figure>
 
           <p className="ms-p mt-8">
-            The result lives in one local store: the prose skeleton and the
-            code-intelligence model — symbols, reference edges, bridge
-            links — sit side by side, so a structural query and a semantic
-            query hit the same index. Nothing is sent to an API; the
-            embedding model (~80&nbsp;MB) is the only download, fetched once
-            on first run.
+            The result is one local index: the code-intelligence model —
+            symbols, reference edges, bridge links — and the searchable
+            text live together, so a structural query and a semantic query
+            resolve against the same thing. No code is sent to an API; a
+            small embedding model is the only first-run download.
           </p>
         </Section>
 
@@ -229,46 +228,38 @@ export default function HomePage() {
         {/* ── §5 Architecture ──────────────────────────────── */}
         <Section folio="§ 5" title="The shape of it.">
           <p className="ms-p">
-            One transport-agnostic core does the work; a thin MCP adapter
-            speaks to the agent. A background daemon holds the model once
-            and shares it, so a second client doesn&rsquo;t load a second
-            copy into memory.
+            The agent speaks ordinary MCP. Behind that, a local engine
+            holds the model and answers — and a background process builds
+            it once and shares it, so a second client doesn&rsquo;t load a
+            second copy into memory.
           </p>
 
           <Figure
             className="mt-10"
             caption={
               <>
-                <b>Fig. 3</b> Layers, top to bottom. The full walkthrough is
-                in the{' '}
-                <Link href="/docs/architecture-deep-dive" className="ms-link">
-                  architecture deep dive
+                <b>Fig. 3</b> Top to bottom, conceptually. More on the{' '}
+                <Link href="/docs/architecture" className="ms-link">
+                  architecture page
                 </Link>
                 .
               </>
             }
           >
-            <pre>{`  agent ───────────── ministr_symbols · references · bridge · survey
-    │                  (MCP: stdio or HTTP)
-  ministr-mcp ─────── tool routing · session tracking
+            <pre>{`  agent ───────── ministr_symbols · references · bridge · survey
+    │              (MCP — stdio or HTTP)
+  ministr ─────── code model    symbols · references · bridges
+    │             retrieval     meaning + keyword, ranked
+    │             session       remembers what was sent
     │
-  ministr-core ────── QueryService
-    ├ code model ──── tree-sitter → symbols → references → bridges
-    ├ retrieval ───── dense + sparse + rerank
-    └ store ───────── SQLite · HNSW · inverted index
-    │
-  ministr-daemon ─── one shared engine over a local socket`}</pre>
+  local index ── on your machine; nothing leaves it`}</pre>
           </Figure>
         </Section>
 
         <Rule className="my-16 sm:my-20" />
 
         {/* ── §6 Install ───────────────────────────────────── */}
-        <Section
-          folio="§ 6"
-          title="One installer. Every platform."
-          wide
-        >
+        <Section folio="§ 6" title="One installer. Every platform.">
           <p className="ms-p">
             Download, double-click, done — macOS, Windows, Linux. The{' '}
             <code>ministr</code> CLI lands on your PATH automatically. Any
@@ -282,16 +273,14 @@ export default function HomePage() {
         <Rule className="my-16 sm:my-20" />
 
         {/* ── Coda ─────────────────────────────────────────── */}
-        <footer className="ms-col text-center">
-          <p className="ms-standfirst">
-            Stop re-reading the same files.
-          </p>
+        <footer className="ms-col">
+          <p className="ms-standfirst">Stop re-reading the same files.</p>
           <p className="mt-5">
             <Link href="/install" className="ms-link font-medium text-[15px]">
               Install ministr →
             </Link>
           </p>
-          <nav className="mt-10 flex flex-wrap justify-center gap-x-6 gap-y-2 text-[14px]">
+          <nav className="mt-10 flex flex-wrap gap-x-6 gap-y-2 text-[14px]">
             <Link href="/docs/getting-started" className="ms-link">
               Getting started
             </Link>
@@ -305,9 +294,7 @@ export default function HomePage() {
               Concepts
             </Link>
           </nav>
-          <p className="ms-folio mt-10 justify-center">
-            Local · Rust · no API calls
-          </p>
+          <p className="ms-folio mt-10">Local · Rust · no API calls</p>
         </footer>
       </article>
     </main>
@@ -326,15 +313,13 @@ function Section({
   folio,
   title,
   children,
-  wide,
 }: {
   folio: string;
   title: string;
   children: React.ReactNode;
-  wide?: boolean;
 }) {
   return (
-    <section className={'ms-col' + (wide ? ' ms-col-wide' : '')}>
+    <section className="ms-col">
       <p className="ms-folio">{folio}</p>
       <h2 className="ms-h">{title}</h2>
       <div className="mt-5">{children}</div>

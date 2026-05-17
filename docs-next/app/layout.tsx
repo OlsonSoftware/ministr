@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     template: '%s — ministr',
   },
   description:
-    'ministr is a code intelligence MCP server for Claude Code, Cursor, and Copilot. AST-level semantic search, symbol navigation, reference graphs, and cross-language bridge detection across ~29 languages — all local.',
+    'ministr is a code intelligence MCP server for Claude Code, Cursor, and Copilot. AST-level semantic search, symbol navigation, reference graphs, and cross-language bridge detection across 40+ languages — all local.',
   applicationName: 'ministr',
   authors: [{ name: 'Alrik Olson' }],
   keywords: [
