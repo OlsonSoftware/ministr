@@ -356,36 +356,53 @@ pub struct DetectedProject {
     pub name: String,
 }
 
-/// Scan common directories for projects with `.ministr.toml` files.
-#[tauri::command]
-pub async fn detect_projects() -> Result<Vec<DetectedProject>, String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let scan_dirs = [
-        home.clone(),
-        format!("{home}/Code"),
-        format!("{home}/Projects"),
-        format!("{home}/Developer"),
-        format!("{home}/src"),
-    ];
+/// The directories scanned for `.ministr.toml` projects, cross-platform
+/// (`HOME` on Unix, `USERPROFILE` on Windows via [`home_pathbuf`]).
+pub(crate) fn project_scan_dirs() -> Vec<std::path::PathBuf> {
+    let Some(home) = home_pathbuf() else {
+        return Vec::new();
+    };
+    vec![
+        home.join("Code"),
+        home.join("Projects"),
+        home.join("Developer"),
+        home.join("src"),
+    ]
+}
+
+/// Synchronous filesystem scan for projects containing a `.ministr.toml`.
+///
+/// Blocking by nature (`read_dir`/`exists`); callers in async contexts
+/// must run this on a blocking thread (`spawn_blocking`). When
+/// `include_home_root` is set, the user's home directory is also scanned
+/// one level deep (used by the interactive picker, not first-launch
+/// auto-detect, which would be too broad unattended).
+pub(crate) fn scan_ministr_projects(include_home_root: bool) -> Vec<DetectedProject> {
+    let mut scan_dirs = project_scan_dirs();
+    if include_home_root && let Some(home) = home_pathbuf() {
+        scan_dirs.insert(0, home);
+    }
+    let home = home_pathbuf();
 
     let mut found = Vec::new();
-    for dir in &scan_dirs {
-        let dir_path = std::path::Path::new(dir);
+    for dir_path in &scan_dirs {
         if !dir_path.is_dir() {
             continue;
         }
-        // Check the directory itself for .ministr.toml
-        if dir != &home && dir_path.join(".ministr.toml").exists() {
-            let name = dir_path
-                .file_name()
-                .map_or_else(|| dir.clone(), |n| n.to_string_lossy().into_owned());
+        // Check the directory itself for .ministr.toml (but never treat
+        // the bare home dir as a project).
+        if home.as_deref() != Some(dir_path.as_path()) && dir_path.join(".ministr.toml").exists() {
+            let name = dir_path.file_name().map_or_else(
+                || dir_path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
             found.push(DetectedProject {
-                path: dir.clone(),
+                path: dir_path.display().to_string(),
                 name,
             });
             continue;
         }
-        // Scan one level deep
+        // Scan one level deep.
         let Ok(entries) = std::fs::read_dir(dir_path) else {
             continue;
         };
@@ -403,11 +420,20 @@ pub async fn detect_projects() -> Result<Vec<DetectedProject>, String> {
         }
     }
 
-    // Deduplicate by path
+    // Deduplicate by path.
     found.sort_by(|a, b| a.path.cmp(&b.path));
     found.dedup_by(|a, b| a.path == b.path);
+    found
+}
 
-    Ok(found)
+/// Scan common directories for projects with `.ministr.toml` files.
+#[tauri::command]
+pub async fn detect_projects() -> Result<Vec<DetectedProject>, String> {
+    // The scan does blocking `read_dir`/`exists` syscalls — keep them
+    // off the async runtime threads.
+    tokio::task::spawn_blocking(|| scan_ministr_projects(true))
+        .await
+        .map_err(|e| format!("project scan task failed: {e}"))
 }
 
 /// Register multiple projects at once (for onboarding batch import).
@@ -942,6 +968,14 @@ fn expand_tilde(path: &str) -> String {
         && let Some(home) = home_dir()
     {
         let sep = if cfg!(windows) { '\\' } else { '/' };
+        // Normalize the remainder's separators to the platform's so a
+        // mixed `~/a\b` / `~\a/b` input doesn't yield a path the OS
+        // can't resolve.
+        let rest = if cfg!(windows) {
+            rest.replace('/', "\\")
+        } else {
+            rest.replace('\\', "/")
+        };
         return format!("{home}{sep}{rest}");
     }
     path.to_string()

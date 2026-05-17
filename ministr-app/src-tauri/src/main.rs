@@ -153,30 +153,19 @@ async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
         return;
     }
 
-    let home = std::env::var("HOME").unwrap_or_default();
-    let scan_dirs = [
-        format!("{home}/Code"),
-        format!("{home}/Projects"),
-        format!("{home}/Developer"),
-        format!("{home}/src"),
-    ];
-
-    let mut found_paths = Vec::new();
-    for dir in &scan_dirs {
-        let dir_path = std::path::Path::new(dir);
-        if !dir_path.is_dir() {
-            continue;
-        }
-        // Only scan one level deep.
-        if let Ok(entries) = std::fs::read_dir(dir_path) {
-            for entry in entries.flatten() {
-                let toml_path = entry.path().join(".ministr.toml");
-                if toml_path.exists() {
-                    found_paths.push(entry.path().display().to_string());
-                }
+    // Reuse the shared, cross-platform scanner on a blocking thread so
+    // the `read_dir`/`exists` syscalls don't stall the async runtime.
+    // First-launch auto-detect excludes the bare home root (too broad
+    // to scan unattended) — that's `include_home_root = false`.
+    let found_paths: Vec<String> =
+        match tokio::task::spawn_blocking(|| commands::scan_ministr_projects(false)).await {
+            Ok(projects) => projects.into_iter().map(|p| p.path).collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "project auto-detect scan task failed");
+                let _ = std::fs::write(&sentinel, "");
+                return;
             }
-        }
-    }
+        };
 
     for path in &found_paths {
         info!(path, "auto-detected project with .ministr.toml");
