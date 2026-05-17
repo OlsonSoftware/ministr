@@ -342,6 +342,94 @@ pub async fn should_show_onboarding() -> Result<bool, CommandError> {
     Ok(!sentinel.exists())
 }
 
+/// First-run setup state, surfaced to the branded setup wizard so it can
+/// show real status (and a "Fix PATH" affordance) instead of guessing.
+/// Rendered identically on macOS / Windows / Linux.
+#[derive(Serialize)]
+pub struct SetupStatus {
+    /// A working `ministr` binary is resolvable (canonical bin dir,
+    /// `/usr/local/bin`, or on `PATH`).
+    pub cli_on_path: bool,
+    /// Absolute path to the resolved CLI, when found.
+    pub cli_path: Option<String>,
+    /// `~/.ministr` — where corpora, the daemon socket, and markers live.
+    pub data_dir: String,
+    /// The app/CLI version this build expects.
+    pub version: String,
+}
+
+/// Resolve a usable `ministr` CLI the same way the rest of the app does:
+/// canonical `~/.ministr/bin`, the `.pkg`/Linux-package symlink at
+/// `/usr/local/bin`, then `PATH`.
+fn resolve_cli_path() -> Option<std::path::PathBuf> {
+    let exe = if cfg!(windows) {
+        "ministr.exe"
+    } else {
+        "ministr"
+    };
+    let bin_dir = ministr_api::daemon_data_dir().join("bin");
+
+    let mut candidates = vec![bin_dir.join(exe)];
+    if !cfg!(windows) {
+        candidates.push(std::path::PathBuf::from("/usr/local/bin/ministr"));
+    }
+    for c in candidates {
+        if c.exists() {
+            return Some(c);
+        }
+    }
+
+    // Last resort: ask the OS to resolve it on PATH.
+    let probe = if cfg!(windows) { "where" } else { "which" };
+    let out = std::process::Command::new(probe)
+        .arg("ministr")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let line = String::from_utf8_lossy(&out.stdout);
+    let first = line.lines().next()?.trim();
+    (!first.is_empty()).then(|| std::path::PathBuf::from(first))
+}
+
+/// Report first-run setup state for the setup wizard.
+#[tauri::command]
+pub async fn setup_status() -> Result<SetupStatus, CommandError> {
+    let cli = resolve_cli_path();
+    Ok(SetupStatus {
+        cli_on_path: cli.is_some(),
+        cli_path: cli.map(|p| p.display().to_string()),
+        data_dir: ministr_api::daemon_data_dir().display().to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+/// Wire `ministr` onto the user's PATH by invoking the CLI's own `setup`
+/// subcommand (the `onpath` crate — same surface the installers use, so
+/// re-running is idempotent). Backs the wizard's "Fix PATH" action.
+#[tauri::command]
+pub async fn fix_path() -> Result<String, CommandError> {
+    let cli = resolve_cli_path().ok_or_else(|| CommandError {
+        kind: ErrorKind::NotFound,
+        message: "ministr CLI not found — reinstall the app and try again".to_string(),
+    })?;
+    let out = std::process::Command::new(&cli)
+        .arg("setup")
+        .output()
+        .map_err(CommandError::from)?;
+    if !out.status.success() {
+        return Err(CommandError {
+            kind: ErrorKind::Internal,
+            message: format!(
+                "`ministr setup` failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 /// Dismiss the onboarding screen.
 #[tauri::command]
 pub async fn dismiss_onboarding() -> Result<(), CommandError> {

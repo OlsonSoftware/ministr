@@ -246,7 +246,8 @@ jobs:
         if: matrix.platform == 'linux-x86_64'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          # `rpm` provides rpmbuild, which Tauri's RPM bundler shells out to.
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
 
       # Tauri's externalBin sidecar must exist at build time, named
       # `binaries/ministr-cli-<target-triple>` (with `.exe` on Windows).
@@ -486,12 +487,13 @@ jobs:
             case "$ext" in
               exe)      dst="_bundles/ministr-desktop-${{ matrix.triple }}-setup.exe" ;;
               deb)      dst="_bundles/ministr-desktop-${{ matrix.triple }}.deb" ;;
+              rpm)      dst="_bundles/ministr-desktop-${{ matrix.triple }}.rpm" ;;
               AppImage) dst="_bundles/ministr-desktop-${{ matrix.triple }}.AppImage" ;;
               *) continue ;;
             esac
             cp "$src" "$dst"
             sha256 "$dst" > "$dst.sha256"
-          done < <(find "${{ matrix.target_dir }}" -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) 2>/dev/null)
+          done < <(find "${{ matrix.target_dir }}" -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) 2>/dev/null)
           ls -la _bundles
 
       - name: Upload artifact
@@ -528,7 +530,7 @@ jobs:
           set -euo pipefail
           cd artifacts
           : > SHA256SUMS
-          for f in *.tar.gz *.zip *.pkg *.exe *.deb *.AppImage; do
+          for f in *.tar.gz *.zip *.pkg *.exe *.deb *.rpm *.AppImage; do
             [ -f "$f" ] || continue
             shasum -a 256 "$f" >> SHA256SUMS
           done

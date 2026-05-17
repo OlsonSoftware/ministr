@@ -148,7 +148,7 @@ export function InstallClient() {
               <span className="ministr-body-quiet font-mono text-xs">{tag}</span>
             )}
           </div>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {DESKTOP_INSTALLERS.map((d) => (
               <GlassCard key={d.id} padded={false} className="flex h-full flex-col p-5">
                 <div className="flex items-center gap-2">
@@ -304,7 +304,11 @@ export function InstallClient() {
   );
 }
 
-function PlatformBadge({ ext }: { ext: 'pkg' | 'dmg' | 'exe' | 'deb' | 'AppImage' }) {
+function PlatformBadge({
+  ext,
+}: {
+  ext: 'pkg' | 'dmg' | 'exe' | 'deb' | 'rpm' | 'AppImage';
+}) {
   const label = ext.toUpperCase();
   return (
     <span className="inline-flex h-7 min-w-12 items-center justify-center rounded-md border border-[color-mix(in_oklch,var(--color-ministr-400)_28%,transparent)] bg-[color-mix(in_oklch,var(--color-ministr-500)_18%,transparent)] px-2 font-mono text-[11px] font-semibold text-[var(--ministr-accent-text)]">

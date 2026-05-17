@@ -56,6 +56,16 @@ pub fn run_first_launch_setup(app: &tauri::App) -> Result<(), Box<dyn std::error
         warn!(error = %e, "could not install launchd plist");
     }
 
+    // 4b. Install a desktop entry (Linux only). The .deb / .rpm packages
+    //     already ship a system .desktop via Tauri's bundler, but a
+    //     double-clicked AppImage has no app-menu entry at all. Give the
+    //     AppImage the same "shows up in your launcher" parity the
+    //     macOS .pkg / Windows NSIS installs get for free.
+    #[cfg(target_os = "linux")]
+    if let Err(e) = install_linux_desktop_entry() {
+        warn!(error = %e, "could not install Linux desktop entry");
+    }
+
     // 5. Write setup version marker
     if let Err(e) = fs::write(&version_path, current_version) {
         warn!(
@@ -204,6 +214,76 @@ fn install_launchd_plist() -> Result<(), Box<dyn std::error::Error>> {
         ),
         Err(e) => warn!(error = %e, "failed to invoke launchctl; agent will load on next login"),
         Ok(_) => {}
+    }
+
+    Ok(())
+}
+
+/// Install a per-user XDG desktop entry + icon so the app appears in the
+/// Linux application menu.
+///
+/// Only meaningful for the AppImage distribution: a double-clicked
+/// AppImage is a single self-contained file with no installer and no
+/// menu integration. The `.deb` / `.rpm` packages already register a
+/// system-wide `.desktop` through Tauri's bundler, so we detect that
+/// case (binary living under a system prefix) and skip — mirroring the
+/// non-clobbering posture of `install_launchd_plist`.
+#[cfg(target_os = "linux")]
+fn install_linux_desktop_entry() -> Result<(), Box<dyn std::error::Error>> {
+    // The AppImage runtime exports $APPIMAGE as the absolute path to the
+    // .AppImage file itself — that's what the launcher must Exec. Without
+    // it we're almost certainly running from a system package that
+    // already has its own .desktop; nothing to do.
+    let Ok(appimage) = std::env::var("APPIMAGE") else {
+        info!("not running as an AppImage ($APPIMAGE unset) — skipping desktop entry");
+        return Ok(());
+    };
+
+    let home = home_dir()?;
+    let apps_dir = home.join(".local/share/applications");
+    let icons_dir = home.join(".local/share/icons/hicolor/128x128/apps");
+    fs::create_dir_all(&apps_dir)?;
+    fs::create_dir_all(&icons_dir)?;
+
+    // Stage the icon next to the entry so launchers resolve it by name.
+    let icon_dest = icons_dir.join("ai.ministr.desktop.png");
+    if !icon_dest.exists() {
+        let icon_bytes: &[u8] = include_bytes!("../icons/128x128.png");
+        fs::write(&icon_dest, icon_bytes)?;
+    }
+
+    let desktop_dest = apps_dir.join("ai.ministr.desktop.desktop");
+
+    // Don't clobber a user-customized entry, but always refresh the Exec
+    // line if the AppImage moved (common: Downloads -> ~/Applications).
+    if desktop_dest.exists()
+        && let Ok(existing) = fs::read_to_string(&desktop_dest)
+        && existing.contains(&format!("Exec={appimage}"))
+    {
+        info!("Linux desktop entry already current — skipping");
+        return Ok(());
+    }
+
+    let entry = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=ministr\n\
+         Comment=Context cache for LLM agents\n\
+         Exec={appimage}\n\
+         Icon=ai.ministr.desktop\n\
+         Terminal=false\n\
+         Categories=Development;Utility;\n\
+         StartupWMClass=ministr\n"
+    );
+    fs::write(&desktop_dest, entry)?;
+    info!(path = %desktop_dest.display(), "installed Linux desktop entry");
+
+    // Best-effort menu refresh; non-fatal if the tool is absent.
+    if let Err(e) = std::process::Command::new("update-desktop-database")
+        .arg(&apps_dir)
+        .output()
+    {
+        info!(error = %e, "update-desktop-database unavailable — entry still registered");
     }
 
     Ok(())

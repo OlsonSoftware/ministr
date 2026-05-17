@@ -1,12 +1,15 @@
 /**
- * Onboarding — first-launch 3-step wizard.
+ * Onboarding — first-launch 4-step wizard.
  *
- * 1. Pick a project: auto-detect via `detect_projects` or open the folder
+ * 1. Setup: the OS-identical screen. Confirms the native installer
+ *    (Apple .pkg / Windows NSIS / Linux .deb·.rpm·.AppImage) put the
+ *    CLI on PATH; `fix_path` repairs it in one click if not.
+ * 2. Pick a project: auto-detect via `detect_projects` or open the folder
  *    picker. Multi-select adds many at once.
- * 2. Index it: real progress driven by `indexing_progress_events`. User
+ * 3. Index it: real progress driven by `indexing_progress_events`. User
  *    can "continue in background" once any project transitions out of
  *    pending into running.
- * 3. Connect your AI tool: placeholder for the MCP wizard. Real impl
+ * 4. Connect your AI tool: placeholder for the MCP wizard. Real impl
  *    lands in M3 (Settings → AI assistants is the same panel reused).
  */
 import { useEffect, useRef, useState } from "react";
@@ -18,6 +21,8 @@ import {
   Loader2,
   Search,
   Sparkles,
+  Terminal,
+  TriangleAlert,
 } from "lucide-react";
 
 import { cn } from "../lib/utils";
@@ -29,14 +34,22 @@ import { Button } from "./ui/button";
 import { AiAssistantsPanel } from "./surfaces/AiAssistantsPanel";
 import { formatEtaBare } from "../lib/format";
 
-type Step = "pick" | "index" | "connect";
+type Step = "setup" | "pick" | "index" | "connect";
+
+/** Mirror of the Rust `SetupStatus` (commands.rs::setup_status). */
+interface SetupStatus {
+  cli_on_path: boolean;
+  cli_path: string | null;
+  data_dir: string;
+  version: string;
+}
 
 interface OnboardingProps {
   onDismiss: () => void;
 }
 
 export function Onboarding({ onDismiss }: OnboardingProps) {
-  const [step, setStep] = useState<Step>("pick");
+  const [step, setStep] = useState<Step>("setup");
   // IDs of corpora the user added during this onboarding run. Step 2
   // watches only these, not every corpus the daemon has registered.
   const [watchIds, setWatchIds] = useState<string[]>([]);
@@ -64,6 +77,9 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
 
       <main className="flex-1 min-h-0 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-8 py-6">
+          {step === "setup" && (
+            <StepSetup onContinue={() => setStep("pick")} />
+          )}
           {step === "pick" && (
             <StepPick
               onIndexed={(ids) => {
@@ -97,6 +113,7 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
 
 function StepIndicator({ step }: { step: Step }) {
   const items: { key: Step; label: string }[] = [
+    { key: "setup", label: "Setup" },
     { key: "pick", label: "Pick" },
     { key: "index", label: "Index" },
     { key: "connect", label: "Connect" },
@@ -139,7 +156,184 @@ function StepIndicator({ step }: { step: Step }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Step 1 — Pick
+// Step 1 — Setup
+//
+// The one screen that is byte-identical on macOS, Windows, and Linux.
+// Whatever native installer the user ran (Apple .pkg, Windows NSIS,
+// Linux .deb/.rpm/.AppImage) only laid down the app + put the CLI on
+// PATH; this is the unified, branded confirmation that it worked — with
+// a one-click repair when it didn't.
+
+function StepSetup({ onContinue }: { onContinue: () => void }) {
+  const [status, setStatus] = useState<SetupStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [fixing, setFixing] = useState(false);
+
+  async function refresh() {
+    setError(null);
+    try {
+      setStatus(await invoke<SetupStatus>("setup_status"));
+    } catch (err) {
+      console.error("[ministr] setup_status error:", err);
+      setError(String(err));
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function fixPath() {
+    setFixing(true);
+    setError(null);
+    try {
+      await invoke<string>("fix_path");
+      await refresh();
+    } catch (err) {
+      console.error("[ministr] fix_path error:", err);
+      setError(String(err));
+    } finally {
+      setFixing(false);
+    }
+  }
+
+  const ready = status?.cli_on_path === true;
+
+  return (
+    <div>
+      <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-accent mb-3">
+        Step 1 of 4 · Setup
+      </p>
+      <h1 className="text-display text-text">
+        Welcome to
+        <br />
+        <span className="text-text-dim">ministr.</span>
+      </h1>
+      <p className="font-sans text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
+        The installer placed the app and wired the{" "}
+        <span className="font-mono not-italic text-text">ministr</span> command
+        onto your PATH. Same result on macOS, Windows, and Linux — here's the
+        confirmation.
+      </p>
+
+      <div className="mt-8 border border-border bg-surface">
+        <header className="flex items-center justify-between gap-2 border-b-2 border-border bg-surface-overlay px-4 py-2">
+          <h2 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text">
+            Install status
+          </h2>
+          {status && (
+            <span className="font-mono text-mono-mini text-text-dim">
+              v{status.version}
+            </span>
+          )}
+        </header>
+
+        <div className="divide-y divide-border-soft">
+          <StatusRow
+            ok={ready}
+            pending={status === null && error === null}
+            title="ministr CLI on PATH"
+            detail={
+              status?.cli_path ??
+              (ready ? undefined : "not found — click Fix PATH")
+            }
+          />
+          <StatusRow
+            ok={status !== null}
+            pending={status === null && error === null}
+            title="Data directory"
+            detail={status?.data_dir}
+          />
+        </div>
+
+        {!ready && status !== null && (
+          <footer className="flex items-center justify-between gap-2 border-t-2 border-border px-4 py-2">
+            <span className="font-mono text-mono-mini text-text-dim">
+              CLI not resolvable from this app
+            </span>
+            <Button size="sm" onClick={fixPath} disabled={fixing}>
+              {fixing && (
+                <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+              )}
+              Fix PATH
+            </Button>
+          </footer>
+        )}
+      </div>
+
+      {error && (
+        <p className="mt-3 font-mono text-mono-mini text-danger">{error}</p>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-10">
+        <Capability
+          title="Local-only"
+          hint="Indexing happens on your machine. No code leaves it."
+        />
+        <Capability
+          title="One installer"
+          hint="Identical setup on macOS, Windows, and Linux."
+        />
+        <Capability
+          title="MCP-ready"
+          hint="The same daemon serves your editor's AI agent."
+        />
+      </div>
+
+      <div className="mt-8 flex items-center gap-2 justify-end">
+        <Button size="lg" onClick={onContinue}>
+          {ready ? "Continue" : "Continue anyway"}
+          <ArrowRight className="h-4 w-4" strokeWidth={2} />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function StatusRow({
+  ok,
+  pending,
+  title,
+  detail,
+}: {
+  ok: boolean;
+  pending: boolean;
+  title: string;
+  detail?: string;
+}) {
+  return (
+    <div className="flex items-start gap-3 px-4 py-2.5">
+      <span className="mt-0.5 shrink-0">
+        {pending ? (
+          <Loader2
+            className="h-4 w-4 text-text-dim animate-spin"
+            strokeWidth={2}
+          />
+        ) : ok ? (
+          <Check className="h-4 w-4 text-accent" strokeWidth={3} />
+        ) : (
+          <TriangleAlert className="h-4 w-4 text-danger" strokeWidth={2.5} />
+        )}
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="font-mono text-sm font-semibold text-text">{title}</div>
+        {detail && (
+          <div className="font-mono text-mono-mini text-text-dim truncate">
+            {detail}
+          </div>
+        )}
+      </div>
+      <Terminal
+        className="h-3.5 w-3.5 text-text-dim shrink-0 mt-1"
+        strokeWidth={2}
+        aria-hidden="true"
+      />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Step 2 — Pick
 
 function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
   const [detected, setDetected] = useState<DetectedProject[] | null>(null);
@@ -232,7 +426,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
   return (
     <div>
       <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-accent mb-3">
-        Step 1 of 3 · Welcome
+        Step 2 of 4 · Project
       </p>
       <h1 className="text-display text-text">
         Ask your codebase
@@ -388,7 +582,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Step 2 — Index
+// Step 3 — Index
 
 function StepIndex({
   watchIds,
@@ -420,7 +614,7 @@ function StepIndex({
   return (
     <div>
       <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-accent mb-3">
-        Step 2 of 3 · Indexing
+        Step 3 of 4 · Indexing
       </p>
       <h1 className="text-display text-text">
         {allComplete ? "All set." : "Reading your code…"}
@@ -496,7 +690,7 @@ function StepIndex({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Step 3 — Connect
+// Step 4 — Connect
 
 function StepConnect({ onDone }: { onDone: () => void }) {
   const { status } = useDaemonStatus();
@@ -506,7 +700,7 @@ function StepConnect({ onDone }: { onDone: () => void }) {
   return (
     <div>
       <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-accent mb-3">
-        Step 3 of 3 · Connect
+        Step 4 of 4 · Connect
       </p>
       <h1 className="text-display text-text">
         Hook up your

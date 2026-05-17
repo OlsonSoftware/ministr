@@ -107,6 +107,7 @@ export type DesktopPlatformId =
   | 'macos-aarch64'
   | 'windows-x64'
   | 'linux-deb'
+  | 'linux-rpm'
   | 'linux-appimage';
 
 export interface DesktopInstaller {
@@ -116,7 +117,7 @@ export interface DesktopInstaller {
   /** Asset filename as published on the GitHub Release. */
   filename: string;
   /** Friendly file extension shown in the UI. */
-  ext: 'pkg' | 'dmg' | 'exe' | 'deb' | 'AppImage';
+  ext: 'pkg' | 'dmg' | 'exe' | 'deb' | 'rpm' | 'AppImage';
   /** One-line install/run hint. */
   hint: string;
 }
@@ -134,21 +135,28 @@ export const DESKTOP_INSTALLERS: readonly DesktopInstaller[] = [
     label: 'Windows (x86_64)',
     filename: 'ministr-desktop-x86_64-pc-windows-msvc-setup.exe',
     ext: 'exe',
-    hint: 'NSIS installer. Adds the CLI to PATH automatically.',
+    hint: 'Double-click to install. Adds the CLI to PATH automatically.',
   },
   {
     id: 'linux-deb',
     label: 'Linux Debian / Ubuntu',
     filename: 'ministr-desktop-x86_64-unknown-linux-gnu.deb',
     ext: 'deb',
-    hint: 'sudo dpkg -i ministr-desktop-*.deb',
+    hint: 'Double-click to install (GNOME Software). Adds the CLI to PATH automatically.',
+  },
+  {
+    id: 'linux-rpm',
+    label: 'Linux Fedora / RHEL',
+    filename: 'ministr-desktop-x86_64-unknown-linux-gnu.rpm',
+    ext: 'rpm',
+    hint: 'Double-click to install (GNOME Software / Discover). Adds the CLI to PATH automatically.',
   },
   {
     id: 'linux-appimage',
     label: 'Linux (universal)',
     filename: 'ministr-desktop-x86_64-unknown-linux-gnu.AppImage',
     ext: 'AppImage',
-    hint: 'chmod +x and run.',
+    hint: 'Double-click to run. First launch wires the CLI to PATH + adds an app-menu entry.',
   },
 ] as const;
 

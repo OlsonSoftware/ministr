@@ -66,28 +66,12 @@ export function Hero() {
               re-fetch.
             </motion.p>
 
-            <motion.div {...stagger(4)} className="mt-8">
-              <GlassCard padded={false} className="inline-flex items-center gap-3 pl-4 pr-2 py-2 font-mono text-sm">
-                <span className="text-[var(--color-ministr-400)] select-none">$</span>
-                <span>{HERO_INSTALL}</span>
-                <CopyButton
-                  value={HERO_INSTALL}
-                  label="Copy install command"
-                  size="sm"
-                  className="ml-1"
-                />
-              </GlassCard>
-              <p className="ministr-body-quiet mt-2 font-mono text-[11px]">
-                then <span className="text-fd-foreground">ministr init</span> in your project — wires up Claude Code, Cursor, and Copilot.
-              </p>
-            </motion.div>
-
-            <motion.div {...stagger(5)} className="mt-6 flex flex-wrap items-center gap-3">
+            <motion.div {...stagger(4)} className="mt-8 flex flex-wrap items-center gap-3">
               <Link
                 href="/install"
-                className="ministr-cta-primary group inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-medium"
+                className="ministr-cta-primary group inline-flex items-center gap-1.5 rounded-lg px-5 py-3 text-[15px] font-semibold"
               >
-                Install ministr
+                Download the installer
                 <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
               </Link>
               <Link
@@ -96,6 +80,24 @@ export function Hero() {
               >
                 Read the architecture
               </Link>
+            </motion.div>
+
+            <motion.div {...stagger(5)} className="mt-5">
+              <p className="ministr-body-quiet text-[12px]">
+                One installer for macOS, Windows &amp; Linux — adds the{' '}
+                <span className="font-mono text-fd-foreground">ministr</span>{' '}
+                CLI to your PATH automatically. Just need the CLI?
+              </p>
+              <GlassCard padded={false} className="mt-2 inline-flex items-center gap-3 pl-4 pr-2 py-1.5 font-mono text-xs">
+                <span className="text-[var(--color-ministr-400)] select-none">$</span>
+                <span>{HERO_INSTALL}</span>
+                <CopyButton
+                  value={HERO_INSTALL}
+                  label="Copy CLI install command"
+                  size="sm"
+                  className="ml-1"
+                />
+              </GlassCard>
             </motion.div>
           </div>
 

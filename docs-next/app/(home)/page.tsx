@@ -25,10 +25,12 @@ export default function HomePage() {
         <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
           <p className="ministr-eyebrow">Install</p>
           <h2 className="mt-4 text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.05] tracking-tight text-fd-foreground">
-            Install in 30 seconds.
+            One installer. Every platform.
           </h2>
           <p className="ministr-body mt-4 text-[15.5px]">
-            Four lines. Any MCP client. 100% local.
+            Download, double-click, done — macOS, Windows, and Linux. The{' '}
+            <code className="font-mono">ministr</code> CLI lands on your PATH
+            automatically. Any MCP client. 100% local.
           </p>
         </div>
         <div className="mt-10">
