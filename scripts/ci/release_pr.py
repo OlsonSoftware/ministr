@@ -50,12 +50,36 @@ def emit(key: str, value: str) -> None:
             f.write(f"{key}={value}\n")
 
 
+def manifest_version() -> str:
+    txt = (ROOT / "ministr-cli" / "Cargo.toml").read_text(encoding="utf-8")
+    m = re.search(r'(?m)^version = "([^"]+)"', txt)
+    if not m:
+        raise SystemExit("cannot read manifest version")
+    return m.group(1)
+
+
 def main() -> None:
     last_tag = sh("git", "describe", "--tags", "--match", "v[0-9]*",
                   "--abbrev=0", check=False)
-    nxt = sh("git-cliff", "--bumped-version").lstrip("v")
     cur = last_tag.lstrip("v") if last_tag else None
-    print(f"last tag: {last_tag or '(none)'} | git-cliff next: {nxt}")
+    mani = manifest_version()
+
+    # Phase separation: release-pr only PROPOSES from a clean state. If
+    # the manifest is already ahead of the last tag, a release is
+    # prepared and pending its tag (a release PR was merged but not yet
+    # tagged, e.g. because a build is still retrying). In that state the
+    # `gate` job owns the outcome (build -> tag); release-pr must stand
+    # down, or it opens a PR proposing the very version main is already
+    # releasing. Clean state <-> pending state are mutually exclusive.
+    if cur is not None and mani != cur:
+        print(f"v{mani} already prepared (last tag v{cur}); a release is "
+              f"pending its tag - release-pr stands down")
+        emit("release", "false")
+        return
+
+    nxt = sh("git-cliff", "--bumped-version").lstrip("v")
+    print(f"last tag: {last_tag or '(none)'} | manifest: {mani} | "
+          f"git-cliff next: {nxt}")
 
     if cur == nxt:
         print("no releasable commits since last tag — nothing to do")
