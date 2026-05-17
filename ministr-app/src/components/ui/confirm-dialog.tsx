@@ -3,12 +3,13 @@
  * actions. Type-to-confirm is opt-in via `confirmToken`. Cockpit modal:
  * rounded, hairline, spring pop via the shared motion presets.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "./button";
 import { popIn, scrim } from "../../lib/motion";
 import { transitionInteractive } from "../../lib/ui-tokens";
+import { useDialog } from "../../hooks/useDialog";
 import { cn } from "../../lib/utils";
 
 export interface ConfirmDialogProps {
@@ -35,6 +36,14 @@ export function ConfirmDialog({
   onConfirm,
 }: ConfirmDialogProps) {
   const [typed, setTyped] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  // Escape cancels, focus enters the dialog (the token field when
+  // type-to-confirm is required, else the safe Cancel button) and is
+  // restored to the trigger on close, Tab stays inside.
+  const dialogRef = useDialog<HTMLDivElement>(open, onCancel, {
+    initialFocus: confirmToken ? inputRef : cancelRef,
+  });
 
   const danger = tone === "danger";
   const requiresToken = !!confirmToken;
@@ -58,6 +67,7 @@ export function ConfirmDialog({
           onClick={onCancel}
         >
           <motion.div
+            ref={dialogRef}
             variants={popIn}
             initial="initial"
             animate="animate"
@@ -112,7 +122,7 @@ export function ConfirmDialog({
                     to confirm
                   </label>
                   <input
-                    autoFocus
+                    ref={inputRef}
                     value={typed}
                     onChange={(e) => setTyped(e.target.value)}
                     placeholder={confirmToken}
@@ -126,7 +136,12 @@ export function ConfirmDialog({
               )}
 
               <div className="flex items-center gap-2 mt-4 justify-end">
-                <Button variant="outline" size="sm" onClick={onCancel}>
+                <Button
+                  ref={cancelRef}
+                  variant="outline"
+                  size="sm"
+                  onClick={onCancel}
+                >
                   {cancelLabel}
                 </Button>
                 <Button

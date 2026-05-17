@@ -8,6 +8,7 @@ import {
   type Entity,
 } from "../hooks/useEntityPanel";
 import { scrim, slideOver, spring } from "../lib/motion";
+import { useDialog } from "../hooks/useDialog";
 import { cn } from "../lib/utils";
 import { SymbolView } from "./entity/SymbolView";
 import { SectionView } from "./entity/SectionView";
@@ -29,6 +30,10 @@ export function EntityPanel() {
   const { current, stack, popTo, close } = useEntityPanel();
   const [width, setWidth] = useState(DEFAULT_W);
   const dragging = useRef(false);
+  // Escape now actually closes (the header's "Close · Esc" affordance
+  // was a lie), focus enters the panel and is restored on close, and
+  // Tab is trapped inside it.
+  const panelRef = useDialog<HTMLElement>(Boolean(current), close);
 
   const onResizeStart = useCallback(
     (e: React.MouseEvent) => {
@@ -74,6 +79,7 @@ export function EntityPanel() {
 
           <motion.aside
             key="panel"
+            ref={panelRef}
             variants={slideOver}
             initial="initial"
             animate="animate"

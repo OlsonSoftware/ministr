@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { shortcutGroups } from "../lib/shortcuts";
+import { useDialog } from "../hooks/useDialog";
 
 interface ShortcutSheetProps {
   open: boolean;
@@ -28,6 +29,7 @@ const SECTIONS = (() => {
 })();
 
 export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
+  const panelRef = useDialog<HTMLDivElement>(open, onClose);
   if (!open) return null;
 
   return (
@@ -40,6 +42,7 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
       onClick={onClose}
     >
       <div
+        ref={panelRef}
         className="w-full max-w-md border border-border-soft bg-surface shadow-md overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >

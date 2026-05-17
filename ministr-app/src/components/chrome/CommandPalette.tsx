@@ -29,6 +29,7 @@ import { clampPct } from "../../lib/sessions";
 import { cn } from "../../lib/utils";
 import { useSessions } from "../../hooks/useSessions";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
+import { useDialog } from "../../hooks/useDialog";
 import type { SurfaceId } from "./Sidebar";
 
 interface CommandItem {
@@ -74,6 +75,11 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null);
   const { sessions } = useSessions();
   const { openEntity } = useEntityPanel();
+  // Adds focus-restore (palette didn't return focus to the trigger) and
+  // a Tab trap; the input keeps its own autofocus via `initialFocus`.
+  const dialogRef = useDialog<HTMLDivElement>(open, onClose, {
+    initialFocus: inputRef,
+  });
 
   useEffect(() => {
     if (open) {
@@ -243,6 +249,7 @@ export function CommandPalette({
           onClick={onClose}
         >
           <motion.div
+            ref={dialogRef}
             variants={popIn}
             initial="initial"
             animate="animate"
