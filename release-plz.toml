@@ -10,6 +10,12 @@
 [workspace]
 # Private repo: crates.io publishing stays disabled (was the old policy).
 publish = false
+# GUARD: never tag/release on an arbitrary push — only when the commit
+# is a MERGED release-plz PR. Default `true` releases any untagged
+# manifest version on every push (the footgun that auto-released a
+# stray 0.2.3). With this, `release.yml` can only ever fire as the
+# direct consequence of merging the reviewed release PR.
+release_always = false
 # release.yml already creates the GitHub Release with every artifact when
 # the tag lands — don't let release-plz create a second, empty one.
 git_release_enable = false
