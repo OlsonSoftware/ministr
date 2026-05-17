@@ -199,16 +199,24 @@ Run an **elevated PowerShell** (`Win+X` → *Terminal (Admin)*). These
 match exactly what the `release.yml` Windows steps assume a runner has —
 GitHub's hosted `windows-latest` ships them; your box must too.
 
+> **Fresh Windows / Sandbox / VM gotcha:** the Microsoft Store
+> (`msstore`) winget source often fails first run with
+> `0x8a15005e : The server certificate did not match…`. Harmless here —
+> everything we need is on the community `winget` source. The commands
+> below all pass `--source winget` to skip `msstore` entirely. (To
+> silence it globally instead: `winget source reset --force`.)
+
 ```powershell
-# winget is built into Windows 11 Pro. Accept source agreements once.
-winget install --id Git.Git              -e --accept-source-agreements --accept-package-agreements
-winget install --id Microsoft.PowerShell -e   # `pwsh` 7 — release.yml has `shell: pwsh` steps
-winget install --id Kitware.CMake        -e   # ort-sys / tree-sitter build scripts
-winget install --id Rustlang.Rustup      -e
+# winget is built into Windows 11 Pro. --source winget avoids the
+# msstore cert error on fresh installs; accept agreements once.
+winget install --id Git.Git              --source winget -e --accept-source-agreements --accept-package-agreements
+winget install --id Microsoft.PowerShell --source winget -e   # `pwsh` 7 — release.yml has `shell: pwsh` steps
+winget install --id Kitware.CMake        --source winget -e   # ort-sys / tree-sitter build scripts
+winget install --id Rustlang.Rustup      --source winget -e
 # C/C++ toolchain for the native deps (ort-sys, tokenizers/esaxx C++,
 # tree-sitter C, libsqlite3-sys). The C++ workload includes MSVC + the
 # Windows 11 SDK.
-winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+winget install --id Microsoft.VisualStudio.2022.BuildTools --source winget -e --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 ```
 
 Then, in a **new** terminal so PATH refreshes:
