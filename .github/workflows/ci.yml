@@ -99,7 +99,7 @@ jobs:
     steps:
       # Need full history — actions/checkout defaults to depth 1, but we
       # diff the PR/push range and both endpoints must be reachable.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
@@ -255,7 +255,7 @@ jobs:
       image: ${{ steps.image.outputs.ref }}
       tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - id: image
         name: Resolve lowercase image path
@@ -276,17 +276,17 @@ jobs:
           echo "image tag: $TAG"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build + push ministr-ci image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           file: .github/docker/Dockerfile.ci
@@ -313,10 +313,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install rustfmt
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
         with:
+          # Pinned by SHA → channel can't be read from the ref; set it.
+          toolchain: stable
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -354,14 +356,14 @@ jobs:
       # can't OOM the box; sccache hits make most units near-instant.
       CARGO_BUILD_JOBS: "8"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       # Registry + git dep checkouts only (NOT target/ — sccache owns
       # compile artifacts). `dev` shared-key stays disjoint from
       # rust-release's `release` key. Harmless no-op on a persistent
       # self-hosted runner where CARGO_HOME is already warm.
       - name: Cargo registry cache (dev)
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: dev
           cache-targets: "false"
@@ -450,12 +452,12 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
       CARGO_BUILD_JOBS: "8"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       # Registry + git only; `release` shared-key disjoint from
       # rust-dev's `dev`. sccache owns the compile artifacts.
       - name: Cargo registry cache (release)
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: release
           cache-targets: "false"
@@ -539,11 +541,11 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       # Share rust-dev's cache (registry + git) read-only — cargo-deny /
       # cargo-audit only need the crate metadata, not a target/ tree.
       - name: Cargo cache (registry + git)
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: dev
           save-if: false
@@ -565,9 +567,9 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           push: false
