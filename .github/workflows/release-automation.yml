@@ -246,13 +246,20 @@ jobs:
             -f 'assignees[]=copilot-swe-agent[bot]'
           echo "Assigned the Copilot coding agent to issue #$issue."
 
-  # ── Deterministic safety net (UNCHANGED) ────────────────────────────
+  # ── Deterministic safety net ────────────────────────────────────────
   #
-  # Does the manifest version still lack its `v<version>` tag? Gate
-  # fires on STATE ("a prepared, untagged version"), not a commit
-  # subject. A merged release PR bumps the manifest with no tag yet ->
-  # gate true -> build -> tag. Build fails -> no tag -> the next push
-  # retries. Nothing strands in a "prepared but untagged" limbo.
+  # The expensive build runs ONLY on the release-bump commit itself —
+  # `is_release` is true iff `v<manifest>` is still untagged AND this
+  # push is the release commit (HEAD subject `chore: release vX.Y.Z`,
+  # or the push changed ministr-cli's `version`). The earlier
+  # state-only gate ("any untagged manifest") re-ran the whole
+  # multi-platform matrix on EVERY non-path-ignored push during the
+  # merge→tag window (e.g. a CI-only PR), which is the waste this
+  # removes. Trade-off (accepted): a failed release build no longer
+  # auto-retries on the next unrelated push — re-run / re-merge the
+  # `chore: release` PR to retry. `build`/`tag-and-release` are also
+  # version-scoped via `concurrency` so the same release can't run the
+  # matrix twice. Tag-on-green and "no tag until green" are unchanged.
   gate:
     name: Detect pending release
     runs-on: ubuntu-latest
@@ -262,19 +269,47 @@ jobs:
       version: ${{ steps.d.outputs.version }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: d
+        env:
+          BEFORE: ${{ github.event.before }}
         shell: bash
         run: |
           set -euo pipefail
           ver="$(grep -m1 '^version' ministr-cli/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           [ -n "$ver" ] || { echo "::error::cannot parse version"; exit 1; }
+
           if git ls-remote --exit-code --tags origin "refs/tags/v$ver" >/dev/null 2>&1; then
             echo "v$ver is already tagged - nothing to release"
             echo "is_release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "v$ver has no tag - release pending"
+            exit 0
+          fi
+
+          # Untagged — but only BUILD if this push is the release-bump
+          # commit, not just any push landing while untagged.
+          subject="$(git log -1 --format=%s)"
+          release_commit=false
+          case "$subject" in
+            "chore: release v$ver"*) release_commit=true ;;
+          esac
+          # Belt-and-suspenders: did this push actually change the cli
+          # version line? (full history fetched above, so the diff is
+          # reliable; guard for the first-push all-zero BEFORE sha).
+          if [ "$release_commit" != true ] && [ -n "${BEFORE:-}" ] \
+             && git cat-file -e "$BEFORE" 2>/dev/null \
+             && git diff "$BEFORE" HEAD -- ministr-cli/Cargo.toml \
+                  | grep -qE '^\+version = '; then
+            release_commit=true
+          fi
+
+          if [ "$release_commit" = true ]; then
+            echo "v$ver untagged and this is the release commit - release pending"
             echo "is_release=true"  >> "$GITHUB_OUTPUT"
             echo "version=$ver"     >> "$GITHUB_OUTPUT"
+          else
+            echo "v$ver untagged but this push is not the release commit (subject: $subject) - skipping build (re-run the chore: release PR to retry a failed release)"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
 
   # Build EVERY artifact for this commit. No tag exists yet. Any failure
@@ -283,6 +318,9 @@ jobs:
     name: Build release artifacts
     needs: gate
     if: ${{ github.repository_owner == 'OlsonSoftware' && needs.gate.outputs.is_release == 'true' }}
+    concurrency:
+      group: release-build-v${{ needs.gate.outputs.version }}
+      cancel-in-progress: true
     uses: ./.github/workflows/release.yml
     secrets: inherit
 
@@ -291,6 +329,9 @@ jobs:
     name: Tag + GitHub Release
     needs: [gate, build]
     if: ${{ github.repository_owner == 'OlsonSoftware' && needs.gate.outputs.is_release == 'true' }}
+    concurrency:
+      group: release-tag-v${{ needs.gate.outputs.version }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
