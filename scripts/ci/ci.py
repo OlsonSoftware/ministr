@@ -128,7 +128,22 @@ def cmd_pkg(a: argparse.Namespace) -> None:
     app = REPO / "target/aarch64-apple-darwin/release/bundle/macos/ministr.app"
     if not app.is_dir():
         sys.exit(f"ministr.app not found at {app}")
-    version = env["GITHUB_REF_NAME"].lstrip("v")
+    # Under build-then-tag, this workflow runs on the `main` push BEFORE
+    # any tag exists, so GITHUB_REF_NAME is "main" (was producing
+    # `pkgbuild --version main`). The product version is the single
+    # workspace version in the manifest (same source the release gate
+    # uses); fall back to a tag-style ref only if that can't be read.
+    try:
+        version = next(
+            ln.split('"')[1] for ln in
+            (REPO / "ministr-cli" / "Cargo.toml")
+            .read_text(encoding="utf-8").splitlines()
+            if ln.startswith('version = "')
+        )
+    except (OSError, UnicodeDecodeError, StopIteration):
+        # Manifest unreadable / no version line — fall back to the ref.
+        version = env.get("GITHUB_REF_NAME", "0.0.0").lstrip("v")
+    print(f"pkg version: {version}", flush=True)
     rt = Path(env["RUNNER_TEMP"])
     keychain = rt / "installer-signing.keychain-db"
     kc_pw = str(uuid.uuid4())
@@ -155,7 +170,17 @@ def cmd_pkg(a: argparse.Namespace) -> None:
         # masks known secret strings, but don't rely on that — print
         # only the program name for redacted calls.
         print(f"+ {cmd[0]} (args redacted)" if redact else "+ " + " ".join(cmd), flush=True)
-        subprocess.run(cmd, check=True, **kw)
+        try:
+            subprocess.run(cmd, check=True, **kw)
+        except subprocess.CalledProcessError as e:
+            # CalledProcessError's default text includes the full argv
+            # (cert/keychain/notary password). For redacted calls, exit
+            # with a sanitized message so the secret can't leak to logs.
+            if redact:
+                raise SystemExit(
+                    f"{cmd[0]} failed (exit {e.returncode}) [args redacted]"
+                ) from None
+            raise
 
     try:
         sh(["security", "create-keychain", "-p", kc_pw, str(keychain)], redact=True)
@@ -169,15 +194,30 @@ def cmd_pkg(a: argparse.Namespace) -> None:
         cert.write_bytes(
             __import__("base64").b64decode(env["APPLE_INSTALLER_CERTIFICATE"])
         )
+        # Import the FULL identity (cert + private key) from the .p12.
+        # `-t cert` (the old flag) restricts the import to certificate
+        # items, so the private key is dropped and `productbuild` finds
+        # "no appropriate signing identity". Drop `-t`, and grant the
+        # signing tools access via `-T` instead of blanket `-A`.
         sh([
             "security", "import", str(cert), "-P",
             env["APPLE_INSTALLER_CERTIFICATE_PASSWORD"],
-            "-A", "-t", "cert", "-f", "pkcs12", "-k", str(keychain),
+            "-f", "pkcs12", "-k", str(keychain),
+            "-T", "/usr/bin/productbuild",
+            "-T", "/usr/bin/pkgbuild",
+            "-T", "/usr/bin/codesign",
         ], redact=True)
         sh([
-            "security", "set-key-partition-list", "-S", "apple-tool:,apple:",
+            "security", "set-key-partition-list", "-S",
+            "apple-tool:,apple:,codesign:",
             "-s", "-k", kc_pw, str(keychain),
         ], redact=True)
+        # Diagnostic (non-fatal): list the identities actually present
+        # so a cert/identity-string mismatch in the secrets is obvious
+        # from the log instead of needing another blind iteration.
+        subprocess.run(
+            ["security", "find-identity", "-v", str(keychain)], check=False
+        )
         comp = rt / "ministr-component.pkg"
         sh([
             "pkgbuild", "--component", str(app), "--install-location",
@@ -245,6 +285,105 @@ def cmd_collect_bundles(a: argparse.Namespace) -> None:
         sys.exit(f"no .exe/.deb/.rpm/.AppImage bundles found under {target_dir}")
 
 
+def cmd_verify_signing(_a: argparse.Namespace) -> None:
+    """Fast preflight: do the Apple signing creds actually work?
+
+    Runs the SAME keychain import + `find-identity` path `cmd_pkg`
+    uses, and asserts both signing-identity strings resolve — in ~1 min
+    on a bare macOS runner, so a bad secret fails before the ~20-min
+    Rust/Tauri build instead of after it. macOS only."""
+    if sys.platform != "darwin":
+        sys.exit("verify-signing is macOS-only")
+    import base64
+    import uuid
+
+    env = os.environ
+    required = [
+        "APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD",
+        "APPLE_SIGNING_IDENTITY", "APPLE_INSTALLER_CERTIFICATE",
+        "APPLE_INSTALLER_CERTIFICATE_PASSWORD",
+        "APPLE_INSTALLER_SIGNING_IDENTITY", "APPLE_ID", "APPLE_PASSWORD",
+        "APPLE_TEAM_ID",
+    ]
+    missing = [k for k in required if not env.get(k)]
+    if missing:
+        sys.exit("::error::missing/empty Apple secret(s): " + ", ".join(missing))
+
+    rt = Path(env["RUNNER_TEMP"])
+    kc = rt / "preflight.keychain-db"
+    kc_pw = str(uuid.uuid4())
+
+    def sh(cmd: list[str], *, redact: bool = False, **kw):
+        print(f"+ {cmd[0]} (args redacted)" if redact else "+ " + " ".join(cmd), flush=True)
+        try:
+            subprocess.run(cmd, check=True, **kw)
+        except subprocess.CalledProcessError as e:
+            # CalledProcessError's default text includes the full argv
+            # (cert/keychain/notary password). For redacted calls, exit
+            # with a sanitized message so the secret can't leak to logs.
+            if redact:
+                raise SystemExit(
+                    f"{cmd[0]} failed (exit {e.returncode}) [args redacted]"
+                ) from None
+            raise
+
+    try:
+        sh(["security", "create-keychain", "-p", kc_pw, str(kc)], redact=True)
+        sh(["security", "set-keychain-settings", "-lut", "21600", str(kc)])
+        sh(["security", "unlock-keychain", "-p", kc_pw, str(kc)], redact=True)
+        existing = subprocess.check_output(
+            ["security", "list-keychains", "-d", "user"], text=True
+        )
+        kcs = [x.strip().strip('"') for x in existing.split()] + [str(kc)]
+        sh(["security", "list-keychains", "-d", "user", "-s", *kcs])
+        for b64, pwd, name in (
+            ("APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD", "app.p12"),
+            ("APPLE_INSTALLER_CERTIFICATE",
+             "APPLE_INSTALLER_CERTIFICATE_PASSWORD", "inst.p12"),
+        ):
+            p12 = rt / name
+            p12.write_bytes(base64.b64decode(env[b64]))
+            sh([
+                "security", "import", str(p12), "-P", env[pwd],
+                "-f", "pkcs12", "-k", str(kc),
+                "-T", "/usr/bin/productbuild",
+                "-T", "/usr/bin/pkgbuild",
+                "-T", "/usr/bin/codesign",
+            ], redact=True)
+        sh([
+            "security", "set-key-partition-list", "-S",
+            "apple-tool:,apple:,codesign:", "-s", "-k", kc_pw, str(kc),
+        ], redact=True)
+        ids = subprocess.check_output(
+            ["security", "find-identity", "-v", str(kc)], text=True
+        )
+        print(ids)
+        fails = []
+        for label, key in (
+            ("application", "APPLE_SIGNING_IDENTITY"),
+            ("installer", "APPLE_INSTALLER_SIGNING_IDENTITY"),
+        ):
+            if env[key] not in ids:
+                fails.append(
+                    f"{label} signing identity {env[key]!r} not found "
+                    f"among the imported identities above"
+                )
+        if fails:
+            sys.exit(
+                "::error::Apple signing preflight FAILED:\n  - "
+                + "\n  - ".join(fails)
+                + "\nThe *_SIGNING_IDENTITY secret must exactly match the "
+                "certificate's name in its .p12. Fix the secret(s) and "
+                "re-run — no need to wait for the full build."
+            )
+        print("Apple signing preflight OK: both identities resolve.")
+    finally:
+        subprocess.run(
+            ["security", "delete-keychain", str(kc)],
+            stderr=subprocess.DEVNULL,
+        )
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="ci.py")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -279,6 +418,8 @@ def main() -> None:
     ck.set_defaults(fn=cmd_checksums)
 
     sub.add_parser("pkg").set_defaults(fn=cmd_pkg)
+
+    sub.add_parser("verify-signing").set_defaults(fn=cmd_verify_signing)
 
     args = p.parse_args()
     args.fn(args)
