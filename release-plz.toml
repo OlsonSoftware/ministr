@@ -40,32 +40,48 @@ pr_labels = ["release"]
 name = "tree-sitter-unreal-cpp"
 release = false
 
-# ministr-cli is the single tag-emitting package (inherits the
-# `v{{version}}` name from [workspace]).
+# ministr-cli is the umbrella: it owns the single `v{{version}}` tag AND
+# the single CHANGELOG section. `changelog_include` folds the sibling
+# crates' commits into ministr-cli's entry, and the siblings set
+# `changelog_update = false` so they don't each emit their own
+# `## [x.y.z]` block — that per-crate duplication is what corrupted the
+# old CHANGELOG. Net: one product section per release.
 [[package]]
 name = "ministr-cli"
 version_group = "ministr"
 git_tag_enable = true
+changelog_include = [
+  "ministr-api",
+  "ministr-core",
+  "ministr-daemon",
+  "ministr-mcp",
+  "ministr-app",
+]
 
 [[package]]
 name = "ministr-api"
 version_group = "ministr"
+changelog_update = false
 
 [[package]]
 name = "ministr-core"
 version_group = "ministr"
+changelog_update = false
 
 [[package]]
 name = "ministr-daemon"
 version_group = "ministr"
+changelog_update = false
 
 [[package]]
 name = "ministr-mcp"
 version_group = "ministr"
+changelog_update = false
 
 [[package]]
 name = "ministr-app"
 version_group = "ministr"
+changelog_update = false
 
 # ── Changelog grouping (git-cliff under the hood) ───────────────────────
 # Map Conventional Commit types onto the existing Keep-a-Changelog
