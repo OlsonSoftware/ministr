@@ -234,8 +234,11 @@ function StepSetup({ onContinue }: { onContinue: () => void }) {
             pending={status === null && error === null}
             title="ministr CLI on PATH"
             detail={
-              status?.cli_path ??
-              (ready ? undefined : "not found — click Fix PATH")
+              // Blank while the status is still loading; only surface
+              // "not found" once we actually have a (negative) result.
+              status === null
+                ? undefined
+                : (status.cli_path ?? "not found — click Fix PATH")
             }
           />
           <StatusRow

@@ -246,35 +246,55 @@ fn install_linux_desktop_entry() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&icons_dir)?;
 
     // Stage the icon next to the entry so launchers resolve it by name.
-    let icon_dest = icons_dir.join("ai.ministr.desktop.png");
+    // Basename is `ai.ministr` (NOT the `ai.ministr.desktop` app id,
+    // which already ends in `.desktop` and would yield a doubled
+    // extension on the entry file).
+    let icon_dest = icons_dir.join("ai.ministr.png");
     if !icon_dest.exists() {
         let icon_bytes: &[u8] = include_bytes!("../icons/128x128.png");
         fs::write(&icon_dest, icon_bytes)?;
     }
 
-    let desktop_dest = apps_dir.join("ai.ministr.desktop.desktop");
+    // Single `.desktop` extension.
+    let desktop_dest = apps_dir.join("ai.ministr.desktop");
 
-    // Don't clobber a user-customized entry, but always refresh the Exec
-    // line if the AppImage moved (common: Downloads -> ~/Applications).
+    // Escape the AppImage path for the `Exec` key per the freedesktop
+    // Desktop Entry spec: quote (so spaces are one argument) and
+    // backslash-escape the reserved characters `"`, `$`, `` ` ``, `\`.
+    let exec_value = {
+        let escaped = appimage
+            .replace('\\', "\\\\")
+            .replace('`', "\\`")
+            .replace('"', "\\\"")
+            .replace('$', "\\$");
+        format!("\"{escaped}\"")
+    };
+
+    // Don't clobber a user-customized entry, but always refresh if the
+    // AppImage moved (common: Downloads -> ~/Applications).
     if desktop_dest.exists()
         && let Ok(existing) = fs::read_to_string(&desktop_dest)
-        && existing.contains(&format!("Exec={appimage}"))
+        && existing.contains(&format!("Exec={exec_value}"))
     {
         info!("Linux desktop entry already current — skipping");
         return Ok(());
     }
 
-    let entry = format!(
-        "[Desktop Entry]\n\
-         Type=Application\n\
-         Name=ministr\n\
-         Comment=Context cache for LLM agents\n\
-         Exec={appimage}\n\
-         Icon=ai.ministr.desktop\n\
-         Terminal=false\n\
-         Categories=Development;Utility;\n\
-         StartupWMClass=ministr\n"
-    );
+    // Built line-by-line (no Rust-indentation leaking into the file):
+    // .desktop keys must start at column 0.
+    let entry = [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=ministr",
+        "Comment=Context cache for LLM agents",
+        &format!("Exec={exec_value}"),
+        "Icon=ai.ministr",
+        "Terminal=false",
+        "Categories=Development;Utility;",
+        "StartupWMClass=ministr",
+        "",
+    ]
+    .join("\n");
     fs::write(&desktop_dest, entry)?;
     info!(path = %desktop_dest.display(), "installed Linux desktop entry");
 
