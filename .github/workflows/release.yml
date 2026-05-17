@@ -234,7 +234,21 @@ jobs:
           cache: pnpm
           cache-dependency-path: ministr-app/pnpm-lock.yaml
 
-      - name: Install frontend deps
+      # Split by OS: the self-hosted Windows runner has PowerShell
+      # ExecutionPolicy=Restricted, so GitHub's default `run:` wrapper
+      # (powershell -command ". 'temp.ps1'") is blocked
+      # (PSSecurityException). cmd has no execution policy and pnpm.CMD
+      # is on PATH after pnpm/action-setup. Linux/macOS keep the default
+      # shell. (A single step can't pick cmd-on-Windows + bash-elsewhere,
+      # and shell:bash on this Windows runner is the broken WSL stub.)
+      - name: Install frontend deps (Windows)
+        if: matrix.platform == 'windows-x86_64'
+        working-directory: ministr-app
+        shell: cmd
+        run: pnpm install --frozen-lockfile
+
+      - name: Install frontend deps (Linux/macOS)
+        if: matrix.platform != 'windows-x86_64'
         working-directory: ministr-app
         run: pnpm install --frozen-lockfile
 
