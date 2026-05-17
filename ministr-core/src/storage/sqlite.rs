@@ -1418,12 +1418,12 @@ impl Storage for SqliteStorage {
             // so we default to Fifo on restore. Callers that need a
             // different policy should either (a) add an eviction_policy
             // column to the sessions table and thread it through, or
-            // (b) load the session and rebuild the BudgetTracker with the
+            // (b) load the session and rebuild the UsageTracker with the
             // desired policy.
             let mut session = Session::restore(
                 SessionId(session_id),
                 budget,
-                crate::session::EvictionPolicy::Fifo,
+                crate::session::DropPolicy::Fifo,
                 delivered,
                 trajectory,
                 turn,
@@ -3194,14 +3194,14 @@ mod tests {
         // `session_deliveries` schema had no columns for them; load_session
         // hardcoded `Full`. Every daemon restart wiped the compression
         // pipeline's work. V18 added the missing columns.
-        use crate::session::{CompressionTier, EvictionPolicy, SessionId};
+        use crate::session::{CompressionTier, DropPolicy, SessionId};
         use crate::types::{ContentId, Resolution};
 
         let storage = test_storage().await;
         let mut session = crate::session::Session::new(
             SessionId::from("persist-tier".to_string()),
             100_000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
         session.record_delivery(
             &ContentId::from("s1".to_string()),
@@ -3247,14 +3247,14 @@ mod tests {
         // SessionMetrics (total_deliveries, cumulative_tokens_delivered, …),
         // so every daemon restart zeroed them. V18 added a metrics_json
         // column and restore now re-seeds metrics.
-        use crate::session::{EvictionPolicy, SessionId};
+        use crate::session::{DropPolicy, SessionId};
         use crate::types::{ContentId, Resolution};
 
         let storage = test_storage().await;
         let mut session = crate::session::Session::new(
             SessionId::from("persist-metrics".to_string()),
             100_000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
         for i in 0..5_u32 {
             session.record_delivery(
@@ -3281,16 +3281,16 @@ mod tests {
 
     #[tokio::test]
     async fn save_load_preserves_recent_queries() {
-        // Regression: recent_queries drive the EvictionRanker's task-salience
+        // Regression: recent_queries drive the DropRanker's task-salience
         // factor. V18 persists them as JSON so salience doesn't evaporate on
         // daemon restart mid-task.
-        use crate::session::{EvictionPolicy, SessionId};
+        use crate::session::{DropPolicy, SessionId};
 
         let storage = test_storage().await;
         let mut session = crate::session::Session::new(
             SessionId::from("persist-queries".to_string()),
             100_000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
         session.record_query("authentication flow");
         session.record_query("JWT tokens");

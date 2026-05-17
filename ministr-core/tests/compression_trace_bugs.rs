@@ -1,8 +1,8 @@
 //! Regression guards for compression-pipeline bugs found via trace.
 
 use ministr_core::session::compression::CompressionPipeline;
-use ministr_core::session::{CompressionTier, PressureLevel};
-use ministr_core::session::{EvictionPolicy, Session, SessionId};
+use ministr_core::session::{CompressionTier, UsageLevel};
+use ministr_core::session::{DropPolicy, Session, SessionId};
 use ministr_core::types::{ContentId, Resolution};
 
 /// CH1 regression — Abstractive must NEVER promote to Extractive.
@@ -23,11 +23,11 @@ use ministr_core::types::{ContentId, Resolution};
 #[test]
 fn ch1_abstractive_skips_extractive_and_goes_to_bookmark() {
     assert_eq!(
-        CompressionPipeline::next_tier(CompressionTier::Abstractive, PressureLevel::Elevated),
+        CompressionPipeline::next_tier(CompressionTier::Abstractive, UsageLevel::Elevated),
         Some(CompressionTier::Bookmark),
     );
     assert_eq!(
-        CompressionPipeline::next_tier(CompressionTier::Abstractive, PressureLevel::Critical),
+        CompressionPipeline::next_tier(CompressionTier::Abstractive, UsageLevel::Critical),
         Some(CompressionTier::Bookmark),
     );
 }
@@ -41,7 +41,7 @@ fn ch1_recommend_promotions_reports_real_savings() {
     let mut session = Session::new(
         SessionId::from("ch1-regression".to_string()),
         100_000,
-        EvictionPolicy::Fifo,
+        DropPolicy::Fifo,
     );
 
     session.record_delivery(
@@ -58,7 +58,7 @@ fn ch1_recommend_promotions_reports_real_savings() {
     );
 
     let promotions =
-        CompressionPipeline::recommend_promotions(&session, PressureLevel::Critical, 0);
+        CompressionPipeline::recommend_promotions(&session, UsageLevel::Critical, 0);
 
     let promo = promotions
         .iter()

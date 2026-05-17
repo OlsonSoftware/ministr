@@ -1,9 +1,9 @@
 ---
-title: ministr_budget
+title: ministr_usage
 description: An optional, advisory token-usage estimate for the session — internal accounting, not a signal to stop.
 ---
 
-`ministr_budget` is opt-in. ministr deliberately does **not** put token-usage figures into ordinary tool responses — the per-call numbers are anchored to a configured window, not the model's real context window, and treating them as a limit made agents abandon work early. This tool exists for the rare case where you explicitly want the estimate anyway.
+`ministr_usage` is opt-in. ministr deliberately does **not** put token-usage figures into ordinary tool responses — the per-call numbers are anchored to a configured window, not the model's real context window, and treating them as a limit made agents abandon work early. This tool exists for the rare case where you explicitly want the estimate anyway.
 
 ## Parameters
 
@@ -15,7 +15,7 @@ This tool returns its estimate directly (no wrapper envelope):
 
 ```json
 {
-  "pressure_level": "normal",
+  "level": "normal",
   "tokens_used": 34500,
   "tokens_remaining": 65500,
   "utilization": 0.345
@@ -26,7 +26,7 @@ This tool returns its estimate directly (no wrapper envelope):
 
 | Field | Description |
 |---|---|
-| `pressure_level` | A coarse label for the estimate: `"normal"`, `"elevated"`, or `"critical"` |
+| `level` | A coarse label for the estimate: `"normal"`, `"elevated"`, or `"critical"` |
 | `tokens_used` | Estimated tokens of content delivered so far this session |
 | `tokens_remaining` | Estimated tokens left against the configured window |
 | `utilization` | `tokens_used / window`, 0.0–1.0 |

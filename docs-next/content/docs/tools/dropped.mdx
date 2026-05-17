@@ -1,5 +1,5 @@
 ---
-title: ministr_evicted
+title: ministr_dropped
 description: Signal that content IDs were dropped from the agent's context. Keeps ministr's view of what the agent still has accurate.
 ---
 
@@ -17,7 +17,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 {
   "coherence_alerts": [ /* only when content changed; see envelope */ ],
   "result": {
-    "evicted": ["docs/setup.md#prerequisites", "docs/intro.md#overview"],
+    "dropped": ["docs/setup.md#prerequisites", "docs/intro.md#overview"],
     "not_found": ["unknown-id"]
   }
 }
@@ -27,7 +27,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 
 | Field | Description |
 |---|---|
-| `evicted` | Content IDs ministr no longer considers delivered this session |
+| `dropped` | Content IDs ministr no longer considers delivered this session |
 | `not_found` | Content IDs ministr had no record of delivering |
 
 ## Behavior

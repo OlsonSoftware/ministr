@@ -115,7 +115,7 @@ fn classify_route(path: &str) -> Option<RouteInfo> {
         }
         if inner == "evicted" {
             return Some(RouteInfo {
-                tool: "ministr_evicted",
+                tool: "ministr_dropped",
                 corpus_id,
                 session_id,
                 path_summary: String::new(),

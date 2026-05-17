@@ -6,7 +6,7 @@ use ministr_api::activity::ActivityEvent;
 use ministr_api::coherence::CoherenceEvent;
 use ministr_api::corpus::{CorpusInfo, RegisterCorpusResponse};
 use ministr_api::status::DaemonStatus;
-use ministr_core::session::PressureLevel;
+use ministr_core::session::UsageLevel;
 use ministr_core::storage::traits::Storage;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
@@ -646,7 +646,7 @@ pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result
 pub struct SessionDetail {
     pub session_id: String,
     pub corpus_id: String,
-    pub pressure_level: String,
+    pub level: String,
     pub tokens_used: usize,
     pub tokens_remaining: usize,
     pub utilization: f64,
@@ -693,7 +693,7 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDeta
         let reg = handle.sessions.lock().await;
         for sid in reg.session_ids() {
             if let Some(entry) = reg.get_session(&sid) {
-                let status = entry.budget.budget_status();
+                let status = entry.budget.usage_status();
                 let metrics = entry.session.metrics();
                 let cfg = entry.budget.config();
                 #[allow(clippy::cast_precision_loss)]
@@ -705,10 +705,10 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDeta
                 sessions.push(SessionDetail {
                     session_id: sid.clone(),
                     corpus_id: corpus_id.clone(),
-                    pressure_level: match entry.budget.pressure_level() {
-                        PressureLevel::Normal => "normal",
-                        PressureLevel::Elevated => "elevated",
-                        PressureLevel::Critical => "critical",
+                    level: match entry.budget.level() {
+                        UsageLevel::Normal => "normal",
+                        UsageLevel::Elevated => "elevated",
+                        UsageLevel::Critical => "critical",
                     }
                     .to_string(),
                     tokens_used: status.tokens_used,

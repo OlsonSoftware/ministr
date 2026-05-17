@@ -1,20 +1,20 @@
 //! Budget tracker for agent context window management.
 //!
-//! The [`BudgetTracker`] monitors token usage against a configurable budget
+//! The [`UsageTracker`] monitors token usage against a configurable budget
 //! and reports pressure levels. When usage crosses the pressure threshold
 //! (default 80%), responses should be auto-compressed to claim-level and
 //! eviction recommendations should be attached.
 
 use serde::{Deserialize, Serialize};
 
-use super::eviction::{EvictionCandidate, EvictionRanker};
+use super::drops::{DropCandidate, DropRanker};
 use super::types::Session;
 use super::window::WindowEstimator;
 
 /// Pressure level indicating how close the agent is to its context budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum PressureLevel {
+pub enum UsageLevel {
     /// Usage below pressure threshold — deliver at requested resolution.
     Normal,
     /// Usage between pressure threshold and critical threshold — compress
@@ -33,26 +33,26 @@ pub enum PressureLevel {
 /// # Examples
 ///
 /// ```
-/// use ministr_core::session::BudgetStatus;
-/// use ministr_core::session::PressureLevel;
+/// use ministr_core::session::UsageStatus;
+/// use ministr_core::session::UsageLevel;
 ///
-/// let status = BudgetStatus {
+/// let status = UsageStatus {
 ///     tokens_used: 75_000,
 ///     tokens_remaining: 25_000,
-///     pressure_level: PressureLevel::Normal,
+///     level: UsageLevel::Normal,
 ///     utilization: 0.75,
 /// };
 ///
-/// assert_eq!(status.pressure_level, PressureLevel::Normal);
+/// assert_eq!(status.level, UsageLevel::Normal);
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct BudgetStatus {
+pub struct UsageStatus {
     /// Estimated tokens currently consumed in the agent's context.
     pub tokens_used: usize,
     /// Estimated tokens remaining before hitting the budget limit.
     pub tokens_remaining: usize,
     /// Current pressure level.
-    pub pressure_level: PressureLevel,
+    pub level: UsageLevel,
     /// Utilization ratio (0.0–1.0).
     pub utilization: f64,
 }
@@ -88,7 +88,7 @@ pub fn default_max_context_tokens() -> usize {
 
 /// Configuration for the budget tracker.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BudgetConfig {
+pub struct UsageConfig {
     /// Maximum context window budget in tokens.
     ///
     /// Defaults to the connected session's window via
@@ -102,22 +102,22 @@ pub struct BudgetConfig {
     /// Eviction policy applied when the window fills. Defaults to `Fifo`
     /// for backward compatibility; callers who want FSRS-aware eviction
     /// (using the memory tracker's retrievability scores) must explicitly
-    /// set this to `Fsrs` and call [`BudgetTracker::record_tokens_with_memory`].
+    /// set this to `Fsrs` and call [`UsageTracker::record_tokens_with_memory`].
     #[serde(default = "default_eviction_policy")]
-    pub eviction_policy: super::types::EvictionPolicy,
+    pub eviction_policy: super::types::DropPolicy,
 }
 
-fn default_eviction_policy() -> super::types::EvictionPolicy {
-    super::types::EvictionPolicy::Fifo
+fn default_eviction_policy() -> super::types::DropPolicy {
+    super::types::DropPolicy::Fifo
 }
 
-impl Default for BudgetConfig {
+impl Default for UsageConfig {
     fn default() -> Self {
         Self {
             max_context_tokens: default_max_context_tokens(),
             pressure_threshold: 0.80,
             critical_threshold: 0.95,
-            eviction_policy: super::types::EvictionPolicy::Fifo,
+            eviction_policy: super::types::DropPolicy::Fifo,
         }
     }
 }
@@ -131,33 +131,33 @@ impl Default for BudgetConfig {
 /// # Examples
 ///
 /// ```
-/// use ministr_core::session::{BudgetTracker, BudgetConfig, EvictionPolicy, PressureLevel};
+/// use ministr_core::session::{UsageTracker, UsageConfig, DropPolicy, UsageLevel};
 ///
-/// let config = BudgetConfig {
+/// let config = UsageConfig {
 ///     max_context_tokens: 1000,
 ///     pressure_threshold: 0.8,
 ///     critical_threshold: 0.95,
-///     eviction_policy: EvictionPolicy::Fifo,
+///     eviction_policy: DropPolicy::Fifo,
 /// };
-/// let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
+/// let mut tracker = UsageTracker::new(config, DropPolicy::Fifo);
 ///
 /// tracker.record_tokens("s1", 500);
-/// assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+/// assert_eq!(tracker.level(), UsageLevel::Normal);
 ///
 /// tracker.record_tokens("s2", 400);
-/// assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+/// assert_eq!(tracker.level(), UsageLevel::Elevated);
 /// ```
-pub struct BudgetTracker {
+pub struct UsageTracker {
     /// Budget configuration.
-    config: BudgetConfig,
+    config: UsageConfig,
     /// Underlying window estimator.
     window: WindowEstimator,
 }
 
-impl BudgetTracker {
+impl UsageTracker {
     /// Create a new budget tracker with the given configuration and eviction policy.
     #[must_use]
-    pub fn new(config: BudgetConfig, eviction_policy: super::types::EvictionPolicy) -> Self {
+    pub fn new(config: UsageConfig, eviction_policy: super::types::DropPolicy) -> Self {
         let window = WindowEstimator::new(config.max_context_tokens, eviction_policy);
         Self { config, window }
     }
@@ -168,7 +168,7 @@ impl BudgetTracker {
     /// to make room for this delivery. Callers should apply bookmark
     /// compression to evicted IDs so the agent retains structural awareness.
     ///
-    /// **Note:** under [`EvictionPolicy::Fsrs`](super::types::EvictionPolicy::Fsrs)
+    /// **Note:** under [`DropPolicy::Fsrs`](super::types::DropPolicy::Fsrs)
     /// this path falls back to FIFO eviction because no retrievability
     /// scores are supplied. Call [`record_tokens_with_memory`](Self::record_tokens_with_memory)
     /// instead whenever a [`MemoryTracker`](super::memory::MemoryTracker) is
@@ -180,7 +180,7 @@ impl BudgetTracker {
 
     /// Record a token delivery with FSRS-aware eviction.
     ///
-    /// Under the [`EvictionPolicy::Fsrs`] policy, the memory tracker's
+    /// Under the [`DropPolicy::Fsrs`] policy, the memory tracker's
     /// retrievability scores determine which content is evicted first
     /// (lowest predicted recall probability).
     #[allow(clippy::cast_precision_loss)]
@@ -207,14 +207,14 @@ impl BudgetTracker {
 
     /// Current pressure level based on token utilization.
     #[must_use]
-    pub fn pressure_level(&self) -> PressureLevel {
+    pub fn level(&self) -> UsageLevel {
         let utilization = self.utilization();
         if utilization >= self.config.critical_threshold {
-            PressureLevel::Critical
+            UsageLevel::Critical
         } else if utilization >= self.config.pressure_threshold {
-            PressureLevel::Elevated
+            UsageLevel::Elevated
         } else {
-            PressureLevel::Normal
+            UsageLevel::Normal
         }
     }
 
@@ -231,18 +231,18 @@ impl BudgetTracker {
 
     /// Get a full budget status snapshot for inclusion in tool responses.
     #[must_use]
-    pub fn budget_status(&self) -> BudgetStatus {
-        BudgetStatus {
+    pub fn usage_status(&self) -> UsageStatus {
+        UsageStatus {
             tokens_used: self.window.estimated_used(),
             tokens_remaining: self.window.estimated_remaining(),
-            pressure_level: self.pressure_level(),
+            level: self.level(),
             utilization: self.utilization(),
         }
     }
 
     /// The budget configuration.
     #[must_use]
-    pub fn config(&self) -> &BudgetConfig {
+    pub fn config(&self) -> &UsageConfig {
         &self.config
     }
 
@@ -261,7 +261,7 @@ impl BudgetTracker {
     /// Force-evict a content ID from the budget tracker's window.
     ///
     /// Used when the agent signals that content has been dropped, either
-    /// explicitly (via `ministr_evicted`) or implicitly (via re-request).
+    /// explicitly (via `ministr_dropped`) or implicitly (via re-request).
     /// Returns `true` if the content was found and removed.
     pub fn force_evict(&mut self, content_id: &str) -> bool {
         self.window.force_evict(content_id)
@@ -269,23 +269,23 @@ impl BudgetTracker {
 
     /// Get eviction candidates ranked by priority.
     ///
-    /// Uses the [`EvictionRanker`] to score delivered items from the session
+    /// Uses the [`DropRanker`] to score delivered items from the session
     /// by recency, token weight, and resolution priority. Returns up to
     /// `max_candidates` items, sorted best-to-evict first.
     ///
     /// Only returns candidates when pressure is elevated or critical.
     /// Under normal pressure, returns an empty list.
     #[must_use]
-    pub fn eviction_candidates(
+    pub fn drop_candidates(
         &self,
         session: &Session,
         max_candidates: usize,
         memory: Option<&super::memory::MemoryTracker>,
-    ) -> Vec<EvictionCandidate> {
-        if self.pressure_level() == PressureLevel::Normal {
+    ) -> Vec<DropCandidate> {
+        if self.level() == UsageLevel::Normal {
             return Vec::new();
         }
-        EvictionRanker::rank(session, max_candidates, memory)
+        DropRanker::rank(session, max_candidates, memory)
     }
 
     /// Recommend automatic tier promotions based on current pressure.
@@ -301,7 +301,7 @@ impl BudgetTracker {
         const RECENCY_PROTECTION_TURNS: u32 = 3;
         super::compression::CompressionPipeline::recommend_promotions(
             session,
-            self.pressure_level(),
+            self.level(),
             RECENCY_PROTECTION_TURNS,
         )
     }
@@ -310,34 +310,34 @@ impl BudgetTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::EvictionPolicy;
+    use crate::session::DropPolicy;
 
-    fn default_tracker() -> BudgetTracker {
-        BudgetTracker::new(BudgetConfig::default(), EvictionPolicy::Fifo)
+    fn default_tracker() -> UsageTracker {
+        UsageTracker::new(UsageConfig::default(), DropPolicy::Fifo)
     }
 
-    fn tracker_with_capacity(capacity: usize) -> BudgetTracker {
-        BudgetTracker::new(
-            BudgetConfig {
+    fn tracker_with_capacity(capacity: usize) -> UsageTracker {
+        UsageTracker::new(
+            UsageConfig {
                 max_context_tokens: capacity,
-                ..BudgetConfig::default()
+                ..UsageConfig::default()
             },
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         )
     }
 
     #[test]
     fn initial_state_is_normal() {
         let tracker = default_tracker();
-        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+        assert_eq!(tracker.level(), UsageLevel::Normal);
         assert!((tracker.utilization() - 0.0).abs() < f64::EPSILON);
 
-        let status = tracker.budget_status();
+        let status = tracker.usage_status();
         assert_eq!(status.tokens_used, 0);
         // With MINISTR_CONTEXT_WINDOW unset (the default test env) the
         // window is the non-misleading fallback, not the old 100k.
         assert_eq!(status.tokens_remaining, FALLBACK_CONTEXT_TOKENS);
-        assert_eq!(status.pressure_level, PressureLevel::Normal);
+        assert_eq!(status.level, UsageLevel::Normal);
     }
 
     #[test]
@@ -345,7 +345,7 @@ mod tests {
         let mut tracker = tracker_with_capacity(1000);
 
         let _ = tracker.record_tokens("s1", 500);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+        assert_eq!(tracker.level(), UsageLevel::Normal);
         assert!((tracker.utilization() - 0.5).abs() < f64::EPSILON);
     }
 
@@ -354,7 +354,7 @@ mod tests {
         let mut tracker = tracker_with_capacity(1000);
 
         let _ = tracker.record_tokens("s1", 800);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        assert_eq!(tracker.level(), UsageLevel::Elevated);
         assert!((tracker.utilization() - 0.8).abs() < f64::EPSILON);
     }
 
@@ -363,7 +363,7 @@ mod tests {
         let mut tracker = tracker_with_capacity(1000);
 
         let _ = tracker.record_tokens("s1", 900);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        assert_eq!(tracker.level(), UsageLevel::Elevated);
     }
 
     #[test]
@@ -371,7 +371,7 @@ mod tests {
         let mut tracker = tracker_with_capacity(1000);
 
         let _ = tracker.record_tokens("s1", 950);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
+        assert_eq!(tracker.level(), UsageLevel::Critical);
     }
 
     #[test]
@@ -379,20 +379,20 @@ mod tests {
         let mut tracker = tracker_with_capacity(1000);
 
         let _ = tracker.record_tokens("s1", 1000);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
+        assert_eq!(tracker.level(), UsageLevel::Critical);
     }
 
     #[test]
-    fn budget_status_snapshot() {
+    fn usage_status_snapshot() {
         let mut tracker = tracker_with_capacity(1000);
 
         let _ = tracker.record_tokens("s1", 300);
         let _ = tracker.record_tokens("s2", 200);
 
-        let status = tracker.budget_status();
+        let status = tracker.usage_status();
         assert_eq!(status.tokens_used, 500);
         assert_eq!(status.tokens_remaining, 500);
-        assert_eq!(status.pressure_level, PressureLevel::Normal);
+        assert_eq!(status.level, UsageLevel::Normal);
         assert!((status.utilization - 0.5).abs() < f64::EPSILON);
     }
 
@@ -401,54 +401,54 @@ mod tests {
         let mut tracker = tracker_with_capacity(1000);
 
         let _ = tracker.record_tokens("s1", 300);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+        assert_eq!(tracker.level(), UsageLevel::Normal);
 
         let _ = tracker.record_tokens("s2", 300);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+        assert_eq!(tracker.level(), UsageLevel::Normal);
 
         let _ = tracker.record_tokens("s3", 300);
         // 900/1000 = 0.9 -> Elevated (>= 0.8, < 0.95)
-        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        assert_eq!(tracker.level(), UsageLevel::Elevated);
 
         let _ = tracker.record_tokens("s4", 100);
         // 1000/1000 = 1.0 -> Critical (>= 0.95)
         // Window eviction only triggers when > capacity, and 1000 == 1000, so no eviction
-        assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
+        assert_eq!(tracker.level(), UsageLevel::Critical);
     }
 
     #[test]
     fn custom_thresholds() {
-        let config = BudgetConfig {
+        let config = UsageConfig {
             max_context_tokens: 1000,
             pressure_threshold: 0.5,
             critical_threshold: 0.75,
-            eviction_policy: EvictionPolicy::Fifo,
+            eviction_policy: DropPolicy::Fifo,
         };
-        let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
+        let mut tracker = UsageTracker::new(config, DropPolicy::Fifo);
 
         let _ = tracker.record_tokens("s1", 400);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+        assert_eq!(tracker.level(), UsageLevel::Normal);
 
         let _ = tracker.record_tokens("s2", 100);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        assert_eq!(tracker.level(), UsageLevel::Elevated);
 
         let _ = tracker.record_tokens("s3", 250);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
+        assert_eq!(tracker.level(), UsageLevel::Critical);
     }
 
     #[test]
     fn zero_capacity_is_always_critical() {
-        let config = BudgetConfig {
+        let config = UsageConfig {
             max_context_tokens: 0,
-            ..BudgetConfig::default()
+            ..UsageConfig::default()
         };
-        let tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
-        assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
+        let tracker = UsageTracker::new(config, DropPolicy::Fifo);
+        assert_eq!(tracker.level(), UsageLevel::Critical);
     }
 
     #[test]
     fn budget_config_defaults() {
-        let config = BudgetConfig::default();
+        let config = UsageConfig::default();
         // MINISTR_CONTEXT_WINDOW unset → fallback window, not the old
         // hardcoded 100k that under-reported real model windows.
         assert_eq!(config.max_context_tokens, FALLBACK_CONTEXT_TOKENS);
@@ -487,38 +487,38 @@ mod tests {
     #[test]
     fn pressure_drops_after_eviction() {
         // Capacity 100, pressure at 80%, critical at 95%
-        let config = BudgetConfig {
+        let config = UsageConfig {
             max_context_tokens: 100,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
-            eviction_policy: EvictionPolicy::Fifo,
+            eviction_policy: DropPolicy::Fifo,
         };
-        let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
+        let mut tracker = UsageTracker::new(config, DropPolicy::Fifo);
 
         // Fill past capacity: s1=50, s2=60 -> 110 > 100, s1 evicted -> 60
         let _ = tracker.record_tokens("s1", 50);
         let _ = tracker.record_tokens("s2", 60);
 
         // After eviction: 60/100 = 0.6 -> Normal
-        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+        assert_eq!(tracker.level(), UsageLevel::Normal);
         assert!(!tracker.is_in_window("s1"), "s1 should be evicted");
         assert!(tracker.is_in_window("s2"));
     }
 
     #[test]
     fn lru_eviction_with_budget_tracking() {
-        let config = BudgetConfig {
+        let config = UsageConfig {
             max_context_tokens: 500,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
-            eviction_policy: EvictionPolicy::Lru,
+            eviction_policy: DropPolicy::Lru,
         };
-        let mut tracker = BudgetTracker::new(config, EvictionPolicy::Lru);
+        let mut tracker = UsageTracker::new(config, DropPolicy::Lru);
 
         let _ = tracker.record_tokens("s1", 200);
         let _ = tracker.record_tokens("s2", 200);
         // At 400/500 = 0.8 -> Elevated
-        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        assert_eq!(tracker.level(), UsageLevel::Elevated);
 
         // Touch s1 to make s2 the LRU candidate
         tracker.touch("s1");
@@ -531,16 +531,16 @@ mod tests {
         assert!(tracker.is_in_window("s3"));
 
         // 400/500 = 0.8 -> Elevated
-        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        assert_eq!(tracker.level(), UsageLevel::Elevated);
     }
 
     #[test]
-    fn budget_status_after_eviction() {
-        let config = BudgetConfig {
+    fn usage_status_after_eviction() {
+        let config = UsageConfig {
             max_context_tokens: 100,
-            ..BudgetConfig::default()
+            ..UsageConfig::default()
         };
-        let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fifo);
+        let mut tracker = UsageTracker::new(config, DropPolicy::Fifo);
 
         let _ = tracker.record_tokens("s1", 30);
         let _ = tracker.record_tokens("s2", 30);
@@ -550,10 +550,10 @@ mod tests {
         // This pushes past capacity: 90 + 20 = 110 > 100, evict s1 -> 80
         let _ = tracker.record_tokens("s4", 20);
 
-        let status = tracker.budget_status();
+        let status = tracker.usage_status();
         assert_eq!(status.tokens_used, 80);
         assert_eq!(status.tokens_remaining, 20);
-        assert_eq!(status.pressure_level, PressureLevel::Elevated); // 80/100 = 0.8
+        assert_eq!(status.level, UsageLevel::Elevated); // 80/100 = 0.8
     }
 
     #[test]
@@ -565,13 +565,13 @@ mod tests {
         // how recently it was accessed.
         use crate::session::memory::{AccessRating, MemoryTracker};
 
-        let config = BudgetConfig {
+        let config = UsageConfig {
             max_context_tokens: 100,
             pressure_threshold: 0.8,
             critical_threshold: 0.95,
-            eviction_policy: EvictionPolicy::Fsrs,
+            eviction_policy: DropPolicy::Fsrs,
         };
-        let mut tracker = BudgetTracker::new(config, EvictionPolicy::Fsrs);
+        let mut tracker = UsageTracker::new(config, DropPolicy::Fsrs);
         let mut memory = MemoryTracker::new();
 
         // Turn 1: deliver A (will appear "oldest" to FIFO)
@@ -615,17 +615,17 @@ mod tests {
         let mut levels = vec![];
         for i in 0..20 {
             let _ = tracker.record_tokens(&format!("s{i}"), 5);
-            levels.push(tracker.pressure_level());
+            levels.push(tracker.level());
         }
 
         // With 20 * 5 = 100 tokens on capacity 100, eviction kicks in above 100
         // Early items should be Normal, later Elevated, final Critical
         assert!(
-            levels.contains(&PressureLevel::Normal),
+            levels.contains(&UsageLevel::Normal),
             "should start Normal"
         );
         assert!(
-            levels.contains(&PressureLevel::Elevated),
+            levels.contains(&UsageLevel::Elevated),
             "should pass through Elevated"
         );
     }
@@ -635,19 +635,19 @@ mod tests {
         let mut tracker = tracker_with_capacity(1000);
 
         let _ = tracker.record_tokens("s1", 300);
-        assert_eq!(tracker.budget_status().tokens_used, 300);
+        assert_eq!(tracker.usage_status().tokens_used, 300);
 
         // Re-record with smaller count — replaces the old entry
         let _ = tracker.record_tokens("s1", 100);
-        assert_eq!(tracker.budget_status().tokens_used, 100);
+        assert_eq!(tracker.usage_status().tokens_used, 100);
         assert!(tracker.is_in_window("s1"));
     }
 
     #[test]
     fn touch_nonexistent_does_not_panic() {
-        let mut tracker = BudgetTracker::new(BudgetConfig::default(), EvictionPolicy::Lru);
+        let mut tracker = UsageTracker::new(UsageConfig::default(), DropPolicy::Lru);
         tracker.touch("nonexistent");
-        assert_eq!(tracker.budget_status().tokens_used, 0);
+        assert_eq!(tracker.usage_status().tokens_used, 0);
     }
 
     #[test]
@@ -669,53 +669,53 @@ mod tests {
 
     #[test]
     fn config_accessor() {
-        let config = BudgetConfig {
+        let config = UsageConfig {
             max_context_tokens: 5000,
             pressure_threshold: 0.7,
             critical_threshold: 0.9,
-            eviction_policy: EvictionPolicy::Fifo,
+            eviction_policy: DropPolicy::Fifo,
         };
-        let tracker = BudgetTracker::new(config.clone(), EvictionPolicy::Fifo);
+        let tracker = UsageTracker::new(config.clone(), DropPolicy::Fifo);
         assert_eq!(tracker.config().max_context_tokens, 5000);
         assert!((tracker.config().pressure_threshold - 0.7).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn pressure_level_serde_roundtrip() {
+    fn level_serde_roundtrip() {
         for level in [
-            PressureLevel::Normal,
-            PressureLevel::Elevated,
-            PressureLevel::Critical,
+            UsageLevel::Normal,
+            UsageLevel::Elevated,
+            UsageLevel::Critical,
         ] {
             let json = serde_json::to_string(&level).unwrap();
-            let back: PressureLevel = serde_json::from_str(&json).unwrap();
+            let back: UsageLevel = serde_json::from_str(&json).unwrap();
             assert_eq!(back, level);
         }
     }
 
     #[test]
-    fn budget_status_serde_roundtrip() {
-        let status = BudgetStatus {
+    fn usage_status_serde_roundtrip() {
+        let status = UsageStatus {
             tokens_used: 5000,
             tokens_remaining: 95_000,
-            pressure_level: PressureLevel::Normal,
+            level: UsageLevel::Normal,
             utilization: 0.05,
         };
         let json = serde_json::to_string(&status).unwrap();
-        let back: BudgetStatus = serde_json::from_str(&json).unwrap();
+        let back: UsageStatus = serde_json::from_str(&json).unwrap();
         assert_eq!(back.tokens_used, status.tokens_used);
-        assert_eq!(back.pressure_level, status.pressure_level);
+        assert_eq!(back.level, status.level);
     }
 
-    // --- eviction_candidates tests ---
+    // --- drop_candidates tests ---
 
     #[test]
-    fn eviction_candidates_empty_under_normal_pressure() {
+    fn drop_candidates_empty_under_normal_pressure() {
         let mut tracker = tracker_with_capacity(1000);
         let mut session = crate::session::Session::new(
             crate::session::SessionId::from("test".to_string()),
             1000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
 
         let _ = tracker.record_tokens("s1", 300);
@@ -728,8 +728,8 @@ mod tests {
         );
 
         // 300/1000 = 0.3 -> Normal pressure
-        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
-        let candidates = tracker.eviction_candidates(&session, 5, None);
+        assert_eq!(tracker.level(), UsageLevel::Normal);
+        let candidates = tracker.drop_candidates(&session, 5, None);
         assert!(
             candidates.is_empty(),
             "no eviction candidates under normal pressure"
@@ -737,12 +737,12 @@ mod tests {
     }
 
     #[test]
-    fn eviction_candidates_returned_under_elevated_pressure() {
+    fn drop_candidates_returned_under_elevated_pressure() {
         let mut tracker = tracker_with_capacity(1000);
         let mut session = crate::session::Session::new(
             crate::session::SessionId::from("test".to_string()),
             1000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
 
         let _ = tracker.record_tokens("s1", 300);
@@ -764,8 +764,8 @@ mod tests {
         );
 
         // 900/1000 = 0.9 -> Elevated
-        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
-        let candidates = tracker.eviction_candidates(&session, 5, None);
+        assert_eq!(tracker.level(), UsageLevel::Elevated);
+        let candidates = tracker.drop_candidates(&session, 5, None);
         assert!(
             !candidates.is_empty(),
             "should return candidates under elevated pressure"
@@ -773,12 +773,12 @@ mod tests {
     }
 
     #[test]
-    fn eviction_candidates_returned_under_critical_pressure() {
+    fn drop_candidates_returned_under_critical_pressure() {
         let mut tracker = tracker_with_capacity(1000);
         let mut session = crate::session::Session::new(
             crate::session::SessionId::from("test".to_string()),
             1000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
 
         let _ = tracker.record_tokens("s1", 960);
@@ -791,8 +791,8 @@ mod tests {
         );
 
         // 960/1000 = 0.96 -> Critical
-        assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
-        let candidates = tracker.eviction_candidates(&session, 5, None);
+        assert_eq!(tracker.level(), UsageLevel::Critical);
+        let candidates = tracker.drop_candidates(&session, 5, None);
         assert!(
             !candidates.is_empty(),
             "should return candidates under critical pressure"
@@ -807,7 +807,7 @@ mod tests {
         let mut session = crate::session::Session::new(
             crate::session::SessionId::from("test".to_string()),
             1000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
 
         session.record_delivery(
@@ -819,7 +819,7 @@ mod tests {
         );
 
         // 0/1000 = 0.0 -> Normal (tracker has no tokens recorded)
-        assert_eq!(tracker.pressure_level(), PressureLevel::Normal);
+        assert_eq!(tracker.level(), UsageLevel::Normal);
         let promotions = tracker.auto_promote(&session);
         assert!(promotions.is_empty(), "no promotions under normal pressure");
     }
@@ -830,7 +830,7 @@ mod tests {
         let mut session = crate::session::Session::new(
             crate::session::SessionId::from("test".to_string()),
             1000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
 
         // Deliver at turn 1, then advance session to turn 10
@@ -853,7 +853,7 @@ mod tests {
         );
 
         // 900/1000 = 0.9 -> Elevated
-        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        assert_eq!(tracker.level(), UsageLevel::Elevated);
         let promotions = tracker.auto_promote(&session);
         // s1 is old (turn 1, age 9 > 3), should be promoted
         let s1_promo = promotions.iter().find(|p| p.content_id == "s1");
@@ -873,7 +873,7 @@ mod tests {
         let mut session = crate::session::Session::new(
             crate::session::SessionId::from("test".to_string()),
             1000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
 
         // Record at current turn (turn 10) — within recency protection
@@ -886,7 +886,7 @@ mod tests {
             "h1".into(),
         );
 
-        assert_eq!(tracker.pressure_level(), PressureLevel::Elevated);
+        assert_eq!(tracker.level(), UsageLevel::Elevated);
         let promotions = tracker.auto_promote(&session);
         assert!(
             promotions.is_empty(),
@@ -900,7 +900,7 @@ mod tests {
         let mut session = crate::session::Session::new(
             crate::session::SessionId::from("test".to_string()),
             1000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
 
         // Recent item but critical pressure — should still promote
@@ -913,7 +913,7 @@ mod tests {
             "h1".into(),
         );
 
-        assert_eq!(tracker.pressure_level(), PressureLevel::Critical);
+        assert_eq!(tracker.level(), UsageLevel::Critical);
         let promotions = tracker.auto_promote(&session);
         assert!(
             !promotions.is_empty(),

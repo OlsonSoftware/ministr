@@ -19,7 +19,7 @@ use ministr_core::embedding::Embedder;
 use ministr_core::error::IndexError;
 use ministr_core::index::{HnswIndex, VectorIndex};
 use ministr_core::service::QueryService;
-use ministr_core::session::BudgetConfig;
+use ministr_core::session::UsageConfig;
 use ministr_core::storage::{SqliteStorage, Storage, SymbolRecord, SymbolRefRecord};
 use ministr_core::types::{
     Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RefKind, RelationType, Section,
@@ -283,17 +283,17 @@ async fn call_tool(client: &McpClient, name: &str, args: serde_json::Value) -> C
 /// Assert a tool response carries no agent-facing budget hints.
 ///
 /// Budget is tracked internally (and still queryable via the explicit
-/// `ministr_budget` tool) but must never be injected into ordinary tool
+/// `ministr_usage` tool) but must never be injected into ordinary tool
 /// responses — the per-call numbers made agents wrongly believe they
 /// were running out of context.
 fn assert_no_budget_hints(v: &serde_json::Value) {
     assert!(
-        v.get("budget_status").is_none() || v["budget_status"].is_null(),
-        "budget_status must not be surfaced to the agent, got: {v}"
+        v.get("usage_status").is_none() || v["usage_status"].is_null(),
+        "usage_status must not be surfaced to the agent, got: {v}"
     );
     assert!(
-        v.get("eviction_recommendations").is_none() || v["eviction_recommendations"].is_null(),
-        "eviction_recommendations must not be surfaced to the agent, got: {v}"
+        v.get("drop_suggestions").is_none() || v["drop_suggestions"].is_null(),
+        "drop_suggestions must not be surfaced to the agent, got: {v}"
     );
 }
 
@@ -320,12 +320,12 @@ async fn list_tools_returns_all_ministr_tools() {
         "should list ministr_extract, got: {tool_names:?}"
     );
     assert!(
-        tool_names.contains(&"ministr_evicted"),
-        "should list ministr_evicted, got: {tool_names:?}"
+        tool_names.contains(&"ministr_dropped"),
+        "should list ministr_dropped, got: {tool_names:?}"
     );
     assert!(
-        tool_names.contains(&"ministr_budget"),
-        "should list ministr_budget, got: {tool_names:?}"
+        tool_names.contains(&"ministr_usage"),
+        "should list ministr_usage, got: {tool_names:?}"
     );
     assert!(
         tool_names.contains(&"ministr_compress"),
@@ -379,7 +379,7 @@ async fn full_flow_survey_read_extract_via_call_tool() {
     assert_no_budget_hints(&survey_json);
     // Internal accounting is observed via the explicit budget tool, not
     // injected into the survey reply.
-    let budget_after_survey = call_tool(&client, "ministr_budget", json!({})).await;
+    let budget_after_survey = call_tool(&client, "ministr_usage", json!({})).await;
     let bjs: serde_json::Value =
         serde_json::from_str(extract_text(&budget_after_survey.content)).unwrap();
     let tokens_after_survey = bjs["estimated_used"].as_u64().unwrap();
@@ -420,7 +420,7 @@ async fn full_flow_survey_read_extract_via_call_tool() {
     }
 
     assert_no_budget_hints(&read_json);
-    let budget_after_read = call_tool(&client, "ministr_budget", json!({})).await;
+    let budget_after_read = call_tool(&client, "ministr_usage", json!({})).await;
     let bjr: serde_json::Value =
         serde_json::from_str(extract_text(&budget_after_read.content)).unwrap();
     let tokens_after_read = bjr["estimated_used"].as_u64().unwrap();
@@ -454,7 +454,7 @@ async fn full_flow_survey_read_extract_via_call_tool() {
     assert!(claim_texts.iter().any(|t| t.contains("24 hours")));
 
     assert_no_budget_hints(&extract_json);
-    let budget_after_extract = call_tool(&client, "ministr_budget", json!({})).await;
+    let budget_after_extract = call_tool(&client, "ministr_usage", json!({})).await;
     let bje: serde_json::Value =
         serde_json::from_str(extract_text(&budget_after_extract.content)).unwrap();
     let tokens_after_extract = bje["estimated_used"].as_u64().unwrap();
@@ -595,7 +595,7 @@ async fn read_sections_from_different_documents() {
 
     // Budget is tracked internally (covered by
     // budget_monotonically_increases_across_tool_types via the explicit
-    // ministr_budget tool) but must not be surfaced in the read reply.
+    // ministr_usage tool) but must not be surfaced in the read reply.
     assert_no_budget_hints(&api_json);
 }
 
@@ -676,13 +676,13 @@ async fn extract_nonexistent_section_returns_user_friendly_error() {
 // ---------------------------------------------------------------------------
 
 /// Budget still accumulates internally across tool types — observed via
-/// the explicit `ministr_budget` tool, never injected into the survey/
+/// the explicit `ministr_usage` tool, never injected into the survey/
 /// read/extract responses themselves.
 #[tokio::test]
 async fn budget_monotonically_increases_across_tool_types() {
     // Helper: query the explicit budget tool for estimated_used.
     async fn used(client: &McpClient) -> u64 {
-        let b = call_tool(client, "ministr_budget", json!({})).await;
+        let b = call_tool(client, "ministr_usage", json!({})).await;
         let j: serde_json::Value = serde_json::from_str(extract_text(&b.content)).unwrap();
         j["estimated_used"].as_u64().unwrap()
     }
@@ -725,17 +725,17 @@ async fn budget_monotonically_increases_across_tool_types() {
     assert!(t3 >= t2, "extract should not decrease tokens: {t3} >= {t2}");
 
     // The explicit budget tool still reports pressure level.
-    let b = call_tool(&client, "ministr_budget", json!({})).await;
+    let b = call_tool(&client, "ministr_usage", json!({})).await;
     let bj: serde_json::Value = serde_json::from_str(extract_text(&b.content)).unwrap();
     assert_eq!(
-        bj["pressure_level"].as_str().unwrap(),
+        bj["level"].as_str().unwrap(),
         "normal",
         "small corpus should not trigger pressure"
     );
 }
 
 // ---------------------------------------------------------------------------
-// ministr_evicted tool
+// ministr_dropped tool
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -750,7 +750,7 @@ async fn evicted_removes_content_from_session_and_budget() {
     )
     .await;
 
-    let budget_before = call_tool(&client, "ministr_budget", json!({})).await;
+    let budget_before = call_tool(&client, "ministr_usage", json!({})).await;
     let j_before: serde_json::Value =
         serde_json::from_str(extract_text(&budget_before.content)).unwrap();
     let used_before = j_before["estimated_used"].as_u64().unwrap();
@@ -759,7 +759,7 @@ async fn evicted_removes_content_from_session_and_budget() {
     // Evict the delivered content
     let evict_result = call_tool(
         &client,
-        "ministr_evicted",
+        "ministr_dropped",
         json!({"content_ids": ["docs/auth.md#tokens"]}),
     )
     .await;
@@ -773,7 +773,7 @@ async fn evicted_removes_content_from_session_and_budget() {
         serde_json::from_str(extract_text(&evict_result.content)).unwrap();
     let evict_data = tool_result(&evict_json);
     assert_eq!(
-        evict_data["evicted"].as_array().unwrap().len(),
+        evict_data["dropped"].as_array().unwrap().len(),
         1,
         "should evict one item"
     );
@@ -789,26 +789,26 @@ async fn evicted_reports_not_found_for_unknown_ids() {
 
     let result = call_tool(
         &client,
-        "ministr_evicted",
+        "ministr_dropped",
         json!({"content_ids": ["nonexistent-id"]}),
     )
     .await;
 
     let json: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
     let data = tool_result(&json);
-    assert!(data["evicted"].as_array().unwrap().is_empty());
+    assert!(data["dropped"].as_array().unwrap().is_empty());
     assert_eq!(data["not_found"].as_array().unwrap().len(), 1);
 }
 
 // ---------------------------------------------------------------------------
-// ministr_budget standalone
+// ministr_usage standalone
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn budget_returns_complete_status() {
     let (client, _server) = wrap_as_client(setup_server().await).await;
 
-    let result = call_tool(&client, "ministr_budget", json!({})).await;
+    let result = call_tool(&client, "ministr_usage", json!({})).await;
 
     assert!(
         result.is_error.is_none() || result.is_error == Some(false),
@@ -819,13 +819,13 @@ async fn budget_returns_complete_status() {
     assert!(json["total_budget"].is_number());
     assert!(json["estimated_used"].is_number());
     assert!(json["estimated_remaining"].is_number());
-    assert!(json["pressure_level"].is_string());
-    assert!(json["eviction_candidates"].is_array());
+    assert!(json["level"].is_string());
+    assert!(json["drop_candidates"].is_array());
     assert!(json["prefetch_metrics"].is_object());
 
     // Fresh session should have zero usage
     assert_eq!(json["estimated_used"].as_u64().unwrap(), 0);
-    assert_eq!(json["pressure_level"].as_str().unwrap(), "normal");
+    assert_eq!(json["level"].as_str().unwrap(), "normal");
 }
 
 // ---------------------------------------------------------------------------
@@ -1082,7 +1082,7 @@ async fn coherence_alerts_surface_in_ministr_read_response() {
 }
 
 #[tokio::test]
-async fn coherence_alerts_surface_in_ministr_budget_response() {
+async fn coherence_alerts_surface_in_ministr_usage_response() {
     let server = setup_server().await;
     let (client, _server) = wrap_as_client(server.clone()).await;
 
@@ -1102,13 +1102,13 @@ async fn coherence_alerts_surface_in_ministr_budget_response() {
     }
 
     // Budget tool should surface the alert
-    let result = call_tool(&client, "ministr_budget", json!({})).await;
+    let result = call_tool(&client, "ministr_usage", json!({})).await;
     let text = extract_text(&result.content);
     let json: serde_json::Value = serde_json::from_str(text).unwrap();
 
     assert!(
         json["coherence_alerts"].is_array(),
-        "ministr_budget should include coherence_alerts, got: {json}"
+        "ministr_usage should include coherence_alerts, got: {json}"
     );
     let alerts = json["coherence_alerts"].as_array().unwrap();
     assert!(
@@ -1188,7 +1188,7 @@ async fn setup_server_with_persistence() -> MinistrServer {
 
     let storage = Arc::new(storage);
     let service = Arc::new(QueryService::new((*storage).clone(), embedder, index));
-    let budget_config = BudgetConfig::default();
+    let budget_config = UsageConfig::default();
     MinistrServer::with_persistence(
         service,
         budget_config,
@@ -1232,13 +1232,13 @@ async fn analytics_co_access_patterns_recorded_and_served_via_prefetch_metrics()
     .await;
 
     // Check budget response includes prefetch_metrics
-    let result = call_tool(&client, "ministr_budget", json!({})).await;
+    let result = call_tool(&client, "ministr_usage", json!({})).await;
     let text = extract_text(&result.content);
     let json: serde_json::Value = serde_json::from_str(text).unwrap();
 
     assert!(
         json["prefetch_metrics"].is_object(),
-        "ministr_budget should include prefetch_metrics, got: {json}"
+        "ministr_usage should include prefetch_metrics, got: {json}"
     );
 
     let metrics = &json["prefetch_metrics"];
@@ -1336,7 +1336,7 @@ Use the Retry-After header to determine when to retry.
 
     let storage = Arc::new(storage);
     let service = Arc::new(QueryService::new((*storage).clone(), embedder, index));
-    let budget_config = BudgetConfig::default();
+    let budget_config = UsageConfig::default();
     let server = MinistrServer::with_persistence(
         service,
         budget_config,
@@ -1690,7 +1690,7 @@ async fn e2e_read_session_dedup_on_second_request() {
 }
 
 // ---------------------------------------------------------------------------
-// I3.5: ministr_compress + ministr_evicted cycle works and budget updates
+// I3.5: ministr_compress + ministr_dropped cycle works and budget updates
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -1713,7 +1713,7 @@ async fn e2e_compress_evict_cycle_updates_budget() {
     .await;
 
     // Check budget after reads
-    let budget_before = call_tool(&client, "ministr_budget", json!({})).await;
+    let budget_before = call_tool(&client, "ministr_usage", json!({})).await;
     let jb: serde_json::Value = serde_json::from_str(extract_text(&budget_before.content)).unwrap();
     let used_before = jb["estimated_used"].as_u64().unwrap();
     assert!(used_before > 0, "should have budget usage after reads");
@@ -1745,7 +1745,7 @@ async fn e2e_compress_evict_cycle_updates_budget() {
     // Step 3: Evict the content after compression
     let evict = call_tool(
         &client,
-        "ministr_evicted",
+        "ministr_dropped",
         json!({"content_ids": ["docs/auth.md#tokens", "docs/api.md#rate-limits"]}),
     )
     .await;
@@ -1757,7 +1757,7 @@ async fn e2e_compress_evict_cycle_updates_budget() {
     let ej: serde_json::Value = serde_json::from_str(extract_text(&evict.content)).unwrap();
     let ed = tool_result(&ej);
     assert_eq!(
-        ed["evicted"].as_array().unwrap().len(),
+        ed["dropped"].as_array().unwrap().len(),
         2,
         "should evict both items"
     );
@@ -1767,7 +1767,7 @@ async fn e2e_compress_evict_cycle_updates_budget() {
     );
 
     // Step 4: Verify budget decreased after eviction
-    let budget_after = call_tool(&client, "ministr_budget", json!({})).await;
+    let budget_after = call_tool(&client, "ministr_usage", json!({})).await;
     let ja: serde_json::Value = serde_json::from_str(extract_text(&budget_after.content)).unwrap();
     let used_after = ja["estimated_used"].as_u64().unwrap();
 
@@ -1843,7 +1843,7 @@ JWT tokens use RS256 signing. Tokens expire after 24 hours.
     ));
     let server = MinistrServer::with_persistence(
         service,
-        BudgetConfig::default(),
+        UsageConfig::default(),
         Arc::clone(&storage),
         Some("coherence-test".into()),
     )
@@ -2173,8 +2173,8 @@ async fn survey_prewarms_parent_sections_of_claim_hits() {
         "read should succeed"
     );
 
-    // Check prefetch metrics via ministr_budget
-    let budget_result = call_tool(&client, "ministr_budget", json!({})).await;
+    // Check prefetch metrics via ministr_usage
+    let budget_result = call_tool(&client, "ministr_usage", json!({})).await;
     let budget_body: serde_json::Value =
         serde_json::from_str(extract_text(&budget_result.content)).unwrap();
 
@@ -2270,7 +2270,7 @@ and individual files in a single ministr session.
 
     let storage = Arc::new(storage);
     let service = Arc::new(QueryService::new((*storage).clone(), embedder, index));
-    let budget_config = BudgetConfig::default();
+    let budget_config = UsageConfig::default();
     let server = MinistrServer::with_persistence(
         service,
         budget_config,
@@ -2416,7 +2416,7 @@ async fn setup_server_with_web_fetcher(
         Arc::clone(&index),
     ));
 
-    let budget_config = BudgetConfig::default();
+    let budget_config = UsageConfig::default();
     let server = MinistrServer::with_persistence(
         service,
         budget_config,
@@ -2702,7 +2702,7 @@ async fn setup_server_with_git_fetcher(
         Arc::clone(&index),
     ));
 
-    let budget_config = BudgetConfig::default();
+    let budget_config = UsageConfig::default();
     let server = MinistrServer::with_persistence(
         service,
         budget_config,
@@ -2866,7 +2866,7 @@ async fn e2e_clone_and_fetch_unified_survey_results() {
         Arc::clone(&index),
     ));
 
-    let budget_config = BudgetConfig::default();
+    let budget_config = UsageConfig::default();
     let server = MinistrServer::with_persistence(
         service,
         budget_config,
@@ -3330,7 +3330,7 @@ async fn ministr_definition_returns_symbol_metadata() {
 }
 
 #[tokio::test]
-async fn ministr_definition_omits_budget_status() {
+async fn ministr_definition_omits_usage_status() {
     let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
     let result = call_tool(
         &client,
@@ -3448,7 +3448,7 @@ async fn ministr_references_not_found() {
 }
 
 #[tokio::test]
-async fn ministr_symbols_omits_budget_status() {
+async fn ministr_symbols_omits_usage_status() {
     let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
     let result = call_tool(&client, "ministr_symbols", json!({"query": "Config"})).await;
 
@@ -3529,7 +3529,7 @@ async fn stress_concurrent_clients_on_shared_corpus() {
                     }
                     4 => {
                         // Budget
-                        let result = call_tool(&client, "ministr_budget", json!({})).await;
+                        let result = call_tool(&client, "ministr_usage", json!({})).await;
                         assert!(
                             result.is_error.is_none() || result.is_error == Some(false),
                             "client {client_id} budget {query_idx} failed"
@@ -3540,7 +3540,7 @@ async fn stress_concurrent_clients_on_shared_corpus() {
             }
 
             // Final: verify budget is consistent
-            let budget = call_tool(&client, "ministr_budget", json!({})).await;
+            let budget = call_tool(&client, "ministr_usage", json!({})).await;
             let text = extract_text(&budget.content);
             let json: serde_json::Value = serde_json::from_str(text).unwrap();
             assert!(
@@ -3593,7 +3593,7 @@ async fn stress_concurrent_read_evict_cycles() {
                 let evict_ids: Vec<&str> = sections.to_vec();
                 let result = call_tool(
                     &client,
-                    "ministr_evicted",
+                    "ministr_dropped",
                     json!({"content_ids": evict_ids}),
                 )
                 .await;
@@ -3604,7 +3604,7 @@ async fn stress_concurrent_read_evict_cycles() {
             }
 
             // Final budget should be consistent
-            let budget = call_tool(&client, "ministr_budget", json!({})).await;
+            let budget = call_tool(&client, "ministr_usage", json!({})).await;
             let text = extract_text(&budget.content);
             let json: serde_json::Value = serde_json::from_str(text).unwrap();
             assert!(json["total_budget"].is_number());
@@ -3716,34 +3716,34 @@ async fn integration_roundtrip_all_mcp_tools() {
         serde_json::from_str(extract_text(&compress.content)).unwrap();
     assert!(tool_result(&compress_json)["summaries"].is_array());
 
-    // 7. ministr_budget — budget status
-    let budget = call_tool(&client, "ministr_budget", json!({})).await;
+    // 7. ministr_usage — budget status
+    let budget = call_tool(&client, "ministr_usage", json!({})).await;
     assert!(
         budget.is_error.is_none() || budget.is_error == Some(false),
-        "ministr_budget failed"
+        "ministr_usage failed"
     );
     let budget_json: serde_json::Value =
         serde_json::from_str(extract_text(&budget.content)).unwrap();
     assert!(budget_json["total_budget"].is_number());
     assert!(budget_json["estimated_used"].is_number());
-    assert!(budget_json["pressure_level"].is_string());
-    assert!(budget_json["eviction_candidates"].is_array());
+    assert!(budget_json["level"].is_string());
+    assert!(budget_json["drop_candidates"].is_array());
 
-    // 8. ministr_evicted — eviction signaling
+    // 8. ministr_dropped — eviction signaling
     let evicted = call_tool(
         &client,
-        "ministr_evicted",
+        "ministr_dropped",
         json!({"content_ids": ["docs/auth.md#tokens"]}),
     )
     .await;
     assert!(
         evicted.is_error.is_none() || evicted.is_error == Some(false),
-        "ministr_evicted failed"
+        "ministr_dropped failed"
     );
     let evicted_json: serde_json::Value =
         serde_json::from_str(extract_text(&evicted.content)).unwrap();
     let evicted_data = tool_result(&evicted_json);
-    assert!(evicted_data["evicted"].is_array());
+    assert!(evicted_data["dropped"].is_array());
     assert!(evicted_data["not_found"].is_array());
 
     // 9. ministr_symbols — code symbol search
@@ -3850,8 +3850,8 @@ async fn integration_roundtrip_all_mcp_tools() {
         "ministr_related",
         "ministr_toc",
         "ministr_compress",
-        "ministr_budget",
-        "ministr_evicted",
+        "ministr_usage",
+        "ministr_dropped",
         "ministr_symbols",
         "ministr_definition",
         "ministr_references",
@@ -3949,7 +3949,7 @@ async fn soak_large_corpus_indexing_and_query() {
         embedder as Arc<dyn Embedder>,
         index as Arc<dyn VectorIndex>,
     ));
-    let budget_config = BudgetConfig::default();
+    let budget_config = UsageConfig::default();
     let server =
         MinistrServer::with_persistence(service, budget_config, storage, Some("soak-test".into()))
             .await;
@@ -3999,7 +3999,7 @@ async fn soak_large_corpus_indexing_and_query() {
     );
 
     // Budget should reflect the large amount of delivered content
-    let budget = call_tool(&client, "ministr_budget", json!({})).await;
+    let budget = call_tool(&client, "ministr_usage", json!({})).await;
     let budget_json: serde_json::Value =
         serde_json::from_str(extract_text(&budget.content)).unwrap();
     assert!(budget_json["total_budget"].is_number());

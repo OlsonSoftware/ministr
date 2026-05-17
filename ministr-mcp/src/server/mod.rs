@@ -2,18 +2,18 @@
 //!
 //! Implements the rmcp `ServerHandler` trait with `#[tool]` macro-based
 //! tool registration. The server exposes ministr tools (`ministr_survey`,
-//! `ministr_read`, `ministr_extract`, `ministr_related`, `ministr_evicted`,
-//! `ministr_budget`, `ministr_compress`, `ministr_toc`, `ministr_fetch`,
+//! `ministr_read`, `ministr_extract`, `ministr_related`, `ministr_dropped`,
+//! `ministr_usage`, `ministr_compress`, `ministr_toc`, `ministr_fetch`,
 //! `ministr_refresh`, `ministr_clone`, `ministr_task`) over the MCP protocol.
 //!
-//! Every tool response includes a `budget_status` object with the current
+//! Every tool response includes a `usage_status` object with the current
 //! token budget state. Survey and read responses are deduplicated against
 //! the session shadow to avoid re-delivering content the agent already has.
 //!
 //! When the agent re-requests unchanged content, ministr treats it as a
 //! fault-based eviction signal — the agent's context window dropped the
 //! content before our estimator predicted. The window estimate is corrected
-//! and the content is re-delivered. The `ministr_evicted` tool accepts explicit
+//! and the content is re-delivered. The `ministr_dropped` tool accepts explicit
 //! eviction feedback from the agent.
 
 mod builders;
@@ -60,7 +60,7 @@ use ministr_core::index::VectorIndex;
 use ministr_core::ingestion::{IngestionPipeline, IngestionProgress};
 use ministr_core::service::QueryService;
 use ministr_core::session::prefetch::PrefetchEngine;
-use ministr_core::session::{PressureLevel, SessionRegistry};
+use ministr_core::session::{UsageLevel, SessionRegistry};
 use ministr_core::storage::{SqliteStorage, Storage, SymbolFilter};
 use ministr_core::token::count_tokens;
 use ministr_core::types::{
@@ -75,8 +75,8 @@ use helpers::{
 use progress::{run_ingestion_progress_notifier, run_subscription_notifier};
 use types::{
     AlreadyDeliveredResponse, BridgeEndpointSummary, BridgeLinkSummary, BridgeParams,
-    BridgeResponse, BudgetResponse, CloneOutputData, CloneParams, CompressParams, CompressResponse,
-    CorpusStatsHeader, DefinitionParams, EvictedParams, EvictedResponse, ExtractParams,
+    BridgeResponse, UsageResponse, CloneOutputData, CloneParams, CompressParams, CompressResponse,
+    CorpusStatsHeader, DefinitionParams, DroppedParams, DroppedResponse, ExtractParams,
     ExtractResponse, FetchOutputData, FetchParams, FetchResponse, NextAction, ReadOutputData,
     ReadParams, ReferencesParams, ReferencesResponse, RefreshParams, RefreshResponse,
     RelatedParams, RelatedResponse, SessionMetricsResponse, SurveyParams, SurveyResponse,
@@ -201,7 +201,7 @@ fn single_symbol_next_action(symbols: &[SymbolSummary]) -> Vec<NextAction> {
 /// Advertises that the server provides per-response budget status snapshots,
 /// proactive eviction recommendations at elevated pressure, and context-window
 /// token accounting.
-pub const EXT_BUDGET_PROTOCOL: &str = "dev.ministr/budget-protocol";
+pub const EXT_USAGE_PROTOCOL: &str = "dev.ministr/usage-protocol";
 
 /// Extension identifier for ministr coherence notifications.
 ///
@@ -219,7 +219,7 @@ pub const EXT_COMPRESSION: &str = "dev.ministr/compression";
 fn ministr_extension_capabilities() -> ExtensionCapabilities {
     let mut extensions = ExtensionCapabilities::new();
     extensions.insert(
-        EXT_BUDGET_PROTOCOL.to_string(),
+        EXT_USAGE_PROTOCOL.to_string(),
         serde_json::from_value(serde_json::json!({ "version": "1" }))
             .expect("static JSON is valid"),
     );
@@ -248,7 +248,7 @@ fn ministr_extension_capabilities() -> ExtensionCapabilities {
 #[derive(Debug, Clone, Default)]
 pub struct NegotiatedExtensions {
     /// Client understands per-response budget status and eviction recommendations.
-    pub budget_protocol: bool,
+    pub usage_protocol: bool,
     /// Client can handle coherence change notifications via resource subscriptions.
     pub coherence: bool,
     /// Client supports multi-tier compression (summary / claims / full).
@@ -263,7 +263,7 @@ impl NegotiatedExtensions {
             return Self::default();
         };
         Self {
-            budget_protocol: client.contains_key(EXT_BUDGET_PROTOCOL),
+            usage_protocol: client.contains_key(EXT_USAGE_PROTOCOL),
             coherence: client.contains_key(EXT_COHERENCE),
             compression: client.contains_key(EXT_COMPRESSION),
         }
@@ -373,7 +373,7 @@ impl ServerHandler for MinistrServer {
         // client's declared extension support.
         let negotiated = NegotiatedExtensions::negotiate(request.capabilities.extensions.as_ref());
         tracing::info!(
-            budget = negotiated.budget_protocol,
+            budget = negotiated.usage_protocol,
             coherence = negotiated.coherence,
             compression = negotiated.compression,
             "extension negotiation complete"
@@ -859,7 +859,7 @@ impl MinistrServer {
                         );
                         let _ = entry.budget.record_tokens(&r.content_id, token_count);
                     }
-                    let budget_status = entry.budget.budget_status();
+                    let usage_status = entry.budget.usage_status();
 
                     // Survey-triggered prefetch: pre-warm parent sections of claim hits
                     let claim_section_ids: Vec<String> = results
@@ -946,7 +946,7 @@ impl MinistrServer {
                                 results,
                                 deduplicated_count,
                             },
-                            budget_status,
+                            usage_status,
                             extra_actions,
                         )
                         .await;
@@ -1037,7 +1037,7 @@ impl MinistrServer {
                             entry.budget.force_evict(&params.section_id);
                         }
 
-                        let budget_status = entry.budget.budget_status();
+                        let usage_status = entry.budget.usage_status();
                         drop(reg);
 
                         let skip = AlreadyDeliveredResponse {
@@ -1045,7 +1045,7 @@ impl MinistrServer {
                             status: "already_delivered",
                             claims_available: detail.claims_available,
                         };
-                        let response = self.build_response(skip, budget_status).await;
+                        let response = self.build_response(skip, usage_status).await;
                         return structured_result(&response);
                     }
 
@@ -1056,13 +1056,13 @@ impl MinistrServer {
 
                     // Case 1: New content (or changed) — deliver full text
                     drop(reg);
-                    let budget_status = self
+                    let usage_status = self
                         .record_section_delivery(&params.section_id, &detail.text, current_hash)
                         .await;
                     self.record_analytics_access(&params.section_id).await;
                     self.trigger_prefetch(&params.section_id).await;
 
-                    let response = self.build_response(detail, budget_status).await;
+                    let response = self.build_response(detail, usage_status).await;
                     structured_result(&response)
                 }
                 Err(e) => {
@@ -1132,13 +1132,13 @@ impl MinistrServer {
                         );
                         let _ = entry.budget.record_tokens(&c.claim_id, token_count);
                     }
-                    let budget_status = entry.budget.budget_status();
+                    let usage_status = entry.budget.usage_status();
                     drop(reg);
 
                     self.persist_session().await;
 
                     let response = self
-                        .build_response(ExtractResponse { claims }, budget_status)
+                        .build_response(ExtractResponse { claims }, usage_status)
                         .await;
                     structured_result(&response)
                 }
@@ -1211,13 +1211,13 @@ impl MinistrServer {
                         );
                         let _ = entry.budget.record_tokens(&r.claim_id, token_count);
                     }
-                    let budget_status = entry.budget.budget_status();
+                    let usage_status = entry.budget.usage_status();
                     drop(reg);
 
                     self.persist_session().await;
 
                     let response = self
-                        .build_response(RelatedResponse { related }, budget_status)
+                        .build_response(RelatedResponse { related }, usage_status)
                         .await;
                     structured_result(&response)
                 }
@@ -1239,21 +1239,21 @@ impl MinistrServer {
     /// updates the session shadow and window estimator, improving the accuracy
     /// of budget tracking and deduplication for subsequent requests.
     #[tool(
-        name = "ministr_evicted",
+        name = "ministr_dropped",
         description = "Call immediately after dropping content you previously received. Keeps ministr's view of what you still have accurate; without this, future ministr_read calls on dropped IDs return short 'already delivered' stubs instead of the full text.",
-        output_schema = tool_output_schema::<ToolResponse<EvictedResponse>>(),
+        output_schema = tool_output_schema::<ToolResponse<DroppedResponse>>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
-    async fn evicted(
+    async fn dropped(
         &self,
-        Parameters(params): Parameters<EvictedParams>,
+        Parameters(params): Parameters<DroppedParams>,
     ) -> Result<CallToolResult, McpError> {
-        let span = info_span!("ministr_evicted", count = params.content_ids.len());
+        let span = info_span!("ministr_dropped", count = params.content_ids.len());
 
         async {
-            debug!(content_ids = ?params.content_ids, "ministr_evicted request");
+            debug!(content_ids = ?params.content_ids, "ministr_dropped request");
 
-            let mut evicted = Vec::new();
+            let mut dropped = Vec::new();
             let mut not_found = Vec::new();
 
             let mut reg = self.registry.lock().await;
@@ -1263,25 +1263,25 @@ impl MinistrServer {
                 let content_id = ContentId(id_str.clone());
                 if entry.session.remove_delivered(&content_id).is_some() {
                     entry.budget.force_evict(id_str);
-                    evicted.push(id_str.clone());
+                    dropped.push(id_str.clone());
                 } else {
                     not_found.push(id_str.clone());
                 }
             }
 
-            let budget_status = entry.budget.budget_status();
+            let usage_status = entry.budget.usage_status();
             drop(reg);
 
             self.persist_session().await;
 
             debug!(
-                evicted_count = evicted.len(),
+                dropped_count = dropped.len(),
                 not_found_count = not_found.len(),
-                "ministr_evicted complete"
+                "ministr_dropped complete"
             );
 
             let response = self
-                .build_response(EvictedResponse { evicted, not_found }, budget_status)
+                .build_response(DroppedResponse { dropped, not_found }, usage_status)
                 .await;
             structured_result(&response)
         }
@@ -1295,26 +1295,26 @@ impl MinistrServer {
     /// ranked list of eviction candidates when under pressure. Use this
     /// to understand budget health and decide what to evict.
     #[tool(
-        name = "ministr_budget",
+        name = "ministr_usage",
         description = "Internal ministr accounting (a rough token estimate of what it has delivered so far). Advisory only and anchored to a configured window, not your real model context window — do NOT use it to decide you are low on context or to stop work. Safe to ignore.",
-        output_schema = tool_output_schema::<BudgetResponse>(),
+        output_schema = tool_output_schema::<UsageResponse>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
-    async fn budget(&self) -> Result<CallToolResult, McpError> {
-        let span = info_span!("ministr_budget");
+    async fn usage(&self) -> Result<CallToolResult, McpError> {
+        let span = info_span!("ministr_usage");
 
         async {
-            debug!("ministr_budget request");
+            debug!("ministr_usage request");
 
             let mut reg = self.registry.lock().await;
             let entry = self.ensure_session_mut(&mut reg);
             let prefetch = self.prefetch.lock().await;
 
-            let status = entry.budget.budget_status();
+            let status = entry.budget.usage_status();
             let candidates =
                 entry
                     .budget
-                    .eviction_candidates(&entry.session, 5, Some(&entry.memory));
+                    .drop_candidates(&entry.session, 5, Some(&entry.memory));
             let prefetch_metrics = prefetch.metrics();
             let alerts = entry.session.drain_alerts();
             let metrics = entry.session.metrics().clone();
@@ -1322,10 +1322,10 @@ impl MinistrServer {
             drop(prefetch);
             drop(reg);
 
-            let pressure_str = match status.pressure_level {
-                PressureLevel::Normal => "normal",
-                PressureLevel::Elevated => "elevated",
-                PressureLevel::Critical => "critical",
+            let pressure_str = match status.level {
+                UsageLevel::Normal => "normal",
+                UsageLevel::Elevated => "elevated",
+                UsageLevel::Critical => "critical",
             };
 
             debug!(
@@ -1333,12 +1333,12 @@ impl MinistrServer {
                 used = status.tokens_used,
                 remaining = status.tokens_remaining,
                 candidate_count = candidates.len(),
-                "ministr_budget complete"
+                "ministr_usage complete"
             );
 
             // When under pressure, try eliciting which sections to evict.
             let mut elicitation_evicted = Vec::new();
-            if status.pressure_level != PressureLevel::Normal && !candidates.is_empty() {
+            if status.level != UsageLevel::Normal && !candidates.is_empty() {
                 let candidate_list: String = candidates
                     .iter()
                     .map(|c| format!("  - {} ({} tokens)", c.content_id, c.tokens_recoverable))
@@ -1355,7 +1355,7 @@ impl MinistrServer {
                 if let Some(peer) = peer_guard.clone() {
                     drop(peer_guard);
                     if let Some(choice) = crate::elicitation::try_elicit::<
-                        crate::elicitation::EvictionChoice,
+                        crate::elicitation::DropChoice,
                     >(&peer, &message)
                     .await
                     {
@@ -1387,12 +1387,12 @@ impl MinistrServer {
 
             let (schema_tokens, tool_count) = self.schema_token_overhead();
 
-            let response = BudgetResponse {
+            let response = UsageResponse {
                 total_budget: status.tokens_used + status.tokens_remaining,
                 estimated_used: status.tokens_used,
                 estimated_remaining: status.tokens_remaining,
-                pressure_level: pressure_str.to_string(),
-                eviction_candidates: candidates,
+                level: pressure_str.to_string(),
+                drop_candidates: candidates,
                 prefetch_metrics,
                 session_metrics: SessionMetricsResponse {
                     total_deliveries: metrics.total_deliveries,
@@ -1423,7 +1423,7 @@ impl MinistrServer {
     /// with no extra cost.
     #[tool(
         name = "ministr_compress",
-        description = "Extractive TF-IDF summaries (roughly 60-80% shorter) for sections you want to keep referenceable without their full text. Pair with ministr_evicted after dropping the originals.",
+        description = "Extractive TF-IDF summaries (roughly 60-80% shorter) for sections you want to keep referenceable without their full text. Pair with ministr_dropped after dropping the originals.",
         output_schema = tool_output_schema::<ToolResponse<CompressResponse>>(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]
@@ -1454,7 +1454,7 @@ impl MinistrServer {
                     };
 
                     let mut reg = self.registry.lock().await;
-                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
+                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
                     let compress_resp = CompressResponse {
@@ -1463,7 +1463,7 @@ impl MinistrServer {
                         total_compressed_tokens: total_compressed,
                         compression_ratio: ratio,
                     };
-                    let response = self.build_response(compress_resp, budget_status).await;
+                    let response = self.build_response(compress_resp, usage_status).await;
                     structured_result(&response)
                 }
                 Err(e) => {
@@ -1522,7 +1522,7 @@ impl MinistrServer {
                     );
 
                     let mut reg = self.registry.lock().await;
-                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
+                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
                     // Report ingestion status when corpus is empty to help
@@ -1554,7 +1554,7 @@ impl MinistrServer {
                                 roots,
                                 entries: paginated,
                             },
-                            budget_status,
+                            usage_status,
                         )
                         .await;
                     structured_result(&response)
@@ -1651,7 +1651,7 @@ impl MinistrServer {
                     );
 
                     let mut reg = self.registry.lock().await;
-                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
+                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
                     let response = self
@@ -1663,7 +1663,7 @@ impl MinistrServer {
                                 tokens_added: result.tokens_added,
                                 strategy_used: result.strategy.to_string(),
                             },
-                            budget_status,
+                            usage_status,
                         )
                         .await;
                     structured_result(&response)
@@ -1905,7 +1905,7 @@ impl MinistrServer {
                     debug!(total, offset, returned = paginated.len(), "ministr_symbols success");
 
                     let mut reg = self.registry.lock().await;
-                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
+                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
                     // When there's exactly one match, suggest fetching its definition —
@@ -1915,7 +1915,7 @@ impl MinistrServer {
                     let response = self
                         .build_response_with(
                             SymbolsResponse { symbols: paginated, total, offset },
-                            budget_status,
+                            usage_status,
                             extra_actions,
                         )
                         .await;
@@ -1958,12 +1958,12 @@ impl MinistrServer {
                     let mut reg = self.registry.lock().await;
                     let entry = self.ensure_session_mut(&mut reg);
                     let _ = entry.budget.record_tokens(&params.symbol_id, token_count);
-                    let budget_status = entry.budget.budget_status();
+                    let usage_status = entry.budget.usage_status();
                     drop(reg);
 
                     debug!(symbol_id = %params.symbol_id, token_count, "ministr_definition success");
 
-                    let response = self.build_response(def, budget_status).await;
+                    let response = self.build_response(def, usage_status).await;
                     structured_result(&response)
                 }
                 Err(e) => {
@@ -2019,7 +2019,7 @@ impl MinistrServer {
                     debug!(symbol_id = %params.symbol_id, total, offset, returned = paginated.len(), "ministr_references success");
 
                     let mut reg = self.registry.lock().await;
-                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
+                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
                     let response = self
@@ -2029,7 +2029,7 @@ impl MinistrServer {
                                 total,
                                 offset,
                             },
-                            budget_status,
+                            usage_status,
                         )
                         .await;
                     structured_result(&response)
@@ -2102,11 +2102,11 @@ impl MinistrServer {
                     debug!(total, "ministr_bridge success");
 
                     let mut reg = self.registry.lock().await;
-                    let budget_status = self.ensure_session_mut(&mut reg).budget.budget_status();
+                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
                     let response = self
-                        .build_response(BridgeResponse { links: summaries, total }, budget_status)
+                        .build_response(BridgeResponse { links: summaries, total }, usage_status)
                         .await;
                     structured_result(&response)
                 }
@@ -2141,7 +2141,7 @@ impl MinistrServer {
         let entry = reg
             .get_session(&self.active_session_id)
             .expect("active session exists");
-        let status = entry.budget.budget_status();
+        let status = entry.budget.usage_status();
         let prefetch = self.prefetch.lock().await;
         let metrics = prefetch.metrics();
 
@@ -2162,7 +2162,7 @@ impl MinistrServer {
              - Pressure: {:?}\n\
              - Remaining: {} tokens\n",
             status.utilization * 100.0,
-            status.pressure_level,
+            status.level,
             status.tokens_remaining,
         );
 
@@ -2177,7 +2177,7 @@ impl MinistrServer {
         if has_alerts {
             summary.push_str(
                 "\n### Coherence\nPending coherence alerts — \
-                             call `ministr_budget` to review.\n",
+                             call `ministr_usage` to review.\n",
             );
         }
 
@@ -2211,7 +2211,7 @@ impl MinistrServer {
             .get_session(&self.active_session_id)
             .expect("active session exists");
         let prefetch = self.prefetch.lock().await;
-        let status = entry.budget.budget_status();
+        let status = entry.budget.usage_status();
 
         let mut recommendations = String::from("## What to Read Next\n\n");
 
@@ -2239,13 +2239,13 @@ impl MinistrServer {
              {remaining} tokens remaining ({util:.1}% used, pressure: {pressure:?})\n\n",
             remaining = status.tokens_remaining,
             util = status.utilization * 100.0,
-            pressure = status.pressure_level,
+            pressure = status.level,
         );
 
-        if matches!(status.pressure_level, PressureLevel::Critical) {
+        if matches!(status.level, UsageLevel::Critical) {
             recommendations.push_str(
                 "**Warning:** Budget is critical. Consider evicting content \
-                 with `ministr_evicted` or compressing with `ministr_compress` before reading more.\n\n",
+                 with `ministr_dropped` or compressing with `ministr_compress` before reading more.\n\n",
             );
         }
 
@@ -2354,7 +2354,7 @@ mod tests {
     use ministr_core::error::IndexError;
     use ministr_core::index::{HnswIndex, VectorIndex};
     use ministr_core::service::QueryError;
-    use ministr_core::session::BudgetConfig;
+    use ministr_core::session::UsageConfig;
     use ministr_core::storage::{SqliteStorage, Storage};
     use ministr_core::types::{Claim, ClaimId, ContentId, DocumentTree, Section, SectionId};
     use rmcp::model::{ProtocolVersion, ResourceContents};
@@ -2377,14 +2377,14 @@ mod tests {
     // ── Steering surface: instructions + next_action helpers ──────────
 
     #[test]
-    fn default_instructions_do_not_push_budget_protocol() {
+    fn default_instructions_do_not_push_usage_protocol() {
         // Regression: the playbook must NOT advertise a budget protocol or
         // tell agents to react to pressure — that made agents wrongly
         // conclude they were low on context. It should instead explicitly
         // state that ministr does not surface budget pressure.
-        assert!(!DEFAULT_INSTRUCTIONS.contains("ministr_budget"));
+        assert!(!DEFAULT_INSTRUCTIONS.contains("ministr_usage"));
         assert!(!DEFAULT_INSTRUCTIONS.contains("Budget protocol"));
-        assert!(!DEFAULT_INSTRUCTIONS.contains("eviction_recommendations"));
+        assert!(!DEFAULT_INSTRUCTIONS.contains("drop_suggestions"));
         assert!(
             DEFAULT_INSTRUCTIONS
                 .contains("do not treat ministr as a signal that you are low on room")
@@ -2713,7 +2713,7 @@ mod tests {
             .expect("extensions capability should be set");
 
         assert!(
-            extensions.contains_key(EXT_BUDGET_PROTOCOL),
+            extensions.contains_key(EXT_USAGE_PROTOCOL),
             "should advertise budget-protocol extension"
         );
         assert!(
@@ -2727,11 +2727,11 @@ mod tests {
     }
 
     #[test]
-    fn extension_budget_protocol_has_version() {
+    fn extension_usage_protocol_has_version() {
         let server = setup_server_sync();
         let info = server.get_info();
         let extensions = info.capabilities.extensions.as_ref().unwrap();
-        let budget = &extensions[EXT_BUDGET_PROTOCOL];
+        let budget = &extensions[EXT_USAGE_PROTOCOL];
         assert_eq!(budget["version"], serde_json::json!("1"));
     }
 
@@ -2752,7 +2752,7 @@ mod tests {
     #[test]
     fn negotiation_with_no_client_extensions_yields_all_false() {
         let result = NegotiatedExtensions::negotiate(None);
-        assert!(!result.budget_protocol);
+        assert!(!result.usage_protocol);
         assert!(!result.coherence);
         assert!(!result.compression);
     }
@@ -2761,7 +2761,7 @@ mod tests {
     fn negotiation_with_empty_client_extensions_yields_all_false() {
         let empty = ExtensionCapabilities::new();
         let result = NegotiatedExtensions::negotiate(Some(&empty));
-        assert!(!result.budget_protocol);
+        assert!(!result.usage_protocol);
         assert!(!result.coherence);
         assert!(!result.compression);
     }
@@ -2769,12 +2769,12 @@ mod tests {
     #[test]
     fn negotiation_with_matching_client_extensions() {
         let mut client_ext = ExtensionCapabilities::new();
-        client_ext.insert(EXT_BUDGET_PROTOCOL.to_string(), serde_json::Map::new());
+        client_ext.insert(EXT_USAGE_PROTOCOL.to_string(), serde_json::Map::new());
         client_ext.insert(EXT_COHERENCE.to_string(), serde_json::Map::new());
         client_ext.insert(EXT_COMPRESSION.to_string(), serde_json::Map::new());
 
         let result = NegotiatedExtensions::negotiate(Some(&client_ext));
-        assert!(result.budget_protocol);
+        assert!(result.usage_protocol);
         assert!(result.coherence);
         assert!(result.compression);
     }
@@ -2782,11 +2782,11 @@ mod tests {
     #[test]
     fn negotiation_partial_match() {
         let mut client_ext = ExtensionCapabilities::new();
-        client_ext.insert(EXT_BUDGET_PROTOCOL.to_string(), serde_json::Map::new());
+        client_ext.insert(EXT_USAGE_PROTOCOL.to_string(), serde_json::Map::new());
         // Client does NOT advertise coherence or compression.
 
         let result = NegotiatedExtensions::negotiate(Some(&client_ext));
-        assert!(result.budget_protocol);
+        assert!(result.usage_protocol);
         assert!(!result.coherence);
         assert!(!result.compression);
     }
@@ -2797,7 +2797,7 @@ mod tests {
         client_ext.insert("io.example/unknown".to_string(), serde_json::Map::new());
 
         let result = NegotiatedExtensions::negotiate(Some(&client_ext));
-        assert!(!result.budget_protocol);
+        assert!(!result.usage_protocol);
         assert!(!result.coherence);
         assert!(!result.compression);
     }
@@ -2805,37 +2805,37 @@ mod tests {
     // --- Budget-hint suppression tests ---
     //
     // Budget is tracked internally (so compression/dedup keep working and
-    // `ministr_budget` can still report it on explicit request) but is
+    // `ministr_usage` can still report it on explicit request) but is
     // never injected into ordinary tool responses — the per-call numbers
     // made agents wrongly believe they were almost out of context.
 
-    /// Pull `estimated_used` out of a `ministr_budget` tool result. The
-    /// budget tool serializes `BudgetResponse` directly (no `ToolResponse`
+    /// Pull `estimated_used` out of a `ministr_usage` tool result. The
+    /// budget tool serializes `UsageResponse` directly (no `ToolResponse`
     /// wrapper), so the field is top-level.
     fn extract_estimated_used(result: &rmcp::model::CallToolResult) -> u64 {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text)
-            .unwrap_or_else(|e| panic!("ministr_budget should be valid JSON: {e}\n{text}"));
+            .unwrap_or_else(|e| panic!("ministr_usage should be valid JSON: {e}\n{text}"));
         parsed["estimated_used"]
             .as_u64()
-            .unwrap_or_else(|| panic!("ministr_budget should report estimated_used: {parsed}"))
+            .unwrap_or_else(|| panic!("ministr_usage should report estimated_used: {parsed}"))
     }
 
     /// The serialized fields an agent must never see in a normal response.
     fn assert_no_budget_hints(parsed: &serde_json::Value) {
         assert!(
-            parsed.get("budget_status").is_none() || parsed["budget_status"].is_null(),
-            "budget_status must not be surfaced to the agent, got: {parsed}"
+            parsed.get("usage_status").is_none() || parsed["usage_status"].is_null(),
+            "usage_status must not be surfaced to the agent, got: {parsed}"
         );
         assert!(
-            parsed.get("eviction_recommendations").is_none()
-                || parsed["eviction_recommendations"].is_null(),
-            "eviction_recommendations must not be surfaced to the agent, got: {parsed}"
+            parsed.get("drop_suggestions").is_none()
+                || parsed["drop_suggestions"].is_null(),
+            "drop_suggestions must not be surfaced to the agent, got: {parsed}"
         );
     }
 
     #[tokio::test]
-    async fn survey_response_omits_budget_status() {
+    async fn survey_response_omits_usage_status() {
         let server = setup_server().await;
         let params = SurveyParams {
             query: "JWT authentication tokens".to_string(),
@@ -2855,7 +2855,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_response_omits_budget_status() {
+    async fn read_response_omits_usage_status() {
         let server = setup_server().await;
         let params = ReadParams {
             section_id: "docs/auth.md#tokens".to_string(),
@@ -2870,7 +2870,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn extract_response_omits_budget_status() {
+    async fn extract_response_omits_usage_status() {
         let server = setup_server().await;
         let params = ExtractParams {
             section_id: "docs/auth.md#tokens".to_string(),
@@ -2885,7 +2885,7 @@ mod tests {
     }
 
     /// Internal accumulation still works — it's just only observable via
-    /// the explicit `ministr_budget` tool, not injected into every reply.
+    /// the explicit `ministr_usage` tool, not injected into every reply.
     #[tokio::test]
     async fn budget_accumulates_internally_across_tool_calls() {
         let server = setup_server().await;
@@ -2896,7 +2896,7 @@ mod tests {
             }))
             .await
             .unwrap();
-        let after_read = extract_estimated_used(&server.budget().await.unwrap());
+        let after_read = extract_estimated_used(&server.usage().await.unwrap());
         assert!(after_read > 0, "should track tokens after read");
 
         server
@@ -2906,7 +2906,7 @@ mod tests {
             }))
             .await
             .unwrap();
-        let after_extract = extract_estimated_used(&server.budget().await.unwrap());
+        let after_extract = extract_estimated_used(&server.usage().await.unwrap());
         assert!(
             after_extract > after_read,
             "internal budget should accumulate: {after_extract} > {after_read}"
@@ -3023,7 +3023,7 @@ mod tests {
     // --- Read response format tests ---
 
     #[tokio::test]
-    async fn read_returns_section_without_budget_status() {
+    async fn read_returns_section_without_usage_status() {
         let server = setup_server().await;
         let params = ReadParams {
             section_id: "docs/auth.md#tokens".to_string(),
@@ -3172,7 +3172,7 @@ mod tests {
         assert_eq!(parse_resolution("unknown"), Resolution::Section);
     }
 
-    // --- ministr_evicted tests ---
+    // --- ministr_dropped tests ---
 
     #[tokio::test]
     async fn evicted_removes_delivered_content() {
@@ -3188,7 +3188,7 @@ mod tests {
 
         // Evict it
         let result = server
-            .evicted(Parameters(EvictedParams {
+            .dropped(Parameters(DroppedParams {
                 content_ids: vec!["docs/auth.md#tokens".to_string()],
             }))
             .await
@@ -3197,13 +3197,13 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(parsed["result"]["evicted"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["result"]["dropped"].as_array().unwrap().len(), 1);
         assert_eq!(parsed["result"]["not_found"].as_array().unwrap().len(), 0);
         assert_no_budget_hints(&parsed);
         // The eviction really happened — confirmed via the explicit
         // budget tool, not via a field injected into the evict reply.
         assert_eq!(
-            extract_estimated_used(&server.budget().await.unwrap()),
+            extract_estimated_used(&server.usage().await.unwrap()),
             0,
             "internal budget should be zero after evicting all content"
         );
@@ -3214,7 +3214,7 @@ mod tests {
         let server = setup_server().await;
 
         let result = server
-            .evicted(Parameters(EvictedParams {
+            .dropped(Parameters(DroppedParams {
                 content_ids: vec!["nonexistent".to_string()],
             }))
             .await
@@ -3223,7 +3223,7 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(parsed["result"]["evicted"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["result"]["dropped"].as_array().unwrap().len(), 0);
         assert_eq!(parsed["result"]["not_found"].as_array().unwrap().len(), 1);
     }
 
@@ -3241,7 +3241,7 @@ mod tests {
 
         // Evict a mix of known and unknown
         let result = server
-            .evicted(Parameters(EvictedParams {
+            .dropped(Parameters(DroppedParams {
                 content_ids: vec!["docs/auth.md#tokens".to_string(), "nonexistent".to_string()],
             }))
             .await
@@ -3250,7 +3250,7 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(parsed["result"]["evicted"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["result"]["dropped"].as_array().unwrap().len(), 1);
         assert_eq!(parsed["result"]["not_found"].as_array().unwrap().len(), 1);
     }
 
@@ -3259,7 +3259,7 @@ mod tests {
         let server = setup_server().await;
 
         let result = server
-            .evicted(Parameters(EvictedParams {
+            .dropped(Parameters(DroppedParams {
                 content_ids: vec![],
             }))
             .await
@@ -3268,7 +3268,7 @@ mod tests {
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(parsed["result"]["evicted"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["result"]["dropped"].as_array().unwrap().len(), 0);
         assert_eq!(parsed["result"]["not_found"].as_array().unwrap().len(), 0);
     }
 
@@ -3286,7 +3286,7 @@ mod tests {
             .await
             .unwrap();
         let _ = extract_text(&result1.content);
-        let used_after_first = extract_estimated_used(&server.budget().await.unwrap());
+        let used_after_first = extract_estimated_used(&server.usage().await.unwrap());
         assert!(used_after_first > 0, "first read should use tokens");
 
         // Second read (re-request) — triggers fault correction (force_evict)
@@ -3309,33 +3309,33 @@ mod tests {
         // force_evict removed the entry and no re-delivery occurred.
         // Observed via the explicit budget tool, not an injected field.
         assert_eq!(
-            extract_estimated_used(&server.budget().await.unwrap()),
+            extract_estimated_used(&server.usage().await.unwrap()),
             0,
             "internal budget should be zero after fault correction"
         );
     }
 
     /// The instructions must NOT push a budget protocol at the agent.
-    /// `ministr_budget` stays callable, but the prose no longer advertises
+    /// `ministr_usage` stays callable, but the prose no longer advertises
     /// it or instructs agents to react to pressure — that's what made
     /// agents wrongly conclude they were low on context.
     #[test]
-    fn server_instructions_do_not_advertise_budget_protocol() {
+    fn server_instructions_do_not_advertise_usage_protocol() {
         let server = setup_server_sync();
         let info = server.get_info();
         let instructions = info.instructions.unwrap();
 
         assert!(
-            !instructions.contains("ministr_budget"),
-            "instructions must not advertise ministr_budget"
+            !instructions.contains("ministr_usage"),
+            "instructions must not advertise ministr_usage"
         );
         assert!(
             !instructions.contains("Budget protocol"),
             "instructions must not contain a budget protocol section"
         );
         assert!(
-            !instructions.contains("eviction_recommendations"),
-            "instructions must not tell the agent to act on eviction_recommendations"
+            !instructions.contains("drop_suggestions"),
+            "instructions must not tell the agent to act on drop_suggestions"
         );
         // It should explicitly tell the agent ministr is not a
         // low-context signal.
@@ -3345,12 +3345,12 @@ mod tests {
         );
     }
 
-    // --- ministr_budget tests ---
+    // --- ministr_usage tests ---
 
     #[tokio::test]
     async fn budget_returns_status_with_zero_usage() {
         let server = setup_server().await;
-        let result = server.budget().await.unwrap();
+        let result = server.usage().await.unwrap();
 
         assert!(result.is_error.is_none() || result.is_error == Some(false));
         let text = extract_text(&result.content);
@@ -3358,10 +3358,10 @@ mod tests {
 
         assert!(parsed["total_budget"].is_number());
         assert_eq!(parsed["estimated_used"].as_u64().unwrap(), 0);
-        assert_eq!(parsed["pressure_level"], "normal");
-        assert!(parsed["eviction_candidates"].is_array());
+        assert_eq!(parsed["level"], "normal");
+        assert!(parsed["drop_candidates"].is_array());
         assert!(
-            parsed["eviction_candidates"].as_array().unwrap().is_empty(),
+            parsed["drop_candidates"].as_array().unwrap().is_empty(),
             "no candidates under normal pressure"
         );
     }
@@ -3386,11 +3386,11 @@ mod tests {
         }
 
         let service = Arc::new(QueryService::new(storage, embedder, index));
-        let budget_config = BudgetConfig {
+        let budget_config = UsageConfig {
             max_context_tokens: 20, // Very small — any delivery triggers pressure
             pressure_threshold: 0.5,
             critical_threshold: 0.9,
-            ..BudgetConfig::default()
+            ..UsageConfig::default()
         };
         let server = MinistrServer::with_budget_config(service, budget_config);
 
@@ -3403,16 +3403,16 @@ mod tests {
             .unwrap();
 
         // Now check budget — should be under pressure with candidates
-        let result = server.budget().await.unwrap();
+        let result = server.usage().await.unwrap();
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
         assert_ne!(
-            parsed["pressure_level"], "normal",
+            parsed["level"], "normal",
             "should be under pressure"
         );
         assert!(
-            !parsed["eviction_candidates"].as_array().unwrap().is_empty(),
+            !parsed["drop_candidates"].as_array().unwrap().is_empty(),
             "should have eviction candidates under pressure"
         );
     }
@@ -3429,7 +3429,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = server.budget().await.unwrap();
+        let result = server.usage().await.unwrap();
         let text = extract_text(&result.content);
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
@@ -3484,7 +3484,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compress_omits_budget_status() {
+    async fn compress_omits_usage_status() {
         let server = setup_server().await;
         let params = CompressParams {
             content_ids: vec!["docs/auth.md#tokens".to_string()],
@@ -3727,7 +3727,7 @@ mod tests {
         let git_fetcher = GitFetcher::new(git_config);
 
         let server =
-            MinistrServer::with_persistence(service, BudgetConfig::default(), storage, None)
+            MinistrServer::with_persistence(service, UsageConfig::default(), storage, None)
                 .await
                 .with_git_fetcher(git_fetcher, embedder, index);
 
@@ -3777,11 +3777,11 @@ mod tests {
 
     // --- Budget-pressure suppression tests ---
     //
-    // These used to assert that eviction_recommendations + budget_status
+    // These used to assert that drop_suggestions + usage_status
     // appeared in responses under pressure. The new contract is the
     // opposite: even with a tiny budget that is provably saturated, none
     // of it is surfaced to the agent. Internal tracking still runs (the
-    // `ministr_budget` tool can still report real numbers on request).
+    // `ministr_usage` tool can still report real numbers on request).
 
     /// Helper: create a server with a tiny budget so any delivery triggers pressure.
     async fn setup_pressured_server() -> MinistrServer {
@@ -3803,11 +3803,11 @@ mod tests {
         }
 
         let service = Arc::new(QueryService::new(storage, embedder, index));
-        let budget_config = BudgetConfig {
+        let budget_config = UsageConfig {
             max_context_tokens: 20, // Very small — any delivery triggers pressure
             pressure_threshold: 0.5,
             critical_threshold: 0.9,
-            ..BudgetConfig::default()
+            ..UsageConfig::default()
         };
         MinistrServer::with_budget_config(service, budget_config)
     }
@@ -3833,7 +3833,7 @@ mod tests {
     /// The key regression: a provably-saturated budget must STILL leak
     /// nothing to the agent. Internal pressure is real here (tiny 20-token
     /// window, content delivered) — yet the response carries no
-    /// `budget_status` and no `eviction_recommendations`.
+    /// `usage_status` and no `drop_suggestions`.
     #[tokio::test]
     async fn saturated_budget_still_leaks_no_hints_via_toc() {
         let server = setup_pressured_server().await;
@@ -3861,11 +3861,11 @@ mod tests {
         // Internal tracking is genuinely under pressure — confirm via the
         // explicit budget tool so this isn't a false-negative from the
         // budget simply not being exercised.
-        let budget = server.budget().await.unwrap();
+        let budget = server.usage().await.unwrap();
         let btext = extract_text(&budget.content);
         let bparsed: serde_json::Value = serde_json::from_str(btext).unwrap();
         assert_ne!(
-            bparsed["pressure_level"], "normal",
+            bparsed["level"], "normal",
             "internal budget should actually be under pressure"
         );
     }
@@ -4181,7 +4181,7 @@ mod tests {
             "ministr_read",
             "ministr_extract",
             "ministr_related",
-            "ministr_budget",
+            "ministr_usage",
             "ministr_toc",
             "ministr_task",
             "ministr_symbols",
@@ -4190,7 +4190,7 @@ mod tests {
         ];
 
         let mutating_tools = [
-            "ministr_evicted",
+            "ministr_dropped",
             "ministr_compress",
             "ministr_fetch",
             "ministr_refresh",
@@ -4277,8 +4277,8 @@ mod tests {
             "structured_content should contain result, got: {sc:?}"
         );
         assert!(
-            sc.get("budget_status").is_none(),
-            "structured_content must not surface budget_status, got: {sc:?}"
+            sc.get("usage_status").is_none(),
+            "structured_content must not surface usage_status, got: {sc:?}"
         );
 
         // Must also have text fallback
@@ -4628,7 +4628,7 @@ mod tests {
 
         let extensions = &card["capabilities"]["extensions"];
         assert!(
-            extensions[EXT_BUDGET_PROTOCOL].is_object(),
+            extensions[EXT_USAGE_PROTOCOL].is_object(),
             "should include budget-protocol extension"
         );
         assert!(
@@ -4660,8 +4660,8 @@ mod tests {
             "ministr_read",
             "ministr_extract",
             "ministr_related",
-            "ministr_evicted",
-            "ministr_budget",
+            "ministr_dropped",
+            "ministr_usage",
             "ministr_compress",
             "ministr_toc",
             "ministr_fetch",
@@ -4903,31 +4903,31 @@ mod tests {
 
     #[test]
     fn tool_response_prefix_stability() {
-        use ministr_core::session::{BudgetStatus, PressureLevel};
+        use ministr_core::session::{UsageStatus, UsageLevel};
 
         // Two different tool result types with identical budget status
-        let budget = BudgetStatus {
+        let budget = UsageStatus {
             tokens_used: 5000,
             tokens_remaining: 95_000,
-            pressure_level: PressureLevel::Normal,
+            level: UsageLevel::Normal,
             utilization: 0.05,
         };
 
         let resp_a = ToolResponse {
-            budget_status: budget.clone(),
+            usage_status: budget.clone(),
             coherence_alerts: Vec::new(),
             indexing_in_progress: false,
             indexing_message: None,
-            eviction_recommendations: Vec::new(),
+            drop_suggestions: Vec::new(),
             next_actions: Vec::new(),
             result: serde_json::json!({"results": [1, 2, 3]}),
         };
         let resp_b = ToolResponse {
-            budget_status: budget,
+            usage_status: budget,
             coherence_alerts: Vec::new(),
             indexing_in_progress: false,
             indexing_message: None,
-            eviction_recommendations: Vec::new(),
+            drop_suggestions: Vec::new(),
             next_actions: Vec::new(),
             result: serde_json::json!({"symbols": ["foo", "bar"]}),
         };
@@ -4935,7 +4935,7 @@ mod tests {
         let json_a = serde_json::to_string(&resp_a).unwrap();
         let json_b = serde_json::to_string(&resp_b).unwrap();
 
-        // Both should start with identical budget_status prefix
+        // Both should start with identical usage_status prefix
         let prefix_a = &json_a[..json_a.find("\"result\"").unwrap()];
         let prefix_b = &json_b[..json_b.find("\"result\"").unwrap()];
         assert_eq!(
@@ -4946,19 +4946,19 @@ mod tests {
 
     #[test]
     fn tool_response_result_not_flattened() {
-        use ministr_core::session::{BudgetStatus, PressureLevel};
+        use ministr_core::session::{UsageStatus, UsageLevel};
 
         let resp = ToolResponse {
-            budget_status: BudgetStatus {
+            usage_status: UsageStatus {
                 tokens_used: 0,
                 tokens_remaining: 100_000,
-                pressure_level: PressureLevel::Normal,
+                level: UsageLevel::Normal,
                 utilization: 0.0,
             },
             coherence_alerts: Vec::new(),
             indexing_in_progress: false,
             indexing_message: None,
-            eviction_recommendations: Vec::new(),
+            drop_suggestions: Vec::new(),
             next_actions: Vec::new(),
             result: serde_json::json!({"items": [1]}),
         };
@@ -4968,10 +4968,10 @@ mod tests {
 
         // `result` should be a nested object, not flattened
         assert!(obj.contains_key("result"), "should have 'result' key");
-        // budget_status is tracked internally but must not be serialized.
+        // usage_status is tracked internally but must not be serialized.
         assert!(
-            !obj.contains_key("budget_status"),
-            "budget_status must not be serialized to the agent"
+            !obj.contains_key("usage_status"),
+            "usage_status must not be serialized to the agent"
         );
         // Flattened fields should NOT appear at top level
         assert!(
@@ -4982,19 +4982,19 @@ mod tests {
 
     #[test]
     fn tool_response_skips_empty_optional_fields() {
-        use ministr_core::session::{BudgetStatus, PressureLevel};
+        use ministr_core::session::{UsageStatus, UsageLevel};
 
         let resp = ToolResponse {
-            budget_status: BudgetStatus {
+            usage_status: UsageStatus {
                 tokens_used: 0,
                 tokens_remaining: 100_000,
-                pressure_level: PressureLevel::Normal,
+                level: UsageLevel::Normal,
                 utilization: 0.0,
             },
             coherence_alerts: Vec::new(),
             indexing_in_progress: false,
             indexing_message: None,
-            eviction_recommendations: Vec::new(),
+            drop_suggestions: Vec::new(),
             next_actions: Vec::new(),
             result: serde_json::json!({}),
         };
@@ -5016,12 +5016,12 @@ mod tests {
             "None message should be skipped"
         );
         assert!(
-            !obj.contains_key("eviction_recommendations"),
-            "eviction_recommendations must never be serialized"
+            !obj.contains_key("drop_suggestions"),
+            "drop_suggestions must never be serialized"
         );
         assert!(
-            !obj.contains_key("budget_status"),
-            "budget_status must never be serialized"
+            !obj.contains_key("usage_status"),
+            "usage_status must never be serialized"
         );
 
         // Only `result` remains — budget hints are gone entirely.
@@ -5076,9 +5076,9 @@ mod tests {
             "ministr_read",
             "ministr_extract",
             "ministr_related",
-            "ministr_budget",
+            "ministr_usage",
             "ministr_compress",
-            "ministr_evicted",
+            "ministr_dropped",
             "ministr_toc",
         ] {
             assert!(

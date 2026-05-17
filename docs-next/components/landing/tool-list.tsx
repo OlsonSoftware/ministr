@@ -26,9 +26,9 @@ const GROUPS: Group[] = [
   {
     label: 'Session efficiency',
     tools: [
-      { name: 'ministr_budget', slug: 'budget', description: 'Advisory token-usage estimate (internal accounting).' },
+      { name: 'ministr_usage', slug: 'usage', description: 'Advisory token-usage estimate (internal accounting).' },
       { name: 'ministr_compress', slug: 'compress', description: 'Generate compact summaries of sections.' },
-      { name: 'ministr_evicted', slug: 'evicted', description: 'Signal that content was dropped from context.' },
+      { name: 'ministr_dropped', slug: 'dropped', description: 'Signal that content was dropped from context.' },
     ],
   },
   {

@@ -8,8 +8,8 @@ use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
 use ministr_core::service::{CompressedItem, RelatedClaimResult, SurveyResult, SymbolRefResult};
-use ministr_core::session::eviction::EvictionCandidate;
-use ministr_core::session::{BudgetStatus, CoherenceAlert};
+use ministr_core::session::drops::DropCandidate;
+use ministr_core::session::{UsageStatus, CoherenceAlert};
 
 /// Tool response wrapper.
 ///
@@ -17,16 +17,16 @@ use ministr_core::session::{BudgetStatus, CoherenceAlert};
 /// signals (coherence alerts when content changed underneath the agent,
 /// ingestion progress, concrete follow-up hints).
 ///
-/// **Budget is deliberately not surfaced here.** `budget_status` and
-/// `eviction_recommendations` are still tracked internally (the
-/// `BudgetTracker` keeps recording so compression and dedup keep working),
+/// **Budget is deliberately not surfaced here.** `usage_status` and
+/// `drop_suggestions` are still tracked internally (the
+/// `UsageTracker` keeps recording so compression and dedup keep working),
 /// but they are no longer serialized to the agent: the per-response
 /// numbers were anchored to an arbitrary window and were causing agents
 /// to wrongly conclude they were almost out of context and abandon work.
 /// Both fields are retained on the struct (constructors/tests still set
 /// them) and marked `#[serde(skip_serializing)]` so nothing reaches the
 /// model. An agent that genuinely wants the figure can still call
-/// `ministr_budget` explicitly.
+/// `ministr_usage` explicitly.
 ///
 /// Fields are ordered for KV-cache prefix stability: stable metadata
 /// first, varying tool-specific payload last.
@@ -38,14 +38,14 @@ pub(crate) struct ToolResponse<T: Serialize + schemars::JsonSchema> {
     /// Constructed by every `build_response` call (keeping that
     /// signature stable across all tool handlers) but deliberately not
     /// read back out — the agent-facing path is gone and internal
-    /// pressure tracking lives in `BudgetTracker`, not here.
+    /// pressure tracking lives in `UsageTracker`, not here.
     #[expect(
         dead_code,
         reason = "retained so build_response's contract is unchanged; intentionally not serialized"
     )]
     #[serde(skip_serializing)]
     #[schemars(skip)]
-    pub(crate) budget_status: BudgetStatus,
+    pub(crate) usage_status: UsageStatus,
     /// Pending coherence alerts (present when underlying content has changed).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     #[schemars(default)]
@@ -67,7 +67,7 @@ pub(crate) struct ToolResponse<T: Serialize + schemars::JsonSchema> {
     )]
     #[serde(skip_serializing)]
     #[schemars(skip)]
-    pub(crate) eviction_recommendations: Vec<EvictionCandidate>,
+    pub(crate) drop_suggestions: Vec<DropCandidate>,
     /// Concrete next-tool-call suggestions, in priority order.
     ///
     /// Coherence-driven (re-read changed sections) plus any per-handler
@@ -88,7 +88,7 @@ pub(crate) struct ToolResponse<T: Serialize + schemars::JsonSchema> {
 /// match, etc.). Cooperative — agents that ignore these still work.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct NextAction {
-    /// Tool name to call (e.g. `"ministr_evicted"`, `"ministr_read"`).
+    /// Tool name to call (e.g. `"ministr_dropped"`, `"ministr_read"`).
     pub(crate) action: String,
     /// Suggested arguments as a JSON object matching the tool's input schema.
     pub(crate) args: serde_json::Value,
@@ -126,11 +126,11 @@ pub(crate) struct AlreadyDeliveredResponse {
     pub(crate) claims_available: usize,
 }
 
-/// Response from the `ministr_evicted` tool.
+/// Response from the `ministr_dropped` tool.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-pub(crate) struct EvictedResponse {
+pub(crate) struct DroppedResponse {
     /// Content IDs that were successfully removed.
-    pub(crate) evicted: Vec<String>,
+    pub(crate) dropped: Vec<String>,
     /// Content IDs that were not found in the session.
     pub(crate) not_found: Vec<String>,
 }
@@ -155,9 +155,9 @@ pub struct ReadParams {
     pub section_id: String,
 }
 
-/// Parameters for the `ministr_evicted` tool.
+/// Parameters for the `ministr_dropped` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct EvictedParams {
+pub struct DroppedParams {
     /// Content IDs that the agent has dropped from its context window.
     #[schemars(description = "Content IDs the agent has dropped from its context")]
     pub content_ids: Vec<String>,
@@ -183,9 +183,9 @@ pub struct CompressParams {
     pub content_ids: Vec<String>,
 }
 
-/// Response from the `ministr_budget` tool.
+/// Response from the `ministr_usage` tool.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-pub(crate) struct BudgetResponse {
+pub(crate) struct UsageResponse {
     /// Total context window budget in tokens.
     pub(crate) total_budget: usize,
     /// Estimated tokens currently used.
@@ -193,9 +193,9 @@ pub(crate) struct BudgetResponse {
     /// Estimated tokens remaining.
     pub(crate) estimated_remaining: usize,
     /// Current pressure level.
-    pub(crate) pressure_level: String,
+    pub(crate) level: String,
     /// Recommended eviction candidates (empty under normal pressure).
-    pub(crate) eviction_candidates: Vec<EvictionCandidate>,
+    pub(crate) drop_candidates: Vec<DropCandidate>,
     /// Prefetch cache hit/miss metrics by strategy.
     pub(crate) prefetch_metrics: ministr_core::session::PrefetchMetrics,
     /// Cumulative session token economics.

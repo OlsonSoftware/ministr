@@ -35,7 +35,7 @@ pub struct SessionMetrics {
     pub total_deliveries: u64,
     /// Cumulative tokens delivered to the agent across all deliveries.
     pub cumulative_tokens_delivered: u64,
-    /// Total number of explicit evictions (via `ministr_evicted`).
+    /// Total number of explicit evictions (via `ministr_dropped`).
     pub total_evictions: u64,
     /// Cumulative tokens freed by explicit evictions.
     pub cumulative_tokens_evicted: u64,
@@ -118,7 +118,7 @@ pub enum AccessMode {
 /// Eviction policy that models how the agent's context window discards old content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum EvictionPolicy {
+pub enum DropPolicy {
     /// First-in, first-out: oldest delivered content is evicted first.
     Fifo,
     /// Least recently used: content not re-accessed is evicted first.
@@ -244,13 +244,13 @@ pub struct DeliveredItem {
 /// # Examples
 ///
 /// ```
-/// use ministr_core::session::{Session, SessionId, EvictionPolicy};
+/// use ministr_core::session::{Session, SessionId, DropPolicy};
 /// use ministr_core::types::{ContentId, Resolution};
 ///
 /// let mut session = Session::new(
 ///     SessionId::from("sess-1".to_string()),
 ///     100_000,
-///     EvictionPolicy::Fifo,
+///     DropPolicy::Fifo,
 /// );
 ///
 /// session.record_delivery(
@@ -272,10 +272,10 @@ pub struct Session {
     /// Maximum context budget in tokens for this session.
     pub agent_context_budget: usize,
     /// Eviction policy configured for this session. Session itself doesn't
-    /// evict — the [`BudgetTracker`]'s [`WindowEstimator`] does — but the
+    /// evict — the [`UsageTracker`]'s [`WindowEstimator`] does — but the
     /// policy is stored here so callers can introspect it (telemetry,
     /// persistence) and so it isn't silently discarded by the constructor.
-    eviction_policy: EvictionPolicy,
+    eviction_policy: DropPolicy,
     /// Map of delivered content, keyed by `ContentId`.
     delivered: BTreeMap<String, DeliveredItem>,
     /// Ordered trajectory of content accesses (content IDs in access order).
@@ -306,7 +306,7 @@ impl Session {
     pub fn new(
         id: SessionId,
         agent_context_budget: usize,
-        eviction_policy: EvictionPolicy,
+        eviction_policy: DropPolicy,
     ) -> Self {
         Self {
             id,
@@ -326,7 +326,7 @@ impl Session {
 
     /// The eviction policy configured for this session.
     #[must_use]
-    pub fn eviction_policy(&self) -> EvictionPolicy {
+    pub fn eviction_policy(&self) -> DropPolicy {
         self.eviction_policy
     }
 
@@ -336,7 +336,7 @@ impl Session {
     /// from `SQLite`. The `created_at` timestamp is reset to `Instant::now()`
     /// since `Instant` is not serializable. The eviction policy is not part
     /// of the persistence format today, so callers supply it — typically
-    /// from the `BudgetConfig` in use for the restored session.
+    /// from the `UsageConfig` in use for the restored session.
     ///
     /// If the supplied `current_turn` is below the max `turn_delivered` in
     /// the delivered map (e.g. a stale or inconsistent persistence record),
@@ -346,7 +346,7 @@ impl Session {
     pub fn restore(
         id: SessionId,
         agent_context_budget: usize,
-        eviction_policy: EvictionPolicy,
+        eviction_policy: DropPolicy,
         delivered: BTreeMap<String, DeliveredItem>,
         trajectory: Vec<ContentId>,
         current_turn: u32,
@@ -501,7 +501,7 @@ impl Session {
     /// Remove a delivered item from the session shadow.
     ///
     /// Used when the agent explicitly signals it has evicted content from
-    /// its context window (via `ministr_evicted`). Returns the removed item
+    /// its context window (via `ministr_dropped`). Returns the removed item
     /// if it existed.
     pub fn remove_delivered(&mut self, content_id: &ContentId) -> Option<DeliveredItem> {
         self.stale.remove(&content_id.0);
@@ -773,7 +773,7 @@ impl Session {
 
     /// Recent search queries (most recent last).
     ///
-    /// Used by [`EvictionRanker`] for task-aware salience scoring.
+    /// Used by [`DropRanker`] for task-aware salience scoring.
     #[must_use]
     pub fn recent_queries(&self) -> &VecDeque<String> {
         &self.recent_queries
@@ -815,7 +815,7 @@ mod tests {
         Session::new(
             SessionId::from("test-session".to_string()),
             100_000,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         )
     }
 
@@ -938,13 +938,13 @@ mod tests {
 
     #[test]
     fn eviction_policy_serde_roundtrip() {
-        let fifo = EvictionPolicy::Fifo;
+        let fifo = DropPolicy::Fifo;
         let json = serde_json::to_string(&fifo).unwrap();
         assert_eq!(json, r#""fifo""#);
-        let back: EvictionPolicy = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, EvictionPolicy::Fifo);
+        let back: DropPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, DropPolicy::Fifo);
 
-        let lru = EvictionPolicy::Lru;
+        let lru = DropPolicy::Lru;
         let json = serde_json::to_string(&lru).unwrap();
         assert_eq!(json, r#""lru""#);
     }
@@ -1076,7 +1076,7 @@ mod tests {
         let session = Session::new(
             SessionId::from("zero-budget".to_string()),
             0,
-            EvictionPolicy::Fifo,
+            DropPolicy::Fifo,
         );
         assert_eq!(session.agent_context_budget, 0);
         assert_eq!(session.delivered_count(), 0);
