@@ -241,11 +241,20 @@ function AppInner() {
 
   const openAddProject = useCallback(async () => {
     try {
-      await invoke("add_project_dialog");
+      // Cancelling the folder picker resolves to `null` (not an error).
+      // The old code toasted "Project added" + refreshed even on cancel,
+      // and silently swallowed real failures as "user cancelled".
+      const res = await invoke<{ corpus_id: string } | null>(
+        "add_project_dialog",
+      );
+      if (!res) return;
       refresh();
       toast("Project added", { tone: "success" });
-    } catch {
-      /* user cancelled */
+    } catch (e) {
+      toast("Couldn’t add project", {
+        detail: String(e),
+        tone: "danger",
+      });
     }
   }, [refresh, toast]);
 
@@ -267,14 +276,13 @@ function AppInner() {
   );
 
   const onOpenLogs = useCallback(async () => {
-    if (status?.log_path) {
-      try {
-        await invoke("open_path", { path: status.log_path });
-      } catch {
-        /* ignore */
-      }
+    if (!status?.log_path) return;
+    try {
+      await invoke("open_path", { path: status.log_path });
+    } catch (e) {
+      toast("Couldn’t open logs", { detail: String(e), tone: "danger" });
     }
-  }, [status]);
+  }, [status, toast]);
 
   const corpora = status?.corpora ?? [];
   const hasCorpora = corpora.length > 0;

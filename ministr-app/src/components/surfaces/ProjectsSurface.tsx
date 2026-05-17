@@ -45,6 +45,7 @@ import { H1 } from "../ui/heading";
 import { MetricTile } from "../ui/metric-tile";
 import { Progress } from "../ui/progress";
 import { ProjectSessions } from "./ProjectSessions";
+import { useToast } from "../shell/ToastTray";
 
 interface Props {
   corpora: CorpusInfo[];
@@ -65,6 +66,7 @@ export function ProjectsSurface({
   const [confirmReindex, setConfirmReindex] = useState<CorpusInfo | null>(null);
 
   const progress = useIndexingProgress();
+  const { toast } = useToast();
 
   const selected = useMemo(
     () => corpora.find((c) => c.id === activeCorpusId) ?? null,
@@ -74,10 +76,18 @@ export function ProjectsSurface({
   async function addProject() {
     setAdding(true);
     try {
-      await invoke("add_project_dialog");
+      // `null` = the folder picker was cancelled (not an error).
+      const res = await invoke<{ corpus_id: string } | null>(
+        "add_project_dialog",
+      );
+      if (!res) return;
       onRefresh();
-    } catch {
-      /* user cancelled */
+      toast("Project added", { tone: "success" });
+    } catch (e) {
+      toast("Couldn’t add project", {
+        detail: String(e),
+        tone: "danger",
+      });
     } finally {
       setAdding(false);
     }
@@ -93,11 +103,18 @@ export function ProjectsSurface({
         const paths = detected.map((d) => d.path);
         await invoke("register_projects_batch", { paths });
         onRefresh();
+        toast("Projects found", {
+          detail: `Added ${detected.length}`,
+          tone: "success",
+        });
+      } else {
+        toast("No projects found", {
+          detail: "No .ministr.toml under the usual roots",
+          tone: "info",
+        });
       }
     } catch (e) {
-      // Detection failures are not actionable from this surface; the caller
-      // sees the rejected promise via the catch and we just stop the spinner.
-      console.error("[ministr] scan failed", e);
+      toast("Scan failed", { detail: String(e), tone: "danger" });
     } finally {
       setScanning(false);
     }
