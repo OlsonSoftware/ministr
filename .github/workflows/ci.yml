@@ -1,8 +1,10 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
+  # PR-only validation. Branch protection's `ci-complete` required
+  # check gates every merge, so a second full CI run on the push to
+  # `main` is pure duplication — dropped. (The release pipeline is
+  # release-automation.yml; it runs on push to main on its own.)
   pull_request:
     branches: [main]
   # Weekly full Docker application-image build. docker-build is otherwise
