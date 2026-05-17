@@ -580,10 +580,25 @@ impl CorpusRegistry {
         }
     }
 
+    /// Extract a corpus's `info` handle without holding the corpora-map
+    /// guard across the subsequent `.await`.
+    ///
+    /// The indexer calls `set_status`/`update_stats`/`update_symbols_count`
+    /// repeatedly *while* a `register`/`unregister`/`restore` may be
+    /// taking the map write lock. Holding `corpora.read()` across
+    /// `info.write().await` serialises those writers behind every
+    /// per-corpus info write (and risks lock-order inversion). `info` is
+    /// an `Arc<RwLock<…>>` precisely so we can clone it out, drop the map
+    /// guard, *then* await.
+    async fn info_handle(&self, corpus_id: &str) -> Option<Arc<RwLock<CorpusInfo>>> {
+        let guard = self.corpora.read().await;
+        guard.get(corpus_id).map(|h| Arc::clone(&h.info))
+    }
+
     /// Update indexing status for a corpus.
     pub async fn set_status(&self, corpus_id: &str, status: IndexingStatus) {
-        if let Some(handle) = self.corpora.read().await.get(corpus_id) {
-            handle.info.write().await.status = status;
+        if let Some(info) = self.info_handle(corpus_id).await {
+            info.write().await.status = status;
         }
     }
 
@@ -595,8 +610,8 @@ impl CorpusRegistry {
         sections_count: usize,
         embeddings_count: usize,
     ) {
-        if let Some(handle) = self.corpora.read().await.get(corpus_id) {
-            let mut info = handle.info.write().await;
+        if let Some(info) = self.info_handle(corpus_id).await {
+            let mut info = info.write().await;
             info.status = IndexingStatus::Idle;
             info.files_indexed = files_indexed;
             info.sections_count = sections_count;
@@ -611,8 +626,8 @@ impl CorpusRegistry {
 
     /// Update the symbols count for a corpus (called after symbol extraction).
     pub async fn update_symbols_count(&self, corpus_id: &str, symbols_count: usize) {
-        if let Some(handle) = self.corpora.read().await.get(corpus_id) {
-            handle.info.write().await.symbols_count = symbols_count;
+        if let Some(info) = self.info_handle(corpus_id).await {
+            info.write().await.symbols_count = symbols_count;
         }
     }
 
