@@ -323,7 +323,9 @@ impl GrammarRegistry {
             &mut languages,
             &mut grammars,
             "hcl",
-            &["tf", "hcl"],
+            // `.tfvars` is plain HCL (Terraform variable definitions) and
+            // is ubiquitous in real Terraform repos — parse it like `.tf`.
+            &["tf", "tfvars", "hcl"],
             tree_sitter_hcl::LANGUAGE.into(),
         );
 
@@ -700,6 +702,7 @@ pub const ALL_CODE_EXTENSIONS: &[&str] = &[
     "jsonc",
     // HCL / Terraform
     "tf",
+    "tfvars",
     "hcl",
     // Dockerfile
     "dockerfile",
