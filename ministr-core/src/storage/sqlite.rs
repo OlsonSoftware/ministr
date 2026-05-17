@@ -48,15 +48,46 @@ impl Pool {
     /// Check out a connection. Blocks (synchronously, inside a
     /// `spawn_blocking` thread) when the pool is exhausted. The pool
     /// is pre-populated so this path never opens a new connection.
+    ///
+    /// The wait is *bounded* per iteration: every connection is returned
+    /// to the pool on `PoolGuard::drop`, so the only way to wait forever
+    /// is a leaked guard (a bug) or a deadlock. An unbounded
+    /// `Condvar::wait` would hang the blocking-pool thread silently;
+    /// instead we wake every `WAIT_SLICE`, log with escalating severity,
+    /// and keep waiting — turning an invisible hang into a diagnosable
+    /// one without inventing an error path callers can't recover from.
     fn acquire(self: &Arc<Self>) -> PoolGuard {
+        /// How long a single `Condvar` wait may park before we re-check
+        /// and log. Short enough that a hang shows up promptly in logs.
+        const WAIT_SLICE: std::time::Duration = std::time::Duration::from_secs(5);
+
         let mut slots = self.slots.lock();
-        while slots.is_empty() {
-            self.available.wait(&mut slots);
-        }
-        let conn = slots.pop().expect("pool invariant: non-empty after wait");
-        PoolGuard {
-            conn: Some(conn),
-            pool: Arc::clone(self),
+        let mut waited = std::time::Duration::ZERO;
+        loop {
+            if let Some(conn) = slots.pop() {
+                return PoolGuard {
+                    conn: Some(conn),
+                    pool: Arc::clone(self),
+                };
+            }
+            let res = self.available.wait_for(&mut slots, WAIT_SLICE);
+            if res.timed_out() && slots.is_empty() {
+                waited += WAIT_SLICE;
+                if waited >= std::time::Duration::from_secs(30) {
+                    tracing::error!(
+                        waited_secs = waited.as_secs(),
+                        "SQLite connection pool exhausted for 30s+ — \
+                         a PoolGuard is likely leaked or a query is \
+                         deadlocked; storage is stalled"
+                    );
+                } else {
+                    tracing::warn!(
+                        waited_secs = waited.as_secs(),
+                        "SQLite connection pool exhausted; waiting for a \
+                         connection to be released"
+                    );
+                }
+            }
         }
     }
 
