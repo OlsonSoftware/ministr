@@ -394,96 +394,29 @@ pub(crate) fn cmd_init(root: &Path, force: bool) -> Result<()> {
 // ministr init --interactive
 // ---------------------------------------------------------------------------
 
-/// `ministr init --interactive` — guided setup wizard.
-#[allow(clippy::too_many_lines)]
+/// `ministr init --interactive` — guided setup with a confirmation step.
+///
+/// `ministr init` writes one configuration set: corpus config plus the
+/// steering scaffold for every supported agent platform. The interactive
+/// flow shows what will be written and asks for confirmation — it does not
+/// offer per-platform or "strictness" choices, because the scaffold is a
+/// single non-blocking steering design (the earlier prompts collected
+/// answers that were never applied; they are gone rather than faked).
 pub(crate) fn cmd_init_interactive(root: &Path, force: bool) -> Result<()> {
-    use dialoguer::{Confirm, MultiSelect, Select};
+    use dialoguer::Confirm;
 
-    eprintln!("ministr interactive setup wizard\n");
+    eprintln!("ministr interactive setup\n");
 
-    // Step 1: detect project and confirm type
     let detection = ministr_core::init::detect_project(root);
-
-    let confirmed_type = {
-        use ministr_core::init::ProjectType;
-        let types = &[
-            ProjectType::Monorepo,
-            ProjectType::Library,
-            ProjectType::Cli,
-            ProjectType::WebApp,
-            ProjectType::Api,
-            ProjectType::Unknown,
-        ];
-        let labels: Vec<String> = types.iter().map(std::string::ToString::to_string).collect();
-        let detected_idx = types
-            .iter()
-            .position(|t| *t == detection.project_type)
-            .unwrap_or(types.len() - 1);
-        let idx = Select::new()
-            .with_prompt(format!(
-                "Detected project type: {}. Confirm or change",
-                detection.project_type
-            ))
-            .items(&labels)
-            .default(detected_idx)
-            .interact()
-            .into_diagnostic()?;
-        types[idx]
-    };
-
-    eprintln!("  Project type: {confirmed_type}");
-
-    // Step 2: choose agent platforms
-    let platforms = &[
-        "Claude Code (.claude/rules/, settings.json hooks)",
-        "Cursor (.cursor/rules/, hooks.json)",
-        "GitHub Copilot (.github/hooks/, copilot-instructions.md)",
-        "Windsurf (.windsurf/hooks.json, rules/)",
-        "Continue.dev (.continue/rules/)",
-    ];
-    let platform_defaults = vec![true, true, true, true, true];
-    let selected_platforms = MultiSelect::new()
-        .with_prompt("Agent platforms to configure")
-        .items(platforms)
-        .defaults(&platform_defaults)
-        .interact()
-        .into_diagnostic()?;
-
-    let platform_names: Vec<&str> = selected_platforms
-        .iter()
-        .map(|&i| match i {
-            0 => "claude",
-            1 => "cursor",
-            2 => "copilot",
-            3 => "windsurf",
-            4 => "continue",
-            _ => "unknown",
-        })
-        .collect();
-    eprintln!("  Platforms: {}", platform_names.join(", "));
-
-    // Step 3: hook strictness
-    let strictness_levels = &[
-        "strict — block Grep/Glob/Bash search, enforce ministr tools",
-        "moderate — warn on Grep/Glob/Bash, allow with confirmation",
-        "advisory — suggest ministr tools, never block",
-    ];
-    let strictness_idx = Select::new()
-        .with_prompt("Hook strictness level")
-        .items(strictness_levels)
-        .default(0)
-        .interact()
-        .into_diagnostic()?;
-
-    let strictness = match strictness_idx {
-        0 => "strict",
-        1 => "moderate",
-        _ => "advisory",
-    };
-    eprintln!("  Strictness: {strictness}");
-
-    // Step 4: confirm and write
+    eprintln!("  Detected project type: {}", detection.project_type);
     eprintln!();
+    eprintln!("`ministr init` will write:");
+    eprintln!("  - .ministr.toml (corpus paths, auto-detected)");
+    eprintln!("  - MCP client configs (merged non-destructively)");
+    eprintln!("  - agent rules + PreToolUse steering hooks for Claude Code,");
+    eprintln!("    Cursor, Copilot, Windsurf, Continue, and AGENTS.md");
+    eprintln!();
+
     let proceed = Confirm::new()
         .with_prompt("Write .ministr.toml and scaffold agent configs?")
         .default(true)
@@ -495,12 +428,10 @@ pub(crate) fn cmd_init_interactive(root: &Path, force: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Write config (reuses the non-interactive path)
-    let _detection = ministr_core::init::write_config(root, force)
+    ministr_core::init::write_config(root, force)
         .into_diagnostic()
         .wrap_err("failed to generate .ministr.toml")?;
 
-    // Scaffold agent configs
     let scaffolded = ministr_core::scaffold::scaffold_agent_config(root);
 
     eprintln!();
@@ -511,20 +442,16 @@ pub(crate) fn cmd_init_interactive(root: &Path, force: bool) -> Result<()> {
         scaffolded.healed,
     );
     eprintln!();
-    eprintln!("Selected platforms: {}", platform_names.join(", "));
-    eprintln!("Hook strictness: {strictness}");
-    eprintln!();
     eprintln!("Next steps:");
     eprintln!("  1. Start a new session in your preferred agent");
-    eprintln!("  2. ministr will auto-index and semantic search tools become available");
+    eprintln!("  2. ministr auto-indexes; its semantic search and code-nav tools become available");
     eprintln!(
-        "  3. Grep/Glob/Bash search are {} by hooks",
-        match strictness {
-            "strict" => "blocked",
-            "moderate" => "warned",
-            _ => "unaffected",
-        }
+        "  3. The hooks steer (they do not wall): the built-in Grep/Glob tools are"
     );
+    eprintln!(
+        "     declined in favor of ministr; a leading shell grep/find is allowed with"
+    );
+    eprintln!("     a hint; pipelines are never intercepted");
 
     Ok(())
 }
