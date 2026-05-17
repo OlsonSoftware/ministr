@@ -171,7 +171,7 @@ reinstall:
     # the binary is at ~/.ministr/bin/ministr regardless, so PATH-wiring
     # trouble shouldn't abort the rest of the reinstall.
     echo "==> Adding ministr to PATH via \`ministr setup\`..."
-    if ! ~/.ministr/bin/ministr setup --bin-dir ~/.ministr/bin; then
+    if ! ~/.ministr/bin/ministr setup; then
         echo "   ministr setup failed — add manually with:" >&2
         echo "     export PATH=\"\$HOME/.ministr/bin:\$PATH\"" >&2
     fi
