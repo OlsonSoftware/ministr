@@ -108,6 +108,23 @@ jobs:
           Add-MpPreference -ExclusionProcess "link.exe"
           Add-MpPreference -ExclusionProcess "lld-link.exe"
 
+      # On a self-hosted Windows runner `shell: bash` resolves to
+      # C:\Windows\System32\bash.exe (the WSL launcher) which exits 1
+      # when no WSL distro is installed. Prepend Git's bin (real Git
+      # Bash) to PATH so every later `shell: bash` step uses it — the
+      # same bash GitHub-hosted runners use. No-op-safe on hosted.
+      - name: Prefer Git Bash over WSL for shell:bash (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $gitRoot = Split-Path (Split-Path (Get-Command git).Source)
+          $bin = Join-Path $gitRoot 'bin'
+          if (-not (Test-Path (Join-Path $bin 'bash.exe'))) {
+            throw "Git Bash not found at $bin — install Git for Windows on this runner (see CI-RUNNER-SETUP.md C1)."
+          }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "PATH-prepended $bin so shell:bash uses Git Bash, not System32 WSL bash."
+
       - name: Use lld linker on Windows
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: bash
@@ -234,6 +251,19 @@ jobs:
           Add-MpPreference -ExclusionProcess "cargo.exe"
           Add-MpPreference -ExclusionProcess "link.exe"
           Add-MpPreference -ExclusionProcess "lld-link.exe"
+
+      # See cli job: force `shell: bash` to Git Bash, not System32 WSL.
+      - name: Prefer Git Bash over WSL for shell:bash (Windows)
+        if: matrix.platform == 'windows-x86_64'
+        shell: pwsh
+        run: |
+          $gitRoot = Split-Path (Split-Path (Get-Command git).Source)
+          $bin = Join-Path $gitRoot 'bin'
+          if (-not (Test-Path (Join-Path $bin 'bash.exe'))) {
+            throw "Git Bash not found at $bin — install Git for Windows on this runner (see CI-RUNNER-SETUP.md C1)."
+          }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "PATH-prepended $bin so shell:bash uses Git Bash, not System32 WSL bash."
 
       # Use rust-lld instead of MSVC link.exe on Windows. Faster final-link
       # phase, no quality difference for our binaries.
