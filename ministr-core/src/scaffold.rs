@@ -511,7 +511,7 @@ category="${1:-grep}"
 case "$category" in
   tool)
     decision="deny"
-    reason="This repo dogfoods ministr for code exploration. Use mcp__ministr__ministr_survey(query) for semantic/content search, mcp__ministr__ministr_symbols(query) for symbols, or mcp__ministr__ministr_toc for project structure. ministr indexes this repo and returns deduplicated, budget-aware results. See .claude/rules/ministr-scope.md."
+    reason="This repo dogfoods ministr for code exploration. Use mcp__ministr__ministr_survey(query) for semantic/content search, mcp__ministr__ministr_symbols(query) for symbols, or mcp__ministr__ministr_toc for project structure. ministr is a code intelligence server: semantic search, symbol navigation, references, and cross-language bridges. See .claude/rules/ministr-scope.md."
     ;;
   find)
     decision="allow"
