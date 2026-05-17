@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Weekly full Docker application-image build. docker-build is otherwise
+  # narrowed to only fire on Dockerfile changes (see the `changes` job),
+  # so this catches dependency/base-image drift without making every
+  # Rust PR pay for a redundant full release cook.
+  schedule:
+    - cron: "17 4 * * 1"
 
 # Auto-cancel in-flight runs when a new commit lands on the same PR.
 concurrency:
@@ -33,45 +39,47 @@ env:
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: short
 
-# Runner topology: stock GitHub-hosted `ubuntu-latest` runners.
+# Runner topology: two tiers. Heavy jobs that compile the Rust
+# workspace go to a large runner; everything else stays on the free
+# stock `ubuntu-latest`. The large runner is `vars.CI_RUNNER` (an org/
+# repo Actions variable, e.g. a self-hosted label or a GitHub-hosted
+# larger-runner name); if it's unset, those jobs transparently fall
+# back to `ubuntu-latest` so CI never hard-breaks. See CI-RUNNER-SETUP.md.
 #
 #   changes        → ubuntu-latest (path-filter, sub-10s)
-#   ci-image       → ubuntu-latest (docker build + push)
-#   fmt            → ubuntu-latest (inside ministr-ci)
-#   rust-dev       → ubuntu-latest (inside ministr-ci)
-#   rust-release   → ubuntu-latest (inside ministr-ci)
-#   security       → ubuntu-latest (inside ministr-ci)
-#   docker-build   → ubuntu-latest (application image)
+#   ci-image       → ubuntu-latest (docker build + push, rare)
+#   fmt            → ubuntu-latest (no container — rustfmt toolchain)
+#   rust-dev       → vars.CI_RUNNER  (heavy: clippy/nextest/doc/eval)
+#   rust-release   → vars.CI_RUNNER  (heavy: release build + smoke)
+#   security       → ubuntu-latest (cargo-deny/audit, metadata only)
+#   docker-build   → vars.CI_RUNNER  (heavy: full release cook; rare)
 #   ci-complete    → gate job, required check for branch protection
 #
 # Path-filtering: a `changes` job classifies the PR/push and every
-# expensive downstream job is `if`-gated on it. Editing this workflow
-# itself forces every gate back on.
+# expensive downstream job is `if`-gated on it, so the large runner is
+# only ever summoned on Rust-source pushes (never docs/markdown). The
+# weekly `schedule:` fires docker-build alone. Editing this workflow
+# forces every gate back on.
 #
-# Two layers of caching stack on each other:
+# Caching:
 #
 #   1. ministr-ci image (.github/docker/Dockerfile.ci) — rust toolchain,
-#      clippy/rustfmt/cargo-nextest/cargo-deny/cargo-audit/just, and the
-#      Tauri + MCP-smoke system deps are baked into the image. Built
-#      once per Dockerfile revision via the `ci-image` job and pushed
-#      to GHCR; downstream jobs pull it via `container:`.
+#      clippy/cargo-nextest/cargo-deny/cargo-audit/just/sccache + the
+#      Tauri/MCP system deps baked in. Built per-Dockerfile-revision by
+#      `ci-image`; the compiling jobs pull it via `container:`.
 #
-#   2. Swatinem/rust-cache (GitHub Actions cache) persists the inputs
-#      that change per-commit but not per-run: the crate registry, git
-#      dep checkouts, and the `target/` directory. rust-dev and
-#      rust-release use distinct cache keys so their disjoint
-#      target/debug/ and target/release/ trees don't thrash each other,
-#      and the two jobs still run in parallel:
+#   2. sccache → Cloudflare R2 (SCCACHE_* secrets): a shared, ~unbounded,
+#      zero-egress compile cache across runs/branches. A warm run
+#      recompiles only changed crates (~3-5 min vs ~15 cold). Unset, it
+#      falls back to a local on-disk cache (ideal on a persistent
+#      self-hosted runner). This replaces target/ caching entirely.
 #
-#        rust-dev     writes target/debug/
-#          └─ cargo clippy --all-targets (dev)
-#          └─ cargo nextest run --lib --bins (dev, reuses clippy rlibs)
-#          └─ cargo test --doc (dev)
-#          └─ just eval-gate (dev, `cargo test --test eval_retrieval`)
+#   3. Swatinem/rust-cache — registry + git dep checkouts only
+#      (cache-targets:false). Disjoint `dev` / `release` keys.
 #
-#        rust-release writes target/release/
-#          └─ cargo build --release -p ministr-cli
-#          └─ MCP smoke (runs the release binary)
+#        rust-dev     → clippy --all-targets · nextest --lib/bins ·
+#                       cargo test --doc · just eval-gate
+#        rust-release → cargo build --release -p ministr-cli · MCP smoke
 
 jobs:
   # ────────────────────────────────────────────────────────────────
@@ -114,9 +122,18 @@ jobs:
           # each changed-file path. Editing ci.yml itself or the
           # composite rust-setup action force-runs the relevant gates,
           # so we can't skip CI by accident when changing CI.
-          RUST_RE='^(Cargo\.(toml|lock)|rust-toolchain\.toml|deny\.toml|ministr-[^/]+/|\.config/nextest\.toml|justfile|eval/|\.github/workflows/ci\.yml$|\.github/actions/|\.github/docker/Dockerfile\.ci$)'
-          SECURITY_RE='^(Cargo\.(toml|lock)|deny\.toml|ministr-[^/]+/|\.github/workflows/ci\.yml$|\.github/actions/|\.github/docker/Dockerfile\.ci$)'
-          DOCKER_RE='^(Dockerfile|\.dockerignore|Cargo\.(toml|lock)|ministr-[^/]+/|\.github/workflows/ci\.yml$)'
+          # `ministr-app/src/` is the Vite/TS/CSS frontend — it does NOT
+          # affect the Rust workspace, so a frontend-only change must not
+          # trigger the heavy clippy/nextest jobs. Match the Rust crates
+          # explicitly (incl. ministr-app/src-tauri + its Cargo.toml)
+          # instead of a blanket `ministr-[^/]+/`.
+          CRATES_RE='(ministr-(api|core|daemon|mcp|cli)/|ministr-app/src-tauri/|ministr-app/Cargo\.toml)'
+          RUST_RE="^(Cargo\.(toml|lock)|rust-toolchain\.toml|deny\.toml|${CRATES_RE}|\.config/nextest\.toml|justfile|eval/|\.github/workflows/ci\.yml\$|\.github/actions/|\.github/docker/Dockerfile\.ci\$)"
+          SECURITY_RE="^(Cargo\.(toml|lock)|deny\.toml|${CRATES_RE}|\.github/workflows/ci\.yml\$|\.github/actions/|\.github/docker/Dockerfile\.ci\$)"
+          # docker-build is a full release cook ≈ duplicate of rust-release.
+          # Only fire it when the application Dockerfile itself changes;
+          # weekly `schedule:` catches base-image / dependency drift.
+          DOCKER_RE='^(Dockerfile|\.dockerignore|\.github/workflows/ci\.yml$)'
           CI_IMAGE_RE='^(\.github/docker/Dockerfile\.ci$|\.github/workflows/ci\.yml$)'
 
           # Fall-through: emit everything as "true" and exit 0. Used
@@ -132,6 +149,20 @@ jobs:
             } >> "$GITHUB_OUTPUT"
             exit 0
           }
+
+          # Weekly cron: only the application Docker image build needs to
+          # run (dependency / base-image drift). Skip the Rust gates so
+          # the scheduled run doesn't pay for a full workspace CI.
+          if [ "$GH_EVENT" = "schedule" ]; then
+            echo "scheduled run — docker-build only"
+            {
+              echo "rust=false"
+              echo "security=false"
+              echo "docker=true"
+              echo "ci_image=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           # Resolve the diff endpoints per event type.
           if [ "$GH_EVENT" = "pull_request" ]; then
@@ -268,55 +299,72 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────
   # fmt: instant feedback, no compile. Gates the Rust jobs below.
-  # Runs inside ministr-ci so rustfmt + the toolchain are pre-installed.
-  # No cargo cache — rustfmt works off the workspace directly without
-  # compiling, so there's nothing to restore.
+  #
+  # Deliberately decoupled from ci-image / the container: rustfmt does
+  # not compile anything, so a ~15 s toolchain action on the free
+  # runner gives faster feedback than pulling the ~2 GB ministr-ci
+  # image — and dropping the `needs: ci-image` edge lets fmt start
+  # immediately in parallel with the image bake.
   # ────────────────────────────────────────────────────────────────
   fmt:
     name: fmt
-    needs: [changes, ci-image]
+    needs: [changes]
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    container:
-      image: ${{ needs.ci-image.outputs.image }}:${{ needs.ci-image.outputs.tag }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
       - run: cargo fmt --all -- --check
 
   # ────────────────────────────────────────────────────────────────
   # rust-dev: dev-profile pipeline, inside ministr-ci.
-  # Owns target/debug/ via its own rust-cache key. Runs in parallel with
-  # rust-release (which owns target/release/).
-  # Within this job the steps are serial so clippy → nextest →
-  # doc-test → eval-gate all reuse the same dev rlibs in target/debug/.
+  # Runs on the large runner (vars.CI_RUNNER); falls back to the free
+  # ubuntu-latest if the variable is unset so CI never hard-breaks.
+  # sccache(R2) makes a warm run recompile only changed crates (~3-5 min
+  # vs ~15 cold). Within this job the steps are serial so clippy →
+  # nextest → doc-test → eval-gate all reuse the same dev rlibs.
   # ────────────────────────────────────────────────────────────────
   rust-dev:
     name: rust-dev (clippy → nextest → doc → eval)
     needs: [changes, ci-image, fmt]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
     container:
       image: ${{ needs.ci-image.outputs.image }}:${{ needs.ci-image.outputs.tag }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      # Shared compile cache. With the SCCACHE_* secrets set this is a
+      # Cloudflare R2 bucket shared across runs/branches; unset, sccache
+      # transparently falls back to an on-disk cache (ideal on a
+      # persistent self-hosted runner) — either way CI still works.
+      RUSTC_WRAPPER: sccache
+      SCCACHE_BUCKET: ${{ secrets.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ secrets.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: auto
+      AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
+      # Cap parallel codegen so a cold-cache candle/ort/esaxx compile
+      # can't OOM the box; sccache hits make most units near-instant.
+      CARGO_BUILD_JOBS: "8"
     steps:
       - uses: actions/checkout@v4
 
-      # Restore the crate registry, git dep checkouts, and target/debug/
-      # from the GitHub Actions cache. The `dev` shared-key keeps this
-      # job's cache disjoint from rust-release's `release` key so the
-      # two parallel jobs don't overwrite each other's target/ tree.
-      - name: Cargo cache (dev profile)
+      # Registry + git dep checkouts only (NOT target/ — sccache owns
+      # compile artifacts). `dev` shared-key stays disjoint from
+      # rust-release's `release` key. Harmless no-op on a persistent
+      # self-hosted runner where CARGO_HOME is already warm.
+      - name: Cargo registry cache (dev)
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: dev
-          # CARGO_HOME is /usr/local/cargo inside the ministr-ci image.
+          cache-targets: "false"
           cache-directories: /usr/local/cargo/registry /usr/local/cargo/git
 
       - name: Stub Tauri bundle artifacts
@@ -369,31 +417,46 @@ jobs:
         # and nextest above.
         run: just eval-gate
 
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
   # ────────────────────────────────────────────────────────────────
   # rust-release: release-profile pipeline, inside ministr-ci.
-  # Owns target/release/ via its own rust-cache key. Runs in parallel
-  # with rust-dev. Only builds ministr-cli (+ its transitive deps).
+  # Large runner (vars.CI_RUNNER) w/ free fallback, sccache(R2) shared
+  # cache. Runs in parallel with rust-dev — give the runner pool ≥2
+  # concurrency (two self-hosted agents, or hosted autoscale) so the
+  # two heavy jobs don't serialize. Only builds ministr-cli (+ deps).
   # ────────────────────────────────────────────────────────────────
   rust-release:
     name: rust-release (build → mcp smoke)
     needs: [changes, ci-image, fmt]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 25
     container:
       image: ${{ needs.ci-image.outputs.image }}:${{ needs.ci-image.outputs.tag }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_BUCKET: ${{ secrets.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ secrets.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: auto
+      AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
+      CARGO_BUILD_JOBS: "8"
     steps:
       - uses: actions/checkout@v4
 
-      # Distinct `release` shared-key so target/release/ is cached
-      # separately from rust-dev's target/debug/.
-      - name: Cargo cache (release profile)
+      # Registry + git only; `release` shared-key disjoint from
+      # rust-dev's `dev`. sccache owns the compile artifacts.
+      - name: Cargo registry cache (release)
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: release
+          cache-targets: "false"
           cache-directories: /usr/local/cargo/registry /usr/local/cargo/git
 
       - name: Build release ministr-cli
@@ -451,6 +514,10 @@ jobs:
           done
           echo "✓ MCP smoke test passed"
 
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
   # ────────────────────────────────────────────────────────────────
   # security: cargo-deny + cargo-audit, inside ministr-ci.
   # Independent, fast — runs in parallel with `rust-dev` and
@@ -480,12 +547,17 @@ jobs:
       - run: cargo deny check
       - run: cargo audit
 
+  # docker-build: full release cook of the application image. Heavy
+  # (≈ a duplicate of rust-release), so it runs on the large runner and
+  # is narrowly gated — only when the application Dockerfile changes, or
+  # weekly via `schedule:` (the `changes` job emits docker=true for
+  # both). gha layer cache keeps warm rebuilds cheap.
   docker-build:
     name: docker build
     needs: [changes]
     if: needs.changes.outputs.docker == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -494,6 +566,8 @@ jobs:
           context: .
           push: false
           tags: ministr:ci
+          cache-from: type=gha,scope=ministr-app
+          cache-to: type=gha,mode=max,scope=ministr-app
 
   # ────────────────────────────────────────────────────────────────
   # Gate job — single required status check for branch protection.

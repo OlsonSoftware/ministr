@@ -33,9 +33,9 @@
 #     RUSTUP_HOME=/usr/local/rustup), with clippy + rustfmt components
 #   - Tauri / ministr-app system libraries (webkit, appindicator, rsvg)
 #   - jq (MCP smoke test parses JSON-RPC responses)
-#   - sudo (stickydisk action shells out to `sudo mount` / `sudo mkfs`)
-#   - cargo-nextest, cargo-deny, cargo-audit, just (prebuilt via
-#     cargo-binstall — no from-source compile)
+#   - cargo-nextest, cargo-deny, cargo-audit, sccache, just (prebuilt
+#     via cargo-binstall — no from-source compile). sccache is the
+#     RUSTC_WRAPPER for the heavy compile jobs (R2-backed shared cache).
 #
 # Invalidation
 # ------------
@@ -105,6 +105,7 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 \
       cargo-nextest \
       cargo-deny \
       cargo-audit \
+      sccache \
       just
 
 # GitHub Actions' checkout action drops the workspace at a path owned
