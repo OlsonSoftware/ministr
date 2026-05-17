@@ -1,0 +1,24 @@
+---
+title: Cross-language bridges
+description: How ministr follows a call across a language boundary — the thing text search fundamentally cannot do.
+---
+
+Modern codebases call across languages: a Rust function exposed to Python, a Tauri command invoked from TypeScript, a gRPC service consumed by a generated client. The two sides live in different files, in different languages, often with no shared identifier — so the [reference graph](/docs/concepts/references) within one language can't connect them.
+
+A **bridge** is that connection: an export on one side linked to the calls that reach it from another. This is ministr's sharpest differentiator — grep cannot do it even in principle, because nothing textual ties the two sides together.
+
+## What it links
+
+ministr recognizes **13 kinds** of cross-language boundary, including:
+
+- Tauri commands and events (Rust ↔ JS/TS)
+- PyO3 (Rust ↔ Python)
+- napi-rs and wasm-bindgen (Rust ↔ JS)
+- HTTP routes (handler ↔ client call)
+- gRPC services, JNI, UniFFI, Electron IPC, Flutter channels, and raw FFI
+
+For each, it finds the export sites and the call sites and matches them, with a confidence on every link.
+
+## Why it matters for an agent
+
+Ask "what calls `create_user`?" in a polyglot app and the honest answer crosses a language boundary. `ministr_bridge` gives the agent that answer directly, so it can reason about — and safely change — code that spans the stack instead of treating each language as an island.

@@ -1,7 +1,9 @@
 ---
 title: ministr_budget
-description: Get ministr's advisory token-usage estimate for the session — internal accounting anchored to a configured window, not a stop signal.
+description: An optional, advisory token-usage estimate for the session — internal accounting, not a signal to stop.
 ---
+
+`ministr_budget` is opt-in. ministr deliberately does **not** put token-usage figures into ordinary tool responses — the per-call numbers are anchored to a configured window, not the model's real context window, and treating them as a limit made agents abandon work early. This tool exists for the rare case where you explicitly want the estimate anyway.
 
 ## Parameters
 
@@ -9,65 +11,27 @@ None.
 
 ## Response
 
-> **Note.** Unlike other tools, `ministr_budget` does **not** wrap its response in the standard [response envelope](/docs/tools#response-envelope). The reply is the `BudgetResponse` directly — the budget tool already exists to surface budget state, so adding another envelope around it would duplicate fields. `budget_status` from the envelope is omitted; the equivalent fields (`total_budget`, `estimated_used`, `pressure_level`, `eviction_candidates`) are top-level here.
+This tool returns its estimate directly (no wrapper envelope):
 
 ```json
 {
-  "total_budget": 100000,
-  "estimated_used": 78500,
-  "estimated_remaining": 21500,
-  "pressure_level": "critical",
-  "eviction_candidates": [
-    {
-      "content_id": "docs/setup.md#prerequisites",
-      "reason": "low relevance, delivered 8 turns ago",
-      "tokens_recoverable": 450
-    }
-  ],
-  "prefetch_metrics": {
-    "hits": 6,
-    "misses": 7,
-    "sequential_hits": 3,
-    "topical_hits": 2,
-    "structural_hits": 1,
-    "cross_session_hits": 0,
-    "survey_expand_hits": 0,
-    "agent_plan_hits": 0
-  },
-  "session_metrics": { "turn_count": 24, "tokens_delivered": 78500 },
-  "schema_tokens": 3120,
-  "tool_count": 15,
-  "coherence_alerts": [],
-  "elicitation_evicted": []
+  "pressure_level": "normal",
+  "tokens_used": 34500,
+  "tokens_remaining": 65500,
+  "utilization": 0.345
 }
 ```
 
-### Response Fields
+### Response fields
 
 | Field | Description |
 |---|---|
-| `total_budget` | Total context window budget in tokens |
-| `estimated_used` | Estimated tokens currently in the agent's window |
-| `estimated_remaining` | Estimated tokens available |
-| `pressure_level` | `"normal"`, `"elevated"`, or `"critical"` |
-| `eviction_candidates` | Ranked list of content safe to drop (populated under pressure) |
-| `prefetch_metrics` | Overall `hits`/`misses` totals plus per-strategy hit counts (`sequential_hits`, `topical_hits`, `structural_hits`, `cross_session_hits`, `survey_expand_hits`, `agent_plan_hits`) |
-| `session_metrics` | Cumulative token economics for the session (turns, delivered totals) |
-| `schema_tokens` | Tokens consumed by MCP tool schemas (descriptions + parameters) |
-| `tool_count` | Number of registered MCP tools |
-| `coherence_alerts` | Pending alerts when underlying content has changed (omitted when empty) |
-| `elicitation_evicted` | Content IDs evicted via interactive elicitation (omitted when empty) |
-
-### Pressure Levels
-
-| Level | Threshold | Behavior |
-|---|---|---|
-| `normal` | &lt; 80% used | Standard operation |
-| `elevated` | 80-95% used | Eviction candidates suggested |
-| `critical` | &ge; 95% used | Responses auto-compressed, strong eviction recommendations |
+| `pressure_level` | A coarse label for the estimate: `"normal"`, `"elevated"`, or `"critical"` |
+| `tokens_used` | Estimated tokens of content delivered so far this session |
+| `tokens_remaining` | Estimated tokens left against the configured window |
+| `utilization` | `tokens_used / window`, 0.0–1.0 |
 
 ## Behavior
 
-- Call this periodically to monitor budget health
-- Eviction candidates are ranked by recency, relevance decay, and dependency analysis
-- Prefetch metrics help assess whether prefetching is effective for the current session
+- **Advisory only.** These figures are anchored to a configured window size, not the agent's real context window. Don't use them to decide you're low on context or to stop working.
+- **Not in normal responses.** Other tools never include this; ministr tracks usage internally so it can keep delivery lean (skip re-sends, ship deltas), but it doesn't surface the numbers unless you call this tool.

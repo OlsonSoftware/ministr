@@ -42,49 +42,44 @@ ministr exposes MCP tools that give the agent code intelligence and explicit con
 
 ## Response envelope
 
-Every MCP tool returns a `ToolResponse<T>` envelope. The tool-specific payload lives under `result`; everything else is wrapper metadata that the agent can use to track session state without re-querying.
+Every MCP tool wraps its answer in a small envelope. The tool-specific payload is always under `result`; the other fields appear only when they apply and carry actionable signals the agent can use without re-querying.
 
 ```json
 {
-  "budget_status": {
-    "tokens_used": 34500,
-    "tokens_remaining": 65500,
-    "pressure_level": "normal",
-    "utilization": 0.345
-  },
-  "coherence_alerts": [ /* present only when underlying content has changed */ ],
-  "indexing_in_progress": true,
+  "coherence_alerts": [ /* present only when underlying content changed */ ],
+  "indexing_in_progress": true,            /* present only while indexing */
   "indexing_message": "Checking 12/42 files",
-  "eviction_recommendations": [ /* advisory; present when the configured-window estimate runs high */ ],
+  "next_actions": [ /* present only when ministr has concrete suggestions */ ],
   "result": {
     /* tool-specific payload — shape varies per tool */
   }
 }
 ```
 
-| Wrapper field | Always present? | Description |
+| Wrapper field | When present | Description |
 |---|---|---|
-| `budget_status` | ✅ always | Advisory token-usage estimate (`tokens_used`, `tokens_remaining`, `pressure_level`, `utilization`) — internal accounting, anchored to the configured window, not a stop signal |
-| `coherence_alerts` | only when non-empty | Notifications for sections whose underlying content changed since last delivery |
-| `indexing_in_progress` | only when `true` | Background corpus ingestion is still running |
-| `indexing_message` | only when present | Human-readable ingestion status (e.g. `"Checking 12/42 files"`) |
-| `eviction_recommendations` | only when the window estimate runs high | Advisory list of content ministr suggests dropping first — same shape as the `eviction_candidates` field in [`ministr_budget`](/docs/tools/budget) |
-| `result` | ✅ always | Tool-specific payload — see each tool's reference page for its shape |
+| `result` | always | Tool-specific payload — see each tool's reference page for its shape |
+| `coherence_alerts` | only when non-empty | Sections whose underlying content changed since they were last delivered |
+| `indexing_in_progress` | only when `true` | Background indexing is still running, so results may be partial |
+| `indexing_message` | only when present | Human-readable indexing status (e.g. `"Checking 12/42 files"`) |
+| `next_actions` | only when non-empty | Concrete suggested follow-up calls (e.g. re-read a changed section) |
 
-The per-tool reference pages below show the full envelope in their `Response` examples for clarity. Field tables describe the `result` payload (shape varies per tool) and reference this envelope for the wrapper fields.
+ministr does not inject token-usage figures into tool responses; if you want an advisory estimate, call [`ministr_budget`](/docs/tools/budget) explicitly.
 
-## Typical Workflow
+## Typical workflow
+
+Code intelligence first; the prose tools and session aids fall in around it.
 
 ```text
-survey → read → extract → related
-  ↓                          ↓
-budget ← compress ← evicted
+survey ──▶ symbols ──▶ definition ──▶ references ──▶ bridge
+   │                                                   (cross-language)
+   └──▶ read ──▶ extract ──▶ related        (docs & prose)
 ```
 
-1. **Survey** to orient — find relevant areas of the corpus
-2. **Read** specific sections identified by the survey
-3. **Extract** claims for surgical precision
-4. **Related** to follow reasoning chains
-5. **Budget** for an advisory token-usage estimate (optional)
-6. **Compress** sections into compact summaries when useful
-7. **Evicted** to tell ministr what was dropped (improves tracking accuracy)
+1. **Survey** to orient — find the relevant area by meaning
+2. **Symbols / Definition** — jump to the exact function, type, or trait
+3. **References** — see real callers, implementors, importers
+4. **Bridge** — follow a call across a language boundary
+5. **Read / Extract / Related** — pull prose sections, atomic claims, and follow links
+
+`compress` and `evicted` are optional session-efficiency aids — they help ministr keep delivery lean and are never required to get an answer.

@@ -17,7 +17,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 
 ```json
 {
-  "budget_status": { /* see envelope */ },
+  "coherence_alerts": [ /* only when content changed; see envelope */ ],
   "result": {
     "section_id": "docs/auth.md#error-handling",
     "heading_path": ["Authentication", "Error Handling"],
@@ -34,7 +34,7 @@ If the section was already delivered and has not changed, ministr returns a **mi
 
 ```json
 {
-  "budget_status": { /* see envelope */ },
+  "coherence_alerts": [ /* only when content changed; see envelope */ ],
   "result": {
     "section_id": "docs/auth.md#error-handling",
     "status": "already_delivered",

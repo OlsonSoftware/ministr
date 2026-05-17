@@ -18,7 +18,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 
 ```json
 {
-  "budget_status": { /* see envelope */ },
+  "coherence_alerts": [ /* only when content changed; see envelope */ ],
   "result": {
     "claims": [
       {
@@ -40,7 +40,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 
 ```json
 {
-  "budget_status": { /* see envelope */ },
+  "coherence_alerts": [ /* only when content changed; see envelope */ ],
   "result": {
     "claims": [
       { "claim_id": "docs/auth.md#jwt-validation:c1", "text": "JWT tokens use RS256 signing algorithm." },

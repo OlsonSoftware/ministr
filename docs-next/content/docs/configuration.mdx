@@ -88,7 +88,7 @@ ministr auto-discovers `.ministr.toml` by walking up from the working directory.
 | `corpus.cloud` | list of sub-tables | `[]` | Pre-built `.ministr-index` bundles to fetch instead of re-indexing locally |
 | `corpus.model` | string (optional) | — | Per-repo embedding-model override (falls back to global `default_model`) |
 | `corpus.dimension` | integer (optional) | — | Target embedding dimension for Matryoshka truncation. Only effective with Matryoshka-capable models like `nomic-embed-text-v1.5` |
-| `corpus.rerank_depth` | integer (optional) | `100` | Number of coarse HNSW candidates fetched for full-dimension rescoring during two-stage Matryoshka retrieval. `0` disables second-stage rerank. |
+| `corpus.rerank_depth` | integer (optional) | `100` | How many coarse candidates to re-score at full dimension when using a Matryoshka model. `0` disables the second-stage rescore. |
 
 ### Multi-source corpora
 
@@ -144,7 +144,7 @@ See the [CLI reference](/docs/cli) for all commands and flags, including OAuth, 
 
 ## Supported Embedding Models
 
-ministr supports the following embedding models via `fastembed`. Quantized variants (suffix `-q`) use INT8 quantization for faster inference and smaller model files at a slight quality trade-off. The authoritative list lives at `SUPPORTED_MODELS` in `ministr-core/src/embedding/fastembed_impl.rs`.
+ministr supports the following local embedding models. Quantized variants (suffix `-q`) use INT8 quantization for faster inference and smaller model files at a slight quality trade-off. Run `ministr list-models` for the authoritative, up-to-date list.
 
 ### General-purpose
 

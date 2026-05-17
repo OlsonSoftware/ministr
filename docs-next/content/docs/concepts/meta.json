@@ -2,6 +2,13 @@
   "title": "Concepts",
   "defaultOpen": true,
   "pages": [
+    "index",
+    "---Code intelligence---",
+    "symbols",
+    "references",
+    "bridges",
+    "search",
+    "---Session efficiency---",
     "session-shadow",
     "prefetch-engine",
     "coherence"
