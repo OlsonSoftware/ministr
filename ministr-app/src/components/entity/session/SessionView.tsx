@@ -11,21 +11,29 @@ import { EntitySection } from "../EntitySection";
 import { EntityRow } from "../EntityRow";
 import { EmptyState } from "../../ui/empty-state";
 import { Button } from "../../ui/button";
-import { SessionHero } from "./SessionHero";
-import { SessionEconomicsSection } from "./SessionEconomicsSection";
-import { SessionBudgetSection } from "./SessionBudgetSection";
+import { SessionHeroStrip } from "./SessionHeroStrip";
+import { SessionCodeTouchedSection } from "./SessionCodeTouchedSection";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { SessionLineageSection } from "./SessionLineageSection";
+import { SessionTokenAdvanced } from "./SessionTokenAdvanced";
 
 interface Props {
   entity: Extract<Entity, { kind: "session" }>;
 }
 
 /**
- * SessionView — the deep per-session drawer (the centerpiece of the
- * overhaul). Orchestrator only: it owns the hooks (one shared sessions
- * subscription + an activity poll) and composes the hero + chapters.
- * Sections take already-fetched data as props so they stay pure.
+ * SessionView — the deep per-session drawer. Orchestrator only: owns
+ * the hooks (one shared sessions subscription + an activity poll) and
+ * composes the hero strip + numbered chapters. Sections take
+ * already-fetched data as props so they stay pure.
+ *
+ * Order (code-intelligence first, token economics demoted):
+ *   Hero strip
+ *   §1 Code touched
+ *   §2 Activity
+ *   §3 Lineage (when present)
+ *   §4 Project
+ *   §5 Token usage (collapsed)
  *
  * Liveness: prefers live store data; falls back to the caller-supplied
  * `seed`, then the 24h ended-session history, so reopening an ended
@@ -37,6 +45,11 @@ export function SessionView({ entity }: Props) {
 
   const live = useSession(sessionId);
   const activity = useSessionActivity(sessionId);
+
+  // Cross-section filter state — §1 file-row clicks set this, which
+  // flows down to §2 as a search-input default. Bidirectional: §2's
+  // search clear bubbles back up so §1 can drop highlighting.
+  const [targetFilter, setTargetFilter] = useState("");
 
   const session: SessionDetail | null = useMemo(
     () => live.session ?? entity.seed ?? endedSessionSeed(sessionId),
@@ -105,9 +118,8 @@ export function SessionView({ entity }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <SessionHero
+      <SessionHeroStrip
         session={session}
-        samples={live.samples}
         isLive={live.isLive}
         stale={live.stale}
         fresh={live.fresh}
@@ -118,13 +130,11 @@ export function SessionView({ entity }: Props) {
         }
       />
 
-      <SessionEconomicsSection chapter={(ch += 1)} session={session} />
-
-      <SessionBudgetSection
+      <SessionCodeTouchedSection
         chapter={(ch += 1)}
-        session={session}
-        samples={live.samples}
-        ended={!live.isLive}
+        events={activity.events}
+        loading={activity.loading}
+        onFilterFile={setTargetFilter}
       />
 
       <ActivityTimeline
@@ -133,6 +143,8 @@ export function SessionView({ entity }: Props) {
         loading={activity.loading}
         error={activity.error}
         flashSince={activity.flashSince}
+        targetFilter={targetFilter}
+        onTargetFilterChange={setTargetFilter}
       />
 
       {hasLineage && (
@@ -158,6 +170,13 @@ export function SessionView({ entity }: Props) {
           }
         />
       </EntitySection>
+
+      <SessionTokenAdvanced
+        chapter={(ch += 1)}
+        session={session}
+        samples={live.samples}
+        ended={!live.isLive}
+      />
     </div>
   );
 }

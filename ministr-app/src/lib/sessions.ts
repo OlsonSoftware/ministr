@@ -223,9 +223,6 @@ export interface SessionVitals {
   capacity: number;
   tokensSaved: number;
   dedupHits: number;
-  /** `total_tokens_saved / cumulative_tokens_delivered` (0..1) or `null`
-   *  when nothing has been delivered yet. */
-  savingsRate: number | null;
   /** `dedup_hits / total_deliveries` (0..1) or `null`. */
   cacheHitRate: number | null;
   evictions: number;
@@ -250,13 +247,6 @@ export function deriveVitals(
     capacity: capacityOf(session),
     tokensSaved: session.total_tokens_saved,
     dedupHits: session.dedup_hits,
-    savingsRate:
-      session.compression_ratio > 0
-        ? session.compression_ratio
-        : safeDiv(
-            session.total_tokens_saved,
-            session.cumulative_tokens_delivered,
-          ),
     cacheHitRate: safeDiv(session.dedup_hits, session.total_deliveries),
     evictions: session.total_evictions,
     compressions: session.total_compressions,
