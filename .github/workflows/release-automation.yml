@@ -47,6 +47,13 @@ on:
       - 'docs-next/**'
       - 'assets/**'
       - '.github/**'
+  # Manual lever: re-run release detection on demand (e.g. after a
+  # push-trigger was path-ignored, or to retry once the detect/agent
+  # path is fixed). `paths-ignore` does not apply to dispatch, so this
+  # always evaluates. The deterministic gate→build→tag still no-ops
+  # unless HEAD is the `chore: release vX.Y.Z` commit, so a manual run
+  # on a non-release commit only (re-)engages the release-PR agent.
+  workflow_dispatch:
 
 permissions:
   contents: read
