@@ -78,6 +78,12 @@ bench-lsp-index:
     rustup component add rust-analyzer
     rustup run stable rust-analyzer lsif . > eval/lsp-nav/ra.lsif
 
+# Run the ministr-vs-LSP code-navigation benchmark: emit the RA LSIF
+# index, then diff ministr's answers against it over the hand-verified
+# ground truth. Report-only (not a regression gate). Minutes-long.
+bench-lsp: bench-lsp-index
+    cargo test --test eval_lsp_nav -p ministr-core --release -- --nocapture --ignored
+
 # Run all benchmarks
 bench-all:
     cargo bench -p ministr-core
