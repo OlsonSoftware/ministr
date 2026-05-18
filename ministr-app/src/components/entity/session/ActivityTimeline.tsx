@@ -176,7 +176,6 @@ export function ActivityTimeline({
             <EventRow
               key={`${e.timestamp_ms}-${e.tool}-${e.corpus_id}`}
               event={e}
-              fresh={e.timestamp_ms > flashSince}
               maxDuration={maxDuration}
               nowMs={now}
             />
@@ -268,12 +267,10 @@ export function ActivityTimeline({
 
 function EventRow({
   event,
-  fresh,
   maxDuration,
   nowMs,
 }: {
   event: ActivityEvent;
-  fresh: boolean;
   maxDuration: number;
   nowMs: number;
 }) {
@@ -288,12 +285,7 @@ function EventRow({
   const expandedTarget = relativizeSummary((event.summary ?? "").trim());
 
   return (
-    <details
-      className={cn(
-        "group",
-        fresh && "ministr-pulse",
-      )}
-    >
+    <details className="group">
       <summary
         className={cn(
           "grid cursor-pointer list-none items-start px-3 py-1.5 gap-x-3",
