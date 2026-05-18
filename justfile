@@ -228,8 +228,17 @@ reinstall:
 design-lint:
     cd ministr-app && node scripts/design-lint.cjs
 
-# Run all quality gates: format check + build + test + lint + UI contract
-validate: fmt-check lint test design-lint
+# Closed-source guard: public surfaces (README, docs site, scaffolded
+# agent rules) must stay black-box — no internal source paths/jargon.
+blackbox-lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # `python3` on Linux/macOS, `python` on Windows (see win_setup.ps1).
+    if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
+    "$py" scripts/ci/blackbox_lint.py
+
+# Run all quality gates: format check + build + test + lint + UI + black-box
+validate: fmt-check lint test design-lint blackbox-lint
 
 # Release pre-flight gates — run before merging the release-plz PR
 release-preflight: validate deny eval-gate
