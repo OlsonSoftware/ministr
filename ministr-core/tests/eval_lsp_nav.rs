@@ -169,10 +169,19 @@ fn norm_path(root: &Path, p: &str) -> String {
     rel.to_string_lossy().replace('\\', "/")
 }
 
-/// Does `line` fall inside any expected location's range (file match by suffix)?
+/// Does `line` fall inside any expected location's range?
+///
+/// `expect.file` is a repo-relative POSIX path; `file` is the answer's
+/// path normalized the same way (ministr) or an absolute LSIF URI path
+/// (rust-analyzer). In both cases the *actual* path ends with the
+/// repo-relative expected path, so a single one-way `ends_with` is
+/// correct and strict. The reverse direction (`e.file.ends_with(file)`)
+/// is deliberately NOT used: a basename-only answer like `foo.rs` would
+/// spuriously match an expected `src/foo.rs` in an unrelated directory
+/// and silently inflate accuracy.
 fn matches_expect(file: &str, line: u32, expect: &[ExpectLoc]) -> bool {
     expect.iter().any(|e| {
-        (file.ends_with(&e.file) || e.file.ends_with(file))
+        file.ends_with(&e.file)
             && line >= e.line_start.saturating_sub(2)
             && line <= e.line_end.saturating_add(2)
     })
@@ -451,19 +460,21 @@ async fn lsp_nav_benchmark() {
                 }
                 if task.lsp_can_answer {
                     ra_answerable += 1;
-                    if let Some(ra) = &ra {
-                        // RA is position-keyed; query at the expected def
-                        // line in the expected file (a stable anchor that
-                        // doesn't depend on choosing a use-site).
-                        if let Some(e) = task.expect.first() {
-                            let hits = ra.definition(&e.file, e.line_start);
-                            if hits
-                                .iter()
-                                .any(|(f, l)| matches_expect(f, *l, &task.expect))
-                            {
-                                ra_def_ok += 1;
-                                ra_cov += 1;
-                            }
+                    // RA is position-keyed; query at the expected def line
+                    // in the expected file (a stable anchor that doesn't
+                    // depend on choosing a use-site).
+                    if let Some(ra) = &ra
+                        && let Some(e) = task.expect.first()
+                    {
+                        let hits = ra.definition(&e.file, e.line_start);
+                        if !hits.is_empty() {
+                            ra_cov += 1; // RA returned a result → coverage
+                        }
+                        if hits
+                            .iter()
+                            .any(|(f, l)| matches_expect(f, *l, &task.expect))
+                        {
+                            ra_def_ok += 1; // ...and it was correct → accuracy
                         }
                     }
                 }
@@ -493,6 +504,9 @@ async fn lsp_nav_benchmark() {
                     ra_answerable += 1;
                     if let (Some(ra), Some((ffile, fline))) = (&ra, &task.from) {
                         let hits = ra.references(ffile, *fline);
+                        if !hits.is_empty() {
+                            ra_cov += 1; // RA returned a result → coverage
+                        }
                         let hit = hits
                             .iter()
                             .filter(|(f, l)| matches_expect(f, *l, &task.expect))
@@ -508,10 +522,9 @@ async fn lsp_nav_benchmark() {
             }
             "bridge" => {
                 // Cross-language: ministr resolves via bridge links; a
-                // Rust-only LSP is structurally blind (lsp_can_answer:false).
-                if ministr_answered {
-                    ra_cov += 0; // explicit: RA contributes nothing here
-                }
+                // Rust-only LSP is structurally blind (lsp_can_answer:false),
+                // so it contributes nothing to `ra_cov` — that absence IS
+                // the coverage gap this benchmark exists to show.
                 println!(
                     "  bridge {:<31} ministr: {} | rust-analyzer: n/a (Rust-only, cross-language)",
                     task.id,
