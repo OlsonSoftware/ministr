@@ -282,7 +282,7 @@ function EventRow({
     1,
     Math.min(LATENCY_BAR_PX, (event.duration_ms / maxDuration) * LATENCY_BAR_PX),
   );
-  const { head, file } = formatActivityForDisplay(event);
+  const { head, file, badge } = formatActivityForDisplay(event);
   const displayHead = head || event.corpus_id;
   // Expanded body shows the full summary with absolute paths stripped.
   const expandedTarget = relativizeSummary((event.summary ?? "").trim());
@@ -290,41 +290,49 @@ function EventRow({
   return (
     <details
       className={cn(
-        "group border-b border-border-soft last:border-b-0",
+        "group",
         fresh && "ministr-pulse",
       )}
     >
       <summary
         className={cn(
-          "flex cursor-pointer list-none items-center gap-3 px-3 py-2",
+          "flex cursor-pointer list-none items-center gap-2.5 px-3 py-1",
           "hover:bg-surface-overlay",
           "[&::-webkit-details-marker]:hidden",
         )}
       >
         {/* TAG */}
-        <span className="w-16 shrink-0 font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim">
+        <span className="w-14 shrink-0 font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim">
           {tag(event.tool)}
         </span>
 
-        {/* Middle column: head on line 1, optional file on line 2 */}
-        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-          <span className="truncate font-mono text-sm font-semibold text-text">
+        {/* Middle: head on line 1, optional dim file on line 2. */}
+        <div className="flex-1 min-w-0 leading-tight">
+          <div className="truncate font-mono text-[13px] text-text">
             {displayHead}
-          </span>
+          </div>
           {file && (
-            <span
-              className="truncate font-mono text-mono-mini text-text-dim"
+            <div
+              className="truncate font-mono text-[11px] text-text-dim"
               dir="rtl"
               title={file}
             >
               <bdo dir="ltr">↳ {file}</bdo>
-            </span>
+            </div>
           )}
         </div>
 
-        {/* Right cluster */}
-        <span className="flex shrink-0 items-center gap-2 whitespace-nowrap font-mono text-xs tabular-nums text-text-dim">
-          {/* Latency bar */}
+        {/* Right-pinned count badge — never truncates with the head. */}
+        {badge && (
+          <span className="shrink-0 whitespace-nowrap rounded-md border border-border-soft px-1 py-px font-mono text-mono-mini tabular-nums text-text-dim">
+            {badge}
+          </span>
+        )}
+
+        {/* Right cluster: latency bar + duration + relative time. The
+            absolute time is intentionally dropped here — it lives in the
+            expand body, keeping the row dense. */}
+        <span className="flex shrink-0 items-center gap-2 whitespace-nowrap font-mono text-mono-mini tabular-nums text-text-dim">
           <span
             className="inline-block h-1.5 border border-border-soft bg-surface-overlay overflow-hidden"
             style={{ width: `${LATENCY_BAR_PX}px` }}
@@ -336,11 +344,10 @@ function EventRow({
               style={{ width: `${latencyPx}px` }}
             />
           </span>
-          <span className="w-10 text-right tabular-nums">
+          <span className="w-8 text-right tabular-nums">
             {event.duration_ms > 0 ? `${event.duration_ms}ms` : "—"}
           </span>
-          <span className="hidden sm:inline">{absTime(event.timestamp_ms)}</span>
-          <span className="text-text-dim">{relative(nowMs, event.timestamp_ms)}</span>
+          <span className="w-10 text-right">{relative(nowMs, event.timestamp_ms)}</span>
         </span>
       </summary>
 
