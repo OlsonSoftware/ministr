@@ -239,16 +239,29 @@ export function summarizeCodeTouched(
 
 /**
  * Decompose an activity event into a structured display:
- *   head — the primary, non-path label (symbol name, query, anchor, etc.)
- *   file — the repo-relative file path, if the event has one; rendered
- *          on a secondary line in the activity row.
+ *   head  — the primary, non-path label (symbol name, query, anchor)
+ *   file  — repo-relative file path, rendered as a dim second line
+ *   badge — small right-aligned chip pinned outside the truncate column
+ *           (counts, `top_k=N`, kind filter, etc.) so it never gets cut
+ *           when the head overflows.
  *
- * Both fields are pre-relativized — callers never need to worry about
- * absolute paths leaking into the UI.
+ * Pre-relativized; callers never see absolute paths.
  */
 export interface FormattedActivity {
   head: string;
   file: string | null;
+  badge: string | null;
+}
+
+/** Pull a trailing `(count)` or `(top_k=N)`-style suffix out of a head
+ *  so the count can render as a right-pinned chip instead of being
+ *  truncated as part of the head string. */
+function extractBadge(s: string): { head: string; badge: string | null } {
+  const m = s.match(/^(.*?)\s*\(([^()]+)\)\s*$/);
+  if (!m) return { head: s.trim(), badge: null };
+  const head = m[1].trim();
+  const badge = m[2].trim();
+  return { head, badge };
 }
 
 export function formatActivityForDisplay(e: ActivityEvent): FormattedActivity {
@@ -256,85 +269,69 @@ export function formatActivityForDisplay(e: ActivityEvent): FormattedActivity {
   const raw = relativizeSummary((e.summary ?? "").trim());
 
   if (!raw) {
-    return { head: e.corpus_id, file: null };
+    return { head: e.corpus_id, file: null, badge: null };
   }
 
   switch (t) {
     case "definition": {
-      const { head } = splitTrailingCount(raw);
+      const { head, badge } = extractBadge(raw);
       const { name, file } = splitNameDashFile(head);
-      return withPromotedFile({ head: name || "", file });
+      return withPromotedFile({ head: name || "", file, badge });
     }
     case "references": {
-      const { head, count } = splitTrailingCount(raw);
+      const { head, badge } = extractBadge(raw);
       const { name, file } = splitNameDashFile(head);
-      const label = count != null && name ? `${name} (${count})` : name;
-      return withPromotedFile({ head: label || "", file });
+      return withPromotedFile({ head: name || "", file, badge });
     }
     case "extract": {
-      const { head, count } = splitTrailingCount(raw);
-      // Head may be `anchor — file · "query"` or `file · "query"` or `file`.
+      const { head, badge } = extractBadge(raw);
+      // Head may be `anchor — file · "query"` / `file · "query"` / `file`.
       const stripped = stripQueryClause(head);
       const queryMatch = head.match(/·\s+(".+")$/);
       const query = queryMatch ? queryMatch[1] : null;
       const { name, file } = splitNameDashFile(stripped);
-      // Anchor goes in head if present; otherwise just the query.
       const parts: string[] = [];
       if (name && file) parts.push(name);
       if (query) parts.push(query);
-      const joined = parts.join(" · ");
-      const headLabel = count != null
-        ? joined
-          ? `${joined} (${count})`
-          : `(${count})`
-        : joined;
       return withPromotedFile({
-        head: headLabel,
+        head: parts.join(" · "),
         file: file ?? stripped,
+        badge,
       });
     }
     case "read": {
       const hashIdx = raw.indexOf("#");
-      if (hashIdx < 0) return { head: raw, file: null };
-      return { head: raw.slice(hashIdx + 1), file: raw.slice(0, hashIdx) };
+      if (hashIdx < 0) return { head: raw, file: null, badge: null };
+      return {
+        head: raw.slice(hashIdx + 1),
+        file: raw.slice(0, hashIdx),
+        badge: null,
+      };
     }
     case "toc": {
-      const { head, count } = splitTrailingCount(raw);
+      const { head, badge } = extractBadge(raw);
       if (head === "<root>") {
-        return {
-          head: count != null ? `<root> (${count})` : "<root>",
-          file: null,
-        };
+        return { head: "<root>", file: null, badge };
       }
-      // `head` IS the document file path. Treat like a file-only event
-      // (read-style): file goes on the single label line with the count
-      // appended, no second line — putting just `(N)` on line 1 with the
-      // file beneath reads as orphan metadata.
-      return {
-        head: count != null ? `${head} (${count})` : head,
-        file: null,
-      };
+      // `head` IS the document file path. Treat as a file-only event:
+      // file in the head slot, count in the badge slot.
+      return { head, file: null, badge };
     }
     case "related": {
-      const { head, count } = splitTrailingCount(raw);
+      const { head, badge } = extractBadge(raw);
       // claim_id is shaped like `<file>#<anchor>:cN`
       const hashIdx = head.indexOf("#");
-      if (hashIdx < 0) {
-        return {
-          head: count != null ? `${head} (${count})` : head,
-          file: null,
-        };
-      }
+      if (hashIdx < 0) return { head, file: null, badge };
       const file = head.slice(0, hashIdx);
       const claim = head.slice(hashIdx + 1);
-      return {
-        head: count != null ? `${claim} (${count})` : claim,
-        file,
-      };
+      return { head: claim, file, badge };
     }
-    default:
-      // survey / symbols / bridge / compress / dropped — no file in summary.
-      return { head: raw, file: null };
+    default: {
+      // survey / symbols / bridge / compress / dropped — extract any
+      // trailing `(...)` clause as a badge, no file.
+      const { head, badge } = extractBadge(raw);
+      return { head, file: null, badge };
+    }
   }
 }
 
@@ -342,6 +339,6 @@ export function formatActivityForDisplay(e: ActivityEvent): FormattedActivity {
  *  events (read, toc) render as a single normal-weight line instead of
  *  an empty top line above a small file line. */
 function withPromotedFile(s: FormattedActivity): FormattedActivity {
-  if (!s.head && s.file) return { head: s.file, file: null };
+  if (!s.head && s.file) return { head: s.file, file: null, badge: s.badge };
   return s;
 }
