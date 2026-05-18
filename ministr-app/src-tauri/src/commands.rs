@@ -1716,8 +1716,18 @@ pub async fn inference_health(
 /// try every `PATHEXT` suffix. Returning the *resolved absolute path*
 /// (with its real extension) is what lets the caller spawn it correctly
 /// — `Command::new("claude")` from a GUI process finds nothing.
+///
+/// On macOS / Linux the inherited `PATH` is the *other* failure mode:
+/// a GUI process launched from Finder / Dock / a `.desktop` file gets
+/// launchd's narrow `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin` plus
+/// `/etc/paths.d`), which **excludes** Homebrew (`/opt/homebrew/bin`),
+/// npm-global, Volta, `~/.local/bin`, and friends. The shell PATH the
+/// user sees in a terminal never reaches the app, so `claude` —
+/// usually installed via `npm i -g` against Homebrew Node — is
+/// invisible. We probe a curated set of common install locations
+/// after exhausting `PATH` so "works in my shell" matches "works in
+/// the app" without forcing the user to relaunch from a terminal.
 fn which_on_path(name: &str) -> Option<String> {
-    let path_var = std::env::var_os("PATH")?;
     let has_ext = std::path::Path::new(name).extension().is_some();
     #[cfg(windows)]
     let exts: Vec<String> = if has_ext {
@@ -1730,7 +1740,8 @@ fn which_on_path(name: &str) -> Option<String> {
             .map(str::to_ascii_lowercase)
             .collect()
     };
-    for dir in std::env::split_paths(&path_var) {
+
+    let probe = |dir: &std::path::Path| -> Option<String> {
         let direct = dir.join(name);
         if direct.is_file() {
             return Some(direct.display().to_string());
@@ -1744,9 +1755,105 @@ fn which_on_path(name: &str) -> Option<String> {
                 }
             }
         }
+        None
+    };
+
+    // Track which directories we've already probed so the unix-fallback
+    // sweep doesn't re-stat dirs that were already on PATH.
+    let mut seen: std::collections::HashSet<std::path::PathBuf> =
+        std::collections::HashSet::new();
+
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            if !seen.insert(dir.clone()) {
+                continue;
+            }
+            if let Some(hit) = probe(&dir) {
+                return Some(hit);
+            }
+        }
     }
+
+    #[cfg(not(windows))]
+    for dir in unix_extra_bin_dirs() {
+        if !seen.insert(dir.clone()) {
+            continue;
+        }
+        if let Some(hit) = probe(&dir) {
+            return Some(hit);
+        }
+    }
+
     let _ = has_ext;
+    let _ = seen;
     None
+}
+
+/// Common bin directories that GUI-launched processes on macOS / Linux
+/// don't inherit from launchd / the desktop session, but where users
+/// expect tools like `claude`, `codex`, `node`, `npm`, `bun`, etc. to
+/// live. Used as a fallback by [`which_on_path`] after the inherited
+/// `PATH` comes up empty.
+///
+/// Order matters — Homebrew first (most common on macOS), then per-user
+/// language-toolchain dirs, then system-wide non-Homebrew locations.
+/// Each path is returned as an absolute [`PathBuf`]; non-existent
+/// entries are kept in the list (probe will simply miss them) rather
+/// than `stat`-ed twice.
+#[cfg(not(windows))]
+fn unix_extra_bin_dirs() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+
+    let mut dirs: Vec<PathBuf> = vec![
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/opt/homebrew/sbin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/local/sbin"),
+        PathBuf::from("/opt/local/bin"),
+        PathBuf::from("/opt/local/sbin"),
+    ];
+
+    if let Some(home) = home_pathbuf() {
+        for sub in [
+            ".local/bin",
+            "bin",
+            ".npm-global/bin",
+            ".npm/bin",
+            ".yarn/bin",
+            ".config/yarn/global/node_modules/.bin",
+            ".bun/bin",
+            ".volta/bin",
+            ".cargo/bin",
+            ".deno/bin",
+            ".asdf/shims",
+            ".local/share/mise/shims",
+            ".fnm/aliases/default/bin",
+            ".nodenv/shims",
+            ".rbenv/shims",
+            ".pyenv/shims",
+        ] {
+            dirs.push(home.join(sub));
+        }
+
+        // nvm: walk `$NVM_DIR/versions/node/*/bin` (or `~/.nvm/...`)
+        // for any installed node version. Users routinely have a
+        // single version installed via nvm, so probing the directory
+        // surfaces `claude` without needing the shell-only `nvm use`
+        // symlink dance.
+        let nvm_root = std::env::var_os("NVM_DIR")
+            .map_or_else(|| home.join(".nvm"), PathBuf::from);
+        let versions_dir = nvm_root.join("versions").join("node");
+        if let Ok(entries) = std::fs::read_dir(&versions_dir) {
+            for entry in entries.flatten() {
+                let bin = entry.path().join("bin");
+                if bin.is_dir() {
+                    dirs.push(bin);
+                }
+            }
+        }
+    }
+
+    dirs
 }
 
 /// A section's full text, used by `AskView` to resolve a citation
