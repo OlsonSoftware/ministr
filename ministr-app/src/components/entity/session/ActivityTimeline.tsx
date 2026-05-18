@@ -296,24 +296,28 @@ function EventRow({
     >
       <summary
         className={cn(
-          "flex cursor-pointer list-none items-center gap-2.5 px-3 py-1",
+          "grid cursor-pointer list-none items-start px-3 py-1.5 gap-x-3",
+          "[grid-template-columns:5.5rem_minmax(0,1fr)_max-content_max-content]",
           "hover:bg-surface-overlay",
           "[&::-webkit-details-marker]:hidden",
         )}
       >
-        {/* TAG */}
-        <span className="w-14 shrink-0 font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim">
+        {/* col 1: TAG — strict 5.5rem column, hard-clipped so long names
+            (REFERENCES / DEFINITION) can never bleed into the next cell. */}
+        <span className="overflow-hidden whitespace-nowrap font-mono text-[10px] font-semibold uppercase tracking-[0.06em] leading-[18px] text-text-dim">
           {tag(event.tool)}
         </span>
 
-        {/* Middle: head on line 1, optional dim file on line 2. */}
-        <div className="flex-1 min-w-0 leading-tight">
-          <div className="truncate font-mono text-[13px] text-text">
+        {/* col 2: TARGET — head on line 1, optional dim file on line 2.
+            min-w-0 + overflow-hidden so the cell actually constrains and
+            the right columns never get pushed off-screen. */}
+        <div className="min-w-0 overflow-hidden leading-[18px]">
+          <div className="truncate font-mono text-[12.5px] text-text">
             {displayHead}
           </div>
           {file && (
             <div
-              className="truncate font-mono text-[11px] text-text-dim"
+              className="truncate font-mono text-[10.5px] text-text-dim mt-px"
               dir="rtl"
               title={file}
             >
@@ -322,17 +326,18 @@ function EventRow({
           )}
         </div>
 
-        {/* Right-pinned count badge — never truncates with the head. */}
-        {badge && (
-          <span className="shrink-0 whitespace-nowrap rounded-md border border-border-soft px-1 py-px font-mono text-mono-mini tabular-nums text-text-dim">
-            {badge}
-          </span>
-        )}
+        {/* col 3: badge — fixed-position chip, aligned with row 1 of the
+            target stack so it never collides with the file row below. */}
+        <span className="font-mono text-[10px] tabular-nums leading-[18px]">
+          {badge ? (
+            <span className="whitespace-nowrap rounded border border-border-soft px-1 text-text-dim">
+              {badge}
+            </span>
+          ) : null}
+        </span>
 
-        {/* Right cluster: latency bar + duration + relative time. The
-            absolute time is intentionally dropped here — it lives in the
-            expand body, keeping the row dense. */}
-        <span className="flex shrink-0 items-center gap-2 whitespace-nowrap font-mono text-mono-mini tabular-nums text-text-dim">
+        {/* col 4: metrics — latency bar, duration, relative time. */}
+        <span className="flex items-center gap-2 whitespace-nowrap font-mono text-[10px] tabular-nums text-text-dim leading-[18px]">
           <span
             className="inline-block h-1.5 border border-border-soft bg-surface-overlay overflow-hidden"
             style={{ width: `${LATENCY_BAR_PX}px` }}
@@ -344,7 +349,7 @@ function EventRow({
               style={{ width: `${latencyPx}px` }}
             />
           </span>
-          <span className="w-8 text-right tabular-nums">
+          <span className="w-9 text-right tabular-nums">
             {event.duration_ms > 0 ? `${event.duration_ms}ms` : "—"}
           </span>
           <span className="w-10 text-right">{relative(nowMs, event.timestamp_ms)}</span>
