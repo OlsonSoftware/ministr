@@ -41,7 +41,7 @@ construction and exercise the differentiator.
 
 ## Harness (Phase 2 — not yet implemented)
 
-1. `just bench-lsp` installs `rust-analyzer` (`rustup component add
+1. `just bench-lsp-index` installs `rust-analyzer` (`rustup component add
    rust-analyzer`) and emits an LSIF index of the repo
    (`rust-analyzer lsif .` → `eval/lsp-nav/ra.lsif`, gitignored). LSIF is
    line-delimited JSON — no protobuf dependency (vs. SCIP).
