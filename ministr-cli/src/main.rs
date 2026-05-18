@@ -12,8 +12,6 @@
 mod commands;
 mod infra;
 mod ingestion;
-mod instance;
-mod proxy;
 
 use std::path::PathBuf;
 
@@ -92,7 +90,12 @@ enum Command {
     /// or running in CI pipelines.
     Index,
 
-    /// Show daemon status (requires ministr-app to be running).
+    /// Internal: run the headless ministr daemon. Auto-spawned by the
+    /// MCP proxy (and desktop app); not intended for direct use.
+    #[command(hide = true, name = "__daemon")]
+    Daemon,
+
+    /// Show daemon status (requires the ministr daemon to be running).
     Status,
 
     /// Search the corpus via the daemon (requires ministr-app to be running).
@@ -330,6 +333,22 @@ async fn main() -> Result<()> {
         return commands::cmd_setup(bin_dir.as_deref(), dry_run, uninstall);
     }
 
+    // `ministr __daemon` is the headless daemon host (auto-spawned by the
+    // MCP proxy / desktop app). It runs *before* resolve_config() too:
+    // it serves every corpus over the IPC endpoint and must not depend on
+    // the spawning process's cwd or a `.ministr.toml` there.
+    if let Command::Daemon = command {
+        let config_path = cli
+            .config
+            .clone()
+            .unwrap_or_else(ministr_core::config::MinistrConfig::default_path);
+        let config = ministr_core::config::MinistrConfig::load(&config_path)
+            .unwrap_or_else(|_| ministr_core::config::MinistrConfig::default());
+        return ministr_daemon::bootstrap::run(config)
+            .await
+            .map_err(|e| miette::miette!("daemon exited: {e}"));
+    }
+
     let rc = resolve_config(&cli)?;
 
     dispatch(command, rc).await
@@ -356,29 +375,15 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
             );
 
             match transport {
-                Transport::Stdio if proxy => {
-                    commands::cmd_serve_proxy_stdio(&rc.corpus_paths, &rc.linked).await
-                }
-                Transport::Stdio
-                    if !proxy && ministr_api::client::DaemonClient::new().is_healthy().await =>
-                {
-                    eprintln!(
-                        "ministr: daemon detected at ~/.ministr/ministrd.sock — running as proxy"
-                    );
-                    commands::cmd_serve_proxy_stdio(&rc.corpus_paths, &rc.linked).await
-                }
                 Transport::Stdio => {
-                    commands::cmd_serve_stdio(
-                        &rc.corpus_paths,
-                        &rc.git_includes,
-                        &rc.config_path,
-                        &rc.config,
-                        &rc.resolved_model,
-                        rc.repo_config_dir.as_deref(),
-                        rc.resolved_dimension,
-                        rc.rerank_depth,
-                    )
-                    .await
+                    // Always a thin proxy. The proxy auto-starts the
+                    // headless daemon (self-exec `ministr __daemon`) if
+                    // none is running, so shared-daemon is the single
+                    // architecture — there is no separate monolithic
+                    // per-corpus server. `--proxy` is now implicit; the
+                    // flag is retained only for backward compatibility.
+                    let _ = proxy;
+                    commands::cmd_serve_proxy_stdio(&rc.corpus_paths, &rc.linked).await
                 }
                 Transport::Http => {
                     let oauth_config = if oauth {
@@ -447,6 +452,9 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
         },
         Command::Setup { .. } => {
             unreachable!("ministr setup is dispatched before resolve_config in main()")
+        }
+        Command::Daemon => {
+            unreachable!("ministr __daemon is dispatched before resolve_config in main()")
         }
     }
 }

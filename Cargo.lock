@@ -4496,6 +4496,7 @@ dependencies = [
  "miette",
  "ministr-api",
  "ministr-core",
+ "ministr-daemon",
  "ministr-mcp",
  "notify",
  "onpath",

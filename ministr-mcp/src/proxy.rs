@@ -271,25 +271,31 @@ impl ProxyServer {
         self.launch_daemon().await
     }
 
-    /// Spawn the daemon binary and wait for it to become responsive.
+    /// Spawn the headless daemon and wait for it to become responsive.
     ///
-    /// The child is spawned fully detached from the proxy on every platform:
-    /// no console window flashes on Windows, the process is in its own
-    /// process group on Unix so the parent dying doesn't take it down, and
-    /// stdio is null so nothing leaks into the MCP transport.
+    /// Self-exec: the same `ministr` binary hosts the daemon via the
+    /// hidden `__daemon` subcommand, so there is **one** daemon
+    /// implementation and no dependency on the `ministr-app` GUI binary —
+    /// this works in headless, CI, and CLI-only installs. The child is
+    /// fully detached on every platform: no console flash on Windows, own
+    /// process group on Unix, null stdio so nothing leaks into the MCP
+    /// transport.
     async fn launch_daemon(&self) -> Result<(), McpError> {
-        let daemon_bin = Self::find_daemon_binary();
-        info!(bin = %daemon_bin.display(), "launching ministr daemon");
+        let exe = std::env::current_exe().map_err(|e| {
+            McpError::internal_error(format!("cannot resolve current executable: {e}"), None)
+        })?;
+        info!(bin = %exe.display(), "launching ministr daemon (self-exec __daemon)");
 
-        let mut cmd = std::process::Command::new(&daemon_bin);
-        cmd.stdin(std::process::Stdio::null())
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.arg("__daemon")
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
         configure_detached_spawn(&mut cmd);
 
         cmd.spawn().map_err(|e| {
             McpError::internal_error(
-                format!("failed to start daemon at {}: {e}", daemon_bin.display()),
+                format!("failed to start daemon ({} __daemon): {e}", exe.display()),
                 None,
             )
         })?;
@@ -312,48 +318,6 @@ impl ProxyServer {
             "daemon did not become responsive within 5 seconds",
             None,
         ))
-    }
-
-    /// Find the ministr-app binary by searching multiple well-known locations.
-    ///
-    /// Search order:
-    /// 1. Same directory as the current executable (development / co-installed)
-    /// 2. `~/.ministr/bin/ministr-app` (user install)
-    /// 3. macOS app bundle: `/Applications/ministr.app/Contents/MacOS/ministr-app`
-    /// 4. `PATH` fallback
-    fn find_daemon_binary() -> std::path::PathBuf {
-        // 1. Sibling of current executable.
-        if let Some(sibling) = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("ministr-app")))
-            .filter(|p| p.exists())
-        {
-            return sibling;
-        }
-
-        // 2. ~/.ministr/bin/ministr-app
-        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-            let user_bin = std::path::PathBuf::from(home)
-                .join(".ministr")
-                .join("bin")
-                .join("ministr-app");
-            if user_bin.exists() {
-                return user_bin;
-            }
-        }
-
-        // 3. macOS app bundle.
-        #[cfg(target_os = "macos")]
-        {
-            let app_bundle =
-                std::path::PathBuf::from("/Applications/ministr.app/Contents/MacOS/ministr-app");
-            if app_bundle.exists() {
-                return app_bundle;
-            }
-        }
-
-        // 4. Fall back to PATH.
-        std::path::PathBuf::from("ministr-app")
     }
 
     async fn ensure_corpus(&self) -> Result<String, McpError> {

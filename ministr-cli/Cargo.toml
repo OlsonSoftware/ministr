@@ -23,6 +23,9 @@ ministr-api.workspace = true
 # Non-macOS: fastembed/ONNX path only. candle-core pulls in the Apple-only
 # `metal` crate stack (objc2), which refuses to compile on Linux/Windows.
 ministr-mcp.workspace = true
+# Headless daemon host: the `ministr __daemon` subcommand runs the same
+# daemon ministr-app does, so the CLI can self-spawn it (no GUI needed).
+ministr-daemon.workspace = true
 clap.workspace = true
 rmcp.workspace = true
 axum.workspace = true
