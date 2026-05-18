@@ -53,6 +53,7 @@ ROADMAP.md
 
 # Evaluation artifacts
 eval/model-comparison.json
+eval/lsp-nav/ra.lsif
 
 # Signing credentials
 .env.signing

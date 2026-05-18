@@ -71,6 +71,13 @@ bench-models:
 bench-model model:
     MINISTR_EVAL_MODELS="{{model}}" cargo test --test eval_model_comparison -p ministr-core --release -- --nocapture --ignored
 
+# Emit a rust-analyzer LSIF index of this repo for the ministr-vs-LSP
+# code-navigation benchmark (eval/lsp-nav/). Heavy + minutes-long; the
+# comparison runner that diffs this against ministr is Phase 2.
+bench-lsp-index:
+    rustup component add rust-analyzer
+    rustup run stable rust-analyzer lsif . > eval/lsp-nav/ra.lsif
+
 # Run all benchmarks
 bench-all:
     cargo bench -p ministr-core

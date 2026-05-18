@@ -1,0 +1,78 @@
+{
+  "_schema": {
+    "description": "Hand-verified code-navigation tasks for the ministr-vs-LSP benchmark. Answers are byte-anchored to specific commits; re-verify line ranges if the source moves. Paths are repo-relative, POSIX separators.",
+    "task": {
+      "id": "stable kebab-case identifier",
+      "kind": "definition | references | bridge",
+      "symbol": "human-readable symbol name (for reporting only)",
+      "from": "definition/references: a real source position to query FROM { file, line } (1-based). Omitted for bridge.",
+      "expect": "array of expected locations [{ file, line_start, line_end }]; for references this is the full set used for precision/recall",
+      "lsp_can_answer": "true if a Rust-only LSP (rust-analyzer) can in principle resolve this; false for cross-language bridges it is structurally blind to — the coverage differentiator"
+    },
+    "verified_against_commit": "d7ecd94 (v0.5.0 + #130); RE-VERIFY line ranges before trusting metrics"
+  },
+  "tasks": [
+    {
+      "id": "def-repoconfig-resolve-linked-projects",
+      "kind": "definition",
+      "symbol": "RepoConfig::resolve_linked_projects",
+      "from": { "file": "ministr-cli/src/main.rs", "line": 352 },
+      "expect": [
+        { "file": "ministr-core/src/config.rs", "line_start": 619, "line_end": 674 }
+      ],
+      "lsp_can_answer": true
+    },
+    {
+      "id": "def-corpusregistry-new",
+      "kind": "definition",
+      "symbol": "CorpusRegistry::new",
+      "from": { "file": "ministr-daemon/src/bootstrap.rs", "line": 35 },
+      "expect": [
+        { "file": "ministr-daemon/src/registry.rs", "line_start": 169, "line_end": 176 }
+      ],
+      "lsp_can_answer": true
+    },
+    {
+      "id": "def-proxyserver-with-linked",
+      "kind": "definition",
+      "symbol": "ProxyServer::with_linked",
+      "from": { "file": "ministr-cli/src/commands.rs", "line": 172 },
+      "expect": [
+        { "file": "ministr-mcp/src/proxy.rs", "line_start": 217, "line_end": 238 }
+      ],
+      "lsp_can_answer": true
+    },
+    {
+      "id": "def-bootstrap-run",
+      "kind": "definition",
+      "symbol": "ministr_daemon::bootstrap::run",
+      "from": { "file": "ministr-cli/src/main.rs", "line": 349 },
+      "expect": [
+        { "file": "ministr-daemon/src/bootstrap.rs", "line_start": 49, "line_end": 53 }
+      ],
+      "lsp_can_answer": true
+    },
+    {
+      "id": "bridge-linked-projects-list",
+      "kind": "bridge",
+      "symbol": "linked_projects_list (Tauri command ↔ TS invoke)",
+      "expect": [
+        { "file": "ministr-app/src-tauri/src/commands.rs", "line_start": 162, "line_end": 192 },
+        { "file": "ministr-app/src/components/surfaces/LinkedProjectsPanel.tsx", "line_start": 1, "line_end": 1 }
+      ],
+      "lsp_can_answer": false,
+      "note": "rust-analyzer is Rust-only and cannot connect the #[tauri::command] to its TS invoke(\"linked_projects_list\") call site. ministr_bridge is expected to. The TS line is a placeholder until the harness records the real invoke site."
+    },
+    {
+      "id": "bridge-linked-project-remove",
+      "kind": "bridge",
+      "symbol": "linked_project_remove (Tauri command ↔ TS invoke)",
+      "expect": [
+        { "file": "ministr-app/src-tauri/src/commands.rs", "line_start": 248, "line_end": 260 },
+        { "file": "ministr-app/src/components/surfaces/LinkedProjectsPanel.tsx", "line_start": 1, "line_end": 1 }
+      ],
+      "lsp_can_answer": false,
+      "note": "Cross-language Tauri boundary; LSP-blind by construction."
+    }
+  ]
+}
