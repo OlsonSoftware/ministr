@@ -32,6 +32,11 @@ multiple-versions = "warn"
 wildcards = "allow"
 
 [licenses]
+# ministr's own crates are proprietary (LicenseRef-Proprietary) and
+# `publish = false`. cargo-deny's license policy is for *third-party*
+# dependencies; skip our unpublished workspace crates so the proprietary
+# marker doesn't trip the allow-list (which only governs deps).
+private = { ignore = true }
 allow = [
     "MIT",
     "Apache-2.0",

@@ -11,6 +11,7 @@ If you're looking for a place to begin, check the [issues labeled `good first is
 - **Rust 1.88+** (edition 2024) — install via [rustup](https://rustup.rs)
 - **just** — task runner (`cargo install just` or `brew install just`)
 - **cargo-deny** — license and advisory checks (`cargo install cargo-deny`)
+- **Python 3** — runs the black-box lint (`just blackbox-lint`, part of `just validate`); `python3` on Linux/macOS, `python` on Windows
 
 ### Clone and build
 
