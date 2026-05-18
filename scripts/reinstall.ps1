@@ -46,17 +46,50 @@ $hostTriple = (& rustc -vV) | Where-Object { $_ -match '^host:' } |
 if (-not $hostTriple) { throw 'could not determine rustc host triple — is rustup/rustc on PATH?' }
 $sidecarExe = Join-Path $tauriBinaries "ministr-cli-$hostTriple.exe"
 
-Write-Host '==> Killing existing ministr processes...'
-Get-Process -Name 'ministr-app', 'ministr' -ErrorAction SilentlyContinue |
-    Stop-Process -Force -ErrorAction SilentlyContinue
+# Stop-and-wait helper. Windows blocks overwriting a *running* .exe, so
+# we have to verify the process is actually gone before we attempt the
+# Copy-Item further down. Mirrors wait_for_exit() in scripts/reinstall.sh.
+function Stop-MinistrAnd-Wait {
+    Get-Process -Name 'ministr-app', 'ministr' -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline) {
+        $still = Get-Process -Name 'ministr-app', 'ministr' -ErrorAction SilentlyContinue
+        if (-not $still) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    Write-Warning 'ministr-app / ministr still alive after Stop-Process — rename-aside fallback in install step will handle it'
+}
+
+# Copy a fresh file over a (possibly running) target. Windows blocks
+# overwriting a running .exe with a plain Copy-Item, but it *does* allow
+# renaming it — exactly the trick refresh_shadowing_binaries() uses in
+# ministr-cli/src/commands.rs. So on a plain-copy failure we move the
+# locked file aside and copy the new bytes into place; the leftover
+# .stale orphan is best-effort swept here too.
+function Install-Atomic {
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Destination
+    )
+    try {
+        Copy-Item -Force -Path $Source -Destination $Destination -ErrorAction Stop
+        return
+    } catch {
+        Write-Host "   $Destination is locked — moving aside and replacing"
+    }
+    $aside = "$Destination.stale"
+    Remove-Item -Force -ErrorAction SilentlyContinue $aside
+    Move-Item -Force -ErrorAction Stop -Path $Destination -Destination $aside
+    Copy-Item -Force -ErrorAction Stop -Path $Source -Destination $Destination
+    Remove-Item -Force -ErrorAction SilentlyContinue $aside
+}
 
 # Stale socket file only exists on Unix; on Windows the daemon uses named
 # pipes which are refcounted kernel objects and disappear on process exit.
 # PID file cleanup runs on both platforms.
 Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $dataDir 'ministrd.sock')
 Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $dataDir 'ministrd.pid')
-
-Start-Sleep -Seconds 1
 
 Write-Host '==> Clean rebuild (release)...'
 & cargo clean -p ministr-mcp -p ministr-cli -p ministr-daemon -p ministr-app
@@ -69,11 +102,17 @@ Assert-LastExitOk 'cargo clean'
 Assert-LastExitOk 'cargo build (ministr-cli)'
 
 Write-Host "==> Installing CLI to $binPath (canonical dev location)..."
+# Stop here (post-build, immediately before the install steps) so nothing
+# has had 30+ seconds of build time to respawn before we replace the
+# binaries. Mirrors scripts/reinstall.sh.
+Write-Host '   stopping any running ministr processes first...'
+Stop-MinistrAnd-Wait
+
 # Legacy/duplicate install roots (~/.cargo\bin, %LOCALAPPDATA%\ministr)
 # are no longer cleaned here — `ministr setup` below is the single
 # source of truth: it de-PATHs and refreshes every stale shadow.
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-Copy-Item -Force -Path 'target\release\ministr.exe' -Destination $binPath
+Install-Atomic -Source 'target\release\ministr.exe' -Destination $binPath
 
 # Hand off PATH wiring to `ministr setup`, which uses the onpath crate to
 # write HKCU\Environment\PATH and broadcast WM_SETTINGCHANGE. Idempotent —
@@ -163,8 +202,8 @@ Assert-LastExitOk 'cargo build (ministr-app)'
 #    bundle's Contents/MacOS/ layout.
 Write-Host "==> Installing Tauri app to $appDir..."
 New-Item -ItemType Directory -Force -Path $appDir | Out-Null
-Copy-Item -Force -Path (Join-Path $repoRoot 'target\release\ministr-app.exe') -Destination $appExePath
-Copy-Item -Force -Path (Join-Path $repoRoot 'target\release\ministr.exe')     -Destination $appCliPath
+Install-Atomic -Source (Join-Path $repoRoot 'target\release\ministr-app.exe') -Destination $appExePath
+Install-Atomic -Source (Join-Path $repoRoot 'target\release\ministr.exe')     -Destination $appCliPath
 
 # 6. Launch the freshly-installed app.
 Write-Host '==> Launching tray app...'
