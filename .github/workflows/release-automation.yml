@@ -214,8 +214,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          n="$(gh pr list --state open --label release \
-                --json number --jq '.[0].number // empty')"
+          # Do NOT depend solely on the `release` label: the Copilot
+          # agent cannot self-apply labels (no labels permission), so a
+          # real in-flight release PR is routinely unlabelled. Match it
+          # by ANY robust signal — label, the agent's branch prefix, or
+          # the conventional release title — so a second push/dispatch
+          # can't spawn a duplicate agent session / second release PR.
+          n="$(gh pr list --state open \
+                --json number,title,headRefName,labels \
+                --jq '[ .[]
+                        | select(
+                            (.labels | any(.name == "release"))
+                            or (.headRefName | startswith("copilot/release-"))
+                            or (.title | test("^chore: release "))
+                          ) ][0].number // empty')"
           if [ -n "$n" ]; then
             echo "Release PR #$n already open — Copilot owns it; leaving it alone."
             echo "skip=true" >> "$GITHUB_OUTPUT"
