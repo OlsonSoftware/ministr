@@ -116,12 +116,21 @@ pub fn detect_parser_kind(path: &Path) -> Option<ParserKind> {
     let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
     if filename == "Dockerfile"
         || filename.starts_with("Dockerfile.")
+        || filename == "Containerfile"
+        || filename.starts_with("Containerfile.")
         || filename == "Makefile"
         || filename == "GNUmakefile"
         || filename == "Justfile"
         || filename == "justfile"
         || filename == "Rakefile"
         || filename == "Gemfile"
+        // Well-known extensionless Ruby DSL files (same class as
+        // Gemfile/Rakefile — Bundler, Homebrew, Vagrant, Fastlane).
+        || filename == "Podfile"
+        || filename == "Brewfile"
+        || filename == "Vagrantfile"
+        || filename == "Fastfile"
+        || filename == "Appfile"
         || filename == "CMakeLists.txt"
     {
         return Some(ParserKind::Code);
@@ -226,6 +235,21 @@ mod tests {
             detect_parser_kind(Path::new("Makefile")),
             Some(ParserKind::Code)
         );
+        for name in [
+            "Containerfile",
+            "Containerfile.dev",
+            "Podfile",
+            "Brewfile",
+            "Vagrantfile",
+            "Fastfile",
+            "Appfile",
+        ] {
+            assert_eq!(
+                detect_parser_kind(Path::new(name)),
+                Some(ParserKind::Code),
+                "expected Code for filename {name}"
+            );
+        }
     }
 
     #[test]
