@@ -103,9 +103,9 @@ export function LinkedProjectsPanel({ corpora, activeCorpusId }: Props) {
         <Header />
         <div className="border border-border-soft bg-surface p-4">
           <p className="font-sans text-sm text-text-muted">
-            Add a project first — links are stored in a project's
-            <code className="mx-1 font-mono text-mono-mini">.ministr.toml</code>
-            . Visit Projects to add one.
+            Add a project first — links are stored in a project's{" "}
+            <code className="font-mono text-mono-mini">.ministr.toml</code>.
+            Visit Projects to add one.
           </p>
         </div>
       </div>
@@ -225,8 +225,8 @@ function Header({
         </p>
         {projectRoot && (
           <p className="font-mono text-mono-mini text-text-dim truncate max-w-[60ch]">
-            Stored in <span className="text-text">{projectRoot}</span>
-            /.ministr.toml
+            Stored in{" "}
+            <span className="text-text">{`${projectRoot}/.ministr.toml`}</span>
           </p>
         )}
       </div>

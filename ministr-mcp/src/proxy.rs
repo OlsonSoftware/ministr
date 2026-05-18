@@ -54,6 +54,10 @@ fn configure_detached_spawn(cmd: &mut std::process::Command) {
     let _ = cmd;
 }
 
+/// Per-linked-label resolved `(corpus_id, session_id)`, each behind its
+/// own [`tokio::sync::OnceCell`] so distinct labels resolve in parallel.
+type LinkedState = Arc<Mutex<HashMap<String, Arc<tokio::sync::OnceCell<(String, String)>>>>>;
+
 /// MCP proxy server that delegates to the ministr daemon.
 #[derive(Clone)]
 pub struct ProxyServer {
@@ -65,10 +69,15 @@ pub struct ProxyServer {
     /// An agent targets one by passing its label as the `project` argument
     /// to a query tool; omitting `project` always uses the current corpus.
     linked: Vec<ResolvedLinkedProject>,
-    /// Memoized `(corpus_id, session_id)` per linked-project label. Kept
-    /// separate from the current project's `corpus_id`/`session_id` so the
-    /// default path (and shutdown/lock ordering) is unchanged.
-    linked_state: Arc<Mutex<HashMap<String, (String, String)>>>,
+    /// Memoized `(corpus_id, session_id)` per linked-project label. Each
+    /// label gets its own [`tokio::sync::OnceCell`], so first-time setup
+    /// of one label (daemon launch + `register_corpus` + `create_session`,
+    /// possibly seconds) does NOT serialize resolution of other labels —
+    /// the map lock is only held to look up / insert the per-label cell,
+    /// never across the RPCs. Kept separate from the current project's
+    /// `corpus_id`/`session_id` so the default path (and shutdown / lock
+    /// ordering) is unchanged.
+    linked_state: LinkedState,
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     /// Local budget tracker — tracks tokens delivered through this proxy
@@ -196,8 +205,10 @@ struct ProjectEntry {
     /// Value to pass as the `project` argument. `null` for the current
     /// project (omit `project` entirely to query it).
     label: Option<String>,
-    /// On-disk root of the project.
-    root: String,
+    /// Every indexed path that makes up this project, so the agent sees
+    /// the full scope (a project can be configured with multiple corpus
+    /// paths, not just one root).
+    roots: Vec<String>,
     /// `true` for the project this MCP session was launched in.
     is_current: bool,
 }
@@ -381,13 +392,17 @@ impl ProxyServer {
             }
         }
 
-        // Tear down any linked-project sessions this proxy created.
+        // Tear down any linked-project sessions this proxy created. Only
+        // cells that finished initialization hold a pair; in-flight or
+        // never-resolved labels have an empty cell and are skipped.
         let linked = std::mem::take(&mut *self.linked_state.lock().await);
-        for (label, (cid, sid)) in linked {
-            if let Err(e) = self.client.destroy_session(&cid, &sid).await {
-                warn!(error = %e, label, "failed to destroy linked session on shutdown");
-            } else {
-                info!(session_id = %sid, label, "destroyed linked session");
+        for (label, cell) in linked {
+            if let Some((cid, sid)) = cell.get() {
+                if let Err(e) = self.client.destroy_session(cid, sid).await {
+                    warn!(error = %e, label, "failed to destroy linked session on shutdown");
+                } else {
+                    info!(session_id = %sid, label, "destroyed linked session");
+                }
             }
         }
     }
@@ -451,34 +466,42 @@ impl ProxyServer {
             ));
         };
 
-        // Hold the map lock across the register + create_session RPCs so
-        // concurrent first-callers for the same label don't double-register.
-        let mut guard = self.linked_state.lock().await;
-        if let Some(pair) = guard.get(label) {
-            return Ok(pair.clone());
-        }
+        // Grab (or create) this label's own OnceCell, holding the map
+        // lock only for that O(1) lookup — never across the daemon RPCs.
+        // Different labels therefore resolve fully in parallel; same-label
+        // first-callers share one init via the cell (no double-register).
+        let cell = {
+            let mut guard = self.linked_state.lock().await;
+            Arc::clone(
+                guard
+                    .entry(label.to_string())
+                    .or_insert_with(|| Arc::new(tokio::sync::OnceCell::new())),
+            )
+        };
 
-        self.ensure_daemon().await?;
-        let reg = self
-            .client
-            .register_corpus(&link.corpus_paths)
-            .await
-            .map_err(|e| McpError::internal_error(format!("daemon: {e}"), None))?;
-        let sess = self
-            .client
-            .create_session(&reg.corpus_id, None)
-            .await
-            .map_err(|e| McpError::internal_error(format!("daemon session: {e}"), None))?;
-
-        info!(
-            label,
-            corpus_id = %reg.corpus_id,
-            session_id = %sess.session_id,
-            "resolved linked project"
-        );
-        let pair = (reg.corpus_id, sess.session_id);
-        guard.insert(label.to_string(), pair.clone());
-        Ok(pair)
+        let pair = cell
+            .get_or_try_init(|| async {
+                self.ensure_daemon().await?;
+                let reg = self
+                    .client
+                    .register_corpus(&link.corpus_paths)
+                    .await
+                    .map_err(|e| McpError::internal_error(format!("daemon: {e}"), None))?;
+                let sess = self
+                    .client
+                    .create_session(&reg.corpus_id, None)
+                    .await
+                    .map_err(|e| McpError::internal_error(format!("daemon session: {e}"), None))?;
+                info!(
+                    label,
+                    corpus_id = %reg.corpus_id,
+                    session_id = %sess.session_id,
+                    "resolved linked project"
+                );
+                Ok::<_, McpError>((reg.corpus_id, sess.session_id))
+            })
+            .await?;
+        Ok(pair.clone())
     }
 
     /// Serialize a response into a `CallToolResult` using only the `content`
@@ -749,13 +772,13 @@ impl ProxyServer {
         let mut projects = Vec::with_capacity(self.linked.len() + 1);
         projects.push(ProjectEntry {
             label: None,
-            root: self.corpus_paths.first().cloned().unwrap_or_default(),
+            roots: self.corpus_paths.clone(),
             is_current: true,
         });
         for l in &self.linked {
             projects.push(ProjectEntry {
                 label: Some(l.label.clone()),
-                root: l.root.to_string_lossy().to_string(),
+                roots: l.corpus_paths.clone(),
                 is_current: false,
             });
         }
