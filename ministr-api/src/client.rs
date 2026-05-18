@@ -3,8 +3,55 @@
 //!
 //! [`DaemonClient`] provides typed methods for all daemon API endpoints.
 //! Used by `ministr-mcp` (MCP proxy) and `ministr-cli` (CLI tool).
+//!
+//! ## Per-request session attribution
+//!
+//! When a caller wraps a future in [`with_session_id`], every HTTP request
+//! issued inside that future automatically carries an
+//! `X-Ministr-Session-Id` header. The daemon's activity middleware uses
+//! that header to tag activity events with their originating session even
+//! when the underlying tool route is not session-scoped (e.g. corpus-wide
+//! `survey` / `symbols` / `definition` / `references` / `extract` / `toc`
+//! / `bridge` calls). Scopes are per-async-task, so concurrent tool
+//! handlers from different sessions never cross-contaminate.
+
+use std::future::Future;
 
 use serde::de::DeserializeOwned;
+
+tokio::task_local! {
+    /// Active MCP session id for the duration of [`with_session_id`].
+    /// Read by [`DaemonClient::raw_request`] to stamp every outbound HTTP
+    /// request with `X-Ministr-Session-Id` when set.
+    static REQUEST_SESSION_ID: Option<String>;
+}
+
+/// Run `fut` with `session_id` bound as the active MCP session for every
+/// [`DaemonClient`] HTTP request issued inside it.
+///
+/// The session id is read from a `tokio::task_local!` slot in
+/// [`DaemonClient::raw_request`] and forwarded to the daemon as an
+/// `X-Ministr-Session-Id` header. The daemon's activity middleware uses
+/// that header to attribute corpus-wide tool calls (which have no session
+/// id in the URL path) to the originating session.
+///
+/// Pass `None` to leave the slot empty inside `fut` — useful for short
+/// administrative calls (`status`, `list_corpora`) explicitly executed
+/// outside a session context.
+pub fn with_session_id<F>(session_id: Option<String>, fut: F) -> impl Future<Output = F::Output>
+where
+    F: Future,
+{
+    REQUEST_SESSION_ID.scope(session_id, fut)
+}
+
+/// Read the active session id from the current async task's scope, if any.
+/// Returns `None` outside a [`with_session_id`] frame.
+fn current_session_id() -> Option<String> {
+    REQUEST_SESSION_ID
+        .try_with(std::clone::Clone::clone)
+        .unwrap_or(None)
+}
 
 use crate::activity::ActivityResponse;
 use crate::coherence::CoherenceEventsResponse;
@@ -751,11 +798,18 @@ impl DaemonClient {
 
             // Build HTTP/1.1 request.
             let content_length = body.as_ref().map_or(0, Vec::len);
+            // Stamp the active MCP session id when one is in scope (see
+            // `with_session_id`). The daemon's activity middleware reads
+            // this to attribute corpus-wide tool calls to a session.
+            let session_header = current_session_id()
+                .map(|sid| format!("X-Ministr-Session-Id: {sid}\r\n"))
+                .unwrap_or_default();
             let request = format!(
                 "{method} {path} HTTP/1.1\r\n\
                  Host: localhost\r\n\
                  Content-Type: application/json\r\n\
                  Content-Length: {content_length}\r\n\
+                 {session_header}\
                  Connection: close\r\n\
                  \r\n"
             );

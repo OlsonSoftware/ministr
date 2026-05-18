@@ -770,6 +770,7 @@ pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result
 pub struct SessionDetail {
     pub session_id: String,
     pub corpus_id: String,
+    #[serde(rename = "pressure_level")]
     pub level: String,
     pub tokens_used: usize,
     pub tokens_remaining: usize,
@@ -1092,9 +1093,10 @@ pub async fn recent_activity(
     } else {
         state.recent_activity(limit).await
     };
-    // Optional server-side per-session filter. The ring is small (≤ the
-    // requested window, ≤500), so filtering here is cheap and removes the
-    // pull-everything-then-filter-client-side workaround.
+    // Per-session filter. Every event the MCP proxy generates is now
+    // stamped with its originating session via the X-Ministr-Session-Id
+    // header (read in the daemon's activity middleware), so a strict
+    // session_id match returns the complete timeline for this session.
     let events = match session_id {
         Some(sid) => events
             .into_iter()

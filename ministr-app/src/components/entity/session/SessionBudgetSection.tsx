@@ -71,14 +71,9 @@ export function SessionBudgetSection({
     >
       <div className="px-3 py-3 space-y-3">
         <div className="space-y-1">
-          <div className="flex items-baseline justify-between">
-            <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
-              Tokens in context
-            </span>
-            <span className="font-mono text-xs tabular-nums text-text">
-              {formatTokens(session.tokens_used)}
-            </span>
-          </div>
+          <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
+            Tokens in context
+          </span>
           <div className="border border-border-soft bg-surface-sunken">
             <Sparkline
               data={tokenSeries}

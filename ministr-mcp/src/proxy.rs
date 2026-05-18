@@ -531,17 +531,20 @@ impl ProxyServer {
         Parameters(params): Parameters<SurveyParams>,
     ) -> Result<CallToolResult, McpError> {
         let (cid, sid) = self.target(params.project.as_deref()).await?;
-        let req = ministr_api::query::SurveyRequest {
-            query: params.query,
-            top_k: params.top_k,
-            session_id: Some(sid),
-        };
-        let resp = self
-            .client
-            .survey_req(&cid, &req)
-            .await
-            .map_err(|e| Self::err(&e))?;
-        Self::json_result(&resp)
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let req = ministr_api::query::SurveyRequest {
+                query: params.query,
+                top_k: params.top_k,
+                session_id: Some(sid),
+            };
+            let resp = self
+                .client
+                .survey_req(&cid, &req)
+                .await
+                .map_err(|e| Self::err(&e))?;
+            Self::json_result(&resp)
+        })
+        .await
     }
 
     #[tool(
@@ -553,25 +556,28 @@ impl ProxyServer {
         Parameters(params): Parameters<ReadParams>,
     ) -> Result<CallToolResult, McpError> {
         let (cid, sid) = self.target(params.project.as_deref()).await?;
-        let resp = self
-            .client
-            .session_read_section(&cid, &sid, &params.section_id)
-            .await
-            .map_err(|e| Self::err(&e))?;
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let resp = self
+                .client
+                .session_read_section(&cid, &sid, &params.section_id)
+                .await
+                .map_err(|e| Self::err(&e))?;
 
-        // Track delivered tokens locally so ministr_usage reflects actual usage.
-        let token_count = ministr_core::token::count_tokens(&resp.text);
-        {
-            let mut budget = self.local_budget.lock().await;
-            let _ = budget.record_tokens(&params.section_id, token_count);
-        }
+            // Track delivered tokens locally so ministr_usage reflects actual usage.
+            let token_count = ministr_core::token::count_tokens(&resp.text);
+            {
+                let mut budget = self.local_budget.lock().await;
+                let _ = budget.record_tokens(&params.section_id, token_count);
+            }
 
-        // Compact: drop redundant fields and strip doc comment duplication
-        // from text to save context tokens.
-        let mut resp = resp;
-        resp.summary = None;
-        resp.usage_status = None;
-        Self::json_result(&resp)
+            // Compact: drop redundant fields and strip doc comment duplication
+            // from text to save context tokens.
+            let mut resp = resp;
+            resp.summary = None;
+            resp.usage_status = None;
+            Self::json_result(&resp)
+        })
+        .await
     }
 
     #[tool(
@@ -583,17 +589,20 @@ impl ProxyServer {
         Parameters(params): Parameters<ExtractParams>,
     ) -> Result<CallToolResult, McpError> {
         let (cid, sid) = self.target(params.project.as_deref()).await?;
-        let req = ministr_api::query::ExtractRequest {
-            section_id: params.section_id,
-            query: params.query,
-            session_id: Some(sid),
-        };
-        let resp = self
-            .client
-            .extract(&cid, &req)
-            .await
-            .map_err(|e| Self::err(&e))?;
-        Self::json_result(&resp)
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let req = ministr_api::query::ExtractRequest {
+                section_id: params.section_id,
+                query: params.query,
+                session_id: Some(sid),
+            };
+            let resp = self
+                .client
+                .extract(&cid, &req)
+                .await
+                .map_err(|e| Self::err(&e))?;
+            Self::json_result(&resp)
+        })
+        .await
     }
 
     #[tool(
@@ -605,30 +614,33 @@ impl ProxyServer {
         Parameters(params): Parameters<SymbolsParams>,
     ) -> Result<CallToolResult, McpError> {
         let (cid, sid) = self.target(params.project.as_deref()).await?;
-        let req = ministr_api::query::SymbolsRequest {
-            query: params.query,
-            kind: params.kind,
-            module: params.module,
-            visibility: params.visibility,
-            limit: params.limit,
-            session_id: Some(sid),
-        };
-        let mut resp = self
-            .client
-            .symbols(&cid, &req)
-            .await
-            .map_err(|e| Self::err(&e))?;
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let req = ministr_api::query::SymbolsRequest {
+                query: params.query,
+                kind: params.kind,
+                module: params.module,
+                visibility: params.visibility,
+                limit: params.limit,
+                session_id: Some(sid),
+            };
+            let mut resp = self
+                .client
+                .symbols(&cid, &req)
+                .await
+                .map_err(|e| Self::err(&e))?;
 
-        // Compact: in listing context, drop source_context (already empty from
-        // daemon), heading_path (derivable from file_path), and doc_comment
-        // (signature is sufficient for deciding which symbol to drill into).
-        for sym in &mut resp.symbols {
-            sym.source_context = String::new();
-            sym.heading_path.clear();
-            sym.doc_comment = None;
-        }
+            // Compact: in listing context, drop source_context (already empty from
+            // daemon), heading_path (derivable from file_path), and doc_comment
+            // (signature is sufficient for deciding which symbol to drill into).
+            for sym in &mut resp.symbols {
+                sym.source_context = String::new();
+                sym.heading_path.clear();
+                sym.doc_comment = None;
+            }
 
-        Self::json_result(&resp)
+            Self::json_result(&resp)
+        })
+        .await
     }
 
     #[tool(
@@ -640,22 +652,25 @@ impl ProxyServer {
         Parameters(params): Parameters<DefinitionParams>,
     ) -> Result<CallToolResult, McpError> {
         let (cid, sid) = self.target(params.project.as_deref()).await?;
-        let mut resp = self
-            .client
-            .definition(&cid, &params.symbol_id, Some(&sid))
-            .await
-            .map_err(|e| Self::err(&e))?;
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let mut resp = self
+                .client
+                .definition(&cid, &params.symbol_id, Some(&sid))
+                .await
+                .map_err(|e| Self::err(&e))?;
 
-        // Compact: when source_context is present, doc_comment and signature
-        // are redundant (both appear in the source lines). heading_path is
-        // derivable from file_path.
-        if !resp.source_context.is_empty() {
-            resp.doc_comment = None;
-            resp.signature = String::new();
-            resp.heading_path.clear();
-        }
+            // Compact: when source_context is present, doc_comment and signature
+            // are redundant (both appear in the source lines). heading_path is
+            // derivable from file_path.
+            if !resp.source_context.is_empty() {
+                resp.doc_comment = None;
+                resp.signature = String::new();
+                resp.heading_path.clear();
+            }
 
-        Self::json_result(&resp)
+            Self::json_result(&resp)
+        })
+        .await
     }
 
     #[tool(
@@ -667,22 +682,25 @@ impl ProxyServer {
         Parameters(params): Parameters<ReferencesParams>,
     ) -> Result<CallToolResult, McpError> {
         let (cid, sid) = self.target(params.project.as_deref()).await?;
-        let mut resp = self
-            .client
-            .references(&cid, &params.symbol_id, Some(&sid))
-            .await
-            .map_err(|e| Self::err(&e))?;
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let mut resp = self
+                .client
+                .references(&cid, &params.symbol_id, Some(&sid))
+                .await
+                .map_err(|e| Self::err(&e))?;
 
-        // Compact: the caller already knows the target symbol — drop
-        // redundant to_* fields from each reference.
-        for r in &mut resp.references {
-            r.to_symbol_id = String::new();
-            r.to_name = String::new();
-            r.to_file = String::new();
-            r.to_line = 0;
-        }
+            // Compact: the caller already knows the target symbol — drop
+            // redundant to_* fields from each reference.
+            for r in &mut resp.references {
+                r.to_symbol_id = String::new();
+                r.to_name = String::new();
+                r.to_file = String::new();
+                r.to_line = 0;
+            }
 
-        Self::json_result(&resp)
+            Self::json_result(&resp)
+        })
+        .await
     }
 
     // TODO(toc-schema-convergence): the standalone `MinistrServer::toc` emits
@@ -704,18 +722,21 @@ impl ProxyServer {
         Parameters(params): Parameters<TocParams>,
     ) -> Result<CallToolResult, McpError> {
         let (cid, sid) = self.target(params.project.as_deref()).await?;
-        let req = ministr_api::query::TocRequest {
-            document_id: params.document_id,
-            offset: params.offset,
-            limit: params.limit,
-            session_id: Some(sid),
-        };
-        let resp = self
-            .client
-            .toc(&cid, &req)
-            .await
-            .map_err(|e| Self::err(&e))?;
-        Self::json_result(&resp)
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let req = ministr_api::query::TocRequest {
+                document_id: params.document_id,
+                offset: params.offset,
+                limit: params.limit,
+                session_id: Some(sid),
+            };
+            let resp = self
+                .client
+                .toc(&cid, &req)
+                .await
+                .map_err(|e| Self::err(&e))?;
+            Self::json_result(&resp)
+        })
+        .await
     }
 
     #[tool(
@@ -727,17 +748,20 @@ impl ProxyServer {
         Parameters(params): Parameters<RelatedParams>,
     ) -> Result<CallToolResult, McpError> {
         let (cid, sid) = self.target(params.project.as_deref()).await?;
-        let req = ministr_api::query::RelatedRequest {
-            claim_id: params.claim_id,
-            relation_types: params.relation_types.unwrap_or_default(),
-            session_id: Some(sid),
-        };
-        let resp = self
-            .client
-            .related(&cid, &req)
-            .await
-            .map_err(|e| Self::err(&e))?;
-        Self::json_result(&resp)
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let req = ministr_api::query::RelatedRequest {
+                claim_id: params.claim_id,
+                relation_types: params.relation_types.unwrap_or_default(),
+                session_id: Some(sid),
+            };
+            let resp = self
+                .client
+                .related(&cid, &req)
+                .await
+                .map_err(|e| Self::err(&e))?;
+            Self::json_result(&resp)
+        })
+        .await
     }
 
     #[tool(
@@ -749,19 +773,22 @@ impl ProxyServer {
         Parameters(params): Parameters<BridgeParams>,
     ) -> Result<CallToolResult, McpError> {
         let (cid, sid) = self.target(params.project.as_deref()).await?;
-        let req = ministr_api::query::BridgeRequest {
-            query: params.query,
-            kind: params.kind,
-            source_language: params.source_language,
-            limit: params.limit,
-            session_id: Some(sid),
-        };
-        let resp = self
-            .client
-            .bridge(&cid, &req)
-            .await
-            .map_err(|e| Self::err(&e))?;
-        Self::json_result(&resp)
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let req = ministr_api::query::BridgeRequest {
+                query: params.query,
+                kind: params.kind,
+                source_language: params.source_language,
+                limit: params.limit,
+                session_id: Some(sid),
+            };
+            let resp = self
+                .client
+                .bridge(&cid, &req)
+                .await
+                .map_err(|e| Self::err(&e))?;
+            Self::json_result(&resp)
+        })
+        .await
     }
 
     #[tool(
@@ -827,16 +854,19 @@ impl ProxyServer {
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
         let sid = self.ensure_session().await?;
-        let req = ministr_api::session::CompressRequest {
-            content_ids: params.content_ids,
-            session_id: Some(sid),
-        };
-        let resp = self
-            .client
-            .compress(&cid, &req)
-            .await
-            .map_err(|e| Self::err(&e))?;
-        Self::json_result(&resp)
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let req = ministr_api::session::CompressRequest {
+                content_ids: params.content_ids,
+                session_id: Some(sid),
+            };
+            let resp = self
+                .client
+                .compress(&cid, &req)
+                .await
+                .map_err(|e| Self::err(&e))?;
+            Self::json_result(&resp)
+        })
+        .await
     }
 
     #[tool(
@@ -849,24 +879,27 @@ impl ProxyServer {
     ) -> Result<CallToolResult, McpError> {
         let cid = self.ensure_corpus().await?;
         let sid = self.ensure_session().await?;
-        let req = ministr_api::session::DropRequest {
-            content_ids: params.content_ids,
-        };
-        let resp = self
-            .client
-            .drop_content(&cid, &sid, &req)
-            .await
-            .map_err(|e| Self::err(&e))?;
+        ministr_api::client::with_session_id(Some(sid.clone()), async move {
+            let req = ministr_api::session::DropRequest {
+                content_ids: params.content_ids,
+            };
+            let resp = self
+                .client
+                .drop_content(&cid, &sid, &req)
+                .await
+                .map_err(|e| Self::err(&e))?;
 
-        // Update local budget tracker so ministr_usage reflects the evictions.
-        {
-            let mut budget = self.local_budget.lock().await;
-            for id in &resp.dropped {
-                budget.force_evict(id);
+            // Update local budget tracker so ministr_usage reflects the evictions.
+            {
+                let mut budget = self.local_budget.lock().await;
+                for id in &resp.dropped {
+                    budget.force_evict(id);
+                }
             }
-        }
 
-        Self::json_result(&resp)
+            Self::json_result(&resp)
+        })
+        .await
     }
 }
 
