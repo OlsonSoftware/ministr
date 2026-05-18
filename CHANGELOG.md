@@ -5,7 +5,23 @@ All notable changes to ministr will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.4.0) - 2026-05-18
+
+### Added
+- Index Terraform `.tfvars` files using the HCL parser so variable-only Terraform inputs are ingested as code.
+
+### Changed
+- Release authoring now runs through the GitHub Copilot cloud agent workflow; CI skips redundant matrices and avoids request-release while a release is prepared but not yet tagged.
+
+### Fixed
+- Code-extension detection now explicitly covers `.tfvars` and `.hcl` paths with regression tests.
+
+### Removed
+- Removed the legacy Python release PR authoring script and `cliff.toml` in favor of the consolidated workflow-based release path.
+
+### Breaking changes — migration
+- Release authoring flow: `scripts/ci/release_pr.py` + `cliff.toml` -> `.github/workflows/release-automation.yml` managed by the GitHub Copilot cloud agent.
+
 ## [0.3.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.3.0) - 2026-05-17
 
 ### Added
