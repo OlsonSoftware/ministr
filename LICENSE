@@ -1,0 +1,26 @@
+ministr — Proprietary Software License
+Copyright (c) 2026 Olson Software / Alrik Olson. All rights reserved.
+
+This software and its source code, documentation, data, models, and all
+associated materials (the "Software") are proprietary and confidential.
+
+No license, right, or permission is granted to any person or entity to
+use, copy, modify, merge, publish, distribute, sublicense, sell, reverse
+engineer, decompile, disassemble, or create derivative works of the
+Software, in whole or in part, by any means, except under a separate
+written agreement signed by the copyright holder.
+
+Possession of, or access to, the Software does not transfer any
+ownership or license. Distributed binaries are licensed, not sold, and
+only under the terms accompanying that distribution.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES,
+OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+SOFTWARE OR ITS USE.
+
+Third-party components are licensed under their own terms; see
+third_party/ (e.g. third_party/tree-sitter-unreal-cpp, MIT) and the
+dependency manifests. Those terms apply only to those components.

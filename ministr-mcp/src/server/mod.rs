@@ -270,7 +270,7 @@ impl NegotiatedExtensions {
     }
 }
 
-/// MCP server that exposes ministr context-cache tools to LLM agents.
+/// MCP server that exposes ministr's code-intelligence tools to LLM agents.
 ///
 /// `MinistrServer` adapts the [`QueryService`] to the MCP protocol.
 /// It handles tool registration, request routing, and response formatting.
