@@ -224,7 +224,15 @@ pub async fn linked_project_add_dialog(
 ) -> Result<Option<LinkedProjectOut>, CommandError> {
     use tauri_plugin_dialog::DialogExt;
 
-    let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+    // `blocking_pick_folder` parks the calling thread while the native
+    // dialog is open (potentially many seconds). Off-load it to the
+    // blocking pool so the async runtime's worker threads stay free.
+    let app_for_dialog = app.clone();
+    let picked =
+        tokio::task::spawn_blocking(move || app_for_dialog.dialog().file().blocking_pick_folder())
+            .await
+            .map_err(|e| CommandError::internal(format!("folder picker task failed: {e}")))?;
+    let Some(folder) = picked else {
         return Ok(None);
     };
     let picked = folder.to_string();

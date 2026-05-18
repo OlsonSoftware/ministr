@@ -620,9 +620,12 @@ impl RepoConfig {
     ///
     /// For each entry the root is tilde-expanded, the label is derived from
     /// the directory name when not given explicitly, and the corpus path
-    /// set is taken from the linked project's *own* `.ministr.toml` (so it
-    /// resolves to the exact same corpus identity that project uses).
-    /// When the linked project has no `.ministr.toml`, its root directory
+    /// set is taken from a `.ministr.toml` located *at the linked
+    /// project's own root* (so it resolves to the exact same corpus
+    /// identity that project uses). An ancestor directory's
+    /// `.ministr.toml` is deliberately NOT consulted — it must not be
+    /// able to hijack an unrelated linked project's identity. When the
+    /// root has no (or an unparsable) `.ministr.toml`, the root directory
     /// is used directly.
     ///
     /// Entries with a duplicate label (after derivation) are skipped — the
@@ -647,11 +650,17 @@ impl RepoConfig {
                 continue;
             }
 
-            // Prefer the linked project's own .ministr.toml so we land on
-            // its real corpus identity; fall back to the bare root dir.
-            let corpus_paths = match Self::discover(&root) {
-                Ok(Some((cfg_dir, cfg))) => cfg.resolve_local_paths(&cfg_dir),
-                _ => vec![root.to_string_lossy().to_string()],
+            // Read ONLY a .ministr.toml at the linked root itself — never
+            // walk up (an ancestor/workspace config must not hijack this
+            // project's corpus identity). Missing or unparsable → use the
+            // bare root dir.
+            let root_only_fallback = || vec![root.to_string_lossy().to_string()];
+            let corpus_paths = match std::fs::read_to_string(root.join(CORPUS_CONFIG_FILENAME)) {
+                Ok(s) => toml::from_str::<Self>(&s).map_or_else(
+                    |_| root_only_fallback(),
+                    |cfg| cfg.resolve_local_paths(&root),
+                ),
+                Err(_) => root_only_fallback(),
             };
 
             resolved.push(ResolvedLinkedProject {
@@ -756,8 +765,10 @@ impl RepoConfig {
     /// preserving the rest of the file's formatting and comments.
     ///
     /// The file is created if absent. If an entry with the same `path`
-    /// already exists, only its `label` is updated — never duplicated — so
-    /// this is safe to call repeatedly from the UI.
+    /// already exists it is never duplicated: `Some(label)` updates the
+    /// label, while `None` leaves any existing label **untouched** (so
+    /// re-linking a folder via the label-less dialog can't silently wipe
+    /// a label set by hand or via the non-dialog command).
     ///
     /// # Errors
     ///
@@ -794,11 +805,10 @@ impl RepoConfig {
         let mut updated = false;
         for t in arr.iter_mut() {
             if t.get("path").and_then(Item::as_str) == Some(path) {
-                match label {
-                    Some(l) => t["label"] = value(l),
-                    None => {
-                        t.remove("label");
-                    }
+                // Only an explicit Some(label) changes the label; None
+                // means "leave whatever label is already there alone".
+                if let Some(l) = label {
+                    t["label"] = value(l);
                 }
                 updated = true;
                 break;
@@ -1182,6 +1192,60 @@ mod tests {
         let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
         assert_eq!(cfg.linked.len(), 1);
         assert!(cfg.linked[0].label.is_none());
+    }
+
+    #[test]
+    fn add_linked_none_label_preserves_existing_label() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        // Linked with an explicit label (hand-edit / non-dialog command).
+        RepoConfig::add_linked_project(root, "/abs/dep", Some("custom")).unwrap();
+        // Re-linking the same folder via the label-less dialog path.
+        RepoConfig::add_linked_project(root, "/abs/dep", None).unwrap();
+
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.linked.len(), 1, "must not duplicate");
+        assert_eq!(
+            cfg.linked[0].label.as_deref(),
+            Some("custom"),
+            "None must not wipe an existing label"
+        );
+
+        // An explicit Some(..) still overwrites.
+        RepoConfig::add_linked_project(root, "/abs/dep", Some("renamed")).unwrap();
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.linked[0].label.as_deref(), Some("renamed"));
+    }
+
+    #[test]
+    fn resolve_linked_ignores_ancestor_config() {
+        // An ancestor .ministr.toml must NOT define a linked child's
+        // corpus identity — only a config at the child's own root counts.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ancestor = tmp.path();
+        std::fs::write(
+            ancestor.join(CORPUS_CONFIG_FILENAME),
+            "[corpus]\npaths = [\"ancestor-src\"]\n",
+        )
+        .unwrap();
+        let child = ancestor.join("child");
+        std::fs::create_dir_all(&child).unwrap();
+
+        let config = RepoConfig {
+            linked: vec![LinkedProject {
+                path: child.to_string_lossy().to_string(),
+                label: Some("child".to_string()),
+            }],
+            ..Default::default()
+        };
+        let resolved = config.resolve_linked_projects();
+        assert_eq!(resolved.len(), 1);
+        // Falls back to the child root itself, NOT the ancestor's
+        // resolved `ancestor-src` path.
+        assert_eq!(
+            resolved[0].corpus_paths,
+            vec![child.to_string_lossy().to_string()]
+        );
     }
 
     #[test]

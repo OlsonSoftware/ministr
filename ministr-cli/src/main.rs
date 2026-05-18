@@ -60,12 +60,12 @@ enum Command {
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
 
-        /// Run as a thin proxy to the ministr daemon instead of the monolithic server.
+        /// Deprecated, no-op (kept for backward compatibility).
         ///
-        /// When enabled, the MCP server connects to the ministr daemon at
-        /// `~/.ministr/ministrd.sock` and delegates all indexing and querying.
-        /// Uses ~20 MB vs ~2 GB for the full server.
-        #[arg(long)]
+        /// stdio now ALWAYS runs as a thin proxy to the ministr daemon
+        /// (auto-spawned if not running); the old monolithic server was
+        /// removed. This flag is accepted but has no effect.
+        #[arg(long, hide = true)]
         proxy: bool,
 
         /// Enable OAuth 2.1 authentication for the HTTP transport.
@@ -98,7 +98,8 @@ enum Command {
     /// Show daemon status (requires the ministr daemon to be running).
     Status,
 
-    /// Search the corpus via the daemon (requires ministr-app to be running).
+    /// Search the corpus via the daemon (requires the ministr daemon to
+    /// be running).
     Search {
         /// Search query.
         query: String,
@@ -342,8 +343,23 @@ async fn main() -> Result<()> {
             .config
             .clone()
             .unwrap_or_else(ministr_core::config::MinistrConfig::default_path);
-        let config = ministr_core::config::MinistrConfig::load(&config_path)
-            .unwrap_or_else(|_| ministr_core::config::MinistrConfig::default());
+        // `load` already returns the default when the file is simply
+        // absent; an `Err` therefore means the file IS present but
+        // unreadable/invalid. Silently defaulting there would start the
+        // daemon with the wrong data_dir/model and no clue why — so make
+        // that case loud rather than swallowing it.
+        let config = match ministr_core::config::MinistrConfig::load(&config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    path = %config_path.display(),
+                    error = %e,
+                    "config file present but invalid — starting daemon with DEFAULT \
+                     settings; fix the config and restart the daemon"
+                );
+                ministr_core::config::MinistrConfig::default()
+            }
+        };
         return ministr_daemon::bootstrap::run(config)
             .await
             .map_err(|e| miette::miette!("daemon exited: {e}"));
