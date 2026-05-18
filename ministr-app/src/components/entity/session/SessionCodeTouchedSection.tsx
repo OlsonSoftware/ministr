@@ -3,7 +3,6 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ActivityEvent } from "../../../lib/types";
 import {
   type FileBucket,
-  shortFilePath,
   summarizeCodeTouched,
 } from "../../../lib/session-activity-summary";
 import { cn } from "../../../lib/utils";
@@ -166,8 +165,14 @@ function FileRow({
       title={bucket.file}
     >
       <span className="text-accent shrink-0" aria-hidden="true">◆</span>
-      <span className="flex-1 min-w-0 truncate font-mono text-sm text-text">
-        {shortFilePath(bucket.file)}
+      <span
+        className="flex-1 min-w-0 truncate font-mono text-sm text-text"
+        dir="rtl"
+      >
+        {/* RTL direction keeps the meaningful tail (filename) visible
+            when the path overflows; truncation appears at the leading
+            edge as a natural ellipsis. */}
+        <bdo dir="ltr">{bucket.file}</bdo>
       </span>
       <span className="shrink-0 whitespace-nowrap font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
         {events}

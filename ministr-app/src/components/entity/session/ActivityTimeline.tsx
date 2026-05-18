@@ -8,6 +8,10 @@ import {
 import { Search, X } from "lucide-react";
 import type { ActivityEvent } from "../../../lib/types";
 import { formatTokens } from "../../../lib/format";
+import {
+  formatActivityForDisplay,
+  relativizeSummary,
+} from "../../../lib/session-activity-summary";
 import { relative } from "../../../lib/time";
 import { cn } from "../../../lib/utils";
 import {
@@ -278,6 +282,10 @@ function EventRow({
     1,
     Math.min(LATENCY_BAR_PX, (event.duration_ms / maxDuration) * LATENCY_BAR_PX),
   );
+  const { head, file } = formatActivityForDisplay(event);
+  const displayHead = head || event.corpus_id;
+  // Expanded body shows the full summary with absolute paths stripped.
+  const expandedTarget = relativizeSummary((event.summary ?? "").trim());
 
   return (
     <details
@@ -288,18 +296,33 @@ function EventRow({
     >
       <summary
         className={cn(
-          "grid cursor-pointer list-none items-baseline gap-x-3 gap-y-1 px-3 py-2",
-          "[grid-template-columns:auto_1fr_auto]",
+          "flex cursor-pointer list-none items-center gap-3 px-3 py-2",
           "hover:bg-surface-overlay",
           "[&::-webkit-details-marker]:hidden",
         )}
       >
+        {/* TAG */}
         <span className="w-16 shrink-0 font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim">
           {tag(event.tool)}
         </span>
-        <span className="min-w-0 truncate font-mono text-sm font-semibold text-text">
-          {event.summary || event.corpus_id}
-        </span>
+
+        {/* Middle column: head on line 1, optional file on line 2 */}
+        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+          <span className="truncate font-mono text-sm font-semibold text-text">
+            {displayHead}
+          </span>
+          {file && (
+            <span
+              className="truncate font-mono text-mono-mini text-text-dim"
+              dir="rtl"
+              title={file}
+            >
+              <bdo dir="ltr">↳ {file}</bdo>
+            </span>
+          )}
+        </div>
+
+        {/* Right cluster */}
         <span className="flex shrink-0 items-center gap-2 whitespace-nowrap font-mono text-xs tabular-nums text-text-dim">
           {/* Latency bar */}
           <span
@@ -326,7 +349,7 @@ function EventRow({
         <div className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1">
           <span className="text-text-dim uppercase tracking-[0.08em]">Target</span>
           <span className="text-text break-all">
-            {event.summary || <em className="text-text-dim">—</em>}
+            {expandedTarget || <em className="text-text-dim">—</em>}
           </span>
           <span className="text-text-dim uppercase tracking-[0.08em]">Corpus</span>
           <span className="text-text break-all">{event.corpus_id}</span>
