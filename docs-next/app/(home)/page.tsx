@@ -116,7 +116,10 @@ export default function HomePage() {
                   <li>
                     <code>ministr_definition</code> — just the function body
                   </li>
-                  <li>a repeat read returns a pointer, not the file again</li>
+                  <li>
+                    <code>ministr_bridge</code> — every call site across a
+                    language boundary
+                  </li>
                 </ul>
               </div>
             </div>
@@ -158,17 +161,6 @@ export default function HomePage() {
                   sparse keyword matching, reranked — and every document
                   indexed at several resolutions, so the agent gets the
                   exact section, not a file dump.
-                </>
-              }
-            />
-            <Item
-              h="Lean by default"
-              p={
-                <>
-                  A bonus, not the headline: ministr records what it has
-                  already sent this session, so a repeat request returns a
-                  pointer or just the changed lines. Less re-reading, more
-                  window left for the work.
                 </>
               }
             />
@@ -254,7 +246,6 @@ export default function HomePage() {
     │              (MCP — stdio or HTTP)
   ministr ─────── code model    symbols · references · bridges
     │             retrieval     meaning + keyword, ranked
-    │             session       remembers what was sent
     │
   local index ── on your machine; nothing leaves it`}</pre>
           </Figure>
@@ -278,7 +269,7 @@ export default function HomePage() {
 
         {/* ── Coda ─────────────────────────────────────────── */}
         <footer className="ms-col">
-          <p className="ms-standfirst">Stop re-reading the same files.</p>
+          <p className="ms-standfirst">Give your agent eyes for structure.</p>
           <p className="mt-5">
             <Link href="/install" className="ms-link font-medium text-[15px]">
               Install ministr →

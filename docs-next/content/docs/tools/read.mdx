@@ -30,7 +30,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 
 ### Already delivered (unchanged)
 
-If the section was already delivered and has not changed, ministr returns a **minimal `result`** — just the section ID, `status: "already_delivered"`, and the available-claims count. The text, heading path, and summary are **not** re-shipped. Treat the call as a fault-based eviction signal: ministr infers the agent's context window dropped the content, corrects the window estimate, and lets the agent decide whether to do anything about it.
+If the section was already delivered this session and has not changed, ministr returns a **minimal `result`** — just the section ID, `status: "already_delivered"`, and the available-claims count. The text, heading path, and summary are **not** re-shipped, since the agent already received them on the earlier call.
 
 ```json
 {
@@ -60,6 +60,4 @@ If the section was delivered but the underlying document changed, ministr return
 
 ## Behavior
 
-- Triggers prefetch for adjacent and related sections
-- Remembers it delivered this section, so a later identical call returns only what changed
-- Handles three cases: new content, unchanged re-request (fault), changed re-request (delta)
+- Handles three cases: new content, unchanged re-request (returns the `already_delivered` stub), changed re-request (returns a line-level delta)

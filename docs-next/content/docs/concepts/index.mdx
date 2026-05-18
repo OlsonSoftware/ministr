@@ -1,9 +1,9 @@
 ---
 title: Core concepts
-description: The ideas behind ministr's code intelligence — symbols, references, cross-language bridges, and hybrid search — plus the session efficiency that keeps it lean.
+description: The ideas behind ministr's code intelligence — symbols, references, cross-language bridges, and hybrid search.
 ---
 
-ministr's job is to understand a codebase well enough that an agent can ask real questions about it. Four ideas carry that; a few more keep delivery efficient.
+ministr's job is to understand a codebase well enough that an agent can ask real questions about it. Four ideas carry that.
 
 ## Code intelligence
 
@@ -14,14 +14,4 @@ ministr's job is to understand a codebase well enough that an agent can ask real
 | [Cross-language bridges](/docs/concepts/bridges) | It follows a call across a language boundary — the thing grep fundamentally can't do |
 | [Hybrid search](/docs/concepts/search) | Meaning-based and keyword search together, at the right level of detail |
 
-## Session efficiency
-
-A quiet layer underneath — a bonus, never the headline.
-
-| Concept | What it means |
-|---|---|
-| [Session memory](/docs/concepts/session-shadow) | Remembers what the agent has already been shown this session |
-| [Predictive prefetch](/docs/concepts/prefetch-engine) | Anticipates the next request and has it ready |
-| [Coherence](/docs/concepts/coherence) | Notices when files change and flags anything the agent saw before |
-
-These compose: session memory tells prefetch what's already in hand, and coherence uses the same memory to know which sessions are holding something that just changed — so the agent spends its window on the work, not on re-reading.
+The model stays in sync with the code on disk — ministr watches the source while it's serving and re-indexes incrementally as files change, so answers reflect the current state of the tree.
