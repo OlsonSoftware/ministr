@@ -25,7 +25,9 @@ import { ConfirmDialog } from "../ui/confirm-dialog";
 import { useToast } from "../shell/ToastTray";
 import { MaintAction, formatUptime } from "./settings-primitives";
 
-const RELEASES_URL = "https://github.com/anthropics/ministr/releases";
+// Public, brand-owned destination. ministr is closed-source: never link
+// to the (private) GitHub repo from shipped UI.
+const RELEASES_URL = "https://ministr.ai";
 const DATA_DIR = "~/.ministr/";
 
 interface Props {

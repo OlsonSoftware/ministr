@@ -5,7 +5,7 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.88"
-license = "MIT OR Apache-2.0"
+license = "LicenseRef-Proprietary"
 repository = "https://github.com/OlsonSoftware/ministr"
 homepage = "https://ministr.ai"
 

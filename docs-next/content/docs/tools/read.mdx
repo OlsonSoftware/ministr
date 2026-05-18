@@ -61,5 +61,5 @@ If the section was delivered but the underlying document changed, ministr return
 ## Behavior
 
 - Triggers prefetch for adjacent and related sections
-- Records delivery in the session shadow
+- Remembers it delivered this section, so a later identical call returns only what changed
 - Handles three cases: new content, unchanged re-request (fault), changed re-request (delta)

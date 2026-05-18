@@ -11,6 +11,7 @@ If you're looking for a place to begin, check the [issues labeled `good first is
 - **Rust 1.88+** (edition 2024) — install via [rustup](https://rustup.rs)
 - **just** — task runner (`cargo install just` or `brew install just`)
 - **cargo-deny** — license and advisory checks (`cargo install cargo-deny`)
+- **Python 3** — runs the black-box lint (`just blackbox-lint`, part of `just validate`); `python3` on Linux/macOS, `python` on Windows
 
 ### Clone and build
 
@@ -161,4 +162,4 @@ CI runs these automatically on every PR.
 
 ## License
 
-By contributing, you agree that your contributions will be dual-licensed under MIT and Apache-2.0, as described in [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
+ministr is proprietary, closed-source software (see [LICENSE](LICENSE)). By contributing, you assign all right, title, and interest in your contributions to the copyright holder; no open-source license is granted in or to this repository or its source.

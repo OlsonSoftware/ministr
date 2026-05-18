@@ -589,9 +589,22 @@ jobs:
   # Accepts `success` or `skipped` for each upstream — skipped means
   # the path filter determined the job wasn't needed for this diff.
   # ────────────────────────────────────────────────────────────────
+  # Closed-source guard: public surfaces (README, docs site, the
+  # agent-rule constants scaffolded into users' repos) must stay
+  # black-box. Always runs — not gated on rust changes, since the
+  # likeliest leak is a docs/branding-only edit.
+  blackbox:
+    name: black-box lint
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: python3 scripts/ci/blackbox_lint.py
+
   ci-complete:
     name: ci complete
-    needs: [changes, ci-image, fmt, rust-dev, rust-release, security, docker-build]
+    needs: [changes, ci-image, fmt, blackbox, rust-dev, rust-release, security, docker-build]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -601,6 +614,7 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CI_IMAGE_RESULT: ${{ needs.ci-image.result }}
           FMT_RESULT: ${{ needs.fmt.result }}
+          BLACKBOX_RESULT: ${{ needs.blackbox.result }}
           RUST_DEV_RESULT: ${{ needs.rust-dev.result }}
           RUST_RELEASE_RESULT: ${{ needs.rust-release.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
@@ -609,6 +623,7 @@ jobs:
           echo "changes:       $CHANGES_RESULT"
           echo "ci-image:      $CI_IMAGE_RESULT"
           echo "fmt:           $FMT_RESULT"
+          echo "blackbox:      $BLACKBOX_RESULT"
           echo "rust-dev:      $RUST_DEV_RESULT"
           echo "rust-release:  $RUST_RELEASE_RESULT"
           echo "security:      $SECURITY_RESULT"
@@ -624,6 +639,7 @@ jobs:
           fail=0
           ok "$CI_IMAGE_RESULT"     || { echo "::error::ci-image $CI_IMAGE_RESULT";           fail=1; }
           ok "$FMT_RESULT"          || { echo "::error::fmt $FMT_RESULT";                     fail=1; }
+          ok "$BLACKBOX_RESULT"     || { echo "::error::blackbox $BLACKBOX_RESULT";           fail=1; }
           ok "$RUST_DEV_RESULT"     || { echo "::error::rust-dev $RUST_DEV_RESULT";           fail=1; }
           ok "$RUST_RELEASE_RESULT" || { echo "::error::rust-release $RUST_RELEASE_RESULT";   fail=1; }
           ok "$SECURITY_RESULT"     || { echo "::error::security $SECURITY_RESULT";           fail=1; }
