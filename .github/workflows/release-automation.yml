@@ -59,11 +59,79 @@ permissions:
   contents: read
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # SINGLE SOURCE OF TRUTH for release state. `request-release` ("should
+  # we ask the agent to PREPARE a release?") and `gate` ("should we
+  # BUILD+TAG now?") used to each recompute the manifest version + the
+  # "is v<version> tagged?" check via their own git archaeology — two
+  # paths that could disagree (root cause of the #123 silent miss).
+  # Compute it ONCE here; the consumers only layer their own decision.
+  # ─────────────────────────────────────────────────────────────────────
+  state:
+    name: Resolve release state
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'OlsonSoftware' }}
+    outputs:
+      version: ${{ steps.s.outputs.version }}
+      tagged: ${{ steps.s.outputs.tagged }}
+      last_tag: ${{ steps.s.outputs.last_tag }}
+      release_commit: ${{ steps.s.outputs.release_commit }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - id: s
+        env:
+          BEFORE: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ver="$(grep -m1 '^version' ministr-cli/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          [ -n "$ver" ] || { echo "::error::cannot parse version from ministr-cli/Cargo.toml"; exit 1; }
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/v$ver" >/dev/null 2>&1; then
+            tagged=true
+          else
+            tagged=false
+          fi
+          echo "tagged=$tagged" >> "$GITHUB_OUTPUT"
+
+          # No blanket `|| true` swallow: "no v* tag yet" is a distinct,
+          # logged state vs a git failure.
+          if last_tag="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null)"; then
+            :
+          else
+            last_tag=""
+            echo "::notice::no v* tag reachable from HEAD"
+          fi
+          echo "last_tag=$last_tag" >> "$GITHUB_OUTPUT"
+
+          # Is HEAD the release-bump commit? subject `chore: release vX`
+          # OR this push changed the cli version line. (`BEFORE` is unset
+          # on workflow_dispatch — the subject test still covers it.)
+          subject="$(git log -1 --format=%s)"
+          release_commit=false
+          case "$subject" in
+            "chore: release v$ver"*) release_commit=true ;;
+          esac
+          if [ "$release_commit" != true ] && [ -n "${BEFORE:-}" ] \
+             && git cat-file -e "$BEFORE" 2>/dev/null \
+             && git diff "$BEFORE" HEAD -- ministr-cli/Cargo.toml \
+                  | grep -qE '^\+version = '; then
+            release_commit=true
+          fi
+          echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
+          echo "::notice::state: version=$ver tagged=$tagged release_commit=$release_commit last_tag=${last_tag:-<none>}"
+
   # Detect releasable work since the last tag and delegate the release
   # PR to the Copilot cloud agent. No version math, no changelog
   # generation here — the agent owns that judgment.
   request-release:
     name: Request release (Copilot agent)
+    needs: state
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'OlsonSoftware' }}
     permissions:
@@ -85,39 +153,32 @@ jobs:
 
       - name: Detect releasable commits
         id: detect
+        env:
+          # Shared release state — computed once in the `state` job, not
+          # recomputed here (was a divergent second path → #123 miss).
+          STATE_VERSION: ${{ needs.state.outputs.version }}
+          STATE_TAGGED: ${{ needs.state.outputs.tagged }}
+          STATE_LAST_TAG: ${{ needs.state.outputs.last_tag }}
         shell: bash
         run: |
           set -euo pipefail
           head_sha="$(git rev-parse HEAD)"
-
-          # Resolve the last tag WITHOUT a blanket `|| true` swallow:
-          # "no v* tag exists yet" (fresh repo) is a real, distinct
-          # state from "git failed". Either way `last_tag` may be empty,
-          # but the distinction is logged rather than hidden.
-          if last_tag="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null)"; then
-            :
-          else
-            last_tag=""
-            echo "::notice::no v* tag reachable from HEAD — treating range as full history"
-          fi
-          range="${last_tag:+$last_tag..}HEAD"
-          echo "last_tag=${last_tag:-}" >> "$GITHUB_OUTPUT"
+          range="${STATE_LAST_TAG:+$STATE_LAST_TAG..}HEAD"
+          # Re-exported for the "Hand the release" step's evidence block.
+          echo "last_tag=${STATE_LAST_TAG:-}" >> "$GITHUB_OUTPUT"
           echo "range=$range" >> "$GITHUB_OUTPUT"
-          echo "::notice::detect: head=$head_sha last_tag=${last_tag:-<none>} range=$range"
+          echo "::notice::detect: head=$head_sha last_tag=${STATE_LAST_TAG:-<none>} range=$range"
 
-          # CORE INVARIANT (same state check as the `gate` job): in
-          # steady state the manifest version == the last `vX.Y.Z` tag.
-          # If the manifest is ahead and UNTAGGED, a release is already
-          # prepared and in flight (its release PR merged; the
+          # CORE INVARIANT: in steady state the manifest version == the
+          # last `vX.Y.Z` tag. If the manifest is UNTAGGED, a release is
+          # already prepared and in flight (its release PR merged; the
           # deterministic gate→build→tag path owns it until the tag
           # lands). Starting another agent session now would prepare a
-          # "next" release on top of an untagged one — exactly the
-          # phantom-pending-release failure mode. Skip until tagged.
-          ver="$(grep -m1 '^version' ministr-cli/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          if [ -n "$ver" ] && \
-             ! git ls-remote --exit-code --tags origin "refs/tags/v$ver" >/dev/null 2>&1; then
+          # "next" release on top of an untagged one — the phantom-
+          # pending-release failure mode. Skip until tagged.
+          if [ "$STATE_TAGGED" != true ]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "v$ver is prepared but not yet tagged — a release is in flight; the deterministic gate/build/tag path owns it. Not starting a new agent session."
+            echo "::notice::v$STATE_VERSION is prepared but not yet tagged — a release is in flight; the deterministic gate/build/tag path owns it. Not starting a new agent session."
             exit 0
           fi
 
@@ -142,7 +203,7 @@ jobs:
             echo "::notice::releasable commit in $range — $matched"
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no releasable (feat/fix/perf/revert/breaking) commits since ${last_tag:-repo start}; nothing to do"
+            echo "::notice::no releasable (feat/fix/perf/revert/breaking) commits since ${STATE_LAST_TAG:-repo start}; nothing to do"
           fi
 
       - name: Skip if a release PR is already open
@@ -324,54 +385,35 @@ jobs:
   # matrix twice. Tag-on-green and "no tag until green" are unchanged.
   gate:
     name: Detect pending release
+    needs: state
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'OlsonSoftware' }}
     outputs:
+      # `version` is the shared state's version verbatim — no second
+      # parse. `build`/`tag-and-release` keep consuming gate outputs.
       is_release: ${{ steps.d.outputs.is_release }}
-      version: ${{ steps.d.outputs.version }}
+      version: ${{ needs.state.outputs.version }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          fetch-tags: true
+      # No checkout / git here: this is a pure decision over the shared
+      # `state` outputs. BUILD+TAG only when the manifest is UNTAGGED
+      # *and* HEAD is the release-bump commit — identical contract to
+      # before, now sourced from the single state computation.
       - id: d
         env:
-          BEFORE: ${{ github.event.before }}
+          VER: ${{ needs.state.outputs.version }}
+          TAGGED: ${{ needs.state.outputs.tagged }}
+          RELEASE_COMMIT: ${{ needs.state.outputs.release_commit }}
         shell: bash
         run: |
           set -euo pipefail
-          ver="$(grep -m1 '^version' ministr-cli/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          [ -n "$ver" ] || { echo "::error::cannot parse version"; exit 1; }
-
-          if git ls-remote --exit-code --tags origin "refs/tags/v$ver" >/dev/null 2>&1; then
-            echo "v$ver is already tagged - nothing to release"
+          if [ "$TAGGED" = true ]; then
+            echo "v$VER is already tagged - nothing to release"
             echo "is_release=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Untagged — but only BUILD if this push is the release-bump
-          # commit, not just any push landing while untagged.
-          subject="$(git log -1 --format=%s)"
-          release_commit=false
-          case "$subject" in
-            "chore: release v$ver"*) release_commit=true ;;
-          esac
-          # Belt-and-suspenders: did this push actually change the cli
-          # version line? (full history fetched above, so the diff is
-          # reliable; guard for the first-push all-zero BEFORE sha).
-          if [ "$release_commit" != true ] && [ -n "${BEFORE:-}" ] \
-             && git cat-file -e "$BEFORE" 2>/dev/null \
-             && git diff "$BEFORE" HEAD -- ministr-cli/Cargo.toml \
-                  | grep -qE '^\+version = '; then
-            release_commit=true
-          fi
-
-          if [ "$release_commit" = true ]; then
-            echo "v$ver untagged and this is the release commit - release pending"
-            echo "is_release=true"  >> "$GITHUB_OUTPUT"
-            echo "version=$ver"     >> "$GITHUB_OUTPUT"
+          elif [ "$RELEASE_COMMIT" = true ]; then
+            echo "v$VER untagged and this is the release commit - release pending"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
           else
-            echo "v$ver untagged but this push is not the release commit (subject: $subject) - skipping build (re-run the chore: release PR to retry a failed release)"
+            echo "v$VER untagged but this push is not the release commit - skipping build (re-run the chore: release PR to retry a failed release)"
             echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
 
