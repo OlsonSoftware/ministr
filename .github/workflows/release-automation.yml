@@ -70,6 +70,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          # `git describe` below needs tags. fetch-depth:0 alone runs
+          # `git fetch --no-tags …`; without this, tag availability for
+          # describe is incidental, not guaranteed.
+          fetch-tags: true
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Detect releasable commits
@@ -77,10 +81,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          last_tag="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+          head_sha="$(git rev-parse HEAD)"
+
+          # Resolve the last tag WITHOUT a blanket `|| true` swallow:
+          # "no v* tag exists yet" (fresh repo) is a real, distinct
+          # state from "git failed". Either way `last_tag` may be empty,
+          # but the distinction is logged rather than hidden.
+          if last_tag="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null)"; then
+            :
+          else
+            last_tag=""
+            echo "::notice::no v* tag reachable from HEAD — treating range as full history"
+          fi
           range="${last_tag:+$last_tag..}HEAD"
           echo "last_tag=${last_tag:-}" >> "$GITHUB_OUTPUT"
           echo "range=$range" >> "$GITHUB_OUTPUT"
+          echo "::notice::detect: head=$head_sha last_tag=${last_tag:-<none>} range=$range"
 
           # CORE INVARIANT (same state check as the `gate` job): in
           # steady state the manifest version == the last `vX.Y.Z` tag.
@@ -98,14 +114,28 @@ jobs:
             exit 0
           fi
 
+          # Compute the commit log explicitly. A `git log` failure
+          # (e.g. an unresolved range because tags weren't fetched) must
+          # NOT collapse into "nothing to release": that turned a real
+          # detection miss into a green, benign-looking log and silently
+          # stalled the release. Fail loud instead.
+          if ! commits="$(git log "$range" --format='%s%n%b' 2>&1)"; then
+            echo "::error::git log '$range' failed — cannot determine releasable commits; refusing to silently report 'nothing to release'"
+            printf '%s\n' "$commits" >&2
+            exit 1
+          fi
+
           # Conventional types that warrant a release (or any breaking
           # `!` / `BREAKING CHANGE`). docs/chore/ci/test/style never bump.
-          if git log "$range" --format='%s%n%b' \
-              | grep -Eiq '^(feat|fix|perf|revert)(\(.+\))?!?:|^[a-z]+(\(.+\))?!:|BREAKING CHANGE'; then
+          matched="$(printf '%s\n' "$commits" \
+            | grep -Eim1 '^(feat|fix|perf|revert)(\(.+\))?!?:|^[a-z]+(\(.+\))?!:|BREAKING CHANGE' \
+            || true)"
+          if [ -n "$matched" ]; then
             echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::releasable commit in $range — $matched"
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "No releasable commits since ${last_tag:-repo start}; nothing to do."
+            echo "::notice::no releasable (feat/fix/perf/revert/breaking) commits since ${last_tag:-repo start}; nothing to do"
           fi
 
       - name: Skip if a release PR is already open
@@ -296,6 +326,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          fetch-tags: true
       - id: d
         env:
           BEFORE: ${{ github.event.before }}
