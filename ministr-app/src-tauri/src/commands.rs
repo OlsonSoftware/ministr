@@ -179,8 +179,7 @@ pub async fn linked_projects_list(
                 Some(s) if !s.trim().is_empty() => s.trim().to_string(),
                 _ => std::path::Path::new(&expanded)
                     .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| l.path.clone()),
+                    .map_or_else(|| l.path.clone(), |n| n.to_string_lossy().to_string()),
             };
             LinkedProjectOut {
                 path: l.path.clone(),
@@ -207,7 +206,9 @@ pub async fn linked_project_add(
     if trimmed.is_empty() {
         return Err(CommandError::invalid_input("linked project path is empty"));
     }
-    let label = label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+    let label = label
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty());
     ministr_core::config::RepoConfig::add_linked_project(root, trimmed, label.as_deref())
         .map_err(|e| CommandError::internal(e.to_string()))?;
     tracing::info!(project_root = %project_root, linked = %trimmed, "added linked project");
@@ -229,8 +230,7 @@ pub async fn linked_project_add_dialog(
     let picked = folder.to_string();
     let resolved_label = std::path::Path::new(&picked)
         .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| picked.clone());
+        .map_or_else(|| picked.clone(), |n| n.to_string_lossy().to_string());
 
     let root = std::path::Path::new(&project_root);
     ministr_core::config::RepoConfig::add_linked_project(root, &picked, None)

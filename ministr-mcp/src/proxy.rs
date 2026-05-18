@@ -86,7 +86,7 @@ pub struct SurveyParams {
     #[serde(default)]
     pub top_k: Option<usize>,
     /// Linked project label to query instead of the current project.
-    /// Omit to query the current project. List labels via ministr_projects.
+    /// Omit to query the current project. List labels via `ministr_projects`.
     #[serde(default)]
     pub project: Option<String>,
 }
@@ -965,16 +965,20 @@ mod tests {
             .await
             .expect_err("unknown label must error");
         let msg = format!("{err:?}");
-        assert!(msg.contains("nope"), "error should name the bad label: {msg}");
-        assert!(msg.contains("shared"), "error should list valid labels: {msg}");
+        assert!(
+            msg.contains("nope"),
+            "error should name the bad label: {msg}"
+        );
+        assert!(
+            msg.contains("shared"),
+            "error should list valid labels: {msg}"
+        );
     }
 
     #[tokio::test]
     async fn projects_lists_current_plus_linked() {
-        let proxy = ProxyServer::with_linked(
-            vec!["/cur".into()],
-            vec![linked("alpha"), linked("beta")],
-        );
+        let proxy =
+            ProxyServer::with_linked(vec!["/cur".into()], vec![linked("alpha"), linked("beta")]);
         // No daemon needed: projects() only reads in-memory config.
         let result = proxy.projects().await.expect("projects must succeed");
         let v = serde_json::to_value(&result).unwrap();

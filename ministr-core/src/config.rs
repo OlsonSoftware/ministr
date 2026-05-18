@@ -640,8 +640,7 @@ impl RepoConfig {
                 Some(l) if !l.trim().is_empty() => l.trim().to_string(),
                 _ => root
                     .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| link.path.clone()),
+                    .map_or_else(|| link.path.clone(), |n| n.to_string_lossy().to_string()),
             };
 
             if !seen.insert(label.clone()) {
@@ -848,7 +847,7 @@ impl RepoConfig {
 
         let mut kept = ArrayOfTables::new();
         let mut removed = false;
-        for t in arr.iter() {
+        for t in arr {
             if t.get("path").and_then(Item::as_str) == Some(path) {
                 removed = true;
             } else {
