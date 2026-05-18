@@ -142,82 +142,12 @@ pkg-dev:
 pkg-backgrounds:
     ./installer/generate-backgrounds.sh
 
-# Clean rebuild + install CLI + Tauri app + restart daemon
+# Clean rebuild + install CLI + Tauri app + relaunch tray (macOS / Linux).
+# Logic lives in scripts/reinstall.sh — parallels scripts/reinstall.ps1
+# so the two stay in lockstep.
 [unix]
 reinstall:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "==> Killing existing ministr daemons..."
-    pkill -f "ministr-app" || true
-    pkill -f "ministr serve" || true
-    rm -f ~/.ministr/ministrd.sock ~/.ministr/ministrd.pid
-    sleep 1
-    echo "==> Clean rebuild (release)..."
-    cargo clean -p ministr-mcp -p ministr-cli -p ministr-daemon -p ministr-app
-    cargo build --release -p ministr-cli
-    # Tauri's externalBin (tauri.conf.json) requires the sidecar at
-    # `ministr-app/src-tauri/binaries/ministr-cli-<host-triple>` before
-    # the ministr-app build script runs. Mirror scripts/reinstall.ps1.
-    HOST_TRIPLE=$(rustc -vV | awk '/^host:/ { print $2 }')
-    mkdir -p ministr-app/src-tauri/binaries
-    cp target/release/ministr "ministr-app/src-tauri/binaries/ministr-cli-${HOST_TRIPLE}"
-    # Tauri's `generate_context!` proc macro reads `frontendDist` from
-    # tauri.conf.json (`../dist`) at compile time, so the Vite output
-    # must exist before `cargo build -p ministr-app`. `tauri build` would
-    # run beforeBuildCommand for us; raw cargo doesn't.
-    # Always sync — checking `-d node_modules` skips a partial install
-    # (lockfile drift, interrupted prior run) and leaves vite to fail at
-    # build time. `--frozen-lockfile` is a no-op when in sync and fails
-    # loudly if package.json and pnpm-lock.yaml disagree.
-    echo "==> Syncing frontend deps (pnpm install --frozen-lockfile)..."
-    (cd ministr-app && pnpm install --frozen-lockfile)
-    echo "==> Building frontend (vite)..."
-    (cd ministr-app && pnpm run build)
-    cargo build --release -p ministr-app
-    echo "==> Installing CLI to ~/.ministr/bin/ministr (canonical dev location)..."
-    # Remove stale copies from other locations to prevent shadow binaries.
-    rm -f ~/.cargo/bin/ministr
-    rm -f /usr/local/bin/ministr 2>/dev/null || true
-    mkdir -p ~/.ministr/bin
-    cp target/release/ministr ~/.ministr/bin/ministr
-    # Hand off PATH wiring to `ministr setup` (onpath crate). Detects
-    # installed shells and writes the right rc-file edits. Idempotent
-    # — re-runs of this dev recipe won't duplicate entries. Non-fatal:
-    # the binary is at ~/.ministr/bin/ministr regardless, so PATH-wiring
-    # trouble shouldn't abort the rest of the reinstall.
-    echo "==> Adding ministr to PATH via \`ministr setup\`..."
-    if ! ~/.ministr/bin/ministr setup; then
-        echo "   ministr setup failed — add manually with:" >&2
-        echo "     export PATH=\"\$HOME/.ministr/bin:\$PATH\"" >&2
-    fi
-    echo "==> Installing Tauri app..."
-    if [ ! -d /Applications/ministr.app/Contents/MacOS ]; then
-        echo "   ministr.app bundle not found at /Applications/ministr.app." >&2
-        echo "   This recipe only updates the inner binary; it cannot build the" >&2
-        echo "   .app bundle from scratch. Run \`just pkg-dev\` (or \`just pkg\` for" >&2
-        echo "   a signed+notarized build), install the produced .pkg, then" >&2
-        echo "   re-run this recipe." >&2
-        exit 1
-    fi
-    # Bundles installed from a signed .pkg are owned by root; bundles
-    # built locally with `cargo build -p ministr-app` are owned by the
-    # current user. Use sudo only when needed so dev re-runs don't
-    # prompt for a password unnecessarily.
-    SUDO=""
-    if [ ! -w /Applications/ministr.app/Contents/MacOS/ministr-app ]; then
-        SUDO="sudo"
-        echo "   bundle is root-owned (.pkg-installed) — using sudo for in-place updates"
-    fi
-    $SUDO cp target/release/ministr-app /Applications/ministr.app/Contents/MacOS/ministr-app
-    # Sidecar binary lives inside the bundle too; keep it in sync.
-    if [ -f /Applications/ministr.app/Contents/MacOS/ministr-cli ]; then
-        $SUDO cp target/release/ministr /Applications/ministr.app/Contents/MacOS/ministr-cli
-    fi
-    # We modified the bundle contents; ad-hoc re-sign so macOS will launch it.
-    $SUDO codesign --force --deep --sign - /Applications/ministr.app >/dev/null 2>&1 || true
-    echo "==> Launching tray app..."
-    open /Applications/ministr.app
-    echo "==> Done. Restart your Claude Code session to pick up the new binary."
+    bash scripts/reinstall.sh
 
 # Clean rebuild + install CLI + Tauri app + launch tray (Windows)
 [windows]
