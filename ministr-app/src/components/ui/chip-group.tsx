@@ -33,7 +33,7 @@ export function Chip({
         <span
           className={cn(
             "tabular-nums",
-            active ? "opacity-80" : "text-text-dim",
+            active ? "text-accent/70" : "text-text-dim/60",
           )}
         >
           {count}
@@ -42,11 +42,14 @@ export function Chip({
     </>
   );
 
+  // Pill styling — quiet by default, gently lit when active. Smaller type
+  // and tighter padding than the previous design so the filter bar feels
+  // like metadata, not chrome.
   const classes = cn(
-    "inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 font-mono text-mono-mini uppercase tracking-[0.08em] transition-colors duration-150",
+    "inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-px font-mono text-[10px] uppercase tracking-[0.06em] leading-[18px] transition-colors duration-150",
     active
-      ? "border-accent bg-accent text-[var(--color-accent-fg-on)]"
-      : "border-border-soft text-text-muted hover:border-border",
+      ? "border-accent/40 bg-accent/10 text-accent"
+      : "border-border-soft/60 text-text-dim hover:border-border-soft hover:text-text-muted",
     onClick && "cursor-pointer",
     className,
   );

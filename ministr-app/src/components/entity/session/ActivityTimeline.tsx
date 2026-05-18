@@ -318,10 +318,9 @@ function EventRow({
           {file && (
             <div
               className="truncate font-mono text-[10.5px] text-text-dim mt-px"
-              dir="rtl"
               title={file}
             >
-              <bdo dir="ltr">↳ {file}</bdo>
+              ↳ {file}
             </div>
           )}
         </div>
