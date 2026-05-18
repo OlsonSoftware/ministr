@@ -20,8 +20,18 @@ use axum::{
     response::Response,
 };
 use ministr_api::activity::ActivityEvent;
+use percent_encoding::percent_decode_str;
 
 use crate::state::AppState;
+
+/// Decode percent-encoded URL path components for human-readable
+/// activity summaries (e.g. `%2FUsers%2F…%23section` → `/Users/…#section`).
+/// Falls back to the raw string on invalid UTF-8.
+fn decode_summary(raw: &str) -> String {
+    percent_decode_str(raw)
+        .decode_utf8()
+        .map_or_else(|_| raw.to_string(), std::borrow::Cow::into_owned)
+}
 
 /// Request-/response-extension handlers can insert to enrich the
 /// activity event the middleware records on the way back out.
@@ -40,6 +50,16 @@ pub struct ActivitySummary {
 /// inspection in [`classify_route`].
 pub async fn record(State(state): State<AppState>, req: Request<Body>, next: Next) -> Response {
     let path = req.uri().path().to_string();
+    // Capture the per-request session header before `next.run(req)`
+    // consumes the request. Corpus-scoped tool routes (survey/symbols/
+    // definition/…) have no session id in the URL path; the MCP proxy
+    // stamps the active session here via `X-Ministr-Session-Id` so the
+    // activity timeline can still attribute them.
+    let header_session_id = req
+        .headers()
+        .get("x-ministr-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
     let started = Instant::now();
 
     let res = next.run(req).await;
@@ -57,12 +77,20 @@ pub async fn record(State(state): State<AppState>, req: Request<Body>, next: Nex
         .cloned()
         .unwrap_or_default();
 
+    // URL-derived session id wins (it is the authoritative
+    // session-scoped route segment for `read`/`dropped`). For every
+    // other route the URL has no session id, so fall back to the
+    // header the MCP proxy stamps from its active session.
+    let session_id = route.session_id.or(header_session_id);
+
     let event = ActivityEvent {
         timestamp_ms: now_ms(),
         tool: route.tool.to_string(),
         corpus_id: route.corpus_id,
-        session_id: route.session_id,
-        summary: enrich.summary.unwrap_or(route.path_summary),
+        session_id,
+        summary: enrich
+            .summary
+            .unwrap_or_else(|| decode_summary(&route.path_summary)),
         tokens_delta: enrich.tokens_delta,
         pressure: enrich.pressure,
         cache_hit: enrich.cache_hit,

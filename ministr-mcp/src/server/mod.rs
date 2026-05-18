@@ -1,20 +1,13 @@
 //! MCP server implementation for ministr.
 //!
 //! Implements the rmcp `ServerHandler` trait with `#[tool]` macro-based
-//! tool registration. The server exposes ministr tools (`ministr_survey`,
-//! `ministr_read`, `ministr_extract`, `ministr_related`, `ministr_dropped`,
-//! `ministr_usage`, `ministr_compress`, `ministr_toc`, `ministr_fetch`,
-//! `ministr_refresh`, `ministr_clone`, `ministr_task`) over the MCP protocol.
-//!
-//! Every tool response includes a `usage_status` object with the current
-//! token budget state. Survey and read responses are deduplicated against
-//! the session shadow to avoid re-delivering content the agent already has.
-//!
-//! When the agent re-requests unchanged content, ministr treats it as a
-//! fault-based eviction signal — the agent's context window dropped the
-//! content before our estimator predicted. The window estimate is corrected
-//! and the content is re-delivered. The `ministr_dropped` tool accepts explicit
-//! eviction feedback from the agent.
+//! tool registration. The server exposes ministr's code-intelligence tools
+//! over MCP — code navigation (`ministr_symbols`, `ministr_definition`,
+//! `ministr_references`, `ministr_bridge`), search and retrieval
+//! (`ministr_survey`, `ministr_read`, `ministr_extract`, `ministr_related`,
+//! `ministr_toc`), ingestion (`ministr_fetch`, `ministr_refresh`,
+//! `ministr_clone`), and a few advanced session-housekeeping tools
+//! (`ministr_usage`, `ministr_compress`, `ministr_dropped`).
 
 mod builders;
 mod helpers;
@@ -95,15 +88,14 @@ use crate::task::{McpTaskManager, task_to_cancel_result, task_to_get_result};
 /// loaded when editing ministr itself).
 pub(crate) const DEFAULT_INSTRUCTIONS: &str = "\
 ministr is a code intelligence MCP server. It gives you AST-level \
-understanding of the codebase: semantic search, symbol navigation, \
-real reference graphs, and cross-language bridge detection — not text \
-matching. Prefer it over Read/Grep/Glob for any exploration. As a bonus, \
-ministr remembers what it has already shown you this session, so re-asking \
-for the same content costs almost nothing and you only get back what changed.
+understanding of the codebase: symbol navigation, real reference graphs, \
+cross-language bridge detection, and hybrid semantic search across code \
+and docs — not text matching. Prefer it over Read/Grep/Glob for any \
+exploration.
 
 # Where to start
-- Vague concept question → ministr_survey
 - Know the symbol name → ministr_symbols, then ministr_definition
+- Vague concept question → ministr_survey
 - Know the file → ministr_toc, then ministr_read (or ministr_extract for atomic claims)
 - Need project layout → ministr_toc
 - Following claim dependencies → ministr_related
@@ -121,18 +113,12 @@ re-call ministr_read on the listed sections to get the delta.
 - `indexing_in_progress: true` → results may be incomplete; consider re-running \
 search-style tools when it clears.
 - `next_actions` array → concrete suggested next tool calls with arguments and reasons. \
-Treat as advisory but high-signal; the server picked them based on session state.
-
-Note: ministr tracks delivery internally only to avoid re-sending content \
-you already have. It does not, and is not designed to, tell you how full \
-your context window is — any internal figures are anchored to a configured \
-window, not your real model context window. Manage your own context as you \
-normally would; do not treat ministr as a signal that you are low on room.
+Treat as advisory but high-signal.
 
 # Anti-patterns
 - Don't shell out to grep/rg/find/ag/cat for search — use ministr_survey or ministr_symbols.
-- Don't Read a file just to explore — use ministr_read so ministr can track what \
-you've seen and return only the delta on later calls.
+- Don't Read a file just to explore — use ministr_read for a section or \
+ministr_definition for a symbol.
 ";
 
 /// Minimum survey score for a top-result follow-up suggestion.
@@ -274,7 +260,6 @@ impl NegotiatedExtensions {
 ///
 /// `MinistrServer` adapts the [`QueryService`] to the MCP protocol.
 /// It handles tool registration, request routing, and response formatting.
-/// Tracks session state for deduplication and budget management.
 #[derive(Clone)]
 pub struct MinistrServer {
     service: Arc<QueryService>,
@@ -976,7 +961,7 @@ impl MinistrServer {
     ///    of re-delivering the full text.
     #[tool(
         name = "ministr_read",
-        description = "Full content of a section by ID. On a repeat request it returns only what changed since it last showed you this section (or a short stub if nothing changed). Call ministr_extract instead if you only need atomic claims.",
+        description = "Full content of a section by ID. Call ministr_extract instead if you only need atomic claims.",
         output_schema = tool_output_schema::<ToolResponse<ReadOutputData>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2379,15 +2364,11 @@ mod tests {
     fn default_instructions_do_not_push_usage_protocol() {
         // Regression: the playbook must NOT advertise a budget protocol or
         // tell agents to react to pressure — that made agents wrongly
-        // conclude they were low on context. It should instead explicitly
-        // state that ministr does not surface budget pressure.
+        // conclude they were low on context. The current playbook simply
+        // doesn't mention the usage protocol at all.
         assert!(!DEFAULT_INSTRUCTIONS.contains("ministr_usage"));
         assert!(!DEFAULT_INSTRUCTIONS.contains("Budget protocol"));
         assert!(!DEFAULT_INSTRUCTIONS.contains("drop_suggestions"));
-        assert!(
-            DEFAULT_INSTRUCTIONS
-                .contains("do not treat ministr as a signal that you are low on room")
-        );
     }
 
     #[test]
@@ -3334,12 +3315,6 @@ mod tests {
         assert!(
             !instructions.contains("drop_suggestions"),
             "instructions must not tell the agent to act on drop_suggestions"
-        );
-        // It should explicitly tell the agent ministr is not a
-        // low-context signal.
-        assert!(
-            instructions.contains("do not treat ministr as a signal that you are low on room"),
-            "instructions should state ministr is not a low-context signal"
         );
     }
 

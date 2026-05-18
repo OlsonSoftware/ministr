@@ -7,11 +7,10 @@ ministr is a code intelligence MCP server. It gives AI coding agents AST-level u
 
 ## What ministr gives your agent
 
-- **Semantic search** across your codebase and docs via `ministr_survey`
-- **Symbol navigation** — find and trace functions, types, and callers via `ministr_symbols` / `ministr_references`
-- **Cross-language bridge detection** — links Tauri / napi-rs / PyO3 / wasm-bindgen / gRPC / HTTP / FFI boundaries via `ministr_bridge`
+- **Symbol navigation** — find and trace functions, types, and callers via `ministr_symbols` / `ministr_references` / `ministr_definition`
+- **Cross-language bridge detection** — follows a call across Tauri / napi-rs / PyO3 / wasm-bindgen / gRPC / HTTP / FFI boundaries via `ministr_bridge`
+- **Hybrid semantic search** across code and docs via `ministr_survey` — meaning and keyword together, ranked
 - **Multi-resolution results** — summary, section, claim, symbol, or full source — the slice that matters, not a file dump
-- **Efficient delivery (a bonus)** — remembers what it already sent and ships only what changed on the next turn
 
 ## Start here
 

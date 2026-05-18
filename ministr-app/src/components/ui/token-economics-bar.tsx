@@ -32,9 +32,9 @@ export function TokenEconomicsBar({
   className,
 }: TokenEconomicsBarProps) {
   const segs: Seg[] = [
-    { label: "Served", tokens: deliveredTokens, bg: "bg-accent" },
+    { label: "Delivered", tokens: deliveredTokens, bg: "bg-accent" },
     { label: "Saved", tokens: savedTokens, bg: "bg-success" },
-    { label: "Live", tokens: liveTokens, bg: "bg-surface-overlay" },
+    { label: "Live", tokens: liveTokens, bg: "bg-text-dim" },
   ];
   const total = segs.reduce((a, s) => a + s.tokens, 0);
 

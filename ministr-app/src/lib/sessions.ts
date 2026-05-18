@@ -250,10 +250,13 @@ export function deriveVitals(
     capacity: capacityOf(session),
     tokensSaved: session.total_tokens_saved,
     dedupHits: session.dedup_hits,
-    savingsRate: safeDiv(
-      session.total_tokens_saved,
-      session.cumulative_tokens_delivered,
-    ),
+    savingsRate:
+      session.compression_ratio > 0
+        ? session.compression_ratio
+        : safeDiv(
+            session.total_tokens_saved,
+            session.cumulative_tokens_delivered,
+          ),
     cacheHitRate: safeDiv(session.dedup_hits, session.total_deliveries),
     evictions: session.total_evictions,
     compressions: session.total_compressions,

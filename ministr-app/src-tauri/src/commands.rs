@@ -770,6 +770,7 @@ pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result
 pub struct SessionDetail {
     pub session_id: String,
     pub corpus_id: String,
+    #[serde(rename = "pressure_level")]
     pub level: String,
     pub tokens_used: usize,
     pub tokens_remaining: usize,
@@ -1092,9 +1093,10 @@ pub async fn recent_activity(
     } else {
         state.recent_activity(limit).await
     };
-    // Optional server-side per-session filter. The ring is small (≤ the
-    // requested window, ≤500), so filtering here is cheap and removes the
-    // pull-everything-then-filter-client-side workaround.
+    // Per-session filter. Every event the MCP proxy generates is now
+    // stamped with its originating session via the X-Ministr-Session-Id
+    // header (read in the daemon's activity middleware), so a strict
+    // session_id match returns the complete timeline for this session.
     let events = match session_id {
         Some(sid) => events
             .into_iter()
@@ -1760,8 +1762,7 @@ fn which_on_path(name: &str) -> Option<String> {
 
     // Track which directories we've already probed so the unix-fallback
     // sweep doesn't re-stat dirs that were already on PATH.
-    let mut seen: std::collections::HashSet<std::path::PathBuf> =
-        std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
 
     if let Some(path_var) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path_var) {
@@ -1840,8 +1841,7 @@ fn unix_extra_bin_dirs() -> Vec<std::path::PathBuf> {
         // single version installed via nvm, so probing the directory
         // surfaces `claude` without needing the shell-only `nvm use`
         // symlink dance.
-        let nvm_root = std::env::var_os("NVM_DIR")
-            .map_or_else(|| home.join(".nvm"), PathBuf::from);
+        let nvm_root = std::env::var_os("NVM_DIR").map_or_else(|| home.join(".nvm"), PathBuf::from);
         let versions_dir = nvm_root.join("versions").join("node");
         if let Ok(entries) = std::fs::read_dir(&versions_dir) {
             for entry in entries.flatten() {

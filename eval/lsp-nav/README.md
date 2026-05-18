@@ -54,8 +54,3 @@ construction and exercise the differentiator.
 
 Both indexers are minutes-long and memory-heavy, so this runs on demand
 (and in a dedicated CI job), never in the default test run.
-
-## Public-results note
-
-ministr is not open source; any published comparison stays black-box —
-report metrics and methodology, not internal symbol/schema names.

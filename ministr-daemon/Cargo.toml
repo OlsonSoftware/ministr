@@ -59,6 +59,9 @@ blake3 = { workspace = true }
 async-stream = "0.3"
 futures-core = "0.3"
 
+# Percent-decoding for activity-event path summaries
+percent-encoding = "2"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
