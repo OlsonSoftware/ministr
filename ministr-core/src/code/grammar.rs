@@ -158,7 +158,13 @@ impl GrammarRegistry {
             &mut languages,
             &mut grammars,
             "cpp",
-            &["cpp", "cc", "cxx", "hpp", "hxx", "hh"],
+            // Includes C++20 module interfaces (`.cppm` Clang / `.ixx`
+            // MSVC) and template-implementation headers (`.tpp`/`.ipp`/
+            // `.inl`) — all plain C++ the grammar already parses.
+            &[
+                "cpp", "cc", "cxx", "c++", "hpp", "hxx", "hh", "h++", "cppm", "ixx", "tpp", "ipp",
+                "inl",
+            ],
             tree_sitter_unreal_cpp::LANGUAGE.into(),
         );
 
@@ -650,9 +656,16 @@ pub const ALL_CODE_EXTENSIONS: &[&str] = &[
     "cpp",
     "cc",
     "cxx",
+    "c++",
     "hpp",
     "hxx",
     "hh",
+    "h++",
+    "cppm",
+    "ixx",
+    "tpp",
+    "ipp",
+    "inl",
     // C#
     "cs",
     // Ruby
