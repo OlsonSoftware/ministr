@@ -223,10 +223,14 @@ pub(crate) async fn cmd_serve_http(
 ///
 /// Connects to the ministr daemon at `~/.ministr/ministrd.sock` and proxies all
 /// tool calls. No ONNX model, no indexes, no `SQLite` — just HTTP over UDS.
-pub(crate) async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
+pub(crate) async fn cmd_serve_proxy_stdio(
+    corpus_paths: &[String],
+    linked: &[ministr_core::config::ResolvedLinkedProject],
+) -> Result<()> {
     eprintln!(
-        "ministr: proxy starting with {} corpus paths",
-        corpus_paths.len()
+        "ministr: proxy starting with {} corpus paths, {} linked project(s)",
+        corpus_paths.len(),
+        linked.len()
     );
 
     // Pre-register corpus with daemon before starting MCP handshake.
@@ -244,7 +248,8 @@ pub(crate) async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()>
     }
 
     eprintln!("ministr: starting MCP proxy on stdio");
-    let proxy = ministr_mcp::proxy::ProxyServer::new(corpus_paths.to_vec());
+    let proxy =
+        ministr_mcp::proxy::ProxyServer::with_linked(corpus_paths.to_vec(), linked.to_vec());
 
     // Eagerly create a daemon session so the GUI shows it immediately.
     if let Err(e) = proxy.initialize().await {

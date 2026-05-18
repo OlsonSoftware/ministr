@@ -214,6 +214,8 @@ struct ResolvedConfig {
     config: ministr_core::config::MinistrConfig,
     cwd: PathBuf,
     corpus_paths: Vec<String>,
+    /// Projects linked into this workspace via `.ministr.toml` `[[linked]]`.
+    linked: Vec<ministr_core::config::ResolvedLinkedProject>,
     git_includes: Vec<ministr_core::config::GitInclude>,
     resolved_model: String,
     repo_config_dir: Option<PathBuf>,
@@ -262,6 +264,11 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
         cli.corpus.clone()
     };
 
+    let linked = corpus_config
+        .as_ref()
+        .map(|(_, cc)| cc.resolve_linked_projects())
+        .unwrap_or_default();
+
     let repo_config_dir = corpus_config.as_ref().map(|(dir, _)| dir.clone());
 
     let git_includes = corpus_config
@@ -287,6 +294,7 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
         config,
         cwd,
         corpus_paths,
+        linked,
         git_includes,
         resolved_model,
         repo_config_dir,
@@ -349,7 +357,7 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
 
             match transport {
                 Transport::Stdio if proxy => {
-                    commands::cmd_serve_proxy_stdio(&rc.corpus_paths).await
+                    commands::cmd_serve_proxy_stdio(&rc.corpus_paths, &rc.linked).await
                 }
                 Transport::Stdio
                     if !proxy && ministr_api::client::DaemonClient::new().is_healthy().await =>
@@ -357,7 +365,7 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                     eprintln!(
                         "ministr: daemon detected at ~/.ministr/ministrd.sock — running as proxy"
                     );
-                    commands::cmd_serve_proxy_stdio(&rc.corpus_paths).await
+                    commands::cmd_serve_proxy_stdio(&rc.corpus_paths, &rc.linked).await
                 }
                 Transport::Stdio => {
                     commands::cmd_serve_stdio(

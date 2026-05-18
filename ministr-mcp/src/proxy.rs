@@ -4,9 +4,11 @@
 //! forwards all operations to the ministr daemon via [`DaemonClient`].
 //! Uses ~20 MB vs the monolithic server's ~2 GB+.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ministr_api::client::DaemonClient;
+use ministr_core::config::ResolvedLinkedProject;
 use ministr_core::session::{DropPolicy, UsageConfig, UsageTracker};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -59,6 +61,14 @@ pub struct ProxyServer {
     corpus_id: Arc<Mutex<Option<String>>>,
     session_id: Arc<Mutex<Option<String>>>,
     corpus_paths: Vec<String>,
+    /// Projects linked into this workspace via `.ministr.toml` `[[linked]]`.
+    /// An agent targets one by passing its label as the `project` argument
+    /// to a query tool; omitting `project` always uses the current corpus.
+    linked: Vec<ResolvedLinkedProject>,
+    /// Memoized `(corpus_id, session_id)` per linked-project label. Kept
+    /// separate from the current project's `corpus_id`/`session_id` so the
+    /// default path (and shutdown/lock ordering) is unchanged.
+    linked_state: Arc<Mutex<HashMap<String, (String, String)>>>,
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     /// Local budget tracker — tracks tokens delivered through this proxy
@@ -75,11 +85,19 @@ pub struct SurveyParams {
     pub query: String,
     #[serde(default)]
     pub top_k: Option<usize>,
+    /// Linked project label to query instead of the current project.
+    /// Omit to query the current project. List labels via ministr_projects.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReadParams {
     pub section_id: String,
+    /// Linked project label the section belongs to. Omit for the current
+    /// project. Use the same label you queried it from.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -87,6 +105,9 @@ pub struct ExtractParams {
     pub section_id: String,
     #[serde(default)]
     pub query: Option<String>,
+    /// Linked project label. Omit for the current project.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -100,16 +121,25 @@ pub struct SymbolsParams {
     pub visibility: Option<String>,
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Linked project label. Omit for the current project.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DefinitionParams {
     pub symbol_id: String,
+    /// Linked project label. Omit for the current project.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReferencesParams {
     pub symbol_id: String,
+    /// Linked project label. Omit for the current project.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -120,6 +150,9 @@ pub struct TocParams {
     pub offset: Option<usize>,
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Linked project label. Omit for the current project.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -127,6 +160,9 @@ pub struct RelatedParams {
     pub claim_id: String,
     #[serde(default)]
     pub relation_types: Option<Vec<String>>,
+    /// Linked project label. Omit for the current project.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -139,6 +175,9 @@ pub struct BridgeParams {
     pub source_language: Option<String>,
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Linked project label. Omit for the current project.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -151,9 +190,34 @@ pub struct DroppedParams {
     pub content_ids: Vec<String>,
 }
 
+/// One project an agent can query in this session.
+#[derive(Debug, Serialize)]
+struct ProjectEntry {
+    /// Value to pass as the `project` argument. `null` for the current
+    /// project (omit `project` entirely to query it).
+    label: Option<String>,
+    /// On-disk root of the project.
+    root: String,
+    /// `true` for the project this MCP session was launched in.
+    is_current: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectsResponse {
+    projects: Vec<ProjectEntry>,
+    hint: String,
+}
+
 impl ProxyServer {
     #[must_use]
     pub fn new(corpus_paths: Vec<String>) -> Self {
+        Self::with_linked(corpus_paths, Vec::new())
+    }
+
+    /// Like [`new`](Self::new) but also wires up linked projects so an agent
+    /// can query them by label without leaving the session.
+    #[must_use]
+    pub fn with_linked(corpus_paths: Vec<String>, linked: Vec<ResolvedLinkedProject>) -> Self {
         // Inherit the env-driven window (MINISTR_CONTEXT_WINDOW, else the
         // 200k fallback) rather than pinning a misleadingly small 100k.
         let budget_config = UsageConfig::default();
@@ -162,6 +226,8 @@ impl ProxyServer {
             corpus_id: Arc::new(Mutex::new(None)),
             session_id: Arc::new(Mutex::new(None)),
             corpus_paths,
+            linked,
+            linked_state: Arc::new(Mutex::new(HashMap::new())),
             tool_router: Self::tool_router(),
             local_budget: Arc::new(Mutex::new(UsageTracker::new(
                 budget_config,
@@ -350,6 +416,16 @@ impl ProxyServer {
                 info!(session_id = %sid, "destroyed daemon session");
             }
         }
+
+        // Tear down any linked-project sessions this proxy created.
+        let linked = std::mem::take(&mut *self.linked_state.lock().await);
+        for (label, (cid, sid)) in linked {
+            if let Err(e) = self.client.destroy_session(&cid, &sid).await {
+                warn!(error = %e, label, "failed to destroy linked session on shutdown");
+            } else {
+                info!(session_id = %sid, label, "destroyed linked session");
+            }
+        }
     }
 
     /// Ensure a daemon session exists for this proxy, creating one lazily.
@@ -380,6 +456,67 @@ impl ProxyServer {
         Ok(resp.session_id)
     }
 
+    /// Resolve a tool call's optional `project` argument to a
+    /// `(corpus_id, session_id)` pair.
+    ///
+    /// `None` (the default) targets the current project — identical
+    /// behaviour to before linked projects existed. `Some(label)` targets a
+    /// linked project declared in `.ministr.toml`; an unknown label is a
+    /// clean error listing the valid ones (the agent can only ever reach a
+    /// project a human linked — never an arbitrary path).
+    async fn target(&self, project: Option<&str>) -> Result<(String, String), McpError> {
+        let Some(label) = project.map(str::trim).filter(|l| !l.is_empty()) else {
+            // Current project — unchanged path.
+            return Ok((self.ensure_corpus().await?, self.ensure_session().await?));
+        };
+
+        let Some(link) = self.linked.iter().find(|l| l.label == label) else {
+            let valid: Vec<&str> = self.linked.iter().map(|l| l.label.as_str()).collect();
+            return Err(McpError::invalid_params(
+                format!(
+                    "unknown linked project {label:?}. Linked projects: {}. \
+                     Omit `project` to query the current one. \
+                     Call ministr_projects to list them.",
+                    if valid.is_empty() {
+                        "(none configured)".to_string()
+                    } else {
+                        valid.join(", ")
+                    }
+                ),
+                None,
+            ));
+        };
+
+        // Hold the map lock across the register + create_session RPCs so
+        // concurrent first-callers for the same label don't double-register.
+        let mut guard = self.linked_state.lock().await;
+        if let Some(pair) = guard.get(label) {
+            return Ok(pair.clone());
+        }
+
+        self.ensure_daemon().await?;
+        let reg = self
+            .client
+            .register_corpus(&link.corpus_paths)
+            .await
+            .map_err(|e| McpError::internal_error(format!("daemon: {e}"), None))?;
+        let sess = self
+            .client
+            .create_session(&reg.corpus_id, None)
+            .await
+            .map_err(|e| McpError::internal_error(format!("daemon session: {e}"), None))?;
+
+        info!(
+            label,
+            corpus_id = %reg.corpus_id,
+            session_id = %sess.session_id,
+            "resolved linked project"
+        );
+        let pair = (reg.corpus_id, sess.session_id);
+        guard.insert(label.to_string(), pair.clone());
+        Ok(pair)
+    }
+
     /// Serialize a response into a `CallToolResult` using only the `content`
     /// field (text JSON).  We intentionally avoid `CallToolResult::structured`
     /// because it populates *both* `content` and `structured_content`, and
@@ -406,8 +543,7 @@ impl ProxyServer {
         &self,
         Parameters(params): Parameters<SurveyParams>,
     ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
+        let (cid, sid) = self.target(params.project.as_deref()).await?;
         let req = ministr_api::query::SurveyRequest {
             query: params.query,
             top_k: params.top_k,
@@ -429,8 +565,7 @@ impl ProxyServer {
         &self,
         Parameters(params): Parameters<ReadParams>,
     ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
+        let (cid, sid) = self.target(params.project.as_deref()).await?;
         let resp = self
             .client
             .session_read_section(&cid, &sid, &params.section_id)
@@ -460,8 +595,7 @@ impl ProxyServer {
         &self,
         Parameters(params): Parameters<ExtractParams>,
     ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
+        let (cid, sid) = self.target(params.project.as_deref()).await?;
         let req = ministr_api::query::ExtractRequest {
             section_id: params.section_id,
             query: params.query,
@@ -483,8 +617,7 @@ impl ProxyServer {
         &self,
         Parameters(params): Parameters<SymbolsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
+        let (cid, sid) = self.target(params.project.as_deref()).await?;
         let req = ministr_api::query::SymbolsRequest {
             query: params.query,
             kind: params.kind,
@@ -519,8 +652,7 @@ impl ProxyServer {
         &self,
         Parameters(params): Parameters<DefinitionParams>,
     ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
+        let (cid, sid) = self.target(params.project.as_deref()).await?;
         let mut resp = self
             .client
             .definition(&cid, &params.symbol_id, Some(&sid))
@@ -547,8 +679,7 @@ impl ProxyServer {
         &self,
         Parameters(params): Parameters<ReferencesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
+        let (cid, sid) = self.target(params.project.as_deref()).await?;
         let mut resp = self
             .client
             .references(&cid, &params.symbol_id, Some(&sid))
@@ -585,8 +716,7 @@ impl ProxyServer {
         &self,
         Parameters(params): Parameters<TocParams>,
     ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
+        let (cid, sid) = self.target(params.project.as_deref()).await?;
         let req = ministr_api::query::TocRequest {
             document_id: params.document_id,
             offset: params.offset,
@@ -609,8 +739,7 @@ impl ProxyServer {
         &self,
         Parameters(params): Parameters<RelatedParams>,
     ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
+        let (cid, sid) = self.target(params.project.as_deref()).await?;
         let req = ministr_api::query::RelatedRequest {
             claim_id: params.claim_id,
             relation_types: params.relation_types.unwrap_or_default(),
@@ -632,8 +761,7 @@ impl ProxyServer {
         &self,
         Parameters(params): Parameters<BridgeParams>,
     ) -> Result<CallToolResult, McpError> {
-        let cid = self.ensure_corpus().await?;
-        let sid = self.ensure_session().await?;
+        let (cid, sid) = self.target(params.project.as_deref()).await?;
         let req = ministr_api::query::BridgeRequest {
             query: params.query,
             kind: params.kind,
@@ -647,6 +775,37 @@ impl ProxyServer {
             .await
             .map_err(|e| Self::err(&e))?;
         Self::json_result(&resp)
+    }
+
+    #[tool(
+        name = "ministr_projects",
+        description = "List the current project plus any linked projects you can query in this same session. To search a linked project, pass its `label` as the `project` argument to ministr_survey / ministr_symbols / ministr_read / etc.; omit `project` for the current one. Linked projects are configured by a human (desktop app or .ministr.toml) — you cannot add new ones."
+    )]
+    async fn projects(&self) -> Result<CallToolResult, McpError> {
+        let mut projects = Vec::with_capacity(self.linked.len() + 1);
+        projects.push(ProjectEntry {
+            label: None,
+            root: self.corpus_paths.first().cloned().unwrap_or_default(),
+            is_current: true,
+        });
+        for l in &self.linked {
+            projects.push(ProjectEntry {
+                label: Some(l.label.clone()),
+                root: l.root.to_string_lossy().to_string(),
+                is_current: false,
+            });
+        }
+        let hint = if self.linked.is_empty() {
+            "No linked projects. A human can link one in the ministr desktop \
+             app (Linked Projects) or by adding a [[linked]] entry to \
+             .ministr.toml."
+                .to_string()
+        } else {
+            "Pass `project: \"<label>\"` to any query tool to search that \
+             linked project; omit `project` for the current one."
+                .to_string()
+        };
+        Self::json_result(&ProjectsResponse { projects, hint })
     }
 
     #[tool(
@@ -783,5 +942,71 @@ impl ServerHandler for ProxyServer {
             next_cursor: None,
             meta: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn linked(label: &str) -> ResolvedLinkedProject {
+        ResolvedLinkedProject {
+            label: label.to_string(),
+            root: std::path::PathBuf::from(format!("/p/{label}")),
+            corpus_paths: vec![format!("/p/{label}")],
+        }
+    }
+
+    #[tokio::test]
+    async fn target_unknown_label_errors_without_touching_daemon() {
+        let proxy = ProxyServer::with_linked(vec!["/cur".into()], vec![linked("shared")]);
+        let err = proxy
+            .target(Some("nope"))
+            .await
+            .expect_err("unknown label must error");
+        let msg = format!("{err:?}");
+        assert!(msg.contains("nope"), "error should name the bad label: {msg}");
+        assert!(msg.contains("shared"), "error should list valid labels: {msg}");
+    }
+
+    #[tokio::test]
+    async fn projects_lists_current_plus_linked() {
+        let proxy = ProxyServer::with_linked(
+            vec!["/cur".into()],
+            vec![linked("alpha"), linked("beta")],
+        );
+        // No daemon needed: projects() only reads in-memory config.
+        let result = proxy.projects().await.expect("projects must succeed");
+        let v = serde_json::to_value(&result).unwrap();
+        let text = v["content"][0]["text"]
+            .as_str()
+            .expect("text content")
+            .to_string();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let projects = parsed["projects"].as_array().unwrap();
+        assert_eq!(projects.len(), 3);
+        assert_eq!(projects[0]["is_current"], true);
+        assert!(projects[0]["label"].is_null());
+        assert_eq!(projects[1]["label"], "alpha");
+        assert_eq!(projects[2]["label"], "beta");
+    }
+
+    #[tokio::test]
+    async fn empty_project_arg_is_treated_as_current() {
+        // A blank/whitespace label must not be looked up as a linked
+        // project — it falls through to the current-project path (which
+        // here will fail trying to reach a daemon, *not* with an
+        // "unknown linked project" error).
+        let proxy = ProxyServer::with_linked(vec!["/cur".into()], vec![linked("shared")]);
+        // Whether or not a daemon is reachable in the test environment, a
+        // blank label must never be rejected as an *unknown linked
+        // project* — it is the current-project path.
+        if let Err(err) = proxy.target(Some("   ")).await {
+            let msg = format!("{err:?}");
+            assert!(
+                !msg.contains("unknown linked project"),
+                "blank label must not be rejected as a linked project: {msg}"
+            );
+        }
     }
 }
