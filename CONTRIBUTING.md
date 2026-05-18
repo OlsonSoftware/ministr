@@ -161,4 +161,4 @@ CI runs these automatically on every PR.
 
 ## License
 
-By contributing, you agree that your contributions will be dual-licensed under MIT and Apache-2.0, as described in [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
+ministr is proprietary, closed-source software (see [LICENSE](LICENSE)). By contributing, you assign all right, title, and interest in your contributions to the copyright holder; no open-source license is granted in or to this repository or its source.
