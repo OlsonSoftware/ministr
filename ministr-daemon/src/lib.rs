@@ -7,6 +7,7 @@
 
 pub mod activity;
 pub mod ask;
+pub mod bootstrap;
 pub mod cloud;
 pub mod convert;
 pub mod daemon;

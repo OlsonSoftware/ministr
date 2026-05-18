@@ -12,8 +12,6 @@
 mod commands;
 mod infra;
 mod ingestion;
-mod instance;
-mod proxy;
 
 use std::path::PathBuf;
 
@@ -62,12 +60,12 @@ enum Command {
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
 
-        /// Run as a thin proxy to the ministr daemon instead of the monolithic server.
+        /// Deprecated, no-op (kept for backward compatibility).
         ///
-        /// When enabled, the MCP server connects to the ministr daemon at
-        /// `~/.ministr/ministrd.sock` and delegates all indexing and querying.
-        /// Uses ~20 MB vs ~2 GB for the full server.
-        #[arg(long)]
+        /// stdio now ALWAYS runs as a thin proxy to the ministr daemon
+        /// (auto-spawned if not running); the old monolithic server was
+        /// removed. This flag is accepted but has no effect.
+        #[arg(long, hide = true)]
         proxy: bool,
 
         /// Enable OAuth 2.1 authentication for the HTTP transport.
@@ -92,10 +90,16 @@ enum Command {
     /// or running in CI pipelines.
     Index,
 
-    /// Show daemon status (requires ministr-app to be running).
+    /// Internal: run the headless ministr daemon. Auto-spawned by the
+    /// MCP proxy (and desktop app); not intended for direct use.
+    #[command(hide = true, name = "__daemon")]
+    Daemon,
+
+    /// Show daemon status (requires the ministr daemon to be running).
     Status,
 
-    /// Search the corpus via the daemon (requires ministr-app to be running).
+    /// Search the corpus via the daemon (requires the ministr daemon to
+    /// be running).
     Search {
         /// Search query.
         query: String,
@@ -214,6 +218,8 @@ struct ResolvedConfig {
     config: ministr_core::config::MinistrConfig,
     cwd: PathBuf,
     corpus_paths: Vec<String>,
+    /// Projects linked into this workspace via `.ministr.toml` `[[linked]]`.
+    linked: Vec<ministr_core::config::ResolvedLinkedProject>,
     git_includes: Vec<ministr_core::config::GitInclude>,
     resolved_model: String,
     repo_config_dir: Option<PathBuf>,
@@ -262,6 +268,11 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
         cli.corpus.clone()
     };
 
+    let linked = corpus_config
+        .as_ref()
+        .map(|(_, cc)| cc.resolve_linked_projects())
+        .unwrap_or_default();
+
     let repo_config_dir = corpus_config.as_ref().map(|(dir, _)| dir.clone());
 
     let git_includes = corpus_config
@@ -287,6 +298,7 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
         config,
         cwd,
         corpus_paths,
+        linked,
         git_includes,
         resolved_model,
         repo_config_dir,
@@ -322,6 +334,37 @@ async fn main() -> Result<()> {
         return commands::cmd_setup(bin_dir.as_deref(), dry_run, uninstall);
     }
 
+    // `ministr __daemon` is the headless daemon host (auto-spawned by the
+    // MCP proxy / desktop app). It runs *before* resolve_config() too:
+    // it serves every corpus over the IPC endpoint and must not depend on
+    // the spawning process's cwd or a `.ministr.toml` there.
+    if let Command::Daemon = command {
+        let config_path = cli
+            .config
+            .clone()
+            .unwrap_or_else(ministr_core::config::MinistrConfig::default_path);
+        // `load` already returns the default when the file is simply
+        // absent; an `Err` therefore means the file IS present but
+        // unreadable/invalid. Silently defaulting there would start the
+        // daemon with the wrong data_dir/model and no clue why — so make
+        // that case loud rather than swallowing it.
+        let config = match ministr_core::config::MinistrConfig::load(&config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    path = %config_path.display(),
+                    error = %e,
+                    "config file present but invalid — starting daemon with DEFAULT \
+                     settings; fix the config and restart the daemon"
+                );
+                ministr_core::config::MinistrConfig::default()
+            }
+        };
+        return ministr_daemon::bootstrap::run(config)
+            .await
+            .map_err(|e| miette::miette!("daemon exited: {e}"));
+    }
+
     let rc = resolve_config(&cli)?;
 
     dispatch(command, rc).await
@@ -348,29 +391,15 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
             );
 
             match transport {
-                Transport::Stdio if proxy => {
-                    commands::cmd_serve_proxy_stdio(&rc.corpus_paths).await
-                }
-                Transport::Stdio
-                    if !proxy && ministr_api::client::DaemonClient::new().is_healthy().await =>
-                {
-                    eprintln!(
-                        "ministr: daemon detected at ~/.ministr/ministrd.sock — running as proxy"
-                    );
-                    commands::cmd_serve_proxy_stdio(&rc.corpus_paths).await
-                }
                 Transport::Stdio => {
-                    commands::cmd_serve_stdio(
-                        &rc.corpus_paths,
-                        &rc.git_includes,
-                        &rc.config_path,
-                        &rc.config,
-                        &rc.resolved_model,
-                        rc.repo_config_dir.as_deref(),
-                        rc.resolved_dimension,
-                        rc.rerank_depth,
-                    )
-                    .await
+                    // Always a thin proxy. The proxy auto-starts the
+                    // headless daemon (self-exec `ministr __daemon`) if
+                    // none is running, so shared-daemon is the single
+                    // architecture — there is no separate monolithic
+                    // per-corpus server. `--proxy` is now implicit; the
+                    // flag is retained only for backward compatibility.
+                    let _ = proxy;
+                    commands::cmd_serve_proxy_stdio(&rc.corpus_paths, &rc.linked).await
                 }
                 Transport::Http => {
                     let oauth_config = if oauth {
@@ -439,6 +468,9 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
         },
         Command::Setup { .. } => {
             unreachable!("ministr setup is dispatched before resolve_config in main()")
+        }
+        Command::Daemon => {
+            unreachable!("ministr __daemon is dispatched before resolve_config in main()")
         }
     }
 }

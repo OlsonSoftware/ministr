@@ -327,39 +327,6 @@ pub(crate) async fn build_server(
     Ok((server, ctx, coherence_handle))
 }
 
-/// Spawn an HTTP listener for secondary ministr instances to connect to.
-///
-/// Runs in a background task. When the primary's main MCP session ends,
-/// the tokio runtime drops this task and the listener closes.
-pub(crate) fn spawn_http_listener(server: ministr_mcp::server::MinistrServer, port: u16) {
-    use rmcp::transport::streamable_http_server::{
-        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-    };
-
-    tokio::spawn(async move {
-        // Each new MCP HTTP session gets a forked server with a fresh
-        // `active_session_id`. Without this, parent and subagent clients
-        // (both Claude Code MCP connections to the same primary) would
-        // share one session shadow — the parent's deduplication state
-        // would silently filter content from the subagent.
-        let server_factory = move || Ok(server.fork_for_new_session());
-        let session_manager = Arc::new(LocalSessionManager::default());
-        let http_service = StreamableHttpService::new(
-            server_factory,
-            session_manager,
-            StreamableHttpServerConfig::default(),
-        );
-        let app = axum::Router::new().nest_service("/mcp", http_service);
-
-        let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await else {
-            tracing::warn!(port, "failed to bind HTTP listener for secondaries");
-            return;
-        };
-        tracing::info!(port, "HTTP listener ready for secondary instances");
-        let _ = axum::serve(listener, app).await;
-    });
-}
-
 /// Spawn background corpus ingestion, returning when the MCP transport finishes.
 pub(crate) fn spawn_background_ingestion(
     corpus_paths: &[String],

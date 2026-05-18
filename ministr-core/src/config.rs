@@ -367,6 +367,14 @@ pub struct RepoConfig {
     /// Agent configuration: custom rules and preferences.
     #[serde(default)]
     pub agent: AgentConfig,
+    /// Other projects linked into this workspace.
+    ///
+    /// Unlike [`ExternalInclude`] (which merges files into *this* corpus),
+    /// each linked project keeps its own identity and index. An agent
+    /// working in this repo can target a linked project by label to query
+    /// it without leaving the session.
+    #[serde(default)]
+    pub linked: Vec<LinkedProject>,
 }
 
 /// Custom agent configuration in `.ministr.toml`.
@@ -419,6 +427,37 @@ pub struct CorpusSpec {
 pub struct ExternalInclude {
     /// Absolute or `~`-relative path to the directory.
     pub path: String,
+}
+
+/// A separate project linked into this workspace for cross-project queries.
+///
+/// A linked project is *not* merged into this repo's corpus — it keeps its
+/// own identity and index. The agent targets it by [`label`](Self::label).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LinkedProject {
+    /// Absolute or `~`-relative path to the linked project's root.
+    pub path: String,
+    /// Human-readable label the agent uses to target this project.
+    ///
+    /// When omitted, the final component of [`path`](Self::path) is used.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// A [`LinkedProject`] resolved against the filesystem.
+///
+/// Carries the on-disk root, the display label, and the canonical corpus
+/// path set used to derive the project's corpus identity — the same path
+/// set that project would register for itself, so the linked index is
+/// shared, never duplicated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedLinkedProject {
+    /// Display label (explicit, or derived from the directory name).
+    pub label: String,
+    /// Absolute on-disk root of the linked project.
+    pub root: PathBuf,
+    /// Corpus paths to register with the daemon for this project.
+    pub corpus_paths: Vec<String>,
 }
 
 /// A git repository to clone and index.
@@ -576,6 +615,63 @@ impl RepoConfig {
 
         paths
     }
+
+    /// Resolve every [`LinkedProject`] against the filesystem.
+    ///
+    /// For each entry the root is tilde-expanded, the label is derived from
+    /// the directory name when not given explicitly, and the corpus path
+    /// set is taken from a `.ministr.toml` located *at the linked
+    /// project's own root* (so it resolves to the exact same corpus
+    /// identity that project uses). An ancestor directory's
+    /// `.ministr.toml` is deliberately NOT consulted — it must not be
+    /// able to hijack an unrelated linked project's identity. When the
+    /// root has no (or an unparsable) `.ministr.toml`, the root directory
+    /// is used directly.
+    ///
+    /// Entries with a duplicate label (after derivation) are skipped — the
+    /// first occurrence wins, keeping label → project resolution
+    /// unambiguous.
+    #[must_use]
+    pub fn resolve_linked_projects(&self) -> Vec<ResolvedLinkedProject> {
+        let mut resolved = Vec::with_capacity(self.linked.len());
+        let mut seen = std::collections::HashSet::new();
+
+        for link in &self.linked {
+            let root = PathBuf::from(expand_tilde(&link.path));
+
+            let label = match &link.label {
+                Some(l) if !l.trim().is_empty() => l.trim().to_string(),
+                _ => root
+                    .file_name()
+                    .map_or_else(|| link.path.clone(), |n| n.to_string_lossy().to_string()),
+            };
+
+            if !seen.insert(label.clone()) {
+                continue;
+            }
+
+            // Read ONLY a .ministr.toml at the linked root itself — never
+            // walk up (an ancestor/workspace config must not hijack this
+            // project's corpus identity). Missing or unparsable → use the
+            // bare root dir.
+            let root_only_fallback = || vec![root.to_string_lossy().to_string()];
+            let corpus_paths = match std::fs::read_to_string(root.join(CORPUS_CONFIG_FILENAME)) {
+                Ok(s) => toml::from_str::<Self>(&s).map_or_else(
+                    |_| root_only_fallback(),
+                    |cfg| cfg.resolve_local_paths(&root),
+                ),
+                Err(_) => root_only_fallback(),
+            };
+
+            resolved.push(ResolvedLinkedProject {
+                label,
+                root,
+                corpus_paths,
+            });
+        }
+
+        resolved
+    }
 }
 
 /// A warning about a potential issue in a `.ministr.toml` config file.
@@ -655,6 +751,129 @@ impl RepoConfig {
         }
 
         warnings
+    }
+}
+
+impl RepoConfig {
+    /// Path to the `.ministr.toml` inside `repo_root` (existence unchecked).
+    #[must_use]
+    pub fn config_path_in(repo_root: &Path) -> PathBuf {
+        repo_root.join(CORPUS_CONFIG_FILENAME)
+    }
+
+    /// Add (or update) a `[[linked]]` entry in `repo_root`'s `.ministr.toml`,
+    /// preserving the rest of the file's formatting and comments.
+    ///
+    /// The file is created if absent. If an entry with the same `path`
+    /// already exists it is never duplicated: `Some(label)` updates the
+    /// label, while `None` leaves any existing label **untouched** (so
+    /// re-linking a folder via the label-less dialog can't silently wipe
+    /// a label set by hand or via the non-dialog command).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the file can't be read/written or
+    /// contains invalid TOML.
+    pub fn add_linked_project(
+        repo_root: &Path,
+        path: &str,
+        label: Option<&str>,
+    ) -> Result<(), StorageError> {
+        use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
+
+        let config_path = Self::config_path_in(repo_root);
+        let existing = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(StorageError::from(e)),
+        };
+        let mut doc = existing
+            .parse::<DocumentMut>()
+            .map_err(|e| StorageError::Serialization {
+                reason: format!("invalid TOML in {}: {e}", config_path.display()),
+            })?;
+
+        let item = doc
+            .entry("linked")
+            .or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
+        let arr = item
+            .as_array_of_tables_mut()
+            .ok_or_else(|| StorageError::Serialization {
+                reason: "`linked` exists but is not an array of tables".to_string(),
+            })?;
+
+        let mut updated = false;
+        for t in arr.iter_mut() {
+            if t.get("path").and_then(Item::as_str) == Some(path) {
+                // Only an explicit Some(label) changes the label; None
+                // means "leave whatever label is already there alone".
+                if let Some(l) = label {
+                    t["label"] = value(l);
+                }
+                updated = true;
+                break;
+            }
+        }
+        if !updated {
+            let mut t = Table::new();
+            t["path"] = value(path);
+            if let Some(l) = label {
+                t["label"] = value(l);
+            }
+            arr.push(t);
+        }
+
+        std::fs::write(&config_path, doc.to_string()).map_err(StorageError::from)
+    }
+
+    /// Remove the `[[linked]]` entry whose `path` equals `path`.
+    ///
+    /// Returns `true` if an entry was removed, `false` if none matched (or
+    /// the file/section doesn't exist). Format-preserving for the rest of
+    /// the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the file can't be read/written or
+    /// contains invalid TOML.
+    pub fn remove_linked_project(repo_root: &Path, path: &str) -> Result<bool, StorageError> {
+        use toml_edit::{ArrayOfTables, DocumentMut, Item};
+
+        let config_path = Self::config_path_in(repo_root);
+        let content = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(StorageError::from(e)),
+        };
+        let mut doc = content
+            .parse::<DocumentMut>()
+            .map_err(|e| StorageError::Serialization {
+                reason: format!("invalid TOML in {}: {e}", config_path.display()),
+            })?;
+
+        let Some(arr) = doc.get("linked").and_then(Item::as_array_of_tables) else {
+            return Ok(false);
+        };
+
+        let mut kept = ArrayOfTables::new();
+        let mut removed = false;
+        for t in arr {
+            if t.get("path").and_then(Item::as_str) == Some(path) {
+                removed = true;
+            } else {
+                kept.push(t.clone());
+            }
+        }
+        if !removed {
+            return Ok(false);
+        }
+        if kept.is_empty() {
+            doc.remove("linked");
+        } else {
+            doc["linked"] = Item::ArrayOfTables(kept);
+        }
+        std::fs::write(&config_path, doc.to_string()).map_err(StorageError::from)?;
+        Ok(true)
     }
 }
 
@@ -930,6 +1149,106 @@ mod tests {
     }
 
     #[test]
+    fn add_then_remove_linked_roundtrip_preserves_comments() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(
+            root.join(CORPUS_CONFIG_FILENAME),
+            "# my project config\n[corpus]\npaths = [\"src\"] # only src\n",
+        )
+        .unwrap();
+
+        RepoConfig::add_linked_project(root, "/abs/dep", Some("dep")).unwrap();
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.linked.len(), 1);
+        assert_eq!(cfg.linked[0].path, "/abs/dep");
+        assert_eq!(cfg.linked[0].label.as_deref(), Some("dep"));
+
+        let written = std::fs::read_to_string(root.join(CORPUS_CONFIG_FILENAME)).unwrap();
+        assert!(
+            written.contains("# my project config") && written.contains("# only src"),
+            "comments must be preserved: {written}"
+        );
+
+        // Re-adding the same path updates the label rather than duplicating.
+        RepoConfig::add_linked_project(root, "/abs/dep", Some("renamed")).unwrap();
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.linked.len(), 1);
+        assert_eq!(cfg.linked[0].label.as_deref(), Some("renamed"));
+
+        let removed = RepoConfig::remove_linked_project(root, "/abs/dep").unwrap();
+        assert!(removed);
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert!(cfg.linked.is_empty());
+        assert!(!RepoConfig::remove_linked_project(root, "/abs/dep").unwrap());
+    }
+
+    #[test]
+    fn add_linked_creates_config_when_absent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        RepoConfig::add_linked_project(root, "/abs/x", None).unwrap();
+        assert!(root.join(CORPUS_CONFIG_FILENAME).exists());
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.linked.len(), 1);
+        assert!(cfg.linked[0].label.is_none());
+    }
+
+    #[test]
+    fn add_linked_none_label_preserves_existing_label() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        // Linked with an explicit label (hand-edit / non-dialog command).
+        RepoConfig::add_linked_project(root, "/abs/dep", Some("custom")).unwrap();
+        // Re-linking the same folder via the label-less dialog path.
+        RepoConfig::add_linked_project(root, "/abs/dep", None).unwrap();
+
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.linked.len(), 1, "must not duplicate");
+        assert_eq!(
+            cfg.linked[0].label.as_deref(),
+            Some("custom"),
+            "None must not wipe an existing label"
+        );
+
+        // An explicit Some(..) still overwrites.
+        RepoConfig::add_linked_project(root, "/abs/dep", Some("renamed")).unwrap();
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.linked[0].label.as_deref(), Some("renamed"));
+    }
+
+    #[test]
+    fn resolve_linked_ignores_ancestor_config() {
+        // An ancestor .ministr.toml must NOT define a linked child's
+        // corpus identity — only a config at the child's own root counts.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ancestor = tmp.path();
+        std::fs::write(
+            ancestor.join(CORPUS_CONFIG_FILENAME),
+            "[corpus]\npaths = [\"ancestor-src\"]\n",
+        )
+        .unwrap();
+        let child = ancestor.join("child");
+        std::fs::create_dir_all(&child).unwrap();
+
+        let config = RepoConfig {
+            linked: vec![LinkedProject {
+                path: child.to_string_lossy().to_string(),
+                label: Some("child".to_string()),
+            }],
+            ..Default::default()
+        };
+        let resolved = config.resolve_linked_projects();
+        assert_eq!(resolved.len(), 1);
+        // Falls back to the child root itself, NOT the ancestor's
+        // resolved `ancestor-src` path.
+        assert_eq!(
+            resolved[0].corpus_paths,
+            vec![child.to_string_lossy().to_string()]
+        );
+    }
+
+    #[test]
     fn validate_git_only_no_warning() {
         let config = RepoConfig {
             corpus: CorpusSpec {
@@ -1097,5 +1416,114 @@ mod tests {
         "#;
         let config: RepoConfig = toml::from_str(toml).unwrap();
         assert!(config.corpus.cloud.is_empty());
+    }
+
+    // -- linked projects --
+
+    #[test]
+    fn linked_defaults_to_empty() {
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+        "#;
+        let config: RepoConfig = toml::from_str(toml).unwrap();
+        assert!(config.linked.is_empty());
+    }
+
+    #[test]
+    fn linked_from_toml() {
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+
+            [[linked]]
+            path = "~/Code/shared-lib"
+            label = "shared"
+
+            [[linked]]
+            path = "/abs/path/other-service"
+        "#;
+        let config: RepoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.linked.len(), 2);
+        assert_eq!(config.linked[0].label.as_deref(), Some("shared"));
+        assert!(config.linked[1].label.is_none());
+    }
+
+    #[test]
+    fn resolve_linked_derives_label_from_dir_name() {
+        let config = RepoConfig {
+            linked: vec![LinkedProject {
+                path: "/abs/path/other-service".to_string(),
+                label: None,
+            }],
+            ..Default::default()
+        };
+        let resolved = config.resolve_linked_projects();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].label, "other-service");
+    }
+
+    #[test]
+    fn resolve_linked_uses_explicit_label_and_skips_duplicates() {
+        let config = RepoConfig {
+            linked: vec![
+                LinkedProject {
+                    path: "/a/shared".to_string(),
+                    label: Some("shared".to_string()),
+                },
+                LinkedProject {
+                    path: "/b/shared".to_string(),
+                    label: Some("shared".to_string()),
+                },
+            ],
+            ..Default::default()
+        };
+        let resolved = config.resolve_linked_projects();
+        assert_eq!(resolved.len(), 1, "duplicate label should be skipped");
+        assert_eq!(resolved[0].root, PathBuf::from("/a/shared"));
+    }
+
+    #[test]
+    fn resolve_linked_falls_back_to_root_without_config() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = RepoConfig {
+            linked: vec![LinkedProject {
+                path: tmp.path().to_string_lossy().to_string(),
+                label: Some("plain".to_string()),
+            }],
+            ..Default::default()
+        };
+        let resolved = config.resolve_linked_projects();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].corpus_paths,
+            vec![tmp.path().to_string_lossy().to_string()]
+        );
+    }
+
+    #[test]
+    fn resolve_linked_uses_linked_projects_own_config() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("lib")).unwrap();
+        std::fs::write(
+            root.join(CORPUS_CONFIG_FILENAME),
+            "[corpus]\npaths = [\"lib\"]\n",
+        )
+        .unwrap();
+
+        let config = RepoConfig {
+            linked: vec![LinkedProject {
+                path: root.to_string_lossy().to_string(),
+                label: Some("dep".to_string()),
+            }],
+            ..Default::default()
+        };
+        let resolved = config.resolve_linked_projects();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].corpus_paths,
+            vec![root.join("lib").to_string_lossy().to_string()]
+        );
     }
 }

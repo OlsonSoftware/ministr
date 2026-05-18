@@ -137,6 +137,10 @@ fn main() {
             commands::mcp_detect_clients,
             commands::mcp_write_config,
             commands::mcp_test_connection,
+            commands::linked_projects_list,
+            commands::linked_project_add,
+            commands::linked_project_add_dialog,
+            commands::linked_project_remove,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ministr app");
