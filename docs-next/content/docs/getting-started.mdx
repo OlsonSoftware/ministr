@@ -102,4 +102,3 @@ ministr_references("src/auth.rs::validate_token")
   → 3 callers across the codebase
 ```
 
-ministr does not put token-usage figures into tool responses. It tracks usage internally so it can keep delivery lean (skipping re-sends, shipping deltas), but it deliberately doesn't surface those numbers — they're anchored to a configured window, not the agent's real context window, and were never a reliable signal to stop. If you explicitly want the advisory estimate, call [`ministr_usage`](/docs/tools/usage).

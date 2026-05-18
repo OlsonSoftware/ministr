@@ -549,7 +549,7 @@ impl ProxyServer {
 
     #[tool(
         name = "ministr_read",
-        description = "Full content of a section by ID. On a repeat request it returns only what changed since it last showed you this section (or a short stub if nothing changed). Call ministr_extract instead if you only need atomic claims."
+        description = "Full content of a section by ID. Call ministr_extract instead if you only need atomic claims."
     )]
     async fn read(
         &self,

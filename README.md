@@ -19,11 +19,7 @@ Rust `#[pyfunction]` is what Python calls across the boundary.
 ministr replaces that with structure. It parses the codebase into an AST,
 indexes it at multiple resolutions (document, section, claim, symbol, full
 source), and answers in terms of symbols, references, and language bridges —
-returning the exact slice that matters instead of a file dump. As a bonus,
-ministr remembers what it has already shown the agent, so on the next turn it
-ships only what changed rather than re-sending context the agent still has —
-less re-reading, faster time to the right context, more of the window left
-for the actual work.
+returning the exact slice that matters instead of a file dump.
 
 ## Install
 
@@ -85,11 +81,6 @@ JSON/YAML/TOML.
 **Cross-language bridge detection** links bindings automatically: Tauri commands
 and events, napi-rs, PyO3, wasm-bindgen, HTTP routes (actix-web / axum /
 rocket), cgo (Go ↔ C), JNI, UniFFI, gRPC, and raw FFI.
-
-**Efficient delivery** (a bonus, not the headline) means ministr tracks what
-each agent has already received and, on a repeat request, returns only what
-changed — plus predictive prefetch so the next likely request is ready in
-hand. Less re-reading, more window left for the work.
 
 **Local embeddings** use Candle with the Metal GPU on Apple Silicon by default,
 FastEmbed + DirectML on Windows DirectX 12 GPUs (with the `directml` feature),

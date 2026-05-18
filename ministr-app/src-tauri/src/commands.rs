@@ -1762,8 +1762,7 @@ fn which_on_path(name: &str) -> Option<String> {
 
     // Track which directories we've already probed so the unix-fallback
     // sweep doesn't re-stat dirs that were already on PATH.
-    let mut seen: std::collections::HashSet<std::path::PathBuf> =
-        std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
 
     if let Some(path_var) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path_var) {
@@ -1842,8 +1841,7 @@ fn unix_extra_bin_dirs() -> Vec<std::path::PathBuf> {
         // single version installed via nvm, so probing the directory
         // surfaces `claude` without needing the shell-only `nvm use`
         // symlink dance.
-        let nvm_root = std::env::var_os("NVM_DIR")
-            .map_or_else(|| home.join(".nvm"), PathBuf::from);
+        let nvm_root = std::env::var_os("NVM_DIR").map_or_else(|| home.join(".nvm"), PathBuf::from);
         let versions_dir = nvm_root.join("versions").join("node");
         if let Ok(entries) = std::fs::read_dir(&versions_dir) {
             for entry in entries.flatten() {

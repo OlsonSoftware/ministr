@@ -654,7 +654,7 @@ work (pipelines, git, build/test output filtering all run unrestricted).
 | `ministr_symbols(query: "...")`      | **PRIMARY**    | Find structs, functions, traits, enums by name/kind/module.                   |
 | `ministr_definition(id: "...")`      | **PRIMARY**    | Get full source of a symbol by ID.                                            |
 | `ministr_references(id: "...")`      | **PRIMARY**    | Find callers, implementors, importers of a symbol.                            |
-| `ministr_read(id: "...")`            | **PRIMARY**    | Read a section by ID (with deduplication and delta delivery).                 |
+| `ministr_read(id: "...")`            | **PRIMARY**    | Full content of a section by ID.                                              |
 | `ministr_extract(id: "...")`         | **PRIMARY**    | Get atomic claims from a section, optionally filtered by query.               |
 | `ministr_toc`                        | **PRIMARY**    | Structural overview of the indexed corpus.                                    |
 | `ministr_bridge(query/kind/...)`     | **PRIMARY**    | Cross-language bridge links (Tauri, PyO3, NAPI, etc.).                        |
@@ -703,7 +703,7 @@ const TOOLS: &str = r"# Tool Guide
 | `ministr_symbols` | Find structs, functions, traits, enums by name/kind/module. |
 | `ministr_definition` | Get full source of a symbol by ID. |
 | `ministr_references` | Find callers, implementors, importers of a symbol. |
-| `ministr_read` | Read a section by ID (with deduplication and delta delivery). |
+| `ministr_read` | Full content of a section by ID. |
 | `ministr_extract` | Get atomic claims from a section, optionally filtered by query. |
 | `ministr_toc` | Structural overview of the indexed corpus. |
 | `ministr_bridge` | Cross-language bridge links. **Use before changing any IPC/FFI boundary.** |
@@ -1106,7 +1106,7 @@ normal shell work.
 | `ministr_symbols` | Find structs, functions, traits, enums by name/kind/module. |
 | `ministr_definition` | Get full source of a symbol by ID. |
 | `ministr_references` | Find callers, implementors, importers of a symbol. |
-| `ministr_read` | Read a section by ID (with deduplication and delta delivery). |
+| `ministr_read` | Full content of a section by ID. |
 | `ministr_extract` | Get atomic claims from a section, optionally filtered by query. |
 | `ministr_toc` | Structural overview of the indexed corpus. |
 | `ministr_bridge` | Cross-language bridge links (Tauri, PyO3, NAPI, etc.). |

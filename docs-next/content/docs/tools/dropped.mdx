@@ -32,6 +32,5 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 
 ## Behavior
 
-- Tells ministr the agent no longer has this content, so a later `ministr_survey` won't filter it out as "already delivered"
-- Keeps ministr's session memory accurate — without these signals it relies on a rough estimate that can drift over long sessions
-- This is the agent's way of correcting that estimate explicitly
+- Tells ministr the agent no longer has this content, so a later `ministr_survey` won't filter it out as already delivered
+- An advanced housekeeping tool — most agents do not need to call it explicitly
