@@ -367,6 +367,14 @@ pub struct RepoConfig {
     /// Agent configuration: custom rules and preferences.
     #[serde(default)]
     pub agent: AgentConfig,
+    /// Other projects linked into this workspace.
+    ///
+    /// Unlike [`ExternalInclude`] (which merges files into *this* corpus),
+    /// each linked project keeps its own identity and index. An agent
+    /// working in this repo can target a linked project by label to query
+    /// it without leaving the session.
+    #[serde(default)]
+    pub linked: Vec<LinkedProject>,
 }
 
 /// Custom agent configuration in `.ministr.toml`.
@@ -419,6 +427,37 @@ pub struct CorpusSpec {
 pub struct ExternalInclude {
     /// Absolute or `~`-relative path to the directory.
     pub path: String,
+}
+
+/// A separate project linked into this workspace for cross-project queries.
+///
+/// A linked project is *not* merged into this repo's corpus — it keeps its
+/// own identity and index. The agent targets it by [`label`](Self::label).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LinkedProject {
+    /// Absolute or `~`-relative path to the linked project's root.
+    pub path: String,
+    /// Human-readable label the agent uses to target this project.
+    ///
+    /// When omitted, the final component of [`path`](Self::path) is used.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// A [`LinkedProject`] resolved against the filesystem.
+///
+/// Carries the on-disk root, the display label, and the canonical corpus
+/// path set used to derive the project's corpus identity — the same path
+/// set that project would register for itself, so the linked index is
+/// shared, never duplicated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedLinkedProject {
+    /// Display label (explicit, or derived from the directory name).
+    pub label: String,
+    /// Absolute on-disk root of the linked project.
+    pub root: PathBuf,
+    /// Corpus paths to register with the daemon for this project.
+    pub corpus_paths: Vec<String>,
 }
 
 /// A git repository to clone and index.
@@ -575,6 +614,55 @@ impl RepoConfig {
         }
 
         paths
+    }
+
+    /// Resolve every [`LinkedProject`] against the filesystem.
+    ///
+    /// For each entry the root is tilde-expanded, the label is derived from
+    /// the directory name when not given explicitly, and the corpus path
+    /// set is taken from the linked project's *own* `.ministr.toml` (so it
+    /// resolves to the exact same corpus identity that project uses).
+    /// When the linked project has no `.ministr.toml`, its root directory
+    /// is used directly.
+    ///
+    /// Entries with a duplicate label (after derivation) are skipped — the
+    /// first occurrence wins, keeping label → project resolution
+    /// unambiguous.
+    #[must_use]
+    pub fn resolve_linked_projects(&self) -> Vec<ResolvedLinkedProject> {
+        let mut resolved = Vec::with_capacity(self.linked.len());
+        let mut seen = std::collections::HashSet::new();
+
+        for link in &self.linked {
+            let root = PathBuf::from(expand_tilde(&link.path));
+
+            let label = match &link.label {
+                Some(l) if !l.trim().is_empty() => l.trim().to_string(),
+                _ => root
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| link.path.clone()),
+            };
+
+            if !seen.insert(label.clone()) {
+                continue;
+            }
+
+            // Prefer the linked project's own .ministr.toml so we land on
+            // its real corpus identity; fall back to the bare root dir.
+            let corpus_paths = match Self::discover(&root) {
+                Ok(Some((cfg_dir, cfg))) => cfg.resolve_local_paths(&cfg_dir),
+                _ => vec![root.to_string_lossy().to_string()],
+            };
+
+            resolved.push(ResolvedLinkedProject {
+                label,
+                root,
+                corpus_paths,
+            });
+        }
+
+        resolved
     }
 }
 
@@ -1097,5 +1185,114 @@ mod tests {
         "#;
         let config: RepoConfig = toml::from_str(toml).unwrap();
         assert!(config.corpus.cloud.is_empty());
+    }
+
+    // -- linked projects --
+
+    #[test]
+    fn linked_defaults_to_empty() {
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+        "#;
+        let config: RepoConfig = toml::from_str(toml).unwrap();
+        assert!(config.linked.is_empty());
+    }
+
+    #[test]
+    fn linked_from_toml() {
+        let toml = r#"
+            [corpus]
+            paths = ["src"]
+
+            [[linked]]
+            path = "~/Code/shared-lib"
+            label = "shared"
+
+            [[linked]]
+            path = "/abs/path/other-service"
+        "#;
+        let config: RepoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.linked.len(), 2);
+        assert_eq!(config.linked[0].label.as_deref(), Some("shared"));
+        assert!(config.linked[1].label.is_none());
+    }
+
+    #[test]
+    fn resolve_linked_derives_label_from_dir_name() {
+        let config = RepoConfig {
+            linked: vec![LinkedProject {
+                path: "/abs/path/other-service".to_string(),
+                label: None,
+            }],
+            ..Default::default()
+        };
+        let resolved = config.resolve_linked_projects();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].label, "other-service");
+    }
+
+    #[test]
+    fn resolve_linked_uses_explicit_label_and_skips_duplicates() {
+        let config = RepoConfig {
+            linked: vec![
+                LinkedProject {
+                    path: "/a/shared".to_string(),
+                    label: Some("shared".to_string()),
+                },
+                LinkedProject {
+                    path: "/b/shared".to_string(),
+                    label: Some("shared".to_string()),
+                },
+            ],
+            ..Default::default()
+        };
+        let resolved = config.resolve_linked_projects();
+        assert_eq!(resolved.len(), 1, "duplicate label should be skipped");
+        assert_eq!(resolved[0].root, PathBuf::from("/a/shared"));
+    }
+
+    #[test]
+    fn resolve_linked_falls_back_to_root_without_config() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = RepoConfig {
+            linked: vec![LinkedProject {
+                path: tmp.path().to_string_lossy().to_string(),
+                label: Some("plain".to_string()),
+            }],
+            ..Default::default()
+        };
+        let resolved = config.resolve_linked_projects();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].corpus_paths,
+            vec![tmp.path().to_string_lossy().to_string()]
+        );
+    }
+
+    #[test]
+    fn resolve_linked_uses_linked_projects_own_config() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("lib")).unwrap();
+        std::fs::write(
+            root.join(CORPUS_CONFIG_FILENAME),
+            "[corpus]\npaths = [\"lib\"]\n",
+        )
+        .unwrap();
+
+        let config = RepoConfig {
+            linked: vec![LinkedProject {
+                path: root.to_string_lossy().to_string(),
+                label: Some("dep".to_string()),
+            }],
+            ..Default::default()
+        };
+        let resolved = config.resolve_linked_projects();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].corpus_paths,
+            vec![root.join("lib").to_string_lossy().to_string()]
+        );
     }
 }
