@@ -282,9 +282,14 @@ export function formatActivityForDisplay(e: ActivityEvent): FormattedActivity {
       const parts: string[] = [];
       if (name && file) parts.push(name);
       if (query) parts.push(query);
-      if (count != null) parts.push(`(${count})`);
+      const joined = parts.join(" · ");
+      const headLabel = count != null
+        ? joined
+          ? `${joined} (${count})`
+          : `(${count})`
+        : joined;
       return withPromotedFile({
-        head: parts.join(" · "),
+        head: headLabel,
         file: file ?? stripped,
       });
     }
@@ -301,8 +306,14 @@ export function formatActivityForDisplay(e: ActivityEvent): FormattedActivity {
           file: null,
         };
       }
-      const label = count != null ? `(${count})` : "";
-      return withPromotedFile({ head: label, file: head });
+      // `head` IS the document file path. Treat like a file-only event
+      // (read-style): file goes on the single label line with the count
+      // appended, no second line — putting just `(N)` on line 1 with the
+      // file beneath reads as orphan metadata.
+      return {
+        head: count != null ? `${head} (${count})` : head,
+        file: null,
+      };
     }
     case "related": {
       const { head, count } = splitTrailingCount(raw);
