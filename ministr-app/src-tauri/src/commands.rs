@@ -143,6 +143,122 @@ pub async fn remove_project(
     Ok(())
 }
 
+/// One linked project as shown in the Linked Projects panel.
+#[derive(Serialize)]
+pub struct LinkedProjectOut {
+    /// The exact `path` string stored in `.ministr.toml` (used as the
+    /// stable key when removing the entry).
+    pub path: String,
+    /// Explicit label from config, if any.
+    pub label: Option<String>,
+    /// Effective label the agent targets (explicit, else the dir name).
+    pub resolved_label: String,
+    /// Whether the linked root currently exists on disk.
+    pub exists: bool,
+}
+
+/// List the `[[linked]]` projects declared in `project_root`'s
+/// `.ministr.toml`. Returns an empty list when there's no config file.
+#[tauri::command]
+pub async fn linked_projects_list(
+    project_root: String,
+) -> Result<Vec<LinkedProjectOut>, CommandError> {
+    let root = std::path::Path::new(&project_root);
+    let Some((_, cfg)) = ministr_core::config::RepoConfig::discover(root)
+        .map_err(|e| CommandError::internal(e.to_string()))?
+    else {
+        return Ok(Vec::new());
+    };
+
+    Ok(cfg
+        .linked
+        .iter()
+        .map(|l| {
+            let expanded = expand_tilde(&l.path);
+            let resolved_label = match l.label.as_deref() {
+                Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+                _ => std::path::Path::new(&expanded)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| l.path.clone()),
+            };
+            LinkedProjectOut {
+                path: l.path.clone(),
+                label: l.label.clone(),
+                resolved_label,
+                exists: std::path::Path::new(&expanded).is_dir(),
+            }
+        })
+        .collect())
+}
+
+/// Add (or update) a linked project in `project_root`'s `.ministr.toml`.
+///
+/// Format-preserving and idempotent on `path` — see
+/// [`RepoConfig::add_linked_project`](ministr_core::config::RepoConfig::add_linked_project).
+#[tauri::command]
+pub async fn linked_project_add(
+    project_root: String,
+    path: String,
+    label: Option<String>,
+) -> Result<(), CommandError> {
+    let root = std::path::Path::new(&project_root);
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(CommandError::invalid_input("linked project path is empty"));
+    }
+    let label = label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+    ministr_core::config::RepoConfig::add_linked_project(root, trimmed, label.as_deref())
+        .map_err(|e| CommandError::internal(e.to_string()))?;
+    tracing::info!(project_root = %project_root, linked = %trimmed, "added linked project");
+    Ok(())
+}
+
+/// Open a folder picker and link the chosen directory into
+/// `project_root`. Returns the new entry, or `None` if the user cancelled.
+#[tauri::command]
+pub async fn linked_project_add_dialog(
+    app: AppHandle,
+    project_root: String,
+) -> Result<Option<LinkedProjectOut>, CommandError> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let picked = folder.to_string();
+    let resolved_label = std::path::Path::new(&picked)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| picked.clone());
+
+    let root = std::path::Path::new(&project_root);
+    ministr_core::config::RepoConfig::add_linked_project(root, &picked, None)
+        .map_err(|e| CommandError::internal(e.to_string()))?;
+    tracing::info!(project_root = %project_root, linked = %picked, "linked project via dialog");
+
+    Ok(Some(LinkedProjectOut {
+        path: picked.clone(),
+        label: None,
+        resolved_label,
+        exists: std::path::Path::new(&picked).is_dir(),
+    }))
+}
+
+/// Remove a linked project by its stored `path`. Returns `true` if an
+/// entry was removed.
+#[tauri::command]
+pub async fn linked_project_remove(
+    project_root: String,
+    path: String,
+) -> Result<bool, CommandError> {
+    let root = std::path::Path::new(&project_root);
+    let removed = ministr_core::config::RepoConfig::remove_linked_project(root, &path)
+        .map_err(|e| CommandError::internal(e.to_string()))?;
+    tracing::info!(project_root = %project_root, linked = %path, removed, "removed linked project");
+    Ok(removed)
+}
+
 /// Trigger a full re-index of a corpus.
 #[tauri::command]
 pub async fn trigger_reindex(

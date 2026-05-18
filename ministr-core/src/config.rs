@@ -746,6 +746,128 @@ impl RepoConfig {
     }
 }
 
+impl RepoConfig {
+    /// Path to the `.ministr.toml` inside `repo_root` (existence unchecked).
+    #[must_use]
+    pub fn config_path_in(repo_root: &Path) -> PathBuf {
+        repo_root.join(CORPUS_CONFIG_FILENAME)
+    }
+
+    /// Add (or update) a `[[linked]]` entry in `repo_root`'s `.ministr.toml`,
+    /// preserving the rest of the file's formatting and comments.
+    ///
+    /// The file is created if absent. If an entry with the same `path`
+    /// already exists, only its `label` is updated — never duplicated — so
+    /// this is safe to call repeatedly from the UI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the file can't be read/written or
+    /// contains invalid TOML.
+    pub fn add_linked_project(
+        repo_root: &Path,
+        path: &str,
+        label: Option<&str>,
+    ) -> Result<(), StorageError> {
+        use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
+
+        let config_path = Self::config_path_in(repo_root);
+        let existing = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(StorageError::from(e)),
+        };
+        let mut doc = existing
+            .parse::<DocumentMut>()
+            .map_err(|e| StorageError::Serialization {
+                reason: format!("invalid TOML in {}: {e}", config_path.display()),
+            })?;
+
+        let item = doc
+            .entry("linked")
+            .or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
+        let arr = item
+            .as_array_of_tables_mut()
+            .ok_or_else(|| StorageError::Serialization {
+                reason: "`linked` exists but is not an array of tables".to_string(),
+            })?;
+
+        let mut updated = false;
+        for t in arr.iter_mut() {
+            if t.get("path").and_then(Item::as_str) == Some(path) {
+                match label {
+                    Some(l) => t["label"] = value(l),
+                    None => {
+                        t.remove("label");
+                    }
+                }
+                updated = true;
+                break;
+            }
+        }
+        if !updated {
+            let mut t = Table::new();
+            t["path"] = value(path);
+            if let Some(l) = label {
+                t["label"] = value(l);
+            }
+            arr.push(t);
+        }
+
+        std::fs::write(&config_path, doc.to_string()).map_err(StorageError::from)
+    }
+
+    /// Remove the `[[linked]]` entry whose `path` equals `path`.
+    ///
+    /// Returns `true` if an entry was removed, `false` if none matched (or
+    /// the file/section doesn't exist). Format-preserving for the rest of
+    /// the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the file can't be read/written or
+    /// contains invalid TOML.
+    pub fn remove_linked_project(repo_root: &Path, path: &str) -> Result<bool, StorageError> {
+        use toml_edit::{ArrayOfTables, DocumentMut, Item};
+
+        let config_path = Self::config_path_in(repo_root);
+        let content = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(StorageError::from(e)),
+        };
+        let mut doc = content
+            .parse::<DocumentMut>()
+            .map_err(|e| StorageError::Serialization {
+                reason: format!("invalid TOML in {}: {e}", config_path.display()),
+            })?;
+
+        let Some(arr) = doc.get("linked").and_then(Item::as_array_of_tables) else {
+            return Ok(false);
+        };
+
+        let mut kept = ArrayOfTables::new();
+        let mut removed = false;
+        for t in arr.iter() {
+            if t.get("path").and_then(Item::as_str) == Some(path) {
+                removed = true;
+            } else {
+                kept.push(t.clone());
+            }
+        }
+        if !removed {
+            return Ok(false);
+        }
+        if kept.is_empty() {
+            doc.remove("linked");
+        } else {
+            doc["linked"] = Item::ArrayOfTables(kept);
+        }
+        std::fs::write(&config_path, doc.to_string()).map_err(StorageError::from)?;
+        Ok(true)
+    }
+}
+
 /// Expand `~` at the start of a path to the user's home directory.
 fn expand_tilde(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/")
@@ -1015,6 +1137,52 @@ mod tests {
 
         let warnings = config.validate(tmp.path());
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn add_then_remove_linked_roundtrip_preserves_comments() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(
+            root.join(CORPUS_CONFIG_FILENAME),
+            "# my project config\n[corpus]\npaths = [\"src\"] # only src\n",
+        )
+        .unwrap();
+
+        RepoConfig::add_linked_project(root, "/abs/dep", Some("dep")).unwrap();
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.linked.len(), 1);
+        assert_eq!(cfg.linked[0].path, "/abs/dep");
+        assert_eq!(cfg.linked[0].label.as_deref(), Some("dep"));
+
+        let written = std::fs::read_to_string(root.join(CORPUS_CONFIG_FILENAME)).unwrap();
+        assert!(
+            written.contains("# my project config") && written.contains("# only src"),
+            "comments must be preserved: {written}"
+        );
+
+        // Re-adding the same path updates the label rather than duplicating.
+        RepoConfig::add_linked_project(root, "/abs/dep", Some("renamed")).unwrap();
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.linked.len(), 1);
+        assert_eq!(cfg.linked[0].label.as_deref(), Some("renamed"));
+
+        let removed = RepoConfig::remove_linked_project(root, "/abs/dep").unwrap();
+        assert!(removed);
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert!(cfg.linked.is_empty());
+        assert!(!RepoConfig::remove_linked_project(root, "/abs/dep").unwrap());
+    }
+
+    #[test]
+    fn add_linked_creates_config_when_absent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        RepoConfig::add_linked_project(root, "/abs/x", None).unwrap();
+        assert!(root.join(CORPUS_CONFIG_FILENAME).exists());
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.linked.len(), 1);
+        assert!(cfg.linked[0].label.is_none());
     }
 
     #[test]
