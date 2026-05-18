@@ -5,6 +5,22 @@ All notable changes to ministr will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1](https://github.com/OlsonSoftware/ministr/releases/tag/v0.5.1) - 2026-05-18
+
+### Added
+- Added a ministr-vs-LSP code navigation evaluation suite, including runner scaffolding, ground-truth data, and benchmark documentation.
+
+### Changed
+- Refined release automation to use a single source of truth for release state and reduced CI workflow duplication.
+- Updated repository licensing and contributor-facing guidance for closed-source distribution and code-intelligence branding.
+
+### Fixed
+- Fixed release-PR CI skip-guard logic so it no longer depends on the `release` label.
+- Corrected benchmark LSP coverage metrics with strict path matching and tightened `cargo-deny` private ignore handling for proprietary crates.
+
+### Removed
+- Removed split MIT/Apache license files in favor of a consolidated proprietary license file.
+
 ## [0.5.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.5.0) - 2026-05-18
 
 ### Added
