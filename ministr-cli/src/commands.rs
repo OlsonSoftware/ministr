@@ -17,93 +17,14 @@ use crate::infra;
 use crate::ingestion;
 
 // ---------------------------------------------------------------------------
-// ministr serve --transport stdio
+// ministr serve --transport stdio  →  DELETED
+//
+// The monolithic per-corpus stdio primary (flock + deterministic TCP
+// port + in-process MinistrServer, with HTTP secondaries) was a second,
+// redundant "one primary serves many clients" subsystem alongside the
+// UDS daemon. stdio now ALWAYS runs the thin proxy, which self-spawns
+// the headless daemon (`ministr __daemon`). See `cmd_serve_proxy_stdio`.
 // ---------------------------------------------------------------------------
-
-/// `ministr serve --transport stdio` — MCP server over stdin/stdout.
-///
-/// On first invocation for a corpus, acquires an exclusive lock and starts
-/// as the primary (stdio + HTTP listener for secondaries). On subsequent
-/// invocations, detects the primary and runs as a transparent proxy.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub(crate) async fn cmd_serve_stdio(
-    corpus_paths: &[String],
-    git_includes: &[ministr_core::config::GitInclude],
-    config_path: &Path,
-    config: &ministr_core::config::MinistrConfig,
-    resolved_model: &str,
-    repo_config_dir: Option<&Path>,
-    resolved_dimension: Option<usize>,
-    rerank_depth: Option<usize>,
-) -> Result<()> {
-    // Compute the corpus data dir early for lock detection.
-    let corpus_name = infra::corpus_data_dir_name(corpus_paths);
-    let corpus_dir = config.data_dir.join("corpora").join(&corpus_name);
-    std::fs::create_dir_all(&corpus_dir)
-        .into_diagnostic()
-        .wrap_err("failed to create corpus directory")?;
-
-    let role = crate::instance::acquire_role(&corpus_dir, corpus_paths)?;
-
-    match role {
-        crate::instance::InstanceRole::Secondary { mcp_url } => {
-            tracing::info!(url = %mcp_url, "secondary instance — proxying to primary");
-            crate::proxy::run_stdio_proxy(&mcp_url).await
-        }
-        crate::instance::InstanceRole::Primary(lock) => {
-            let (server, ctx, _coherence_handle) = infra::build_server(
-                corpus_paths,
-                config_path,
-                config,
-                Some(resolved_model),
-                resolved_dimension,
-                rerank_depth,
-            )
-            .await?;
-
-            let ingestion_progress = server.ingestion_progress_arc();
-
-            // Spawn HTTP listener for secondary instances.
-            infra::spawn_http_listener(server.clone(), lock.http_port);
-
-            // Start stdio MCP server FIRST so Claude Code doesn't time out.
-            let mcp_service = server
-                .serve(rmcp::transport::stdio())
-                .await
-                .into_diagnostic()
-                .wrap_err("failed to start MCP stdio transport")?;
-
-            // Ingest in background AFTER the MCP server is running.
-            infra::spawn_background_ingestion(
-                corpus_paths,
-                git_includes,
-                &ctx,
-                &ingestion_progress,
-            );
-
-            // Watch .ministr.toml for path changes and re-index automatically.
-            let _config_watcher_handle = repo_config_dir.and_then(|dir| {
-                ingestion::spawn_config_watcher(
-                    dir.to_path_buf(),
-                    corpus_paths.to_vec(),
-                    &ctx,
-                    &ingestion_progress,
-                )
-            });
-
-            mcp_service
-                .waiting()
-                .await
-                .into_diagnostic()
-                .wrap_err("MCP server exited with error")?;
-
-            // lock dropped here → flock released, port file removed.
-            drop(lock);
-            tracing::info!("ministr shutting down");
-            Ok(())
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // ministr serve --transport http
@@ -223,10 +144,14 @@ pub(crate) async fn cmd_serve_http(
 ///
 /// Connects to the ministr daemon at `~/.ministr/ministrd.sock` and proxies all
 /// tool calls. No ONNX model, no indexes, no `SQLite` — just HTTP over UDS.
-pub(crate) async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()> {
+pub(crate) async fn cmd_serve_proxy_stdio(
+    corpus_paths: &[String],
+    linked: &[ministr_core::config::ResolvedLinkedProject],
+) -> Result<()> {
     eprintln!(
-        "ministr: proxy starting with {} corpus paths",
-        corpus_paths.len()
+        "ministr: proxy starting with {} corpus paths, {} linked project(s)",
+        corpus_paths.len(),
+        linked.len()
     );
 
     // Pre-register corpus with daemon before starting MCP handshake.
@@ -244,7 +169,8 @@ pub(crate) async fn cmd_serve_proxy_stdio(corpus_paths: &[String]) -> Result<()>
     }
 
     eprintln!("ministr: starting MCP proxy on stdio");
-    let proxy = ministr_mcp::proxy::ProxyServer::new(corpus_paths.to_vec());
+    let proxy =
+        ministr_mcp::proxy::ProxyServer::with_linked(corpus_paths.to_vec(), linked.to_vec());
 
     // Eagerly create a daemon session so the GUI shows it immediately.
     if let Err(e) = proxy.initialize().await {
