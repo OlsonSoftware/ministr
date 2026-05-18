@@ -61,6 +61,37 @@ function stripQueryClause(s: string): string {
   return s.replace(/\s+·\s+".+"$/, "").trim();
 }
 
+/**
+ * Strip the corpus-root prefix from a path so what we display is always
+ * repo-relative, never absolute. ministr stores paths as
+ * `/Users/<…>/<repo>/./<rel/path>` — the `/./` marker is the boundary
+ * between the absolute prefix and the repo-relative portion, so we just
+ * cut everything up to (and including) it.
+ *
+ * For paths without the marker (e.g. virtual sources like `web://…`),
+ * returns the input unchanged.
+ */
+export function relativizePath(path: string): string {
+  const m = path.match(/^.*?\/\.\//);
+  return m ? path.slice(m[0].length) : path;
+}
+
+/**
+ * Apply `relativizePath`-style stripping to any absolute-looking path
+ * substring anywhere in a free-form summary. Used by the activity-row
+ * renderer so `{name} — /Users/<…>/<repo>/./<rel>` becomes
+ * `{name} — <rel>` for display without changing the underlying event.
+ *
+ * The pattern matches one or more `/<segment>` runs ending in the
+ * literal `/./` corpus-root marker — so it cannot eat plain prose
+ * like `"a · b · c"`.
+ */
+const ABS_PATH_PREFIX_RE = /(?:\/[^\s/]+)+\/\.\//g;
+
+export function relativizeSummary(s: string): string {
+  return s.replace(ABS_PATH_PREFIX_RE, "");
+}
+
 /** Tool name normalised to its tag form (`ministr_definition` → `definition`). */
 function tag(tool: string): string {
   return tool.replace(/^ministr_/, "").toLowerCase();
@@ -82,16 +113,31 @@ function parseEvent(e: ActivityEvent): ParsedEvent {
     return { file: null, symbol: null, count: null, isBridge: t === "bridge" };
   }
 
+  // Helper: relativize a file path before storing it as a bucket key, so
+  // the dashboard always groups by repo-relative paths.
+  const rel = (f: string | null): string | null =>
+    f ? relativizePath(f) : null;
+
   switch (t) {
     case "definition": {
       const { head } = splitTrailingCount(raw);
       const { name, file } = splitNameDashFile(head);
-      return { file, symbol: name || null, count: null, isBridge: false };
+      return {
+        file: rel(file),
+        symbol: name || null,
+        count: null,
+        isBridge: false,
+      };
     }
     case "references": {
       const { head, count } = splitTrailingCount(raw);
       const { name, file } = splitNameDashFile(head);
-      return { file, symbol: name || null, count, isBridge: false };
+      return {
+        file: rel(file),
+        symbol: name || null,
+        count,
+        isBridge: false,
+      };
     }
     case "extract": {
       const { head } = splitTrailingCount(raw);
@@ -99,7 +145,7 @@ function parseEvent(e: ActivityEvent): ParsedEvent {
       const { file } = splitNameDashFile(stripped);
       // If there's no "name — file" form, the head itself is the file path.
       return {
-        file: file ?? stripped,
+        file: rel(file ?? stripped),
         symbol: null,
         count: null,
         isBridge: false,
@@ -109,7 +155,7 @@ function parseEvent(e: ActivityEvent): ParsedEvent {
       // Summary is `<section_id>` = `<file>[#anchor]` (middleware fallback).
       const hashIdx = raw.indexOf("#");
       const file = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-      return { file, symbol: null, count: null, isBridge: false };
+      return { file: rel(file), symbol: null, count: null, isBridge: false };
     }
     case "bridge": {
       return { file: null, symbol: null, count: null, isBridge: true };
@@ -191,11 +237,100 @@ export function summarizeCodeTouched(
   };
 }
 
-/** Render a file path as a compact display label — drops a long
- *  leading path so the visible portion fits in one line. */
-export function shortFilePath(file: string, max = 56): string {
-  if (file.length <= max) return file;
-  // Keep the last segment(s); replace the head with `…`.
-  const keep = file.length - (max - 1);
-  return `…${file.slice(keep)}`;
+/**
+ * Decompose an activity event into a structured display:
+ *   head — the primary, non-path label (symbol name, query, anchor, etc.)
+ *   file — the repo-relative file path, if the event has one; rendered
+ *          on a secondary line in the activity row.
+ *
+ * Both fields are pre-relativized — callers never need to worry about
+ * absolute paths leaking into the UI.
+ */
+export interface FormattedActivity {
+  head: string;
+  file: string | null;
+}
+
+export function formatActivityForDisplay(e: ActivityEvent): FormattedActivity {
+  const t = tag(e.tool);
+  const raw = relativizeSummary((e.summary ?? "").trim());
+
+  if (!raw) {
+    return { head: e.corpus_id, file: null };
+  }
+
+  switch (t) {
+    case "definition": {
+      const { head } = splitTrailingCount(raw);
+      const { name, file } = splitNameDashFile(head);
+      return withPromotedFile({ head: name || "", file });
+    }
+    case "references": {
+      const { head, count } = splitTrailingCount(raw);
+      const { name, file } = splitNameDashFile(head);
+      const label = count != null && name ? `${name} (${count})` : name;
+      return withPromotedFile({ head: label || "", file });
+    }
+    case "extract": {
+      const { head, count } = splitTrailingCount(raw);
+      // Head may be `anchor — file · "query"` or `file · "query"` or `file`.
+      const stripped = stripQueryClause(head);
+      const queryMatch = head.match(/·\s+(".+")$/);
+      const query = queryMatch ? queryMatch[1] : null;
+      const { name, file } = splitNameDashFile(stripped);
+      // Anchor goes in head if present; otherwise just the query.
+      const parts: string[] = [];
+      if (name && file) parts.push(name);
+      if (query) parts.push(query);
+      if (count != null) parts.push(`(${count})`);
+      return withPromotedFile({
+        head: parts.join(" · "),
+        file: file ?? stripped,
+      });
+    }
+    case "read": {
+      const hashIdx = raw.indexOf("#");
+      if (hashIdx < 0) return { head: raw, file: null };
+      return { head: raw.slice(hashIdx + 1), file: raw.slice(0, hashIdx) };
+    }
+    case "toc": {
+      const { head, count } = splitTrailingCount(raw);
+      if (head === "<root>") {
+        return {
+          head: count != null ? `<root> (${count})` : "<root>",
+          file: null,
+        };
+      }
+      const label = count != null ? `(${count})` : "";
+      return withPromotedFile({ head: label, file: head });
+    }
+    case "related": {
+      const { head, count } = splitTrailingCount(raw);
+      // claim_id is shaped like `<file>#<anchor>:cN`
+      const hashIdx = head.indexOf("#");
+      if (hashIdx < 0) {
+        return {
+          head: count != null ? `${head} (${count})` : head,
+          file: null,
+        };
+      }
+      const file = head.slice(0, hashIdx);
+      const claim = head.slice(hashIdx + 1);
+      return {
+        head: count != null ? `${claim} (${count})` : claim,
+        file,
+      };
+    }
+    default:
+      // survey / symbols / bridge / compress / dropped — no file in summary.
+      return { head: raw, file: null };
+  }
+}
+
+/** Promote a file into the head when the head is empty, so file-only
+ *  events (read, toc) render as a single normal-weight line instead of
+ *  an empty top line above a small file line. */
+function withPromotedFile(s: FormattedActivity): FormattedActivity {
+  if (!s.head && s.file) return { head: s.file, file: null };
+  return s;
 }
