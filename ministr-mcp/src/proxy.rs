@@ -873,10 +873,14 @@ impl ProxyServer {
 #[tool_handler]
 impl ServerHandler for ProxyServer {
     fn get_info(&self) -> ServerInfo {
+        // The MCP client sees a single stable server identity, "ministr",
+        // regardless of whether it's served by the in-process server or
+        // this thin proxy — proxying is an internal implementation
+        // detail and the public `serverInfo.name` must not leak it.
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(
-                Implementation::new("ministr-proxy", env!("CARGO_PKG_VERSION"))
-                    .with_description("Thin MCP proxy — delegates to the ministr daemon."),
+                Implementation::new("ministr", env!("CARGO_PKG_VERSION"))
+                    .with_description("ministr — code intelligence MCP server."),
             )
             .with_instructions(crate::server::DEFAULT_INSTRUCTIONS)
     }
