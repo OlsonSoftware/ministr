@@ -56,7 +56,10 @@ export function TokenEconomicsBar({
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1">
         {segs.map((s) => (
-          <div key={s.label} className="flex items-center gap-1.5">
+          <div
+            key={s.label}
+            className="flex items-center gap-1.5 whitespace-nowrap"
+          >
             <span
               className={cn("h-2.5 w-2.5 rounded-full border border-border", s.bg)}
               aria-hidden="true"

@@ -35,7 +35,7 @@ use ministr_core::storage::{Storage as _, SymbolFilter};
 use ministr_core::types::RelationType;
 use sha2::{Digest, Sha256};
 
-use crate::activity::record as record_activity;
+use crate::activity::{ActivitySummary, record as record_activity};
 use crate::convert;
 use crate::state::{ACTIVITY_BUFFER_CAPACITY, AppState, COHERENCE_BUFFER_CAPACITY};
 
@@ -328,6 +328,50 @@ fn response_tokens<T: serde::Serialize>(value: &T) -> usize {
     serde_json::to_string(value).map_or(0, |s| ministr_core::token::count_tokens(&s))
 }
 
+/// Attach an [`ActivitySummary`] extension to a response so the activity
+/// middleware records a human-readable label (the actual query / symbol
+/// name / section id) instead of the empty path-derived fallback.
+///
+/// The middleware reads this extension after the handler returns and
+/// falls back to `decode_summary(&route.path_summary)` when absent, so
+/// every callable handler is safe to leave un-enriched during rollout.
+fn with_summary<T: IntoResponse>(body: T, summary: String) -> axum::response::Response {
+    let mut res = body.into_response();
+    res.extensions_mut().insert(ActivitySummary {
+        summary: Some(summary),
+        ..Default::default()
+    });
+    res
+}
+
+/// Last `::`-delimited segment of a fully-qualified symbol id, used as
+/// the human-readable name in activity summaries.
+fn symbol_short_name(sym: &str) -> &str {
+    sym.rsplit("::").next().unwrap_or(sym)
+}
+
+/// Source file path embedded in a `sym-…` symbol id, when present. The
+/// activity dashboard groups events by file using this, so a definition
+/// or references event without it is invisible in the "Code touched"
+/// section.
+///
+/// Symbol id shape (from ministr-core):
+/// `sym-<absolute_or_relative_path>::<module>::<...>::<name>`
+fn file_from_symbol_id(sym: &str) -> Option<&str> {
+    let stripped = sym.strip_prefix("sym-")?;
+    stripped.split_once("::").map(|(file, _)| file)
+}
+
+/// Split a hierarchical section id into `(file, anchor)`. Sections look
+/// like `/abs/path/foo.md#heading-slug`; the part before `#` is the file
+/// and what comes after is the in-file anchor.
+fn split_section_id(section: &str) -> (&str, Option<&str>) {
+    match section.split_once('#') {
+        Some((file, anchor)) => (file, Some(anchor)),
+        None => (section, None),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Corpus management
 // ---------------------------------------------------------------------------
@@ -402,6 +446,7 @@ async fn survey(
     let handle = get_corpus!(&state, &id);
     let top_k = req.top_k.unwrap_or(10);
     let session_id = req.session_id.clone();
+    let summary = format!("\"{}\" (top_k={top_k})", req.query);
     let result = handle.service.survey(&req.query, top_k).await;
     drop(handle);
     match result {
@@ -414,7 +459,7 @@ async fn survey(
             if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "survey", response_tokens(&body)).await;
             }
-            Json(body).into_response()
+            with_summary(Json(body), summary)
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
@@ -429,6 +474,19 @@ async fn symbols(
     let handle = get_corpus!(&state, &id);
     let limit = req.limit.unwrap_or(20);
     let session_id = req.session_id.clone();
+    let summary = {
+        let mut parts = vec![format!("\"{}\"", req.query)];
+        if let Some(k) = req.kind.as_ref() {
+            parts.push(format!("kind={k}"));
+        }
+        if let Some(m) = req.module.as_ref() {
+            parts.push(format!("module={m}"));
+        }
+        if let Some(v) = req.visibility.as_ref() {
+            parts.push(format!("visibility={v}"));
+        }
+        parts.join(" · ")
+    };
     let filter = SymbolFilter {
         name: Some(req.query),
         name_exact: None,
@@ -448,10 +506,11 @@ async fn symbols(
                     .map(convert::symbol_from_record)
                     .collect(),
             };
+            let summary = format!("{summary} ({n})", n = body.symbols.len());
             if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "symbols", response_tokens(&body)).await;
             }
-            Json(body).into_response()
+            with_summary(Json(body), summary)
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
@@ -476,10 +535,14 @@ async fn definition(
     match result {
         Ok(def) => {
             let body = convert::symbol_definition(def);
+            let summary = match file_from_symbol_id(&sym) {
+                Some(file) => format!("{name} — {file}", name = symbol_short_name(&sym)),
+                None => symbol_short_name(&sym).to_string(),
+            };
             if let Some(sid) = q.session_id {
                 tick_session_turn(&state, &id, &sid, "definition", response_tokens(&body)).await;
             }
-            Json(body).into_response()
+            with_summary(Json(body), summary)
         }
         Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
     }
@@ -498,10 +561,15 @@ async fn references(
             let body = query::ReferencesResponse {
                 references: refs.into_iter().map(convert::symbol_reference).collect(),
             };
+            let n = body.references.len();
+            let summary = match file_from_symbol_id(&sym) {
+                Some(file) => format!("{name} — {file} ({n})", name = symbol_short_name(&sym)),
+                None => format!("{name} ({n})", name = symbol_short_name(&sym)),
+            };
             if let Some(sid) = q.session_id {
                 tick_session_turn(&state, &id, &sid, "references", response_tokens(&body)).await;
             }
-            Json(body).into_response()
+            with_summary(Json(body), summary)
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
@@ -679,6 +747,17 @@ async fn extract(
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
     let session_id = req.session_id.clone();
+    let summary = {
+        let (file, anchor) = split_section_id(&req.section_id);
+        let head = match anchor {
+            Some(a) => format!("{a} — {file}"),
+            None => file.to_string(),
+        };
+        match req.query.as_deref() {
+            Some(q) => format!("{head} · \"{q}\""),
+            None => head,
+        }
+    };
     let result = handle
         .service
         .extract_claims(&req.section_id, req.query.as_deref())
@@ -689,10 +768,11 @@ async fn extract(
             let body = query::ExtractResponse {
                 claims: claims.into_iter().map(convert::claim_result).collect(),
             };
+            let summary = format!("{summary} ({n})", n = body.claims.len());
             if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "extract", response_tokens(&body)).await;
             }
-            Json(body).into_response()
+            with_summary(Json(body), summary)
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
@@ -707,6 +787,7 @@ async fn toc(
     let offset = req.offset.unwrap_or(0);
     let limit = req.limit.unwrap_or(100);
     let session_id = req.session_id.clone();
+    let summary = req.document_id.as_deref().unwrap_or("<root>").to_string();
     let result = handle.service.toc(req.document_id.as_deref()).await;
     drop(handle);
     match result {
@@ -721,10 +802,11 @@ async fn toc(
                     .collect(),
                 total,
             };
+            let summary = format!("{summary} ({total})");
             if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "toc", response_tokens(&body)).await;
             }
-            Json(body).into_response()
+            with_summary(Json(body), summary)
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
@@ -747,6 +829,7 @@ async fn related(
         )
     };
     let session_id = req.session_id.clone();
+    let summary = req.claim_id.clone();
     let result = handle
         .service
         .related_claims(&req.claim_id, relation_types.as_deref())
@@ -757,10 +840,11 @@ async fn related(
             let body = query::RelatedResponse {
                 claims: claims.into_iter().map(convert::related_claim).collect(),
             };
+            let summary = format!("{summary} ({n})", n = body.claims.len());
             if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "related", response_tokens(&body)).await;
             }
-            Json(body).into_response()
+            with_summary(Json(body), summary)
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
@@ -774,6 +858,23 @@ async fn bridge(
     let handle = get_corpus!(&state, &id);
     let limit = req.limit.unwrap_or(50);
     let session_id = req.session_id.clone();
+    let summary = {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(q) = req.query.as_deref() {
+            parts.push(format!("\"{q}\""));
+        }
+        if let Some(k) = req.kind.as_deref() {
+            parts.push(format!("kind={k}"));
+        }
+        if let Some(l) = req.source_language.as_deref() {
+            parts.push(format!("lang={l}"));
+        }
+        if parts.is_empty() {
+            "all bridges".to_string()
+        } else {
+            parts.join(" · ")
+        }
+    };
     let result = handle
         .service
         .query_bridges(
@@ -793,10 +894,11 @@ async fn bridge(
                     .map(convert::bridge_link)
                     .collect(),
             };
+            let summary = format!("{summary} ({n})", n = body.links.len());
             if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "bridge", response_tokens(&body)).await;
             }
-            Json(body).into_response()
+            with_summary(Json(body), summary)
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
@@ -814,6 +916,7 @@ async fn compress_content(
     let _permit = state.query_semaphore.acquire().await;
     let handle = get_corpus!(&state, &id);
     let session_id = req.session_id.clone();
+    let summary = format!("compress {n} items", n = req.content_ids.len());
     let result = handle.service.compress_content(&req.content_ids).await;
     drop(handle);
     match result {
@@ -824,7 +927,7 @@ async fn compress_content(
             if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "compress", response_tokens(&body)).await;
             }
-            Json(body).into_response()
+            with_summary(Json(body), summary)
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "compress_failed", e).into_response(),
     }
