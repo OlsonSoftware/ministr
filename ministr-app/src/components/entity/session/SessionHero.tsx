@@ -158,6 +158,9 @@ export function SessionHero({
           </span>
         )}
         {session.client_name && <span>client {session.client_name}</span>}
+        {session.delivered_count > 0 && (
+          <span>{session.delivered_count} in context</span>
+        )}
         <span className={cn(fresh && "ministr-pulse text-text")}>
           turn {session.current_turn}
         </span>
