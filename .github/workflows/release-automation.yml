@@ -240,11 +240,36 @@ jobs:
 
           # Assign the Copilot cloud agent. A user-PAT-authored issue is
           # required for the agent to pick it up.
-          gh api --method POST \
-            -H 'GraphQL-Features: issues_copilot_assignment_api_support' \
-            "repos/$REPO/issues/$issue/assignees" \
-            -f 'assignees[]=copilot-swe-agent[bot]'
-          echo "Assigned the Copilot coding agent to issue #$issue."
+          #
+          # Model: we prefer Claude Opus 4.7. GitHub does not publish a
+          # stable assignment-API model slug, so this is BEST-EFFORT and
+          # MUST NOT break the release path: try the model-pinned
+          # assignment, and on any failure fall back to the plain
+          # assignment (which runs the org/Agents default — set that to
+          # Claude Opus 4.7 in org Copilot policy for a guaranteed
+          # global effect; this step only nudges it).
+          COPILOT_MODEL="${COPILOT_MODEL:-claude-opus-4.7}"
+          assigned=false
+          for m in "$COPILOT_MODEL" "Claude Opus 4.7"; do
+            if gh api --method POST \
+                 -H 'GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection' \
+                 "repos/$REPO/issues/$issue/assignees" \
+                 -f 'assignees[]=copilot-swe-agent[bot]' \
+                 -f "model=$m" >/dev/null 2>&1; then
+              echo "Assigned Copilot coding agent to #$issue (model: $m)."
+              assigned=true
+              break
+            fi
+          done
+          if [ "$assigned" != true ]; then
+            # Fallback: known-good plain assignment (default model). The
+            # release flow must never hinge on the model pin.
+            gh api --method POST \
+              -H 'GraphQL-Features: issues_copilot_assignment_api_support' \
+              "repos/$REPO/issues/$issue/assignees" \
+              -f 'assignees[]=copilot-swe-agent[bot]'
+            echo "Assigned Copilot coding agent to #$issue (default model — model pin not honored by the API; set the org/Agents default to Claude Opus 4.7)."
+          fi
 
   # ── Deterministic safety net ────────────────────────────────────────
   #
