@@ -5,6 +5,17 @@ All notable changes to ministr will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.5.0) - 2026-05-18
+
+### Added
+- Linked projects support lets one agent session query indexes from other configured projects.
+
+### Changed
+- Release automation now supports manual `workflow_dispatch` kick-off for release runs.
+
+### Fixed
+- Release detection in CI is now deterministic and fails loudly when release state is invalid.
+
 ## [0.4.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.4.0) - 2026-05-18
 
 ### Added
