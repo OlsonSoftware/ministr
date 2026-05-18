@@ -205,7 +205,7 @@ mod tests {
         for ext in &[
             "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp", "h", "cs", "rb",
             "swift", "kt", "scala", "php", "ex", "hs", "lua", "zig", "ml", "dart", "sh", "sql",
-            "yml", "yaml", "toml", "json", "tf", "proto",
+            "yml", "yaml", "toml", "json", "tf", "tfvars", "hcl", "proto",
         ] {
             let path = format!("file.{ext}");
             assert_eq!(
