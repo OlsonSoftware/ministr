@@ -32,6 +32,9 @@ ministr-daemon = { workspace = true }
 # HTTP daemon on UDS
 tokio = { workspace = true }
 
+# Cloud connection probes (mcp.ministr.ai /healthz + /reindex).
+reqwest = { workspace = true, features = ["json"] }
+
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod commands_cloud;
 mod error;
 mod setup;
 mod tray;
@@ -20,6 +21,7 @@ use ministr_daemon::state::AppState;
 use tauri::{AppHandle, Manager};
 use tracing::info;
 
+#[allow(clippy::too_many_lines)] // entrypoint composes plugins + 50+ commands
 fn main() {
     // Initialize tracing to stderr + log file for the LogViewer tab.
     let log_path = ministr_api::daemon_data_dir().join("ministr.log");
@@ -141,6 +143,12 @@ fn main() {
             commands::linked_project_add,
             commands::linked_project_add_dialog,
             commands::linked_project_remove,
+            commands_cloud::cloud_status,
+            commands_cloud::cloud_set_endpoint,
+            commands_cloud::cloud_set_bearer_token,
+            commands_cloud::cloud_disconnect,
+            commands_cloud::cloud_health_check,
+            commands_cloud::cloud_trigger_reindex,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ministr app");
