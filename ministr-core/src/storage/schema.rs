@@ -406,34 +406,59 @@ fn migrations() -> Migrations<'static> {
 /// - 5-second busy timeout for concurrent access
 /// - Foreign keys enabled for referential integrity
 ///
-/// Verifies the journal mode actually took effect — SQLite silently
-/// falls back to `DELETE` on filesystems that don't support WAL
-/// (tmpfs, some network mounts, `:memory:`). When `require_wal` is
-/// true, a fallback is a hard error; when false (in-memory test
-/// databases), the fallback is logged at debug level.
+/// Two ways WAL can fail to take effect:
+///
+/// 1. **Silent downgrade** — SQLite returns `Ok` from `journal_mode=WAL`
+///    but the actual mode is `DELETE` (in-memory databases, some tmpfs).
+/// 2. **Hard failure** — the `journal_mode=WAL` pragma itself returns
+///    `SQLITE_BUSY` because the filesystem can't host the `.shm`
+///    shared-memory file (Azure Files SMB / CIFS / NFS).
+///
+/// When `require_wal` is true, either failure mode is a hard error.
+/// When false, both fall back transparently to whatever `journal_mode`
+/// SQLite ends up with — typically `DELETE`. This is safe for
+/// single-writer deployments (e.g. ACA min=1/max=1) where WAL's
+/// concurrent-reader-while-writer guarantee isn't relied on.
 pub fn configure_connection(conn: &Connection, require_wal: bool) -> Result<(), StorageError> {
-    conn.pragma_update(None, "journal_mode", "WAL")
-        .map_err(|e| StorageError::Database {
-            reason: format!("failed to set WAL mode: {e}"),
-        })?;
-    let actual_mode: String = conn
-        .pragma_query_value(None, "journal_mode", |row| row.get(0))
-        .map_err(|e| StorageError::Database {
-            reason: format!("failed to read journal_mode: {e}"),
-        })?;
-    if !actual_mode.eq_ignore_ascii_case("wal") {
-        if require_wal {
-            return Err(StorageError::Database {
-                reason: format!(
-                    "journal_mode did not stick — got {actual_mode:?}, wanted WAL \
-                     (filesystem may not support WAL — e.g. tmpfs / network mount)"
-                ),
-            });
+    let wal_pragma = conn.pragma_update(None, "journal_mode", "WAL");
+    match wal_pragma {
+        Ok(()) => {
+            // Pragma accepted; check whether SQLite *actually* took WAL
+            // or silently downgraded it.
+            let actual_mode: String = conn
+                .pragma_query_value(None, "journal_mode", |row| row.get(0))
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to read journal_mode: {e}"),
+                })?;
+            if !actual_mode.eq_ignore_ascii_case("wal") {
+                if require_wal {
+                    return Err(StorageError::Database {
+                        reason: format!(
+                            "journal_mode did not stick — got {actual_mode:?}, wanted WAL \
+                             (filesystem may not support WAL — e.g. tmpfs / network mount)"
+                        ),
+                    });
+                }
+                tracing::debug!(
+                    mode = %actual_mode,
+                    "journal_mode fell back from WAL silently (require_wal=false)"
+                );
+            }
         }
-        tracing::debug!(
-            mode = %actual_mode,
-            "journal_mode fell back from WAL (expected for in-memory databases)"
-        );
+        Err(e) => {
+            // The pragma itself failed — common when running on SMB
+            // (Azure Files) which can't host WAL's shared-memory file.
+            if require_wal {
+                return Err(StorageError::Database {
+                    reason: format!("failed to set WAL mode: {e}"),
+                });
+            }
+            tracing::debug!(error = %e, "journal_mode=WAL pragma failed; falling back to DELETE");
+            conn.pragma_update(None, "journal_mode", "DELETE")
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to set DELETE journal fallback: {e}"),
+                })?;
+        }
     }
     conn.pragma_update(None, "synchronous", "NORMAL")
         .map_err(|e| StorageError::Database {
