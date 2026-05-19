@@ -1,7 +1,6 @@
 [package]
 name = "ministr-api"
 version = "0.6.0"
-# Proprietary engine crate — never publishable to crates.io.
 publish = false
 edition.workspace = true
 rust-version.workspace = true
