@@ -5,6 +5,24 @@ All notable changes to ministr will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.7.0) - 2026-05-19
+
+### Added
+- Added `MINISTR_REQUIRE_WAL=0` to allow deployments on SMB-mounted SQLite where WAL cannot be enforced.
+- Added `MINISTR_CORPUS_PATHS` so cloud deployments can override corpus roots via environment variable.
+- Added cloud-focused capabilities across the app and MCP stack, including a desktop Cloud settings panel, Tauri `cloud_*` commands, OAuth flows, and admin job/webhook endpoints.
+- Added Azure-native deployment infrastructure and a dual-mode Docker entrypoint to support both always-on serve and one-shot indexing jobs.
+
+### Changed
+- Reworked the MCP authentication and admin architecture into modular routers, handlers, storage backends, and job orchestration primitives for cloud operation.
+- Extended `ministr serve` to persist OAuth state and integrate admin endpoints for managed cloud workflows.
+
+### Fixed
+- Fixed SQLite WAL handling to surface `PRAGMA journal_mode=WAL` errors instead of only catching silent downgrades.
+
+### Removed
+- Removed ACA health probes from the Pulumi deployment stack state for production cloud rollout.
+
 ## [0.6.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.6.0) - 2026-05-19
 
 ### Added
