@@ -75,6 +75,11 @@ quick-xml = "0.37"
 
 # Hashing
 sha2 = "0.10"
+# HMAC for GitHub webhook signature verification (admin module).
+hmac = "0.12"
+# Constant-time byte comparison — `subtle::ConstantTimeEq` makes HMAC
+# verification immune to timing-channel attacks.
+subtle = "2"
 # Used for content-change-detection hashes on the indexer hot path.
 # ~3× faster than SHA-256 per single-thread, with the same hex output
 # format (32-byte digest → 64 hex chars). Identity-style hashes

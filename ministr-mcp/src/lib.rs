@@ -8,8 +8,10 @@
 #![allow(clippy::cast_precision_loss)] // intentional for progress/stats ratios
 
 pub mod a2a;
+pub mod admin;
 pub mod auth;
 pub mod backend;
+mod time;
 pub mod bundle_routes;
 pub mod elicitation;
 pub mod error;
