@@ -32,10 +32,12 @@ multiple-versions = "warn"
 wildcards = "allow"
 
 [licenses]
-# ministr's own crates are proprietary (LicenseRef-Proprietary) and
-# `publish = false`. cargo-deny's license policy is for *third-party*
-# dependencies; skip our unpublished workspace crates so the proprietary
-# marker doesn't trip the allow-list (which only governs deps).
+# ministr's open-core workspace crates are MIT-licensed and `publish =
+# false`. cargo-deny's license policy governs *third-party* dependencies;
+# ignore our unpublished workspace crates so the policy below applies only
+# to deps. (Closed-source cloud/enterprise/atlas crates added in later
+# phases ship LicenseRef-Proprietary and remain covered by this same
+# `private = { ignore = true }` switch.)
 private = { ignore = true }
 allow = [
     "MIT",

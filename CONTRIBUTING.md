@@ -162,4 +162,12 @@ CI runs these automatically on every PR.
 
 ## License
 
-ministr is proprietary, closed-source software (see [LICENSE](LICENSE)). By contributing, you assign all right, title, and interest in your contributions to the copyright holder; no open-source license is granted in or to this repository or its source.
+The six workspace crates in this repository are MIT-licensed; see
+[LICENSE-MIT](LICENSE-MIT). Contributions are accepted under the same MIT
+license as outbound (the standard inbound=outbound model) — you retain
+copyright in your contribution and grant ministr's users the MIT permissions.
+No copyright assignment is required.
+
+See [STEWARDSHIP.md](STEWARDSHIP.md) for the open-core thesis, the list of
+what stays MIT, and our public commitment that a feature that ships open
+source will not be moved to a paid tier.

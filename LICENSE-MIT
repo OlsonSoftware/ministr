@@ -19,18 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This file applies to ministr's open-core workspace crates (ministr-core,
-ministr-api, ministr-daemon, ministr-mcp, ministr-cli, and
-ministr-app/src-tauri). The hosted ministr Cloud service and any proprietary
-crates added to this repository in future phases (ministr-cloud,
-ministr-enterprise, ministr-atlas, ministr-atlas-mirror) ship under
-LicenseRef-Proprietary and carry their own per-crate LICENSE file when
-introduced. See STEWARDSHIP.md for the open-core thesis and the never-demote
-commitment.
-
-Third-party components are licensed under their own terms; see
-third_party/ (e.g. third_party/tree-sitter-unreal-cpp, MIT) and the
-dependency manifests. Those terms apply only to those components.
