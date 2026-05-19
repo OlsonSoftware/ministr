@@ -62,11 +62,27 @@ impl SqliteStorage {
 }
 
 fn configure(conn: &Connection) -> StorageResult<()> {
-    // WAL gives concurrent reads during writes; NORMAL sync balances
-    // durability vs. latency on the Azure Files mount. A 5s busy timeout
-    // tolerates brief SMB contention.
+    // Try WAL for concurrent reader perf; fall back to DELETE silently
+    // when the filesystem can't host WAL's shared-memory file (Azure
+    // Files SMB / CIFS / NFS). `MINISTR_REQUIRE_WAL=0` declares the
+    // fallback is OK. With ACA min=1/max=1 the single-writer guarantee
+    // holds either way.
+    let require_wal = std::env::var("MINISTR_REQUIRE_WAL").map_or(true, |v| v != "0");
+
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| StorageError::Backend(format!("journal_mode: {e}")))?;
+    let actual: String = conn
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .map_err(|e| StorageError::Backend(format!("read journal_mode: {e}")))?;
+    if !actual.eq_ignore_ascii_case("wal") {
+        if require_wal {
+            return Err(StorageError::Backend(format!(
+                "journal_mode did not stick — got {actual:?}, wanted WAL \
+                 (set MINISTR_REQUIRE_WAL=0 to allow DELETE fallback)"
+            )));
+        }
+        tracing::debug!(mode = %actual, "oauth sqlite: WAL fell back to {actual}");
+    }
     conn.pragma_update(None, "synchronous", "NORMAL")
         .map_err(|e| StorageError::Backend(format!("synchronous: {e}")))?;
     conn.pragma_update(None, "busy_timeout", 5_000)

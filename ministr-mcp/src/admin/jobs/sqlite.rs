@@ -49,8 +49,25 @@ impl SqliteJobQueue {
 }
 
 fn configure(conn: &Connection) -> JobResult<()> {
+    // Same WAL-with-DELETE-fallback pattern as the OAuth sqlite (see
+    // `auth/storage/sqlite.rs`). `MINISTR_REQUIRE_WAL=0` opts into the
+    // fallback for network-filesystem deployments (Azure Files SMB).
+    let require_wal = std::env::var("MINISTR_REQUIRE_WAL").map_or(true, |v| v != "0");
+
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| JobQueueError::Backend(format!("journal_mode: {e}")))?;
+    let actual: String = conn
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .map_err(|e| JobQueueError::Backend(format!("read journal_mode: {e}")))?;
+    if !actual.eq_ignore_ascii_case("wal") {
+        if require_wal {
+            return Err(JobQueueError::Backend(format!(
+                "journal_mode did not stick — got {actual:?}, wanted WAL \
+                 (set MINISTR_REQUIRE_WAL=0 to allow DELETE fallback)"
+            )));
+        }
+        tracing::debug!(mode = %actual, "admin jobs sqlite: WAL fell back to {actual}");
+    }
     conn.pragma_update(None, "synchronous", "NORMAL")
         .map_err(|e| JobQueueError::Backend(format!("synchronous: {e}")))?;
     conn.pragma_update(None, "busy_timeout", 5_000)

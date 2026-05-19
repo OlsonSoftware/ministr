@@ -149,12 +149,21 @@ impl SqliteStorage {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let p = path.as_ref().to_path_buf();
 
+        // `MINISTR_REQUIRE_WAL=0` lets the connection accept the DELETE
+        // journal mode when WAL can't be enabled. Required when the DB
+        // file lives on SMB/CIFS-mounted shares (e.g. Azure Files) where
+        // SQLite's WAL shared-memory file isn't supported. Single-writer
+        // deployments (ACA min=1/max=1) tolerate DELETE just fine; the
+        // perf cost is losing concurrent-reader-while-writer, which is
+        // rare on this workload.
+        let require_wal = std::env::var("MINISTR_REQUIRE_WAL").map_or(true, |v| v != "0");
+
         // Migration pass on the first connection — schema changes are
         // visible to all subsequent pool members via the WAL.
         let mut first = Connection::open(&p).map_err(|e| StorageError::Database {
             reason: format!("failed to open database: {e}"),
         })?;
-        configure_connection(&first, true)?;
+        configure_connection(&first, require_wal)?;
         run_migrations(&mut first)?;
 
         let mut pool_conns = Vec::with_capacity(DEFAULT_POOL_CAPACITY);
@@ -163,7 +172,7 @@ impl SqliteStorage {
             let conn = Connection::open(&p).map_err(|e| StorageError::Database {
                 reason: format!("failed to open pool connection: {e}"),
             })?;
-            configure_connection(&conn, true)?;
+            configure_connection(&conn, require_wal)?;
             pool_conns.push(conn);
         }
 
@@ -171,7 +180,7 @@ impl SqliteStorage {
         let embedding_conn = Connection::open(&p).map_err(|e| StorageError::Database {
             reason: format!("failed to open embedding cache connection: {e}"),
         })?;
-        configure_connection(&embedding_conn, true)?;
+        configure_connection(&embedding_conn, require_wal)?;
 
         Ok(Self {
             pool: Arc::new(Pool {
