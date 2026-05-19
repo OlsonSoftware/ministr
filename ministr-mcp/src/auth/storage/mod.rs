@@ -27,8 +27,8 @@ use thiserror::Error;
 
 use super::types::{AccessToken, AuthorizationCode, RegisteredClient};
 
-pub(crate) use in_memory::InMemoryStorage;
-pub(crate) use sqlite::SqliteStorage;
+pub(super) use in_memory::InMemoryStorage;
+pub(super) use sqlite::SqliteStorage;
 
 /// Result alias for storage operations.
 pub(crate) type StorageResult<T> = Result<T, StorageError>;
@@ -87,7 +87,6 @@ pub(crate) trait OAuthStorage: Send + Sync {
 
 /// Concrete backend dispatcher. Add a variant to support a new storage type.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Sqlite variant is selected by cmd_serve_http in PR1.4
 pub(crate) enum OAuthBackend {
     InMemory(InMemoryStorage),
     Sqlite(SqliteStorage),

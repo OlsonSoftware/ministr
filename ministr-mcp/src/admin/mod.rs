@@ -21,10 +21,14 @@ mod jobs;
 mod router;
 mod webhook;
 
+use std::io;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub use router::admin_routes;
+use jobs::{InMemoryJobQueue, SqliteJobQueue};
+
+pub use router::{admin_protected_routes, admin_public_routes};
 pub(crate) use jobs::JobQueueBackend;
 
 /// State shared by every admin handler.
@@ -40,19 +44,41 @@ pub struct AdminState {
 }
 
 impl AdminState {
-    /// Construct an `AdminState` from its building blocks.
+    /// Construct an `AdminState` with an in-memory job queue. Job state
+    /// is lost on restart — fine for local dev or single-container
+    /// deployments where state doesn't need to outlive the process.
     #[must_use]
-    #[allow(dead_code)] // wired into cmd_serve_http in PR1.4
-    pub(crate) fn new(
-        queue: JobQueueBackend,
-        webhook_secret: Option<String>,
-        corpus_count: Arc<AtomicUsize>,
-    ) -> Self {
+    pub fn in_memory(webhook_secret: Option<String>) -> Self {
         Self {
+            queue: JobQueueBackend::InMemory(InMemoryJobQueue::new()),
+            webhook_secret: webhook_secret.map(Arc::new),
+            corpus_count: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Construct an `AdminState` backed by `SQLite` at `jobs_db_path`. Jobs
+    /// survive process restarts — intended for ACA deployments where the
+    /// path is on the Azure Files mount.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `io::Error` if the database file cannot be opened or
+    /// the schema cannot be initialised.
+    pub fn persistent(jobs_db_path: &Path, webhook_secret: Option<String>) -> io::Result<Self> {
+        let queue = SqliteJobQueue::open(jobs_db_path)
+            .map(JobQueueBackend::Sqlite)
+            .map_err(io::Error::other)?;
+        Ok(Self {
             queue,
             webhook_secret: webhook_secret.map(Arc::new),
-            corpus_count,
-        }
+            corpus_count: Arc::new(AtomicUsize::new(0)),
+        })
+    }
+
+    /// Update the corpus count surfaced by `/healthz`. Called by the CLI
+    /// once corpora are discovered.
+    pub fn set_corpus_count(&self, n: usize) {
+        self.corpus_count.store(n, Ordering::Relaxed);
     }
 
     fn corpus_count(&self) -> usize {
@@ -67,27 +93,18 @@ impl AdminState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::admin::jobs::InMemoryJobQueue;
-
-    fn state(secret: Option<String>, count: usize) -> AdminState {
-        AdminState::new(
-            JobQueueBackend::InMemory(InMemoryJobQueue::new()),
-            secret,
-            Arc::new(AtomicUsize::new(count)),
-        )
-    }
 
     #[test]
     fn webhook_disabled_when_no_secret() {
-        let s = state(None, 0);
+        let s = AdminState::in_memory(None);
         assert!(s.webhook_secret().is_none());
     }
 
     #[test]
     fn corpus_count_round_trips() {
-        let s = state(Some("x".into()), 7);
+        let s = AdminState::in_memory(Some("x".into()));
+        assert_eq!(s.corpus_count(), 0);
+        s.set_corpus_count(7);
         assert_eq!(s.corpus_count(), 7);
-        s.corpus_count.store(11, Ordering::Relaxed);
-        assert_eq!(s.corpus_count(), 11);
     }
 }

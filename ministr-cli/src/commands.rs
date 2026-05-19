@@ -30,6 +30,55 @@ use crate::ingestion;
 // ministr serve --transport http
 // ---------------------------------------------------------------------------
 
+/// Cloud-mode environment knobs honoured by `cmd_serve_http`.
+///
+/// `MINISTR_CLOUD_DATA_DIR` — persistence directory for OAuth + admin
+/// `SQLite` databases. When unset the server runs with in-memory state.
+/// `MINISTR_GITHUB_WEBHOOK_SECRET` — enables `/webhook/github` and
+/// authenticates incoming push events via HMAC-SHA256.
+struct CloudEnv {
+    data_dir: Option<PathBuf>,
+    webhook_secret: Option<String>,
+}
+
+fn read_cloud_env() -> CloudEnv {
+    CloudEnv {
+        data_dir: std::env::var("MINISTR_CLOUD_DATA_DIR").ok().map(PathBuf::from),
+        webhook_secret: std::env::var("MINISTR_GITHUB_WEBHOOK_SECRET").ok(),
+    }
+}
+
+fn build_admin_state(env: &CloudEnv, corpus_count: usize) -> Result<ministr_mcp::admin::AdminState> {
+    let state = match env.data_dir.as_deref() {
+        Some(dir) => {
+            std::fs::create_dir_all(dir)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("create cloud data dir {}", dir.display()))?;
+            ministr_mcp::admin::AdminState::persistent(
+                &dir.join("jobs.db"),
+                env.webhook_secret.clone(),
+            )
+            .into_diagnostic()
+            .wrap_err("open persistent admin state")?
+        }
+        None => ministr_mcp::admin::AdminState::in_memory(env.webhook_secret.clone()),
+    };
+    state.set_corpus_count(corpus_count);
+    Ok(state)
+}
+
+fn build_oauth_store(
+    cfg: ministr_mcp::auth::OAuthConfig,
+    data_dir: Option<&Path>,
+) -> Result<ministr_mcp::auth::OAuthStore> {
+    match data_dir {
+        Some(dir) => ministr_mcp::auth::OAuthStore::persistent(cfg, &dir.join("oauth.db"))
+            .into_diagnostic()
+            .wrap_err("open persistent oauth store"),
+        None => Ok(ministr_mcp::auth::OAuthStore::new(cfg)),
+    }
+}
+
 /// `ministr serve --transport http` — Streamable HTTP MCP server.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_serve_http(
@@ -98,16 +147,40 @@ pub(crate) async fn cmd_serve_http(
     };
     let bundle_router = ministr_mcp::bundle_routes::bundle_routes(bundle_state);
 
+    let cloud_env = read_cloud_env();
+    let admin_state = build_admin_state(&cloud_env, corpus_paths.len())?;
+    let admin_public = ministr_mcp::admin::admin_public_routes(admin_state.clone());
+    let admin_protected = ministr_mcp::admin::admin_protected_routes(admin_state);
+
     let app = if let Some(oauth_cfg) = oauth_config {
-        tracing::info!("OAuth 2.1 authentication enabled");
-        let store = ministr_mcp::auth::OAuthStore::new(oauth_cfg);
+        tracing::info!(
+            persistent = cloud_env.data_dir.is_some(),
+            webhook = cloud_env.webhook_secret.is_some(),
+            "OAuth 2.1 authentication enabled"
+        );
+        let store = build_oauth_store(oauth_cfg, cloud_env.data_dir.as_deref())?;
         let protected = ministr_mcp::auth::protected_router(mcp_router, store.clone());
-        // Bundle endpoints require ministr:bundle:read scope when OAuth is active.
-        let protected_bundles =
-            ministr_mcp::auth::scope_protected_router(bundle_router, store, "ministr:bundle:read");
-        a2a_router.merge(protected).merge(protected_bundles)
+        let protected_bundles = ministr_mcp::auth::scope_protected_router(
+            bundle_router,
+            store.clone(),
+            "ministr:bundle:read",
+        );
+        let protected_admin =
+            ministr_mcp::auth::scope_protected_router(admin_protected, store, "ministr:write");
+        a2a_router
+            .merge(protected)
+            .merge(protected_bundles)
+            .merge(protected_admin)
+            .merge(admin_public)
     } else {
-        a2a_router.merge(mcp_router).merge(bundle_router)
+        // No OAuth: admin protected routes still mount but anyone on the
+        // network can hit `/reindex`. Only safe for local dev — cloud
+        // deployments must always set an `OAuthConfig`.
+        a2a_router
+            .merge(mcp_router)
+            .merge(bundle_router)
+            .merge(admin_protected)
+            .merge(admin_public)
     };
 
     let bind_addr = format!("{host}:{port}");

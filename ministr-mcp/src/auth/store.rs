@@ -5,10 +5,13 @@
 //! `OAuthStore`, not on the storage trait directly — that keeps generic
 //! plumbing out of axum and centralises backend-selection logic.
 
+use std::io;
+use std::path::Path;
+
 use tracing::warn;
 
 use super::OAuthConfig;
-use super::storage::{InMemoryStorage, OAuthBackend, StorageResult};
+use super::storage::{InMemoryStorage, OAuthBackend, SqliteStorage, StorageResult};
 use super::types::{AccessToken, AuthorizationCode, RegisteredClient};
 use super::util::epoch_now;
 
@@ -33,12 +36,19 @@ impl OAuthStore {
         }
     }
 
-    /// Inject a specific backend (used by `cmd_serve_http` when a persistent
-    /// backend is configured).
-    #[must_use]
-    #[allow(dead_code)] // wired up in PR1.4 (OAuthConfig backend selection)
-    pub(crate) fn with_backend(config: OAuthConfig, backend: OAuthBackend) -> Self {
-        Self { config, backend }
+    /// Construct a store backed by `SQLite` at `db_path`. The file is
+    /// created if missing and survives process restarts — meant for ACA
+    /// deployments where the path is on the Azure Files mount.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `io::Error` if the database file cannot be opened or
+    /// the schema cannot be initialised.
+    pub fn persistent(config: OAuthConfig, db_path: &Path) -> io::Result<Self> {
+        let backend = SqliteStorage::open(db_path)
+            .map(OAuthBackend::Sqlite)
+            .map_err(io::Error::other)?;
+        Ok(Self { config, backend })
     }
 
     /// Read-only view of the configuration.
