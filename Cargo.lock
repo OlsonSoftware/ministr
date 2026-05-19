@@ -4524,6 +4524,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ministr-cloud"
+version = "0.6.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ministr-core"
 version = "0.6.0"
 dependencies = [
