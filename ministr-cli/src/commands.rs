@@ -36,15 +36,25 @@ use crate::ingestion;
 /// `SQLite` databases. When unset the server runs with in-memory state.
 /// `MINISTR_GITHUB_WEBHOOK_SECRET` — enables `/webhook/github` and
 /// authenticates incoming push events via HMAC-SHA256.
+/// `MINISTR_PG_URL` — libpq connection string for the cloud Postgres
+/// database. When set, OAuth state is persisted to Postgres
+/// (`OAuthBackend::Postgres`) and takes precedence over the `SQLite`
+/// path; multi-pod cloud deployments rely on this so every pod shares
+/// the same `oauth_clients`/`oauth_codes`/`oauth_tokens` rows.
 struct CloudEnv {
     data_dir: Option<PathBuf>,
     webhook_secret: Option<String>,
+    pg_url: Option<String>,
 }
 
 fn read_cloud_env() -> CloudEnv {
     CloudEnv {
         data_dir: std::env::var("MINISTR_CLOUD_DATA_DIR").ok().map(PathBuf::from),
         webhook_secret: std::env::var("MINISTR_GITHUB_WEBHOOK_SECRET").ok(),
+        pg_url: std::env::var("MINISTR_PG_URL")
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty()),
     }
 }
 
@@ -67,10 +77,21 @@ fn build_admin_state(env: &CloudEnv, corpus_count: usize) -> Result<ministr_mcp:
     Ok(state)
 }
 
-fn build_oauth_store(
+async fn build_oauth_store(
     cfg: ministr_mcp::auth::OAuthConfig,
     data_dir: Option<&Path>,
+    pg_url: Option<&str>,
 ) -> Result<ministr_mcp::auth::OAuthStore> {
+    // Selector order — Postgres wins when MINISTR_PG_URL is set so
+    // multi-pod cloud deployments cannot accidentally fall through to a
+    // pod-local SQLite file. SQLite is the self-hosted persistent
+    // option; in-memory is dev-only.
+    if let Some(url) = pg_url {
+        return ministr_mcp::auth::OAuthStore::postgres(cfg, url)
+            .await
+            .into_diagnostic()
+            .wrap_err("open postgres oauth store");
+    }
     match data_dir {
         Some(dir) => ministr_mcp::auth::OAuthStore::persistent(cfg, &dir.join("oauth.db"))
             .into_diagnostic()
@@ -200,10 +221,16 @@ pub(crate) async fn cmd_serve_http(
     let app = if let Some(oauth_cfg) = oauth_config {
         tracing::info!(
             persistent = cloud_env.data_dir.is_some(),
+            postgres = cloud_env.pg_url.is_some(),
             webhook = cloud_env.webhook_secret.is_some(),
             "OAuth 2.1 authentication enabled"
         );
-        let store = build_oauth_store(oauth_cfg, cloud_env.data_dir.as_deref())?;
+        let store = build_oauth_store(
+            oauth_cfg,
+            cloud_env.data_dir.as_deref(),
+            cloud_env.pg_url.as_deref(),
+        )
+        .await?;
         let protected = ministr_mcp::auth::protected_router(mcp_router, store.clone());
         let protected_bundles = ministr_mcp::auth::scope_protected_router(
             bundle_router,
