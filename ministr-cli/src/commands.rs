@@ -108,6 +108,14 @@ pub(crate) async fn cmd_serve_http(
     )
     .await?;
 
+    // F1.2 sub-bullet 3 — build the corpus registry once and hand the
+    // same `Arc<CorpusRegistry>` to both the MCP server and the daemon
+    // REST router below. Both surfaces therefore observe a single
+    // source of truth for what's indexed; restore() runs once.
+    let corpus_registry = infra::build_corpus_registry(&ctx, config);
+    corpus_registry.restore().await;
+    let server = server.with_corpus_registry(Arc::clone(&corpus_registry));
+
     let ingestion_progress = server.ingestion_progress_arc();
 
     // Extract Arcs before moving server into the factory closure. The HTTP
@@ -167,13 +175,12 @@ pub(crate) async fn cmd_serve_http(
     let admin_protected = ministr_mcp::admin::admin_protected_routes(admin_state);
 
     // ── Daemon REST surface (/api/v1/corpora/* + /activity + /coherence-events) ─
-    // Share the same `Arc<dyn Embedder>` the MCP server already uses — no
-    // double model load. The daemon's `record_activity` middleware is
-    // applied per sub-router so observability spans authenticated calls
-    // only (auth check sits outside the activity layer).
-    let registry = infra::build_corpus_registry(&ctx, config);
-    let daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&registry));
-    registry.restore().await;
+    // Share the same `Arc<CorpusRegistry>` already wired into the MCP
+    // server (see the build_corpus_registry call above). The daemon's
+    // `record_activity` middleware is applied per sub-router so
+    // observability spans authenticated calls only (auth check sits
+    // outside the activity layer).
+    let daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&corpus_registry));
 
     let activity_layer = axum::middleware::from_fn_with_state(
         daemon_state.clone(),

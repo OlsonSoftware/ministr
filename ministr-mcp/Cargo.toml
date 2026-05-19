@@ -18,6 +18,12 @@ workspace = true
 [dependencies]
 ministr-api.workspace = true
 ministr-core.workspace = true
+# F1.2 sub-bullet 3 — MinistrServer holds an optional
+# `Arc<ministr_daemon::registry::CorpusRegistry>` so the `/mcp` surface
+# and the daemon's REST surface (`/api/v1/corpora/*`) share a single
+# source of truth in `cmd_serve_http`. ministr-daemon does not depend
+# on ministr-mcp, so this arrow stays acyclic.
+ministr-daemon.workspace = true
 rmcp.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

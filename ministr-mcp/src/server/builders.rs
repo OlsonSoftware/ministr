@@ -79,6 +79,7 @@ impl MinistrServer {
             custom_instructions: None,
             parent_session_id_hint: read_parent_session_env(),
             client_name_hint: Arc::new(std::sync::Mutex::new(None)),
+            corpus_registry: None,
         }
     }
 
@@ -147,6 +148,7 @@ impl MinistrServer {
             custom_instructions: None,
             parent_session_id_hint: read_parent_session_env(),
             client_name_hint: Arc::new(std::sync::Mutex::new(None)),
+            corpus_registry: None,
         }
     }
 
@@ -237,6 +239,7 @@ impl MinistrServer {
             custom_instructions: None,
             parent_session_id_hint: read_parent_session_env(),
             client_name_hint: Arc::new(std::sync::Mutex::new(None)),
+            corpus_registry: None,
         }
     }
 
@@ -290,6 +293,26 @@ impl MinistrServer {
         if self.index.is_none() {
             self.index = Some(index);
         }
+        self
+    }
+
+    /// Bridge the MCP surface to the daemon's multi-corpus registry.
+    ///
+    /// When `cmd_serve_http` mounts both the `/mcp` surface and the
+    /// daemon's REST router (`/api/v1/corpora/*`) in the same process,
+    /// it constructs a single `Arc<CorpusRegistry>` and hands the same
+    /// clone to both. That way a corpus created via REST (or queried
+    /// via REST) lands in the same state the MCP tools observe — a
+    /// prerequisite for the multi-tenant scoping work in F1.2 and the
+    /// quota middleware in F2.3.
+    ///
+    /// Returns `self` so it composes with the other `with_*` builders.
+    #[must_use]
+    pub fn with_corpus_registry(
+        mut self,
+        registry: Arc<ministr_daemon::registry::CorpusRegistry>,
+    ) -> Self {
+        self.corpus_registry = Some(registry);
         self
     }
 
@@ -387,6 +410,16 @@ impl MinistrServer {
     #[must_use]
     pub fn registry_arc(&self) -> Arc<Mutex<SessionRegistry>> {
         Arc::clone(&self.registry)
+    }
+
+    /// Access the shared daemon corpus registry, if one was wired via
+    /// [`Self::with_corpus_registry`]. `None` for stdio / proxy
+    /// transports.
+    #[must_use]
+    pub fn corpus_registry_arc(
+        &self,
+    ) -> Option<Arc<ministr_daemon::registry::CorpusRegistry>> {
+        self.corpus_registry.as_ref().map(Arc::clone)
     }
 
     /// The active session ID for this MCP connection.

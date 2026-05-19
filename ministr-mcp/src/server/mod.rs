@@ -401,6 +401,12 @@ pub struct MinistrServer {
     /// registry's tokio mutex hold — the lock is brief and never held
     /// across an `.await`.
     client_name_hint: Arc<std::sync::Mutex<Option<String>>>,
+    /// Bridge to the daemon's multi-corpus registry. `Some` when
+    /// `cmd_serve_http` wires the same `Arc<CorpusRegistry>` into both
+    /// the MCP server *and* the daemon's REST router so the two surfaces
+    /// agree on what's indexed (F1.2 sub-bullet 3). `None` for stdio /
+    /// proxy transports where the daemon REST router is not mounted.
+    pub(crate) corpus_registry: Option<Arc<ministr_daemon::registry::CorpusRegistry>>,
 }
 
 #[tool_handler]
@@ -4167,6 +4173,44 @@ mod tests {
         let server = server.with_git_fetcher(git_fetcher, embedder, index);
 
         assert!(server.git_fetcher.is_some());
+    }
+
+    /// F1.2 sub-bullet 3 — the MCP server holds the same
+    /// `Arc<CorpusRegistry>` instance the daemon REST router uses.
+    /// `cmd_serve_http` constructs the Arc once and hands it to both;
+    /// the seam below is what makes that sharing possible.
+    #[test]
+    fn with_corpus_registry_bridges_to_daemon_registry() {
+        let dim = 8;
+        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 100).unwrap());
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let service = Arc::new(QueryService::new(
+            storage,
+            Arc::clone(&embedder),
+            Arc::clone(&index),
+        ));
+        let server = MinistrServer::new(service);
+        assert!(server.corpus_registry_arc().is_none());
+
+        let corpus_registry = Arc::new(ministr_daemon::registry::CorpusRegistry::new(
+            Arc::clone(&embedder),
+            ministr_core::config::MinistrConfig::default(),
+        ));
+        let server = server.with_corpus_registry(Arc::clone(&corpus_registry));
+
+        let from_server = server
+            .corpus_registry_arc()
+            .expect("registry should be set after with_corpus_registry");
+        // Pointer identity — the same Arc reaches both surfaces in
+        // cmd_serve_http; nothing is cloned into a fresh registry.
+        assert!(Arc::ptr_eq(&from_server, &corpus_registry));
+
+        // Cloning the server (per-session factory pattern) preserves
+        // the same registry Arc, so each session sees identical state.
+        let cloned = server.clone();
+        let from_clone = cloned.corpus_registry_arc().expect("cloned registry");
+        assert!(Arc::ptr_eq(&from_clone, &corpus_registry));
     }
 
     // Progress notification tests removed — Peer::new() is pub(crate) in rmcp 0.16.
