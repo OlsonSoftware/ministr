@@ -38,3 +38,12 @@ azure_core = "1"
 azure_identity = "1"
 azure_storage_blob = "1"
 futures = "0.3"
+# F1.2 — multi-tenant data model. deadpool-postgres pool + rustls TLS
+# (Azure Postgres Flex requires TLS server-side; no opt-out). Same
+# pinning as ministr-mcp's OAuthBackend::Postgres so we don't end up
+# with two Postgres client versions in one binary.
+tokio-postgres.workspace = true
+deadpool-postgres.workspace = true
+tokio-postgres-rustls.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true

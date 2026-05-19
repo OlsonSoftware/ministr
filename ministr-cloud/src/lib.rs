@@ -37,8 +37,10 @@
 #![deny(unsafe_code)]
 
 pub mod blob;
+pub mod db;
 
 pub use blob::{BlobError, BlobResult, CorpusBlobStore};
+pub use db::{connect, run_migrations, DbError};
 
 use serde::{Deserialize, Serialize};
 
