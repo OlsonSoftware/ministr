@@ -34,6 +34,8 @@ tokio = { workspace = true }
 
 # Cloud connection probes (mcp.ministr.ai /healthz + /reindex).
 reqwest = { workspace = true, features = ["json"] }
+# SHA-256 for PKCE challenge generation in the OAuth flow.
+sha2 = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

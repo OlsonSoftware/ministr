@@ -12,9 +12,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
+  ChevronDown,
+  ChevronRight,
   CloudOff,
   GitBranch,
   Loader2,
+  LogIn,
   Plus,
   RefreshCw,
   ShieldAlert,
@@ -42,8 +45,15 @@ export function CloudPanel() {
   const [health, setHealth] = useState<CloudHealth | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [busy, setBusy] = useState<
-    null | "save-endpoint" | "save-token" | "probe" | "disconnect"
+    null
+    | "save-endpoint"
+    | "save-token"
+    | "sign-in"
+    | "probe"
+    | "disconnect"
   >(null);
+  const [signInError, setSignInError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const refreshStatus = useCallback(async () => {
     const s = await cloudClient.status();
@@ -71,6 +81,25 @@ export function CloudPanel() {
       await cloudClient.setBearerToken(tokenDraft);
       setTokenDraft("");
       await refreshStatus();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onSignIn = async () => {
+    setBusy("sign-in");
+    setSignInError(null);
+    try {
+      // Make sure the endpoint is saved first — otherwise the OAuth flow
+      // would target whatever the persisted endpoint is, which may not
+      // match what the user just typed.
+      if (endpointDraft.trim() && endpointDraft !== status?.endpoint) {
+        await cloudClient.setEndpoint(endpointDraft);
+      }
+      await cloudClient.authenticate();
+      await refreshStatus();
+    } catch (e) {
+      setSignInError(String(e));
     } finally {
       setBusy(null);
     }
@@ -146,37 +175,88 @@ export function CloudPanel() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <label className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between">
           <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
-            Bearer token
+            Authentication
           </span>
-          <input
-            type="password"
-            value={tokenDraft}
-            onChange={(e) => setTokenDraft(e.target.value)}
-            placeholder={
-              status?.authenticated
-                ? "•••••••• (token saved — type to replace)"
-                : "Paste a token from the remote OAuth flow"
-            }
-            className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
-          />
-        </label>
+          {status?.authenticated && (
+            <span className="text-xs text-accent font-mono flex items-center gap-1">
+              <Check className="size-3.5" /> signed in
+            </span>
+          )}
+        </div>
         <div className="flex gap-2">
           <Button
             size="sm"
-            onClick={onSaveToken}
-            disabled={busy === "save-token" || tokenDraft.trim() === ""}
+            onClick={onSignIn}
+            disabled={busy === "sign-in"}
           >
-            {busy === "save-token" ? <Loader2 className="size-3.5 animate-spin" /> : null}
-            Save token
+            {busy === "sign-in" ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <LogIn className="size-3.5" />
+            )}
+            {status?.authenticated ? "Re-sign in" : "Sign in to ministr Cloud"}
           </Button>
         </div>
-        <p className="text-xs text-text-muted flex items-start gap-1.5">
-          <ShieldAlert className="size-3.5 mt-0.5 shrink-0" />
-          Tokens live in <span className="font-mono text-text">~/.ministr/cloud.json</span>
-          {" "}with owner-only permissions. OS-keychain storage is a follow-up.
+        <p className="text-xs text-text-muted">
+          Opens your browser, completes the OAuth flow, stores the token in{" "}
+          <span className="font-mono text-text">~/.ministr/cloud.json</span>
+          {" "}(owner-only). Times out after 3 minutes.
         </p>
+        {signInError && (
+          <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
+            {signInError}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors self-start"
+        >
+          {advancedOpen ? (
+            <ChevronDown className="size-3.5" />
+          ) : (
+            <ChevronRight className="size-3.5" />
+          )}
+          Advanced: paste token manually
+        </button>
+        {advancedOpen && (
+          <div className="flex flex-col gap-2 border-l-2 border-border-soft pl-3 ml-1">
+            <label className="flex flex-col gap-1.5">
+              <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+                Bearer token
+              </span>
+              <input
+                type="password"
+                value={tokenDraft}
+                onChange={(e) => setTokenDraft(e.target.value)}
+                placeholder={
+                  status?.authenticated
+                    ? "•••••••• (token saved — type to replace)"
+                    : "Paste a token from any OAuth flow"
+                }
+                className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+              />
+            </label>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onSaveToken}
+                disabled={busy === "save-token" || tokenDraft.trim() === ""}
+              >
+                {busy === "save-token" ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                Save token
+              </Button>
+            </div>
+            <p className="text-xs text-text-muted flex items-start gap-1.5">
+              <ShieldAlert className="size-3.5 mt-0.5 shrink-0" />
+              OS-keychain storage is a v2 hardening step.
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="flex flex-col gap-3 border-t border-border-soft pt-5">

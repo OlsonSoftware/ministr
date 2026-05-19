@@ -66,6 +66,14 @@ export const cloudClient = {
     invoke<void>("cloud_set_endpoint", { endpoint }),
   setBearerToken: (token: string) =>
     invoke<void>("cloud_set_bearer_token", { token }),
+  /**
+   * Drive the full OAuth 2.1 + PKCE flow against the configured endpoint.
+   * Opens the system browser; the user signs in once; the resulting
+   * access token is persisted via the same store as `setBearerToken`.
+   * Resolves when the token has been saved. Rejects on cancel/timeout
+   * (~3 min) or any handshake failure.
+   */
+  authenticate: () => invoke<void>("cloud_authenticate"),
   disconnect: () => invoke<void>("cloud_disconnect"),
   healthCheck: () => invoke<CloudHealth>("cloud_health_check"),
   triggerReindex: (corpusId: string) =>
