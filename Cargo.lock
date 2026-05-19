@@ -4732,6 +4732,7 @@ name = "ministr-app"
 version = "0.6.0"
 dependencies = [
  "fastembed",
+ "getrandom 0.3.4",
  "ministr-api",
  "ministr-core",
  "ministr-daemon",
