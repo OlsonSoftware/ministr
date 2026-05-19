@@ -52,3 +52,8 @@ deadpool-postgres.workspace = true
 tokio-postgres-rustls.workspace = true
 rustls.workspace = true
 webpki-roots.workspace = true
+# F1.3 — GitHub OAuth IdP. reqwest is the workspace HTTP client; we use
+# rustls + http2 the same way ministr-mcp and ministr-app do, so there's
+# no second TLS stack in the binary. `json` enables the .json() helper
+# the GitHubIdp uses for the token + user-info responses.
+reqwest = { workspace = true, features = ["json"] }

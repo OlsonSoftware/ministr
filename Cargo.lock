@@ -4800,6 +4800,7 @@ dependencies = [
  "futures",
  "ministr-core",
  "ministr-mcp",
+ "reqwest 0.13.2",
  "rustls",
  "serde",
  "serde_json",

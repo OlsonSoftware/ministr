@@ -42,7 +42,7 @@ pub mod idp;
 
 pub use blob::{BlobError, BlobResult, CorpusBlobStore};
 pub use db::{connect, run_migrations, DbError};
-pub use idp::{IdentityProvider, IdpError, ResolvedIdentity};
+pub use idp::{GitHubIdp, IdentityProvider, IdpError, ResolvedIdentity, GITHUB_ISSUER};
 
 /// Re-exported from `ministr-mcp` (MIT) so the auth middleware in the
 /// local stack can attach a [`Plan`]-bearing `Tenant` to every request
