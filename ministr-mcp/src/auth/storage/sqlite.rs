@@ -31,7 +31,6 @@ pub(crate) struct SqliteStorage {
 impl SqliteStorage {
     /// Open (or create) the OAuth database at `path`. Creates the schema
     /// on first use.
-    #[allow(dead_code)] // wired into cmd_serve_http in PR1.4
     pub(crate) fn open(path: &Path) -> StorageResult<Self> {
         let conn = Connection::open(path)
             .map_err(|e| StorageError::Backend(format!("open {}: {e}", path.display())))?;
@@ -62,7 +61,6 @@ impl SqliteStorage {
     }
 }
 
-#[allow(dead_code)] // used via SqliteStorage::open once wired in PR1.4
 fn configure(conn: &Connection) -> StorageResult<()> {
     // WAL gives concurrent reads during writes; NORMAL sync balances
     // durability vs. latency on the Azure Files mount. A 5s busy timeout
@@ -76,7 +74,6 @@ fn configure(conn: &Connection) -> StorageResult<()> {
     Ok(())
 }
 
-#[allow(dead_code)] // used via SqliteStorage::open once wired in PR1.4
 fn ensure_schema(conn: &Connection) -> StorageResult<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS oauth_clients (
