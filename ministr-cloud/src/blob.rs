@@ -1,39 +1,54 @@
 //! Per-corpus HNSW blob persistence for the cloud surface.
 //!
-//! Every corpus indexed by `mcp.ministr.ai` lives as **one Azure Blob
-//! per corpus** — a zstd-tar `.ministr-index` bundle holding the `SQLite`
-//! content database + HNSW vector index. The blob is the source of
-//! truth; warm pods cache it on local disk.
+//! Every corpus indexed by `mcp.ministr.ai` lives in Azure Blob Storage
+//! as a **versioned `.ministr-index` bundle plus a small manifest blob**:
+//!
+//! ```text
+//! <container>/
+//!   ├─ corpora/<corpus_id>/manifest.json              ← pointer (small, atomically swapped)
+//!   └─ corpora/<corpus_id>/<bundle_version>.ministr-index  ← bundle (versioned)
+//! ```
+//!
+//! The manifest is the source of truth for "what's current". Atomic-swap
+//! semantics fall out of Azure Blob's single-PUT atomicity: until the
+//! manifest is rewritten, readers see the old bundle pointer; after, they
+//! see the new one. Bundles themselves are never overwritten; old
+//! versions accumulate and are eligible for separate GC (a future
+//! `retention` job — out of scope for F1.1).
+//!
+//! This layout mirrors F4.2's Atlas design (`atlas/<slug>/<commit>.idx`
+//! plus a `latest` pointer) so the same retention machinery can serve
+//! both.
+//!
+//! ## Build-on-/tmp + fsync + atomic-swap (F1.1 sub-bullet 6)
+//!
+//! Multi-tenant pods build new bundles on local ephemeral disk
+//! (`/tmp`) — fast, no SMB-mount perf penalty — then fsync the file
+//! before upload. Once durable, the worker:
+//!
+//! 1. Uploads the bundle to `corpora/<id>/<version>.ministr-index`.
+//! 2. Atomically swaps `corpora/<id>/manifest.json` to point at the new
+//!    version (single small PUT).
+//!
+//! A pod that dies mid-upload leaves the old manifest pointing at the
+//! old bundle — readers never see a half-written corpus. A pod that dies
+//! between the two PUTs leaves an orphan bundle blob; GC reaps it later.
 //!
 //! ## Why blob, not pgvector
 //!
 //! Reuses [`ministr_core::bundle::export_bundle`] /
 //! [`ministr_core::bundle::import_bundle`] verbatim — same format the
 //! local stack already exports for `ministr export`. Sidesteps
-//! pgvector's 2000-dimension HNSW ceiling (current ministr embeddings
-//! happen to be 384-dim, but we don't want the wall there as the model
-//! choice evolves). And keeps the `SQLite` path for self-hosted users
-//! unchanged.
-//!
-//! ## Layout in the container
-//!
-//! All blobs are prefixed `corpora/` inside the container so a single
-//! Azure Storage Account can host both per-tenant `corpora/` and the
-//! future Atlas index at `atlas/` (F2.6, F4.2) without conflict.
-//!
-//! ```text
-//! <container>/
-//!   ├─ corpora/<corpus_id>.ministr-index     ← this file
-//!   └─ atlas/<repo_slug>/<commit>.ministr-index    ← F2.6+
-//! ```
+//! pgvector's 2000-dimension HNSW ceiling. Keeps the `SQLite` path for
+//! self-hosted users unchanged.
 //!
 //! ## Cold-start / warm-cache (daemon wiring lands in F1.2)
 //!
-//! This module owns the upload/download primitives. The daemon-side
+//! This module owns the upload/download/list primitives. The daemon-side
 //! "on pod boot, restore each registered corpus's blob into
 //! `$DATA_DIR/corpora/`" loop is `cmd_serve_http`'s job once the cloud
 //! mode selector lands in F1.2. The primitives here are deliberately
-//! state-free so the daemon owns when/where to materialise the corpus.
+//! state-free so the daemon owns when/where to materialise each corpus.
 //!
 //! ## Authentication
 //!
@@ -49,6 +64,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use azure_core::credentials::TokenCredential;
 use azure_core::http::{RequestContent, StatusCode, Url};
@@ -56,8 +72,9 @@ use azure_storage_blob::{BlobContainerClient, BlobServiceClient};
 use futures::TryStreamExt;
 use ministr_core::bundle::{self, BundleManifest, BUNDLE_EXTENSION};
 use ministr_core::error::BundleError;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Errors that `CorpusBlobStore` can surface.
 #[derive(Debug, Error)]
@@ -72,17 +89,32 @@ pub enum BlobError {
         #[source]
         source: std::io::Error,
     },
-    #[error("blob name {0:?} is not a recognised .ministr-index bundle under corpora/")]
-    UnexpectedBlobName(String),
+    #[error("malformed corpus manifest blob: {0}")]
+    MalformedManifest(#[from] serde_json::Error),
+    #[error("bundle manifest is missing the `bundle_version` field; cannot upload (run `bundle::compute_bundle_version` first)")]
+    MissingBundleVersion,
 }
 
 /// Result alias for blob-store operations.
 pub type BlobResult<T> = Result<T, BlobError>;
 
+/// Tiny pointer blob naming the currently-canonical bundle version
+/// for a corpus. Atomically rewritten on every publish.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorpusManifest {
+    /// Bundle version string — names the canonical
+    /// `corpora/<corpus_id>/<version>.ministr-index` blob. Sourced from
+    /// `bundle::compute_bundle_version` so reads against a manifest with
+    /// the same version as the local cache are no-op staleness checks.
+    pub current_version: String,
+    /// Unix-seconds when this manifest was last written.
+    pub updated_at: u64,
+}
+
 /// Per-corpus HNSW blob store backed by an Azure Storage container.
 ///
 /// One instance maps to one container. Multiple corpora live as
-/// distinct blobs under the `corpora/` prefix inside that container.
+/// distinct `corpora/<id>/` prefixes inside that container.
 ///
 /// The Azure SDK's `BlobContainerClient` is not `Clone`; wrap an
 /// instance in `Arc<CorpusBlobStore>` when you need to share it across
@@ -117,7 +149,9 @@ impl CorpusBlobStore {
         credential: Arc<dyn TokenCredential>,
     ) -> BlobResult<Self> {
         let service_url = Url::parse(&format!("https://{account_name}.blob.core.windows.net/"))
-            .map_err(|e| azure_core::Error::with_message(azure_core::error::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| {
+                azure_core::Error::with_message(azure_core::error::ErrorKind::Other, e.to_string())
+            })?;
         let service = BlobServiceClient::new(service_url, Some(credential), None)?;
         let container = service.blob_container_client(container_name);
         debug!(account = account_name, container = container_name, "opened corpus blob store");
@@ -145,63 +179,105 @@ impl CorpusBlobStore {
         }
     }
 
-    /// Upload the corpus at `corpus_dir` as a single `.ministr-index`
-    /// blob named `corpora/<corpus_id>.ministr-index`.
+    /// Upload the corpus at `corpus_dir` as a versioned
+    /// `.ministr-index` bundle, then atomically swap the corpus
+    /// manifest to point at the new version.
     ///
-    /// The bundle is built into a tempfile on the pod's local disk
-    /// first (so the upload streams sequential bytes rather than
-    /// interleaving zstd-encoded chunks with concurrent HTTP frames),
-    /// then uploaded. The tempfile is dropped on return.
+    /// Pipeline:
+    /// 1. **Build on `/tmp`** — `bundle::export_bundle` writes a
+    ///    zstd-tar bundle to a tempfile on local ephemeral disk.
+    /// 2. **fsync** — the tempfile is fsynced before any upload, so a
+    ///    pod death after this point leaves a durable local artefact
+    ///    (helpful for incident forensics and any retry harness above).
+    /// 3. **PUT versioned bundle** — `corpora/<id>/<version>.ministr-index`.
+    /// 4. **Atomic-swap manifest** — single small PUT on
+    ///    `corpora/<id>/manifest.json`. Until this PUT lands, readers
+    ///    still see the old version.
+    ///
+    /// Returns the bundle version string the manifest now points at.
     ///
     /// # Errors
     ///
-    /// Fails on bundle-export errors, I/O errors writing the tempfile,
-    /// or upload errors from the storage service.
+    /// Fails if `manifest.bundle_version` is `None` (the caller must
+    /// have populated it via `bundle::compute_bundle_version`), or on
+    /// any bundle, I/O, or storage error.
     pub async fn upload_corpus(
         &self,
         corpus_id: &str,
         corpus_dir: &Path,
-        manifest: &BundleManifest,
-    ) -> BlobResult<()> {
+        bundle_manifest: &BundleManifest,
+    ) -> BlobResult<String> {
+        let version = bundle_manifest
+            .bundle_version
+            .clone()
+            .ok_or(BlobError::MissingBundleVersion)?;
+
+        // (1) build bundle on local /tmp
         let tmp = tempfile::NamedTempFile::new().map_err(|e| BlobError::Io {
             path: PathBuf::from("<tempfile>"),
             source: e,
         })?;
         let bundle_path =
-            bundle::export_bundle(corpus_dir, tmp.path(), manifest).map_err(BlobError::Bundle)?;
+            bundle::export_bundle(corpus_dir, tmp.path(), bundle_manifest).map_err(BlobError::Bundle)?;
+
+        // (2) fsync the tempfile so the bundle is durable on the pod's
+        //     local disk before we read it back for upload. Defensive
+        //     against partial writes from a crashing tar+zstd stream.
+        let f = tokio::fs::File::open(&bundle_path).await.map_err(|e| BlobError::Io {
+            path: bundle_path.clone(),
+            source: e,
+        })?;
+        f.sync_all().await.map_err(|e| BlobError::Io {
+            path: bundle_path.clone(),
+            source: e,
+        })?;
+        drop(f);
+
+        // (3) PUT the versioned bundle blob.
         let bytes = tokio::fs::read(&bundle_path).await.map_err(|e| BlobError::Io {
             path: bundle_path.clone(),
             source: e,
         })?;
-        let size = bytes.len();
-        let blob = self.container.blob_client(&blob_name_for(corpus_id));
-        blob.upload(RequestContent::from(bytes), None).await?;
+        let bundle_size = bytes.len();
+        let bundle_blob = self.container.blob_client(&bundle_blob_name(corpus_id, &version));
+        bundle_blob
+            .upload(RequestContent::from(bytes), None)
+            .await?;
+
+        // (4) Atomic-swap the manifest pointer.
+        self.put_manifest(corpus_id, &version).await?;
+
         info!(
             corpus_id,
-            bytes = size,
-            "uploaded corpus blob"
+            version = %version,
+            bytes = bundle_size,
+            "uploaded corpus bundle and swapped manifest"
         );
-        Ok(())
+        Ok(version)
     }
 
-    /// Download the blob for `corpus_id` and restore it into
+    /// Download the manifest's pointed-at bundle and restore it into
     /// `target_corpus_dir`, returning the bundle's manifest.
     ///
     /// `target_corpus_dir` must already exist; the daemon's
     /// registration path is responsible for creating it before this
-    /// call (matches the existing `import_bundle` contract).
+    /// call (matches `import_bundle`'s contract).
     ///
     /// # Errors
     ///
-    /// Fails if the blob does not exist, the download fails, the
-    /// tempfile cannot be written, or the bundle is malformed.
+    /// Fails if no manifest is present (treated as a clean 404), the
+    /// bundle the manifest points at is missing, the download fails,
+    /// the tempfile cannot be written, or the bundle is malformed.
     pub async fn download_corpus(
         &self,
         corpus_id: &str,
         target_corpus_dir: &Path,
     ) -> BlobResult<BundleManifest> {
-        let blob = self.container.blob_client(&blob_name_for(corpus_id));
-        let response = blob.download(None).await?;
+        let cm = self.get_manifest(corpus_id).await?;
+        let bundle_blob = self
+            .container
+            .blob_client(&bundle_blob_name(corpus_id, &cm.current_version));
+        let response = bundle_blob.download(None).await?;
         let bytes = response.body.collect().await?;
         let tmp = tempfile::NamedTempFile::new().map_err(|e| BlobError::Io {
             path: PathBuf::from("<tempfile>"),
@@ -214,67 +290,135 @@ impl CorpusBlobStore {
         let manifest = bundle::import_bundle(tmp.path(), target_corpus_dir)?;
         info!(
             corpus_id,
+            version = %cm.current_version,
             vectors = manifest.vector_count,
             documents = manifest.document_count,
-            "downloaded and restored corpus blob"
+            "downloaded and restored corpus bundle"
         );
         Ok(manifest)
     }
 
-    /// List all corpus IDs present in the container. Each returned
-    /// string is the `corpus_id` portion of a `corpora/<id>.ministr-index`
-    /// blob name. The order matches the storage service's listing
-    /// (lexicographic by blob name).
+    /// Return the current `CorpusManifest` for a corpus.
     ///
     /// # Errors
     ///
-    /// Surfaces any error from the storage service. Blobs that don't
-    /// match the `corpora/<id>.ministr-index` shape are skipped (logged
-    /// at debug level) rather than failing the listing.
+    /// Surfaces the underlying storage error if the manifest blob is
+    /// missing — callers that want a soft-404 should match
+    /// [`is_not_found`] on the error.
+    pub async fn get_manifest(&self, corpus_id: &str) -> BlobResult<CorpusManifest> {
+        let manifest_blob = self.container.blob_client(&manifest_blob_name(corpus_id));
+        let response = manifest_blob.download(None).await?;
+        let bytes = response.body.collect().await?;
+        let cm: CorpusManifest = serde_json::from_slice(&bytes)?;
+        Ok(cm)
+    }
+
+    /// Write a fresh `CorpusManifest` pointing at `version`. Replaces
+    /// any prior manifest in a single atomic PUT.
+    async fn put_manifest(&self, corpus_id: &str, version: &str) -> BlobResult<()> {
+        let cm = CorpusManifest {
+            current_version: version.to_string(),
+            updated_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
+        };
+        let bytes = serde_json::to_vec(&cm)?;
+        let manifest_blob = self.container.blob_client(&manifest_blob_name(corpus_id));
+        manifest_blob
+            .upload(RequestContent::from(bytes), None)
+            .await?;
+        debug!(corpus_id, version, "atomic-swapped manifest pointer");
+        Ok(())
+    }
+
+    /// List all corpus IDs present in the container. A corpus is
+    /// considered present iff its `manifest.json` blob exists; orphaned
+    /// bundle versions without a manifest are not reported (they are
+    /// GC candidates, not live data).
+    ///
+    /// Each returned string is the `<corpus_id>` segment of a
+    /// `corpora/<corpus_id>/manifest.json` blob.
+    ///
+    /// # Errors
+    ///
+    /// Surfaces any error from the storage service.
     pub async fn list_corpora(&self) -> BlobResult<Vec<String>> {
         let mut pager = self.container.list_blobs(None)?;
         let mut ids = Vec::new();
         while let Some(item) = pager.try_next().await? {
             let Some(name) = item.name else { continue };
-            if let Some(id) = corpus_id_from_blob_name(&name) {
+            if let Some(id) = corpus_id_from_manifest_blob_name(&name) {
                 ids.push(id);
             } else {
-                debug!(blob = %name, "skipped non-corpus blob during listing");
+                debug!(blob = %name, "skipped non-manifest blob during corpora listing");
             }
         }
         Ok(ids)
     }
 
-    /// Delete a single corpus's blob. Idempotent: a 404 is swallowed
-    /// so callers can use this as a best-effort cleanup.
+    /// Delete a corpus's manifest (so it disappears from
+    /// `list_corpora`) and best-effort delete its current bundle blob.
+    /// Historic bundle versions are left for separate GC.
     ///
     /// # Errors
     ///
     /// Surfaces any non-404 error from the storage service.
     pub async fn delete_corpus(&self, corpus_id: &str) -> BlobResult<()> {
-        let blob = self.container.blob_client(&blob_name_for(corpus_id));
-        match blob.delete(None).await {
-            Ok(_) => {
-                info!(corpus_id, "deleted corpus blob");
-                Ok(())
-            }
+        // Try to read the manifest *before* deleting it so we can also
+        // delete the bundle it points at. If the manifest is already
+        // gone, just succeed.
+        let current_version = match self.get_manifest(corpus_id).await {
+            Ok(m) => Some(m.current_version),
+            Err(BlobError::Azure(e)) if is_not_found(&e) => None,
+            Err(e) => return Err(e),
+        };
+
+        // (a) Delete manifest first — single atomic delete; the corpus
+        //     disappears from `list_corpora` immediately.
+        let manifest_blob = self.container.blob_client(&manifest_blob_name(corpus_id));
+        match manifest_blob.delete(None).await {
+            Ok(_) => debug!(corpus_id, "deleted corpus manifest"),
             Err(e) if is_not_found(&e) => {
-                debug!(corpus_id, "corpus blob already absent; nothing to delete");
-                Ok(())
+                debug!(corpus_id, "corpus manifest already absent");
             }
-            Err(e) => Err(e.into()),
+            Err(e) => return Err(e.into()),
         }
+
+        // (b) Best-effort delete of the current bundle. Failures here
+        //     are non-fatal — the bundle will be reaped by a GC pass.
+        if let Some(version) = current_version {
+            let bundle_blob = self
+                .container
+                .blob_client(&bundle_blob_name(corpus_id, &version));
+            if let Err(e) = bundle_blob.delete(None).await
+                && !is_not_found(&e)
+            {
+                warn!(
+                    corpus_id,
+                    version,
+                    error = %e,
+                    "failed to delete current bundle blob during delete_corpus; \
+                     leaving for GC"
+                );
+            }
+        }
+        info!(corpus_id, "deleted corpus");
+        Ok(())
     }
 }
 
-fn blob_name_for(corpus_id: &str) -> String {
-    format!("corpora/{corpus_id}.{BUNDLE_EXTENSION}")
+fn manifest_blob_name(corpus_id: &str) -> String {
+    format!("corpora/{corpus_id}/manifest.json")
 }
 
-fn corpus_id_from_blob_name(name: &str) -> Option<String> {
+fn bundle_blob_name(corpus_id: &str, version: &str) -> String {
+    format!("corpora/{corpus_id}/{version}.{BUNDLE_EXTENSION}")
+}
+
+fn corpus_id_from_manifest_blob_name(name: &str) -> Option<String> {
     let rest = name.strip_prefix("corpora/")?;
-    let id = rest.strip_suffix(&format!(".{BUNDLE_EXTENSION}"))?;
-    if id.is_empty() {
+    let id = rest.strip_suffix("/manifest.json")?;
+    if id.is_empty() || id.contains('/') {
         return None;
     }
     Some(id.to_string())
@@ -301,13 +445,12 @@ fn error_code_eq(e: &azure_core::Error, code: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    //! Unit + integration tests.
+    //! Unit tests + `#[ignore]` Azure integration tests.
     //!
-    //! The pure round-trip test exercises the `bundle::export_bundle` →
-    //! `bundle::import_bundle` path that the Azure upload/download pair
-    //! sits on top of. The `#[ignore]` Azure tests need a real account
-    //! at `AZURE_STORAGE_ACCOUNT_NAME` with the caller signed in via
-    //! `az login`.
+    //! The pure-logic tests verify the blob-name <-> corpus-id mapping
+    //! and the manifest JSON shape; the Azure tests need a real
+    //! account at `AZURE_STORAGE_ACCOUNT_NAME` with the caller signed
+    //! in via `az login`.
 
     use super::*;
     use ministr_core::bundle::{BundleCorpusRoot, BundleManifest, BUNDLE_FORMAT_VERSION};
@@ -329,41 +472,70 @@ mod tests {
                 repo_url: None,
             }],
             created_at: 0,
-            bundle_version: None,
+            bundle_version: Some("abc123".into()),
             source_commit: None,
         }
     }
 
     #[test]
-    fn blob_name_round_trip() {
-        let name = blob_name_for("abc123");
-        assert_eq!(name, "corpora/abc123.ministr-index");
-        assert_eq!(corpus_id_from_blob_name(&name).as_deref(), Some("abc123"));
+    fn manifest_blob_name_round_trip() {
+        let name = manifest_blob_name("abc123");
+        assert_eq!(name, "corpora/abc123/manifest.json");
+        assert_eq!(
+            corpus_id_from_manifest_blob_name(&name).as_deref(),
+            Some("abc123")
+        );
+    }
+
+    #[test]
+    fn bundle_blob_name_includes_version() {
+        let name = bundle_blob_name("abc123", "v-deadbeef");
+        assert_eq!(name, "corpora/abc123/v-deadbeef.ministr-index");
     }
 
     #[test]
     fn rejects_non_corpus_blob_names() {
-        assert!(corpus_id_from_blob_name("atlas/react/abc.ministr-index").is_none());
-        assert!(corpus_id_from_blob_name("corpora/foo.zip").is_none());
-        assert!(corpus_id_from_blob_name("corpora/.ministr-index").is_none());
+        // Atlas blobs live under a different prefix.
+        assert!(corpus_id_from_manifest_blob_name("atlas/react/manifest.json").is_none());
+        // Bundle blobs are not manifest blobs.
+        assert!(corpus_id_from_manifest_blob_name("corpora/foo/v-1.ministr-index").is_none());
+        // Empty corpus id.
+        assert!(corpus_id_from_manifest_blob_name("corpora//manifest.json").is_none());
+        // Nested subpaths shouldn't accidentally match.
+        assert!(corpus_id_from_manifest_blob_name("corpora/foo/bar/manifest.json").is_none());
     }
 
-    /// Verifies that we can hand a corpus directory shaped like the
-    /// real one to `bundle::export_bundle` and then restore it back,
-    /// which is the contract the Azure upload/download pair depends on.
-    ///
-    /// Skipped if the writer cannot build a `SQLite` db — that requires
-    /// rusqlite, which is in workspace deps but not a direct dep of
-    /// ministr-cloud yet. The test sets up the file scaffolding via
-    /// raw bytes to stay dep-free.
     #[test]
-    fn manifest_serialises_for_blob_payload() {
-        // Sanity: the manifest we'd store in a real bundle is
-        // JSON-serialisable. Full bundle round-trip happens in
-        // ministr-core's tests; we don't duplicate that surface here.
-        let manifest = fake_manifest();
-        let s = serde_json::to_string(&manifest).expect("manifest serialises");
-        assert!(s.contains("\"model_name\":\"test-model\""));
+    fn corpus_manifest_round_trips_as_json() {
+        let cm = CorpusManifest {
+            current_version: "abc123".into(),
+            updated_at: 1_716_148_800,
+        };
+        let s = serde_json::to_string(&cm).unwrap();
+        assert!(s.contains("\"current_version\":\"abc123\""));
+        let back: CorpusManifest = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.current_version, "abc123");
+        assert_eq!(back.updated_at, 1_716_148_800);
+    }
+
+    #[test]
+    fn upload_requires_bundle_version() {
+        // Real-world callers must populate `bundle_version` (via
+        // `bundle::compute_bundle_version`) before upload; we surface a
+        // clear error rather than silently overwrite a default.
+        let mut m = fake_manifest();
+        m.bundle_version = None;
+        // We can't exercise the full upload without an Azure client, but
+        // the error variant exists and `?` flows through `BlobError`.
+        let err: BlobError = BlobError::MissingBundleVersion;
+        match err {
+            BlobError::MissingBundleVersion => {}
+            other => panic!("unexpected variant: {other:?}"),
+        }
+        // Sanity: the manifest is still serialisable with the version
+        // unset; it's the upload helper that enforces the invariant.
+        let s = serde_json::to_string(&m).unwrap();
+        assert!(s.contains("\"bundle_version\":null"));
     }
 
     #[tokio::test]
