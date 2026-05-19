@@ -1,0 +1,29 @@
+[package]
+name = "ministr-cloud"
+version = "0.6.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+# Closed-source crate. The workspace default is MIT for the open-core
+# half; this override marks ministr-cloud as proprietary. The crate
+# holds multi-tenant cloud-only code (tenant model, Stripe glue, GitHub
+# OAuth IdP adapter, quota middleware, billing portal handlers) that
+# only exists because we run mcp.ministr.ai as a service. See
+# STEWARDSHIP.md for the open-core split.
+license = "LicenseRef-Proprietary"
+repository.workspace = true
+homepage.workspace = true
+description = "Proprietary cloud surface for ministr — multi-tenant tenancy, billing, IdP adapters, and quota enforcement. Not part of the MIT open-core."
+readme = "../README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Intentionally minimal until F1.2 lands the Postgres-backed tenant
+# model. New deps are added by the F-item that first needs them so the
+# crate's dep tree stays auditable.
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1,5 +1,5 @@
 [workspace]
-members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-mcp", "ministr-cli", "ministr-app/src-tauri"]
+members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-mcp", "ministr-cli", "ministr-app/src-tauri", "ministr-cloud"]
 resolver = "3"
 
 [workspace.package]
