@@ -149,6 +149,11 @@ fn main() {
             commands_cloud::cloud_disconnect,
             commands_cloud::cloud_health_check,
             commands_cloud::cloud_trigger_reindex,
+            commands_cloud::cloud_list_corpora,
+            commands_cloud::cloud_register_corpus,
+            commands_cloud::cloud_clone_repo,
+            commands_cloud::cloud_unregister_corpus,
+            commands_cloud::cloud_corpus_progress,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ministr app");
