@@ -25,27 +25,87 @@ use crate::error::{CommandError, ErrorKind};
 const CLOUD_CONFIG_FILENAME: &str = "cloud.json";
 const HEALTH_PROBE_TIMEOUT_SECS: u64 = 5;
 
+/// OS-keychain coordinates for the cloud bearer token. macOS sees these
+/// as the Keychain item's `service` + `account`; secret-service as the
+/// item's attributes; Windows as the Credential Manager target. The
+/// values are stable so a desktop upgrade picks up the token written
+/// by the previous version.
+const KEYRING_SERVICE: &str = "ministr-cloud";
+const KEYRING_TOKEN_ACCOUNT: &str = "bearer_token";
+
 /// Persisted state for the cloud connection. Lives on disk as JSON at
-/// `<data-dir>/cloud.json`. Token storage in v1 is plain file (mode
-/// 600 on Unix); migrating to the OS keychain is a v2 hardening step.
+/// `<data-dir>/cloud.json` for the non-secret endpoint URL only — the
+/// bearer token moved to the OS keychain in F1.3 and is never written
+/// to this file.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CloudConfig {
     /// Base URL, e.g. `https://mcp.ministr.ai`. Empty when not configured.
     #[serde(default)]
     pub endpoint: String,
-    /// Bearer token issued by the remote OAuth flow. Empty when not
-    /// authenticated. Treat as a secret.
-    #[serde(default)]
-    pub bearer_token: String,
 }
 
 impl CloudConfig {
     fn is_configured(&self) -> bool {
         !self.endpoint.trim().is_empty()
     }
+}
 
-    fn is_authenticated(&self) -> bool {
-        !self.bearer_token.trim().is_empty()
+/// True when the OS keychain currently holds a non-empty cloud bearer
+/// token. Replaces the old `bearer_token`-on-disk check.
+fn is_authenticated() -> bool {
+    load_bearer_token().is_some_and(|t| !t.trim().is_empty())
+}
+
+/// Read the cloud bearer token from the OS keychain. Returns `None`
+/// when no entry exists or the keychain is unreachable; callers treat
+/// either case as "not signed in".
+fn load_bearer_token() -> Option<String> {
+    let entry = match keyring::Entry::new(KEYRING_SERVICE, KEYRING_TOKEN_ACCOUNT) {
+        Ok(e) => e,
+        Err(e) => {
+            warn!(error = %e, "keyring entry construction failed");
+            return None;
+        }
+    };
+    match entry.get_password() {
+        Ok(s) => Some(s),
+        Err(keyring::Error::NoEntry) => None,
+        Err(e) => {
+            warn!(error = %e, "keyring read failed");
+            None
+        }
+    }
+}
+
+/// Write the cloud bearer token to the OS keychain.
+fn save_bearer_token(token: &str) -> Result<(), CommandError> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_TOKEN_ACCOUNT).map_err(|e| {
+        CommandError::new(ErrorKind::Internal, format!("keyring entry: {e}"))
+    })?;
+    entry.set_password(token).map_err(|e| {
+        CommandError::new(ErrorKind::Internal, format!("keyring write: {e}"))
+    })?;
+    debug!("saved cloud bearer token to OS keychain");
+    Ok(())
+}
+
+/// Remove the cloud bearer token from the OS keychain. A missing entry
+/// is treated as success — the post-condition (no entry) holds either
+/// way.
+fn delete_bearer_token() -> Result<(), CommandError> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_TOKEN_ACCOUNT).map_err(|e| {
+        CommandError::new(ErrorKind::Internal, format!("keyring entry: {e}"))
+    })?;
+    match entry.delete_credential() {
+        Ok(()) => {
+            debug!("removed cloud bearer token from OS keychain");
+            Ok(())
+        }
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(CommandError::new(
+            ErrorKind::Internal,
+            format!("keyring delete: {e}"),
+        )),
     }
 }
 
@@ -81,13 +141,36 @@ fn cloud_config_path() -> PathBuf {
 
 fn load_config() -> CloudConfig {
     let path = cloud_config_path();
-    match std::fs::read_to_string(&path) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
-            warn!(error = %e, path = %path.display(), "cloud.json malformed; starting fresh");
-            CloudConfig::default()
-        }),
-        Err(_) => CloudConfig::default(),
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return CloudConfig::default();
+    };
+    let cfg = serde_json::from_str::<CloudConfig>(&raw).unwrap_or_else(|e| {
+        warn!(error = %e, path = %path.display(), "cloud.json malformed; starting fresh");
+        CloudConfig::default()
+    });
+
+    // Pre-F1.3 builds wrote the bearer token alongside the endpoint in
+    // cloud.json. Detect that legacy shape and migrate the token into
+    // the OS keychain, then rewrite the file without the secret field.
+    // The migration is best-effort: if the keychain write fails we
+    // leave cloud.json alone so the next launch can retry.
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw)
+        && let Some(legacy) = value.get("bearer_token").and_then(|t| t.as_str())
+        && !legacy.trim().is_empty()
+    {
+        if load_bearer_token().is_some() {
+            // Keychain already holds a token — drop the legacy field
+            // silently to avoid replaying a stale value over a freshly
+            // refreshed one.
+            let _ = save_config(&cfg);
+        } else if save_bearer_token(legacy).is_ok() {
+            info!("migrated legacy cloud bearer token from cloud.json to OS keychain");
+            let _ = save_config(&cfg);
+        } else {
+            warn!("failed to migrate legacy bearer token to OS keychain; cloud.json left in place");
+        }
     }
+    cfg
 }
 
 fn save_config(cfg: &CloudConfig) -> Result<(), CommandError> {
@@ -137,7 +220,7 @@ pub async fn cloud_status() -> Result<CloudStatus, CommandError> {
     let cfg = load_config();
     Ok(CloudStatus {
         configured: cfg.is_configured(),
-        authenticated: cfg.is_authenticated(),
+        authenticated: is_authenticated(),
         endpoint: cfg.endpoint,
         last_health_ok: None,
         last_health_latency_ms: None,
@@ -154,13 +237,17 @@ pub async fn cloud_set_endpoint(endpoint: String) -> Result<(), CommandError> {
     save_config(&cfg)
 }
 
-/// Save a Bearer token issued by the remote OAuth flow. Empty clears it.
-/// In v2 this moves to the OS keychain.
+/// Save a Bearer token issued by the remote OAuth flow. Empty clears
+/// the OS-keychain entry. Token lives in the platform credential
+/// store (F1.3 OS-keychain carry-over) — never on disk.
 #[tauri::command]
 pub async fn cloud_set_bearer_token(token: String) -> Result<(), CommandError> {
-    let mut cfg = load_config();
-    cfg.bearer_token = token.trim().to_string();
-    save_config(&cfg)
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        delete_bearer_token()
+    } else {
+        save_bearer_token(trimmed)
+    }
 }
 
 /// Drive the full OAuth 2.1 + PKCE flow against the configured endpoint.
@@ -312,9 +399,9 @@ pub async fn cloud_authenticate(app: AppHandle) -> Result<(), CommandError> {
 
     let mut saved = load_config();
     saved.endpoint = endpoint;
-    saved.bearer_token = access_token;
     save_config(&saved)?;
-    info!("cloud_authenticate: token acquired and persisted");
+    save_bearer_token(&access_token)?;
+    info!("cloud_authenticate: token acquired and persisted to OS keychain");
     Ok(())
 }
 
@@ -599,17 +686,19 @@ fn authed_client(timeout_secs: u64) -> Result<(reqwest::Client, String, String),
             "no cloud endpoint configured",
         ));
     }
-    if !cfg.is_authenticated() {
-        return Err(CommandError::new(
-            ErrorKind::InvalidInput,
-            "cloud connection has no bearer token (sign in first)",
-        ));
-    }
+    let token = load_bearer_token()
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| {
+            CommandError::new(
+                ErrorKind::InvalidInput,
+                "cloud connection has no bearer token (sign in first)",
+            )
+        })?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| CommandError::new(ErrorKind::Internal, format!("http client: {e}")))?;
-    Ok((client, cfg.endpoint, cfg.bearer_token))
+    Ok((client, cfg.endpoint, token))
 }
 
 /// GET `/api/v1/corpora` — list all corpora the remote server has registered.
@@ -790,28 +879,12 @@ pub async fn cloud_corpus_progress(
 /// server-assigned `job_id` that can later be subscribed to via SSE.
 #[tauri::command]
 pub async fn cloud_trigger_reindex(corpus_id: String) -> Result<String, CommandError> {
-    let cfg = load_config();
-    if !cfg.is_configured() {
-        return Err(CommandError::new(
-            ErrorKind::InvalidInput,
-            "no cloud endpoint configured",
-        ));
-    }
-    if !cfg.is_authenticated() {
-        return Err(CommandError::new(
-            ErrorKind::InvalidInput,
-            "cloud connection has no bearer token (sign in first)",
-        ));
-    }
-    let url = format!("{}/reindex", cfg.endpoint);
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| CommandError::new(ErrorKind::Internal, format!("http client: {e}")))?;
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/reindex");
     let body = serde_json::json!({ "corpus_id": corpus_id });
     let resp = client
         .post(&url)
-        .bearer_auth(&cfg.bearer_token)
+        .bearer_auth(&token)
         .json(&body)
         .send()
         .await
@@ -877,5 +950,28 @@ mod tests {
     fn pkce_s256_is_deterministic_for_a_given_verifier() {
         let verifier = "test-verifier-deterministic";
         assert_eq!(pkce_s256(verifier), pkce_s256(verifier));
+    }
+
+    /// Round-trip a bearer token through the OS keychain. Gated on
+    /// `MINISTR_TEST_KEYCHAIN=1` because hitting the platform keychain
+    /// requires a graphical session on Linux (D-Bus secret-service)
+    /// and shouldn't be a default-on dependency for `cargo test`.
+    /// Developers verifying the keychain wiring run:
+    ///   `MINISTR_TEST_KEYCHAIN=1` cargo test -p ministr-app -- --ignored
+    #[test]
+    #[ignore = "needs MINISTR_TEST_KEYCHAIN=1 + a usable platform keychain"]
+    fn bearer_token_round_trips_through_keychain() {
+        if std::env::var("MINISTR_TEST_KEYCHAIN").as_deref() != Ok("1") {
+            return;
+        }
+        // Use a unique account so parallel test runs don't collide
+        // with each other or with a real signed-in session.
+        let account = format!("test-{}", std::process::id());
+        let entry = keyring::Entry::new(KEYRING_SERVICE, &account).unwrap();
+        entry.set_password("test-token-123").unwrap();
+        let got = entry.get_password().unwrap();
+        assert_eq!(got, "test-token-123");
+        entry.delete_credential().unwrap();
+        assert!(matches!(entry.get_password(), Err(keyring::Error::NoEntry)));
     }
 }

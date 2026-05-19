@@ -42,6 +42,11 @@ sha2 = { workspace = true }
 # platform RNG (getrandom(2) on Linux, SecRandomCopyBytes on macOS,
 # BCryptGenRandom on Windows).
 getrandom = "0.3"
+# F1.3 OS-keychain carry-over — bearer token storage moves out of plain
+# `<data-dir>/cloud.json` and into the OS-native credential store
+# (Keychain on macOS, secret-service on Linux, Credential Manager on
+# Windows). Default features select the right native backend per target.
+keyring = "3"
 
 # Serialization
 serde = { workspace = true }
