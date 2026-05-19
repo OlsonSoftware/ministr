@@ -12,6 +12,7 @@ use tracing::warn;
 
 use super::OAuthConfig;
 use super::storage::{InMemoryStorage, OAuthBackend, SqliteStorage, StorageResult};
+use super::tenant::Tenant;
 use super::types::{AccessToken, AuthorizationCode, RegisteredClient};
 use super::util::epoch_now;
 
@@ -104,6 +105,31 @@ impl OAuthStore {
                 None
             }
         }
+    }
+
+    /// Resolve the [`Tenant`] for a bearer token.
+    ///
+    /// Today this is a thin wrapper around [`Self::validate_token`] that
+    /// returns a self-hosted-default [`Tenant::local`]. F1.2 sub-bullet
+    /// 4 swaps this for a Postgres lookup against `users.plan_id` and
+    /// `org_members` once the cloud OAuth backend is wired as the
+    /// default. The seam stays in the same place so the middleware
+    /// doesn't have to change again.
+    pub(crate) async fn resolve_tenant(&self, token: &str) -> Option<Tenant> {
+        let client_id = self.validate_token(token).await?;
+        Some(Tenant::local(client_id))
+    }
+
+    /// Resolve the [`Tenant`] for a bearer token **and** require a
+    /// specific scope claim. Same future-extension story as
+    /// [`Self::resolve_tenant`].
+    pub(crate) async fn resolve_tenant_with_scope(
+        &self,
+        token: &str,
+        required_scope: &str,
+    ) -> Option<Tenant> {
+        let client_id = self.validate_token_with_scope(token, required_scope).await?;
+        Some(Tenant::local(client_id))
     }
 
     /// Validate a bearer token **and** require that its scope claim contains
@@ -224,6 +250,55 @@ mod tests {
                 .validate_token_with_scope("t1", "ministr:bundle:read")
                 .await,
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn resolves_tenant_for_valid_token() {
+        let store = store();
+        store
+            .save_token(token("t1", "ministr:read", 3600, false))
+            .await
+            .unwrap();
+        let tenant = store.resolve_tenant("t1").await.expect("tenant resolves");
+        assert_eq!(tenant.subject, "client-1");
+        assert!(tenant.org_id.is_none());
+        assert_eq!(tenant.plan, super::super::tenant::Plan::Pro);
+    }
+
+    #[tokio::test]
+    async fn resolves_none_for_unknown_token() {
+        assert!(store().resolve_tenant("never-issued").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolves_none_for_expired_token() {
+        let store = store();
+        store
+            .save_token(token("t1", "ministr:read", 100, true))
+            .await
+            .unwrap();
+        assert!(store.resolve_tenant("t1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn scoped_tenant_requires_matching_scope() {
+        let store = store();
+        store
+            .save_token(token("t1", "ministr:read", 3600, false))
+            .await
+            .unwrap();
+        assert!(
+            store
+                .resolve_tenant_with_scope("t1", "ministr:read")
+                .await
+                .is_some()
+        );
+        assert!(
+            store
+                .resolve_tenant_with_scope("t1", "ministr:bundle:write")
+                .await
+                .is_none()
         );
     }
 

@@ -21,7 +21,7 @@
 //!
 //! | Phase | Modules added |
 //! |---|---|
-//! | F1.2 | `tenant::Tenant`, Postgres-backed schema migrations |
+//! | F1.2 | `db` (Postgres-backed schema migrations); `Tenant` itself lives in `ministr-mcp::auth::tenant` (MIT) so handlers in the local stack can read it without depending on this closed crate |
 //! | F1.3 | `idp::IdentityProvider` trait + GitHub/Google/Microsoft impls |
 //! | F1.4 | `billing::usage` daily rollup + `/api/v1/billing/usage` |
 //! | F1.5 | `billing::stripe` Stripe Meters + webhook receiver |
@@ -42,42 +42,26 @@ pub mod db;
 pub use blob::{BlobError, BlobResult, CorpusBlobStore};
 pub use db::{connect, run_migrations, DbError};
 
-use serde::{Deserialize, Serialize};
+/// Re-exported from `ministr-mcp` (MIT) so the auth middleware in the
+/// local stack can attach a [`Plan`]-bearing `Tenant` to every request
+/// extension without depending on this closed crate. Cloud-only code
+/// (quota, billing, Atlas access) keeps reading `ministr_cloud::Plan`
+/// — both paths see the same enum.
+pub use ministr_mcp::auth::Plan;
 
-/// Billing tier attached to every resolved tenant.
+/// Indexing-queue priority for a tier. Higher wins. The pool drains in
+/// `ORDER BY priority DESC, enqueued_at ASC`. F2.2 wires this into
+/// `JobQueue::enqueue`; F5.5 reserves `priority = 4` for the dedicated
+/// Enterprise pool.
 ///
-/// The seam that makes the §3 tier matrix enforceable in code. Every
-/// quota check, every Atlas access gate, and every billing-portal handler
-/// reads through `Plan` rather than re-deriving "what can this tenant
-/// do?" from raw subscription state.
-///
-/// Variants intentionally mirror the public tier names verbatim so logs
-/// and API responses are self-documenting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Plan {
-    /// Pro — $20/mo. Hosted fast lane, 10 corpora, Atlas reads.
-    Pro,
-    /// Team — $30/seat/mo. Priority queue, 50 corpora, ACL, dashboard,
-    /// audit-light, bridge visualizer.
-    Team,
-    /// Enterprise — contact sales. Dedicated pool, SSO/SAML, immutable
-    /// audit, on-prem option, CMK.
-    Enterprise,
-}
-
-impl Plan {
-    /// Indexing-queue priority. Higher wins. The pool drains in
-    /// `ORDER BY priority DESC, enqueued_at ASC`. F2.2 wires this into
-    /// `JobQueue::enqueue`; F5.5 reserves `priority = 4` for the
-    /// dedicated Enterprise pool.
-    #[must_use]
-    pub const fn queue_priority(self) -> i16 {
-        match self {
-            Self::Pro => 1,
-            Self::Team => 2,
-            Self::Enterprise => 3,
-        }
+/// Free function (not a method on `Plan`) so the open `Plan` enum stays
+/// free of cloud-only business logic.
+#[must_use]
+pub const fn queue_priority(plan: Plan) -> i16 {
+    match plan {
+        Plan::Pro => 1,
+        Plan::Team => 2,
+        Plan::Enterprise => 3,
     }
 }
 
@@ -87,8 +71,8 @@ mod tests {
 
     #[test]
     fn priority_order_pro_team_enterprise() {
-        assert!(Plan::Enterprise.queue_priority() > Plan::Team.queue_priority());
-        assert!(Plan::Team.queue_priority() > Plan::Pro.queue_priority());
+        assert!(queue_priority(Plan::Enterprise) > queue_priority(Plan::Team));
+        assert!(queue_priority(Plan::Team) > queue_priority(Plan::Pro));
     }
 
     #[test]

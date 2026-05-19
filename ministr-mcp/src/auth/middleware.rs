@@ -22,10 +22,14 @@ use super::store::OAuthStore;
 
 /// Validates a bearer token. Returns 401 with an RFC 6750 `WWW-Authenticate`
 /// header on failure so MCP clients know where to find the metadata.
+///
+/// On success, a [`super::tenant::Tenant`] is attached to the request
+/// extensions so downstream handlers can scope queries by `subject`,
+/// `org_id`, and `plan` without re-running the token lookup themselves.
 pub async fn validate_token_middleware(
     State(store): State<OAuthStore>,
     headers: HeaderMap,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let Some(token) = extract_bearer(&headers) else {
@@ -33,8 +37,9 @@ pub async fn validate_token_middleware(
         return unauthorized_response(store.config());
     };
 
-    if let Some(client_id) = store.validate_token(token).await {
-        debug!(client_id = %client_id, "token validated");
+    if let Some(tenant) = store.resolve_tenant(token).await {
+        debug!(subject = %tenant.subject, plan = ?tenant.plan, "tenant resolved");
+        request.extensions_mut().insert(tenant);
         next.run(request).await
     } else {
         debug!("invalid or expired token");
@@ -51,10 +56,13 @@ pub struct ScopedState {
 
 /// Validates a bearer token and enforces a specific scope. 401 if missing
 /// or expired; 403 if present but lacking the required scope.
+///
+/// On success, a [`super::tenant::Tenant`] is attached to the request
+/// extensions; same shape and rationale as [`validate_token_middleware`].
 pub async fn validate_scope_middleware(
     State(state): State<ScopedState>,
     headers: HeaderMap,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let Some(token) = extract_bearer(&headers) else {
@@ -67,12 +75,18 @@ pub async fn validate_scope_middleware(
         return unauthorized_response(state.store.config());
     }
 
-    if let Some(client_id) = state
+    if let Some(tenant) = state
         .store
-        .validate_token_with_scope(token, &state.required_scope)
+        .resolve_tenant_with_scope(token, &state.required_scope)
         .await
     {
-        debug!(client_id = %client_id, scope = %state.required_scope, "scoped token validated");
+        debug!(
+            subject = %tenant.subject,
+            plan = ?tenant.plan,
+            scope = %state.required_scope,
+            "scoped tenant resolved"
+        );
+        request.extensions_mut().insert(tenant);
         next.run(request).await
     } else {
         debug!(scope = %state.required_scope, "token lacks required scope");

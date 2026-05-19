@@ -28,6 +28,7 @@ use std::time::Duration;
 
 pub mod middleware;
 pub mod router;
+pub mod tenant;
 
 mod handlers;
 mod storage;
@@ -40,6 +41,7 @@ pub use middleware::{
 };
 pub use router::{oauth_routes, protected_router};
 pub use store::OAuthStore;
+pub use tenant::{Plan, Tenant};
 
 /// OAuth 2.1 server configuration.
 #[derive(Debug, Clone)]

@@ -4787,6 +4787,7 @@ dependencies = [
  "deadpool-postgres",
  "futures",
  "ministr-core",
+ "ministr-mcp",
  "rustls",
  "serde",
  "serde_json",
