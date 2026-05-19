@@ -30,11 +30,22 @@ export interface AppInputs {
   cpu: string;
   memory: string;
   webhookSecret?: pulumi.Output<string>;
+  corpusPaths: string;
 }
 
 export function createApp(inputs: AppInputs): AppArtifact {
-  const { rg, env, registry, storage, insights, imageTag, cpu, memory, webhookSecret } =
-    inputs;
+  const {
+    rg,
+    env,
+    registry,
+    storage,
+    insights,
+    imageTag,
+    cpu,
+    memory,
+    webhookSecret,
+    corpusPaths,
+  } = inputs;
 
   const imageRef = pulumi.interpolate`${registry.loginServer}/ministr:${imageTag}`;
 
@@ -50,6 +61,7 @@ export function createApp(inputs: AppInputs): AppArtifact {
 
   const baseEnv: types.app.EnvironmentVarArgs[] = [
     { name: "MINISTR_CLOUD_DATA_DIR", value: "/data" },
+    { name: "MINISTR_CORPUS_PATHS", value: corpusPaths },
     {
       name: "APPLICATIONINSIGHTS_CONNECTION_STRING",
       secretRef: "appinsights-connection-string",

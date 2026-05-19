@@ -21,6 +21,10 @@ const appCpu = cfg.get("appCpu") ?? "0.5";
 const appMemory = cfg.get("appMemory") ?? "1Gi";
 const jobCpu = cfg.get("jobCpu") ?? "4";
 const jobMemory = cfg.get("jobMemory") ?? "8Gi";
+// Colon-separated paths the container should index. Default to the
+// `corpus/` subdir of the Azure Files mount; the operator drops repos
+// there (or a v2 admin endpoint clones into it).
+const corpusPaths = cfg.get("corpusPaths") ?? "/data/corpus";
 const webhookSecret = cfg.getSecret("githubWebhookSecret");
 
 const net = createNetworking();
@@ -38,6 +42,7 @@ const queryApp = createApp({
   cpu: appCpu,
   memory: appMemory,
   webhookSecret,
+  corpusPaths,
 });
 
 const indexer = createIndexerJob({
@@ -48,6 +53,7 @@ const indexer = createIndexerJob({
   imageTag,
   cpu: jobCpu,
   memory: jobMemory,
+  corpusPaths,
 });
 
 const domainBinding = customDomain

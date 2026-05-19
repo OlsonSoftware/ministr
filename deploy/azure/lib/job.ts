@@ -29,10 +29,11 @@ export interface JobInputs {
   imageTag: string;
   cpu: string;
   memory: string;
+  corpusPaths: string;
 }
 
 export function createIndexerJob(inputs: JobInputs): JobArtifact {
-  const { rg, env, registry, storage, imageTag, cpu, memory } = inputs;
+  const { rg, env, registry, storage, imageTag, cpu, memory, corpusPaths } = inputs;
 
   const imageRef = pulumi.interpolate`${registry.loginServer}/ministr:${imageTag}`;
 
@@ -68,6 +69,7 @@ export function createIndexerJob(inputs: JobInputs): JobArtifact {
           // contains both serve and index entrypoints (PR2/PR5).
           env: [
             { name: "MINISTR_CLOUD_DATA_DIR", value: "/data" },
+            { name: "MINISTR_CORPUS_PATHS", value: corpusPaths },
             { name: "ENTRYPOINT_MODE", value: "index" },
             { name: "RUST_LOG", value: "info,ministr=debug" },
           ],

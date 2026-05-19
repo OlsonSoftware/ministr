@@ -260,7 +260,29 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
         tracing::info!("no .ministr.toml found — using CLI args or config.toml defaults");
     }
 
-    let corpus_paths: Vec<String> = if let Some((ref base_dir, ref cc)) = corpus_config {
+    // `MINISTR_CORPUS_PATHS` overrides every other source. Used by the
+    // cloud deployment so the ACA container can be steered to index a
+    // specific path (typically `/data/corpus`) without having to plant a
+    // `.ministr.toml` on the Azure Files mount.
+    let env_paths: Vec<String> = std::env::var("MINISTR_CORPUS_PATHS")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| {
+            s.split(':')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let corpus_paths: Vec<String> = if !env_paths.is_empty() {
+        tracing::info!(
+            paths = env_paths.len(),
+            "loaded corpus paths from MINISTR_CORPUS_PATHS env var"
+        );
+        env_paths
+    } else if let Some((ref base_dir, ref cc)) = corpus_config {
         cc.resolve_local_paths(base_dir)
     } else if cli.corpus.is_empty() {
         config.corpus_paths.clone()
