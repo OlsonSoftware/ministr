@@ -10,12 +10,14 @@
 //!   separate ACA Job that mounts the same share.
 
 mod in_memory;
+pub(crate) mod postgres;
 mod sqlite;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub(crate) use in_memory::InMemoryJobQueue;
+pub(crate) use postgres::PostgresJobQueue;
 pub(crate) use sqlite::SqliteJobQueue;
 
 /// Result alias for queue operations.
@@ -129,6 +131,7 @@ pub(crate) trait JobQueue: Send + Sync {
 pub(crate) enum JobQueueBackend {
     InMemory(InMemoryJobQueue),
     Sqlite(SqliteJobQueue),
+    Postgres(PostgresJobQueue),
 }
 
 impl JobQueueBackend {
@@ -140,6 +143,7 @@ impl JobQueueBackend {
         match self {
             Self::InMemory(q) => q.enqueue(corpus_id, trigger).await,
             Self::Sqlite(q) => q.enqueue(corpus_id, trigger).await,
+            Self::Postgres(q) => q.enqueue(corpus_id, trigger).await,
         }
     }
 
@@ -147,6 +151,7 @@ impl JobQueueBackend {
         match self {
             Self::InMemory(q) => q.get(job_id).await,
             Self::Sqlite(q) => q.get(job_id).await,
+            Self::Postgres(q) => q.get(job_id).await,
         }
     }
 
@@ -155,6 +160,7 @@ impl JobQueueBackend {
         match self {
             Self::InMemory(q) => q.claim_next().await,
             Self::Sqlite(q) => q.claim_next().await,
+            Self::Postgres(q) => q.claim_next().await,
         }
     }
 
@@ -167,6 +173,7 @@ impl JobQueueBackend {
         match self {
             Self::InMemory(q) => q.update_progress(job_id, progress).await,
             Self::Sqlite(q) => q.update_progress(job_id, progress).await,
+            Self::Postgres(q) => q.update_progress(job_id, progress).await,
         }
     }
 
@@ -180,6 +187,7 @@ impl JobQueueBackend {
         match self {
             Self::InMemory(q) => q.finish(job_id, status, error).await,
             Self::Sqlite(q) => q.finish(job_id, status, error).await,
+            Self::Postgres(q) => q.finish(job_id, status, error).await,
         }
     }
 }
