@@ -166,6 +166,30 @@ pub(crate) async fn cmd_serve_http(
     let admin_public = ministr_mcp::admin::admin_public_routes(admin_state.clone());
     let admin_protected = ministr_mcp::admin::admin_protected_routes(admin_state);
 
+    // ── Daemon REST surface (/api/v1/corpora/* + /activity + /coherence-events) ─
+    // Share the same `Arc<dyn Embedder>` the MCP server already uses — no
+    // double model load. The daemon's `record_activity` middleware is
+    // applied per sub-router so observability spans authenticated calls
+    // only (auth check sits outside the activity layer).
+    let registry = infra::build_corpus_registry(&ctx, config);
+    let daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&registry));
+    registry.restore().await;
+
+    let activity_layer = axum::middleware::from_fn_with_state(
+        daemon_state.clone(),
+        ministr_daemon::activity::record,
+    );
+    let daemon_read_router = ministr_daemon::daemon::corpora_read_router(daemon_state.clone())
+        .layer(activity_layer.clone());
+    let daemon_write_router = ministr_daemon::daemon::corpora_write_router(daemon_state.clone())
+        .layer(activity_layer.clone());
+    let daemon_bundle_router = ministr_daemon::daemon::corpora_bundle_router(daemon_state.clone())
+        .layer(activity_layer.clone());
+    let daemon_obs_router =
+        ministr_daemon::daemon::observability_router(daemon_state).layer(activity_layer);
+    // Note: `corpora_ask_router` is intentionally NOT mounted on cloud.
+    // The container has no `claude` CLI; clients hitting /ask get 404.
+
     let app = if let Some(oauth_cfg) = oauth_config {
         tracing::info!(
             persistent = cloud_env.data_dir.is_some(),
@@ -179,22 +203,53 @@ pub(crate) async fn cmd_serve_http(
             store.clone(),
             "ministr:bundle:read",
         );
-        let protected_admin =
-            ministr_mcp::auth::scope_protected_router(admin_protected, store, "ministr:write");
+        let protected_admin = ministr_mcp::auth::scope_protected_router(
+            admin_protected,
+            store.clone(),
+            "ministr:write",
+        );
+        let daemon_read_p = ministr_mcp::auth::scope_protected_router(
+            daemon_read_router,
+            store.clone(),
+            "ministr:read",
+        );
+        let daemon_write_p = ministr_mcp::auth::scope_protected_router(
+            daemon_write_router,
+            store.clone(),
+            "ministr:write",
+        );
+        let daemon_bundle_p = ministr_mcp::auth::scope_protected_router(
+            daemon_bundle_router,
+            store.clone(),
+            "ministr:bundle:write",
+        );
+        let daemon_obs_p = ministr_mcp::auth::scope_protected_router(
+            daemon_obs_router,
+            store,
+            "ministr:write",
+        );
         a2a_router
             .merge(protected)
             .merge(protected_bundles)
             .merge(protected_admin)
             .merge(admin_public)
+            .merge(daemon_read_p)
+            .merge(daemon_write_p)
+            .merge(daemon_bundle_p)
+            .merge(daemon_obs_p)
     } else {
-        // No OAuth: admin protected routes still mount but anyone on the
-        // network can hit `/reindex`. Only safe for local dev — cloud
-        // deployments must always set an `OAuthConfig`.
+        // No OAuth: daemon + admin protected routes mount but anyone on the
+        // network can hit them. Only safe for local dev — cloud deployments
+        // must always set an `OAuthConfig`.
         a2a_router
             .merge(mcp_router)
             .merge(bundle_router)
             .merge(admin_protected)
             .merge(admin_public)
+            .merge(daemon_read_router)
+            .merge(daemon_write_router)
+            .merge(daemon_bundle_router)
+            .merge(daemon_obs_router)
     };
 
     let bind_addr = format!("{host}:{port}");

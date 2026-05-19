@@ -62,6 +62,11 @@ export function createApp(inputs: AppInputs): AppArtifact {
   const baseEnv: types.app.EnvironmentVarArgs[] = [
     { name: "MINISTR_CLOUD_DATA_DIR", value: "/data" },
     { name: "MINISTR_CORPUS_PATHS", value: corpusPaths },
+    // Enables OAuth on the public deployment — the entrypoint passes
+    // `--oauth --oauth-issuer $MINISTR_OAUTH_ISSUER` when this is set.
+    // Without it, every endpoint we just mounted (including the new
+    // `/api/v1/corpora/*` write routes) would be open to the internet.
+    { name: "MINISTR_OAUTH_ISSUER", value: "https://mcp.ministr.ai" },
     {
       name: "APPLICATIONINSIGHTS_CONNECTION_STRING",
       secretRef: "appinsights-connection-string",

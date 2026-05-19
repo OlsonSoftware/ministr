@@ -487,3 +487,17 @@ fn legacy_corpus_data_dir_name(corpus_paths: &[String]) -> String {
 pub(crate) fn elapsed_millis(start: std::time::Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
+
+/// Build a `CorpusRegistry` that shares the same `Arc<dyn Embedder>` as the
+/// MCP server's `InfrastructureContext`. Used by `cmd_serve_http` to expose
+/// `ministr-daemon::daemon::*_router` REST routes alongside the MCP routes
+/// without spinning up a second embedding model.
+pub(crate) fn build_corpus_registry(
+    ctx: &InfrastructureContext,
+    config: &ministr_core::config::MinistrConfig,
+) -> Arc<ministr_daemon::registry::CorpusRegistry> {
+    Arc::new(ministr_daemon::registry::CorpusRegistry::new(
+        Arc::clone(&ctx.embedder),
+        config.clone(),
+    ))
+}
