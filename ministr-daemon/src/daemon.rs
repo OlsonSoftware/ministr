@@ -25,7 +25,8 @@ use ministr_api::ApiError;
 use ministr_api::activity::ActivityResponse;
 use ministr_api::coherence::CoherenceEventsResponse;
 use ministr_api::corpus::{
-    ListCorporaResponse, RegisterCorpusRequest, RegisterCorpusResponse, UpdateCorpusPathsRequest,
+    CloneRepoRequest, CloneRepoResponse, ListCorporaResponse, RegisterCorpusRequest,
+    RegisterCorpusResponse, UpdateCorpusPathsRequest,
 };
 use ministr_api::query;
 use ministr_api::session::{CreateSessionRequest, CreateSessionResponse};
@@ -43,6 +44,7 @@ use crate::state::{ACTIVITY_BUFFER_CAPACITY, AppState, COHERENCE_BUFFER_CAPACITY
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/corpora", post(register_corpus).get(list_corpora))
+        .route("/api/v1/corpora/{id}/clone", post(clone_repo))
         .route(
             "/api/v1/corpora/{id}",
             get(corpus_status).delete(unregister_corpus),
@@ -52,6 +54,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/symbols", post(symbols))
         .route("/api/v1/corpora/{id}/definition/{sym}", get(definition))
         .route("/api/v1/corpora/{id}/references/{sym}", get(references))
+        .route("/api/v1/corpora/{id}/impact/{sym}", get(impact))
+        .route("/api/v1/corpora/{id}/dead", post(dead_code))
+        .route("/api/v1/corpora/{id}/solid", post(solid))
         .route("/api/v1/corpora/{id}/read/{section}", get(read_section))
         .route("/api/v1/corpora/{id}/extract", post(extract))
         .route("/api/v1/corpora/{id}/toc", post(toc))
@@ -381,13 +386,241 @@ async fn register_corpus(
     Json(req): Json<RegisterCorpusRequest>,
 ) -> impl IntoResponse {
     match state.registry.register(&req.paths).await {
-        Ok((corpus_id, indexing_started)) => Json(RegisterCorpusResponse {
-            corpus_id,
-            indexing_started,
-        })
-        .into_response(),
+        Ok((corpus_id, indexing_started)) => {
+            // Apply the caller-supplied display_name override (e.g. the
+            // linked-project label or `ministr_clone` repo-derived name)
+            // so the tray UI shows the human-meaningful identifier rather
+            // than the path-basename fallback.
+            if let Some(name) = req.display_name
+                && !name.is_empty()
+                && let Ok(handle) = state.registry.get(&corpus_id).await
+            {
+                handle.info.write().await.display_name = name;
+            }
+            Json(RegisterCorpusResponse {
+                corpus_id,
+                indexing_started,
+            })
+            .into_response()
+        }
         Err(e) => err(StatusCode::BAD_REQUEST, "register_failed", e).into_response(),
     }
+}
+
+/// Clone a git repo into a managed directory, register it as a new corpus,
+/// and append a `[[linked]]` entry to the parent corpus's `.ministr.toml`.
+///
+/// The path layout: `~/.ministr/clones/{sanitized-repo}/`. Sanitisation
+/// strips the protocol + replaces `/` and `:` so the path is filesystem-safe.
+///
+/// Steps:
+///   1. Resolve target path.
+///   2. `GitFetcher::clone` into target path (idempotent — re-uses cache).
+///   3. Write a minimal `.ministr.toml` in the cloned tree if absent so the
+///      new corpus is self-describing.
+///   4. Register the new corpus with the daemon → new `corpus_id`.
+///   5. Locate the parent corpus's `.ministr.toml` and append a
+///      `[[linked]]` entry (idempotent — no-op if already present).
+///   6. Return `CloneRepoResponse`.
+async fn clone_repo(
+    State(state): State<AppState>,
+    Path(parent_id): Path<String>,
+    Json(req): Json<CloneRepoRequest>,
+) -> impl IntoResponse {
+    // 1. Lookup parent corpus paths via its info handle so we can locate
+    //    the parent's `.ministr.toml` later.
+    let parent_paths = match state.registry.get(&parent_id).await {
+        Ok(handle) => {
+            let info = handle.info.read().await;
+            info.paths.clone()
+        }
+        Err(e) => {
+            return err(StatusCode::NOT_FOUND, "parent_not_found", e).into_response();
+        }
+    };
+
+    // 2. Clone via GitFetcher into ~/.ministr/clones/{sanitised}/.
+    let git_fetcher = ministr_core::git::GitFetcher::with_defaults();
+    let paths_ref: Option<Vec<String>> = if req.paths.is_empty() {
+        None
+    } else {
+        Some(req.paths.clone())
+    };
+    let clone_result = match git_fetcher
+        .clone(&req.repo, paths_ref.as_deref(), req.branch.as_deref(), None)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return err(StatusCode::BAD_GATEWAY, "clone_failed", e).into_response();
+        }
+    };
+
+    let clone_dir = clone_result.clone_dir.clone();
+    let clone_dir_str = clone_dir.to_string_lossy().to_string();
+
+    // Derive the linked-project label from the URL, or use the caller-
+    // supplied one. The fallback heuristic mirrors `git_repo_display_name`
+    // in ministr-cli/src/ingestion.rs.
+    let label = req
+        .label
+        .clone()
+        .unwrap_or_else(|| derive_repo_label(&req.repo));
+
+    // 3. (no-op) Earlier revisions wrote a `.ministr.toml` with
+    //    `[corpus] paths = ["."]` inside the cloned tree to make the
+    //    corpus self-describing, but the daemon registers the clone path
+    //    directly and `ingest_paths_with_embeddings` discovers files by
+    //    walking that path — it never reads a per-corpus `.ministr.toml`
+    //    for paths/ignore config. The stray file is just one more thing
+    //    for the file watcher to debounce on and confused the manifest
+    //    when the path was registered with a trailing `/.`. Skipped.
+
+    // 4. Register the new corpus.
+    let new_paths: Vec<String> = vec![clone_dir_str.clone()];
+    let (new_corpus_id, indexing_started) = match state.registry.register(&new_paths).await {
+        Ok(v) => v,
+        Err(e) => {
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "register_failed", e).into_response();
+        }
+    };
+
+    // 4b. Override the daemon-derived display_name (which would otherwise
+    //     be the basename of the content-hashed clone dir — e.g.
+    //     `cbbbc0ee0e720d13` — and surfaces that in the tray UI) with the
+    //     friendly label we derived from the repo URL.
+    if let Ok(handle) = state.registry.get(&new_corpus_id).await {
+        let mut info = handle.info.write().await;
+        info.display_name.clone_from(&label);
+    }
+
+    // 5. Append `[[linked]]` to the parent's `.ministr.toml`.
+    let linked_toml_updated = if let Some(parent_toml) = find_ministr_toml(&parent_paths) {
+        match append_linked_entry(&parent_toml, &clone_dir_str, &label).await {
+            Ok(updated) => updated,
+            Err(e) => {
+                tracing::warn!(
+                    parent_toml = %parent_toml.display(),
+                    error = %e,
+                    "clone succeeded but parent .ministr.toml update failed"
+                );
+                false
+            }
+        }
+    } else {
+        tracing::warn!(
+            parent_id = %parent_id,
+            "no .ministr.toml found in parent paths; linked entry not written"
+        );
+        false
+    };
+
+    Json(CloneRepoResponse {
+        corpus_id: new_corpus_id,
+        clone_dir: clone_dir_str,
+        label,
+        commit_sha: clone_result.metadata.commit_sha.clone(),
+        branch: clone_result.metadata.branch.clone().unwrap_or_default(),
+        linked_toml_updated,
+        indexing_started,
+    })
+    .into_response()
+}
+
+/// Sanitise a repo URL into a filesystem-safe label.
+///
+/// `https://github.com/owner/repo.git` → `owner-repo`.
+/// `git@github.com:owner/repo.git`      → `owner-repo`.
+fn derive_repo_label(repo: &str) -> String {
+    let stripped = repo.trim_end_matches(".git").rsplit_once('/').map_or_else(
+        || repo.to_string(),
+        |(prefix, last)| {
+            let owner = prefix.rsplit_once(['/', ':']).map_or("", |(_, o)| o);
+            if owner.is_empty() {
+                last.to_string()
+            } else {
+                format!("{owner}-{last}")
+            }
+        },
+    );
+    stripped
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Locate the `.ministr.toml` for a corpus by scanning its registered
+/// paths. Returns the path of the first existing `.ministr.toml` found by
+/// walking each registered path's ancestors up to a reasonable depth.
+fn find_ministr_toml(paths: &[String]) -> Option<std::path::PathBuf> {
+    for p in paths {
+        let mut current: Option<&std::path::Path> = Some(std::path::Path::new(p));
+        let mut depth = 0;
+        while let Some(dir) = current
+            && depth < 6
+        {
+            let candidate = dir.join(".ministr.toml");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            current = dir.parent();
+            depth += 1;
+        }
+    }
+    None
+}
+
+/// Append a `[[linked]]` entry to `toml_path` if one with the same `path`
+/// isn't already present. Returns `true` when the file was modified.
+///
+/// Uses `toml_edit` to preserve comments and formatting.
+async fn append_linked_entry(
+    toml_path: &std::path::Path,
+    linked_path: &str,
+    label: &str,
+) -> Result<bool, std::io::Error> {
+    let raw = tokio::fs::read_to_string(toml_path).await?;
+    let mut doc: toml_edit::DocumentMut = raw.parse().map_err(|e: toml_edit::TomlError| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+    })?;
+
+    // Check existing [[linked]] entries — skip if the same path is already
+    // linked. Matching on `path` (rather than `label`) prevents accidental
+    // double-links when an agent calls clone twice on the same repo.
+    if let Some(linked) = doc
+        .get("linked")
+        .and_then(toml_edit::Item::as_array_of_tables)
+    {
+        for table in linked {
+            if table
+                .get("path")
+                .and_then(|v| v.as_str())
+                .is_some_and(|existing| existing == linked_path)
+            {
+                return Ok(false);
+            }
+        }
+    }
+
+    // Append a new [[linked]] table.
+    let linked_array = doc
+        .entry("linked")
+        .or_insert_with(|| toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()));
+    if let Some(arr) = linked_array.as_array_of_tables_mut() {
+        let mut new_table = toml_edit::Table::new();
+        new_table["path"] = toml_edit::value(linked_path);
+        new_table["label"] = toml_edit::value(label);
+        arr.push(new_table);
+    }
+
+    tokio::fs::write(toml_path, doc.to_string()).await?;
+    Ok(true)
 }
 
 async fn list_corpora(State(state): State<AppState>) -> impl IntoResponse {
@@ -568,6 +801,101 @@ async fn references(
             };
             if let Some(sid) = q.session_id {
                 tick_session_turn(&state, &id, &sid, "references", response_tokens(&body)).await;
+            }
+            with_summary(Json(body), summary)
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ImpactQuery {
+    #[serde(default)]
+    max_depth: Option<u32>,
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
+async fn impact(
+    State(state): State<AppState>,
+    Path((id, sym)): Path<(String, String)>,
+    Query(q): Query<ImpactQuery>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    let max_depth = q.max_depth.unwrap_or(3);
+    let result = handle.service.compute_impact(&sym, max_depth).await;
+    drop(handle);
+    match result {
+        Ok(r) => {
+            let body = convert::impact_response(r);
+            let summary = format!(
+                "{name} — {symbols} callers, {files} files, {risk:?} risk",
+                name = symbol_short_name(&sym),
+                symbols = body.symbols,
+                files = body.files,
+                risk = body.risk,
+            );
+            if let Some(sid) = q.session_id {
+                tick_session_turn(&state, &id, &sid, "impact", response_tokens(&body)).await;
+            }
+            with_summary(Json(body), summary)
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+    }
+}
+
+async fn dead_code(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionQuery>,
+    Json(req): Json<query::DeadCodeRequest>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    let min_lines = req.min_lines.unwrap_or(1);
+    let limit = req.limit.unwrap_or(50);
+    let result = handle
+        .service
+        .find_dead_code(req.kind.as_deref(), req.module.as_deref(), min_lines, limit)
+        .await;
+    drop(handle);
+    match result {
+        Ok(syms) => {
+            let symbols: Vec<query::DeadSymbol> =
+                syms.into_iter().map(convert::dead_symbol).collect();
+            let total = symbols.len();
+            let body = query::DeadCodeResponse { symbols, total };
+            let summary = format!("{total} dead-code candidates");
+            if let Some(sid) = q.session_id {
+                tick_session_turn(&state, &id, &sid, "dead", response_tokens(&body)).await;
+            }
+            with_summary(Json(body), summary)
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+    }
+}
+
+async fn solid(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionQuery>,
+    Json(req): Json<query::SolidRequest>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    let params = convert::api_solid_request_to_service(req);
+    let result = handle.service.detect_solid_violations(&params).await;
+    drop(handle);
+    match result {
+        Ok(findings) => {
+            let api_findings: Vec<query::SolidFinding> =
+                findings.into_iter().map(convert::solid_finding).collect();
+            let total = api_findings.len();
+            let body = query::SolidResponse {
+                findings: api_findings,
+                total,
+            };
+            let summary = format!("{total} SOLID findings");
+            if let Some(sid) = q.session_id {
+                tick_session_turn(&state, &id, &sid, "solid", response_tokens(&body)).await;
             }
             with_summary(Json(body), summary)
         }

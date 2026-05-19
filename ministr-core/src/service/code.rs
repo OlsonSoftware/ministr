@@ -8,7 +8,10 @@ use tracing::instrument;
 use crate::storage::{BridgeLinkDetail, Storage, SymbolFilter, SymbolRecord};
 use crate::types::{RefKind, SymbolId};
 
-use super::{QueryError, QueryService, SymbolDefinition, SymbolRefResult};
+use super::{
+    DeadSymbol, ImpactCaller, ImpactResult, ImpactRisk, QueryError, QueryService, SymbolDefinition,
+    SymbolRefResult,
+};
 
 impl QueryService {
     /// Search the symbol index with optional filters.
@@ -173,6 +176,158 @@ impl QueryService {
         Ok(self.storage.transitive_caller_counts(symbol_ids).await?)
     }
 
+    /// Compute the transitive impact of changing a symbol.
+    ///
+    /// Walks the call graph upward from the target up to `max_depth` levels,
+    /// collecting distinct transitive callers, the files they live in, and a
+    /// heuristic risk score derived from caller / file / test counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::SymbolNotFound`] if the target does not exist,
+    /// or [`QueryError::Storage`] on database errors.
+    #[instrument(skip(self))]
+    pub async fn compute_impact(
+        &self,
+        symbol_id: &str,
+        max_depth: u32,
+    ) -> Result<ImpactResult, QueryError> {
+        let sid = SymbolId(symbol_id.to_string());
+
+        self.storage
+            .get_symbol(&sid)
+            .await?
+            .ok_or_else(|| QueryError::SymbolNotFound {
+                id: symbol_id.to_string(),
+            })?;
+
+        let depth_cap = max_depth.clamp(1, 10);
+        let mut visited: std::collections::HashSet<SymbolId> = std::collections::HashSet::new();
+        visited.insert(sid.clone());
+        let mut callers: Vec<ImpactCaller> = Vec::new();
+        let mut frontier: Vec<SymbolId> = vec![sid];
+
+        for depth in 1..=depth_cap {
+            let mut next: Vec<SymbolId> = Vec::new();
+            for target in &frontier {
+                let refs = self
+                    .storage
+                    .query_refs(target, Some(RefKind::Calls))
+                    .await?;
+                for r in refs {
+                    if visited.insert(r.from_symbol_id.clone())
+                        && let Some(sym) = self.storage.get_symbol(&r.from_symbol_id).await?
+                    {
+                        callers.push(ImpactCaller {
+                            symbol_id: sym.id.0.clone(),
+                            name: sym.name,
+                            kind: sym.kind,
+                            file: sym.file_path,
+                            line: sym.line_start,
+                            depth,
+                        });
+                        next.push(r.from_symbol_id);
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
+        }
+
+        callers.sort_by(|a, b| {
+            a.depth
+                .cmp(&b.depth)
+                .then_with(|| a.file.cmp(&b.file))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+
+        let mut distinct_files: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut test_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for c in &callers {
+            distinct_files.insert(c.file.clone());
+            if is_test_path(&c.file) {
+                test_files.insert(c.file.clone());
+            }
+        }
+
+        let risk = compute_risk(callers.len(), distinct_files.len(), test_files.len());
+
+        Ok(ImpactResult {
+            target_symbol_id: symbol_id.to_string(),
+            depth: depth_cap,
+            symbols: callers.len(),
+            files: distinct_files.len(),
+            tests: test_files.len(),
+            risk,
+            callers,
+        })
+    }
+
+    /// Find symbols that have zero references — candidates for safe deletion.
+    ///
+    /// Filters out `pub` symbols (since external callers can't be seen),
+    /// entry points (`main`, `_main`), and `#[test]` items by name heuristic.
+    /// `min_lines` skips trivial helpers below that length.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] on database errors.
+    #[instrument(skip(self))]
+    pub async fn find_dead_code(
+        &self,
+        kind: Option<&str>,
+        module: Option<&str>,
+        min_lines: u32,
+        limit: usize,
+    ) -> Result<Vec<DeadSymbol>, QueryError> {
+        let filter = SymbolFilter {
+            name: None,
+            name_exact: None,
+            kind: kind.map(String::from),
+            module: module.map(String::from),
+            visibility: None,
+            file_path: None,
+        };
+        let symbols = self.storage.list_symbols(&filter).await?;
+
+        let mut out: Vec<DeadSymbol> = Vec::new();
+        for sym in symbols {
+            if sym.visibility.starts_with("pub") {
+                continue;
+            }
+            if is_entry_point(&sym.name) {
+                continue;
+            }
+            let lines = sym
+                .line_end
+                .saturating_sub(sym.line_start)
+                .saturating_add(1);
+            if lines < min_lines {
+                continue;
+            }
+            let refs = self.storage.query_refs(&sym.id, None).await?;
+            if !refs.is_empty() {
+                continue;
+            }
+            out.push(DeadSymbol {
+                symbol_id: sym.id.0,
+                name: sym.name,
+                kind: sym.kind,
+                visibility: sym.visibility,
+                file: sym.file_path,
+                line: sym.line_start,
+                lines,
+            });
+            if out.len() >= limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
     /// Query cross-language bridge links with optional filters.
     ///
     /// Returns bridge links (export↔import pairs) matching the given criteria.
@@ -262,5 +417,73 @@ impl QueryService {
             .min(total);
 
         lines[start..end].join("\n")
+    }
+}
+
+pub(super) fn is_test_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.contains("/tests/")
+        || lower.contains("\\tests\\")
+        || lower.contains("/test/")
+        || lower.contains("\\test\\")
+        || lower.ends_with("_test.rs")
+        || lower.ends_with("_test.go")
+        || lower.ends_with("_test.py")
+        || lower.ends_with(".test.ts")
+        || lower.ends_with(".test.tsx")
+        || lower.ends_with(".test.js")
+        || lower.ends_with(".test.jsx")
+        || lower.ends_with(".spec.ts")
+        || lower.ends_with(".spec.tsx")
+        || lower.ends_with(".spec.js")
+        || lower.ends_with(".spec.jsx")
+        || lower.ends_with("_spec.rb")
+}
+
+fn compute_risk(symbols: usize, files: usize, tests: usize) -> ImpactRisk {
+    let score = symbols
+        .saturating_add(files.saturating_mul(2))
+        .saturating_add(tests.saturating_mul(3));
+    if score > 50 || files > 10 {
+        ImpactRisk::High
+    } else if score > 15 || files > 3 {
+        ImpactRisk::Medium
+    } else {
+        ImpactRisk::Low
+    }
+}
+
+fn is_entry_point(name: &str) -> bool {
+    matches!(name, "main" | "_main" | "_start")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compute_risk, is_entry_point, is_test_path};
+    use crate::service::ImpactRisk;
+
+    #[test]
+    fn test_path_recognises_common_test_layouts() {
+        assert!(is_test_path("crate/tests/integration.rs"));
+        assert!(is_test_path("src/foo_test.go"));
+        assert!(is_test_path("app/components/Button.test.tsx"));
+        assert!(is_test_path("lib/parser.spec.js"));
+        assert!(!is_test_path("src/lib.rs"));
+        assert!(!is_test_path("docs/architecture.md"));
+    }
+
+    #[test]
+    fn risk_scales_with_breadth() {
+        assert!(matches!(compute_risk(1, 1, 0), ImpactRisk::Low));
+        assert!(matches!(compute_risk(8, 4, 1), ImpactRisk::Medium));
+        assert!(matches!(compute_risk(40, 12, 5), ImpactRisk::High));
+    }
+
+    #[test]
+    fn entry_point_excludes_main_only() {
+        assert!(is_entry_point("main"));
+        assert!(is_entry_point("_start"));
+        assert!(!is_entry_point("run"));
+        assert!(!is_entry_point("helper"));
     }
 }

@@ -56,12 +56,13 @@ fn current_session_id() -> Option<String> {
 use crate::activity::ActivityResponse;
 use crate::coherence::CoherenceEventsResponse;
 use crate::corpus::{
-    CorpusInfo, ListCorporaResponse, RegisterCorpusRequest, RegisterCorpusResponse,
-    UpdateCorpusPathsRequest,
+    CloneRepoRequest, CloneRepoResponse, CorpusInfo, ListCorporaResponse, RegisterCorpusRequest,
+    RegisterCorpusResponse, UpdateCorpusPathsRequest,
 };
 use crate::query::{
-    ExtractRequest, ExtractResponse, ReferencesResponse, SectionDetail, SurveyRequest,
-    SurveyResponse, SymbolDefinition, SymbolsRequest, SymbolsResponse,
+    DeadCodeRequest, DeadCodeResponse, ExtractRequest, ExtractResponse, ImpactResponse,
+    ReferencesResponse, SectionDetail, SolidRequest, SolidResponse, SurveyRequest, SurveyResponse,
+    SymbolDefinition, SymbolsRequest, SymbolsResponse,
 };
 use crate::status::DaemonStatus;
 use crate::transport;
@@ -209,6 +210,26 @@ impl DaemonClient {
 
     // -- Corpus management --
 
+    /// Register a corpus with the daemon, optionally overriding the
+    /// daemon's path-derived display name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or
+    /// deserialization failure.
+    pub async fn register_corpus_with_display_name(
+        &self,
+        paths: &[String],
+        display_name: Option<String>,
+    ) -> Result<RegisterCorpusResponse, ClientError> {
+        let req = RegisterCorpusRequest {
+            paths: paths.to_vec(),
+            git_includes: Vec::new(),
+            display_name,
+        };
+        self.post("/api/v1/corpora", &req).await
+    }
+
     /// Register a corpus with the daemon.
     ///
     /// # Errors
@@ -221,6 +242,7 @@ impl DaemonClient {
         let req = RegisterCorpusRequest {
             paths: paths.to_vec(),
             git_includes: Vec::new(),
+            display_name: None,
         };
         self.post("/api/v1/corpora", &req).await
     }
@@ -274,6 +296,28 @@ impl DaemonClient {
             paths: paths.to_vec(),
         };
         self.put_no_content(&format!("/api/v1/corpora/{corpus_id}/paths"), &req)
+            .await
+    }
+
+    /// Clone a git repo, register it as a new corpus, and append a
+    /// `[[linked]]` entry to `parent_corpus_id`'s `.ministr.toml`.
+    ///
+    /// This is the daemon-mediated implementation of the `ministr_clone`
+    /// MCP tool's "create new linked project" semantics. The daemon
+    /// chooses the clone target path (under `~/.ministr/clones/`),
+    /// performs the clone, registers the new corpus, mutates the parent
+    /// TOML, and returns the new corpus's id + label.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, clone, registration, or
+    /// TOML-mutation failure.
+    pub async fn clone_repo(
+        &self,
+        parent_corpus_id: &str,
+        req: &CloneRepoRequest,
+    ) -> Result<CloneRepoResponse, ClientError> {
+        self.post(&format!("/api/v1/corpora/{parent_corpus_id}/clone"), req)
             .await
     }
 
@@ -369,6 +413,77 @@ impl DaemonClient {
             None => format!("/api/v1/corpora/{corpus_id}/references/{encoded}"),
         };
         self.get(&path).await
+    }
+
+    /// Compute the transitive impact (blast radius) of changing a symbol.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn impact(
+        &self,
+        corpus_id: &str,
+        symbol_id: &str,
+        max_depth: Option<u32>,
+        session_id: Option<&str>,
+    ) -> Result<ImpactResponse, ClientError> {
+        let encoded = encode_path_component(symbol_id);
+        let mut qs: Vec<String> = Vec::new();
+        if let Some(d) = max_depth {
+            qs.push(format!("max_depth={d}"));
+        }
+        if let Some(sid) = session_id {
+            qs.push(format!("session_id={}", encode_path_component(sid)));
+        }
+        let suffix = if qs.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", qs.join("&"))
+        };
+        let path = format!("/api/v1/corpora/{corpus_id}/impact/{encoded}{suffix}");
+        self.get(&path).await
+    }
+
+    /// Find symbols with zero references (dead-code candidates).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn dead_code(
+        &self,
+        corpus_id: &str,
+        req: &DeadCodeRequest,
+        session_id: Option<&str>,
+    ) -> Result<DeadCodeResponse, ClientError> {
+        let path = match session_id {
+            Some(sid) => format!(
+                "/api/v1/corpora/{corpus_id}/dead?session_id={}",
+                encode_path_component(sid)
+            ),
+            None => format!("/api/v1/corpora/{corpus_id}/dead"),
+        };
+        self.post(&path, req).await
+    }
+
+    /// Detect possible SOLID violations across the corpus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn solid(
+        &self,
+        corpus_id: &str,
+        req: &SolidRequest,
+        session_id: Option<&str>,
+    ) -> Result<SolidResponse, ClientError> {
+        let path = match session_id {
+            Some(sid) => format!(
+                "/api/v1/corpora/{corpus_id}/solid?session_id={}",
+                encode_path_component(sid)
+            ),
+            None => format!("/api/v1/corpora/{corpus_id}/solid"),
+        };
+        self.post(&path, req).await
     }
 
     /// Read a section by ID.

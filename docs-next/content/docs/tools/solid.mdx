@@ -1,0 +1,161 @@
+---
+title: ministr_solid
+description: Deterministic SOLID-violation detector — surfaces DRY/OCP duplicates, SRP low-cohesion containers, ISP fat interfaces, and DIP concrete cross-package dependencies.
+---
+
+`ministr_solid` runs four deterministic detectors over the symbol, reference, and embedding graph and emits findings labelled by the SOLID principle most likely violated. Every signal is thresholded graph data — no LLM judgement — so results are reproducible across runs.
+
+Use it for cleanup sweeps, refactor prep, or to point an agent at concrete structural candidates instead of vague "find duplicates" tasks.
+
+## Detectors
+
+| Principle | Heuristic |
+|---|---|
+| `dry_ocp` | Near-duplicate symbol clusters: embedding cosine ≥ `similarity_threshold` **and** callee-set Jaccard ≥ `jaccard_threshold` within a (kind, arity) bucket. |
+| `srp` | Pseudo-LCOM4 over a container's methods: two methods connect if they share at least one callee or their stub-embeddings are above `srp_cohesion_threshold`. Requires ≥ 2 components of size ≥ 2 — one big cluster + scattered singletons is intentionally silent (a "god object" shape, not an SRP candidate). |
+| `isp` | Interfaces with ≥ `isp_min_methods` methods where at least 50% of implementors overlap with ≤ `isp_max_overlap_fraction` of the methods. |
+| `dip` | A consumer symbol calls / uses a concrete cross-package target that *implements* a trait the consumer doesn't reference directly. |
+| `shotgun_surgery` | Fowler's smell: same `(name, kind)` symbol fanned out across ≥ `shotgun_min_sites` files where average pairwise callee-Jaccard ≤ `shotgun_max_jaccard`. The cousin of Type-4 clones: parallel surface, deliberately disjoint internals. |
+| `cyclic_dependency` | Tarjan SCC over the package-level *type-reference* graph. Edges are filtered to drop common indexer noise: only `RefKind::Uses` / `Imports` (never `Calls`); only function / method source symbols (type-decl edges are bounded by the compiler anyway); never edges to a target whose name + kind also exists in the source's own package (ambiguous resolution); never edges touching test / fixture paths; at least `cyclic_min_edges_per_direction` edges per direction. Reports every SCC of size ≥ 2 after filtering. |
+
+Every detector is language-agnostic — it consumes only normalised graph signals (`kind`, `RefKind`, `module_path`, callee/use sets, embeddings). For non-Rust corpora, override `container_kinds` and `interface_kinds` to match the language's kind tokens.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `kind` | string | — | Filter candidate symbols by kind. |
+| `module` | string | — | Filter candidate symbols by module-path prefix. |
+| `principles` | string[] | all six | Subset of `dry_ocp`, `srp`, `isp`, `dip`, `shotgun_surgery`, `cyclic_dependency`. Empty / omitted = all. |
+| `container_kinds` | string[] | `["impl","struct","class","mod"]` | Kinds treated as containers for SRP. |
+| `interface_kinds` | string[] | `["trait","interface","protocol"]` | Kinds treated as interfaces for ISP / DIP. |
+| `similarity_threshold` | float | `0.86` | Cosine threshold for DRY/OCP. |
+| `jaccard_threshold` | float | `0.4` | Jaccard threshold over callee-sets for DRY/OCP. |
+| `srp_cohesion_threshold` | float | `0.7` | Cosine threshold for SRP cohesion edges. |
+| `isp_min_methods` | integer | `6` | Minimum interface method count before ISP fires. |
+| `isp_max_overlap_fraction` | float | `0.33` | Implementor counts as "under-using" at or below this fraction. |
+| `min_lines` | integer | `5` | Skip candidate symbols shorter than this. |
+| `limit` | integer | `50` | Maximum findings (capped at 500). |
+| `max_pairs` | integer | `100000` | Hard cap on pairwise comparisons inside any single DRY/OCP bucket. |
+| `representative_count` | integer | `5` | Maximum members per component / site list. Larger arrays are truncated and the remainder reported via `*_omitted`. |
+| `shotgun_min_sites` | integer | `3` | Minimum file count before a Shotgun-Surgery finding fires. |
+| `shotgun_max_jaccard` | float | `0.5` | Maximum callee-Jaccard for Shotgun-Surgery — above this the group is a Type-4 clone, handled by `dry_ocp`. |
+| `shotgun_min_packages` | integer | `2` | Sites must span ≥ this many distinct package prefixes. Single-crate fan-out is usually intentional polymorphism. |
+| `shotgun_skip_conventional_names` | bool | `true` | Drop groups whose name is a universal idiom (`new`/`default`/`fmt`/`clone`/`as_str`/`parse`/`main`/...). |
+| `cyclic_min_edges_per_direction` | integer | `2` | Minimum distinct cross-package edges per direction before two packages count as mutually dependent. Single-edge "cycles" are usually phantom name-resolution artefacts. |
+| `cyclic_skip_test_paths` | bool | `true` | Skip cycle-graph edges touching `/tests/`, `/fixtures/`, `/spec/` paths. Sample data shouldn't drive the workspace dependency graph. |
+
+## Response
+
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload contains `findings` (a typed array) and `total`. Each finding carries a `type` discriminator and the `principle` it belongs to.
+
+### Redundancy (DRY/OCP)
+
+```json
+{
+  "type": "redundancy",
+  "principle": "dry_ocp",
+  "members": [ { "symbol_id": "...", "name": "...", "kind": "function", "file": "src/a.rs", "line": 12 }, ... ],
+  "canonical": { "symbol_id": "...", "name": "...", "kind": "function", "file": "src/a.rs", "line": 12 },
+  "avg_cosine": 0.93,
+  "avg_jaccard": 0.71,
+  "cross_module": true
+}
+```
+
+`canonical` is the longest member (line count, then file path as a tiebreaker). `cross_module: true` signals the cluster spans more than one file — the strongest indicator that an OCP-friendly abstraction is missing.
+
+### Low cohesion (SRP)
+
+```json
+{
+  "type": "low_cohesion",
+  "principle": "srp",
+  "container": { "symbol_id": "...", "name": "Service", "kind": "impl", "file": "src/svc.rs", "line": 1 },
+  "components": [
+    [ { "name": "login", ... }, { "name": "logout", ... } ],
+    [ { "name": "charge", ... }, { "name": "refund", ... } ]
+  ]
+}
+```
+
+Each component is a candidate split — the methods that already cluster together by their shared callees.
+
+### Fat interface (ISP)
+
+```json
+{
+  "type": "fat_interface",
+  "principle": "isp",
+  "interface": { "symbol_id": "...", "name": "Backend", "kind": "trait", "file": "src/be.rs", "line": 1 },
+  "method_count": 9,
+  "unused_methods": ["method_c", "method_d", "method_e", "method_f"],
+  "under_using_implementors": [ { "symbol_id": "...", "name": "LiteImpl", ... } ]
+}
+```
+
+### Concrete dependency (DIP)
+
+```json
+{
+  "type": "concrete_dependency",
+  "principle": "dip",
+  "consumer": { "symbol_id": "...", "name": "do_work", ... },
+  "concrete_target": { "symbol_id": "...", "name": "DiskStore", ... },
+  "suggested_abstraction": { "symbol_id": "...", "name": "Store", "kind": "trait", ... }
+}
+```
+
+The detector only fires when the concrete target implements a trait that the consumer does **not** already reference directly. If the consumer already uses the trait, the smell is silent — by design.
+
+### Shotgun Surgery
+
+```json
+{
+  "type": "shotgun_surgery",
+  "principle": "shotgun_surgery",
+  "name": "dead_code",
+  "kind": "function",
+  "sites": [ { "symbol_id": "...", "file": "ministr-api/src/client.rs", "line": 447, ... }, ... ],
+  "sites_total": 5,
+  "avg_jaccard": 0.07
+}
+```
+
+Each `site` is one file's implementation of the shared `(name, kind)`. `avg_jaccard` near 0 means the implementations route through different abstractions — a textbook "introduce an interface" candidate.
+
+### Cyclic Dependency
+
+```json
+{
+  "type": "cyclic_dependency",
+  "principle": "cyclic_dependency",
+  "packages": ["src/auth", "src/billing"],
+  "edge_count": 4,
+  "example_edges": [
+    { "from": "src/auth", "to": "src/billing", "example_from": { ... }, "example_to": { ... } },
+    { "from": "src/billing", "to": "src/auth", "example_from": { ... }, "example_to": { ... } }
+  ]
+}
+```
+
+Every package in the SCC depends (transitively) on every other. Typically the fix is introducing a shared lower-level package both can depend on, or moving the interface to one side and only the implementation to the other.
+
+## Output sizing
+
+Every list-shaped field on every finding is truncated to `representative_count` entries (default 5). The remainder is reported as a sibling `*_omitted` count (e.g., `members_omitted`, `sites_omitted`) plus a total count where useful (`members_total`, `sites_total`). This keeps full-corpus sweeps well below MCP token budgets — bump `representative_count` if you need full lists for a specific finding.
+
+## When to use it
+
+- **Pre-refactor scan** — pick a single principle (`principles: ["srp"]`) and inspect the largest containers before touching them.
+- **Codebase health check** — run all four with `min_lines: 10` to filter noise.
+- **Cross-language repo** — set `container_kinds` and `interface_kinds` to the host language's tokens (e.g. `["class"]` and `["interface","protocol"]` for TS/Python).
+
+Pair findings with [`ministr_references`](/docs/tools/references) before refactoring — the static graph cannot see dynamic dispatch, so confirm callers before you split or merge symbols.
+
+## Limits
+
+- DRY/OCP relies on stored stub embeddings. Symbols without an embedding (e.g. those skipped during ingestion) are excluded from clone clustering.
+- ISP uses name-overlap to detect which interface methods an implementor overrides. Implementors that rename methods at the language boundary won't match.
+- DIP's "same package" check uses the first two path segments of the file path. If your repo layout doesn't follow `crate/<package>/...`, override the detectors with `module` filters instead.
+- All four detectors only see what the static reference graph captures. Macro-generated, function-pointer, and registry-driven dispatch is invisible.

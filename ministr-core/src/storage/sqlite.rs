@@ -1039,18 +1039,20 @@ impl Storage for SqliteStorage {
         let record = record.clone();
         self.with_conn(move |conn| {
             conn.execute(
-                "INSERT INTO file_hashes (path, content_hash, last_indexed, mtime_ns, extractor_version)
-                 VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?3, ?4)
+                "INSERT INTO file_hashes (path, content_hash, last_indexed, mtime_ns, extractor_version, resolver_version)
+                 VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?3, ?4, ?5)
                  ON CONFLICT(path) DO UPDATE SET
                     content_hash = excluded.content_hash,
                     last_indexed = excluded.last_indexed,
                     mtime_ns = excluded.mtime_ns,
-                    extractor_version = excluded.extractor_version",
+                    extractor_version = excluded.extractor_version,
+                    resolver_version = excluded.resolver_version",
                 rusqlite::params![
                     record.path,
                     record.content_hash,
                     record.mtime_ns,
                     record.extractor_version,
+                    record.resolver_version,
                 ],
             )
             .map_err(|e| StorageError::Database {
@@ -1066,7 +1068,7 @@ impl Storage for SqliteStorage {
         self.with_conn(move |conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT path, content_hash, mtime_ns, extractor_version \
+                    "SELECT path, content_hash, mtime_ns, extractor_version, resolver_version \
                      FROM file_hashes WHERE path = ?1",
                 )
                 .map_err(|e| StorageError::Database {
@@ -1080,6 +1082,7 @@ impl Storage for SqliteStorage {
                         content_hash: row.get(1)?,
                         mtime_ns: row.get(2)?,
                         extractor_version: row.get(3)?,
+                        resolver_version: row.get(4)?,
                     })
                 })
                 .optional()
@@ -1112,7 +1115,7 @@ impl Storage for SqliteStorage {
         self.with_conn(move |conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT path, content_hash, mtime_ns, extractor_version \
+                    "SELECT path, content_hash, mtime_ns, extractor_version, resolver_version \
                      FROM file_hashes ORDER BY path",
                 )
                 .map_err(|e| StorageError::Database {
@@ -1126,6 +1129,7 @@ impl Storage for SqliteStorage {
                         content_hash: row.get(1)?,
                         mtime_ns: row.get(2)?,
                         extractor_version: row.get(3)?,
+                        resolver_version: row.get(4)?,
                     })
                 })
                 .map_err(|e| StorageError::Database {
@@ -1137,6 +1141,18 @@ impl Storage for SqliteStorage {
                 })?;
 
             Ok(records)
+        })
+        .await
+    }
+
+    async fn clear_file_hashes(&self) -> Result<usize, StorageError> {
+        self.with_conn(|conn| {
+            let affected = conn.execute("DELETE FROM file_hashes", []).map_err(|e| {
+                StorageError::Database {
+                    reason: e.to_string(),
+                }
+            })?;
+            Ok(affected)
         })
         .await
     }

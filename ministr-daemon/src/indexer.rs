@@ -126,6 +126,29 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
             registry
                 .update_symbols_count(corpus_id, total_symbols)
                 .await;
+
+            // Resolver auto-heal: re-resolve any files whose stored
+            // `resolver_version` is below `ingestion::RESOLVER_VERSION`.
+            // Runs unconditionally after every initial index because the
+            // ingest path skips unchanged files (via the corpus-merkle
+            // short-circuit and per-file mtime check), which means a
+            // resolver-only logic bump on previously-indexed corpora
+            // produces zero ingest work — and therefore zero stamp
+            // refreshes — without this explicit heal. The heal is fast
+            // for already-fresh corpora: `list_file_hashes` plus a
+            // single filter, no per-file work.
+            match pipeline
+                .re_resolve_stale_files(&local_paths, &*storage)
+                .await
+            {
+                Ok(0) => {}
+                Ok(healed) => info!(corpus_id, healed, "resolver auto-heal completed"),
+                Err(e) => warn!(
+                    corpus_id,
+                    error = %e,
+                    "resolver auto-heal failed"
+                ),
+            }
         }
         Err(ministr_core::error::IngestionError::Cancelled) => {
             info!(corpus_id, "indexing cancelled");

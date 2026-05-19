@@ -1,0 +1,24 @@
+{
+  "name": "ministr",
+  "displayName": "ministr — code intelligence",
+  "description": "AST-level codebase understanding for AI coding agents — semantic search, symbol navigation, real reference graphs, and cross-language bridge detection across 40+ languages. Local-only.",
+  "version": "0.1.0",
+  "homepage": "https://ministr.ai",
+  "repository": "https://github.com/OlsonSoftware/ministr",
+  "license": "Apache-2.0",
+  "keywords": [
+    "code-intelligence",
+    "mcp",
+    "semantic-search",
+    "ast",
+    "tree-sitter",
+    "cross-language",
+    "bridges"
+  ],
+  "mcpServers": {
+    "ministr": {
+      "command": "ministr",
+      "args": ["serve", "--transport", "stdio"]
+    }
+  }
+}

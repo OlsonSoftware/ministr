@@ -67,7 +67,8 @@ pub fn canonical_corpus_path(raw: &str) -> String {
     }
 
     let stripped = strip_windows_verbatim(raw);
-    let mut s = stripped.replace('\\', "/");
+    let normalised_seps = stripped.replace('\\', "/");
+    let mut s = lexical_clean(&normalised_seps);
 
     while s.len() > 1 && s.ends_with('/') {
         s.pop();
@@ -79,6 +80,53 @@ pub fn canonical_corpus_path(raw: &str) -> String {
     }
 
     s
+}
+
+/// Lexically clean a slash-separated path:
+/// - drop `.` segments
+/// - resolve `..` against the previous segment when safe (never pops past
+///   an absolute root or a UNC root)
+/// - collapse repeated `/`
+///
+/// Operates purely on the input string — no filesystem syscalls. Returns
+/// the input unchanged when there are no `.`/`..`/`//` segments, so two
+/// path spellings that differ only in those components canonicalise to
+/// the same identity and don't aliase into duplicate corpora.
+fn lexical_clean(s: &str) -> String {
+    // UNC (`//server/share`) vs single-root absolute (`/foo`) vs relative.
+    let unc = s.starts_with("//");
+    let absolute = !unc && s.starts_with('/');
+
+    let mut segs: Vec<&str> = Vec::new();
+    for part in s.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => match segs.last() {
+                Some(&last) if last != ".." => {
+                    segs.pop();
+                }
+                _ => {
+                    // Can't pop past root — drop `..` on absolute / UNC
+                    // paths; keep on relative ones so they're still
+                    // navigable.
+                    if !absolute && !unc {
+                        segs.push("..");
+                    }
+                }
+            },
+            other => segs.push(other),
+        }
+    }
+    let joined = segs.join("/");
+    if unc {
+        format!("//{joined}")
+    } else if absolute {
+        format!("/{joined}")
+    } else if joined.is_empty() {
+        ".".to_string()
+    } else {
+        joined
+    }
 }
 
 /// Canonicalise, sort, and dedup a corpus path set.
@@ -201,6 +249,65 @@ mod tests {
         let a = corpus_id_from_paths(&["/code/foo".into()]).unwrap();
         let b = corpus_id_from_paths(&["/code/bar".into()]).unwrap();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn trailing_dot_invariant() {
+        // `<dir>` and `<dir>/.` are the same location; both must hash to
+        // the same id so tray-app users don't see two entries for the
+        // same project (the original bug that motivated this rule).
+        assert_eq!(canonical_corpus_path("/users/x/foo/."), "/users/x/foo");
+        let a = corpus_id_from_paths(&["/users/x/foo".into()]).unwrap();
+        let b = corpus_id_from_paths(&["/users/x/foo/.".into()]).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn interior_dot_invariant() {
+        assert_eq!(canonical_corpus_path("/users/x/./foo"), "/users/x/foo");
+        let a = corpus_id_from_paths(&["/users/x/foo".into()]).unwrap();
+        let b = corpus_id_from_paths(&["/users/x/./foo".into()]).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn parent_dir_resolved() {
+        assert_eq!(canonical_corpus_path("/users/x/foo/../bar"), "/users/x/bar");
+        assert_eq!(canonical_corpus_path("/foo/.."), "/");
+    }
+
+    #[test]
+    fn parent_dir_does_not_escape_root() {
+        // `..` past `/` is dropped — the path stays at the filesystem
+        // root rather than turning into an empty / relative spelling.
+        assert_eq!(canonical_corpus_path("/../foo"), "/foo");
+        assert_eq!(canonical_corpus_path("/../../foo"), "/foo");
+    }
+
+    #[test]
+    fn repeated_slashes_collapsed() {
+        assert_eq!(canonical_corpus_path("/users//x/foo"), "/users/x/foo");
+        let a = corpus_id_from_paths(&["/users/x/foo".into()]).unwrap();
+        let b = corpus_id_from_paths(&["/users//x/foo".into()]).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn unc_root_preserved() {
+        assert_eq!(
+            canonical_corpus_path("//server/share/sub"),
+            "//server/share/sub"
+        );
+        // Even with a trailing dot.
+        assert_eq!(canonical_corpus_path("//server/share/."), "//server/share");
+    }
+
+    #[test]
+    fn relative_parent_dirs_kept() {
+        // Relative paths can't be resolved without filesystem context, so
+        // leading `..` segments survive canonicalisation.
+        assert_eq!(canonical_corpus_path("../foo"), "../foo");
+        assert_eq!(canonical_corpus_path("./foo"), "foo");
     }
 
     #[cfg(windows)]

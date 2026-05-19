@@ -137,6 +137,15 @@ pub struct FileHashRecord {
     /// index auto-heals after extractor-logic changes. Pre-versioning
     /// rows (from migration V1–V18) read back as `0`.
     pub extractor_version: i64,
+    /// Version of the *resolver* (the `RawRef` → `SymbolRefRecord`
+    /// name-binding step) that produced this file's `symbol_refs` rows.
+    /// Compared against [`crate::ingestion::RESOLVER_VERSION`] on daemon
+    /// startup — when stored is lower, the daemon re-resolves this
+    /// file's refs against the existing stored symbols. Sibling of
+    /// `extractor_version`; orthogonal because resolver fixes don't
+    /// invalidate extraction or embeddings. Pre-V22 rows read back as
+    /// `0`.
+    pub resolver_version: i64,
 }
 
 /// Stat-fingerprint of an entire corpus root.
@@ -234,7 +243,7 @@ pub struct GitCacheRecord {
 /// };
 /// assert_eq!(record.name, "MinistrConfig");
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub struct SymbolRecord {
     /// Unique symbol ID.
     pub id: SymbolId,
@@ -338,7 +347,7 @@ pub struct BridgeLinkRecord {
 }
 
 /// A detailed bridge link result with endpoint information inlined.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
 pub struct BridgeLinkDetail {
     /// Bridge mechanism kind.
     pub kind: String,
@@ -548,6 +557,14 @@ pub trait Storage: Send + Sync {
     fn list_file_hashes(
         &self,
     ) -> impl Future<Output = Result<Vec<FileHashRecord>, StorageError>> + Send;
+
+    /// Wipe every file hash record. Used by the consistency-guard self-heal
+    /// in `all_files_unchanged_by_mtime` when the `documents` table is empty
+    /// but `file_hashes` still claims everything is unchanged — the only
+    /// way to force the per-file fast-skip in `parse_and_store_file` to
+    /// fall through is to remove the stale hash rows it would match
+    /// against.
+    fn clear_file_hashes(&self) -> impl Future<Output = Result<usize, StorageError>> + Send;
 
     // -- Sessions --
 

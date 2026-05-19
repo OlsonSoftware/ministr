@@ -127,8 +127,16 @@ impl MinistrServer {
                 let dependency_refs_linked = if dep_graph.is_empty() {
                     0
                 } else {
-                    let corpus_roots: Vec<std::path::PathBuf> = self
-                        .service
+                    // `service` must be present for refresh — the tool body
+                    // gates this at the top — but the check is defensive in
+                    // case future callers reach this branch in daemon mode.
+                    let Some(ref service) = self.service else {
+                        return Err(McpError::internal_error(
+                            "ministr_refresh requires local engine".to_string(),
+                            None,
+                        ));
+                    };
+                    let corpus_roots: Vec<std::path::PathBuf> = service
                         .list_corpus_roots()
                         .await
                         .unwrap_or_default()

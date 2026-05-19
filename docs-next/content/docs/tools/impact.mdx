@@ -1,0 +1,77 @@
+---
+title: ministr_impact
+description: Transitive blast radius of changing a symbol — every caller N levels deep, plus distinct files, distinct test files, and a risk score.
+---
+
+`ministr_impact` walks the call graph upward from a target symbol, collecting every transitive caller up to a bounded depth, then summarises the affected surface and assigns a `low` / `medium` / `high` risk score. Use this before recommending a non-trivial refactor — the score tells the agent whether the change is a one-file edit or a fan-out across the codebase.
+
+## Parameters
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `symbol_id` | string | yes | — | Symbol ID from `ministr_symbols` |
+| `max_depth` | integer | no | 3 | BFS depth cap (1–10) |
+
+## Response
+
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
+```json
+{
+  "result": {
+    "impact": {
+      "target_symbol_id": "sym-src/auth.rs::auth::validate_token",
+      "depth": 3,
+      "symbols": 12,
+      "files": 5,
+      "tests": 2,
+      "risk": "medium",
+      "callers": [
+        {
+          "symbol_id": "sym-src/handlers.rs::handlers::login_handler",
+          "name": "login_handler",
+          "kind": "function",
+          "file": "src/handlers.rs",
+          "line": 28,
+          "depth": 1
+        },
+        {
+          "symbol_id": "sym-tests/auth_test.rs::tests::rejects_expired",
+          "name": "rejects_expired",
+          "kind": "function",
+          "file": "tests/auth_test.rs",
+          "line": 15,
+          "depth": 1
+        }
+      ]
+    }
+  }
+}
+```
+
+### Risk score
+
+The score is derived from the breadth of the impact, not the semantic difficulty of the change:
+
+- **`low`** — few callers, ≤3 files, no widely-used tests touched.
+- **`medium`** — moderate fan-out, 3–10 files, or 15+ total transitive callers.
+- **`high`** — broad impact: 10+ files or 50+ transitive callers.
+
+A high-risk change isn't necessarily a bad change — it just means the agent should break the work into smaller, independently-reviewable steps and surface the breadth in any PR description.
+
+### Caller ordering
+
+`callers` is sorted by `depth` ascending (direct callers first), then by `file` and `name` for stability across runs.
+
+## When to use it
+
+- **Before recommending a non-trivial refactor** — does this fix touch 3 files or 30?
+- **When triaging a bug report** — what else depends on the broken function?
+- **For PR scoping** — the symbol/file/test counts map directly to review effort.
+- **Pair with `ministr_references`** to inspect each direct caller in detail.
+
+## Limits
+
+- Walks `ref_kind = 'calls'` edges only. Trait dispatch via dynamic objects is not captured — `ministr_bridge` covers cross-language edges that the call graph misses.
+- BFS depth is capped at 10. Even at depth 3 the result on a fan-out hub can be large; consider tightening `max_depth` for survey-level questions.
+- The static reference graph cannot see runtime-dispatched calls (function pointers, registry-driven dispatch); for those, `ministr_survey` against the registry / dispatch table is the better starting point.

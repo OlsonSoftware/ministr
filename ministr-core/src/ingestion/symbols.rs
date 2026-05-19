@@ -417,6 +417,9 @@ fn disambiguate_target<'a>(
         0 => None,
         1 => Some(primary[0]),
         _ => {
+            // When the ref carries an explicit `target_crate` (e.g., from
+            // `use ministr_core::Foo`), filter to that crate first — that's
+            // ground truth.
             let crate_filtered: Vec<_> =
                 if let (Some(tc), Some(graph)) = (target_crate, package_graph) {
                     if let Some(dir_prefix) = graph.dir_prefix_for_crate(tc) {
@@ -433,26 +436,89 @@ fn disambiguate_target<'a>(
                 };
 
             if crate_filtered.len() == 1 {
-                Some(crate_filtered[0])
-            } else if !crate_filtered.is_empty() {
-                Some(
+                return Some(crate_filtered[0]);
+            }
+            if !crate_filtered.is_empty() {
+                return Some(
                     crate_filtered
                         .iter()
                         .find(|s| s.file_path != file_path)
                         .copied()
                         .unwrap_or(crate_filtered[0]),
-                )
-            } else {
-                Some(
-                    primary
-                        .iter()
-                        .find(|s| s.file_path != file_path)
-                        .copied()
-                        .unwrap_or(primary[0]),
-                )
+                );
             }
+
+            // No explicit target_crate (or unknown crate): prefer matches
+            // in the source's *own* package. When two crates each define a
+            // symbol with the same name (deliberate wire-type duplication,
+            // a re-export, or just a coincidence), Rust's compiler would
+            // resolve to the in-scope local one — so should we. Falling
+            // back to "prefer cross-file" caused phantom cross-crate edges
+            // for every same-name twin.
+            if let Some(graph) = package_graph
+                && let Some(source_pkg) = graph.package_for_file(file_path)
+                && let Some(source_dir) = graph.dir_prefix_for_crate(source_pkg)
+            {
+                let same_pkg: Vec<_> = primary
+                    .iter()
+                    .filter(|s| s.file_path.starts_with(source_dir))
+                    .copied()
+                    .collect();
+                if !same_pkg.is_empty() {
+                    return Some(
+                        same_pkg
+                            .iter()
+                            .find(|s| s.file_path != file_path)
+                            .copied()
+                            .unwrap_or(same_pkg[0]),
+                    );
+                }
+            }
+
+            // Final fallback: prefer cross-file among all primary matches.
+            Some(
+                primary
+                    .iter()
+                    .find(|s| s.file_path != file_path)
+                    .copied()
+                    .unwrap_or(primary[0]),
+            )
         }
     }
+}
+
+/// Find the symbol whose `[line_start, line_end]` range tightly encloses
+/// `line`. When several symbols enclose it (e.g. a function inside a `mod`
+/// block), pick the smallest (most-specific) range. Returns `None` when no
+/// local symbol owns the line.
+///
+/// Used as a fallback when extraction couldn't determine a `from_context`
+/// for a ref — without it, every such ref gets attributed to whichever
+/// top-of-file decl happens to be the "file anchor," producing phantom
+/// edges from unrelated types to the body's actual targets.
+fn enclosing_symbol_id(local_symbols: &[SymbolRecord], line: u32) -> Option<SymbolId> {
+    let mut best: Option<&SymbolRecord> = None;
+    for s in local_symbols {
+        if s.line_start > line || s.line_end < line {
+            continue;
+        }
+        // Functions / methods / impls are the symbol kinds that can
+        // legitimately own a body-level ref. Type declarations (`struct`,
+        // `enum`, `trait`) only own refs that appear inside their own
+        // signature / variants / field types — those are extracted with
+        // `from_context` already set, so this fallback path shouldn't
+        // attribute body-level refs to a same-line enum decl.
+        let is_owner_kind = matches!(s.kind.as_str(), "function" | "method" | "impl" | "mod");
+        if !is_owner_kind {
+            continue;
+        }
+        let candidate_span = s.line_end.saturating_sub(s.line_start);
+        let current_span = best.map(|b| b.line_end.saturating_sub(b.line_start));
+        if best.is_none() || candidate_span < current_span.unwrap_or(u32::MAX) {
+            best = Some(s);
+        }
+    }
+    best.map(|s| s.id.clone())
 }
 
 /// Filter symbols to primary definitions (not impl blocks or nested items).
@@ -466,6 +532,32 @@ fn filter_primary(matches: &[SymbolRecord]) -> Vec<&SymbolRecord> {
             )
         })
         .collect()
+}
+
+/// Returns `true` when `source_path` and `target_path` resolve to the
+/// same language via the grammar registry.
+///
+/// Cross-language phantom bindings are never legitimate for the
+/// `Calls` / `Uses` / `Imports` ref kinds — a Rust `bundle::header` use
+/// site can't reasonably bind to a TSX `<Header>` component, even if
+/// both share the bare name. The intentional cross-language paths are
+/// handled separately as `RefKind::Bridge` by the bridge linker, which
+/// runs language-aware extractors on each end and never traverses
+/// `disambiguate_target`.
+///
+/// Unknown extensions on either side return `false` — a hard "skip" is
+/// safer than a wide-open match against arbitrary file kinds.
+fn languages_compatible(source_path: &str, target_path: &str) -> bool {
+    fn lang_of(path: &str) -> Option<&'static str> {
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())?;
+        crate::code::GrammarRegistry::global().language_name_for_extension(ext)
+    }
+    match (lang_of(source_path), lang_of(target_path)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -523,11 +615,16 @@ pub(super) async fn resolve_and_store_refs<S: Storage + ?Sized>(
                             )
                     })
                     .map(|s| s.id.clone());
-                // Fall back to the file anchor when the context name doesn't
-                // match any local symbol (e.g., closures, generated code).
-                found.or_else(|| file_anchor.clone())
+                // Fall back to the innermost local symbol whose line range
+                // contains this ref, then to the file anchor. The line-range
+                // attribution prevents function-body refs from being
+                // misattributed to whatever decl happens to sit at the top
+                // of the file.
+                found
+                    .or_else(|| enclosing_symbol_id(local_symbols, raw.line))
+                    .or_else(|| file_anchor.clone())
             }
-            None => file_anchor.clone(),
+            None => enclosing_symbol_id(local_symbols, raw.line).or_else(|| file_anchor.clone()),
         };
 
         let Some(from_id) = from_id else {
@@ -543,7 +640,15 @@ pub(super) async fn resolve_and_store_refs<S: Storage + ?Sized>(
             continue;
         };
 
-        let primary = filter_primary(&matches);
+        // Drop cross-language candidates before disambiguation. Without
+        // this a Rust ref can phantom-bind to a TSX symbol whose only
+        // commonality is the bare name (see `languages_compatible`).
+        let same_lang: Vec<SymbolRecord> = matches
+            .into_iter()
+            .filter(|s| languages_compatible(file_path, &s.file_path))
+            .collect();
+
+        let primary = filter_primary(&same_lang);
 
         let Some(target) = disambiguate_target(
             &primary,
@@ -626,7 +731,15 @@ pub(super) async fn resolve_pending_refs<S: Storage + ?Sized>(
             continue;
         };
 
-        let primary = filter_primary(&matches);
+        // Same cross-language guard as the first-pass resolver. A pending
+        // ref whose only same-name candidates live in a different
+        // language gets dropped instead of phantom-binding.
+        let same_lang: Vec<SymbolRecord> = matches
+            .into_iter()
+            .filter(|s| languages_compatible(&pr.file_path, &s.file_path))
+            .collect();
+
+        let primary = filter_primary(&same_lang);
 
         let Some(target) = disambiguate_target(
             &primary,
@@ -1178,5 +1291,92 @@ fn run() {
 
         let endpoints = rebuild_bridge_endpoints(&files, &linker).await;
         assert!(endpoints.is_empty(), "no code → no bridge endpoints");
+    }
+
+    #[test]
+    fn languages_compatible_matches_within_language_family() {
+        // Same language: compatible.
+        assert!(languages_compatible("src/a.rs", "src/b.rs"));
+        assert!(languages_compatible("src/a.ts", "src/b.ts"));
+        assert!(languages_compatible("src/A.tsx", "src/B.tsx"));
+        // Different languages: incompatible — this is the case that
+        // produced the `core::bundle::append_bytes → app::Header`
+        // phantom binding before this fix.
+        assert!(!languages_compatible(
+            "ministr-core/src/bundle.rs",
+            "ministr-app/src/components/Header.tsx"
+        ));
+        // Grammar-registry-distinct flavours of "TypeScript" stay
+        // separated. `.tsx` and `.ts` have different tree-sitter
+        // grammars so cross-binding is rejected — a conservative
+        // default; rare collateral that can be relaxed later if the
+        // indexer ever unifies them.
+        assert!(!languages_compatible("a.tsx", "b.ts"));
+        // Unknown extensions: both sides must resolve → reject (safer
+        // than wide-open match).
+        assert!(!languages_compatible("README.md", "src/a.rs"));
+        assert!(!languages_compatible("a.weird", "b.alsoweird"));
+    }
+
+    /// Regression: a Rust ref must not bind to a same-named symbol in
+    /// a different language. Pre-fix, an unresolved `header` ref in a
+    /// `.rs` file could phantom-resolve to a `Header` symbol in a
+    /// `.tsx` file via the global `name_exact` lookup.
+    #[tokio::test]
+    async fn resolver_rejects_cross_language_phantom_binding() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        // Seed a TSX-only Header symbol so any cross-language phantom
+        // would have somewhere to land.
+        let tsx_header = SymbolRecord {
+            id: SymbolId("sym-app/src/components/Header.tsx::Header".into()),
+            file_path: "app/src/components/Header.tsx".into(),
+            name: "Header".into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: "function Header()".into(),
+            doc_comment: None,
+            module_path: String::new(),
+            line_start: 1,
+            line_end: 5,
+            cyclomatic_complexity: None,
+        };
+        storage.insert_symbols(&[tsx_header]).await.unwrap();
+
+        // Now extract refs from a Rust file that uses a type named
+        // `Header`. With the same-language filter active, this ref
+        // should resolve to *no target* (and be queued as pending or
+        // dropped), never to the TSX symbol.
+        let source = r"
+pub struct Bundle;
+
+impl Bundle {
+    pub fn build(&self) -> Header {
+        Header
+    }
+}
+";
+        let _ = extract_code_symbols("core/src/bundle.rs", source, &storage, None, None)
+            .await
+            .unwrap();
+
+        // Inspect every stored ref. None should target the TSX Header.
+        let all_symbols = storage
+            .list_symbols(&SymbolFilter::default())
+            .await
+            .unwrap();
+        let mut cross_lang_phantom_count = 0usize;
+        for sym in &all_symbols {
+            let refs = storage.query_refs(&sym.id, None).await.unwrap();
+            for r in refs {
+                if r.to_symbol_id.0.contains(".tsx") {
+                    cross_lang_phantom_count += 1;
+                }
+            }
+        }
+        assert_eq!(
+            cross_lang_phantom_count, 0,
+            "no Rust ref should bind to a TSX symbol; resolver phantom-bound across languages"
+        );
     }
 }

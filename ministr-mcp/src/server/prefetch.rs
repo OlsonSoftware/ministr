@@ -66,15 +66,21 @@ impl MinistrServer {
             }
 
             // --- Topical prefetch (similarity to running topic) ---
+            // Embedder + vector index are local-only. In daemon-forward mode
+            // (`self.service` is `None`) topical prefetch is skipped — the
+            // daemon already maintains its own prefetch state server-side.
+            let Some(ref service) = self.service else {
+                return;
+            };
             if let Ok(Some(section)) = storage.get_section(&sid).await {
-                if let Ok(embeddings) = self.service.embedder().embed(&[&section.text])
+                if let Ok(embeddings) = service.embedder().embed(&[&section.text])
                     && let Some(embedding) = embeddings.into_iter().next()
                 {
                     prefetch.record_topic_access(embedding);
                 }
 
                 if let Some(topic_vec) = prefetch.topic_vector()
-                    && let Ok(results) = self.service.index().search_knn(&topic_vec, 5)
+                    && let Ok(results) = service.index().search_knn(&topic_vec, 5)
                 {
                     let mut candidates = Vec::new();
                     for result in results {

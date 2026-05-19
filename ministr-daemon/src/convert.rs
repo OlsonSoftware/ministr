@@ -93,6 +93,267 @@ pub fn symbol_reference(r: ministr_core::service::SymbolRefResult) -> query::Sym
 }
 
 #[must_use]
+pub fn impact_risk(r: ministr_core::service::ImpactRisk) -> query::ImpactRisk {
+    match r {
+        ministr_core::service::ImpactRisk::Low => query::ImpactRisk::Low,
+        ministr_core::service::ImpactRisk::Medium => query::ImpactRisk::Medium,
+        ministr_core::service::ImpactRisk::High => query::ImpactRisk::High,
+    }
+}
+
+#[must_use]
+pub fn impact_caller(c: ministr_core::service::ImpactCaller) -> query::ImpactCaller {
+    query::ImpactCaller {
+        symbol_id: c.symbol_id,
+        name: c.name,
+        kind: c.kind,
+        file: c.file,
+        line: c.line,
+        depth: c.depth,
+    }
+}
+
+#[must_use]
+pub fn impact_response(r: ministr_core::service::ImpactResult) -> query::ImpactResponse {
+    query::ImpactResponse {
+        target_symbol_id: r.target_symbol_id,
+        depth: r.depth,
+        symbols: r.symbols,
+        files: r.files,
+        tests: r.tests,
+        risk: impact_risk(r.risk),
+        callers: r.callers.into_iter().map(impact_caller).collect(),
+    }
+}
+
+#[must_use]
+pub fn dead_symbol(s: ministr_core::service::DeadSymbol) -> query::DeadSymbol {
+    query::DeadSymbol {
+        symbol_id: s.symbol_id,
+        name: s.name,
+        kind: s.kind,
+        visibility: s.visibility,
+        file: s.file,
+        line: s.line,
+        lines: s.lines,
+    }
+}
+
+#[must_use]
+pub fn solid_principle(p: ministr_core::service::SolidPrinciple) -> query::SolidPrinciple {
+    match p {
+        ministr_core::service::SolidPrinciple::DryOcp => query::SolidPrinciple::DryOcp,
+        ministr_core::service::SolidPrinciple::Srp => query::SolidPrinciple::Srp,
+        ministr_core::service::SolidPrinciple::Isp => query::SolidPrinciple::Isp,
+        ministr_core::service::SolidPrinciple::Dip => query::SolidPrinciple::Dip,
+        ministr_core::service::SolidPrinciple::ShotgunSurgery => {
+            query::SolidPrinciple::ShotgunSurgery
+        }
+        ministr_core::service::SolidPrinciple::CyclicDependency => {
+            query::SolidPrinciple::CyclicDependency
+        }
+    }
+}
+
+#[must_use]
+pub fn api_solid_principle(p: query::SolidPrinciple) -> ministr_core::service::SolidPrinciple {
+    match p {
+        query::SolidPrinciple::DryOcp => ministr_core::service::SolidPrinciple::DryOcp,
+        query::SolidPrinciple::Srp => ministr_core::service::SolidPrinciple::Srp,
+        query::SolidPrinciple::Isp => ministr_core::service::SolidPrinciple::Isp,
+        query::SolidPrinciple::Dip => ministr_core::service::SolidPrinciple::Dip,
+        query::SolidPrinciple::ShotgunSurgery => {
+            ministr_core::service::SolidPrinciple::ShotgunSurgery
+        }
+        query::SolidPrinciple::CyclicDependency => {
+            ministr_core::service::SolidPrinciple::CyclicDependency
+        }
+    }
+}
+
+#[must_use]
+pub fn solid_symbol_ref(s: ministr_core::service::SolidSymbolRef) -> query::SolidSymbolRef {
+    query::SolidSymbolRef {
+        symbol_id: s.symbol_id,
+        name: s.name,
+        kind: s.kind,
+        file: s.file,
+        line: s.line,
+    }
+}
+
+#[must_use]
+pub fn solid_component(c: ministr_core::service::SolidComponent) -> query::SolidComponent {
+    query::SolidComponent {
+        size: c.size,
+        members: c.members.into_iter().map(solid_symbol_ref).collect(),
+        members_omitted: c.members_omitted,
+    }
+}
+
+#[must_use]
+pub fn solid_edge(e: ministr_core::service::SolidEdge) -> query::SolidEdge {
+    query::SolidEdge {
+        from: e.from,
+        to: e.to,
+        example_from: solid_symbol_ref(e.example_from),
+        example_to: solid_symbol_ref(e.example_to),
+    }
+}
+
+#[must_use]
+pub fn solid_finding(f: ministr_core::service::SolidFinding) -> query::SolidFinding {
+    match f {
+        ministr_core::service::SolidFinding::Redundancy {
+            principle,
+            members,
+            members_omitted,
+            members_total,
+            canonical,
+            avg_cosine,
+            avg_jaccard,
+            cross_module,
+        } => query::SolidFinding::Redundancy {
+            principle: solid_principle(principle),
+            members: members.into_iter().map(solid_symbol_ref).collect(),
+            members_omitted,
+            members_total,
+            canonical: solid_symbol_ref(canonical),
+            avg_cosine,
+            avg_jaccard,
+            cross_module,
+        },
+        ministr_core::service::SolidFinding::LowCohesion {
+            principle,
+            container,
+            components,
+            method_count,
+        } => query::SolidFinding::LowCohesion {
+            principle: solid_principle(principle),
+            container: solid_symbol_ref(container),
+            components: components.into_iter().map(solid_component).collect(),
+            method_count,
+        },
+        ministr_core::service::SolidFinding::FatInterface {
+            principle,
+            interface,
+            method_count,
+            unused_methods,
+            unused_methods_omitted,
+            under_using_implementors,
+            under_using_implementors_omitted,
+        } => query::SolidFinding::FatInterface {
+            principle: solid_principle(principle),
+            interface: solid_symbol_ref(interface),
+            method_count,
+            unused_methods,
+            unused_methods_omitted,
+            under_using_implementors: under_using_implementors
+                .into_iter()
+                .map(solid_symbol_ref)
+                .collect(),
+            under_using_implementors_omitted,
+        },
+        ministr_core::service::SolidFinding::ConcreteDependency {
+            principle,
+            consumer,
+            concrete_target,
+            suggested_abstraction,
+        } => query::SolidFinding::ConcreteDependency {
+            principle: solid_principle(principle),
+            consumer: solid_symbol_ref(consumer),
+            concrete_target: solid_symbol_ref(concrete_target),
+            suggested_abstraction: suggested_abstraction.map(solid_symbol_ref),
+        },
+        ministr_core::service::SolidFinding::ShotgunSurgery {
+            principle,
+            name,
+            kind,
+            sites,
+            sites_omitted,
+            sites_total,
+            avg_jaccard,
+        } => query::SolidFinding::ShotgunSurgery {
+            principle: solid_principle(principle),
+            name,
+            kind,
+            sites: sites.into_iter().map(solid_symbol_ref).collect(),
+            sites_omitted,
+            sites_total,
+            avg_jaccard,
+        },
+        ministr_core::service::SolidFinding::CyclicDependency {
+            principle,
+            packages,
+            edge_count,
+            example_edges,
+            example_edges_omitted,
+        } => query::SolidFinding::CyclicDependency {
+            principle: solid_principle(principle),
+            packages,
+            edge_count,
+            example_edges: example_edges.into_iter().map(solid_edge).collect(),
+            example_edges_omitted,
+        },
+    }
+}
+
+/// Translate the on-the-wire request into the core service params, applying
+/// the documented defaults when fields are omitted.
+#[must_use]
+pub fn api_solid_request_to_service(r: query::SolidRequest) -> ministr_core::service::SolidParams {
+    let defaults = ministr_core::service::SolidParams::default();
+    ministr_core::service::SolidParams {
+        kind: r.kind,
+        module: r.module,
+        principles: r.principles.into_iter().map(api_solid_principle).collect(),
+        container_kinds: if r.container_kinds.is_empty() {
+            defaults.container_kinds
+        } else {
+            r.container_kinds
+        },
+        interface_kinds: if r.interface_kinds.is_empty() {
+            defaults.interface_kinds
+        } else {
+            r.interface_kinds
+        },
+        similarity_threshold: r
+            .similarity_threshold
+            .unwrap_or(defaults.similarity_threshold),
+        jaccard_threshold: r.jaccard_threshold.unwrap_or(defaults.jaccard_threshold),
+        srp_cohesion_threshold: r
+            .srp_cohesion_threshold
+            .unwrap_or(defaults.srp_cohesion_threshold),
+        isp_min_methods: r.isp_min_methods.unwrap_or(defaults.isp_min_methods),
+        isp_max_overlap_fraction: r
+            .isp_max_overlap_fraction
+            .unwrap_or(defaults.isp_max_overlap_fraction),
+        min_lines: r.min_lines.unwrap_or(defaults.min_lines),
+        limit: r.limit.unwrap_or(defaults.limit).clamp(1, 500),
+        max_pairs: r.max_pairs.unwrap_or(defaults.max_pairs),
+        representative_count: r
+            .representative_count
+            .unwrap_or(defaults.representative_count),
+        shotgun_min_sites: r.shotgun_min_sites.unwrap_or(defaults.shotgun_min_sites),
+        shotgun_max_jaccard: r
+            .shotgun_max_jaccard
+            .unwrap_or(defaults.shotgun_max_jaccard),
+        shotgun_min_packages: r
+            .shotgun_min_packages
+            .unwrap_or(defaults.shotgun_min_packages),
+        shotgun_skip_conventional_names: r
+            .shotgun_skip_conventional_names
+            .unwrap_or(defaults.shotgun_skip_conventional_names),
+        cyclic_min_edges_per_direction: r
+            .cyclic_min_edges_per_direction
+            .unwrap_or(defaults.cyclic_min_edges_per_direction),
+        cyclic_skip_test_paths: r
+            .cyclic_skip_test_paths
+            .unwrap_or(defaults.cyclic_skip_test_paths),
+    }
+}
+
+#[must_use]
 pub fn related_claim(c: ministr_core::service::RelatedClaimResult) -> query::RelatedClaimResult {
     query::RelatedClaimResult {
         claim_id: c.claim_id,

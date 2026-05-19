@@ -61,8 +61,12 @@ pub(crate) async fn cmd_serve_http(
 
     let ingestion_progress = server.ingestion_progress_arc();
 
-    // Extract Arcs before moving server into the factory closure.
-    let a2a_service = server.service_arc();
+    // Extract Arcs before moving server into the factory closure. The HTTP
+    // serve path is always local-engine mode, so `service_arc()` must be
+    // present — A2A task handlers require direct service access.
+    let a2a_service = server
+        .service_arc()
+        .expect("HTTP serve constructs MinistrServer in local mode");
     let a2a_registry = server.registry_arc();
 
     // Each HTTP session gets its own MinistrServer clone.
@@ -142,8 +146,27 @@ pub(crate) async fn cmd_serve_http(
 
 /// `ministr serve --proxy` — thin MCP proxy over stdin/stdout.
 ///
-/// Connects to the ministr daemon at `~/.ministr/ministrd.sock` and proxies all
-/// tool calls. No ONNX model, no indexes, no `SQLite` — just HTTP over UDS.
+/// Connects to the ministr daemon at `~/.ministr/ministrd.sock` and routes
+/// every shared MCP tool call through it via the [`QueryBackend`] trait
+/// abstraction. No ONNX model, no indexes, no `SQLite` in this process —
+/// just HTTP over UDS.
+///
+/// **Linked projects:** the per-call `project` argument routing the
+/// previous `ProxyServer` supported is not currently re-implemented on the
+/// unified `MinistrServer` — that requires extending the backend trait
+/// with multi-corpus dispatch. For now, linked projects in
+/// `.ministr.toml` are accepted but silently ignored; only the primary
+/// corpus is queryable through this path. Users who need multi-corpus
+/// queries can use the desktop app (which connects to the daemon
+/// directly) until this gap closes.
+#[allow(
+    clippy::too_many_lines,
+    reason = "orchestration entry point — sequential setup (register \
+              primary corpus, create session, resolve linked projects, \
+              build the backend, install signal handlers, run the MCP \
+              loop, run cleanup); each step is unique and inlining keeps \
+              the startup order auditable"
+)]
 pub(crate) async fn cmd_serve_proxy_stdio(
     corpus_paths: &[String],
     linked: &[ministr_core::config::ResolvedLinkedProject],
@@ -154,31 +177,115 @@ pub(crate) async fn cmd_serve_proxy_stdio(
         linked.len()
     );
 
-    // Pre-register corpus with daemon before starting MCP handshake.
-    let client = ministr_api::client::DaemonClient::new();
-    match client.register_corpus(corpus_paths).await {
+    // Resolve the primary corpus + session.
+    let client = std::sync::Arc::new(ministr_api::client::DaemonClient::new());
+    let corpus_id = match client.register_corpus(corpus_paths).await {
         Ok(resp) => {
             eprintln!(
-                "ministr: corpus {} registered (indexing_started={})",
+                "ministr: primary corpus {} registered (indexing_started={})",
                 resp.corpus_id, resp.indexing_started
             );
+            resp.corpus_id
         }
         Err(e) => {
-            eprintln!("ministr: warning — corpus registration failed: {e}");
+            return Err(miette::miette!(
+                "corpus registration failed: {e} — is the daemon running?"
+            ));
+        }
+    };
+    let session_id = match client.create_session(&corpus_id, None).await {
+        Ok(resp) => {
+            eprintln!("ministr: primary session {} created", resp.session_id);
+            resp.session_id
+        }
+        Err(e) => {
+            return Err(miette::miette!("session creation failed: {e}"));
+        }
+    };
+
+    // Resolve each linked project's (corpus_id, session_id) so the agent
+    // can target it by label via the `project: "<label>"` argument on any
+    // shared MCP tool. Failures are logged but non-fatal — the primary
+    // corpus stays usable.
+    let mut linked_backends: std::collections::HashMap<
+        String,
+        std::sync::Arc<ministr_mcp::backend::DaemonBackend>,
+    > = std::collections::HashMap::new();
+    let mut linked_cleanup: Vec<(String, String)> = Vec::new();
+    for project in linked {
+        let label = project.label.clone();
+        let paths: Vec<String> = project.corpus_paths.clone();
+        if paths.is_empty() {
+            eprintln!("ministr: warning — linked project '{label}' has no corpus paths, skipping");
+            continue;
+        }
+        // Pass the linked-project label as display_name so the tray UI
+        // shows "BurntSushi-ripgrep" rather than the basename of the
+        // (possibly content-hashed) clone dir.
+        match client
+            .register_corpus_with_display_name(&paths, Some(label.clone()))
+            .await
+        {
+            Ok(resp) => {
+                let linked_corpus_id = resp.corpus_id;
+                match client.create_session(&linked_corpus_id, None).await {
+                    Ok(sresp) => {
+                        eprintln!(
+                            "ministr: linked '{label}' → corpus {linked_corpus_id}, session {} (indexing_started={})",
+                            sresp.session_id, resp.indexing_started
+                        );
+                        linked_cleanup.push((linked_corpus_id.clone(), sresp.session_id.clone()));
+                        let backend = ministr_mcp::backend::DaemonBackend::new(
+                            std::sync::Arc::clone(&client),
+                            linked_corpus_id,
+                            Some(sresp.session_id),
+                        );
+                        linked_backends.insert(label, std::sync::Arc::new(backend));
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "ministr: warning — linked '{label}' session creation failed: {e}"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("ministr: warning — linked '{label}' corpus registration failed: {e}");
+            }
         }
     }
 
-    eprintln!("ministr: starting MCP proxy on stdio");
-    let proxy =
-        ministr_mcp::proxy::ProxyServer::with_linked(corpus_paths.to_vec(), linked.to_vec());
+    eprintln!("ministr: starting MCP proxy on stdio (daemon-backend mode)");
+    let mut server = if linked_backends.is_empty() {
+        ministr_mcp::server::MinistrServer::with_daemon_backend(
+            std::sync::Arc::clone(&client),
+            corpus_id.clone(),
+            session_id.clone(),
+        )
+    } else {
+        let default_backend = std::sync::Arc::new(ministr_mcp::backend::DaemonBackend::new(
+            std::sync::Arc::clone(&client),
+            corpus_id.clone(),
+            Some(session_id.clone()),
+        ));
+        let multi = ministr_mcp::backend::DaemonMultiBackend::new(default_backend, linked_backends);
+        ministr_mcp::server::MinistrServer::with_daemon_multi_backend(multi, session_id.clone())
+    };
 
-    // Eagerly create a daemon session so the GUI shows it immediately.
-    if let Err(e) = proxy.initialize().await {
-        eprintln!("ministr: warning — eager session init failed: {e}");
-    }
+    // Prune local-only tools — fetch / clone / refresh / task all need
+    // local engine state (embedder, vector index, storage, fetchers) that
+    // daemon-backend mode doesn't have. `prune_tools` already gates on
+    // `web_fetcher.is_none() && git_fetcher.is_none()` etc., which is
+    // exactly the daemon-mode state, so this call is enough.
+    let local_paths: Vec<std::path::PathBuf> =
+        corpus_paths.iter().map(std::path::PathBuf::from).collect();
+    server.prune_tools(&local_paths);
 
-    let proxy_handle = proxy.clone();
-    let service = proxy
+    let cleanup_client = std::sync::Arc::clone(&client);
+    let cleanup_corpus = corpus_id;
+    let cleanup_session = session_id;
+
+    let service = server
         .serve(rmcp::transport::stdio())
         .await
         .into_diagnostic()
@@ -187,8 +294,23 @@ pub(crate) async fn cmd_serve_proxy_stdio(
     // Keep the service alive until the client disconnects.
     let _ = service.waiting().await;
 
-    // Clean up the daemon session so the GUI doesn't show stale entries.
-    proxy_handle.shutdown().await;
+    // Clean up the primary daemon session.
+    if let Err(e) = cleanup_client
+        .destroy_session(&cleanup_corpus, &cleanup_session)
+        .await
+    {
+        eprintln!("ministr: warning — primary session cleanup failed: {e}");
+    }
+    // Clean up linked-project sessions too so the desktop UI doesn't show
+    // stale entries.
+    for (linked_corpus, linked_session) in &linked_cleanup {
+        if let Err(e) = cleanup_client
+            .destroy_session(linked_corpus, linked_session)
+            .await
+        {
+            eprintln!("ministr: warning — linked session cleanup for {linked_corpus} failed: {e}");
+        }
+    }
     Ok(())
 }
 

@@ -130,25 +130,37 @@ pub fn strip_root_prefix(path: &str) -> Option<&str> {
     None
 }
 
-/// Determine which source root a file belongs to (longest prefix match).
-pub(super) fn find_root_for_file<'a>(
+/// Determine which source-root entry a file belongs to (longest prefix match).
+///
+/// Returns the matched `(root_path, root_id)` tuple; callers that only need
+/// one of the two can use [`find_root_for_file`] for the id-only form.
+pub(super) fn find_root_entry_for_file<'a>(
     file: &Path,
     roots: &'a [(PathBuf, String)],
-) -> Option<&'a str> {
+) -> Option<&'a (PathBuf, String)> {
     let canonical = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
-    let mut best: Option<(&str, usize)> = None;
-    for (root_path, root_id) in roots {
+    let mut best: Option<(&(PathBuf, String), usize)> = None;
+    for entry in roots {
+        let (root_path, _) = entry;
         let root_canonical = root_path
             .canonicalize()
             .unwrap_or_else(|_| root_path.clone());
         if canonical.starts_with(&root_canonical) {
             let depth = root_canonical.as_os_str().len();
-            if best.is_none() || depth > best.unwrap().1 {
-                best = Some((root_id.as_str(), depth));
+            if best.is_none_or(|(_, d)| depth > d) {
+                best = Some((entry, depth));
             }
         }
     }
-    best.map(|(id, _)| id)
+    best.map(|(entry, _)| entry)
+}
+
+/// Determine which source root a file belongs to (longest prefix match).
+pub(super) fn find_root_for_file<'a>(
+    file: &Path,
+    roots: &'a [(PathBuf, String)],
+) -> Option<&'a str> {
+    find_root_entry_for_file(file, roots).map(|(_, id)| id.as_str())
 }
 
 // ── Language statistics ──────────────────────────────────────────────────────
@@ -310,6 +322,39 @@ pub(super) async fn all_files_unchanged_by_mtime<S: Storage + ?Sized>(
         if *stored_ns != current_ns {
             return Ok(false);
         }
+    }
+
+    // Consistency guard: `file_hashes` says everything is unchanged, but
+    // if the `documents` table is empty the two tables have drifted apart
+    // (most often from a previous run that wrote hashes before failing
+    // to commit documents — e.g. an HNSW persist error or a half-deleted
+    // cleanup loop). Without this check the corpus stays stuck reporting
+    // "0 files indexed, ready" forever — both the manifest-level mtime
+    // fast-skip (early return below) AND the per-file mtime fast-skip in
+    // `parse_and_store_file` would suppress every subsequent re-ingest.
+    //
+    // Wiping `file_hashes` is the only intervention that actually works:
+    // the per-file path keys on a hash row existing for that path, so
+    // returning false here without clearing the rows still hits the same
+    // wall one level down. After clearing, the next ingestion run sees
+    // `existing_hash = None` per file and parses fresh.
+    let doc_count = storage
+        .document_count()
+        .await
+        .map_err(IngestionError::from)?;
+    if doc_count == 0 && !files.is_empty() {
+        let cleared = storage
+            .clear_file_hashes()
+            .await
+            .map_err(IngestionError::from)?;
+        tracing::warn!(
+            stored_hashes = cleared,
+            files = files.len(),
+            "mtime fast-skip would fire but documents table is empty — \
+             cleared stale file_hashes and forcing full re-ingest to \
+             repair drifted state"
+        );
+        return Ok(false);
     }
 
     Ok(true)

@@ -17,7 +17,14 @@ impl MinistrServer {
 
     /// Complete section IDs by fuzzy-matching the partial value.
     pub(super) async fn complete_section_ids(&self, partial: &str) -> Vec<String> {
-        let storage = self.service.storage();
+        // Completion uses direct storage access, which is only available
+        // in local-engine mode. In daemon-forward mode return no
+        // completions — the agent can still complete by calling the
+        // backend-routed tools.
+        let Some(ref service) = self.service else {
+            return Vec::new();
+        };
+        let storage = service.storage();
         let documents = storage.list_documents().await.unwrap_or_default();
         let lower = partial.to_lowercase();
         let mut results = Vec::new();
@@ -37,7 +44,10 @@ impl MinistrServer {
 
     /// Complete corpus document paths for `ministr://corpus/{path}` resources.
     pub(super) async fn complete_corpus_paths(&self, partial: &str) -> Vec<String> {
-        let storage = self.service.storage();
+        let Some(ref service) = self.service else {
+            return Vec::new();
+        };
+        let storage = service.storage();
         let documents = storage.list_documents().await.unwrap_or_default();
         let lower = partial.to_lowercase();
         documents
@@ -149,7 +159,9 @@ impl MinistrServer {
 
     /// Build the `ministr://status` resource content.
     pub(super) async fn read_status_resource(&self) -> Result<ReadResourceResult, McpError> {
-        let index = self.service.index();
+        // Index access is local-only. In daemon-forward mode report empty
+        // index stats — the agent can still inspect session + budget.
+        let index = self.service.as_ref().map(|s| s.index());
         let reg = self.registry.lock().await;
         let entry = reg
             .get_session(&self.active_session_id)
@@ -162,9 +174,12 @@ impl MinistrServer {
         };
 
         let mut status = serde_json::json!({
-            "index": {
-                "vector_count": index.len(),
-                "dimension": index.dimension(),
+            "index": match index {
+                Some(idx) => serde_json::json!({
+                    "vector_count": idx.len(),
+                    "dimension": idx.dimension(),
+                }),
+                None => serde_json::json!({ "mode": "daemon-forward" }),
             },
             "session": {
                 "id": entry.session.id.to_string(),
@@ -201,7 +216,14 @@ impl MinistrServer {
         &self,
         path: &str,
     ) -> Result<ReadResourceResult, McpError> {
-        let storage = self.service.storage();
+        let service = self.service.as_ref().ok_or_else(|| {
+            McpError::new(
+                rmcp::model::ErrorCode::INTERNAL_ERROR,
+                "ministr://corpus/* resources require local engine".to_string(),
+                None,
+            )
+        })?;
+        let storage = service.storage();
         let documents = storage.list_documents().await.map_err(|e| {
             McpError::new(
                 rmcp::model::ErrorCode::INTERNAL_ERROR,

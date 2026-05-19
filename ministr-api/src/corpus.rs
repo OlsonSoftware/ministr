@@ -14,6 +14,14 @@ pub struct RegisterCorpusRequest {
     /// Optional git include URLs from `.ministr.toml`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub git_includes: Vec<GitInclude>,
+
+    /// Optional friendly display name to override the daemon's
+    /// path-derived label. Used when registering linked projects or
+    /// `ministr_clone` targets so the tray UI shows the human-meaningful
+    /// name (e.g. `"BurntSushi-ripgrep"` rather than the basename of the
+    /// content-hashed clone dir).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 /// A git repository to clone and index alongside local paths.
@@ -177,4 +185,50 @@ pub struct ImportBundleResponse {
     pub corpus_id: String,
     /// Bundle manifest metadata.
     pub manifest: BundleManifestApi,
+}
+
+/// Request body for the daemon's clone-and-link endpoint
+/// (`POST /api/v1/corpora/{parent_id}/clone`).
+///
+/// The daemon clones the repo into a managed directory under
+/// `~/.ministr/clones/`, registers it as a new corpus, and appends a
+/// `[[linked]]` entry to the parent corpus's `.ministr.toml` so future
+/// MCP sessions can target the new corpus by label.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CloneRepoRequest {
+    /// Remote git repository URL (HTTPS or SSH).
+    pub repo: String,
+    /// Optional sparse-checkout paths.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    /// Optional branch or tag.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Optional human-readable label for the new linked project. When
+    /// omitted, the daemon derives one from the repo URL (typically
+    /// `owner-repo`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// Response from the daemon's clone-and-link endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CloneRepoResponse {
+    /// Corpus ID assigned to the newly cloned project.
+    pub corpus_id: String,
+    /// Absolute filesystem path of the cloned working tree (this is the
+    /// path written into the parent's `[[linked]]` entry).
+    pub clone_dir: String,
+    /// Label used in the parent's `[[linked]] label = "…"` entry. Use
+    /// this value in future tool calls as `project: "<label>"`.
+    pub label: String,
+    /// Resolved commit SHA at clone time.
+    pub commit_sha: String,
+    /// Resolved branch name.
+    pub branch: String,
+    /// Whether the parent's `.ministr.toml` was updated (false if the
+    /// link already existed and was a no-op).
+    pub linked_toml_updated: bool,
+    /// Whether indexing of the new corpus has started.
+    pub indexing_started: bool,
 }

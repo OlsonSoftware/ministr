@@ -54,8 +54,10 @@ impl MinistrServer {
         let session_id = uuid_v4();
         let mut registry = SessionRegistry::new(budget_config);
         registry.create_session(&session_id, None, AccessMode::ReadWrite);
+        let backend = crate::backend::Backend::local(service.clone());
         Self {
-            service,
+            service: Some(service),
+            backend,
             registry: Arc::new(Mutex::new(registry)),
             active_session_id: session_id,
             prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
@@ -120,8 +122,10 @@ impl MinistrServer {
         }
 
         let analytics = Arc::new(Analytics::new((*storage).clone()));
+        let backend = crate::backend::Backend::local(service.clone());
         Self {
-            service,
+            service: Some(service),
+            backend,
             registry: Arc::new(Mutex::new(registry)),
             active_session_id: sid,
             prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
@@ -163,6 +167,77 @@ impl MinistrServer {
         let mut forked = self.clone();
         forked.active_session_id = uuid_v4();
         forked
+    }
+
+    /// Construct a server that routes every shared MCP tool call through a
+    /// running `ministr-daemon` via [`DaemonClient`], instead of an
+    /// in-process [`QueryService`].
+    ///
+    /// This is the replacement for the old `ProxyServer`. Local-only
+    /// features (the `ministr_fetch` / `ministr_clone` / `ministr_refresh`
+    /// corpus-mutating tools, `ministr_task`, prefetch warming, analytics,
+    /// elicitation, and the storage-backed survey helpers) are unavailable
+    /// in daemon-forward mode and return errors when invoked.
+    ///
+    /// `corpus_id` and `session_id` must already be resolved by the caller
+    /// (typically `ministr-cli/src/commands.rs::cmd_serve_proxy_stdio`,
+    /// which performs the daemon-spawn handshake and corpus registration
+    /// before constructing the server).
+    #[must_use]
+    pub fn with_daemon_backend(
+        client: Arc<ministr_api::client::DaemonClient>,
+        corpus_id: String,
+        session_id: String,
+    ) -> Self {
+        let backend = crate::backend::Backend::daemon(client, corpus_id, Some(session_id.clone()));
+        Self::from_daemon_pieces(backend, session_id)
+    }
+
+    /// Construct a server backed by a multi-corpus daemon backend.
+    ///
+    /// `session_id` here is the *primary* corpus's session — linked
+    /// projects each carry their own session inside the
+    /// `DaemonMultiBackend`. The primary session is the one that drives
+    /// the MCP server's own session-state machinery
+    /// (`registry.create_session`, `active_session_id`, etc.).
+    #[must_use]
+    pub fn with_daemon_multi_backend(
+        multi: crate::backend::DaemonMultiBackend,
+        session_id: String,
+    ) -> Self {
+        let backend = crate::backend::Backend::daemon_multi(multi);
+        Self::from_daemon_pieces(backend, session_id)
+    }
+
+    /// Shared body for both daemon-backend constructors.
+    fn from_daemon_pieces(backend: crate::backend::Backend, session_id: String) -> Self {
+        let mut registry = SessionRegistry::new(UsageConfig::default());
+        registry.create_session(&session_id, None, AccessMode::ReadWrite);
+        Self {
+            service: None,
+            backend,
+            registry: Arc::new(Mutex::new(registry)),
+            active_session_id: session_id,
+            prefetch: Arc::new(Mutex::new(PrefetchEngine::with_default_capacity())),
+            storage: None,
+            analytics: None,
+            web_fetcher: None,
+            git_fetcher: None,
+            ingestion_pipeline: Arc::new(IngestionPipeline::new()),
+            embedder: None,
+            index: None,
+            ingestion_progress: Arc::new(IngestionProgress::new()),
+            task_manager: Arc::new(McpTaskManager::new()),
+            peer: Arc::new(Mutex::new(None)),
+            subscriptions: Arc::new(Mutex::new(HashSet::new())),
+            coherence_rx: Arc::new(Mutex::new(None)),
+            negotiated_extensions: Arc::new(Mutex::new(NegotiatedExtensions::default())),
+            tool_router: Self::tool_router(),
+            prompt_router: Self::prompt_router(),
+            custom_instructions: None,
+            parent_session_id_hint: read_parent_session_env(),
+            client_name_hint: Arc::new(std::sync::Mutex::new(None)),
+        }
     }
 
     /// Get a clone of the ingestion progress tracker for use by background tasks.
@@ -237,14 +312,18 @@ impl MinistrServer {
             }
         }
 
-        // Git tools: hide if no git fetcher configured
-        if self.git_fetcher.is_none() {
+        // Git tools: hide if no git fetcher AND not running in daemon-
+        // backend mode. In daemon mode `ministr_clone` works via the
+        // daemon's clone-and-link endpoint regardless of local fetcher
+        // state, so it stays exposed.
+        let in_daemon_mode = matches!(self.backend, crate::backend::Backend::Daemon(_));
+        if self.git_fetcher.is_none() && !in_daemon_mode {
             self.tool_router.remove_route("ministr_clone");
             pruned.push("ministr_clone");
         }
 
         // Task tool: hide if neither fetch nor clone are available (it's deprecated)
-        if self.web_fetcher.is_none() && self.git_fetcher.is_none() {
+        if self.web_fetcher.is_none() && self.git_fetcher.is_none() && !in_daemon_mode {
             self.tool_router.remove_route("ministr_task");
             pruned.push("ministr_task");
         }
@@ -256,6 +335,7 @@ impl MinistrServer {
                 "ministr_symbols",
                 "ministr_definition",
                 "ministr_references",
+                "ministr_solid",
             ] {
                 self.tool_router.remove_route(name);
                 pruned.push(*name);
@@ -294,9 +374,13 @@ impl MinistrServer {
     }
 
     /// Access the query service `Arc` for external use (e.g. A2A task handlers).
+    ///
+    /// Returns `None` when the server is running in daemon-forward mode
+    /// (no local engine). Callers that require the service should error
+    /// out gracefully in that case.
     #[must_use]
-    pub fn service_arc(&self) -> Arc<QueryService> {
-        Arc::clone(&self.service)
+    pub fn service_arc(&self) -> Option<Arc<QueryService>> {
+        self.service.as_ref().map(Arc::clone)
     }
 
     /// Access the session registry `Arc` for external use (e.g. coherence task).

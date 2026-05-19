@@ -26,36 +26,58 @@ mod tests {
     use super::super::symbols::resolve_and_store_refs;
 
     // --- Ignored directory guard ---
+    //
+    // The check is scoped to a corpus root: only components *under* the
+    // root are inspected, so an ignore-dir name appearing as an ancestor
+    // of the root (e.g. running ministr on a corpus that lives under
+    // `~/.ministr/...`) does not poison every file. With root = None the
+    // function defers to the discovery walker and returns false.
 
     #[test]
     fn is_in_ignored_dir_catches_target() {
-        assert!(is_in_ignored_dir(Path::new(
-            "/home/user/project/target/debug/foo.rs"
-        )));
-        assert!(is_in_ignored_dir(Path::new(
-            "target/release/build/crate/lib.rs"
-        )));
+        let root = Path::new("/home/user/project");
+        assert!(is_in_ignored_dir(
+            Some(root),
+            Path::new("/home/user/project/target/debug/foo.rs"),
+        ));
+        let rel_root = Path::new("");
+        assert!(is_in_ignored_dir(
+            Some(rel_root),
+            Path::new("target/release/build/crate/lib.rs"),
+        ));
     }
 
     #[test]
     fn is_in_ignored_dir_catches_node_modules() {
-        assert!(is_in_ignored_dir(Path::new(
-            "/app/node_modules/lodash/index.js"
-        )));
+        let root = Path::new("/app");
+        assert!(is_in_ignored_dir(
+            Some(root),
+            Path::new("/app/node_modules/lodash/index.js"),
+        ));
     }
 
     #[test]
     fn is_in_ignored_dir_catches_git() {
-        assert!(is_in_ignored_dir(Path::new("/repo/.git/objects/pack/foo")));
+        let root = Path::new("/repo");
+        assert!(is_in_ignored_dir(
+            Some(root),
+            Path::new("/repo/.git/objects/pack/foo"),
+        ));
     }
 
     #[test]
     fn is_in_ignored_dir_allows_normal_paths() {
-        assert!(!is_in_ignored_dir(Path::new(
-            "/home/user/project/src/main.rs"
-        )));
-        assert!(!is_in_ignored_dir(Path::new("docs/README.md")));
-        assert!(!is_in_ignored_dir(Path::new("lib.rs")));
+        let root = Path::new("/home/user/project");
+        assert!(!is_in_ignored_dir(
+            Some(root),
+            Path::new("/home/user/project/src/main.rs"),
+        ));
+        let rel_root = Path::new("");
+        assert!(!is_in_ignored_dir(
+            Some(rel_root),
+            Path::new("docs/README.md"),
+        ));
+        assert!(!is_in_ignored_dir(Some(rel_root), Path::new("lib.rs")));
     }
 
     // --- Hash computation ---

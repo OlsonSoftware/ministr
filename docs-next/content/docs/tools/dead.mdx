@@ -1,0 +1,55 @@
+---
+title: ministr_dead
+description: Find symbols with zero references — candidates for safe deletion.
+---
+
+`ministr_dead` returns symbols that have no references in the reference graph and don't look like entry points. It's the first step of a "what can I delete?" pass — every result is a *candidate*, not a guarantee. The static reference graph cannot see runtime-dispatched calls (function pointers, trait objects, registry-driven dispatch), so always confirm with `ministr_references` before deleting.
+
+## Parameters
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `kind` | string | no | — | Filter by symbol kind (`function`, `struct`, `enum`, `trait`, …) |
+| `module` | string | no | — | Filter by module path prefix |
+| `min_lines` | integer | no | 1 | Skip symbols whose body is shorter than this |
+| `limit` | integer | no | 50 | Maximum results (capped at 500) |
+
+## Response
+
+Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+
+```json
+{
+  "result": {
+    "symbols": [
+      {
+        "symbol_id": "sym-src/util.rs::util::parse_legacy_header",
+        "name": "parse_legacy_header",
+        "kind": "function",
+        "visibility": "pub(crate)",
+        "file": "src/util.rs",
+        "line": 142,
+        "lines": 18
+      }
+    ],
+    "total": 1
+  }
+}
+```
+
+## Filters applied automatically
+
+- `pub` symbols are excluded (external callers in dependent crates aren't visible to the local reference graph).
+- Entry points are excluded by name: `main`, `_main`, `_start`.
+- Symbols shorter than `min_lines` are skipped — set `min_lines: 5` to suppress trivial helpers.
+
+## When to use it
+
+- **Pre-cleanup sweep** — quick list of plausibly-unused symbols to inspect.
+- **Module migration** — see what's left behind after moving call sites elsewhere.
+- **Pair with `ministr_references`** before any deletion to catch references via dynamic dispatch.
+
+## Limits
+
+- Static reference graph only. Trait objects, function pointers, dispatch tables, and macro-generated references are not captured.
+- `pub` items are excluded by default. If you want to find unused public items at crate boundaries, you'll need ecosystem-level information ministr doesn't index.

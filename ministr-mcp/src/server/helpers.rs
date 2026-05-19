@@ -125,6 +125,26 @@ pub(crate) fn format_query_error(err: &QueryError) -> String {
     }
 }
 
+/// Format a [`crate::backend::BackendError`] into a user-friendly error
+/// message for MCP tool responses.
+///
+/// Routes `Query` variants through [`format_query_error`] (preserves the
+/// same friendly text the codebase relied on before the backend trait
+/// was introduced), and surfaces `Client` variants as daemon transport
+/// failures the agent can react to.
+pub(crate) fn format_backend_error(err: &crate::backend::BackendError) -> String {
+    match err {
+        crate::backend::BackendError::Query(q) => format_query_error(q),
+        crate::backend::BackendError::Client(c) => {
+            format!(
+                "Daemon transport error: {c}. The ministr daemon may have \
+                 disconnected; retry the call, or restart the daemon if the \
+                 error persists."
+            )
+        }
+    }
+}
+
 /// Check whether a directory tree contains any code files (by extension).
 ///
 /// Uses a bounded BFS (max depth 6, max 500 entries) to keep this fast.

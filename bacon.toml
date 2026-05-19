@@ -1,0 +1,43 @@
+# bacon (https://dystroy.org/bacon) configuration.
+#
+# Watch-mode jobs for the ministr backend refactor. Default `bacon` runs
+# `ministr-mcp-check` — the fastest signal during active editing.
+#
+#   bacon                          # tier 1 — cargo check on every save
+#   bacon ministr-mcp-clippy       # pedantic clippy
+#   bacon ministr-mcp-test         # test compile (use a filter to run)
+#   bacon ws-build                 # full workspace build
+#
+# Press `s` while bacon is running to summary-only mode; `q` to quit.
+
+default_job = "ministr-mcp-check"
+
+[jobs.ministr-mcp-check]
+command = ["cargo", "check", "--color=always", "--release", "-p", "ministr-mcp", "--lib"]
+need_stdout = false
+watch = ["ministr-mcp/src", "ministr-core/src", "ministr-api/src"]
+
+[jobs.ministr-mcp-clippy]
+command = [
+    "cargo", "clippy", "--color=always", "--release",
+    "-p", "ministr-mcp", "--all-targets",
+    "--", "-D", "warnings", "-W", "clippy::pedantic",
+]
+need_stdout = false
+watch = ["ministr-mcp/src", "ministr-core/src", "ministr-api/src"]
+
+[jobs.ministr-mcp-test]
+command = [
+    "cargo", "test", "--color=always", "--release",
+    "-p", "ministr-mcp", "--test", "e2e_mcp", "--no-run",
+]
+need_stdout = false
+watch = ["ministr-mcp/src", "ministr-mcp/tests"]
+
+[jobs.ws-build]
+command = ["cargo", "build", "--color=always", "--release", "--workspace"]
+need_stdout = false
+watch = [
+    "ministr-mcp/src", "ministr-core/src", "ministr-api/src",
+    "ministr-daemon/src", "ministr-cli/src",
+]
