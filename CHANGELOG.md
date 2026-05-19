@@ -5,6 +5,20 @@ All notable changes to ministr will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.6.0) - 2026-05-19
+
+### Added
+- Added a `ministr_solid` detector and resolver auto-heal flow, plus the MCP backend trait plumbing needed for the new backend architecture.
+- Added per-session attribution for corpus-wide tool calls so activity is traceable to the originating session.
+
+### Changed
+- Reworked the app session panel to prioritize code-intelligence activity and improved activity labels for clearer session timelines.
+- Refined the release and CI smoke-test flow so release preparation and MCP smoke checks are more deterministic in automation.
+
+### Fixed
+- Fixed activity row rendering regressions in the desktop app (grid bleed, dense timeline layout, path display, and label readability).
+- Fixed reinstall behavior to atomically replace running binaries and improved binary discovery when launchd hides common PATH entries on macOS.
+
 ## [0.5.1](https://github.com/OlsonSoftware/ministr/releases/tag/v0.5.1) - 2026-05-18
 
 ### Added
