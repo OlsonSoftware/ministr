@@ -4927,6 +4927,7 @@ dependencies = [
  "miette",
  "ministr-api",
  "ministr-core",
+ "ministr-daemon",
  "rmcp",
  "rusqlite",
  "rustls",
