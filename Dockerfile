@@ -44,16 +44,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3t64 \
     libgomp1 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user
 RUN useradd --create-home --home-dir /data ministr
-USER ministr
 WORKDIR /data
 
 COPY --from=builder /usr/local/bin/ministr /usr/local/bin/ministr
+COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+USER ministr
 
 ENV RUST_LOG=ministr=info
 EXPOSE 8080
 
-ENTRYPOINT ["ministr", "serve", "--transport", "http", "--host", "0.0.0.0", "--port", "8080"]
+# Honoured by `docker run` (ACA uses its own httpGet probes from the
+# Pulumi template). Same `/healthz` endpoint either way.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS http://localhost:8080/healthz || exit 1
+
+# ENTRYPOINT_MODE selects between `serve` (default) and `index`. See
+# deploy/docker-entrypoint.sh.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
