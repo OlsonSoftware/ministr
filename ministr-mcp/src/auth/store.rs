@@ -11,7 +11,7 @@ use std::path::Path;
 use tracing::warn;
 
 use super::OAuthConfig;
-use super::storage::{InMemoryStorage, OAuthBackend, SqliteStorage, StorageResult};
+use super::storage::{InMemoryStorage, OAuthBackend, PostgresStorage, SqliteStorage, StorageResult};
 use super::tenant::Tenant;
 use super::types::{AccessToken, AuthorizationCode, RegisteredClient};
 use super::util::epoch_now;
@@ -48,6 +48,29 @@ impl OAuthStore {
     pub fn persistent(config: OAuthConfig, db_path: &Path) -> io::Result<Self> {
         let backend = SqliteStorage::open(db_path)
             .map(OAuthBackend::Sqlite)
+            .map_err(io::Error::other)?;
+        Ok(Self { config, backend })
+    }
+
+    /// Construct a store backed by Postgres at `url` — the cloud default
+    /// for `mcp.ministr.ai` (F1.2 sub-bullet 4). The OAuth schema is
+    /// created idempotently on first use; multiple pods sharing the same
+    /// database all participate in the same OAuth state without any
+    /// coordination beyond the connection string.
+    ///
+    /// `url` is a standard libpq connection string
+    /// (`postgres://user:pw@host/db?sslmode=require`). Azure Postgres
+    /// Flex requires TLS server-side; the backend wires rustls + the
+    /// Mozilla CA bundle unconditionally.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `io::Error` if the pool cannot be opened or the
+    /// schema cannot be ensured.
+    pub async fn postgres(config: OAuthConfig, url: &str) -> io::Result<Self> {
+        let backend = PostgresStorage::open(url)
+            .await
+            .map(OAuthBackend::Postgres)
             .map_err(io::Error::other)?;
         Ok(Self { config, backend })
     }
@@ -300,6 +323,28 @@ mod tests {
                 .await
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "needs MINISTR_TEST_PG_URL"]
+    async fn postgres_backed_store_round_trips_a_token() {
+        let Ok(url) = std::env::var("MINISTR_TEST_PG_URL") else {
+            return;
+        };
+        let store = OAuthStore::postgres(OAuthConfig::default(), &url)
+            .await
+            .expect("open postgres oauth store");
+        let tok = token("pg-t1", "ministr:read", 3600, false);
+        store.save_token(tok.clone()).await.unwrap();
+        assert_eq!(
+            store.validate_token(&tok.token).await,
+            Some("client-1".into())
+        );
+        let tenant = store
+            .resolve_tenant(&tok.token)
+            .await
+            .expect("tenant resolves through postgres backend");
+        assert_eq!(tenant.subject, "client-1");
     }
 
     #[tokio::test]
