@@ -4784,14 +4784,19 @@ dependencies = [
  "azure_core",
  "azure_identity",
  "azure_storage_blob",
+ "deadpool-postgres",
  "futures",
  "ministr-core",
+ "rustls",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-postgres",
+ "tokio-postgres-rustls",
  "tracing",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
