@@ -9,13 +9,26 @@
  * (`src/lib/cloudClient.ts`). All Tauri ↔ HTTP plumbing lives there.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { Check, CloudOff, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Check,
+  CloudOff,
+  GitBranch,
+  Loader2,
+  Plus,
+  RefreshCw,
+  ShieldAlert,
+  Trash2,
+  X,
+} from "lucide-react";
 
 import { Button } from "../ui/button";
+import { ConfirmDialog } from "../ui/confirm-dialog";
 import {
   cloudClient,
+  type CloudCorpusInfo,
   type CloudHealth,
+  type CloudProgressEvent,
   type CloudStatus,
 } from "../../lib/cloudClient";
 import { cn } from "../../lib/utils";
@@ -192,6 +205,8 @@ export function CloudPanel() {
         />
       </section>
 
+      <CorporaSection authenticated={!!status?.authenticated} />
+
       <section className="flex flex-col gap-2 border-t border-border-soft pt-5">
         <Button
           size="sm"
@@ -204,6 +219,540 @@ export function CloudPanel() {
         </Button>
       </section>
     </div>
+  );
+}
+
+// ── Corpora section ─────────────────────────────────────────────────────────
+
+interface CorporaSectionProps {
+  authenticated: boolean;
+}
+
+function CorporaSection({ authenticated }: CorporaSectionProps) {
+  const [corpora, setCorpora] = useState<CloudCorpusInfo[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState<string | null>(null);
+  const [progressFor, setProgressFor] = useState<string | null>(null);
+  const [busy, setBusy] = useState<null | "list" | "delete" | "reindex">(null);
+
+  const refresh = useCallback(async () => {
+    if (!authenticated) {
+      setCorpora([]);
+      return;
+    }
+    setBusy("list");
+    setListError(null);
+    try {
+      setCorpora(await cloudClient.listCorpora());
+    } catch (e) {
+      setListError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }, [authenticated]);
+
+  // Initial + 5s poll while authenticated.
+  useEffect(() => {
+    void refresh();
+    if (!authenticated) return;
+    const t = window.setInterval(() => void refresh(), 5000);
+    return () => window.clearInterval(t);
+  }, [authenticated, refresh]);
+
+  const onDelete = async () => {
+    if (!deleteCandidate) return;
+    setBusy("delete");
+    try {
+      await cloudClient.unregisterCorpus(deleteCandidate);
+      setDeleteCandidate(null);
+      await refresh();
+    } catch (e) {
+      setListError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onReindex = async (id: string) => {
+    setBusy("reindex");
+    try {
+      await cloudClient.triggerReindex(id);
+      setProgressFor(id);
+    } catch (e) {
+      setListError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
+      <div className="flex items-center justify-between">
+        <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Corpora
+        </h3>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={refresh}
+            disabled={!authenticated || busy === "list"}
+          >
+            {busy === "list" ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            Refresh
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setRegisterOpen(true)}
+            disabled={!authenticated}
+          >
+            <Plus className="size-3.5" />
+            Register path
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => setCloneOpen(true)}
+            disabled={!authenticated}
+          >
+            <GitBranch className="size-3.5" />
+            Clone repo
+          </Button>
+        </div>
+      </div>
+
+      {!authenticated && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          Sign in (save a Bearer token above) to manage corpora.
+        </div>
+      )}
+
+      {listError && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-text font-mono">
+          {listError}
+        </div>
+      )}
+
+      {authenticated && corpora.length === 0 && !listError && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          No corpora registered yet. Clone a repo or register a server-side path.
+        </div>
+      )}
+
+      {corpora.length > 0 && (
+        <CorporaTable
+          corpora={corpora}
+          busy={busy === "delete" || busy === "reindex"}
+          onDeleteRequest={setDeleteCandidate}
+          onReindex={(id) => void onReindex(id)}
+          onShowProgress={setProgressFor}
+        />
+      )}
+
+      {cloneOpen && (
+        <CloneDialog
+          onClose={() => setCloneOpen(false)}
+          onSuccess={(corpusId) => {
+            setCloneOpen(false);
+            setProgressFor(corpusId);
+            void refresh();
+          }}
+        />
+      )}
+      {registerOpen && (
+        <RegisterDialog
+          onClose={() => setRegisterOpen(false)}
+          onSuccess={() => {
+            setRegisterOpen(false);
+            void refresh();
+          }}
+        />
+      )}
+      {progressFor && (
+        <ProgressDrawer
+          corpusId={progressFor}
+          onClose={() => setProgressFor(null)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={!!deleteCandidate}
+        title={`Unregister ${deleteCandidate ?? ""}?`}
+        body={
+          <>
+            This removes the corpus from the remote server. Indexed data on
+            the server is dropped. Local desktop corpora are unaffected.
+          </>
+        }
+        confirmLabel="Unregister"
+        cancelLabel="Keep"
+        tone="danger"
+        onConfirm={() => void onDelete()}
+        onCancel={() => setDeleteCandidate(null)}
+      />
+    </section>
+  );
+}
+
+interface CorporaTableProps {
+  corpora: CloudCorpusInfo[];
+  busy: boolean;
+  onDeleteRequest: (corpusId: string) => void;
+  onReindex: (corpusId: string) => void;
+  onShowProgress: (corpusId: string) => void;
+}
+
+function CorporaTable({
+  corpora,
+  busy,
+  onDeleteRequest,
+  onReindex,
+  onShowProgress,
+}: CorporaTableProps) {
+  return (
+    <div className="rounded-md border border-border-soft bg-surface overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-surface-overlay border-b border-border-soft">
+          <tr className="text-left text-xs font-mono uppercase tracking-[0.08em] text-text-muted">
+            <th className="px-3 py-2 font-semibold">Corpus</th>
+            <th className="px-3 py-2 font-semibold">Source</th>
+            <th className="px-3 py-2 font-semibold w-24">Status</th>
+            <th className="px-3 py-2 font-semibold w-32 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {corpora.map((c) => (
+            <tr
+              key={c.corpus_id}
+              className="border-b border-border-soft last:border-b-0"
+            >
+              <td className="px-3 py-2 align-top">
+                <div className="font-mono text-xs text-text">{c.corpus_id}</div>
+                {c.display_name && (
+                  <div className="text-xs text-text-muted">{c.display_name}</div>
+                )}
+              </td>
+              <td className="px-3 py-2 align-top">
+                <div className="text-xs text-text-muted font-mono break-all">
+                  {c.paths.join(", ") || "—"}
+                </div>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <span className="text-xs text-text-muted">
+                  {c.indexing_status ?? "ready"}
+                </span>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <div className="flex justify-end gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => onShowProgress(c.corpus_id)}
+                    title="Show indexing progress"
+                  >
+                    <RefreshCw className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => onReindex(c.corpus_id)}
+                    title="Reindex"
+                  >
+                    Reindex
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => onDeleteRequest(c.corpus_id)}
+                    title="Unregister"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+interface CloneDialogProps {
+  onClose: () => void;
+  onSuccess: (corpusId: string) => void;
+}
+
+function CloneDialog({ onClose, onSuccess }: CloneDialogProps) {
+  const [repo, setRepo] = useState("");
+  const [branch, setBranch] = useState("");
+  const [label, setLabel] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const onSubmit = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await cloudClient.cloneRepo(
+        repo.trim(),
+        branch.trim() || undefined,
+        label.trim() || undefined,
+      );
+      onSuccess(res.corpus_id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DialogShell title="Clone repo on remote server" onClose={onClose}>
+      <LabeledInput
+        label="Git URL"
+        placeholder="https://github.com/owner/repo.git"
+        value={repo}
+        onChange={setRepo}
+        type="url"
+      />
+      <LabeledInput
+        label="Branch (optional)"
+        placeholder="main"
+        value={branch}
+        onChange={setBranch}
+      />
+      <LabeledInput
+        label="Label / slug (optional)"
+        placeholder="auto-derived from URL"
+        value={label}
+        onChange={setLabel}
+      />
+      {error && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
+          {error}
+        </div>
+      )}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button size="sm" variant="ghost" onClick={onClose} disabled={busy}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={() => void onSubmit()} disabled={busy || !repo.trim()}>
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+          Clone & index
+        </Button>
+      </div>
+    </DialogShell>
+  );
+}
+
+interface RegisterDialogProps {
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function RegisterDialog({ onClose, onSuccess }: RegisterDialogProps) {
+  const [pathsText, setPathsText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const paths = useMemo(
+    () =>
+      pathsText
+        .split("\n")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0),
+    [pathsText],
+  );
+
+  const onSubmit = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await cloudClient.registerCorpus(paths);
+      onSuccess();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DialogShell
+      title="Register server-side path"
+      onClose={onClose}
+      hint="Paths resolve on the remote container, not your local desktop."
+    >
+      <label className="flex flex-col gap-1.5">
+        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Path(s), one per line
+        </span>
+        <textarea
+          rows={4}
+          value={pathsText}
+          onChange={(e) => setPathsText(e.target.value)}
+          placeholder="/data/some-repo&#10;/data/another"
+          className="px-3 py-2 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+        />
+      </label>
+      {error && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
+          {error}
+        </div>
+      )}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button size="sm" variant="ghost" onClick={onClose} disabled={busy}>
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => void onSubmit()}
+          disabled={busy || paths.length === 0}
+        >
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+          Register
+        </Button>
+      </div>
+    </DialogShell>
+  );
+}
+
+interface LabeledInputProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+}
+
+function LabeledInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+}: LabeledInputProps) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+        {label}
+      </span>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+      />
+    </label>
+  );
+}
+
+interface DialogShellProps {
+  title: string;
+  hint?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}
+
+function DialogShell({ title, hint, onClose, children }: DialogShellProps) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-6">
+      <div className="w-full max-w-md rounded-lg border border-border bg-surface shadow-xl flex flex-col gap-3 p-5">
+        <div className="flex items-start justify-between gap-3">
+          <h4 className="font-mono text-sm font-semibold uppercase tracking-[0.08em] text-text">
+            {title}
+          </h4>
+          <Button size="icon-sm" variant="ghost" onClick={onClose}>
+            <X className="size-4" />
+          </Button>
+        </div>
+        {hint && <p className="text-xs text-text-muted">{hint}</p>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+interface ProgressDrawerProps {
+  corpusId: string;
+  onClose: () => void;
+}
+
+function ProgressDrawer({ corpusId, onClose }: ProgressDrawerProps) {
+  const [event, setEvent] = useState<CloudProgressEvent | null>(null);
+  const subscribed = useRef(false);
+
+  useEffect(() => {
+    if (subscribed.current) return;
+    subscribed.current = true;
+    const channel = cloudClient.corpusProgress(corpusId);
+    channel.onmessage = (msg) => setEvent(msg);
+  }, [corpusId]);
+
+  const terminal = event?.status === 2;
+  const pct =
+    event?.files_total && event.files_processed !== undefined
+      ? Math.min(
+          100,
+          Math.round((event.files_processed / event.files_total) * 100),
+        )
+      : null;
+
+  return (
+    <DialogShell title={`Indexing: ${corpusId}`} onClose={onClose}>
+      {!event && (
+        <div className="text-sm text-text-muted flex items-center gap-2">
+          <Loader2 className="size-3.5 animate-spin" />
+          waiting for first event…
+        </div>
+      )}
+      {event && (
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs uppercase text-text-muted">
+              Phase
+            </span>
+            <span className="font-mono text-text">{event.phase}</span>
+            {terminal && (
+              <span className="ml-auto text-accent text-xs font-mono">
+                ✓ complete
+              </span>
+            )}
+          </div>
+          {event.files_total !== undefined && (
+            <div className="flex flex-col gap-1">
+              <div className="flex items-baseline justify-between font-mono text-xs text-text-muted">
+                <span>
+                  {event.files_processed ?? 0} / {event.files_total} files
+                </span>
+                {pct !== null && <span>{pct}%</span>}
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-overlay">
+                <div
+                  className="h-full bg-accent transition-all duration-300"
+                  style={{ width: `${pct ?? 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+          {event.current_file && (
+            <div className="text-xs text-text-muted font-mono break-all">
+              {event.current_file}
+            </div>
+          )}
+        </div>
+      )}
+    </DialogShell>
   );
 }
 

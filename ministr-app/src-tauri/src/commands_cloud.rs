@@ -198,6 +198,204 @@ pub async fn cloud_health_check() -> Result<CloudHealth, CommandError> {
     Ok(health)
 }
 
+/// Build an `authed_client()` — returns the configured endpoint base URL,
+/// bearer token, and a reqwest client. Rejects with structured errors when
+/// the local cloud config is missing endpoint or token.
+fn authed_client(timeout_secs: u64) -> Result<(reqwest::Client, String, String), CommandError> {
+    let cfg = load_config();
+    if !cfg.is_configured() {
+        return Err(CommandError::new(
+            ErrorKind::InvalidInput,
+            "no cloud endpoint configured",
+        ));
+    }
+    if !cfg.is_authenticated() {
+        return Err(CommandError::new(
+            ErrorKind::InvalidInput,
+            "cloud connection has no bearer token (sign in first)",
+        ));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| CommandError::new(ErrorKind::Internal, format!("http client: {e}")))?;
+    Ok((client, cfg.endpoint, cfg.bearer_token))
+}
+
+/// GET `/api/v1/corpora` — list all corpora the remote server has registered.
+#[tauri::command]
+pub async fn cloud_list_corpora() -> Result<serde_json::Value, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/corpora");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("list corpora returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse list: {e}")))
+}
+
+/// POST `/api/v1/corpora` — register a corpus by paths on the remote server.
+/// The remote server resolves the paths inside its own filesystem (e.g.
+/// container `/data/...`), not the local desktop's.
+#[tauri::command]
+pub async fn cloud_register_corpus(
+    paths: Vec<String>,
+) -> Result<serde_json::Value, CommandError> {
+    let (client, endpoint, token) = authed_client(15)?;
+    let url = format!("{endpoint}/api/v1/corpora");
+    let body = serde_json::json!({ "paths": paths });
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("register returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse register: {e}")))
+}
+
+/// POST `/api/v1/corpora/{slug}/clone` — git-clone a remote repo and register
+/// it as a corpus. The `slug` is derived from the URL when not supplied.
+#[tauri::command]
+pub async fn cloud_clone_repo(
+    repo: String,
+    branch: Option<String>,
+    label: Option<String>,
+) -> Result<serde_json::Value, CommandError> {
+    let (client, endpoint, token) = authed_client(120)?;
+    // Derive a slug from the URL when label is missing: last path segment,
+    // strip `.git`. The daemon uses this as the corpus id prefix.
+    let slug = label.unwrap_or_else(|| derive_slug_from_repo(&repo));
+    let url = format!("{endpoint}/api/v1/corpora/{slug}/clone");
+    let mut body = serde_json::json!({ "repo": repo });
+    if let Some(b) = branch {
+        body["branch"] = serde_json::Value::String(b);
+    }
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("clone returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse clone: {e}")))
+}
+
+fn derive_slug_from_repo(repo: &str) -> String {
+    repo.rsplit('/')
+        .find(|s| !s.is_empty())
+        .map_or_else(
+            || "corpus".to_string(),
+            |s| s.trim_end_matches(".git").to_string(),
+        )
+}
+
+/// DELETE `/api/v1/corpora/{id}` — unregister a corpus on the remote server.
+#[tauri::command]
+pub async fn cloud_unregister_corpus(corpus_id: String) -> Result<(), CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/corpora/{corpus_id}");
+    let resp = client
+        .delete(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("delete {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("unregister returned HTTP {}", resp.status()),
+        ));
+    }
+    Ok(())
+}
+
+/// Subscribe to `GET /api/v1/corpora/{id}/progress` (SSE) and forward each
+/// `data:` event as JSON to the given Tauri Channel. Stops when the remote
+/// stream closes (terminal status) or when the channel is dropped.
+///
+/// The function reads `Response::chunk()` and parses SSE frames inline so
+/// we don't need to enable reqwest's `stream` feature.
+#[tauri::command]
+pub async fn cloud_corpus_progress(
+    corpus_id: String,
+    on_event: tauri::ipc::Channel<serde_json::Value>,
+) -> Result<(), CommandError> {
+    let (client, endpoint, token) = authed_client(0)?; // no overall timeout — SSE is long-lived
+    let url = format!("{endpoint}/api/v1/corpora/{corpus_id}/progress");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("progress SSE returned HTTP {}", resp.status()),
+        ));
+    }
+
+    let mut buf = String::new();
+    let mut resp = resp;
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("chunk read: {e}")))?
+    {
+        let Ok(s) = std::str::from_utf8(&chunk) else {
+            continue; // skip non-utf8 (shouldn't happen on SSE)
+        };
+        buf.push_str(s);
+
+        // Each SSE event ends with a blank line (\n\n). Process complete events.
+        while let Some(idx) = buf.find("\n\n") {
+            let frame = buf[..idx].to_string();
+            buf.drain(..idx + 2);
+            for line in frame.lines() {
+                if let Some(json_str) = line.strip_prefix("data:") {
+                    let trimmed = json_str.trim();
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                        // If the channel is closed (panel navigated away),
+                        // the send returns an error — that's our exit signal.
+                        if on_event.send(value).is_err() {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// POST `/reindex` on the configured cloud endpoint. Returns the
 /// server-assigned `job_id` that can later be subscribed to via SSE.
 #[tauri::command]
