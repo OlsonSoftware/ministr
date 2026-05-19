@@ -484,6 +484,16 @@ jobs:
         # we just substring-search for the markers we care about. Real
         # protocol validation lives in nextest unit tests.
         #
+        # `ministr serve` is now a thin proxy that requires a daemon —
+        # the MCP backend refactor moved the embedded QueryService path
+        # behind `Backend::Local`, but `serve --stdio` always uses
+        # `Backend::Daemon`. So spin up `ministr __daemon` first and
+        # wait for its IPC socket before invoking the proxy. The
+        # daemon socket lives at `$HOME/.ministr/ministrd.sock` —
+        # point HOME at a fresh tempdir so the smoke test starts from
+        # clean state and doesn't pollute the runner's persistent
+        # home (matters when CI_RUNNER is a self-hosted host).
+        #
         # TODO(rmcp-raw-newline): track down the actual source of the
         # raw '\n' in tools/list output and fix it upstream. Suspected
         # culprits: multi-line `///` doc comments on nested response
@@ -494,14 +504,59 @@ jobs:
         # grep block below back to a single jq pipeline asserting on
         # `.result.tools[].name`.
         run: |
+          set -euo pipefail
+
+          export HOME="$(mktemp -d)"
+          echo "── smoke HOME ── $HOME"
+
+          # Start the headless daemon in the background. Send its logs
+          # to a file so they don't contaminate the proxy stdin/stdout
+          # under test, but make them available below for diagnostics
+          # if anything fails.
+          ./target/release/ministr __daemon > "$HOME/daemon.log" 2>&1 &
+          DAEMON_PID=$!
+          cleanup() {
+            kill "$DAEMON_PID" 2>/dev/null || true
+            wait "$DAEMON_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # Wait up to 30 s for the IPC socket. The daemon may need to
+          # extract ONNX assets / open SQLite on first run, so allow a
+          # generous window — much faster on warm runs.
+          SOCKET="$HOME/.ministr/ministrd.sock"
+          for i in $(seq 1 60); do
+            if [ -S "$SOCKET" ]; then break; fi
+            sleep 0.5
+          done
+          if [ ! -S "$SOCKET" ]; then
+            echo "::error::daemon never created its IPC socket ($SOCKET)"
+            echo "── daemon log ──"
+            cat "$HOME/daemon.log" || true
+            exit 1
+          fi
+          echo "✓ daemon socket ready at $SOCKET"
+
+          # Now run the proxy. Keep stderr visible — earlier iterations
+          # piped 2>/dev/null and turned every startup failure into a
+          # silent zero-byte stdout, which was unrecoverable in CI logs.
+          # The proxy itself writes a couple of human-readable status
+          # lines to stderr; that's fine, the test only inspects stdout.
           response=$(printf '%s\n%s\n%s\n' \
             '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"1.0"}},"id":1}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","method":"tools/list","id":2}' \
-            | timeout 30 ./target/release/ministr serve 2>/dev/null || true)
+            | timeout 30 ./target/release/ministr serve || true)
 
           echo "── stdout size from ministr serve ──"
           printf '%s' "$response" | wc -c
+
+          if [ -z "$response" ]; then
+            echo "::error::ministr serve produced zero bytes of stdout"
+            echo "── daemon log ──"
+            cat "$HOME/daemon.log" || true
+            exit 1
+          fi
 
           # initialize response: jsonrpc framing + id:1 + serverInfo block.
           printf '%s' "$response" | grep -q '"jsonrpc":"2.0"' \
