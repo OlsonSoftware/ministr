@@ -80,7 +80,7 @@ fn build_oauth_store(
 }
 
 /// `ministr serve --transport http` — Streamable HTTP MCP server.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) async fn cmd_serve_http(
     corpus_paths: &[String],
     git_includes: &[ministr_core::config::GitInclude],
@@ -123,11 +123,25 @@ pub(crate) async fn cmd_serve_http(
     let server_factory = move || Ok(server.clone());
 
     let session_manager = Arc::new(LocalSessionManager::default());
-    let http_service = StreamableHttpService::new(
-        server_factory,
-        session_manager,
-        StreamableHttpServerConfig::default(),
-    );
+    // Override the default loopback-only allowed_hosts list with the
+    // deployment's public hostnames when `MINISTR_ALLOWED_HOSTS` is set
+    // (comma-separated). Default (no env var) keeps loopback for local dev.
+    let mut sh_config = StreamableHttpServerConfig::default();
+    if let Ok(hosts_raw) = std::env::var("MINISTR_ALLOWED_HOSTS")
+        && !hosts_raw.trim().is_empty()
+    {
+        sh_config.allowed_hosts = hosts_raw
+            .split(',')
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+            .map(str::to_owned)
+            .collect();
+        tracing::info!(
+            count = sh_config.allowed_hosts.len(),
+            "MINISTR_ALLOWED_HOSTS override applied to Streamable HTTP transport"
+        );
+    }
+    let http_service = StreamableHttpService::new(server_factory, session_manager, sh_config);
 
     let mcp_router = axum::Router::new().nest_service("/mcp", http_service);
 
