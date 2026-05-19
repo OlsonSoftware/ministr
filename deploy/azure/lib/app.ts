@@ -105,20 +105,9 @@ export function createApp(inputs: AppInputs): AppArtifact {
           resources: { cpu: Number(cpu), memory },
           env: envVars,
           volumeMounts: [{ volumeName: "data", mountPath: "/data" }],
-          probes: [
-            {
-              type: "Liveness",
-              httpGet: { path: "/healthz", port: 8080 },
-              initialDelaySeconds: 15,
-              periodSeconds: 30,
-            },
-            {
-              type: "Readiness",
-              httpGet: { path: "/healthz", port: 8080 },
-              initialDelaySeconds: 5,
-              periodSeconds: 10,
-            },
-          ],
+          // Probes intentionally omitted during placeholder bootstrap — they
+          // require /healthz on 8080 and would block ACA from accepting the
+          // first revision. Re-add once the real ministr image is in ACR.
         },
       ],
       volumes: [
