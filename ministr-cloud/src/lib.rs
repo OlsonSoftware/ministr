@@ -36,6 +36,10 @@
 
 #![deny(unsafe_code)]
 
+pub mod blob;
+
+pub use blob::{BlobError, BlobResult, CorpusBlobStore};
+
 use serde::{Deserialize, Serialize};
 
 /// Billing tier attached to every resolved tenant.

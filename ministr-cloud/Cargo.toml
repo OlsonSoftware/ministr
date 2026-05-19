@@ -20,10 +20,23 @@ readme = "../README.md"
 workspace = true
 
 [dependencies]
-# Intentionally minimal until F1.2 lands the Postgres-backed tenant
-# model. New deps are added by the F-item that first needs them so the
-# crate's dep tree stays auditable.
+# New deps are added by the F-item that first needs them so the crate's
+# dep tree stays auditable.
 serde.workspace = true
+# F1.1 sub-bullet 5 — per-corpus HNSW blob persistence. Reuses
+# `ministr-core::bundle::{export_bundle, import_bundle}` for the
+# .ministr-index file format; this crate only owns the Azure-side
+# upload/download wrapper.
+ministr-core.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
+# Official Azure SDK for Rust — GA'd May 2026.
+azure_core = "1"
+azure_identity = "1"
+azure_storage_blob = "1"
+futures = "0.3"
 
 [dev-dependencies]
 serde_json.workspace = true
