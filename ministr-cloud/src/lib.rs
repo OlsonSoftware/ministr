@@ -22,7 +22,7 @@
 //! | Phase | Modules added |
 //! |---|---|
 //! | F1.2 | `db` (Postgres-backed schema migrations); `Tenant` itself lives in `ministr-mcp::auth::tenant` (MIT) so handlers in the local stack can read it without depending on this closed crate |
-//! | F1.3 | `idp::IdentityProvider` trait + GitHub/Google/Microsoft impls |
+//! | F1.3 | `idp::IdentityProvider` trait (landed); GitHub/Google/Microsoft impls plug in via the same trait |
 //! | F1.4 | `billing::usage` daily rollup + `/api/v1/billing/usage` |
 //! | F1.5 | `billing::stripe` Stripe Meters + webhook receiver |
 //! | F2.1 | `github::app` installation-token minter |
@@ -38,9 +38,11 @@
 
 pub mod blob;
 pub mod db;
+pub mod idp;
 
 pub use blob::{BlobError, BlobResult, CorpusBlobStore};
 pub use db::{connect, run_migrations, DbError};
+pub use idp::{IdentityProvider, IdpError, ResolvedIdentity};
 
 /// Re-exported from `ministr-mcp` (MIT) so the auth middleware in the
 /// local stack can attach a [`Plan`]-bearing `Tenant` to every request
