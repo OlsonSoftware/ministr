@@ -32,6 +32,11 @@ axum.workspace = true
 tempfile.workspace = true
 tokio-util = "0.7"
 rusqlite.workspace = true
+tokio-postgres.workspace = true
+deadpool-postgres.workspace = true
+tokio-postgres-rustls.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
 hmac.workspace = true
 subtle.workspace = true
 # Used for SSE: `tokio_stream::wrappers::ReceiverStream` + `StreamExt::map`.
