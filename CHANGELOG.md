@@ -5,6 +5,25 @@ All notable changes to ministr will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.6.0) - 2026-05-19
+
+### Added
+- Added a new `ministr_solid` detector and resolver auto-heal flow, plus a backend trait for MCP integration.
+- Added per-session attribution for corpus-wide tool calls and a code-intelligence-first session panel in the desktop app.
+
+### Changed
+- Reworked the MCP backend architecture to support daemon, local, and multi-daemon backends through a shared conversion layer.
+- Redesigned desktop activity rows for denser single-line timeline rendering, clearer labels, repo-relative paths, and pinned count badges.
+- Hardened reinstall behavior with atomic replacement of running binaries and macOS dev-bundle install to `~/Applications`.
+
+### Fixed
+- Fixed MCP smoke CI reliability by pinning bash with `pipefail`, starting the daemon before smoke checks, and preserving stderr diagnostics.
+- Fixed desktop activity rendering issues including broken fresh-event pulses and activity-row column bleed.
+- Fixed PATH discovery for app-launched flows by probing common binary directories when `launchd` omits `claude`/`codex`.
+
+### Removed
+- Removed the legacy standalone MCP proxy backend implementation in favor of modular backend components.
+
 ## [0.5.1](https://github.com/OlsonSoftware/ministr/releases/tag/v0.5.1) - 2026-05-18
 
 ### Added
