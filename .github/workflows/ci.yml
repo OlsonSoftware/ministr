@@ -563,24 +563,46 @@ jobs:
             exit 1
           fi
 
+          # Persist the raw response so subsequent greps work on a file
+          # (avoids re-piping huge stdin through printf each time) and so
+          # a fail dump can show what we actually got.
+          printf '%s' "$response" > "$HOME/proxy.stdout"
+
+          fail() {
+            echo "::error::$1"
+            echo "── first 800 bytes of proxy stdout ──"
+            head -c 800 "$HOME/proxy.stdout" | cat -v
+            echo
+            echo "── last 200 bytes of proxy stdout ──"
+            tail -c 200 "$HOME/proxy.stdout" | cat -v
+            echo
+            echo "── daemon log (tail) ──"
+            tail -n 80 "$HOME/daemon.log" || true
+            exit 1
+          }
+
+          # `grep -a` forces text mode: rmcp's stdio framing may include
+          # bytes grep heuristically classifies as binary, which would
+          # otherwise produce a silent no-match across the whole buffer.
+
           # initialize response: jsonrpc framing + id:1 + serverInfo block.
-          printf '%s' "$response" | grep -q '"jsonrpc":"2.0"' \
-            || { echo "no JSON-RPC frame in stdout"; exit 1; }
-          printf '%s' "$response" | grep -Eq '"id":[[:space:]]*1\b' \
-            || { echo "no id:1 frame in stdout"; exit 1; }
-          printf '%s' "$response" | grep -q '"serverInfo"' \
-            || { echo "no serverInfo in initialize response"; exit 1; }
-          printf '%s' "$response" | grep -q '"name":"ministr"' \
-            || { echo "serverInfo.name != ministr"; exit 1; }
+          grep -aq '"jsonrpc":"2.0"' "$HOME/proxy.stdout" \
+            || fail "no JSON-RPC frame in stdout"
+          grep -aEq '"id":[[:space:]]*1\b' "$HOME/proxy.stdout" \
+            || fail "no id:1 frame in stdout"
+          grep -aq '"serverInfo"' "$HOME/proxy.stdout" \
+            || fail "no serverInfo in initialize response"
+          grep -aq '"name":"ministr"' "$HOME/proxy.stdout" \
+            || fail "serverInfo.name != ministr"
           echo "✓ initialize succeeded"
 
           # tools/list response: id:2 with each expected tool name.
-          printf '%s' "$response" | grep -Eq '"id":[[:space:]]*2\b' \
-            || { echo "no id:2 frame in stdout"; exit 1; }
+          grep -aEq '"id":[[:space:]]*2\b' "$HOME/proxy.stdout" \
+            || fail "no id:2 frame in stdout"
           for tool in ministr_survey ministr_read ministr_extract \
                       ministr_usage ministr_compress ministr_toc; do
-            printf '%s' "$response" | grep -q "\"name\":\"$tool\"" \
-              || { echo "missing tool: $tool"; exit 1; }
+            grep -aq "\"name\":\"$tool\"" "$HOME/proxy.stdout" \
+              || fail "missing tool: $tool"
             echo "✓ found tool: $tool"
           done
           echo "✓ MCP smoke test passed"
