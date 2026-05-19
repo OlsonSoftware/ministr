@@ -13,6 +13,7 @@ import { createInsights } from "./lib/insights";
 import { createApp } from "./lib/app";
 import { createIndexerJob } from "./lib/job";
 import { bindCustomDomain } from "./lib/domain";
+import { createPostgres } from "./lib/postgres";
 
 const cfg = new pulumi.Config();
 const imageTag = cfg.get("imageTag") ?? "latest";
@@ -27,10 +28,29 @@ const jobMemory = cfg.get("jobMemory") ?? "8Gi";
 const corpusPaths = cfg.get("corpusPaths") ?? "/data/corpus";
 const webhookSecret = cfg.getSecret("githubWebhookSecret");
 
+// Postgres provisioning is opt-in until F1.1 ships the Postgres backends
+// (OAuthBackend::Postgres, JobQueueBackend::Postgres). Flip on with:
+//   pulumi config set enablePostgres true
+//   pulumi config set --secret pgAdminPassword <strong-password>
+const enablePostgres = cfg.getBoolean("enablePostgres") ?? false;
+const pgAdminLogin = cfg.get("pgAdminLogin") ?? "ministradmin";
+const pgAdminPassword = cfg.getSecret("pgAdminPassword");
+
 const net = createNetworking();
 const registry = createRegistry({ rg: net.rg });
 const storage = createStorage({ rg: net.rg, env: net.env });
 const insights = createInsights({ rg: net.rg, workspace: net.workspace });
+
+// Provision Postgres Flex only when explicitly enabled. The module is
+// defined regardless so the type-check covers it on every build.
+const postgres =
+  enablePostgres && pgAdminPassword
+    ? createPostgres({
+        rg: net.rg,
+        adminLogin: pgAdminLogin,
+        adminPassword: pgAdminPassword,
+      })
+    : undefined;
 
 const queryApp = createApp({
   rg: net.rg,
@@ -72,3 +92,5 @@ export const appFqdn = queryApp.fqdn;
 export const indexerJobName = indexer.name;
 export const customDomainConfigured = customDomain || "(none)";
 export const customDomainCertId = domainBinding?.apply((d) => d.certId);
+export const pgHost = postgres?.host;
+export const pgConnectionString = postgres?.pgConnectionString;
