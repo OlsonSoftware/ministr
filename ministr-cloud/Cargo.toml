@@ -29,6 +29,11 @@ serde_json.workspace = true
 # .ministr-index file format; this crate only owns the Azure-side
 # upload/download wrapper.
 ministr-core.workspace = true
+# F1.2 sub-bullet 2 — Plan + Tenant types live in ministr-mcp (MIT) so
+# the auth middleware that ships in the local stack can attach a Tenant
+# to request extensions without depending on this closed crate. We
+# re-export Plan here for downstream cloud-only consumers.
+ministr-mcp.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
