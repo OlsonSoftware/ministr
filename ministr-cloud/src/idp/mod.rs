@@ -25,6 +25,10 @@
 //! `idp::oidc`, …) implement it. Cloud handlers depend on the trait,
 //! not concrete types, so adding a provider doesn't touch any handler.
 
+pub mod github;
+
+pub use github::{GitHubIdp, GITHUB_ISSUER};
+
 use serde::{Deserialize, Serialize};
 
 /// The cloud-mode identity surface. Implementations cover the OAuth
@@ -42,7 +46,10 @@ pub trait IdentityProvider: Send + Sync + std::fmt::Debug {
     /// `"microsoft"`, `"oidc:keycloak"`. Persisted in audit logs and
     /// referenced when joining to provider-specific user columns
     /// (`users.github_id`, future `users.google_id`).
-    fn name(&self) -> &str;
+    ///
+    /// Returns `&'static str` because every concrete provider's name
+    /// is a compile-time constant.
+    fn name(&self) -> &'static str;
 
     /// Build the authorize-URL the user is redirected to. `state` and
     /// `code_challenge` are caller-generated (the cloud auth handler
@@ -127,7 +134,7 @@ mod tests {
     }
 
     impl IdentityProvider for StubIdp {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             self.name
         }
         fn authorize_url(
