@@ -1,8 +1,21 @@
+# Cargo build artifacts. The double-star prefixes match nested target
+# dirs (e.g. ministr-app/src-tauri/target/) which BuildKit prunes at
+# the walk stage, so the 46 GB target tree never enters the tarball.
+# Without these explicit nested forms, `az acr build` and some other
+# tar packers walk the entire tree before applying patterns and
+# spend minutes on a no-op.
 target/
+**/target/
+**/.cargo/registry/
+**/.cargo/git/
 .git/
 docs/
 .fastembed_cache/
+**/.fastembed_cache/
 .DS_Store
+
+# Local Pulumi state cache (not needed in container).
+deploy/azure/node_modules/
 
 # Documentation (not needed in container)
 *.md
@@ -10,7 +23,9 @@ docs/
 
 # Frontend build artifacts
 node_modules/
+**/node_modules/
 ministr-app/dist/
+**/dist/
 
 # IDE and editor configs
 .claude/
