@@ -474,6 +474,11 @@ jobs:
         run: cargo build --release -p ministr-cli --locked
 
       - name: MCP smoke (initialize + tools/list)
+        # The CI image's default shell is dash (`sh -e {0}`), which
+        # doesn't support `set -o pipefail`. Pin bash so the daemon-
+        # spawn + socket-wait dance can use pipefail + arithmetic
+        # without surprise dash quirks.
+        shell: bash
         # The job here is "did the binary start, handshake, and list
         # tools" — not "validate the JSON-RPC protocol byte-for-byte".
         # Earlier iterations piped through jq, which has to parse the
