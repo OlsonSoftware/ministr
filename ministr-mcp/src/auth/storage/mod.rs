@@ -21,6 +21,7 @@
 //! `ministr-core/src/storage/traits.rs`.
 
 mod in_memory;
+pub(crate) mod postgres;
 mod sqlite;
 
 use thiserror::Error;
@@ -28,6 +29,7 @@ use thiserror::Error;
 use super::types::{AccessToken, AuthorizationCode, RegisteredClient};
 
 pub(super) use in_memory::InMemoryStorage;
+pub(crate) use postgres::PostgresStorage;
 pub(super) use sqlite::SqliteStorage;
 
 /// Result alias for storage operations.
@@ -87,9 +89,11 @@ pub(crate) trait OAuthStorage: Send + Sync {
 
 /// Concrete backend dispatcher. Add a variant to support a new storage type.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Postgres variant constructed by `cmd_serve_http` in F1.2
 pub(crate) enum OAuthBackend {
     InMemory(InMemoryStorage),
     Sqlite(SqliteStorage),
+    Postgres(PostgresStorage),
 }
 
 impl OAuthBackend {
@@ -97,6 +101,7 @@ impl OAuthBackend {
         match self {
             Self::InMemory(s) => s.save_client(client).await,
             Self::Sqlite(s) => s.save_client(client).await,
+            Self::Postgres(s) => s.save_client(client).await,
         }
     }
 
@@ -107,6 +112,7 @@ impl OAuthBackend {
         match self {
             Self::InMemory(s) => s.get_client(client_id).await,
             Self::Sqlite(s) => s.get_client(client_id).await,
+            Self::Postgres(s) => s.get_client(client_id).await,
         }
     }
 
@@ -114,6 +120,7 @@ impl OAuthBackend {
         match self {
             Self::InMemory(s) => s.save_code(code).await,
             Self::Sqlite(s) => s.save_code(code).await,
+            Self::Postgres(s) => s.save_code(code).await,
         }
     }
 
@@ -124,6 +131,7 @@ impl OAuthBackend {
         match self {
             Self::InMemory(s) => s.take_code(code).await,
             Self::Sqlite(s) => s.take_code(code).await,
+            Self::Postgres(s) => s.take_code(code).await,
         }
     }
 
@@ -131,6 +139,7 @@ impl OAuthBackend {
         match self {
             Self::InMemory(s) => s.save_token(token).await,
             Self::Sqlite(s) => s.save_token(token).await,
+            Self::Postgres(s) => s.save_token(token).await,
         }
     }
 
@@ -138,6 +147,7 @@ impl OAuthBackend {
         match self {
             Self::InMemory(s) => s.get_token(token).await,
             Self::Sqlite(s) => s.get_token(token).await,
+            Self::Postgres(s) => s.get_token(token).await,
         }
     }
 }
