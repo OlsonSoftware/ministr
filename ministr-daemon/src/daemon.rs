@@ -40,16 +40,14 @@ use crate::activity::{ActivitySummary, record as record_activity};
 use crate::convert;
 use crate::state::{ACTIVITY_BUFFER_CAPACITY, AppState, COHERENCE_BUFFER_CAPACITY};
 
-/// Build the daemon API router.
-pub fn router(state: AppState) -> Router {
+/// Read-only daemon routes — query handlers + status + ingestion-progress SSE.
+///
+/// Safe to gate with a read-only OAuth scope (`ministr:read`) when mounted
+/// behind public auth.
+pub fn corpora_read_router(state: AppState) -> Router {
     Router::new()
-        .route("/api/v1/corpora", post(register_corpus).get(list_corpora))
-        .route("/api/v1/corpora/{id}/clone", post(clone_repo))
-        .route(
-            "/api/v1/corpora/{id}",
-            get(corpus_status).delete(unregister_corpus),
-        )
-        .route("/api/v1/corpora/{id}/paths", put(update_corpus_paths))
+        .route("/api/v1/corpora", get(list_corpora))
+        .route("/api/v1/corpora/{id}", get(corpus_status))
         .route("/api/v1/corpora/{id}/survey", post(survey))
         .route("/api/v1/corpora/{id}/symbols", post(symbols))
         .route("/api/v1/corpora/{id}/definition/{sym}", get(definition))
@@ -63,16 +61,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/related", post(related))
         .route("/api/v1/corpora/{id}/bridge", post(bridge))
         .route("/api/v1/corpora/{id}/compress", post(compress_content))
-        .route("/api/v1/corpora/{id}/ask", post(ask_handler))
-        .route("/api/v1/corpora/{id}/export", post(export_bundle))
         .route("/api/v1/corpora/{id}/progress", get(ingestion_progress))
         .route("/api/v1/corpora/{id}/coherence", get(coherence_stream))
         .route("/api/v1/corpora/{id}/prefetch", get(prefetch_metrics))
-        .route("/api/v1/corpora/import", post(import_bundle))
-        .route(
-            "/api/v1/corpora/{id}/sessions",
-            post(create_session).delete(clear_sessions),
-        )
         .route(
             "/api/v1/corpora/{id}/sessions/{sid}/usage",
             get(session_usage),
@@ -81,22 +72,79 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/corpora/{id}/sessions/{sid}/read/{section}",
             get(session_read_section),
         )
+        .route("/api/v1/status", get(daemon_status))
+        .with_state(state)
+}
+
+/// State-mutating daemon routes — corpus + session lifecycle.
+///
+/// Gate behind `ministr:write` on public deployments.
+pub fn corpora_write_router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/v1/corpora", post(register_corpus))
+        .route("/api/v1/corpora/{id}/clone", post(clone_repo))
+        .route("/api/v1/corpora/{id}", axum::routing::delete(unregister_corpus))
+        .route("/api/v1/corpora/{id}/paths", put(update_corpus_paths))
         .route(
-            "/api/v1/corpora/{id}/sessions/{sid}/dropped",
-            post(drop_content),
+            "/api/v1/corpora/{id}/sessions",
+            post(create_session).delete(clear_sessions),
         )
         .route(
             "/api/v1/corpora/{id}/sessions/{sid}",
             axum::routing::delete(destroy_session),
         )
-        .route("/api/v1/status", get(daemon_status))
+        .route(
+            "/api/v1/corpora/{id}/sessions/{sid}/dropped",
+            post(drop_content),
+        )
+        .with_state(state)
+}
+
+/// Bundle import / export — large payloads, file IO, sensitive.
+///
+/// Gate behind `ministr:bundle:write` on public deployments.
+pub fn corpora_bundle_router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/v1/corpora/import", post(import_bundle))
+        .route("/api/v1/corpora/{id}/export", post(export_bundle))
+        .with_state(state)
+}
+
+/// Claude-CLI inference handler — depends on a `claude` binary in PATH.
+///
+/// Mounted on local-UDS deployments via [`router`]; cloud deployments
+/// (which ship without the `claude` CLI) intentionally skip this and let
+/// callers receive a 404 if they discover the path.
+pub fn corpora_ask_router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/v1/corpora/{id}/ask", post(ask_handler))
+        .with_state(state)
+}
+
+/// Observability snapshots — recent tool-call activity + file-coherence events.
+///
+/// Gate behind `ministr:write` on public deployments (these leak corpus paths
+/// and tool-call patterns).
+pub fn observability_router(state: AppState) -> Router {
+    Router::new()
         .route("/activity", get(recent_activity))
         .route("/coherence-events", get(recent_coherence_events))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            record_activity,
-        ))
         .with_state(state)
+}
+
+/// Build the daemon API router.
+///
+/// Composes every sub-router (read, write, bundle, ask, observability) and
+/// wraps the merged tree with the `record_activity` middleware. Used by the
+/// local UDS daemon; cloud deployments mount the sub-routers individually
+/// with per-scope OAuth guards.
+pub fn router(state: AppState) -> Router {
+    corpora_read_router(state.clone())
+        .merge(corpora_write_router(state.clone()))
+        .merge(corpora_bundle_router(state.clone()))
+        .merge(corpora_ask_router(state.clone()))
+        .merge(observability_router(state.clone()))
+        .layer(middleware::from_fn_with_state(state, record_activity))
 }
 
 /// `GET /activity?limit=50&since=<unix_ms>` — returns a snapshot of
@@ -1859,4 +1907,172 @@ async fn daemon_status(State(state): State<AppState>) -> impl IntoResponse {
         // know whether the tray app is configured to launch at login.
         autostart_enabled: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the router split.
+    //!
+    //! We distinguish *handler*-404s (request reached the handler and it
+    //! decided the resource doesn't exist) from *routing*-404s (no route
+    //! registered for this method+path). For the negative cases we treat
+    //! BOTH 404 and 405 (Method Not Allowed) as "route does not serve this
+    //! combination" — axum 0.8 returns 405 when a path-shape exists but the
+    //! method doesn't match, which can happen because path parameters like
+    //! `{id}` swallow whole segments. The positive side uses routes whose
+    //! handlers return 200 on an empty registry (e.g. GET /api/v1/corpora →
+    //! empty list).
+    use super::*;
+    use axum::body::Body;
+    use http::StatusCode;
+    use tower::ServiceExt;
+
+    fn test_state() -> AppState {
+        use ministr_core::config::MinistrConfig;
+
+        struct FixedEmbedder;
+        impl ministr_core::embedding::Embedder for FixedEmbedder {
+            fn embed(
+                &self,
+                texts: &[&str],
+            ) -> Result<Vec<Vec<f32>>, ministr_core::error::IndexError> {
+                Ok(texts.iter().map(|_| vec![0.0; 384]).collect())
+            }
+            fn dimension(&self) -> usize {
+                384
+            }
+        }
+
+        let embedder: Arc<dyn ministr_core::embedding::Embedder> = Arc::new(FixedEmbedder);
+        let registry = crate::registry::CorpusRegistry::new(embedder, MinistrConfig::default());
+        crate::state::AppState::new(registry)
+    }
+
+    async fn status_of(router: &Router, method: &str, uri: &str) -> StatusCode {
+        let req = http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap();
+        router.clone().oneshot(req).await.unwrap().status()
+    }
+
+    /// "Not routed" — request did not reach any handler matching method+path.
+    fn unrouted(status: StatusCode) -> bool {
+        status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED
+    }
+
+    #[tokio::test]
+    async fn read_router_serves_known_read_paths() {
+        let app = corpora_read_router(test_state());
+        // GET /api/v1/corpora → handler returns 200 with empty list.
+        assert_eq!(
+            status_of(&app, "GET", "/api/v1/corpora").await,
+            StatusCode::OK,
+        );
+        // GET /api/v1/status → handler returns 200.
+        assert_eq!(
+            status_of(&app, "GET", "/api/v1/status").await,
+            StatusCode::OK,
+        );
+    }
+
+    #[tokio::test]
+    async fn read_router_rejects_write_methods() {
+        let app = corpora_read_router(test_state());
+        // POST /api/v1/corpora — register is not on read router.
+        assert!(unrouted(status_of(&app, "POST", "/api/v1/corpora").await));
+        // DELETE /api/v1/corpora/x — unregister is not on read router.
+        assert!(unrouted(status_of(&app, "DELETE", "/api/v1/corpora/x").await));
+        // POST /api/v1/corpora/x/clone — clone is not on read router.
+        assert!(unrouted(
+            status_of(&app, "POST", "/api/v1/corpora/x/clone").await,
+        ));
+        // POST /api/v1/corpora/import — bundle import is not on read router.
+        assert!(unrouted(
+            status_of(&app, "POST", "/api/v1/corpora/import").await,
+        ));
+        // GET /activity — observability is not on read router.
+        assert!(unrouted(status_of(&app, "GET", "/activity").await));
+    }
+
+    #[tokio::test]
+    async fn write_router_rejects_read_paths() {
+        let app = corpora_write_router(test_state());
+        // GET /api/v1/corpora — list is read-only, not on write router.
+        assert!(unrouted(status_of(&app, "GET", "/api/v1/corpora").await));
+        // GET /api/v1/status — read-only.
+        assert!(unrouted(status_of(&app, "GET", "/api/v1/status").await));
+        // POST /api/v1/corpora/x/survey — read-only.
+        assert!(unrouted(
+            status_of(&app, "POST", "/api/v1/corpora/x/survey").await,
+        ));
+        // POST /api/v1/corpora/import — bundle router, not write.
+        assert!(unrouted(
+            status_of(&app, "POST", "/api/v1/corpora/import").await,
+        ));
+    }
+
+    #[tokio::test]
+    async fn bundle_router_serves_bundle_paths() {
+        let app = corpora_bundle_router(test_state());
+        // POST /api/v1/corpora/import — handler reaches its body parser
+        // (rejects empty body, but the response is from the handler, so the
+        // path IS routed — manifests as 400/415 rather than routing-404).
+        let s = status_of(&app, "POST", "/api/v1/corpora/import").await;
+        assert!(!unrouted(s), "POST .../import should be routed, got {s}");
+        // GET /api/v1/corpora — not on bundle router.
+        assert!(unrouted(status_of(&app, "GET", "/api/v1/corpora").await));
+    }
+
+    #[tokio::test]
+    async fn observability_router_serves_observability_only() {
+        let app = observability_router(test_state());
+        assert_eq!(
+            status_of(&app, "GET", "/activity").await,
+            StatusCode::OK,
+        );
+        assert_eq!(
+            status_of(&app, "GET", "/coherence-events").await,
+            StatusCode::OK,
+        );
+        // No corpus paths on observability router.
+        assert!(unrouted(status_of(&app, "GET", "/api/v1/corpora").await));
+        assert!(unrouted(status_of(&app, "POST", "/api/v1/corpora/import").await));
+    }
+
+    #[tokio::test]
+    async fn ask_router_isolated() {
+        let app = corpora_ask_router(test_state());
+        // The ask path is routed. Handler may fail (no `claude` CLI on the
+        // test runner), but routing-wise the path exists. Method GET should
+        // therefore return 405 (path exists, method doesn't match).
+        assert!(unrouted(status_of(&app, "GET", "/api/v1/corpora/x/ask").await));
+        // No other paths on ask router.
+        assert!(unrouted(status_of(&app, "GET", "/api/v1/corpora").await));
+    }
+
+    #[tokio::test]
+    async fn composed_router_includes_every_sub_router() {
+        // Regression: if a sub-builder is ever dropped from `router()`, at
+        // least one of these probes will surface routing-404 on a path that
+        // the composed router should serve.
+        let app = router(test_state());
+
+        // Each probe checks routing by method/path; status code is allowed
+        // to be anything except a routing failure.
+        for (method, path, label) in &[
+            ("GET", "/api/v1/corpora", "read: list"),
+            ("GET", "/api/v1/status", "read: status"),
+            ("POST", "/api/v1/corpora/import", "bundle: import"),
+            ("GET", "/activity", "observability: activity"),
+            ("GET", "/coherence-events", "observability: coherence"),
+        ] {
+            let s = status_of(&app, method, path).await;
+            assert!(
+                !unrouted(s),
+                "composed router missing {label} ({method} {path}) — got {s}"
+            );
+        }
+    }
 }
