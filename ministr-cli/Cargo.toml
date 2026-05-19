@@ -1,6 +1,6 @@
 [package]
 name = "ministr-cli"
-version = "0.5.1"
+version = "0.6.0"
 # Proprietary engine crate — never publishable to crates.io.
 publish = false
 edition.workspace = true
