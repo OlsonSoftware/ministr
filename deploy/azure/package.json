@@ -1,0 +1,21 @@
+{
+  "name": "ministr-azure",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pulumi azure-native deployment for ministr.ai cloud.",
+  "main": "index.ts",
+  "scripts": {
+    "preview": "pulumi preview",
+    "up": "pulumi up",
+    "destroy": "pulumi destroy",
+    "tsc": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.5"
+  },
+  "dependencies": {
+    "@pulumi/pulumi": "^3.180.0",
+    "@pulumi/azure-native": "^3.18.0"
+  }
+}

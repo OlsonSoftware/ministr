@@ -1,0 +1,12 @@
+config:
+  ministr-azure:location: eastus
+  ministr-azure:projectName: ministr
+  ministr-azure:imageTag: latest
+  ministr-azure:customDomain: mcp.ministr.ai
+  ministr-azure:appCpu: "0.5"
+  ministr-azure:appMemory: 1Gi
+  ministr-azure:jobCpu: "4"
+  ministr-azure:jobMemory: 8Gi
+  # Secrets — set via `pulumi config set --secret <key> <value>`:
+  #   ministr-azure:githubWebhookSecret <hex>
+  # The Container App reads this as MINISTR_GITHUB_WEBHOOK_SECRET.

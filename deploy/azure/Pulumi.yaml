@@ -1,0 +1,41 @@
+name: ministr-azure
+runtime:
+  name: nodejs
+  options:
+    packagemanager: npm
+description: |
+  Azure-native Pulumi program for ministr.ai's remote MCP server.
+  Stacks: prod (mcp.ministr.ai).
+config:
+  ministr-azure:location:
+    type: string
+    default: eastus
+    description: Azure region to deploy into.
+  ministr-azure:projectName:
+    type: string
+    default: ministr
+    description: Short prefix used in every resource name.
+  ministr-azure:imageTag:
+    type: string
+    default: latest
+    description: Container image tag (mutable in dev, pinned in prod).
+  ministr-azure:customDomain:
+    type: string
+    default: ""
+    description: |
+      Optional ACA custom domain (e.g. "mcp.ministr.ai"). When set, this
+      program creates a Managed Certificate and binds the domain to the
+      query app. Leave empty to use the default *.azurecontainerapps.io
+      hostname.
+  ministr-azure:appCpu:
+    type: string
+    default: "0.5"
+  ministr-azure:appMemory:
+    type: string
+    default: 1Gi
+  ministr-azure:jobCpu:
+    type: string
+    default: "4"
+  ministr-azure:jobMemory:
+    type: string
+    default: 8Gi
