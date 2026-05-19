@@ -10,7 +10,7 @@
 //! daemon control) stays focused.
 
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -436,23 +436,24 @@ fn pkce_s256(verifier: &str) -> String {
     base64_url_no_pad(&hasher.finalize())
 }
 
-/// Generate a URL-safe identifier hashed from nanos + an OS heap pointer.
-/// Same "good enough" shape the server uses for its own ids. Truncates to
-/// roughly the requested byte length when base64-encoded.
+/// Generate a URL-safe identifier from `bytes` cryptographically-random
+/// bytes. Used for the PKCE code verifier and the OAuth `state` nonce.
+///
+/// `getrandom::fill` delegates to the platform CSPRNG, which is what
+/// RFC 7636 §4.1 requires for the verifier (the previous SHA-256-over-
+/// nanos shim leaked too much structure to be safe against a network
+/// adversary who can observe the challenge).
+///
+/// # Panics
+///
+/// Panics if the OS RNG is unreachable. On all supported platforms this
+/// is treated as unrecoverable — sign-in cannot proceed safely without a
+/// real RNG, and a panic surfaces the problem rather than silently
+/// emitting a predictable verifier.
 fn random_url_safe_id(bytes: usize) -> String {
-    let mut hasher = Sha256::new();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    hasher.update(nanos.to_le_bytes());
-    let entropy: u64 = std::ptr::from_ref(&hasher) as u64;
-    hasher.update(entropy.to_le_bytes());
-    // Mix in process id for an extra source of variability per process.
-    hasher.update(std::process::id().to_le_bytes());
-    let hash = hasher.finalize();
-    let take = bytes.min(hash.len());
-    base64_url_no_pad(&hash[..take])
+    let mut buf = vec![0u8; bytes];
+    getrandom::fill(&mut buf).expect("OS RNG must be available for PKCE");
+    base64_url_no_pad(&buf)
 }
 
 fn base64_url_no_pad(data: &[u8]) -> String {
@@ -831,4 +832,50 @@ pub async fn cloud_trigger_reindex(corpus_id: String) -> Result<String, CommandE
         .ok_or_else(|| {
             CommandError::new(ErrorKind::Io, "reindex response missing job_id".to_string())
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// PKCE verifiers must use the URL-safe base64 alphabet per
+    /// RFC 7636 §4.1: `[A-Za-z0-9_-]`.
+    fn is_pkce_alphabet(s: &str) -> bool {
+        s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    }
+
+    #[test]
+    fn random_url_safe_id_uses_pkce_alphabet() {
+        let id = random_url_safe_id(32);
+        assert!(is_pkce_alphabet(&id), "unexpected chars in {id:?}");
+    }
+
+    #[test]
+    fn random_url_safe_id_is_unpredictable() {
+        // Two back-to-back calls share a nanosecond on a fast machine —
+        // the old SHA-256-over-nanos shim would collide here. The OS
+        // CSPRNG must not.
+        let a = random_url_safe_id(32);
+        let b = random_url_safe_id(32);
+        assert_ne!(a, b, "OS RNG produced two identical 32-byte ids");
+    }
+
+    #[test]
+    fn random_url_safe_id_meets_pkce_minimum_length() {
+        // RFC 7636 §4.1: verifier MUST be 43-128 base64url chars. 32
+        // random bytes encode to 43 chars (no padding) — the minimum.
+        let id = random_url_safe_id(32);
+        assert!(
+            (43..=128).contains(&id.len()),
+            "32-byte verifier length {} outside RFC range",
+            id.len()
+        );
+    }
+
+    #[test]
+    fn pkce_s256_is_deterministic_for_a_given_verifier() {
+        let verifier = "test-verifier-deterministic";
+        assert_eq!(pkce_s256(verifier), pkce_s256(verifier));
+    }
 }
