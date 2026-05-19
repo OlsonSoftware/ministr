@@ -36,6 +36,12 @@ tokio = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 # SHA-256 for PKCE challenge generation in the OAuth flow.
 sha2 = { workspace = true }
+# F1.3 PKCE carry-over — OS CSPRNG for the code verifier. RFC 7636 §4.1
+# requires cryptographically random bytes; the previous SHA-256-over-
+# nanos shim did not meet that bar. `getrandom::fill` delegates to the
+# platform RNG (getrandom(2) on Linux, SecRandomCopyBytes on macOS,
+# BCryptGenRandom on Windows).
+getrandom = "0.3"
 
 # Serialization
 serde = { workspace = true }
