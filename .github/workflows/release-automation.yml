@@ -289,6 +289,29 @@ jobs:
           GitHub Releases — CI does that deterministically only after a
           fully green build of the merged PR.
 
+          ## ⚠️ HARD CONSTRAINTS — read first
+
+          **You are running on a small ephemeral runner with limited
+          disk space.** This repository's Rust workspace pulls hundreds
+          of dependencies (ONNX Runtime, tree-sitter grammars, Tauri,
+          etc.). A single `cargo build` / `cargo check` / `cargo update`
+          / `just *` invocation downloads + compiles gigabytes and will
+          exhaust the runner's disk, failing the release.
+
+          Your task is **pure text edits**. You MUST NOT run any of:
+
+          - `cargo build`, `cargo check`, `cargo test`, `cargo run`
+          - `cargo update`, `cargo metadata`, `cargo tree`,
+            `cargo package`, `cargo publish`
+          - `just *` (every recipe transitively invokes cargo)
+          - `rustc`, `rustup`, anything that compiles or resolves
+            dependencies
+          - any script that runs the above (e.g. `scripts/ci/ci.py`)
+
+          Validation of your bump happens **in CI after the PR merges**
+          — that's the entire point of the deterministic `gate → build →
+          tag` pipeline downstream. Your job ends when the PR is open.
+
           ## Decide the version (SemVer, pre-1.0 aware)
           - From the commits/diffstat below, pick the next X.Y.Z from the
             last tag using Conventional Commits: breaking (`!` /
@@ -297,27 +320,48 @@ jobs:
           - If nothing is actually releasable (docs/chore/ci only),
             comment saying so and do not open a PR.
 
-          ## Make the change
-          1. Bump the SINGLE product version to the new X.Y.Z in every
-             workspace crate: ministr-api, ministr-core, ministr-daemon,
-             ministr-mcp, ministr-cli, ministr-app/src-tauri (Cargo.toml
-             `version`). Keep tree-sitter-unreal-cpp (vendored) pinned —
-             it is not part of the product version.
-          2. Bump the internal path-dep requirements in the root
-             Cargo.toml [workspace.dependencies] (ministr-api,
-             ministr-core, ministr-daemon, ministr-mcp -> version =
-             "X.Y.Z") in lockstep. Required for cargo package/publish.
-          3. Refresh Cargo.lock for the workspace members only.
-          4. Prepend a new
+          ## Make the change (text edits only — no cargo, no just)
+
+          1. **Crate `version` strings.** In each of these files, find
+             the line `version = "OLD"` under the `[package]` table and
+             replace `OLD` with the new X.Y.Z:
+             - `ministr-api/Cargo.toml`
+             - `ministr-core/Cargo.toml`
+             - `ministr-daemon/Cargo.toml`
+             - `ministr-mcp/Cargo.toml`
+             - `ministr-cli/Cargo.toml`
+             - `ministr-app/src-tauri/Cargo.toml`
+             Keep `tree-sitter-unreal-cpp` (vendored, separate version)
+             untouched — it is not part of the product version.
+
+          2. **Workspace path-dep requirements.** In the root
+             `Cargo.toml` under `[workspace.dependencies]`, each of the
+             internal crates appears as e.g.
+             `ministr-api = { path = "ministr-api", version = "OLD" }`.
+             Replace `OLD` with the new X.Y.Z on all four lines
+             (ministr-api, ministr-core, ministr-daemon, ministr-mcp) —
+             required for `cargo package/publish` to accept the
+             workspace.
+
+          3. **`Cargo.lock` (text edit, NOT `cargo update`).** Open
+             `Cargo.lock` as plain text. Find each `[[package]]` block
+             whose `name = "ministr-XXX"` matches a workspace crate
+             (api / core / daemon / mcp / cli, plus `ministr-app` for
+             the Tauri shell) and update its `version = "OLD"` line to
+             the new X.Y.Z. **Do not run `cargo update` — it will
+             explode the runner's disk.** No other `[[package]]` blocks
+             need editing; transitive deps don't change.
+
+          4. **`CHANGELOG.md`.** Prepend a new
              `## [X.Y.Z](https://github.com/OlsonSoftware/ministr/releases/tag/vX.Y.Z) - <UTC date>`
-             section to CHANGELOG.md (Keep a Changelog), with grouped
+             section (Keep a Changelog format), with grouped
              `### Added / Changed / Fixed / Removed` entries written for
              humans — one bullet per real change, never raw squashed
              subjects. If there are breaking changes, include a
              prominent `### Breaking changes — migration` block listing
              every renamed/removed public API, MCP tool id, HTTP route,
-             response field, config flag, or doc slug as old -> new. Do
-             not leave an empty `[Unreleased]` stub.
+             response field, config flag, or doc slug as `old → new`.
+             Do not leave an empty `[Unreleased]` stub.
 
           ## Open the PR
           - Branch: `release/vX.Y.Z`. Base: `main`.
@@ -327,6 +371,16 @@ jobs:
             that merging triggers build-then-tag and only a green build
             tags `vX.Y.Z`.
           - Request review when done. Make no other changes.
+
+          ## Self-check before opening the PR
+          - The diff touches **only** the 8 files listed in steps 1-4
+            (6 crate Cargo.toml, root Cargo.toml, Cargo.lock,
+            CHANGELOG.md). If you find yourself touching anything else
+            you have drifted off-task; stop and re-read the constraints.
+          - No `target/` directory, no `cargo-*` binaries, no fetched
+            registry caches should appear in `git status`.
+          - The PR description does **not** mention having run any
+            build/test command — because you didn't run any.
           EOF
           )
 
