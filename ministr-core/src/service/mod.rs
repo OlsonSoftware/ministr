@@ -8,6 +8,7 @@
 mod code;
 mod compress;
 mod query;
+mod solid;
 
 use std::sync::Arc;
 
@@ -148,6 +149,373 @@ pub struct SymbolRefResult {
     pub to_line: u32,
     /// The kind of reference.
     pub ref_kind: String,
+}
+
+/// Risk level for an impact analysis result.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ImpactRisk {
+    Low,
+    Medium,
+    High,
+}
+
+/// One transitive caller in an impact analysis.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct ImpactCaller {
+    /// Symbol ID of the caller.
+    pub symbol_id: String,
+    /// Caller name.
+    pub name: String,
+    /// Symbol kind (e.g. "function", "method").
+    pub kind: String,
+    /// File containing the caller.
+    pub file: String,
+    /// Line where the caller is defined.
+    pub line: u32,
+    /// Depth in the call graph (1 = direct caller).
+    pub depth: u32,
+}
+
+/// Result of computing the transitive impact of changing a symbol.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct ImpactResult {
+    /// The target symbol ID that was analyzed.
+    pub target_symbol_id: String,
+    /// Maximum BFS depth that was walked.
+    pub depth: u32,
+    /// Distinct transitive caller count.
+    pub symbols: usize,
+    /// Distinct files touched by the callers.
+    pub files: usize,
+    /// Distinct test files among the touched files.
+    pub tests: usize,
+    /// Risk level (low / medium / high).
+    pub risk: ImpactRisk,
+    /// Transitive callers, ordered by depth then file then name.
+    pub callers: Vec<ImpactCaller>,
+}
+
+/// A dead-code candidate: a non-public symbol with zero references.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct DeadSymbol {
+    /// Symbol ID.
+    pub symbol_id: String,
+    /// Symbol name.
+    pub name: String,
+    /// Symbol kind (e.g. "function", "struct").
+    pub kind: String,
+    /// Visibility.
+    pub visibility: String,
+    /// File path.
+    pub file: String,
+    /// Line where the symbol is defined.
+    pub line: u32,
+    /// Line count of the symbol body.
+    pub lines: u32,
+}
+
+/// Which SOLID concern a [`SolidFinding`] surfaces.
+///
+/// Used both as a filter on the input ([`SolidParams::principles`]) and as a
+/// discriminator on the output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SolidPrinciple {
+    /// DRY + OCP — near-duplicate symbols that probably want an extracted
+    /// abstraction. Surfaces as a clustered [`SolidFinding::Redundancy`].
+    DryOcp,
+    /// Single-Responsibility — a container (impl / class / module) whose
+    /// methods split into multiple cohesion clusters with little overlap.
+    /// Surfaces as [`SolidFinding::LowCohesion`].
+    Srp,
+    /// Interface-Segregation — a trait / interface with many methods that
+    /// most implementors only partially use. Surfaces as
+    /// [`SolidFinding::FatInterface`].
+    Isp,
+    /// Dependency-Inversion — a consumer depending directly on a concrete
+    /// symbol in another package when a trait abstraction is available.
+    /// Surfaces as [`SolidFinding::ConcreteDependency`].
+    Dip,
+    /// Fowler's Shotgun Surgery — the same logical change must be made in
+    /// many parallel sites (same `(name, kind)` symbol appears across N
+    /// files with mostly disjoint callee sets). Surfaces as
+    /// [`SolidFinding::ShotgunSurgery`]. Adjacent to OCP — the abstraction
+    /// to introduce is usually a trait or strategy interface.
+    ShotgunSurgery,
+    /// Architectural cyclic dependency — a strongly-connected component
+    /// of size ≥ 2 in the package-level import graph. Surfaces as
+    /// [`SolidFinding::CyclicDependency`]. Adjacent to DIP — a layered
+    /// abstraction is missing somewhere on the cycle.
+    CyclicDependency,
+}
+
+/// Parameters for [`QueryService::detect_solid_violations`].
+///
+/// All fields have working defaults via [`SolidParams::default`]; callers
+/// override only the knobs they care about.
+#[derive(Debug, Clone)]
+pub struct SolidParams {
+    /// Limit candidate symbols to this kind (e.g. `"function"`). `None` = all.
+    pub kind: Option<String>,
+    /// Limit candidate symbols to this module path prefix. `None` = all.
+    pub module: Option<String>,
+    /// Which SOLID principles to evaluate. Empty = run all four.
+    pub principles: Vec<SolidPrinciple>,
+    /// Symbol kinds treated as "containers" for the SRP pseudo-LCOM4 sweep
+    /// (Rust impl/struct, Python/TS class, Go file-as-package, etc.).
+    pub container_kinds: Vec<String>,
+    /// Symbol kinds treated as "interfaces" for the ISP fat-trait sweep
+    /// (Rust trait, TS/Java interface, Python protocol, Go interface).
+    pub interface_kinds: Vec<String>,
+    /// Cosine threshold for the DRY/OCP clone detector (default 0.86).
+    pub similarity_threshold: f32,
+    /// Jaccard threshold over callee-sets for DRY/OCP (default 0.4).
+    pub jaccard_threshold: f32,
+    /// Cosine threshold for the SRP within-container edge graph (default 0.7).
+    pub srp_cohesion_threshold: f32,
+    /// Minimum method count for ISP to fire (default 6).
+    pub isp_min_methods: usize,
+    /// Implementor counts as "under-using" when it overlaps with at most this
+    /// fraction of the trait's methods (default 0.33).
+    pub isp_max_overlap_fraction: f32,
+    /// Skip candidate symbols shorter than this many lines (default 5).
+    pub min_lines: u32,
+    /// Total findings cap across all principles (default 50, hard max 500).
+    pub limit: usize,
+    /// Hard cap on pairwise comparisons inside any single DRY/OCP bucket.
+    /// Buckets larger than this are downsampled with a warning (default 100k).
+    pub max_pairs: usize,
+    /// Maximum representative members included per finding component list.
+    /// When a component / member array exceeds this, it's truncated to the
+    /// first N entries and the remainder is reported separately as
+    /// `omitted` so the response stays well below MCP token budgets
+    /// (default 5).
+    pub representative_count: usize,
+    /// Minimum number of files a `(name, kind)` group must span before
+    /// [`SolidFinding::ShotgunSurgery`] fires (default 3).
+    pub shotgun_min_sites: usize,
+    /// Maximum callee-set Jaccard between two members of a Shotgun-Surgery
+    /// group. Above this the group is dropped — at that point the pattern
+    /// is a true DRY/OCP clone, not a Shotgun-Surgery dispatch family
+    /// (default 0.5).
+    pub shotgun_max_jaccard: f32,
+    /// Sites of a Shotgun-Surgery group must span at least this many
+    /// distinct package prefixes (see `package_prefix`). Single-package
+    /// fan-out is usually intentional polymorphism inside one crate
+    /// (e.g. per-language trait impls) — not a cross-layer smell
+    /// (default 2).
+    pub shotgun_min_packages: usize,
+    /// When `true`, drop Shotgun-Surgery candidates whose `name` matches a
+    /// built-in list of conventional method names (`new`, `default`,
+    /// `fmt`, `clone`, `as_str`, `parse`, `main`, etc.). These almost
+    /// always represent Rust trait conformance or universal language
+    /// idioms, not real fan-out smells. Set to `false` to opt back in
+    /// (default `true`).
+    pub shotgun_skip_conventional_names: bool,
+    /// CyclicDependency: minimum number of distinct cross-package edges
+    /// required *in each direction* before two packages are considered
+    /// mutually dependent. Single-edge "cycles" are typically phantom
+    /// edges from ambiguous symbol-name resolution (e.g. a common
+    /// method name colliding across crates) — real architectural
+    /// coupling shows up as multiple touch points (default 2).
+    pub cyclic_min_edges_per_direction: usize,
+    /// CyclicDependency: when `true`, exclude edges whose source or
+    /// target lives in a test / fixture / snapshot path. Sample data is
+    /// not part of the workspace's actual dependency graph (default
+    /// `true`).
+    pub cyclic_skip_test_paths: bool,
+}
+
+impl Default for SolidParams {
+    fn default() -> Self {
+        Self {
+            kind: None,
+            module: None,
+            principles: Vec::new(),
+            container_kinds: vec!["impl".into(), "struct".into(), "class".into(), "mod".into()],
+            interface_kinds: vec!["trait".into(), "interface".into(), "protocol".into()],
+            similarity_threshold: 0.86,
+            jaccard_threshold: 0.4,
+            srp_cohesion_threshold: 0.7,
+            isp_min_methods: 6,
+            isp_max_overlap_fraction: 0.33,
+            min_lines: 5,
+            limit: 50,
+            max_pairs: 100_000,
+            representative_count: 5,
+            shotgun_min_sites: 3,
+            shotgun_max_jaccard: 0.5,
+            shotgun_min_packages: 2,
+            shotgun_skip_conventional_names: true,
+            cyclic_min_edges_per_direction: 2,
+            cyclic_skip_test_paths: true,
+        }
+    }
+}
+
+/// A minimal symbol summary embedded in [`SolidFinding`] payloads.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct SolidSymbolRef {
+    /// Symbol ID.
+    pub symbol_id: String,
+    /// Symbol name.
+    pub name: String,
+    /// Symbol kind (e.g. `"function"`, `"struct"`).
+    pub kind: String,
+    /// File path.
+    pub file: String,
+    /// Line where the symbol is defined (1-based).
+    pub line: u32,
+}
+
+/// A single SOLID-violation finding.
+///
+/// Each variant corresponds to a [`SolidPrinciple`]. The `principle` field is
+/// duplicated on the wire so clients can branch on a single string without
+/// destructuring.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SolidFinding {
+    /// Near-duplicate symbols clustered by embedding + callee-set overlap
+    /// (DRY/OCP).
+    Redundancy {
+        /// Always [`SolidPrinciple::DryOcp`].
+        principle: SolidPrinciple,
+        /// Truncated to `representative_count` — see `members_omitted`.
+        members: Vec<SolidSymbolRef>,
+        /// How many additional members exist beyond `members`.
+        #[serde(skip_serializing_if = "is_zero_usize")]
+        members_omitted: usize,
+        /// Total members in the cluster (members.len() + members_omitted).
+        members_total: usize,
+        /// The longest member, suggested as the canonical implementation.
+        canonical: SolidSymbolRef,
+        /// Average pairwise cosine similarity across the cluster.
+        avg_cosine: f32,
+        /// Average pairwise Jaccard over callee-sets across the cluster.
+        avg_jaccard: f32,
+        /// True when members span more than one file (stronger OCP signal).
+        cross_module: bool,
+    },
+    /// A container whose methods split into multiple weakly-connected
+    /// cohesion components (SRP).
+    LowCohesion {
+        /// Always [`SolidPrinciple::Srp`].
+        principle: SolidPrinciple,
+        /// The container symbol (impl / class / module owner).
+        container: SolidSymbolRef,
+        /// Per-component summary: members truncated, sizes preserved.
+        components: Vec<SolidComponent>,
+        /// Total method count in the container (sum across components).
+        method_count: usize,
+    },
+    /// A trait / interface with many methods that most implementors only
+    /// partially use (ISP).
+    FatInterface {
+        /// Always [`SolidPrinciple::Isp`].
+        principle: SolidPrinciple,
+        /// The interface symbol.
+        interface: SolidSymbolRef,
+        /// Number of methods on the interface.
+        method_count: usize,
+        /// Method names no implementor in the corpus appears to override.
+        unused_methods: Vec<String>,
+        /// How many unused methods exist beyond `unused_methods`.
+        #[serde(skip_serializing_if = "is_zero_usize")]
+        unused_methods_omitted: usize,
+        /// Implementors whose overlap with the interface is ≤ the
+        /// configured fraction. Truncated to `representative_count`.
+        under_using_implementors: Vec<SolidSymbolRef>,
+        /// How many under-using implementors exist beyond the truncated list.
+        #[serde(skip_serializing_if = "is_zero_usize")]
+        under_using_implementors_omitted: usize,
+    },
+    /// A high-level consumer depending directly on a concrete symbol in
+    /// another package when an abstraction is available (DIP).
+    ConcreteDependency {
+        /// Always [`SolidPrinciple::Dip`].
+        principle: SolidPrinciple,
+        /// The consuming symbol.
+        consumer: SolidSymbolRef,
+        /// The concrete target it depends on.
+        concrete_target: SolidSymbolRef,
+        /// A trait/interface that could replace the concrete edge, if any.
+        suggested_abstraction: Option<SolidSymbolRef>,
+    },
+    /// Fowler's Shotgun Surgery — the same `(name, kind)` symbol appears
+    /// across multiple files with mostly disjoint callee sets, signalling
+    /// a parallel-dispatch fan-out where a single abstraction would do.
+    /// This is the cousin of Type-4 clones: similar surface, deliberately
+    /// disjoint internals.
+    ShotgunSurgery {
+        /// Always [`SolidPrinciple::ShotgunSurgery`].
+        principle: SolidPrinciple,
+        /// The shared symbol name (e.g. `dead_code`).
+        name: String,
+        /// The shared kind (e.g. `function`).
+        kind: String,
+        /// Representative call-sites (one per file), truncated.
+        sites: Vec<SolidSymbolRef>,
+        /// Sites omitted from the truncated list.
+        #[serde(skip_serializing_if = "is_zero_usize")]
+        sites_omitted: usize,
+        /// Total file count across the dispatch family.
+        sites_total: usize,
+        /// Average pairwise callee-set Jaccard. Low values strengthen the
+        /// "disjoint internals" interpretation.
+        avg_jaccard: f32,
+    },
+    /// An architectural strongly-connected component in the package-level
+    /// import graph. Cycles of size ≥ 2 mean every package in the cycle
+    /// depends on every other — typically a sign of a missing layered
+    /// abstraction.
+    CyclicDependency {
+        /// Always [`SolidPrinciple::CyclicDependency`].
+        principle: SolidPrinciple,
+        /// Packages in the cycle, ordered for stable display.
+        packages: Vec<String>,
+        /// Total edges inside the SCC (cycle "weight").
+        edge_count: usize,
+        /// One example cross-package edge per pair, capped at
+        /// `representative_count`.
+        example_edges: Vec<SolidEdge>,
+        /// Example edges omitted beyond `example_edges`.
+        #[serde(skip_serializing_if = "is_zero_usize")]
+        example_edges_omitted: usize,
+    },
+}
+
+/// One cohesion component inside an SRP finding.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct SolidComponent {
+    /// Total methods in this component.
+    pub size: usize,
+    /// Truncated method list (≤ `representative_count`).
+    pub members: Vec<SolidSymbolRef>,
+    /// How many members were omitted.
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub members_omitted: usize,
+}
+
+/// One package-to-package edge surfaced inside a `CyclicDependency` finding.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct SolidEdge {
+    /// Source package (e.g. `ministr-core`).
+    pub from: String,
+    /// Target package.
+    pub to: String,
+    /// A representative symbol-pair witnessing the edge.
+    pub example_from: SolidSymbolRef,
+    /// The target symbol of the example edge.
+    pub example_to: SolidSymbolRef,
+}
+
+// Serde's `skip_serializing_if` requires `&T`, so the by-ref signature is
+// forced — silence the pedantic by-value suggestion.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero_usize(n: &usize) -> bool {
+    *n == 0
 }
 
 /// Errors from the query service layer.
@@ -342,7 +710,7 @@ fn is_unresolved_placeholder(text: &str) -> bool {
 }
 
 /// Compute cosine similarity between two vectors.
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+pub(super) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();

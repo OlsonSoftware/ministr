@@ -2,14 +2,14 @@
 
 ## One-time setup
 
-1. Create a new GitHub repository: `AlrikOlson/homebrew-tap`
+1. Create a new GitHub repository: `OlsonSoftware/homebrew-tap`
 2. Copy `ministr.rb` to `Formula/ministr.rb` in that repository
 3. Push to GitHub
 
 Users can then install with:
 
 ```sh
-brew install AlrikOlson/tap/ministr
+brew install OlsonSoftware/tap/ministr
 ```
 
 ## Updating after a release
@@ -29,7 +29,7 @@ Add a step to the release workflow that auto-updates the tap:
   uses: mislav/bump-homebrew-formula-action@v3
   with:
     formula-name: ministr
-    homebrew-tap: AlrikOlson/homebrew-tap
+    homebrew-tap: OlsonSoftware/homebrew-tap
   env:
     COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 ```

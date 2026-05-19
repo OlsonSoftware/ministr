@@ -284,6 +284,7 @@ async fn file_hash_crud() {
         content_hash: "abc123".into(),
         mtime_ns: Some(1_700_000_000_000_000_000),
         extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
+        resolver_version: ministr_core::ingestion::RESOLVER_VERSION,
     };
     storage.upsert_file_hash(&record).await.unwrap();
 
@@ -304,6 +305,7 @@ async fn file_hash_crud() {
         content_hash: "def456".into(),
         mtime_ns: Some(1_700_000_001_000_000_000),
         extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
+        resolver_version: ministr_core::ingestion::RESOLVER_VERSION,
     };
     storage.upsert_file_hash(&updated).await.unwrap();
     let retrieved = storage.get_file_hash("docs/api.md").await.unwrap().unwrap();
@@ -337,6 +339,7 @@ async fn file_hash_mtime_none_roundtrip() {
         content_hash: "aaa".into(),
         mtime_ns: None,
         extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
+        resolver_version: ministr_core::ingestion::RESOLVER_VERSION,
     };
     storage.upsert_file_hash(&record).await.unwrap();
 
@@ -357,6 +360,7 @@ async fn list_file_hashes_returns_all() {
                 content_hash: format!("hash-{path}"),
                 mtime_ns: mtime,
                 extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
+                resolver_version: ministr_core::ingestion::RESOLVER_VERSION,
             })
             .await
             .unwrap();
@@ -392,6 +396,7 @@ async fn file_hash_extractor_version_round_trips() {
             content_hash: "aaa".into(),
             mtime_ns: Some(100),
             extractor_version: 0,
+            resolver_version: 0,
         })
         .await
         .unwrap();
@@ -403,6 +408,7 @@ async fn file_hash_extractor_version_round_trips() {
             content_hash: "bbb".into(),
             mtime_ns: Some(200),
             extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
+            resolver_version: ministr_core::ingestion::RESOLVER_VERSION,
         })
         .await
         .unwrap();
@@ -427,6 +433,77 @@ async fn file_hash_extractor_version_round_trips() {
     // so pre-migration rows (stored with the DEFAULT 0) always compare
     // as stale and trigger re-parsing on first post-upgrade ingest.
     const { assert!(ministr_core::ingestion::EXTRACTOR_VERSION > 0) };
+}
+
+/// Regression guard for the resolver-version auto-heal path.
+///
+/// When `RESOLVER_VERSION` bumps, stale `file_hashes` rows compare
+/// less-than the current constant and the auto-heal loop in
+/// `IngestionPipeline::re_resolve_stale_files` must observe the
+/// pre-bump value so it knows to re-resolve. The DB-layer contract is
+/// the same as `extractor_version`: a row written with V=0 reads back
+/// as V=0, distinguishable from one written with the current version.
+#[tokio::test]
+async fn file_hash_resolver_version_round_trips() {
+    use ministr_core::storage::traits::FileHashRecord;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+
+    // Stale-resolver row (e.g. pre-V22 migration default of 0).
+    storage
+        .upsert_file_hash(&FileHashRecord {
+            path: "stale.rs".into(),
+            content_hash: "aaa".into(),
+            mtime_ns: Some(100),
+            extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
+            resolver_version: 0,
+        })
+        .await
+        .unwrap();
+
+    // Current-resolver row.
+    storage
+        .upsert_file_hash(&FileHashRecord {
+            path: "fresh.rs".into(),
+            content_hash: "bbb".into(),
+            mtime_ns: Some(200),
+            extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
+            resolver_version: ministr_core::ingestion::RESOLVER_VERSION,
+        })
+        .await
+        .unwrap();
+
+    let stale = storage
+        .get_file_hash("stale.rs")
+        .await
+        .unwrap()
+        .expect("stale row should exist");
+    let fresh = storage
+        .get_file_hash("fresh.rs")
+        .await
+        .unwrap()
+        .expect("fresh row should exist");
+
+    assert_eq!(stale.resolver_version, 0);
+    assert_eq!(
+        fresh.resolver_version,
+        ministr_core::ingestion::RESOLVER_VERSION
+    );
+    // Compile-time guard: RESOLVER_VERSION must stay strictly above 0
+    // so pre-migration rows (stored with the DEFAULT 0) always compare
+    // as stale and trigger re-resolution on first post-upgrade
+    // daemon-restart.
+    const { assert!(ministr_core::ingestion::RESOLVER_VERSION > 0) };
+
+    // Cross-orthogonality: bumping resolver_version must not require
+    // re-stamping extractor_version, and vice versa. The two layers
+    // need to be independently invalidatable so we can ship resolver
+    // fixes without re-parsing every file.
+    assert_eq!(
+        stale.extractor_version,
+        ministr_core::ingestion::EXTRACTOR_VERSION,
+        "stale-resolver row should still carry a fresh extractor_version"
+    );
 }
 
 #[tokio::test]
@@ -492,7 +569,7 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 21);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 22);
 }
 
 #[tokio::test]
@@ -2396,4 +2473,138 @@ async fn corpus_root_provenance_roundtrip() {
     assert_eq!(loaded.commit_sha.as_deref(), Some("abc123def456"));
     assert_eq!(loaded.clone_timestamp.as_deref(), Some("1711036800"));
     assert_eq!(loaded.sparse_paths, vec!["docs", "src"]);
+}
+
+/// End-to-end integration: stale `resolver_version` rows on disk get
+/// healed by `IngestionPipeline::re_resolve_stale_files`. Verifies
+/// (a) the `file_hash` row's stamp returns to current, and (b) the heal
+/// is a no-op the second time it runs.
+#[tokio::test]
+async fn re_resolve_stale_files_heals_pre_bump_rows() {
+    use ministr_core::ingestion::{IngestionPipeline, RESOLVER_VERSION};
+    use ministr_core::storage::traits::FileHashRecord;
+    use ministr_core::types::SymbolId;
+    use std::fs;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let corpus_root = tmp.path().to_path_buf();
+
+    // Lay down a small Rust source file that the resolver can parse.
+    let src_dir = corpus_root.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    let src_path = "src/lib.rs";
+    let abs_src = corpus_root.join(src_path);
+    fs::write(
+        &abs_src,
+        "pub struct Widget;\n\npub fn make_widget() -> Widget {\n    Widget\n}\n",
+    )
+    .unwrap();
+
+    // Pre-seed the symbol rows the way ingestion would have written
+    // them — without that, `re_resolve_stale_files` has nothing to resolve.
+    let widget_sym = ministr_core::storage::traits::SymbolRecord {
+        id: SymbolId(format!("sym-{src_path}::Widget")),
+        file_path: src_path.into(),
+        name: "Widget".into(),
+        kind: "struct".into(),
+        visibility: "pub".into(),
+        signature: "pub struct Widget".into(),
+        doc_comment: None,
+        module_path: String::new(),
+        line_start: 1,
+        line_end: 1,
+        cyclomatic_complexity: None,
+    };
+    let make_sym = ministr_core::storage::traits::SymbolRecord {
+        id: SymbolId(format!("sym-{src_path}::make_widget")),
+        file_path: src_path.into(),
+        name: "make_widget".into(),
+        kind: "function".into(),
+        visibility: "pub".into(),
+        signature: "pub fn make_widget() -> Widget".into(),
+        doc_comment: None,
+        module_path: String::new(),
+        line_start: 3,
+        line_end: 5,
+        cyclomatic_complexity: Some(1),
+    };
+    storage
+        .insert_symbols(&[widget_sym.clone(), make_sym.clone()])
+        .await
+        .unwrap();
+
+    // Stale file_hash: extractor is fresh, resolver is pre-bump.
+    storage
+        .upsert_file_hash(&FileHashRecord {
+            path: src_path.into(),
+            content_hash: "any".into(),
+            mtime_ns: Some(0),
+            extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
+            resolver_version: 0,
+        })
+        .await
+        .unwrap();
+
+    let pipeline = IngestionPipeline::new();
+    let roots = std::slice::from_ref(&corpus_root);
+    let healed = pipeline
+        .re_resolve_stale_files(roots, &storage)
+        .await
+        .unwrap();
+    assert_eq!(healed, 1, "expected the single stale row to be healed");
+
+    // Stamp must be current now.
+    let after = storage.get_file_hash(src_path).await.unwrap().unwrap();
+    assert_eq!(after.resolver_version, RESOLVER_VERSION);
+
+    // Idempotent: a second pass over the same corpus heals zero files.
+    let healed_again = pipeline
+        .re_resolve_stale_files(roots, &storage)
+        .await
+        .unwrap();
+    assert_eq!(healed_again, 0, "second pass should be a no-op");
+}
+
+/// `re_resolve_stale_files` must update the row's stamp even when a
+/// file has no symbols extracted (e.g. an empty or comment-only source).
+/// Otherwise the daemon retries the same file on every restart forever.
+#[tokio::test]
+async fn re_resolve_stale_files_stamps_files_with_no_symbols() {
+    use ministr_core::ingestion::{IngestionPipeline, RESOLVER_VERSION};
+    use ministr_core::storage::traits::FileHashRecord;
+    use std::fs;
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let corpus_root = tmp.path().to_path_buf();
+
+    // Source file exists but has no extractable symbols (no struct/fn/etc.).
+    let src_path = "src/empty.rs";
+    fs::create_dir_all(corpus_root.join("src")).unwrap();
+    fs::write(corpus_root.join(src_path), "// just a comment\n").unwrap();
+
+    storage
+        .upsert_file_hash(&FileHashRecord {
+            path: src_path.into(),
+            content_hash: "any".into(),
+            mtime_ns: Some(0),
+            extractor_version: ministr_core::ingestion::EXTRACTOR_VERSION,
+            resolver_version: 0,
+        })
+        .await
+        .unwrap();
+
+    let pipeline = IngestionPipeline::new();
+    let healed = pipeline
+        .re_resolve_stale_files(std::slice::from_ref(&corpus_root), &storage)
+        .await
+        .unwrap();
+    assert_eq!(healed, 1);
+
+    let after = storage.get_file_hash(src_path).await.unwrap().unwrap();
+    assert_eq!(
+        after.resolver_version, RESOLVER_VERSION,
+        "no-symbol rows must still get stamped so we don't retry every startup"
+    );
 }

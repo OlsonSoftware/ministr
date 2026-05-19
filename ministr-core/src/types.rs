@@ -82,7 +82,7 @@ impl AsRef<str> for SectionId {
 /// assert_eq!(id.to_string(), "sym-config::MinistrConfig");
 /// assert_eq!(id.as_ref(), "sym-config::MinistrConfig");
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SymbolId(pub String);
 
 impl fmt::Display for SymbolId {

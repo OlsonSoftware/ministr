@@ -49,9 +49,134 @@ pub struct RawRef {
 }
 
 /// Primitive and built-in type names to exclude from type-usage references.
+///
+/// Covers Rust scalar primitives plus the universal-prelude stdlib type
+/// names. These shadow user types of the same name (e.g., a project's
+/// `Command` enum), so leaving them in produces phantom cross-crate
+/// bindings during reference resolution — the indexer picks the only
+/// in-corpus `Command` and ties unrelated `std::process::Command::new(...)`
+/// call sites to it. Skipping these at extraction time means stdlib
+/// references stay unresolved (as they should — stdlib isn't in the
+/// corpus), and same-named user types only get edges when they're
+/// actually referenced.
 const PRIMITIVE_TYPES: &[&str] = &[
-    "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64", "i128", "isize", "str", "u8", "u16",
-    "u32", "u64", "u128", "usize", "Self",
+    // Rust scalar primitives.
+    "bool",
+    "char",
+    "f32",
+    "f64",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "i128",
+    "isize",
+    "str",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "u128",
+    "usize",
+    "Self",
+    // Rust prelude / extremely common stdlib types.
+    // Collections and ownership.
+    "String",
+    "Vec",
+    "Box",
+    "Rc",
+    "Arc",
+    "Cell",
+    "RefCell",
+    "Mutex",
+    "RwLock",
+    "Weak",
+    "HashMap",
+    "HashSet",
+    "BTreeMap",
+    "BTreeSet",
+    "VecDeque",
+    "LinkedList",
+    "BinaryHeap",
+    // Core enums / wrappers.
+    "Option",
+    "Result",
+    "Cow",
+    "Ordering",
+    // Iterators / closures.
+    "Iterator",
+    "IntoIterator",
+    "FromIterator",
+    "Fn",
+    "FnMut",
+    "FnOnce",
+    // I/O and OS.
+    "Command",
+    "Child",
+    "Stdio",
+    "Output",
+    "ExitStatus",
+    "PathBuf",
+    "Path",
+    "OsString",
+    "OsStr",
+    "Read",
+    "Write",
+    "BufRead",
+    "BufReader",
+    "BufWriter",
+    "File",
+    "Error",
+    "ErrorKind",
+    // Networking.
+    "IpAddr",
+    "Ipv4Addr",
+    "Ipv6Addr",
+    "SocketAddr",
+    "TcpListener",
+    "TcpStream",
+    "UdpSocket",
+    // Time.
+    "Duration",
+    "Instant",
+    "SystemTime",
+    // Sync / future / channel primitives.
+    "Sender",
+    "Receiver",
+    "Future",
+    "Pin",
+    "Poll",
+    "Context",
+    "Waker",
+    // Common conversion / range / numeric.
+    "From",
+    "Into",
+    "TryFrom",
+    "TryInto",
+    "AsRef",
+    "AsMut",
+    "Borrow",
+    "BorrowMut",
+    "Default",
+    "Clone",
+    "Copy",
+    "Drop",
+    "Debug",
+    "Display",
+    "Range",
+    "RangeFrom",
+    "RangeTo",
+    "RangeInclusive",
+    "NonZeroU8",
+    "NonZeroU16",
+    "NonZeroU32",
+    "NonZeroU64",
+    "NonZeroUsize",
+    "NonZeroI8",
+    "NonZeroI16",
+    "NonZeroI32",
+    "NonZeroI64",
+    "NonZeroIsize",
 ];
 
 // ---------------------------------------------------------------------------
@@ -1563,28 +1688,68 @@ impl MyStruct {
 
     #[test]
     fn extract_parameter_types() {
+        // Stdlib types (`Vec`) are now in the PRIMITIVE_TYPES denylist —
+        // emitting `Uses(Vec)` causes phantom cross-crate bindings since
+        // stdlib isn't indexed. The extraction mechanic for *user* types
+        // is what this test verifies.
         let source = r"
-fn process(config: Config, items: Vec<Item>) {}
+fn process(config: MyConfig, items: MyVec<MyItem>) {}
 ";
         let refs = parse_and_extract(source);
         let uses: Vec<_> = refs.iter().filter(|r| r.kind == RefKind::Uses).collect();
         let names: Vec<&str> = uses.iter().map(|r| r.target_name.as_str()).collect();
-        assert!(names.contains(&"Config"), "missing Config, got: {names:?}");
-        assert!(names.contains(&"Vec"), "missing Vec, got: {names:?}");
-        assert!(names.contains(&"Item"), "missing Item, got: {names:?}");
+        assert!(
+            names.contains(&"MyConfig"),
+            "missing MyConfig, got: {names:?}"
+        );
+        assert!(names.contains(&"MyVec"), "missing MyVec, got: {names:?}");
+        assert!(names.contains(&"MyItem"), "missing MyItem, got: {names:?}");
     }
 
     #[test]
     fn extract_return_type() {
+        // `Result` is intentionally filtered — same reasoning as above.
         let source = r"
-fn create() -> Result<Config, Error> { todo!() }
+fn create() -> MyResult<MyConfig, MyError> { todo!() }
 ";
         let refs = parse_and_extract(source);
         let uses: Vec<_> = refs.iter().filter(|r| r.kind == RefKind::Uses).collect();
         let names: Vec<&str> = uses.iter().map(|r| r.target_name.as_str()).collect();
-        assert!(names.contains(&"Result"), "missing Result, got: {names:?}");
-        assert!(names.contains(&"Config"), "missing Config, got: {names:?}");
-        assert!(names.contains(&"Error"), "missing Error, got: {names:?}");
+        assert!(
+            names.contains(&"MyResult"),
+            "missing MyResult, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"MyConfig"),
+            "missing MyConfig, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"MyError"),
+            "missing MyError, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn stdlib_names_are_filtered() {
+        // Regression: `Result`, `Vec`, `Option`, `Command`, `Box`, etc.
+        // are denylisted to prevent phantom cross-crate bindings when a
+        // user crate happens to define a same-named type.
+        let source = r"
+use std::process::Command;
+fn run() -> Result<Vec<Option<Command>>, Box<dyn std::error::Error>> { todo!() }
+";
+        let refs = parse_and_extract(source);
+        let names: Vec<&str> = refs
+            .iter()
+            .filter(|r| r.kind == RefKind::Uses)
+            .map(|r| r.target_name.as_str())
+            .collect();
+        for stdlib_name in ["Result", "Vec", "Option", "Command", "Box"] {
+            assert!(
+                !names.contains(&stdlib_name),
+                "stdlib name {stdlib_name} should be filtered, got: {names:?}"
+            );
+        }
     }
 
     #[test]

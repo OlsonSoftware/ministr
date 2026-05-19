@@ -62,19 +62,20 @@ use ministr_core::types::{
 use ministr_core::web::fetcher::WebFetcher;
 
 use helpers::{
-    MAX_INTENT_PREFETCH_SURVEY, content_hash, format_query_error, parse_resolution,
+    MAX_INTENT_PREFETCH_SURVEY, content_hash, format_backend_error, parse_resolution,
     structured_result,
 };
 use progress::{run_ingestion_progress_notifier, run_subscription_notifier};
 use types::{
     AlreadyDeliveredResponse, BridgeEndpointSummary, BridgeLinkSummary, BridgeParams,
     BridgeResponse, CloneOutputData, CloneParams, CompressParams, CompressResponse,
-    CorpusStatsHeader, DefinitionParams, DroppedParams, DroppedResponse, ExtractParams,
-    ExtractResponse, FetchOutputData, FetchParams, FetchResponse, NextAction, ReadOutputData,
+    CorpusStatsHeader, DeadCodeParams, DeadCodeResponse, DefinitionParams, DroppedParams,
+    DroppedResponse, ExtractParams, ExtractResponse, FetchOutputData, FetchParams, FetchResponse,
+    ImpactParams, ImpactResponse, NextAction, ProjectEntry, ProjectsResponse, ReadOutputData,
     ReadParams, ReferencesParams, ReferencesResponse, RefreshParams, RefreshResponse,
-    RelatedParams, RelatedResponse, SessionMetricsResponse, SurveyParams, SurveyResponse,
-    SymbolSummary, SymbolsParams, SymbolsResponse, TaskParams, TaskStatusResponse, TocParams,
-    TocResponse, ToolResponse, UsageResponse, tool_output_schema,
+    RelatedParams, RelatedResponse, SessionMetricsResponse, SolidParams, SolidResponse,
+    SurveyParams, SurveyResponse, SymbolSummary, SymbolsParams, SymbolsResponse, TaskParams,
+    TaskStatusResponse, TocParams, TocResponse, ToolResponse, UsageResponse, tool_output_schema,
 };
 
 use crate::task::{McpTaskManager, task_to_cancel_result, task_to_get_result};
@@ -202,6 +203,77 @@ pub const EXT_COHERENCE: &str = "dev.ministr/coherence";
 pub const EXT_COMPRESSION: &str = "dev.ministr/compression";
 
 /// Build the `ExtensionCapabilities` map advertising all ministr extensions.
+/// Translate the MCP-facing `SolidParams` into the core service params.
+///
+/// Resolves principle strings (`"dry_ocp"`/`"srp"`/`"isp"`/`"dip"`); unknown
+/// strings are silently dropped. Applies the documented defaults for every
+/// omitted threshold and clamps `limit` to [1, 500].
+fn mcp_solid_params_to_service(p: &SolidParams) -> ministr_core::service::SolidParams {
+    use ministr_core::service::SolidPrinciple;
+    let defaults = ministr_core::service::SolidParams::default();
+    let principles = p
+        .principles
+        .iter()
+        .filter_map(|s| match s.as_str() {
+            "dry_ocp" => Some(SolidPrinciple::DryOcp),
+            "srp" => Some(SolidPrinciple::Srp),
+            "isp" => Some(SolidPrinciple::Isp),
+            "dip" => Some(SolidPrinciple::Dip),
+            "shotgun_surgery" => Some(SolidPrinciple::ShotgunSurgery),
+            "cyclic_dependency" => Some(SolidPrinciple::CyclicDependency),
+            _ => None,
+        })
+        .collect();
+    ministr_core::service::SolidParams {
+        kind: p.kind.clone(),
+        module: p.module.clone(),
+        principles,
+        container_kinds: if p.container_kinds.is_empty() {
+            defaults.container_kinds
+        } else {
+            p.container_kinds.clone()
+        },
+        interface_kinds: if p.interface_kinds.is_empty() {
+            defaults.interface_kinds
+        } else {
+            p.interface_kinds.clone()
+        },
+        similarity_threshold: p
+            .similarity_threshold
+            .unwrap_or(defaults.similarity_threshold),
+        jaccard_threshold: p.jaccard_threshold.unwrap_or(defaults.jaccard_threshold),
+        srp_cohesion_threshold: p
+            .srp_cohesion_threshold
+            .unwrap_or(defaults.srp_cohesion_threshold),
+        isp_min_methods: p.isp_min_methods.unwrap_or(defaults.isp_min_methods),
+        isp_max_overlap_fraction: p
+            .isp_max_overlap_fraction
+            .unwrap_or(defaults.isp_max_overlap_fraction),
+        min_lines: p.min_lines.unwrap_or(defaults.min_lines),
+        limit: p.limit.unwrap_or(defaults.limit).clamp(1, 500),
+        max_pairs: p.max_pairs.unwrap_or(defaults.max_pairs),
+        representative_count: p
+            .representative_count
+            .unwrap_or(defaults.representative_count),
+        shotgun_min_sites: p.shotgun_min_sites.unwrap_or(defaults.shotgun_min_sites),
+        shotgun_max_jaccard: p
+            .shotgun_max_jaccard
+            .unwrap_or(defaults.shotgun_max_jaccard),
+        shotgun_min_packages: p
+            .shotgun_min_packages
+            .unwrap_or(defaults.shotgun_min_packages),
+        shotgun_skip_conventional_names: p
+            .shotgun_skip_conventional_names
+            .unwrap_or(defaults.shotgun_skip_conventional_names),
+        cyclic_min_edges_per_direction: p
+            .cyclic_min_edges_per_direction
+            .unwrap_or(defaults.cyclic_min_edges_per_direction),
+        cyclic_skip_test_paths: p
+            .cyclic_skip_test_paths
+            .unwrap_or(defaults.cyclic_skip_test_paths),
+    }
+}
+
 fn ministr_extension_capabilities() -> ExtensionCapabilities {
     let mut extensions = ExtensionCapabilities::new();
     extensions.insert(
@@ -262,7 +334,21 @@ impl NegotiatedExtensions {
 /// It handles tool registration, request routing, and response formatting.
 #[derive(Clone)]
 pub struct MinistrServer {
-    service: Arc<QueryService>,
+    /// Local in-process query service.
+    ///
+    /// `Some` when the server is running in local-engine mode (the default,
+    /// constructed via [`Self::new`] / [`Self::with_persistence`]). `None`
+    /// when running in daemon-forward mode (constructed via
+    /// [`Self::with_daemon_backend`]) — in that mode, every code-intelligence
+    /// query routes through `self.backend` instead, and direct storage /
+    /// embedder / index access is unavailable.
+    service: Option<Arc<QueryService>>,
+    /// Pluggable data-path backend. Routes shared MCP tool calls
+    /// (`references`, `impact`, `dead_code`, …) through the [`QueryBackend`]
+    /// abstraction so the same handler works whether ministr is running
+    /// embedded ([`Backend::Local`]) or forwarding to a daemon
+    /// ([`Backend::Daemon`]). See [`crate::backend`].
+    backend: crate::backend::Backend,
     /// Federated session registry managing all agent sessions.
     registry: Arc<Mutex<SessionRegistry>>,
     /// ID of the active session for this MCP connection.
@@ -738,10 +824,16 @@ impl MinistrServer {
                 entry.session.delivered_ids()
             };
 
-            // Run the survey; if results are ambiguous, try eliciting a refined query.
+            // Run the survey through the backend trait; if results are
+            // ambiguous, try eliciting a refined query.
             let survey_result = self
-                .service
-                .survey_excluding(&params.query, top_k, &exclude_ids)
+                .backend
+                .survey_with_exclude(
+                    params.project.as_deref(),
+                    &params.query,
+                    top_k,
+                    &exclude_ids,
+                )
                 .await;
 
             // Attempt disambiguation: if top score is low and scores are clustered,
@@ -794,8 +886,9 @@ impl MinistrServer {
                                         refined = %refinement.refined_query,
                                         "re-running survey with refined query"
                                     );
-                                    self.service
-                                        .survey_excluding(
+                                    self.backend
+                                        .survey_with_exclude(
+                                            params.project.as_deref(),
                                             &refinement.refined_query,
                                             top_k,
                                             &exclude_ids,
@@ -857,9 +950,15 @@ impl MinistrServer {
                         .collect();
                     drop(reg);
 
-                    if !claim_section_ids.is_empty() {
+                    // Survey-triggered prefetch warming uses direct storage
+                    // access — local-only. In daemon-forward mode the
+                    // daemon owns prefetch state server-side and we skip
+                    // the in-proxy cache warming entirely.
+                    if !claim_section_ids.is_empty()
+                        && let Some(ref service) = self.service
+                    {
+                        let storage = service.storage();
                         let mut prefetch = self.prefetch.lock().await;
-                        // Filter out sections already in the prefetch cache
                         let ids_to_fetch: Vec<String> = claim_section_ids
                             .into_iter()
                             .filter(|sid| prefetch.cache().peek(sid).is_none())
@@ -870,12 +969,8 @@ impl MinistrServer {
                             let mut claims_counts = std::collections::HashMap::new();
                             for sid in &ids_to_fetch {
                                 let section_id = SectionId(sid.clone());
-                                if let Ok(Some(record)) =
-                                    self.service.storage().get_section(&section_id).await
-                                {
-                                    if let Ok(claims) =
-                                        self.service.storage().list_claims(&section_id).await
-                                    {
+                                if let Ok(Some(record)) = storage.get_section(&section_id).await {
+                                    if let Ok(claims) = storage.list_claims(&section_id).await {
                                         claims_counts.insert(sid.clone(), claims.len());
                                     }
                                     sections.push(record);
@@ -899,21 +994,23 @@ impl MinistrServer {
                             prefetch.record_tool_call("ministr_survey", &params.query);
                             prefetch.record_survey_results(survey_section_ids.clone());
 
-                            // Fetch and pre-warm the predicted sections
-                            let mut sections = Vec::new();
-                            for sid in &survey_section_ids {
-                                if prefetch.cache().peek(sid).is_some() {
-                                    continue;
+                            // Pre-warm via direct storage — local-only.
+                            if let Some(ref service) = self.service {
+                                let storage = service.storage();
+                                let mut sections = Vec::new();
+                                for sid in &survey_section_ids {
+                                    if prefetch.cache().peek(sid).is_some() {
+                                        continue;
+                                    }
+                                    let section_id = SectionId(sid.clone());
+                                    if let Ok(Some(record)) = storage.get_section(&section_id).await
+                                    {
+                                        sections.push(record);
+                                    }
                                 }
-                                let section_id = SectionId(sid.clone());
-                                if let Ok(Some(record)) =
-                                    self.service.storage().get_section(&section_id).await
-                                {
-                                    sections.push(record);
+                                if !sections.is_empty() {
+                                    prefetch.prefetch_from_intent(sections);
                                 }
-                            }
-                            if !sections.is_empty() {
-                                prefetch.prefetch_from_intent(sections);
                             }
                         }
                     }
@@ -940,7 +1037,7 @@ impl MinistrServer {
                 Err(e) => {
                     warn!(error = %e, "ministr_survey failed");
                     Ok(CallToolResult::error(vec![Content::text(
-                        format_query_error(&e),
+                        format_backend_error(&e),
                     )]))
                 }
             }
@@ -992,7 +1089,9 @@ impl MinistrServer {
                 debug!(section_id = %params.section_id, "ministr_read: warm cache hit");
                 Ok(detail)
             } else {
-                self.service.read_section(&params.section_id).await
+                self.backend
+                    .read_section(params.project.as_deref(), &params.section_id)
+                    .await
             };
 
             match read_result {
@@ -1053,7 +1152,7 @@ impl MinistrServer {
                 Err(e) => {
                     warn!(error = %e, section_id = %params.section_id, "ministr_read failed");
                     Ok(CallToolResult::error(vec![Content::text(
-                        format_query_error(&e),
+                        format_backend_error(&e),
                     )]))
                 }
             }
@@ -1090,8 +1189,12 @@ impl MinistrServer {
             );
 
             match self
-                .service
-                .extract_claims(&params.section_id, params.query.as_deref())
+                .backend
+                .extract_claims(
+                    params.project.as_deref(),
+                    &params.section_id,
+                    params.query.as_deref(),
+                )
                 .await
             {
                 Ok(claims) => {
@@ -1130,7 +1233,7 @@ impl MinistrServer {
                 Err(e) => {
                     warn!(error = %e, section_id = %params.section_id, "ministr_extract failed");
                     Ok(CallToolResult::error(vec![Content::text(
-                        format_query_error(&e),
+                        format_backend_error(&e),
                     )]))
                 }
             }
@@ -1169,8 +1272,12 @@ impl MinistrServer {
                 });
 
             match self
-                .service
-                .related_claims(&params.claim_id, relation_types.as_deref())
+                .backend
+                .related_claims(
+                    params.project.as_deref(),
+                    &params.claim_id,
+                    relation_types.as_deref(),
+                )
                 .await
             {
                 Ok(related) => {
@@ -1209,7 +1316,7 @@ impl MinistrServer {
                 Err(e) => {
                     warn!(error = %e, claim_id = %params.claim_id, "ministr_related failed");
                     Ok(CallToolResult::error(vec![Content::text(
-                        format_query_error(&e),
+                        format_backend_error(&e),
                     )]))
                 }
             }
@@ -1422,7 +1529,10 @@ impl MinistrServer {
 
             // Always use extractive (TF-IDF) compression — fast, no extra cost,
             // and doesn't require MCP sampling support from the client.
-            let result = self.service.compress_content(&params.content_ids).await;
+            let result = self
+                .backend
+                .compress(params.project.as_deref(), &params.content_ids)
+                .await;
 
             match result {
                 Ok(summaries) => {
@@ -1453,7 +1563,7 @@ impl MinistrServer {
                 Err(e) => {
                     warn!(error = %e, "ministr_compress failed");
                     Ok(CallToolResult::error(vec![Content::text(
-                        format_query_error(&e),
+                        format_backend_error(&e),
                     )]))
                 }
             }
@@ -1482,7 +1592,11 @@ impl MinistrServer {
         async {
             debug!(document_id = ?params.document_id, "ministr_toc request");
 
-            match self.service.toc(params.document_id.as_deref()).await {
+            match self
+                .backend
+                .toc(params.project.as_deref(), params.document_id.as_deref())
+                .await
+            {
                 Ok(entries) => {
                     let total_sections = entries.len();
                     let total_claims: usize = entries.iter().map(|e| e.claims_available).sum();
@@ -1517,9 +1631,16 @@ impl MinistrServer {
                         _ => None, // Don't clutter the response when complete
                     };
 
-                    // Include corpus roots when not filtered to a single document.
+                    // Include corpus roots when not filtered to a single
+                    // document. `list_corpus_roots` is local-only; in
+                    // daemon-forward mode the roots list is empty (the
+                    // agent can query the daemon directly for project
+                    // metadata if needed).
                     let roots = if params.document_id.is_none() {
-                        self.service.list_corpus_roots().await.unwrap_or_default()
+                        match self.service.as_ref() {
+                            Some(s) => s.list_corpus_roots().await.unwrap_or_default(),
+                            None => Vec::new(),
+                        }
                     } else {
                         Vec::new()
                     };
@@ -1546,7 +1667,7 @@ impl MinistrServer {
                 Err(e) => {
                     warn!(error = %e, "ministr_toc failed");
                     Ok(CallToolResult::error(vec![Content::text(
-                        format_query_error(&e),
+                        format_backend_error(&e),
                     )]))
                 }
             }
@@ -1737,6 +1858,39 @@ impl MinistrServer {
                 "ministr_clone request"
             );
 
+            // Daemon-backend mode: delegate the clone-and-link operation
+            // to the daemon's `POST /api/v1/corpora/{parent}/clone`
+            // endpoint, which clones, registers as a new corpus, and
+            // appends `[[linked]]` to the parent's `.ministr.toml`.
+            if let crate::backend::Backend::Daemon(b) = &self.backend {
+                let parent_id = b.corpus_id();
+                let client = b.client();
+                let req = ministr_api::corpus::CloneRepoRequest {
+                    repo: params.repo.clone(),
+                    paths: params.paths.clone().unwrap_or_default(),
+                    branch: params.branch.clone(),
+                    label: None,
+                };
+                return match client.clone_repo(parent_id, &req).await {
+                    Ok(resp) => {
+                        debug!(
+                            repo = %params.repo,
+                            corpus_id = %resp.corpus_id,
+                            label = %resp.label,
+                            linked = resp.linked_toml_updated,
+                            "ministr_clone (daemon-backend) success"
+                        );
+                        structured_result(&resp)
+                    }
+                    Err(e) => {
+                        warn!(error = %e, repo = %params.repo, "ministr_clone (daemon-backend) failed");
+                        Ok(CallToolResult::error(vec![Content::text(format!(
+                            "daemon clone failed: {e}"
+                        ))]))
+                    }
+                };
+            }
+
             let Some(ref git_fetcher) = self.git_fetcher else {
                 return Ok(CallToolResult::error(vec![Content::text(
                     "ministr_clone is not available: git fetcher not configured. \
@@ -1848,17 +2002,27 @@ impl MinistrServer {
                 file_path: None,
             };
 
-            match self.service.search_symbols(&filter).await {
+            match self
+                .backend
+                .search_symbols(params.project.as_deref(), filter)
+                .await
+            {
                 Ok(symbols) => {
                     let total = symbols.len();
 
-                    // Compute transitive caller counts for all result symbols
+                    // Compute transitive caller counts for all result symbols.
+                    // This stays on `self.service` (local-only enrichment); the
+                    // daemon backend doesn't currently expose batch caller-
+                    // count over HTTP. When running in daemon mode the
+                    // counts are simply omitted — handlers tolerate `None`.
                     let symbol_ids: Vec<_> = symbols.iter().map(|s| s.id.clone()).collect();
-                    let caller_counts = self
-                        .service
-                        .transitive_caller_counts(&symbol_ids)
-                        .await
-                        .unwrap_or_default();
+                    let caller_counts = match self.backend.as_local() {
+                        Some(svc) => svc
+                            .transitive_caller_counts(&symbol_ids)
+                            .await
+                            .unwrap_or_default(),
+                        None => std::collections::HashMap::new(),
+                    };
 
                     let summaries: Vec<SymbolSummary> = symbols
                         .into_iter()
@@ -1907,9 +2071,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_symbols failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_query_error(&e),
-                    )]))
+                    Ok(CallToolResult::error(vec![Content::text(format_backend_error(&e))]))
                 }
             }
         }
@@ -1936,7 +2098,11 @@ impl MinistrServer {
         async {
             debug!(symbol_id = %params.symbol_id, "ministr_definition request");
 
-            match self.service.get_symbol_definition(&params.symbol_id).await {
+            match self
+                .backend
+                .definition(params.project.as_deref(), &params.symbol_id)
+                .await
+            {
                 Ok(def) => {
                     let token_count = count_tokens(&def.source_context);
                     let mut reg = self.registry.lock().await;
@@ -1952,9 +2118,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %params.symbol_id, "ministr_definition failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_query_error(&e),
-                    )]))
+                    Ok(CallToolResult::error(vec![Content::text(format_backend_error(&e))]))
                 }
             }
         }
@@ -1987,8 +2151,8 @@ impl MinistrServer {
                 .and_then(RefKind::parse);
 
             match self
-                .service
-                .get_symbol_references(&params.symbol_id, ref_kind)
+                .backend
+                .references(params.project.as_deref(), &params.symbol_id, ref_kind)
                 .await
             {
                 Ok(refs) => {
@@ -2020,8 +2184,127 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %params.symbol_id, "ministr_references failed");
+                    Ok(CallToolResult::error(vec![Content::text(format_backend_error(&e))]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Compute the transitive blast radius of changing a symbol.
+    ///
+    /// Walks the call graph upward from the target up to `max_depth` levels
+    /// (default 3, capped at 10), returning the distinct transitive callers,
+    /// the files they live in, the test files touched, and a risk score.
+    #[tool(
+        name = "ministr_impact",
+        description = "Transitive blast radius of changing a symbol. Returns every caller / implementor / importer N levels deep, plus distinct files, distinct test files, and a low/medium/high risk score. Use BEFORE recommending a non-trivial refactor.",
+        output_schema = tool_output_schema::<ToolResponse<ImpactResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn impact(
+        &self,
+        Parameters(params): Parameters<ImpactParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let max_depth = params.max_depth.unwrap_or(3).clamp(1, 10);
+        let span = info_span!("ministr_impact", symbol_id = %params.symbol_id, max_depth);
+
+        async {
+            debug!(symbol_id = %params.symbol_id, max_depth, "ministr_impact request");
+
+            // Goes through the QueryBackend abstraction so the same handler
+            // works whether ministr is running embedded or proxying to a
+            // daemon. Concrete dispatch happens in `Backend::impact`.
+            match self
+                .backend
+                .impact(params.project.as_deref(), &params.symbol_id, max_depth)
+                .await
+            {
+                Ok(impact) => {
+                    debug!(symbol_id = %params.symbol_id, symbols = impact.symbols, files = impact.files, "ministr_impact success");
+
+                    let mut reg = self.registry.lock().await;
+                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
+                    drop(reg);
+
+                    let response = self
+                        .build_response(ImpactResponse { impact }, usage_status)
+                        .await;
+                    structured_result(&response)
+                }
+                Err(e) => {
+                    warn!(error = %e, symbol_id = %params.symbol_id, "ministr_impact failed");
+                    Ok(CallToolResult::error(vec![Content::text(format_backend_error(&e))]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Find symbols that have zero references — candidates for safe deletion.
+    ///
+    /// Filters out `pub` symbols (since external callers can't be seen),
+    /// entry points (`main`, `_main`, `_start`), and symbols shorter than
+    /// `min_lines` lines. Always double-check with `ministr_references`
+    /// before deleting, since dynamic dispatch and trait objects aren't
+    /// captured by the static reference graph.
+    #[tool(
+        name = "ministr_dead",
+        description = "Find symbols with zero references — candidates for safe deletion. Filters out `pub` symbols, entry points, and trivial helpers. Double-check with `ministr_references` before deleting since dynamic dispatch isn't tracked.",
+        output_schema = tool_output_schema::<ToolResponse<DeadCodeResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn dead_code(
+        &self,
+        Parameters(params): Parameters<DeadCodeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let min_lines = params.min_lines.unwrap_or(1).max(1);
+        let limit = params.limit.unwrap_or(50).clamp(1, 500);
+        let span = info_span!("ministr_dead", kind = ?params.kind, module = ?params.module, min_lines, limit);
+
+        async {
+            debug!(
+                kind = ?params.kind,
+                module = ?params.module,
+                min_lines,
+                limit,
+                "ministr_dead request"
+            );
+
+            // Same SOLID pattern as `impact`: dispatch through the backend
+            // trait instead of touching `self.service` directly. This is the
+            // call site that's identical between embedded and daemon-proxy
+            // deployments.
+            match self
+                .backend
+                .dead_code(
+                    params.project.as_deref(),
+                    params.kind.as_deref(),
+                    params.module.as_deref(),
+                    min_lines,
+                    limit,
+                )
+                .await
+            {
+                Ok(symbols) => {
+                    let total = symbols.len();
+                    debug!(total, "ministr_dead success");
+
+                    let mut reg = self.registry.lock().await;
+                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
+                    drop(reg);
+
+                    let response = self
+                        .build_response(DeadCodeResponse { symbols, total }, usage_status)
+                        .await;
+                    structured_result(&response)
+                }
+                Err(e) => {
+                    warn!(error = %e, "ministr_dead failed");
                     Ok(CallToolResult::error(vec![Content::text(
-                        format_query_error(&e),
+                        format_backend_error(&e),
                     )]))
                 }
             }
@@ -2029,6 +2312,72 @@ impl MinistrServer {
         .instrument(span)
         .await
     }
+
+    /// Detect possible SOLID-principle violations across the corpus.
+    ///
+    /// Surfaces four classes of structural smell from the existing symbol /
+    /// reference / embedding index with thresholded graph + cosine signals
+    /// (no LLM judgement): DRY/OCP near-duplicate clusters, SRP low-cohesion
+    /// containers, ISP fat interfaces, and DIP concrete cross-package
+    /// dependencies. Pair with `ministr_references` before refactoring.
+    #[tool(
+        name = "ministr_solid",
+        description = "Detect possible SOLID-principle violations across the codebase deterministically. Returns clusters / findings labelled by principle (dry_ocp, srp, isp, dip). Filter by kind/module and toggle principles via params. Pair with ministr_references before refactoring.",
+        output_schema = tool_output_schema::<ToolResponse<SolidResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn solid(
+        &self,
+        Parameters(params): Parameters<SolidParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let core_params = mcp_solid_params_to_service(&params);
+        let span = info_span!(
+            "ministr_solid",
+            kind = ?core_params.kind,
+            module = ?core_params.module,
+            principles = ?core_params.principles,
+            limit = core_params.limit,
+        );
+
+        async {
+            debug!(
+                kind = ?core_params.kind,
+                module = ?core_params.module,
+                principles = ?core_params.principles,
+                limit = core_params.limit,
+                "ministr_solid request"
+            );
+
+            match self
+                .backend
+                .solid(params.project.as_deref(), &core_params)
+                .await
+            {
+                Ok(findings) => {
+                    let total = findings.len();
+                    debug!(total, "ministr_solid success");
+
+                    let mut reg = self.registry.lock().await;
+                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
+                    drop(reg);
+
+                    let response = self
+                        .build_response(SolidResponse { findings, total }, usage_status)
+                        .await;
+                    structured_result(&response)
+                }
+                Err(e) => {
+                    warn!(error = %e, "ministr_solid failed");
+                    Ok(CallToolResult::error(vec![Content::text(
+                        format_backend_error(&e),
+                    )]))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
     /// Query cross-language bridge links.
     ///
     /// Returns bridge links (export↔import pairs) with optional filtering by
@@ -2049,8 +2398,9 @@ impl MinistrServer {
             debug!(?params.query, ?params.bridge_kind, ?params.language, ?params.file_path, "ministr_bridge request");
 
             match self
-                .service
-                .query_bridges(
+                .backend
+                .bridges(
+                    params.project.as_deref(),
                     params.query.as_deref(),
                     params.bridge_kind.as_deref(),
                     params.language.as_deref(),
@@ -2096,11 +2446,61 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_bridge failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_query_error(&e),
-                    )]))
+                    Ok(CallToolResult::error(vec![Content::text(format_backend_error(&e))]))
                 }
             }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// List the current project plus any linked projects available in
+    /// this session.
+    ///
+    /// Agents call this to discover what labels they can pass as the
+    /// `project: "<label>"` argument to other tools. Returns at minimum
+    /// the primary corpus (label = `null`, `is_current = true`); any
+    /// `[[linked]]` entries from the parent `.ministr.toml` that were
+    /// successfully resolved at startup appear alongside it.
+    #[tool(
+        name = "ministr_projects",
+        description = "List the current project plus any linked projects you can query in this session. Pass a returned `label` as the `project` argument to other tools; omit `project` for the current one. Linked projects come from `.ministr.toml` `[[linked]]` entries (or `ministr_clone` results).",
+        output_schema = tool_output_schema::<ToolResponse<ProjectsResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn projects(&self) -> Result<CallToolResult, McpError> {
+        let span = info_span!("ministr_projects");
+        async {
+            let labels = self.backend.linked_labels();
+            let mut projects: Vec<ProjectEntry> = Vec::with_capacity(labels.len() + 1);
+            projects.push(ProjectEntry {
+                label: None,
+                is_current: true,
+            });
+            for label in labels {
+                projects.push(ProjectEntry {
+                    label: Some(label),
+                    is_current: false,
+                });
+            }
+            let hint = if projects.len() == 1 {
+                "No linked projects. Use `ministr_clone` to clone a repo as a new linked \
+                 project, or add a `[[linked]]` entry to .ministr.toml."
+                    .to_string()
+            } else {
+                "Pass `project: \"<label>\"` to any query tool to target a linked project; \
+                 omit `project` for the current one."
+                    .to_string()
+            };
+
+            let mut reg = self.registry.lock().await;
+            let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
+            drop(reg);
+
+            let response = self
+                .build_response(ProjectsResponse { projects, hint }, usage_status)
+                .await;
+            structured_result(&response)
         }
         .instrument(span)
         .await
@@ -2261,8 +2661,9 @@ impl MinistrServer {
     ) -> Result<GetPromptResult, McpError> {
         let concept = &params.concept;
 
-        // Search for relevant sections to find claims.
-        let results = self.service.survey(concept, 5).await.map_err(|e| {
+        // Route through the backend so the same prompt works under both
+        // local and daemon modes.
+        let results = self.backend.survey(None, concept, 5).await.map_err(|e| {
             McpError::new(
                 rmcp::model::ErrorCode::INTERNAL_ERROR,
                 format!("survey failed: {e}"),
@@ -2283,8 +2684,8 @@ impl MinistrServer {
         // Extract claims from top results and follow relationships.
         for result in results.iter().take(3) {
             let claims = self
-                .service
-                .extract_claims(&result.content_id, Some(concept))
+                .backend
+                .extract_claims(None, &result.content_id, Some(concept))
                 .await
                 .unwrap_or_default();
 
@@ -2299,8 +2700,8 @@ impl MinistrServer {
 
                 // Follow relationships one level deep.
                 let relations = self
-                    .service
-                    .related_claims(&claim.claim_id, None)
+                    .backend
+                    .related_claims(None, &claim.claim_id, None)
                     .await
                     .unwrap_or_default();
 
@@ -2345,7 +2746,7 @@ mod tests {
     use serde::Serialize;
 
     use crate::server::helpers::{
-        MAX_RESPONSE_BYTES, apply_response_size_guard, has_code_files_in_dir,
+        MAX_RESPONSE_BYTES, apply_response_size_guard, format_query_error, has_code_files_in_dir,
     };
 
     /// Extract the text string from the first Content item.
@@ -2819,6 +3220,7 @@ mod tests {
         let params = SurveyParams {
             query: "JWT authentication tokens".to_string(),
             top_k: Some(5),
+            project: None,
         };
         let result = server.survey(Parameters(params)).await.unwrap();
 
@@ -2838,6 +3240,7 @@ mod tests {
         let server = setup_server().await;
         let params = ReadParams {
             section_id: "docs/auth.md#tokens".to_string(),
+            project: None,
         };
         let result = server.read(Parameters(params)).await.unwrap();
 
@@ -2854,6 +3257,7 @@ mod tests {
         let params = ExtractParams {
             section_id: "docs/auth.md#tokens".to_string(),
             query: None,
+            project: None,
         };
         let result = server.extract(Parameters(params)).await.unwrap();
 
@@ -2872,6 +3276,7 @@ mod tests {
         server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
+                project: None,
             }))
             .await
             .unwrap();
@@ -2882,6 +3287,7 @@ mod tests {
             .extract(Parameters(ExtractParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 query: None,
+                project: None,
             }))
             .await
             .unwrap();
@@ -2903,6 +3309,7 @@ mod tests {
             .survey(Parameters(SurveyParams {
                 query: "JWT authentication tokens".to_string(),
                 top_k: Some(10),
+                project: None,
             }))
             .await
             .unwrap();
@@ -2916,6 +3323,7 @@ mod tests {
             .survey(Parameters(SurveyParams {
                 query: "JWT authentication tokens".to_string(),
                 top_k: Some(10),
+                project: None,
             }))
             .await
             .unwrap();
@@ -2942,6 +3350,7 @@ mod tests {
         let result1 = server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
+                project: None,
             }))
             .await
             .unwrap();
@@ -2956,6 +3365,7 @@ mod tests {
         let result2 = server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
+                project: None,
             }))
             .await
             .unwrap();
@@ -2984,6 +3394,7 @@ mod tests {
         let params = SurveyParams {
             query: "JWT authentication tokens".to_string(),
             top_k: Some(5),
+            project: None,
         };
         let result = server.survey(Parameters(params)).await.unwrap();
 
@@ -3006,6 +3417,7 @@ mod tests {
         let server = setup_server().await;
         let params = ReadParams {
             section_id: "docs/auth.md#tokens".to_string(),
+            project: None,
         };
         let result = server.read(Parameters(params)).await.unwrap();
 
@@ -3029,6 +3441,7 @@ mod tests {
         let server = setup_server().await;
         let params = ReadParams {
             section_id: "nonexistent#section".to_string(),
+            project: None,
         };
         let result = server.read(Parameters(params)).await.unwrap();
 
@@ -3041,6 +3454,7 @@ mod tests {
         let params = ExtractParams {
             section_id: "nonexistent#section".to_string(),
             query: None,
+            project: None,
         };
         let result = server.extract(Parameters(params)).await.unwrap();
 
@@ -3094,6 +3508,7 @@ mod tests {
         let server = setup_server().await;
         let params = ReadParams {
             section_id: "nonexistent#section".to_string(),
+            project: None,
         };
         let result = server.read(Parameters(params)).await.unwrap();
 
@@ -3115,6 +3530,7 @@ mod tests {
         let params = ExtractParams {
             section_id: "nonexistent#section".to_string(),
             query: None,
+            project: None,
         };
         let result = server.extract(Parameters(params)).await.unwrap();
 
@@ -3161,6 +3577,7 @@ mod tests {
         server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
+                project: None,
             }))
             .await
             .unwrap();
@@ -3214,6 +3631,7 @@ mod tests {
         server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
+                project: None,
             }))
             .await
             .unwrap();
@@ -3261,6 +3679,7 @@ mod tests {
         let result1 = server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
+                project: None,
             }))
             .await
             .unwrap();
@@ -3273,6 +3692,7 @@ mod tests {
         let result2 = server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
+                project: None,
             }))
             .await
             .unwrap();
@@ -3371,6 +3791,7 @@ mod tests {
         server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
+                project: None,
             }))
             .await
             .unwrap();
@@ -3395,6 +3816,7 @@ mod tests {
         server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
+                project: None,
             }))
             .await
             .unwrap();
@@ -3420,6 +3842,7 @@ mod tests {
         let server = setup_server().await;
         let params = CompressParams {
             content_ids: vec!["docs/auth.md#tokens".to_string()],
+            project: None,
         };
         let result = server.compress(Parameters(params)).await.unwrap();
 
@@ -3440,6 +3863,7 @@ mod tests {
         let server = setup_server().await;
         let params = CompressParams {
             content_ids: vec!["nonexistent#section".to_string()],
+            project: None,
         };
         let result = server.compress(Parameters(params)).await.unwrap();
 
@@ -3458,6 +3882,7 @@ mod tests {
         let server = setup_server().await;
         let params = CompressParams {
             content_ids: vec!["docs/auth.md#tokens".to_string()],
+            project: None,
         };
         let result = server.compress(Parameters(params)).await.unwrap();
 
@@ -3472,6 +3897,7 @@ mod tests {
         let server = setup_server().await;
         let params = CompressParams {
             content_ids: vec!["docs/auth.md#tokens".to_string()],
+            project: None,
         };
         let result = server.compress(Parameters(params)).await.unwrap();
 
@@ -3499,6 +3925,7 @@ mod tests {
                 "docs/auth.md#tokens".to_string(),
                 "nonexistent#missing".to_string(),
             ],
+            project: None,
         };
         let result = server.compress(Parameters(params)).await.unwrap();
 
@@ -3791,6 +4218,7 @@ mod tests {
                 document_id: None,
                 offset: None,
                 limit: None,
+                project: None,
             }))
             .await
             .unwrap();
@@ -3811,6 +4239,7 @@ mod tests {
         server
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
+                project: None,
             }))
             .await
             .unwrap();
@@ -3820,6 +4249,7 @@ mod tests {
                 document_id: None,
                 offset: None,
                 limit: None,
+                project: None,
             }))
             .await
             .unwrap();
@@ -3848,6 +4278,7 @@ mod tests {
             .survey(Parameters(SurveyParams {
                 query: "JWT tokens".to_string(),
                 top_k: Some(5),
+                project: None,
             }))
             .await
             .unwrap();
@@ -4719,6 +5150,7 @@ mod tests {
                 document_id: None,
                 offset: None,
                 limit: None,
+                project: None,
             }))
             .await
             .unwrap();
@@ -4742,6 +5174,7 @@ mod tests {
                 document_id: None,
                 offset: Some(100),
                 limit: Some(10),
+                project: None,
             }))
             .await
             .unwrap();
@@ -4765,6 +5198,7 @@ mod tests {
                 visibility: None,
                 offset: None,
                 limit: None,
+                project: None,
             }))
             .await
             .unwrap();
@@ -4788,6 +5222,7 @@ mod tests {
                 visibility: None,
                 offset: Some(50),
                 limit: Some(10),
+                project: None,
             }))
             .await
             .unwrap();
@@ -4810,6 +5245,7 @@ mod tests {
                 ref_kind: None,
                 offset: None,
                 limit: None,
+                project: None,
             }))
             .await
             .unwrap();

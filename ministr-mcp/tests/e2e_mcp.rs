@@ -3458,6 +3458,45 @@ async fn ministr_symbols_omits_usage_status() {
     assert_no_budget_hints(&response);
 }
 
+#[tokio::test]
+async fn ministr_solid_returns_findings_envelope() {
+    // The default test corpus carries no SOLID-violating fixtures, so this
+    // primarily verifies that the tool is reachable end-to-end, accepts the
+    // documented parameter shape, and serialises a well-formed empty result.
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(
+        &client,
+        "ministr_solid",
+        json!({
+            "principles": ["srp", "isp", "dip"],
+            "limit": 25,
+        }),
+    )
+    .await;
+
+    assert!(
+        result.is_error.is_none() || result.is_error == Some(false),
+        "ministr_solid call failed"
+    );
+    let text = extract_text(&result.content);
+    let response: serde_json::Value = serde_json::from_str(text).unwrap();
+    let data = tool_result(&response);
+
+    let findings = data["findings"].as_array().expect("findings array missing");
+    let total = data["total"].as_u64().expect("total missing");
+    assert_eq!(usize::try_from(total).unwrap(), findings.len());
+    // For every finding (none expected on the default fixture, but assert the
+    // shape if any appear), `principle` must be one of the four known
+    // discriminators.
+    for f in findings {
+        let principle = f["principle"].as_str().expect("principle missing");
+        assert!(
+            matches!(principle, "dry_ocp" | "srp" | "isp" | "dip"),
+            "unexpected principle: {principle}"
+        );
+    }
+}
+
 // ===========================================================================
 // STABLE1.0: Stress test — multiple concurrent clients on shared corpus
 // ===========================================================================

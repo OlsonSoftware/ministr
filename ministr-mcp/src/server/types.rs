@@ -7,7 +7,10 @@
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
-use ministr_core::service::{CompressedItem, RelatedClaimResult, SurveyResult, SymbolRefResult};
+use ministr_core::service::{
+    CompressedItem, DeadSymbol, ImpactResult, RelatedClaimResult, SolidFinding, SurveyResult,
+    SymbolRefResult,
+};
 use ministr_core::session::drops::DropCandidate;
 use ministr_core::session::{CoherenceAlert, UsageStatus};
 
@@ -145,6 +148,14 @@ pub struct SurveyParams {
     /// Maximum number of results to return (default: 10).
     #[schemars(description = "Maximum number of results to return")]
     pub top_k: Option<usize>,
+
+    /// Optional linked-project label. Omit for the session's primary corpus.
+    #[serde(default)]
+    #[schemars(
+        description = "Optional linked-project label (from .ministr.toml [[linked]]). \
+                       Omit for the session's primary corpus. Call ministr_projects to list labels."
+    )]
+    pub project: Option<String>,
 }
 
 /// Parameters for the `ministr_read` tool.
@@ -153,6 +164,11 @@ pub struct ReadParams {
     /// Hierarchical section ID (e.g. `docs/auth.md#error-handling`).
     #[schemars(description = "Section ID to read (e.g. 'docs/auth.md#error-handling')")]
     pub section_id: String,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
 }
 
 /// Parameters for the `ministr_dropped` tool.
@@ -173,6 +189,11 @@ pub struct ExtractParams {
     /// Optional query to filter claims by relevance.
     #[schemars(description = "Optional query to filter claims by relevance")]
     pub query: Option<String>,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
 }
 
 /// Parameters for the `ministr_compress` tool.
@@ -181,6 +202,11 @@ pub struct CompressParams {
     /// Content IDs to generate compressed summaries for.
     #[schemars(description = "Content IDs (section IDs) to generate compressed summaries for")]
     pub content_ids: Vec<String>,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
 }
 
 /// Response from the `ministr_usage` tool.
@@ -252,6 +278,11 @@ pub struct RelatedParams {
         description = "Optional filter: 'references', 'contradicts', 'depends_on', 'updates'"
     )]
     pub relation_types: Option<Vec<String>>,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
 }
 
 /// Response from the `ministr_related` tool.
@@ -290,6 +321,11 @@ pub struct TocParams {
     /// Maximum number of entries to return (default: 100).
     #[schemars(description = "Maximum number of entries to return (default: 100)")]
     pub limit: Option<usize>,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
 }
 
 /// Parameters for the `ministr_fetch` tool.
@@ -498,6 +534,11 @@ pub struct SymbolsParams {
     /// Maximum number of entries to return (default: 100).
     #[schemars(description = "Maximum number of entries to return (default: 100)")]
     pub limit: Option<usize>,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
 }
 
 /// Parameters for the `ministr_definition` tool.
@@ -506,6 +547,11 @@ pub struct DefinitionParams {
     /// The symbol ID to look up.
     #[schemars(description = "Symbol ID to get the definition for (from ministr_symbols results)")]
     pub symbol_id: String,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
 }
 
 /// Parameters for the `ministr_references` tool.
@@ -528,6 +574,59 @@ pub struct ReferencesParams {
     /// Maximum number of entries to return (default: 100).
     #[schemars(description = "Maximum number of entries to return (default: 100)")]
     pub limit: Option<usize>,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
+}
+
+/// Parameters for the `ministr_impact` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ImpactParams {
+    /// The symbol ID whose blast radius should be analyzed.
+    #[schemars(
+        description = "Symbol ID whose blast radius should be analyzed (from ministr_symbols results)"
+    )]
+    pub symbol_id: String,
+
+    /// Maximum BFS depth to walk (default 3, capped at 10).
+    #[schemars(
+        description = "Maximum BFS depth to walk up the call graph. Default 3, capped at 10."
+    )]
+    pub max_depth: Option<u32>,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
+}
+
+/// Parameters for the `ministr_dead` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DeadCodeParams {
+    /// Optional kind filter (e.g. `"function"`, `"struct"`).
+    #[schemars(description = "Optional symbol kind filter (e.g. 'function', 'struct')")]
+    pub kind: Option<String>,
+
+    /// Optional module path prefix filter.
+    #[schemars(description = "Optional module path prefix filter")]
+    pub module: Option<String>,
+
+    /// Skip symbols whose body is shorter than this many lines (default 1).
+    #[schemars(
+        description = "Skip symbols whose body is shorter than this many lines. Default 1."
+    )]
+    pub min_lines: Option<u32>,
+
+    /// Maximum results to return (default 50, capped at 500).
+    #[schemars(description = "Maximum results to return. Default 50, capped at 500.")]
+    pub limit: Option<usize>,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
 }
 
 /// Response from the `ministr_symbols` tool.
@@ -578,6 +677,163 @@ pub(crate) struct ReferencesResponse {
     pub(crate) offset: usize,
 }
 
+/// Response from the `ministr_impact` tool.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct ImpactResponse {
+    /// The impact analysis result.
+    pub(crate) impact: ImpactResult,
+}
+
+/// Response from the `ministr_dead` tool.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DeadCodeResponse {
+    /// Dead-code candidates.
+    pub(crate) symbols: Vec<DeadSymbol>,
+    /// Total number of candidates that matched (before the limit cap).
+    pub(crate) total: usize,
+}
+
+/// Parameters for the `ministr_solid` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SolidParams {
+    /// Optional symbol-kind filter for the candidate set
+    /// (e.g. `"function"`).
+    #[schemars(description = "Optional symbol kind filter (e.g. 'function', 'struct')")]
+    pub kind: Option<String>,
+
+    /// Module-path prefix filter (e.g. `"server"`).
+    #[schemars(description = "Optional module path prefix filter")]
+    pub module: Option<String>,
+
+    /// Which principles to evaluate: any subset of `dry_ocp`, `srp`, `isp`,
+    /// `dip`, `shotgun_surgery`, `cyclic_dependency`. Empty / omitted = all six.
+    #[serde(default)]
+    #[schemars(
+        description = "Principles to evaluate: 'dry_ocp', 'srp', 'isp', 'dip', 'shotgun_surgery', 'cyclic_dependency'. Omit or pass empty to run all six."
+    )]
+    pub principles: Vec<String>,
+
+    /// Override container kinds (defaults cover Rust/TS/Python).
+    #[serde(default)]
+    #[schemars(
+        description = "Override container kinds for SRP detection. Defaults: ['impl','struct','class','mod']"
+    )]
+    pub container_kinds: Vec<String>,
+
+    /// Override interface kinds.
+    #[serde(default)]
+    #[schemars(
+        description = "Override interface kinds for ISP/DIP detection. Defaults: ['trait','interface','protocol']"
+    )]
+    pub interface_kinds: Vec<String>,
+
+    /// Cosine threshold for DRY/OCP clone detection (default 0.86).
+    #[schemars(description = "Cosine threshold for DRY/OCP clone detection. Default 0.86.")]
+    pub similarity_threshold: Option<f32>,
+
+    /// Jaccard threshold over callee-sets for DRY/OCP (default 0.4).
+    #[schemars(description = "Jaccard threshold over callee-sets for DRY/OCP. Default 0.4.")]
+    pub jaccard_threshold: Option<f32>,
+
+    /// Cosine threshold for SRP cohesion edges (default 0.7).
+    #[schemars(
+        description = "Cosine threshold for SRP within-container cohesion edges. Default 0.7."
+    )]
+    pub srp_cohesion_threshold: Option<f32>,
+
+    /// Minimum method count for ISP to fire (default 6).
+    #[schemars(description = "Minimum interface method count before ISP fires. Default 6.")]
+    pub isp_min_methods: Option<usize>,
+
+    /// Implementor counts as "under-using" at or below this fraction
+    /// (default 0.33).
+    #[schemars(
+        description = "Implementor under-using cutoff (fraction of trait methods overlapped). Default 0.33."
+    )]
+    pub isp_max_overlap_fraction: Option<f32>,
+
+    /// Skip candidate symbols shorter than this many lines (default 5).
+    #[schemars(description = "Skip candidate symbols shorter than this many lines. Default 5.")]
+    pub min_lines: Option<u32>,
+
+    /// Maximum findings to return (default 50, capped at 500).
+    #[schemars(description = "Maximum findings to return. Default 50, capped at 500.")]
+    pub limit: Option<usize>,
+
+    /// Hard cap on pairwise comparisons inside any single DRY/OCP bucket
+    /// (default 100k).
+    #[schemars(
+        description = "Hard cap on pairwise comparisons inside any DRY/OCP bucket. Default 100k."
+    )]
+    pub max_pairs: Option<usize>,
+
+    /// Maximum representative members included per finding component list.
+    /// When a list exceeds this it's truncated and the remainder is
+    /// reported as `*_omitted` (default 5).
+    #[schemars(
+        description = "Maximum representative members per component list. Larger arrays are truncated and reported via `*_omitted`. Default 5."
+    )]
+    pub representative_count: Option<usize>,
+
+    /// Minimum file count before a Shotgun-Surgery finding fires (default 3).
+    #[schemars(
+        description = "Minimum file count before a Shotgun-Surgery finding fires. Default 3."
+    )]
+    pub shotgun_min_sites: Option<usize>,
+
+    /// Max callee-set Jaccard for Shotgun-Surgery. Above this the group is a
+    /// real Type-4 clone, handled by `dry_ocp` instead (default 0.5).
+    #[schemars(
+        description = "Maximum callee-set Jaccard for ShotgunSurgery. Above this the group is treated as a Type-4 clone and handled by 'dry_ocp'. Default 0.5."
+    )]
+    pub shotgun_max_jaccard: Option<f32>,
+
+    /// Shotgun-Surgery sites must span at least this many distinct package
+    /// prefixes (default 2). Single-crate fan-out is typically intentional
+    /// polymorphism, not a cross-layer smell.
+    #[schemars(
+        description = "Minimum distinct packages a Shotgun-Surgery group must span. Default 2."
+    )]
+    pub shotgun_min_packages: Option<usize>,
+
+    /// Whether to drop Shotgun-Surgery candidates with conventional method
+    /// names (`new`, `default`, `fmt`, `clone`, `as_str`, `parse`,
+    /// `main`, ...). Default `true`.
+    #[schemars(
+        description = "Skip Shotgun-Surgery groups whose name is universally conventional (new/default/fmt/clone/as_str/parse/main/etc.). Default true."
+    )]
+    pub shotgun_skip_conventional_names: Option<bool>,
+
+    /// Minimum cross-package edges per direction before two packages
+    /// count as mutually dependent (default 2). Filters phantom cycles
+    /// from ambiguous symbol-name resolution.
+    #[schemars(
+        description = "CyclicDependency: minimum distinct cross-package edges per direction. Single-edge cycles are usually phantom name-resolution artefacts. Default 2."
+    )]
+    pub cyclic_min_edges_per_direction: Option<usize>,
+
+    /// Whether the cycle detector skips edges whose source or target
+    /// lives in a test / fixture path. Default `true`.
+    #[schemars(
+        description = "CyclicDependency: skip edges touching test/fixture paths. Sample data shouldn't drive the workspace dependency graph. Default true."
+    )]
+    pub cyclic_skip_test_paths: Option<bool>,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
+}
+
+/// Response from the `ministr_solid` tool.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct SolidResponse {
+    /// All findings across enabled principles.
+    pub(crate) findings: Vec<SolidFinding>,
+    /// Total findings (≤ `limit`).
+    pub(crate) total: usize,
+}
+
 /// Parameters for the `ministr_bridge` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -603,6 +859,11 @@ pub struct BridgeParams {
     /// Optional file path filter.
     #[schemars(description = "Filter links where either endpoint is in this file path")]
     pub file_path: Option<String>,
+
+    /// Optional linked-project label.
+    #[serde(default)]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
 }
 
 /// Response from the `ministr_bridge` tool.
@@ -612,6 +873,25 @@ pub(crate) struct BridgeResponse {
     pub(crate) links: Vec<BridgeLinkSummary>,
     /// Total number of links returned.
     pub(crate) total: usize,
+}
+
+/// A single entry in the `ministr_projects` response.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct ProjectEntry {
+    /// Linked-project label, or `None` for the current/primary corpus.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) label: Option<String>,
+    /// Whether this entry is the session's primary corpus.
+    pub(crate) is_current: bool,
+}
+
+/// Response from the `ministr_projects` tool.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct ProjectsResponse {
+    /// All available projects — the primary corpus plus any linked ones.
+    pub(crate) projects: Vec<ProjectEntry>,
+    /// Human-readable hint about how to use linked projects.
+    pub(crate) hint: String,
 }
 
 /// A compact bridge link summary for search results.

@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 21;
+pub const CURRENT_SCHEMA_VERSION: usize = 22;
 
 /// Returns the migration set for the content database.
 ///
@@ -380,6 +380,20 @@ fn migrations() -> Migrations<'static> {
         M::up(
             "
             ALTER TABLE corpus_merkle ADD COLUMN extractor_version INTEGER NOT NULL DEFAULT 0;
+            ",
+        ),
+        // V22: Resolver-version auto-heal. `file_hashes` now carries the
+        // version of the *resolver* (the `RawRef` → `SymbolRefRecord`
+        // name-binding step) that produced its `symbol_refs` rows,
+        // compared against `ingestion::RESOLVER_VERSION` on daemon
+        // startup. When the stored value is lower, the daemon
+        // re-resolves that file's refs against the existing stored
+        // symbols — no re-parse, no re-embed. Pre-existing rows default
+        // to 0 and re-resolve on first start after upgrade. Sibling of
+        // V19's `extractor_version` column.
+        M::up(
+            "
+            ALTER TABLE file_hashes ADD COLUMN resolver_version INTEGER NOT NULL DEFAULT 0;
             ",
         ),
     ])

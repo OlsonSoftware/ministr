@@ -202,6 +202,7 @@ impl CorpusRegistry {
     /// Reads `{data_dir}/corpora.json` and re-registers each entry.
     /// Skips entries whose source paths no longer exist on disk.
     /// Safe to call on an empty registry — idempotent with `register`.
+    #[allow(clippy::too_many_lines)] // restore is one cohesive startup pass
     pub async fn restore(self: &Arc<Self>) {
         let manifest_path = self.manifest_path();
         let entries = match std::fs::read_to_string(&manifest_path) {
@@ -282,10 +283,36 @@ impl CorpusRegistry {
         let (live, dead): (Vec<&ManifestEntry>, Vec<&ManifestEntry>) =
             entries.iter().partition(|e| entry_is_live(&e.paths));
 
+        // Detect duplicate-by-canonical-id entries among the live set
+        // (e.g. left over from before `canonical_corpus_path` normalised
+        // `.`/`..`/repeated slashes). `register()` is itself idempotent so
+        // the in-memory map collapses them, but the on-disk manifest
+        // still carries the dupes — we persist a clean copy below.
+        let mut canonical_ids_seen: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut duplicate_canonical = false;
+        for entry in &live {
+            if let Ok(canon_id) = corpus_id_from_paths(&entry.paths)
+                && !canonical_ids_seen.insert(canon_id)
+            {
+                duplicate_canonical = true;
+            }
+        }
+
         for entry in &live {
             if let Err(e) = self.register(&entry.paths).await {
                 warn!(corpus_id = %entry.id, error = %e, "failed to restore corpus");
             }
+        }
+
+        // If two live manifest entries canonicalised to the same id,
+        // rewrite the manifest from the deduped in-memory corpora map so
+        // the dupe doesn't keep reappearing on every restart.
+        if duplicate_canonical && let Err(e) = self.save_manifest().await {
+            warn!(
+                error = %e,
+                "failed to persist deduped corpus manifest after canonicalisation merge"
+            );
         }
 
         // Self-heal: drop dead entries from the manifest and best-effort
@@ -678,6 +705,21 @@ impl CorpusRegistry {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs() as i64);
             info.last_indexed = Some(ts);
+            // Surface the persisted snapshot so a "files went back to 0
+            // after re-index" report has a log line to grep for.
+            info!(
+                corpus_id,
+                files_indexed,
+                sections_count,
+                embeddings_count,
+                "corpus stats updated post-indexing"
+            );
+        } else {
+            warn!(
+                corpus_id,
+                "update_stats: corpus not found in registry — \
+                 stats discarded (likely concurrent unregister)"
+            );
         }
     }
 

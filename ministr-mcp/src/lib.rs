@@ -9,10 +9,10 @@
 
 pub mod a2a;
 pub mod auth;
+pub mod backend;
 pub mod bundle_routes;
 pub mod elicitation;
 pub mod error;
-pub mod proxy;
 pub mod sampling;
 pub mod server;
 pub mod task;

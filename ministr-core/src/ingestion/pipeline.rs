@@ -36,12 +36,12 @@ use super::embedding::{
 use super::process::{ProcessOptions, store_enriched_document};
 use super::roots::{
     accumulate_language_stats, all_files_unchanged_by_mtime, compute_content_hash,
-    compute_relative_path, compute_root_id, file_mtime_nanos, find_root_for_file, namespace_path,
-    strip_root_prefix, update_root_stats,
+    compute_relative_path, compute_root_id, file_mtime_nanos, find_root_entry_for_file,
+    namespace_path, strip_root_prefix, update_root_stats,
 };
 use super::symbols::{
     PendingRef, extract_code_symbols, persist_pending_refs, rebuild_bridge_endpoints,
-    repair_missing_refs, resolve_pending_refs, store_bridge_links,
+    repair_missing_refs, resolve_and_store_refs, resolve_pending_refs, store_bridge_links,
 };
 
 // ── Stats types ──────────────────────────────────────────────────────────────
@@ -360,6 +360,12 @@ struct FileItem {
     path: PathBuf,
     relative: String,
     root_id: Option<String>,
+    /// Absolute corpus root the file was discovered under (when known).
+    /// Used by `parse_and_store_file` to scope the ignore-dir guard to
+    /// components inside the root — without this, a corpus rooted under
+    /// an always-ignored ancestor name (e.g. `~/.ministr/remote/<hash>/`)
+    /// would have every file rejected.
+    root_path: Option<PathBuf>,
 }
 
 // ── IngestionPipeline ────────────────────────────────────────────────────────
@@ -570,15 +576,26 @@ impl IngestionPipeline {
             .map_err(IngestionError::from)?;
 
         // Both skip paths below require the cached record to have been
-        // produced by the CURRENT extractor version. When the extractor
-        // logic changes (bumping `EXTRACTOR_VERSION`), the stored row
-        // compares < current, so we fall through and re-parse — the
-        // index auto-heals without a manual corpus wipe.
+        // produced by the CURRENT extractor AND resolver versions. When
+        // either logic changes (bumping `EXTRACTOR_VERSION` or
+        // `RESOLVER_VERSION`), the stored row compares < current, so we
+        // fall through and re-parse — the index auto-heals without a
+        // manual corpus wipe. Resolver-stale + extractor-fresh files
+        // could in principle skip re-parse and re-resolve in place; for
+        // bulk auto-heal of an already-indexed corpus that path lives
+        // in `re_resolve_stale_files` and runs on daemon startup. Here
+        // in the per-file ingest path we conservatively re-parse —
+        // tree-sitter is cheap and this keeps the file-watcher
+        // semantics simple.
         let extractor_fresh = existing_hash
             .as_ref()
             .is_some_and(|e| e.extractor_version >= super::EXTRACTOR_VERSION);
+        let resolver_fresh = existing_hash
+            .as_ref()
+            .is_some_and(|e| e.resolver_version >= super::RESOLVER_VERSION);
+        let cache_fresh = extractor_fresh && resolver_fresh;
 
-        if extractor_fresh
+        if cache_fresh
             && let Some(ref existing) = existing_hash
             && let (Some(stored_mtime), Some(current_mtime)) = (existing.mtime_ns, file_mtime_ns)
             && stored_mtime == current_mtime
@@ -599,7 +616,7 @@ impl IngestionPipeline {
 
         let hash = compute_content_hash(&content_str);
 
-        if extractor_fresh
+        if cache_fresh
             && let Some(ref existing) = existing_hash
             && existing.content_hash == hash
         {
@@ -609,6 +626,7 @@ impl IngestionPipeline {
                     content_hash: hash,
                     mtime_ns: file_mtime_ns,
                     extractor_version: super::EXTRACTOR_VERSION,
+                    resolver_version: super::RESOLVER_VERSION,
                 })
                 .await
                 .map_err(IngestionError::from)?;
@@ -923,6 +941,7 @@ impl IngestionPipeline {
                     path: file_path.clone(),
                     relative,
                     root_id: root_id.map(String::from),
+                    root_path: Some(dir.to_path_buf()),
                 }
             })
             .collect();
@@ -1165,11 +1184,15 @@ impl IngestionPipeline {
             .iter()
             .map(|file_path| {
                 let relative = compute_relative_path(file_path, paths);
-                let root_id = find_root_for_file(file_path, &roots).map(String::from);
+                let (root_path, root_id) = match find_root_entry_for_file(file_path, &roots) {
+                    Some((p, id)) => (Some(p.clone()), Some(id.clone())),
+                    None => (None, None),
+                };
                 FileItem {
                     path: file_path.clone(),
                     relative,
                     root_id,
+                    root_path,
                 }
             })
             .collect();
@@ -1339,6 +1362,7 @@ impl IngestionPipeline {
                                 .parse_and_store_file(
                                     &item.path,
                                     &item.relative,
+                                    item.root_path.as_deref(),
                                     storage,
                                     index,
                                     active_graph,
@@ -1618,6 +1642,7 @@ impl IngestionPipeline {
         &self,
         file_path: &Path,
         relative_path: &str,
+        root_path: Option<&Path>,
         storage: &S,
         index: &I,
         package_graph: Option<&PackageGraph>,
@@ -1627,7 +1652,7 @@ impl IngestionPipeline {
         S: Storage + ?Sized,
         I: VectorIndex + ?Sized,
     {
-        if is_in_ignored_dir(file_path) {
+        if is_in_ignored_dir(root_path, file_path) {
             debug!(path = %relative_path, "skipped: file is inside an always-ignored directory");
             return Ok(FileResult::Skipped);
         }
@@ -1640,15 +1665,26 @@ impl IngestionPipeline {
             .map_err(IngestionError::from)?;
 
         // Both skip paths below require the cached record to have been
-        // produced by the CURRENT extractor version. When the extractor
-        // logic changes (bumping `EXTRACTOR_VERSION`), the stored row
-        // compares < current, so we fall through and re-parse — the
-        // index auto-heals without a manual corpus wipe.
+        // produced by the CURRENT extractor AND resolver versions. When
+        // either logic changes (bumping `EXTRACTOR_VERSION` or
+        // `RESOLVER_VERSION`), the stored row compares < current, so we
+        // fall through and re-parse — the index auto-heals without a
+        // manual corpus wipe. Resolver-stale + extractor-fresh files
+        // could in principle skip re-parse and re-resolve in place; for
+        // bulk auto-heal of an already-indexed corpus that path lives
+        // in `re_resolve_stale_files` and runs on daemon startup. Here
+        // in the per-file ingest path we conservatively re-parse —
+        // tree-sitter is cheap and this keeps the file-watcher
+        // semantics simple.
         let extractor_fresh = existing_hash
             .as_ref()
             .is_some_and(|e| e.extractor_version >= super::EXTRACTOR_VERSION);
+        let resolver_fresh = existing_hash
+            .as_ref()
+            .is_some_and(|e| e.resolver_version >= super::RESOLVER_VERSION);
+        let cache_fresh = extractor_fresh && resolver_fresh;
 
-        if extractor_fresh
+        if cache_fresh
             && let Some(ref existing) = existing_hash
             && let (Some(stored_mtime), Some(current_mtime)) = (existing.mtime_ns, file_mtime_ns)
             && stored_mtime == current_mtime
@@ -1669,7 +1705,7 @@ impl IngestionPipeline {
 
         let hash = compute_content_hash(&content_str);
 
-        if extractor_fresh
+        if cache_fresh
             && let Some(ref existing) = existing_hash
             && existing.content_hash == hash
         {
@@ -1679,6 +1715,7 @@ impl IngestionPipeline {
                     content_hash: hash,
                     mtime_ns: file_mtime_ns,
                     extractor_version: super::EXTRACTOR_VERSION,
+                    resolver_version: super::RESOLVER_VERSION,
                 })
                 .await
                 .map_err(IngestionError::from)?;
@@ -1981,5 +2018,176 @@ impl IngestionPipeline {
         }
 
         Ok(total_refs)
+    }
+
+    // ── Resolver-version auto-heal ───────────────────────────────────────
+
+    /// Re-resolve `symbol_refs` for every file whose stored
+    /// `resolver_version` is below the current
+    /// [`super::RESOLVER_VERSION`].
+    ///
+    /// The auto-heal counterpart to [`Self::re_resolve_dependency_refs`]:
+    /// where that method re-resolves when a new dependency tree becomes
+    /// available, this one re-resolves when the *resolver code itself*
+    /// has been upgraded. Reads stored symbols (no re-extraction),
+    /// re-parses each stale file (tree-sitter is cheap), replays
+    /// [`resolve_and_store_refs`] which deletes the old `symbol_refs`
+    /// rows for the file and writes new ones. Embeddings, documents,
+    /// sections, claims are not touched — the resolver step is
+    /// orthogonal to all of those.
+    ///
+    /// Returns the count of files successfully re-resolved.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IngestionError`] when storage lookups fail. Individual
+    /// per-file failures (missing source, unparseable content, no
+    /// symbols) are logged at debug and silently skipped — the auto-heal
+    /// must be best-effort so one broken file can't block the rest.
+    #[allow(clippy::too_many_lines)]
+    #[instrument(skip(self, storage, corpus_roots))]
+    pub async fn re_resolve_stale_files<S: Storage + ?Sized>(
+        &self,
+        corpus_roots: &[PathBuf],
+        storage: &S,
+    ) -> Result<usize, IngestionError> {
+        let all_hashes = storage
+            .list_file_hashes()
+            .await
+            .map_err(IngestionError::from)?;
+
+        let stale: Vec<FileHashRecord> = all_hashes
+            .into_iter()
+            .filter(|h| h.resolver_version < super::RESOLVER_VERSION)
+            .collect();
+
+        if stale.is_empty() {
+            return Ok(0);
+        }
+
+        info!(
+            stale_count = stale.len(),
+            current_resolver_version = super::RESOLVER_VERSION,
+            "resolver auto-heal: re-resolving stale files"
+        );
+
+        let mut healed = 0usize;
+
+        for hash in &stale {
+            let source_path = &hash.path;
+
+            // Skip non-code files. The resolver only touches symbol-bearing
+            // languages; markdown / json / etc. file_hash rows just need
+            // their stamp bumped so we don't retry every startup.
+            let ext = Path::new(source_path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            let language = crate::code::GrammarRegistry::global().language_name_for_extension(ext);
+
+            // Load stored symbols.
+            let filter = SymbolFilter {
+                file_path: Some(source_path.clone()),
+                ..SymbolFilter::default()
+            };
+            let Ok(local_symbols) = storage.list_symbols(&filter).await else {
+                continue;
+            };
+
+            if local_symbols.is_empty() || language.is_none() {
+                // Nothing to resolve here — just stamp the row so we
+                // don't reconsider it on every restart.
+                let _ = storage
+                    .upsert_file_hash(&FileHashRecord {
+                        resolver_version: super::RESOLVER_VERSION,
+                        ..hash.clone()
+                    })
+                    .await;
+                healed += 1;
+                continue;
+            }
+
+            // Read source content. Try corpus roots first, then absolute.
+            let content_bytes = {
+                let mut found: Option<Vec<u8>> = None;
+                for root in corpus_roots {
+                    let full_path = root.join(source_path);
+                    if let Ok(bytes) = tokio::fs::read(&full_path).await {
+                        found = Some(bytes);
+                        break;
+                    }
+                }
+                if found.is_none()
+                    && let Ok(bytes) = tokio::fs::read(source_path).await
+                {
+                    found = Some(bytes);
+                }
+                let Some(b) = found else {
+                    debug!(
+                        path = %source_path,
+                        "resolver auto-heal: source file missing, skipping"
+                    );
+                    continue;
+                };
+                b
+            };
+
+            // Parse with the same language-dispatch logic
+            // `extract_code_symbols` uses: Rust path via the dedicated
+            // parser, other languages via the grammar registry.
+            let is_rust = language == Some("rust");
+            let tree = if is_rust {
+                let Ok(mut ast_parser) = AstParser::try_new() else {
+                    continue;
+                };
+                match ast_parser.parse(content_bytes.as_slice()) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                }
+            } else {
+                let Some(ts_lang) =
+                    crate::code::GrammarRegistry::global().language_for_extension(ext)
+                else {
+                    continue;
+                };
+                let Ok(mut ast_parser) = AstParser::with_language(ts_lang) else {
+                    continue;
+                };
+                match ast_parser.parse(content_bytes.as_slice()) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                }
+            };
+
+            // Replay the resolver — deletes existing refs for this file
+            // as its first step, then writes the new edges using the
+            // *current* resolver semantics (line-range from_context,
+            // same-crate disambiguation, expanded stdlib denylist via
+            // `extract_refs`).
+            let language_str = language.unwrap_or("rust");
+            let _ = resolve_and_store_refs(
+                &tree,
+                content_bytes.as_slice(),
+                source_path,
+                language_str,
+                &local_symbols,
+                storage,
+                self.package_graph.as_ref(),
+            )
+            .await;
+
+            // Stamp the file's resolver_version so next startup skips it.
+            let _ = storage
+                .upsert_file_hash(&FileHashRecord {
+                    resolver_version: super::RESOLVER_VERSION,
+                    ..hash.clone()
+                })
+                .await;
+
+            healed += 1;
+        }
+
+        info!(healed, "resolver auto-heal complete");
+        Ok(healed)
     }
 }

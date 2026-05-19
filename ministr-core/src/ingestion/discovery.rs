@@ -234,9 +234,29 @@ fn ignored_walk(dir: &Path) -> Result<ignore::Walk, IngestionError> {
     Ok(walker.build())
 }
 
-/// Hard guard: reject files inside always-ignored directories.
-pub(super) fn is_in_ignored_dir(path: &Path) -> bool {
-    for component in path.components() {
+/// Hard guard: reject files whose path includes an always-ignored
+/// directory component *under* the given corpus `root`.
+///
+/// Only path components below `root` are inspected, so a corpus whose
+/// own root path contains an always-ignored name as an ancestor (e.g.
+/// `~/.ministr/remote/<repo>/` — `.ministr` is in
+/// [`ALWAYS_IGNORE_DIRS`], but here it's the *parent* of the root, not
+/// a directory inside the corpus) is not falsely rejected.
+///
+/// If `root` is `None` or `file_path` is not a descendant of `root`,
+/// returns `false`: the discovery walker (`ignored_walk`) is the
+/// primary gate at walk time, and this function only acts as a
+/// defense-in-depth re-check from callers that already know the file
+/// belongs to a particular corpus root (so without that information,
+/// the safe default is to defer to the walker).
+pub(super) fn is_in_ignored_dir(root: Option<&Path>, file_path: &Path) -> bool {
+    let Some(root) = root else {
+        return false;
+    };
+    let Ok(relative) = file_path.strip_prefix(root) else {
+        return false;
+    };
+    for component in relative.components() {
         if let std::path::Component::Normal(name) = component
             && let Some(name_str) = name.to_str()
             && dir_name_is_ignored(name_str)
@@ -634,5 +654,58 @@ mod tests {
         write(&tmp.path().join("src/main.rs"), "fn main(){}");
         write(&tmp.path().join("Cargo.toml"), "[package]");
         assert!(!is_unreal_corpus(tmp.path()));
+    }
+
+    /// Regression: a corpus rooted *under* `.ministr/...` (e.g. the daemon's
+    /// clone cache at `~/.ministr/remote/<hash>/`) must not have every file
+    /// rejected just because `.ministr` appears as an ancestor of the root.
+    /// Before the fix, `is_in_ignored_dir` walked the absolute path including
+    /// ancestors, so a clone living under `.ministr` was unindexable.
+    #[test]
+    fn ignored_dir_check_only_inspects_components_under_root() {
+        // Cross-platform: build paths with PathBuf::push so the test
+        // doesn't bake in `/` or `\`.
+        let mut root = PathBuf::from("home");
+        root.push("alrik");
+        root.push(".ministr");
+        root.push("remote");
+        root.push("abc123");
+
+        let mut clean_file = root.clone();
+        clean_file.push("src");
+        clean_file.push("main.rs");
+
+        let mut nested_ignored = root.clone();
+        nested_ignored.push("vendor");
+        nested_ignored.push("node_modules");
+        nested_ignored.push("foo.js");
+
+        // `.ministr` is an ANCESTOR of the root → must not match.
+        assert!(
+            !is_in_ignored_dir(Some(&root), &clean_file),
+            "ancestor .ministr must not poison a corpus rooted under it"
+        );
+        // An always-ignored dir name appearing UNDER the root → must match.
+        assert!(
+            is_in_ignored_dir(Some(&root), &nested_ignored),
+            "node_modules under the corpus root must be rejected"
+        );
+    }
+
+    #[test]
+    fn ignored_dir_check_returns_false_without_root() {
+        // No root context = defer to the discovery walker. Even a path
+        // containing `.git` returns false (the walker already filtered).
+        let mut p = PathBuf::from("anywhere");
+        p.push(".git");
+        p.push("HEAD");
+        assert!(!is_in_ignored_dir(None, &p));
+    }
+
+    #[test]
+    fn ignored_dir_check_returns_false_when_file_not_under_root() {
+        let root = PathBuf::from("home").join("alrik").join("project");
+        let unrelated = PathBuf::from("tmp").join(".git").join("x");
+        assert!(!is_in_ignored_dir(Some(&root), &unrelated));
     }
 }

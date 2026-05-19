@@ -84,10 +84,16 @@ impl MinistrServer {
         drop(reg);
 
         // Phase 1: bookmark compression for evicted entries.
-        if !evicted_ids.is_empty() {
+        // `section_heading_path` reads from storage and is only available
+        // in local-engine mode. In daemon-forward mode we skip heading-path
+        // enrichment — the daemon owns the section delivery state and
+        // doesn't need the proxy to bookmark it.
+        if !evicted_ids.is_empty()
+            && let Some(ref service) = self.service
+        {
             let mut heading_paths = Vec::with_capacity(evicted_ids.len());
             for evicted_id in &evicted_ids {
-                heading_paths.push(self.service.section_heading_path(evicted_id).await);
+                heading_paths.push(service.section_heading_path(evicted_id).await);
             }
             let mut reg = self.registry.lock().await;
             if let Some(entry) = reg.get_session_mut(&self.active_session_id) {
@@ -101,9 +107,13 @@ impl MinistrServer {
 
         self.persist_session().await;
 
-        // Phase 2: background extractive compression to upgrade bookmarks.
-        if !evicted_ids.is_empty() {
-            let service = self.service.clone();
+        // Phase 2: background extractive compression — only when running
+        // local. The daemon's compression is reachable via the backend
+        // trait but isn't useful here because the session shadow lives in
+        // this process.
+        if !evicted_ids.is_empty()
+            && let Some(service) = self.service.clone()
+        {
             let registry = self.registry.clone();
             let session_id = self.active_session_id.clone();
             tokio::spawn(async move {
