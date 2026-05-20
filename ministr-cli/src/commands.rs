@@ -184,11 +184,78 @@ pub(crate) async fn cmd_serve_http(
     )
     .await?;
 
+    // PHASE3 chunk 5 — replaces PHASE2's boot-time bulk download.
+    //
+    // Build the blob backend once. `None` on self-hosted serve (no
+    // `MINISTR_BLOB_*` env), in which case every blob path below
+    // collapses to a no-op and the binary behaves exactly like before.
+    // The serve pod no longer pulls every bundle at boot; instead the
+    // first query against a corpus_id triggers an on-demand restore
+    // via `CorpusRegistry::get` → `ensure_present` → `BlobCorpusRestorer`.
+    let blob_backend = ministr_cloud::build_blob_backend_from_env()
+        .into_diagnostic()
+        .wrap_err("build blob backend from env")?;
+    let blob_backend_arc = blob_backend.map(Arc::new);
+
+    // Cloud env + Postgres pool. Hoisted above the corpus registry
+    // build so we can wire a `PostgresCorporaRepo` BEFORE `restore()`
+    // and the repo is the source of truth at cold start. Self-hosted
+    // serve leaves cloud_pool = None and skips the repo entirely;
+    // `restore()` falls back to the on-disk `corpora.json` as before.
+    let cloud_env = read_cloud_env();
+    let cloud_pool = if let Some(pg_url) = cloud_env.pg_url.as_deref() {
+        let pool = ministr_cloud::connect(pg_url)
+            .into_diagnostic()
+            .wrap_err("open cloud postgres pool")?;
+        // Auto-apply F1.2 + later migrations on every pod boot. The
+        // runner short-circuits when the schema is up to date so this
+        // is cheap on warm starts; on a fresh DB it creates the
+        // users / orgs / corpora / usage_events / audit_events tables
+        // (and PHASE3's `cloud_corpora`) before any handler can query
+        // them. Without this, a brand-new deployment crashes the first
+        // time any tenant-scoped handler runs.
+        ministr_cloud::run_migrations(&pool)
+            .await
+            .into_diagnostic()
+            .wrap_err("apply cloud postgres migrations")?;
+        tracing::info!("cloud postgres migrations applied");
+        Some(Arc::new(pool))
+    } else {
+        None
+    };
+
     // F1.2 sub-bullet 3 — build the corpus registry once and hand the
     // same `Arc<CorpusRegistry>` to both the MCP server and the daemon
     // REST router below. Both surfaces therefore observe a single
     // source of truth for what's indexed; restore() runs once.
     let corpus_registry = infra::build_corpus_registry(&ctx, config);
+
+    // PHASE3 chunk 1 — wire the durable corpus registry repo before
+    // `restore()`. In cloud mode this makes Postgres the source of
+    // truth for which corpora exist, so the list survives ACA pod
+    // recycling (the on-disk `corpora.json` is pod-ephemeral). In
+    // self-hosted serve cloud_pool is None and this is a no-op.
+    if let Some(pool) = cloud_pool.as_ref() {
+        let repo: Arc<dyn ministr_api::CorporaRepo> = Arc::new(
+            ministr_cloud::PostgresCorporaRepo::new(Arc::clone(pool), None),
+        );
+        corpus_registry.set_corpora_repo(repo);
+        tracing::info!("PostgresCorporaRepo wired — corpus registry durable across pod recycle");
+    }
+
+    // PHASE3 chunk 5 — wire the on-demand bundle restorer. When a
+    // query targets a corpus_id whose in-memory handle is absent but
+    // `cloud_corpora` lists it, `CorpusRegistry::get` calls
+    // `restorer.download` to lazy-fetch the bundle from blob. Replaces
+    // PHASE2's boot-time bulk download.
+    if let Some(backend_arc) = blob_backend_arc.as_ref() {
+        let restorer: Arc<dyn ministr_api::CorpusRestorer> = Arc::new(
+            ministr_cloud::BlobCorpusRestorer::new(Arc::clone(backend_arc)),
+        );
+        corpus_registry.set_corpus_restorer(restorer);
+        tracing::info!("BlobCorpusRestorer wired — first query lazy-downloads bundles from blob");
+    }
+
     corpus_registry.restore().await;
     let server = server.with_corpus_registry(Arc::clone(&corpus_registry));
 
@@ -245,7 +312,6 @@ pub(crate) async fn cmd_serve_http(
     };
     let bundle_router = ministr_mcp::bundle_routes::bundle_routes(bundle_state);
 
-    let cloud_env = read_cloud_env();
     let admin_state = build_admin_state(&cloud_env, corpus_paths.len())?;
     let admin_public = ministr_mcp::admin::admin_public_routes(admin_state.clone());
     let admin_protected = ministr_mcp::admin::admin_protected_routes(admin_state);
@@ -257,31 +323,9 @@ pub(crate) async fn cmd_serve_http(
     // observability spans authenticated calls only (auth check sits
     // outside the activity layer).
     //
-    // F1.4 — when MINISTR_PG_URL is set, open one cloud Postgres pool
-    // and share it across every consumer: PostgresUsageSink for the
-    // activity middleware (sub-bullet 2), and the billing endpoint
-    // for `GET /api/v1/billing/usage` (sub-bullet 4). Self-hosted
-    // serve leaves the pool unbuilt and bills/serves nobody.
-    let cloud_pool = if let Some(pg_url) = cloud_env.pg_url.as_deref() {
-        let pool = ministr_cloud::connect(pg_url)
-            .into_diagnostic()
-            .wrap_err("open cloud postgres pool")?;
-        // Auto-apply F1.2 + later migrations on every pod boot. The
-        // runner short-circuits when the schema is up to date so this
-        // is cheap on warm starts; on a fresh DB it creates the
-        // users / orgs / corpora / usage_events / audit_events tables
-        // before any handler can query them. Without this, a brand-new
-        // deployment crashes the first time any tenant-scoped handler
-        // runs.
-        ministr_cloud::run_migrations(&pool)
-            .await
-            .into_diagnostic()
-            .wrap_err("apply cloud postgres migrations")?;
-        tracing::info!("cloud postgres migrations applied");
-        Some(Arc::new(pool))
-    } else {
-        None
-    };
+    // cloud_pool was constructed above (hoisted for PHASE3 chunk 1).
+    // PostgresUsageSink (F1.4 sub-bullet 2) and the billing endpoint
+    // (sub-bullet 4) share that same pool.
 
     let mut daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&corpus_registry));
     if let Some(pool) = cloud_pool.as_ref() {
@@ -289,6 +333,18 @@ pub(crate) async fn cmd_serve_http(
             std::sync::Arc::new(ministr_cloud::PostgresUsageSink::from_arc(Arc::clone(pool)));
         daemon_state = daemon_state.with_usage_sink(sink);
         tracing::info!("PostgresUsageSink wired — billable usage events enabled");
+
+        // PHASE3 chunk 4 — route POST /api/v1/corpora and the clone
+        // route through the cloud index-job queue instead of running
+        // ingestion inline. The serve pod becomes embed-free; the
+        // worker (chunk 3) drains the queue.
+        let index_job_sink: std::sync::Arc<dyn ministr_api::IndexJobSink> = std::sync::Arc::new(
+            ministr_cloud::PostgresIndexJobSink::new(Arc::clone(pool), None),
+        );
+        daemon_state = daemon_state.with_index_job_sink(index_job_sink);
+        tracing::info!(
+            "PostgresIndexJobSink wired — serve pod enqueues instead of running indexer::run"
+        );
     }
 
     // F2.1 — GitHub App installation-token minter for private-repo
@@ -321,6 +377,41 @@ pub(crate) async fn cmd_serve_http(
             has_app_id = cloud_env.github_app_id.is_some(),
             has_private_key = cloud_env.github_app_private_key.is_some(),
             "GitHub App NOT wired — both MINISTR_GITHUB_APP_ID and MINISTR_GITHUB_APP_PRIVATE_KEY must be set"
+        );
+    }
+
+    // PHASE2 chunk 4 — durable corpus uploads.
+    //
+    // Build the BlobBackendSink, install a completion channel on the
+    // registry, and spawn the reactor that drains `(corpus_id,
+    // corpus_dir)` events and fires `enqueue_upload`. The reactor is
+    // serial (one upload at a time) so concurrent ingestion + upload
+    // don't compete for fs I/O during the bundle's tar+zstd pass.
+    //
+    // Wiring runs AFTER `restore()` above: if the cloud cold-started
+    // and `restore()` re-registered any corpora, those re-registrations
+    // do NOT fire an upload — we just downloaded the bundle from blob,
+    // it is already the source of truth.
+    if let Some(backend_arc) = blob_backend_arc.as_ref() {
+        let sink: Arc<dyn ministr_api::BlobSink> = Arc::new(
+            ministr_cloud::BlobBackendSink::new(
+                Arc::clone(backend_arc),
+                resolved_model.to_string(),
+            ),
+        );
+        let (tx, mut completion_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(String, std::path::PathBuf)>();
+        corpus_registry.set_completion_sink(tx);
+        daemon_state = daemon_state.with_blob_sink(Arc::clone(&sink));
+
+        tokio::spawn(async move {
+            while let Some((corpus_id, corpus_dir)) = completion_rx.recv().await {
+                sink.enqueue_upload(corpus_id, corpus_dir);
+            }
+            tracing::info!("blob upload reactor exited — completion channel closed");
+        });
+        tracing::info!(
+            "blob durability wired — bundles downloaded at boot, uploaded after every ingest"
         );
     }
 
@@ -1853,5 +1944,224 @@ pub(crate) fn cmd_atlas_manifest() -> miette::Result<()> {
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| miette::miette!("serialise atlas manifest: {e}"))?;
     println!("{json}");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ministr indexer-worker — PHASE3 chunk 3
+// ---------------------------------------------------------------------------
+
+/// `ministr indexer-worker` — single-shot queue-driven worker.
+///
+/// Pops one `Pending` job from the cloud Postgres queue, runs the
+/// existing ingestion pipeline against the job's source(s), uploads the
+/// resulting `.ministr-index` bundle to blob storage under the job's
+/// deterministic `corpus_id`, marks the job `Completed`, and exits.
+///
+/// Designed for ACA Job `parallelism: 1` cron-poll: a `None` from
+/// `claim_next` exits clean with status 0 so the cron's "no work this
+/// tick" path doesn't page anyone.
+///
+/// Only [`JobTrigger::Tenant`] is dispatched here in chunk 3; other
+/// triggers (Manual, Github) return `Failed` with an explanatory error
+/// so the serve pod's progress endpoint can surface the mismatch.
+#[allow(clippy::too_many_lines)] // sequential job lifecycle — each section is its own concern
+pub(crate) async fn cmd_indexer_worker(
+    config: &ministr_core::config::MinistrConfig,
+    resolved_model: &str,
+    resolved_dimension: Option<usize>,
+    rerank_depth: Option<usize>,
+) -> Result<()> {
+    use ministr_mcp::admin::jobs::{JobQueue as _, JobStatus, JobTrigger, PostgresJobQueue};
+
+    tracing::info!("ministr indexer-worker — single-shot job runner");
+
+    let pg_url = std::env::var("MINISTR_PG_URL")
+        .into_diagnostic()
+        .wrap_err("MINISTR_PG_URL required for indexer-worker mode")?;
+    let queue = PostgresJobQueue::open(&pg_url)
+        .await
+        .map_err(|e| miette::miette!("open postgres job queue: {e}"))?;
+
+    let blob_backend = ministr_cloud::build_blob_backend_from_env()
+        .into_diagnostic()
+        .wrap_err("build blob backend from env")?;
+
+    let job = match queue.claim_next().await {
+        Ok(Some(j)) => j,
+        Ok(None) => {
+            tracing::info!("no pending jobs — exiting clean");
+            return Ok(());
+        }
+        Err(e) => return Err(miette::miette!("claim_next: {e}")),
+    };
+    tracing::info!(
+        job_id = %job.id,
+        corpus_id = %job.corpus_id,
+        "claimed job"
+    );
+
+    // Resolve corpus sources from the trigger. Chunk 3 only dispatches
+    // Tenant; other variants (Manual, Github) belong to chunks 4-6 once
+    // the serve-pod and webhook enqueue paths land.
+    let sources: Vec<String> = match &job.trigger {
+        JobTrigger::Tenant { paths, clone_url } => {
+            // `clone_url` wins when present — it identifies a remote
+            // source. `paths` then describes local-mount paths. We
+            // never expect both, but if both appear we trust clone_url.
+            if let Some(url) = clone_url {
+                vec![url.clone()]
+            } else if !paths.is_empty() {
+                paths.clone()
+            } else {
+                let msg = "tenant trigger has neither paths nor clone_url";
+                let _ = queue
+                    .finish(&job.id, JobStatus::Failed, Some(msg.to_string()))
+                    .await;
+                return Err(miette::miette!("{msg}"));
+            }
+        }
+        other => {
+            let msg = format!("unsupported trigger in indexer-worker: {other:?}");
+            tracing::warn!("{msg}");
+            let _ = queue.finish(&job.id, JobStatus::Failed, Some(msg)).await;
+            return Ok(());
+        }
+    };
+
+    // Build infrastructure scoped to this job. The on-disk `corpus_dir`
+    // is hashed from `sources` (init_infrastructure's local convention)
+    // and is independent of `job.corpus_id` — the blob upload below
+    // uses the job's deterministic id so the serve pod's lookup matches.
+    let ctx = infra::init_infrastructure(
+        &sources,
+        config,
+        Some(resolved_model),
+        resolved_dimension,
+        rerank_depth,
+    )
+    .await?;
+
+    let progress = Arc::new(ministr_core::ingestion::IngestionProgress::new());
+
+    // PHASE3 fix B — emit periodic `update_progress` while the
+    // ingestion pipeline runs. Without this the serve pod's
+    // `queue_progress_stream` (chunk 4) polls Postgres every 500ms
+    // and sees the initial `total_files=0` row until the worker
+    // calls `finish` — i.e. the demo's SSE shows `0/0` for the
+    // entire run. The reporter polls the in-memory IngestionProgress
+    // snapshot every 500ms and writes it into the queue row, so the
+    // SSE reflects real per-file progress.
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+    let reporter = {
+        use ministr_mcp::admin::jobs::{JobProgress, JobQueue as _};
+        let queue = queue.clone();
+        let job_id = job.id.clone();
+        let progress = Arc::clone(&progress);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+            let mut cancel_rx = cancel_rx;
+            loop {
+                tokio::select! {
+                    _ = &mut cancel_rx => break,
+                    _ = interval.tick() => {
+                        let current = progress.current_file();
+                        let snap = JobProgress {
+                            stage: progress.phase().as_str().to_string(),
+                            total_files: progress.files_total() as u64,
+                            processed_files: progress.files_done() as u64,
+                            current_file: if current.is_empty() {
+                                None
+                            } else {
+                                Some(current)
+                            },
+                        };
+                        if let Err(e) = queue.update_progress(&job_id, snap).await {
+                            // Soft failure — the worker still owns the
+                            // job and will mark it terminal at the end.
+                            tracing::warn!(
+                                job_id = %job_id,
+                                error = %e,
+                                "update_progress failed; ingestion continues"
+                            );
+                        }
+                    }
+                }
+            }
+        })
+    };
+
+    let ingest_result = ingestion::run_corpus_ingestion(&sources, &[], &ctx, &progress).await;
+
+    // Stop the reporter before flipping the job's terminal status so
+    // a late update_progress doesn't overwrite the `Failed`/`Completed`
+    // row the rest of this function is about to write.
+    let _ = cancel_tx.send(());
+    let _ = reporter.await;
+
+    if let Err(e) = ingest_result {
+        let msg = format!("ingestion failed: {e}");
+        let _ = queue
+            .finish(&job.id, JobStatus::Failed, Some(msg.clone()))
+            .await;
+        return Err(miette::miette!("{msg}"));
+    }
+    tracing::info!(corpus_id = %job.corpus_id, "ingestion complete");
+
+    // Upload the bundle under the job's deterministic corpus_id (not
+    // `ctx.corpus_dir`'s hashed name). The serve pod will look up
+    // `corpora/<job.corpus_id>/manifest.json` against the same id.
+    //
+    // PHASE3 fix C — `bundle::export_bundle` chokes on an empty corpus
+    // (`corpus_roots` is empty → the tar build walks a path that
+    // resolves to "/" and fails with `missing file /`). Skip the
+    // upload when there's nothing to upload; the job is still
+    // `Completed` because the worker successfully processed the empty
+    // request — the upload is a no-op, not a failure.
+    let nothing_to_upload = ctx.index.is_empty();
+    if nothing_to_upload {
+        tracing::info!(
+            corpus_id = %job.corpus_id,
+            "no vectors after ingestion — skipping bundle upload"
+        );
+    } else if let Some(backend) = blob_backend {
+        let backend_arc = Arc::new(backend);
+        match ministr_cloud::build_manifest_from_corpus_dir(&ctx.corpus_dir, resolved_model).await {
+            Ok(manifest) => match backend_arc
+                .upload_corpus(&job.corpus_id, &ctx.corpus_dir, &manifest)
+                .await
+            {
+                Ok(version) => tracing::info!(
+                    corpus_id = %job.corpus_id,
+                    version,
+                    "uploaded bundle to blob"
+                ),
+                Err(e) => {
+                    let msg = format!("blob upload failed: {e}");
+                    let _ = queue
+                        .finish(&job.id, JobStatus::Failed, Some(msg.clone()))
+                        .await;
+                    return Err(miette::miette!("{msg}"));
+                }
+            },
+            Err(e) => {
+                let msg = format!("manifest build failed: {e}");
+                let _ = queue
+                    .finish(&job.id, JobStatus::Failed, Some(msg.clone()))
+                    .await;
+                return Err(miette::miette!("{msg}"));
+            }
+        }
+    } else {
+        tracing::info!(
+            "no blob backend configured — corpus indexed locally but not uploaded"
+        );
+    }
+
+    queue
+        .finish(&job.id, JobStatus::Completed, None)
+        .await
+        .map_err(|e| miette::miette!("finish job: {e}"))?;
+    tracing::info!(job_id = %job.id, "job completed");
     Ok(())
 }
