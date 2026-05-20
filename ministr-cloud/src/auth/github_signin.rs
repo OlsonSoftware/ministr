@@ -44,8 +44,9 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use tracing::{debug, info, warn};
 
+use crate::billing::StripeClient;
 use crate::idp::{GitHubIdp, IdentityProvider, IdpError};
-use crate::users::{upsert_github_user, UserError};
+use crate::users::{set_stripe_customer_id, upsert_github_user, UserError};
 
 /// Scopes attached to GitHub-IdP-minted bearer tokens. Matches the
 /// scope set the Tauri OAuth code-grant flow already requests
@@ -99,6 +100,12 @@ pub struct GitHubSigninState {
     /// prod). Used to build the GitHub `redirect_uri` parameter; must
     /// match the value registered in the GitHub OAuth App.
     cloud_base_url: String,
+    /// Optional Stripe client. `None` when
+    /// `MINISTR_STRIPE_SECRET_KEY` is unset (self-hosted / pre-billing
+    /// deployments). `Some` triggers Customer creation on first
+    /// sign-in (F1.5). Failures here are best-effort — they log and
+    /// continue rather than blocking sign-in.
+    stripe: Option<Arc<StripeClient>>,
     /// Open requests awaiting callback. `parking_lot::Mutex` matches the
     /// workspace convention (no poisoning, smaller, faster).
     pending: Arc<Mutex<HashMap<String, PendingState>>>,
@@ -111,6 +118,7 @@ impl std::fmt::Debug for GitHubSigninState {
             .field("idp", &"<GitHubIdp>")
             .field("pool", &"<Pool>")
             .field("oauth_store", &"<OAuthStore>")
+            .field("stripe_configured", &self.stripe.is_some())
             .field("pending_count", &self.pending.lock().len())
             .finish()
     }
@@ -133,8 +141,20 @@ impl GitHubSigninState {
             pool,
             oauth_store,
             cloud_base_url: trim_trailing_slashes(cloud_base_url.into()),
+            stripe: None,
             pending: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Wire a [`StripeClient`] for F1.5 Customer-creation on first
+    /// sign-in. When set, the callback handler creates a Stripe Customer
+    /// for newly-inserted user rows and persists the `cus_…` id into
+    /// `users.stripe_customer_id`. Failures are logged and tolerated —
+    /// sign-in succeeds even when Stripe is unreachable.
+    #[must_use]
+    pub fn with_stripe(mut self, stripe: Arc<StripeClient>) -> Self {
+        self.stripe = Some(stripe);
+        self
     }
 }
 
@@ -307,7 +327,45 @@ async fn handle_github_callback(
         .await?;
 
     let user = upsert_github_user(&state.pool, &identity).await?;
-    debug!(user_id = %user.id, email = %user.email, "github sign-in user upserted");
+    debug!(
+        user_id = %user.id,
+        email = %user.email,
+        inserted = user.inserted,
+        "github sign-in user upserted"
+    );
+
+    // F1.5 — create a Stripe Customer on the user's FIRST sign-in.
+    // Best-effort: a Stripe outage must not block the user from
+    // landing in the Tauri panel. The Customer is also the prerequisite
+    // for F2.4 Checkout, so a follow-up sync job will fill any rows
+    // that race past this hook with `stripe_customer_id IS NULL`.
+    if user.inserted
+        && let Some(stripe) = state.stripe.as_ref()
+        && let Some(github_id) = user.github_id
+    {
+        match stripe.create_customer(&user.email, github_id).await {
+            Ok(customer_id) => {
+                if let Err(e) =
+                    set_stripe_customer_id(&state.pool, &user.id, &customer_id).await
+                {
+                    warn!(error = %e, user_id = %user.id, "persist stripe_customer_id failed");
+                } else {
+                    info!(
+                        user_id = %user.id,
+                        stripe_customer_id = %customer_id,
+                        "stripe customer created for new sign-in"
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    user_id = %user.id,
+                    "stripe customer creation failed — sign-in proceeds, follow-up sync will retry"
+                );
+            }
+        }
+    }
 
     let token = state
         .oauth_store
