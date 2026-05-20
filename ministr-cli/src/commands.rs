@@ -45,6 +45,11 @@ use crate::ingestion;
 /// Stripe dashboard (prefixed `whsec_`). When set, mounts
 /// `POST /webhooks/stripe`; the handler rejects all events without a
 /// matching signature.
+/// `MINISTR_STRIPE_SECRET_KEY` — Stripe API secret key (prefixed
+/// `sk_test_` or `sk_live_`) used for OUTBOUND calls to Stripe (Customer
+/// creation on signup in F1.5; Meter events later). When unset, the
+/// cloud runs without ever calling Stripe; the GitHub sign-in flow
+/// still works, just without seeding a Stripe Customer.
 /// `MINISTR_GITHUB_CLIENT_ID` / `MINISTR_GITHUB_CLIENT_SECRET` — the
 /// GitHub OAuth App credentials registered on github.com. Both must be
 /// present together for the F1.3 `/auth/github/*` sign-in routes to
@@ -60,6 +65,7 @@ struct CloudEnv {
     webhook_secret: Option<String>,
     pg_url: Option<String>,
     stripe_webhook_secret: Option<String>,
+    stripe_secret_key: Option<String>,
     github_client_id: Option<String>,
     github_client_secret: Option<String>,
     cloud_base_url: Option<String>,
@@ -77,6 +83,7 @@ fn read_cloud_env() -> CloudEnv {
         webhook_secret: std::env::var("MINISTR_GITHUB_WEBHOOK_SECRET").ok(),
         pg_url: trimmed("MINISTR_PG_URL"),
         stripe_webhook_secret: trimmed("MINISTR_STRIPE_WEBHOOK_SECRET"),
+        stripe_secret_key: trimmed("MINISTR_STRIPE_SECRET_KEY"),
         github_client_id: trimmed("MINISTR_GITHUB_CLIENT_ID"),
         github_client_secret: trimmed("MINISTR_GITHUB_CLIENT_SECRET"),
         cloud_base_url: trimmed("MINISTR_CLOUD_BASE_URL"),
@@ -352,6 +359,27 @@ pub(crate) async fn cmd_serve_http(
             // (sign-in must be reachable without an existing token); the
             // CSRF + loopback-allowlist check inside the handlers is
             // the only gate.
+            // F1.5 — outbound Stripe client. Built independently of the
+            // GitHub sign-in routes so a future direct caller (Checkout
+            // session, billing portal in F2.4) can read it from the
+            // wired surface even without the GitHub IdP configured. The
+            // GitHub callback hook is the only F1.5 internal caller for
+            // now.
+            let stripe_client = cloud_env.stripe_secret_key.as_ref().and_then(|key| {
+                match ministr_cloud::StripeClient::new(key.clone()) {
+                    Ok(c) => {
+                        tracing::info!(
+                            "stripe outbound client built — Customer creation + Meters API enabled"
+                        );
+                        Some(Arc::new(c))
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "stripe client disabled — STRIPE_SECRET_KEY rejected");
+                        None
+                    }
+                }
+            });
+
             if let (Some(cid), Some(secret), Some(base_url)) = (
                 cloud_env.github_client_id.as_ref(),
                 cloud_env.github_client_secret.as_ref(),
@@ -359,15 +387,19 @@ pub(crate) async fn cmd_serve_http(
             ) {
                 match ministr_cloud::GitHubIdp::new(cid.clone(), secret.clone()) {
                     Ok(idp) => {
-                        let state = ministr_cloud::GitHubSigninState::new(
+                        let mut state = ministr_cloud::GitHubSigninState::new(
                             Arc::new(idp),
                             (**pool).clone(),
                             store,
                             base_url.clone(),
                         );
+                        if let Some(stripe) = stripe_client.as_ref() {
+                            state = state.with_stripe(Arc::clone(stripe));
+                        }
                         composed = composed.merge(ministr_cloud::github_signin_routes(state));
                         tracing::info!(
                             base_url = %base_url,
+                            stripe_customer_seed = stripe_client.is_some(),
                             "github sign-in mounted — GET /auth/github/start, /auth/github/callback"
                         );
                     }

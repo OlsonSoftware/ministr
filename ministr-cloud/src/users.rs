@@ -55,6 +55,13 @@ pub struct UserRow {
     /// free tier per B3); subsequent sign-ins preserve whatever the
     /// billing path most recently set.
     pub plan_id: String,
+    /// `True` when this row was inserted on THIS call — i.e. the user
+    /// just signed in for the first time. F1.5 uses it to gate Stripe
+    /// Customer creation; future signup-side effects (welcome email,
+    /// audit-log entry) can hook on the same flag. Detected via the
+    /// Postgres `xmax = 0` system-column trick in the RETURNING clause
+    /// (xmax is 0 for fresh INSERT rows, non-zero for UPDATEs).
+    pub inserted: bool,
 }
 
 /// Default plan assigned to brand-new GitHub sign-ins. Cloud has no free
@@ -107,6 +114,9 @@ pub async fn upsert_github_user(
     // of `plan_id` after the seed is Stripe webhook handler in F1.5.
     // `id::text` casts the UUID server-side so we don't have to pull the
     // `uuid` crate into the binary just for `try_get`.
+    // `xmax = 0 AS inserted` exposes Postgres's transaction-id system
+    // column: fresh INSERT rows have xmax=0, UPSERT-promoted UPDATE rows
+    // carry the locking xid.
     let row = conn
         .query_one(
             "INSERT INTO users (email, github_id, plan_id)
@@ -114,7 +124,8 @@ pub async fn upsert_github_user(
              ON CONFLICT (github_id) DO UPDATE
                  SET email = EXCLUDED.email,
                      plan_id = users.plan_id
-             RETURNING id::text AS id_text, email, github_id, plan_id",
+             RETURNING id::text AS id_text, email, github_id, plan_id,
+                       (xmax = 0) AS inserted",
             &[&email, &github_id, &DEFAULT_GITHUB_SIGNIN_PLAN],
         )
         .await
@@ -132,13 +143,44 @@ pub async fn upsert_github_user(
     let plan_id: String = row
         .try_get("plan_id")
         .map_err(|e| UserError::Sql(format!("read plan_id: {e}")))?;
+    let inserted: bool = row
+        .try_get("inserted")
+        .map_err(|e| UserError::Sql(format!("read inserted: {e}")))?;
 
     Ok(UserRow {
         id,
         email: email_out,
         github_id: github_id_out,
         plan_id,
+        inserted,
     })
+}
+
+/// Persist the Stripe customer id on the `users` row identified by
+/// UUID. The id should be the freshly-minted `cus_…` returned by
+/// [`crate::billing::StripeClient::create_customer`]. Best-effort —
+/// callers (the GitHub sign-in callback in F1.5) log + continue on
+/// failure rather than blocking the user's sign-in.
+///
+/// # Errors
+///
+/// Same connection / SQL surface as [`upsert_github_user`].
+pub async fn set_stripe_customer_id(
+    pool: &Pool,
+    user_id: &str,
+    stripe_customer_id: &str,
+) -> Result<(), UserError> {
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| UserError::GetConn(format!("set_stripe_customer_id: {e}")))?;
+    conn.execute(
+        "UPDATE users SET stripe_customer_id = $1 WHERE id = $2::uuid",
+        &[&stripe_customer_id, &user_id],
+    )
+    .await
+    .map_err(|e| UserError::Sql(format!("set_stripe_customer_id: {e}")))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -203,6 +245,7 @@ mod tests {
         assert_eq!(first.github_id, Some(gid));
         assert_eq!(first.email, "first@example.com");
         assert_eq!(first.plan_id, DEFAULT_GITHUB_SIGNIN_PLAN);
+        assert!(first.inserted, "fresh insert must report inserted=true");
 
         // Same github_id, new email — should UPDATE, preserve id.
         let second = upsert_github_user(&pool, &identity(gid, "renamed@example.com"))
@@ -210,6 +253,25 @@ mod tests {
             .expect("second upsert");
         assert_eq!(second.id, first.id, "stable row id on rename");
         assert_eq!(second.email, "renamed@example.com");
+        assert!(
+            !second.inserted,
+            "upsert that promoted to UPDATE must report inserted=false"
+        );
+
+        // Stripe customer id round-trip — sanity-check the F1.5 hook.
+        set_stripe_customer_id(&pool, &first.id, "cus_test_set_round_trip")
+            .await
+            .expect("set stripe_customer_id");
+        let conn = pool.get().await.unwrap();
+        let cust_row = conn
+            .query_one(
+                "SELECT stripe_customer_id FROM users WHERE id = $1::uuid",
+                &[&first.id],
+            )
+            .await
+            .unwrap();
+        let saved: Option<String> = cust_row.try_get("stripe_customer_id").unwrap();
+        assert_eq!(saved.as_deref(), Some("cus_test_set_round_trip"));
 
         // Clean up so the test is rerunnable. `id::uuid` casts the
         // text-form back to the column type for the WHERE comparison.
