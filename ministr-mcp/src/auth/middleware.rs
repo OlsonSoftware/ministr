@@ -15,6 +15,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::{Router, extract::Request};
+use ministr_api::TenantId;
 use tracing::debug;
 
 use super::OAuthConfig;
@@ -39,6 +40,12 @@ pub async fn validate_token_middleware(
 
     if let Some(tenant) = store.resolve_tenant(token).await {
         debug!(subject = %tenant.subject, plan = ?tenant.plan, "tenant resolved");
+        // TenantId is a separate, dep-light newtype in `ministr-api`
+        // so `ministr-daemon`'s activity middleware can read tenant
+        // identity without depending on `ministr-mcp::auth::Tenant`.
+        request
+            .extensions_mut()
+            .insert(TenantId(tenant.subject.clone()));
         request.extensions_mut().insert(tenant);
         next.run(request).await
     } else {
@@ -86,6 +93,9 @@ pub async fn validate_scope_middleware(
             scope = %state.required_scope,
             "scoped tenant resolved"
         );
+        request
+            .extensions_mut()
+            .insert(TenantId(tenant.subject.clone()));
         request.extensions_mut().insert(tenant);
         next.run(request).await
     } else {

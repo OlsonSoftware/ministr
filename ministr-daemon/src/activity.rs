@@ -20,9 +20,19 @@ use axum::{
     response::Response,
 };
 use ministr_api::activity::ActivityEvent;
+use ministr_api::TenantId;
 use percent_encoding::percent_decode_str;
 
 use crate::state::AppState;
+
+/// Map a daemon tool route to its billable `UsageEventKind` wire
+/// string. Today every classified route bills as `query.served`;
+/// `corpus.indexed`, `index.minutes`, and `atlas.queries` come from
+/// other call sites (the indexer + the future `/atlas/*` mounts) and
+/// don't flow through this middleware.
+const fn route_kind(_tool: &str) -> &'static str {
+    "query.served"
+}
 
 /// Decode percent-encoded URL path components for human-readable
 /// activity summaries (e.g. `%2FUsers%2F…%23section` → `/Users/…#section`).
@@ -60,6 +70,11 @@ pub async fn record(State(state): State<AppState>, req: Request<Body>, next: Nex
         .get("x-ministr-session-id")
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
+    // F1.4 sub-bullet 2 — pull the tenant id out of request extensions
+    // before `next.run(req)` consumes the request. The auth middleware
+    // in `ministr-mcp::auth::middleware` populates this when running
+    // in cloud mode; self-hosted serve never sets it.
+    let tenant_id = req.extensions().get::<TenantId>().cloned();
     let started = Instant::now();
 
     let res = next.run(req).await;
@@ -82,6 +97,14 @@ pub async fn record(State(state): State<AppState>, req: Request<Body>, next: Nex
     // other route the URL has no session id, so fall back to the
     // header the MCP proxy stamps from its active session.
     let session_id = route.session_id.or(header_session_id);
+
+    // Emit the billable usage event before constructing the activity
+    // record. The sink is fire-and-forget — concrete impls (the cloud
+    // crate's PostgresUsageSink) spawn their own tokio task — so this
+    // call never blocks the response.
+    if let (Some(sink), Some(tenant)) = (state.usage_sink.as_ref(), tenant_id) {
+        sink.record(tenant, route_kind(route.tool), 1);
+    }
 
     let event = ActivityEvent {
         timestamp_ms: now_ms(),
@@ -220,5 +243,32 @@ mod tests {
         assert!(classify_route("/api/v1/corpora/abc").is_none());
         assert!(classify_route("/api/v1/corpora/abc/progress").is_none());
         assert!(classify_route("/api/v1/corpora/abc/sessions/sess-1/usage").is_none());
+    }
+
+    #[test]
+    fn route_kind_maps_every_tool_to_query_served() {
+        // F1.4 sub-bullet 2 — every classified tool route bills as
+        // `query.served`. The Atlas + indexer paths emit other kinds
+        // from their own call sites, not this middleware.
+        for tool in [
+            "ministr_survey",
+            "ministr_symbols",
+            "ministr_definition",
+            "ministr_references",
+            "ministr_read",
+            "ministr_extract",
+            "ministr_toc",
+            "ministr_related",
+            "ministr_bridge",
+            "ministr_compress",
+            "ministr_ask",
+            "ministr_dropped",
+        ] {
+            assert_eq!(
+                route_kind(tool),
+                "query.served",
+                "{tool} should bill as query.served"
+            );
+        }
     }
 }

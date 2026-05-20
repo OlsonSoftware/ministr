@@ -201,7 +201,21 @@ pub(crate) async fn cmd_serve_http(
     // `record_activity` middleware is applied per sub-router so
     // observability spans authenticated calls only (auth check sits
     // outside the activity layer).
-    let daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&corpus_registry));
+    //
+    // F1.4 sub-bullet 2 — when MINISTR_PG_URL is set, attach a
+    // PostgresUsageSink so every successful tool route also writes a
+    // billable usage_events row. Self-hosted serve leaves the sink
+    // `None` and bills nobody.
+    let mut daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&corpus_registry));
+    if let Some(pg_url) = cloud_env.pg_url.as_deref() {
+        let pool = ministr_cloud::connect(pg_url)
+            .into_diagnostic()
+            .wrap_err("open postgres pool for usage sink")?;
+        let sink: std::sync::Arc<dyn ministr_api::UsageSink> =
+            std::sync::Arc::new(ministr_cloud::PostgresUsageSink::new(pool));
+        daemon_state = daemon_state.with_usage_sink(sink);
+        tracing::info!("PostgresUsageSink wired — billable usage events enabled");
+    }
 
     let activity_layer = axum::middleware::from_fn_with_state(
         daemon_state.clone(),

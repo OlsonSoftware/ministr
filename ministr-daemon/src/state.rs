@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use ministr_api::activity::ActivityEvent;
 use ministr_api::coherence::CoherenceEvent;
+use ministr_api::UsageSink;
 use tokio::sync::RwLock;
 
 use crate::inference::{ClaudeCliInference, Inference};
@@ -49,6 +50,12 @@ pub struct AppState {
     /// per registered corpus; read by the Tauri app, `/coherence-events`
     /// HTTP endpoint, and `DaemonClient::recent_coherence_events`.
     pub coherence: Arc<RwLock<VecDeque<CoherenceEvent>>>,
+    /// Billable-usage emission sink. `Some` when cloud mode has wired
+    /// the closed `ministr_cloud::billing::PostgresUsageSink` (F1.4
+    /// sub-bullet 2); `None` for self-hosted serve where no usage is
+    /// billed. The activity middleware fires this fire-and-forget
+    /// whenever a tool route completes successfully.
+    pub usage_sink: Option<Arc<dyn UsageSink>>,
 }
 
 impl AppState {
@@ -70,6 +77,7 @@ impl AppState {
                 ACTIVITY_BUFFER_CAPACITY,
             ))),
             coherence,
+            usage_sink: None,
         }
     }
 
@@ -89,7 +97,16 @@ impl AppState {
                 ACTIVITY_BUFFER_CAPACITY,
             ))),
             coherence,
+            usage_sink: None,
         }
+    }
+
+    /// Wire a billable-usage sink (cloud mode). Returns `self` for
+    /// chainable construction in `cmd_serve_http`.
+    #[must_use]
+    pub fn with_usage_sink(mut self, sink: Arc<dyn UsageSink>) -> Self {
+        self.usage_sink = Some(sink);
+        self
     }
 
     /// Override the inference engine (for testing).
