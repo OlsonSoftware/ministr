@@ -405,6 +405,185 @@ pub async fn cloud_authenticate(app: AppHandle) -> Result<(), CommandError> {
     Ok(())
 }
 
+/// Drive the F1.3 GitHub sign-in flow against the configured cloud
+/// endpoint. Same RFC 8252 loopback-listener pattern as
+/// [`cloud_authenticate`], but instead of running the OAuth code-grant
+/// dance directly against `/oauth/*`, this command bounces through the
+/// cloud's `/auth/github/start` route — the cloud handles federation,
+/// upserts the user, and redirects the bearer token back to our
+/// loopback.
+///
+/// The cloud must be configured with the GitHub OAuth App credentials
+/// (`MINISTR_GITHUB_CLIENT_ID` + `MINISTR_GITHUB_CLIENT_SECRET`) and
+/// `MINISTR_CLOUD_BASE_URL`, otherwise the route returns 404.
+///
+/// Cancellation: a 3-minute deadline aborts the listener if the user
+/// never completes the GitHub consent screen.
+#[tauri::command]
+pub async fn cloud_authenticate_github(app: AppHandle) -> Result<(), CommandError> {
+    let cfg = load_config();
+    let endpoint = if cfg.is_configured() {
+        cfg.endpoint.clone()
+    } else {
+        "https://mcp.ministr.ai".to_string()
+    };
+
+    // CSRF nonce for the loopback redirect. The cloud echoes this back
+    // verbatim; the listener verifies it matches before saving the token.
+    let state_nonce = random_url_safe_id(32);
+
+    // Bind the callback listener BEFORE building the start URL so we
+    // know the port we're committing to.
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("bind callback: {e}")))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("local_addr: {e}")))?
+        .port();
+    let loopback_redirect = format!("http://127.0.0.1:{port}/cb");
+    info!(port, "cloud_authenticate_github: callback listener bound");
+
+    let start_url = format!(
+        "{endpoint}/auth/github/start?loopback_redirect={lr}&state={st}",
+        lr = url_encode(&loopback_redirect),
+        st = url_encode(&state_nonce),
+    );
+
+    #[allow(deprecated)]
+    // Same `Shell::open` migration tracked in F2.7 as `cloud_authenticate`.
+    app.shell()
+        .open(start_url.clone(), None)
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("open browser: {e}")))?;
+    debug!("cloud_authenticate_github: browser launched to {start_url}");
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(180),
+        await_github_signin_callback(listener),
+    )
+    .await
+    .map_err(|_| {
+        CommandError::new(
+            ErrorKind::Io,
+            "GitHub sign-in flow timed out — user did not complete sign-in within 3 minutes",
+        )
+    })??;
+
+    if outcome.state != state_nonce {
+        return Err(CommandError::new(
+            ErrorKind::InvalidInput,
+            "GitHub sign-in state mismatch (possible CSRF attempt) — please retry",
+        ));
+    }
+    if let Some(err) = outcome.error {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("GitHub sign-in declined or failed: {err}"),
+        ));
+    }
+    let token = outcome.token.ok_or_else(|| {
+        CommandError::new(
+            ErrorKind::Io,
+            "GitHub sign-in completed without delivering a bearer token",
+        )
+    })?;
+
+    let mut saved = load_config();
+    saved.endpoint = endpoint;
+    save_config(&saved)?;
+    save_bearer_token(&token)?;
+    info!("cloud_authenticate_github: token acquired and persisted to OS keychain");
+    Ok(())
+}
+
+/// Parsed query-string parameters the cloud delivers to the loopback.
+struct GitHubSigninCallback {
+    state: String,
+    token: Option<String>,
+    error: Option<String>,
+}
+
+async fn await_github_signin_callback(
+    listener: TcpListener,
+) -> Result<GitHubSigninCallback, CommandError> {
+    let (mut stream, _) = listener
+        .accept()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("accept callback: {e}")))?;
+    let (read_half, mut write_half) = stream.split();
+    let mut reader = BufReader::new(read_half);
+    let mut request_line = String::new();
+    reader
+        .read_line(&mut request_line)
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("read request: {e}")))?;
+    let mut discard = String::new();
+    loop {
+        discard.clear();
+        let n = reader
+            .read_line(&mut discard)
+            .await
+            .map_err(|e| CommandError::new(ErrorKind::Io, format!("drain headers: {e}")))?;
+        if n == 0 || discard == "\r\n" || discard == "\n" {
+            break;
+        }
+    }
+
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
+    if parts.len() < 2 {
+        let _ = write_html_response(&mut write_half, "Malformed request").await;
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("malformed callback request line: {request_line:?}"),
+        ));
+    }
+    let path_and_query = parts[1];
+    let query = path_and_query.split_once('?').map_or("", |(_, q)| q);
+    let mut state: Option<String> = None;
+    let mut token: Option<String> = None;
+    let mut error: Option<String> = None;
+    for pair in query.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            let v = url_decode(v);
+            match k {
+                "state" => state = Some(v),
+                "token" => token = Some(v),
+                "error" => error = Some(v),
+                _ => {}
+            }
+        }
+    }
+
+    let Some(state) = state else {
+        let _ = write_html_response(
+            &mut write_half,
+            "Missing state on callback. Please retry.",
+        )
+        .await;
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            "github callback missing state",
+        ));
+    };
+
+    let message = if error.is_some() {
+        "GitHub sign-in failed. You can close this window."
+    } else if token.is_some() {
+        "Signed in to ministr Cloud via GitHub. You can close this window."
+    } else {
+        "GitHub sign-in returned no token. Please retry."
+    };
+    write_html_response(&mut write_half, message)
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("write response: {e}")))?;
+
+    Ok(GitHubSigninCallback {
+        state,
+        token,
+        error,
+    })
+}
+
 /// Accept one TCP connection on `listener`, read the HTTP request line,
 /// extract `code` and `state` from the query string, write a friendly
 /// "you can close this window" HTML response, and return `(code, state)`.

@@ -147,6 +147,7 @@ fn main() {
             commands_cloud::cloud_set_endpoint,
             commands_cloud::cloud_set_bearer_token,
             commands_cloud::cloud_authenticate,
+            commands_cloud::cloud_authenticate_github,
             commands_cloud::cloud_disconnect,
             commands_cloud::cloud_health_check,
             commands_cloud::cloud_trigger_reindex,

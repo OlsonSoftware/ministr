@@ -85,6 +85,14 @@ export const cloudClient = {
    * (~3 min) or any handshake failure.
    */
   authenticate: () => invoke<void>("cloud_authenticate"),
+  /**
+   * F1.3 — drive the GitHub-federated sign-in flow against the cloud's
+   * `/auth/github/*` routes. The cloud must be configured with
+   * `MINISTR_GITHUB_CLIENT_ID` + `MINISTR_GITHUB_CLIENT_SECRET` +
+   * `MINISTR_CLOUD_BASE_URL`, otherwise the routes return 404 and the
+   * command rejects.
+   */
+  authenticateGitHub: () => invoke<void>("cloud_authenticate_github"),
   disconnect: () => invoke<void>("cloud_disconnect"),
   healthCheck: () => invoke<CloudHealth>("cloud_health_check"),
   /** F1.4 sub-bullet 5 — fetch the calling tenant's metered usage. */

@@ -36,19 +36,25 @@
 
 #![deny(unsafe_code)]
 
+pub mod auth;
 pub mod billing;
 pub mod blob;
 pub mod db;
 pub mod idp;
+pub mod users;
 
 pub use billing::{
     billing_routes, record_usage, rollup_day, stripe_webhook_routes, BillingState, PartialRow,
     PostgresUsageSink, RollupRow, StripeWebhookError, StripeWebhookState, UsageEventKind,
     UsageResponse,
 };
+pub use auth::{
+    github_signin_routes, GitHubSigninError, GitHubSigninState, DEFAULT_SIGNIN_SCOPE,
+};
 pub use blob::{BlobError, BlobResult, CorpusBlobStore};
 pub use db::{connect, run_migrations, DbError};
 pub use idp::{GitHubIdp, IdentityProvider, IdpError, ResolvedIdentity, GITHUB_ISSUER};
+pub use users::{upsert_github_user, UserError, UserRow, DEFAULT_GITHUB_SIGNIN_PLAN};
 
 /// Re-exported from `ministr-mcp` (MIT) so the auth middleware in the
 /// local stack can attach a [`Plan`]-bearing `Tenant` to every request

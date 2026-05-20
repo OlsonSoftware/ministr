@@ -72,3 +72,9 @@ axum.workspace = true
 hmac.workspace = true
 sha2.workspace = true
 subtle.workspace = true
+# F1.3 sub-bullet — GitHub sign-in flow. parking_lot::Mutex for the
+# in-memory pending-state map (same convention as the rest of the
+# workspace); getrandom for cryptographically-random PKCE verifiers
+# (RFC 7636 §4.1 requires CSPRNG).
+parking_lot.workspace = true
+getrandom = "0.3"
