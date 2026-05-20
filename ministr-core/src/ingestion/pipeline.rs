@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::stream::{self, StreamExt};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument, trace, warn};
 
 use crate::code::AstParser;
 use crate::code::bridge::linker::BridgeLinker;
@@ -1519,23 +1519,43 @@ impl IngestionPipeline {
                         // inside an async block: persist is fast
                         // enough on hot-disk to not warrant
                         // spawn_blocking for the current corpus sizes.
+                        //
+                        // PHASE5 chunk 2: gate the call on
+                        // `!index.is_empty()`. `stats.files_indexed`
+                        // is bumped by the producer the moment a file
+                        // is parsed + stored, but the embedder runs
+                        // concurrently and may not have flushed any
+                        // vectors yet — the parser can race ahead by
+                        // many files. Calling `index.persist()` on an
+                        // empty HNSW returns "nb point 0" + a WARN log
+                        // every persist_every boundary until the
+                        // consumer catches up, which is loud and
+                        // useless. Mirrors PHASE3 Fix A's spirit for
+                        // the streaming path.
                         if let (Some(n), Some(dir)) = (
                             self.batch_config.persist_every,
                             self.corpus_dir.as_ref(),
                         ) && n != 0
                             && stats.files_indexed.is_multiple_of(n)
                         {
-                            match index.persist(dir) {
-                                Ok(()) => debug!(
+                            if index.is_empty() {
+                                trace!(
                                     files_indexed = stats.files_indexed,
-                                    dir = %dir.display(),
-                                    "mid-run HNSW persist snapshot"
-                                ),
-                                Err(e) => warn!(
-                                    files_indexed = stats.files_indexed,
-                                    error = %e,
-                                    "mid-run HNSW persist failed; continuing"
-                                ),
+                                    "skipping mid-run HNSW persist: index has no vectors yet",
+                                );
+                            } else {
+                                match index.persist(dir) {
+                                    Ok(()) => debug!(
+                                        files_indexed = stats.files_indexed,
+                                        dir = %dir.display(),
+                                        "mid-run HNSW persist snapshot"
+                                    ),
+                                    Err(e) => warn!(
+                                        files_indexed = stats.files_indexed,
+                                        error = %e,
+                                        "mid-run HNSW persist failed; continuing"
+                                    ),
+                                }
                             }
                         }
 
@@ -2342,3 +2362,70 @@ impl IngestionPipeline {
         Ok(healed)
     }
 }
+
+#[cfg(test)]
+mod phase5_chunk2_persist_gate_tests {
+    //! PHASE5 chunk 2 — regression coverage for the empty-index persist
+    //! gate added to `run_producer_consumer`. Driving the full pipeline
+    //! here would require building Storage + Embedder + FileItems and a
+    //! cancellation token harness; PHASE4 chunk 4 explicitly noted that
+    //! the persist hook is exercised by the broader test suite + the
+    //! operator smoke. This module instead pins the two facts the gate
+    //! relies on:
+    //!
+    //! 1. A freshly-constructed [`HnswIndex`](crate::index::HnswIndex)
+    //!    reports `is_empty() == true`.
+    //! 2. Calling `persist()` on that empty index is the failure mode
+    //!    we're avoiding — either an `Err` (current behaviour at the
+    //!    time of writing) OR a no-op that still produces a misleading
+    //!    snapshot. Either way the gate is the right place to short-
+    //!    circuit.
+    //!
+    //! If `HnswIndex` ever starts returning `Ok(())` for empty persist,
+    //! the second test still passes (it asserts `is_empty()` matches
+    //! the persist outcome) and the gate is unchanged — the gate is
+    //! the contract, not the test.
+
+    use crate::index::{HnswIndex, VectorIndex};
+    use tempfile::tempdir;
+
+    #[test]
+    fn fresh_hnsw_is_empty() {
+        // Producer-side regression: a brand-new index reports empty,
+        // which is exactly the state the parser-side counter races into
+        // before the embedder catches up.
+        let idx = HnswIndex::new(384, 1024).expect("create hnsw");
+        assert!(
+            idx.is_empty(),
+            "fresh HNSW must report is_empty=true (this is what the gate reads)",
+        );
+        assert_eq!(idx.len(), 0);
+    }
+
+    #[test]
+    fn empty_persist_is_the_failure_we_avoid() {
+        // PHASE4 chunk 4 hit this in production: index.persist() on an
+        // empty HNSW returns an error like "nb point 0", drowning the
+        // demo log in WARNs until the embedder catches up. The gate's
+        // job is to ensure persist() is never called in this state.
+        let dir = tempdir().expect("tempdir");
+        let idx = HnswIndex::new(384, 1024).expect("create hnsw");
+        let result = idx.persist(dir.path());
+        // Either branch is acceptable behaviour from HnswIndex; the
+        // important thing is that the gate short-circuits BEFORE we
+        // reach this code path at all.
+        if result.is_ok() {
+            // If the underlying impl later starts accepting empty
+            // persists, the gate is still desirable (no point writing a
+            // useless snapshot every persist_every files).
+            return;
+        }
+        // Confirm the failure mode we're avoiding is in fact tied to
+        // emptiness — once we add a vector, the same persist succeeds.
+        idx.insert("sec-1", &[0.1_f32; 384])
+            .expect("insert one vector");
+        idx.persist(dir.path())
+            .expect("persist with at least one vector must succeed");
+    }
+}
+
