@@ -956,7 +956,9 @@ pub(crate) async fn cmd_index(
     .await?;
 
     let progress = Arc::new(ministr_core::ingestion::IngestionProgress::new());
-    ingestion::run_corpus_ingestion(corpus_paths, git_includes, &ctx, &progress).await?;
+    // Local `ministr index` keeps the PHASE3 bundle-at-end shape;
+    // streaming persist is opt-in via the cloud worker path below.
+    ingestion::run_corpus_ingestion(corpus_paths, git_includes, &ctx, &progress, None).await?;
 
     tracing::info!("indexing complete");
     Ok(())
@@ -2103,7 +2105,13 @@ pub(crate) async fn cmd_indexer_worker(
         })
     };
 
-    let ingest_result = ingestion::run_corpus_ingestion(&sources, &[], &ctx, &progress).await;
+    // PHASE4 cloud-streaming opt-in: flush the HNSW index every 4
+    // files indexed. The worker runs in a memory-constrained ACA pod
+    // (4 GiB target after chunk 5 lands); bounding the HNSW rss with
+    // periodic atomic snapshots is the lever we earned by shipping
+    // chunks 3+4. Local `ministr index` stays on bundle-at-end.
+    let ingest_result =
+        ingestion::run_corpus_ingestion(&sources, &[], &ctx, &progress, Some(4)).await;
 
     // Stop the reporter before flipping the job's terminal status so
     // a late update_progress doesn't overwrite the `Failed`/`Completed`
