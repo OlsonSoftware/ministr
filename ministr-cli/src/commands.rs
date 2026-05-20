@@ -566,6 +566,27 @@ pub(crate) async fn cmd_serve_http(
             composed = composed.merge(billing_protected);
             tracing::info!("billing endpoint mounted — GET /api/v1/billing/usage");
 
+            // F3.1a — orgs CRUD + member listing. Mounted only when the
+            // cloud Postgres pool exists (self-hosted serve has no
+            // multi-tenant orgs surface). Behind `ministr:read` —
+            // creating an org is a self-service tenant action, not a
+            // corpus mutation, so the `:write` scope's rate-limit +
+            // quota layers are intentionally not in this path. F3.1b
+            // (invites) and F3.1c (Stripe seat sync) extend the same
+            // router.
+            let orgs_router = ministr_cloud::orgs_routes(
+                ministr_cloud::OrgsState::from_arc(Arc::clone(pool)),
+            );
+            let orgs_protected = ministr_mcp::auth::scope_protected_router(
+                orgs_router,
+                store.clone(),
+                "ministr:read",
+            );
+            composed = composed.merge(orgs_protected);
+            tracing::info!(
+                "orgs endpoints mounted — POST /api/v1/orgs, GET /api/v1/orgs, GET /api/v1/orgs/{{id}}/members"
+            );
+
             // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
             // Mounted behind `ministr:read` so any paid-tier token
             // admits; the F2.3 `AtlasAccessRule` runs higher up in the
