@@ -13,7 +13,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use ministr_api::coherence::CoherenceEvent;
+use ministr_api::corpora_repo::{CorporaRepo, CorpusRegistration};
 use ministr_api::corpus::{CorpusInfo, IndexingStatus};
+use ministr_api::corpus_restorer::{CorpusRestoreError, CorpusRestorer};
 use ministr_core::config::MinistrConfig;
 use ministr_core::corpus_id::{CorpusIdError, canonical_corpus_paths, corpus_id_from_paths};
 use ministr_core::embedding::Embedder;
@@ -69,6 +71,38 @@ pub struct CorpusRegistry {
     /// feeds the app-level ring buffer without the registry needing a
     /// direct handle to [`AppState`].
     coherence_sink: std::sync::OnceLock<Arc<RwLock<VecDeque<CoherenceEvent>>>>,
+    /// Optional sink for per-corpus ingestion-completion events. Wired
+    /// in cloud mode by `cmd_serve_http` after construction; the
+    /// indexer fires this from the `Ok(stats)` exit point of every
+    /// successful ingest (initial register, `update_corpus_paths`
+    /// re-ingest, and watcher debounced re-runs). The reactor on the
+    /// receive end exports a bundle and uploads to durable blob
+    /// storage so corpus indexes survive ACA pod recycling. `None` on
+    /// self-hosted serve, where the user's local disk is already
+    /// durable.
+    completion_tx:
+        std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>>,
+    /// Durable registry repository. Wired in cloud mode by
+    /// `cmd_serve_http` so the list of which corpora exist survives
+    /// pod recycling — the on-disk `corpora.json` is pod-ephemeral on
+    /// ACA. `None` on self-hosted serve, where the user's local disk
+    /// is already durable and `corpora.json` is the source of truth.
+    /// When set, `register` / `unregister` / `update_corpus_paths` fire
+    /// idempotent writes through the repo, and `restore` reads its
+    /// entry list from the repo instead of the manifest file.
+    corpora_repo: std::sync::OnceLock<Arc<dyn CorporaRepo>>,
+    /// PHASE3 chunk 5 — on-demand bundle restore hook. Wired in
+    /// cloud mode by `cmd_serve_http`. When a `get()` misses on the
+    /// in-memory map and a `cloud_corpora` row exists for the id,
+    /// `ensure_present` calls `restorer.download(...)` then inserts
+    /// the corpus via `register_restored`. `None` on self-hosted
+    /// serve — a missing in-memory entry stays a `NotFound`.
+    corpus_restorer: std::sync::OnceLock<Arc<dyn CorpusRestorer>>,
+    /// Per-corpus async mutex serializing restore attempts so two
+    /// concurrent queries for the same fresh id don't kick off two
+    /// downloads. Cleared after a successful restore; future
+    /// restore attempts will re-create as needed.
+    restore_locks: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 /// A single managed corpus with its resources.
@@ -172,6 +206,10 @@ impl CorpusRegistry {
             corpora: RwLock::new(HashMap::new()),
             config,
             coherence_sink: std::sync::OnceLock::new(),
+            completion_tx: std::sync::OnceLock::new(),
+            corpora_repo: std::sync::OnceLock::new(),
+            corpus_restorer: std::sync::OnceLock::new(),
+            restore_locks: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -182,6 +220,214 @@ impl CorpusRegistry {
     /// A second call is a no-op (the first wins).
     pub fn set_coherence_sink(&self, sink: Arc<RwLock<VecDeque<CoherenceEvent>>>) {
         let _ = self.coherence_sink.set(sink);
+    }
+
+    /// Wire an ingestion-completion sink. After this call, every
+    /// successful ingest in [`indexer::run`] sends `(corpus_id, corpus_dir)`
+    /// on `tx`. The receive end is the cloud durability reactor that
+    /// exports a bundle and uploads it to blob storage.
+    ///
+    /// Intended to be called exactly once, immediately after construction.
+    /// A second call is a no-op (the first wins). `None`-sink registries
+    /// (the self-hosted serve and every test) see zero behavior change —
+    /// `notify_complete` is fire-and-forget and silently drops when no
+    /// sink is wired.
+    pub fn set_completion_sink(
+        &self,
+        tx: tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>,
+    ) {
+        let _ = self.completion_tx.set(tx);
+    }
+
+    /// Send a `(corpus_id, corpus_dir)` completion event if a sink is
+    /// wired. Best-effort: if the receiver has been dropped the send
+    /// error is ignored, matching the [`UsageSink`] convention.
+    ///
+    /// Called from [`indexer::run`] at the success exit point of every
+    /// ingest path (initial register, `update_corpus_paths` re-ingest,
+    /// watcher debounced re-run).
+    pub(crate) fn notify_complete(&self, corpus_id: &str, corpus_dir: &std::path::Path) {
+        if let Some(tx) = self.completion_tx.get() {
+            let _ = tx.send((corpus_id.to_string(), corpus_dir.to_path_buf()));
+        }
+    }
+
+    /// Wire a durable corpus registry repository. After this call,
+    /// every `register` / `unregister` / `update_corpus_paths` mirrors
+    /// its in-memory mutation to the repo, and `restore` reads its
+    /// entry list from the repo instead of `corpora.json`.
+    ///
+    /// Intended to be called exactly once, immediately after
+    /// construction. A second call is a no-op (the first wins). `None`
+    /// is the self-hosted serve default — `corpora.json` stays the
+    /// source of truth.
+    pub fn set_corpora_repo(&self, repo: Arc<dyn CorporaRepo>) {
+        let _ = self.corpora_repo.set(repo);
+    }
+
+    /// Best-effort upsert into the durable corpora repo. Mirrors the
+    /// `save_manifest` contract: failures warn-log and continue — the
+    /// in-memory registration is still usable this session, and a
+    /// later mutation may succeed.
+    async fn notify_repo_upsert(&self, corpus_id: &str, paths: &[String]) {
+        let Some(repo) = self.corpora_repo.get() else {
+            return;
+        };
+        let entry = CorpusRegistration {
+            corpus_id: corpus_id.to_string(),
+            paths: paths.to_vec(),
+            display_name: Some(display_name_from_paths(paths)),
+        };
+        if let Err(e) = repo.upsert(&entry).await {
+            warn!(corpus_id = %corpus_id, error = %e, "corpora_repo upsert failed");
+        }
+    }
+
+    /// Best-effort remove from the durable corpora repo. Same
+    /// failure contract as [`Self::notify_repo_upsert`].
+    async fn notify_repo_remove(&self, corpus_id: &str) {
+        let Some(repo) = self.corpora_repo.get() else {
+            return;
+        };
+        if let Err(e) = repo.remove(corpus_id).await {
+            warn!(corpus_id = %corpus_id, error = %e, "corpora_repo remove failed");
+        }
+    }
+
+    /// Wire an on-demand bundle restorer (PHASE3 chunk 5, cloud mode).
+    /// Intended to be called exactly once, immediately after
+    /// construction. A second call is a no-op (the first wins).
+    pub fn set_corpus_restorer(&self, restorer: Arc<dyn CorpusRestorer>) {
+        let _ = self.corpus_restorer.set(restorer);
+    }
+
+    /// Acquire the per-corpus restore mutex, creating it if absent.
+    /// Lock-of-locks pattern: brief acquisition of the outer
+    /// `restore_locks` mutex to look up / insert; then return the inner
+    /// `Arc<Mutex<()>>` so the caller can hold the per-corpus lock for
+    /// the actual download.
+    async fn restore_lock(&self, corpus_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut map = self.restore_locks.lock().await;
+        map.entry(corpus_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    /// PHASE3 chunk 5 — on-demand bundle restore. If `corpus_id` is
+    /// already in the in-memory map, returns its handle. Otherwise,
+    /// when a [`CorpusRestorer`] is wired AND the corpus has a row in
+    /// the durable [`CorporaRepo`], downloads the bundle and inserts
+    /// a [`CorpusHandle`] pointing at the just-restored on-disk data
+    /// — without spawning `indexer::run` (the bundle is already
+    /// indexed). Returns `NotFound` when the restorer isn't wired,
+    /// the repo lookup misses, or the bundle isn't in blob yet.
+    ///
+    /// Concurrent calls for the same `corpus_id` serialise on the
+    /// per-corpus mutex so only one download happens.
+    ///
+    /// # Errors
+    ///
+    /// - [`RegistryError::NotFound`] — corpus is genuinely absent
+    ///   (no repo row, no bundle in blob, or restorer not wired).
+    /// - [`RegistryError::Storage`] — restorer or repo backend error.
+    pub async fn ensure_present(
+        &self,
+        corpus_id: &str,
+    ) -> Result<Arc<CorpusHandle>, RegistryError> {
+        // Fast path: already in memory.
+        if let Some(handle) = self.corpora.read().await.get(corpus_id).cloned() {
+            return Ok(handle);
+        }
+        // Without a restorer wired we cannot lazy-load — preserve the
+        // existing `NotFound` semantics on self-hosted serve.
+        let Some(restorer) = self.corpus_restorer.get().cloned() else {
+            return Err(RegistryError::NotFound {
+                id: corpus_id.to_string(),
+            });
+        };
+        // Check the durable registry for the canonical paths before
+        // touching blob storage — if the repo doesn't list the corpus
+        // we shouldn't pay download latency on a 404 anyway.
+        let Some(repo) = self.corpora_repo.get().cloned() else {
+            return Err(RegistryError::NotFound {
+                id: corpus_id.to_string(),
+            });
+        };
+        let rows = repo
+            .list()
+            .await
+            .map_err(|e| RegistryError::Storage(format!("corpora_repo list: {e}")))?;
+        let Some(registration) = rows.into_iter().find(|r| r.corpus_id == corpus_id) else {
+            return Err(RegistryError::NotFound {
+                id: corpus_id.to_string(),
+            });
+        };
+
+        // Serialise concurrent restores of the same id behind a single
+        // per-corpus mutex.
+        let lock = self.restore_lock(corpus_id).await;
+        let _guard = lock.lock().await;
+
+        // Re-check the in-memory map after acquiring the lock — a
+        // concurrent restorer may have already inserted.
+        if let Some(handle) = self.corpora.read().await.get(corpus_id).cloned() {
+            return Ok(handle);
+        }
+
+        let target = self.config.data_dir.join("corpora").join(corpus_id);
+        info!(corpus_id, target = %target.display(), "restoring corpus bundle from blob");
+        match restorer.download(corpus_id, &target).await {
+            Ok(()) => {}
+            Err(CorpusRestoreError::NotFound { .. }) => {
+                return Err(RegistryError::NotFound {
+                    id: corpus_id.to_string(),
+                });
+            }
+            Err(e) => {
+                return Err(RegistryError::Storage(format!("blob restore: {e}")));
+            }
+        }
+        self.register_restored(corpus_id, &registration.paths, registration.display_name)
+            .await
+    }
+
+    /// PHASE3 chunk 5 — insert a corpus into the in-memory map from
+    /// already-on-disk data (the bundle import wrote
+    /// `<data_dir>/corpora/<id>/{content.db,index}` already). Does NOT
+    /// spawn `indexer::run` or a file watcher — the bundle is fully
+    /// indexed and the source files don't live on the serve pod.
+    ///
+    /// # Errors
+    ///
+    /// - [`RegistryError::Storage`] — failure opening the on-disk
+    ///   storage or index.
+    pub async fn register_restored(
+        &self,
+        corpus_id: &str,
+        paths: &[String],
+        display_name: Option<String>,
+    ) -> Result<Arc<CorpusHandle>, RegistryError> {
+        // Atomic check-and-insert so a concurrent register on the same
+        // id can't both pass and orphan a half-built handle.
+        {
+            let map = self.corpora.read().await;
+            if let Some(handle) = map.get(corpus_id) {
+                return Ok(Arc::clone(handle));
+            }
+        }
+        let display = display_name.unwrap_or_else(|| display_name_from_paths(paths));
+        let handle = self.create_handle(corpus_id, paths, display)?;
+        let handle = Arc::new(handle);
+        {
+            let mut map = self.corpora.write().await;
+            if let Some(existing) = map.get(corpus_id) {
+                // Lost the race — discard our handle, return theirs.
+                return Ok(Arc::clone(existing));
+            }
+            map.insert(corpus_id.to_string(), Arc::clone(&handle));
+        }
+        info!(corpus_id, "corpus restored from blob");
+        Ok(handle)
     }
 
     pub fn embedder(&self) -> &Arc<dyn Embedder> {
@@ -197,30 +443,55 @@ impl CorpusRegistry {
         &self.corpora
     }
 
-    /// Restore previously registered corpora from the on-disk manifest.
+    /// Restore previously registered corpora from durable storage.
     ///
-    /// Reads `{data_dir}/corpora.json` and re-registers each entry.
+    /// Source of truth:
+    /// - When a `CorporaRepo` is wired (cloud mode), reads from the
+    ///   repo — the on-disk `corpora.json` is pod-ephemeral on ACA.
+    /// - Otherwise (self-hosted serve), reads `{data_dir}/corpora.json`.
+    ///
     /// Skips entries whose source paths no longer exist on disk.
     /// Safe to call on an empty registry — idempotent with `register`.
     #[allow(clippy::too_many_lines)] // restore is one cohesive startup pass
     pub async fn restore(self: &Arc<Self>) {
-        let manifest_path = self.manifest_path();
-        let entries = match std::fs::read_to_string(&manifest_path) {
-            Ok(json) => match serde_json::from_str::<Vec<ManifestEntry>>(&json) {
-                Ok(entries) => entries,
+        let repo_mode = self.corpora_repo.get().is_some();
+        let entries = if let Some(repo) = self.corpora_repo.get() {
+            match repo.list().await {
+                Ok(rows) => rows
+                    .into_iter()
+                    .map(|r| ManifestEntry {
+                        id: r.corpus_id,
+                        paths: r.paths,
+                    })
+                    .collect::<Vec<_>>(),
                 Err(e) => {
-                    warn!(error = %e, "corrupt corpus manifest — starting fresh");
+                    warn!(error = %e, "corpora_repo list failed — starting fresh");
                     return;
                 }
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-            Err(e) => {
-                warn!(error = %e, "failed to read corpus manifest");
-                return;
+            }
+        } else {
+            let manifest_path = self.manifest_path();
+            match std::fs::read_to_string(&manifest_path) {
+                Ok(json) => match serde_json::from_str::<Vec<ManifestEntry>>(&json) {
+                    Ok(entries) => entries,
+                    Err(e) => {
+                        warn!(error = %e, "corrupt corpus manifest — starting fresh");
+                        return;
+                    }
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+                Err(e) => {
+                    warn!(error = %e, "failed to read corpus manifest");
+                    return;
+                }
             }
         };
 
-        info!(count = entries.len(), "restoring corpora from manifest");
+        info!(
+            count = entries.len(),
+            source = if repo_mode { "repo" } else { "manifest" },
+            "restoring corpora"
+        );
 
         // One-time on-disk migration from un-canonicalised ids: if an
         // entry's stored id doesn't match the canonical id of its paths,
@@ -326,6 +597,12 @@ impl CorpusRegistry {
                     "pruning dead corpus entry (source paths gone)"
                 );
             }
+            // Mirror the prune into the durable repo when wired, so a
+            // dead row doesn't keep reappearing on every pod restart in
+            // cloud mode.
+            for entry in &dead {
+                self.notify_repo_remove(&entry.id).await;
+            }
             let dead_dirs: Vec<PathBuf> = dead.iter().map(|e| corpora_dir.join(&e.id)).collect();
             tokio::spawn(async move {
                 for dir in dead_dirs {
@@ -426,6 +703,9 @@ impl CorpusRegistry {
         if let Err(e) = self.save_manifest().await {
             warn!(corpus_id = %corpus_id, error = %e, "failed to persist corpus manifest after register");
         }
+        // Mirror to the durable repo when wired (cloud mode). Same
+        // failure contract as save_manifest above.
+        self.notify_repo_upsert(&corpus_id, &canonical).await;
 
         let mut spawned: Vec<tokio::task::JoinHandle<()>> = Vec::with_capacity(4);
 
@@ -528,6 +808,12 @@ impl CorpusRegistry {
         };
 
         self.save_manifest().await?;
+        // Mirror the new path set to the durable repo. Identity didn't
+        // change (checked above), so this is an in-place row update.
+        {
+            let info = info_lock.read().await;
+            self.notify_repo_upsert(corpus_id, &info.paths).await;
+        }
 
         if !added.is_empty() {
             let registry = Arc::clone(self);
@@ -603,6 +889,7 @@ impl CorpusRegistry {
 
         info!(corpus_id, "corpus unregistered");
         self.save_manifest().await?;
+        self.notify_repo_remove(corpus_id).await;
         Ok(())
     }
 
@@ -654,14 +941,16 @@ impl CorpusRegistry {
     ///
     /// Returns [`RegistryError::NotFound`] if the corpus does not exist.
     pub async fn get(&self, corpus_id: &str) -> Result<Arc<CorpusHandle>, RegistryError> {
-        self.corpora
-            .read()
-            .await
-            .get(corpus_id)
-            .cloned()
-            .ok_or_else(|| RegistryError::NotFound {
-                id: corpus_id.to_string(),
-            })
+        // Fast path: in-memory hit.
+        if let Some(handle) = self.corpora.read().await.get(corpus_id).cloned() {
+            return Ok(handle);
+        }
+        // PHASE3 chunk 5 — in cloud mode a `CorpusRestorer` is wired
+        // so a miss can be served by downloading the bundle from blob
+        // and inserting via `register_restored`. Without a restorer
+        // (self-hosted serve) `ensure_present` immediately returns
+        // `NotFound`, matching the historical contract.
+        self.ensure_present(corpus_id).await
     }
 
     /// Extract a corpus's `info` handle without holding the corpora-map
@@ -1187,5 +1476,73 @@ mod tests {
         ));
         assert_eq!(merged.sections_count, 7, "persisted snapshot preserved");
         assert_eq!(merged.embeddings_count, 42);
+    }
+
+    // -- Completion-channel wiring (PHASE2 chunk 3) --
+    //
+    // The cloud durability reactor consumes `(corpus_id, corpus_dir)`
+    // tuples from this channel and uploads bundles to blob. On self-
+    // hosted serve no sink is wired and `notify_complete` is a no-op.
+
+    #[derive(Debug)]
+    struct StubEmbedder {
+        dim: usize,
+    }
+
+    impl ministr_core::embedding::Embedder for StubEmbedder {
+        fn embed(
+            &self,
+            texts: &[&str],
+        ) -> Result<Vec<Vec<f32>>, ministr_core::error::IndexError> {
+            Ok(texts.iter().map(|_| vec![0.0_f32; self.dim]).collect())
+        }
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+    }
+
+    fn build_test_registry() -> CorpusRegistry {
+        let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder { dim: 4 });
+        CorpusRegistry::new(embedder, MinistrConfig::default())
+    }
+
+    #[tokio::test]
+    async fn notify_complete_with_sink_sends_corpus_id_and_dir() {
+        let registry = build_test_registry();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        registry.set_completion_sink(tx);
+
+        registry.notify_complete("c1", std::path::Path::new("/tmp/c1"));
+        let got = rx.recv().await.expect("expected one completion event");
+
+        assert_eq!(got.0, "c1");
+        assert_eq!(got.1, std::path::PathBuf::from("/tmp/c1"));
+    }
+
+    #[tokio::test]
+    async fn notify_complete_without_sink_is_a_no_op() {
+        // No `set_completion_sink` — call must not panic and must not
+        // block waiting for a phantom receiver.
+        let registry = build_test_registry();
+        registry.notify_complete("c1", std::path::Path::new("/tmp/c1"));
+    }
+
+    #[tokio::test]
+    async fn second_set_completion_sink_is_a_no_op() {
+        // OnceLock semantics — first sink wins, second call is silently
+        // dropped (matches `set_coherence_sink`).
+        let registry = build_test_registry();
+        let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
+        let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
+        registry.set_completion_sink(tx1);
+        registry.set_completion_sink(tx2);
+
+        registry.notify_complete("c1", std::path::Path::new("/tmp/c1"));
+
+        assert_eq!(
+            rx1.recv().await,
+            Some(("c1".to_string(), std::path::PathBuf::from("/tmp/c1")))
+        );
+        assert!(rx2.try_recv().is_err(), "second sink must not receive");
     }
 }

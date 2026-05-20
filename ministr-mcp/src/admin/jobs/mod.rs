@@ -10,23 +10,23 @@
 //!   separate ACA Job that mounts the same share.
 
 mod in_memory;
-pub(crate) mod postgres;
+pub mod postgres;
 mod sqlite;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub(crate) use in_memory::InMemoryJobQueue;
-pub(crate) use postgres::PostgresJobQueue;
-pub(crate) use sqlite::SqliteJobQueue;
+pub use in_memory::InMemoryJobQueue;
+pub use postgres::PostgresJobQueue;
+pub use sqlite::SqliteJobQueue;
 
 /// Result alias for queue operations.
-pub(crate) type JobResult<T> = Result<T, JobQueueError>;
+pub type JobResult<T> = Result<T, JobQueueError>;
 
 /// Errors that a queue backend can surface.
 #[derive(Debug, Error)]
 #[allow(dead_code)] // variants surface once a persistent backend is selected
-pub(crate) enum JobQueueError {
+pub enum JobQueueError {
     #[error("job queue backend error: {0}")]
     Backend(String),
     #[error("job queue serde error: {0}")]
@@ -38,7 +38,7 @@ pub(crate) enum JobQueueError {
 /// What triggered an indexing job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum JobTrigger {
+pub enum JobTrigger {
     /// Direct `/reindex` POST.
     Manual,
     /// GitHub webhook (push event).
@@ -48,12 +48,23 @@ pub(crate) enum JobTrigger {
         reference: String,
         commit: String,
     },
+    /// PHASE3 — tenant-initiated cloud ingestion. Emitted by the serve
+    /// pod's `POST /api/v1/corpora` handler in chunk 4 so the indexer
+    /// worker (chunk 3) can pop the job, clone `clone_url` if set, run
+    /// `indexer::run` against `paths`, upload the bundle, and mark the
+    /// job done. The Job's `corpus_id` carries the deterministic id
+    /// computed from the canonical paths.
+    #[allow(dead_code)] // wired in chunk 4 when serve enqueues replace inline register
+    Tenant {
+        paths: Vec<String>,
+        clone_url: Option<String>,
+    },
 }
 
 /// Lifecycle status of an indexing job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum JobStatus {
+pub enum JobStatus {
     Pending,
     Running,
     Completed,
@@ -61,31 +72,32 @@ pub(crate) enum JobStatus {
 }
 
 impl JobStatus {
-    pub(crate) fn is_terminal(self) -> bool {
+    #[must_use]
+    pub fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed)
     }
 }
 
 /// Indexer progress snapshot. Updated by the worker; streamed by SSE.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(crate) struct JobProgress {
-    pub(crate) stage: String,
-    pub(crate) total_files: u64,
-    pub(crate) processed_files: u64,
-    pub(crate) current_file: Option<String>,
+pub struct JobProgress {
+    pub stage: String,
+    pub total_files: u64,
+    pub processed_files: u64,
+    pub current_file: Option<String>,
 }
 
 /// A reindex job record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Job {
-    pub(crate) id: String,
-    pub(crate) corpus_id: String,
-    pub(crate) trigger: JobTrigger,
-    pub(crate) status: JobStatus,
-    pub(crate) progress: JobProgress,
-    pub(crate) created_at: u64,
-    pub(crate) updated_at: u64,
-    pub(crate) error: Option<String>,
+pub struct Job {
+    pub id: String,
+    pub corpus_id: String,
+    pub trigger: JobTrigger,
+    pub status: JobStatus,
+    pub progress: JobProgress,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub error: Option<String>,
     /// F2.2 — tier-derived scheduling priority. Higher wins. The
     /// Postgres backend drains `ORDER BY priority DESC, created_at ASC`
     /// so Team jumps Pro; in-memory + `SQLite` back-ends ignore the
@@ -93,7 +105,7 @@ pub(crate) struct Job {
     /// Defaults to `0` to keep self-hosted enqueue calls source-stable
     /// — they emit a single bucket and queue order remains FIFO.
     #[serde(default)]
-    pub(crate) priority: i16,
+    pub priority: i16,
 }
 
 /// Contract every queue backend implements.
@@ -105,7 +117,7 @@ pub(crate) struct Job {
 ///   calling concurrently must each see *different* jobs (or `None`).
 /// - `update_*` is upsert-by-id. Concurrent updates from the worker and
 ///   `claim_next` are safe under WAL.
-pub(crate) trait JobQueue: Send + Sync {
+pub trait JobQueue: Send + Sync {
     /// Enqueue a new pending job. `priority` is the tier-derived
     /// scheduling weight (see [`Job::priority`]); pass `0` from
     /// self-hosted call sites where every job sits in a single bucket.
@@ -140,14 +152,20 @@ pub(crate) trait JobQueue: Send + Sync {
 /// Concrete dispatcher. Add a variant to support a new backend.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // selected by admin router builder once wired in PR1.4
-pub(crate) enum JobQueueBackend {
+pub enum JobQueueBackend {
     InMemory(InMemoryJobQueue),
     Sqlite(SqliteJobQueue),
     Postgres(PostgresJobQueue),
 }
 
 impl JobQueueBackend {
-    pub(crate) async fn enqueue(
+    /// Enqueue a new pending job through the active backend.
+    ///
+    /// # Errors
+    ///
+    /// Surfaces the backend's [`JobQueueError`] on connection or
+    /// serialization failure.
+    pub async fn enqueue(
         &self,
         corpus_id: String,
         trigger: JobTrigger,
@@ -160,7 +178,12 @@ impl JobQueueBackend {
         }
     }
 
-    pub(crate) async fn get(&self, job_id: &str) -> JobResult<Option<Job>> {
+    /// Fetch a job by id. Returns `None` when the id is unknown.
+    ///
+    /// # Errors
+    ///
+    /// Surfaces the backend's [`JobQueueError`] on storage failure.
+    pub async fn get(&self, job_id: &str) -> JobResult<Option<Job>> {
         match self {
             Self::InMemory(q) => q.get(job_id).await,
             Self::Sqlite(q) => q.get(job_id).await,
@@ -168,8 +191,14 @@ impl JobQueueBackend {
         }
     }
 
+    /// Atomically claim the next pending job (transitioning it to
+    /// `Running`) so a worker can run it.
+    ///
+    /// # Errors
+    ///
+    /// Surfaces the backend's [`JobQueueError`] on storage failure.
     #[allow(dead_code)]
-    pub(crate) async fn claim_next(&self) -> JobResult<Option<Job>> {
+    pub async fn claim_next(&self) -> JobResult<Option<Job>> {
         match self {
             Self::InMemory(q) => q.claim_next().await,
             Self::Sqlite(q) => q.claim_next().await,
@@ -177,8 +206,14 @@ impl JobQueueBackend {
         }
     }
 
+    /// Persist a `JobProgress` snapshot for an in-flight job.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JobQueueError::NotFound`] if `job_id` does not exist;
+    /// other variants surface backend failures.
     #[allow(dead_code)]
-    pub(crate) async fn update_progress(
+    pub async fn update_progress(
         &self,
         job_id: &str,
         progress: JobProgress,
@@ -190,8 +225,15 @@ impl JobQueueBackend {
         }
     }
 
+    /// Mark a job terminal (`Completed` or `Failed`) and record an
+    /// optional error message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JobQueueError::NotFound`] if `job_id` does not exist;
+    /// other variants surface backend failures.
     #[allow(dead_code)]
-    pub(crate) async fn finish(
+    pub async fn finish(
         &self,
         job_id: &str,
         status: JobStatus,
@@ -201,6 +243,48 @@ impl JobQueueBackend {
             Self::InMemory(q) => q.finish(job_id, status, error).await,
             Self::Sqlite(q) => q.finish(job_id, status, error).await,
             Self::Postgres(q) => q.finish(job_id, status, error).await,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn job_trigger_tenant_round_trips_through_json() {
+        // The PostgresJobQueue stores the whole Job (with its embedded
+        // JobTrigger) as a JSON blob in the `data` column. Round-trip
+        // the new variant to confirm the snake_case tag wins under
+        // serde and the optional `clone_url` survives a None.
+        let trigger = JobTrigger::Tenant {
+            paths: vec!["/tmp/x".into(), "/tmp/y".into()],
+            clone_url: Some("https://github.com/dtolnay/anyhow".into()),
+        };
+        let json = serde_json::to_string(&trigger).unwrap();
+        assert!(json.contains(r#""kind":"tenant""#), "got {json}");
+        assert!(json.contains(r#""clone_url":"https://github.com/dtolnay/anyhow""#));
+        let parsed: JobTrigger = serde_json::from_str(&json).unwrap();
+        match parsed {
+            JobTrigger::Tenant { paths, clone_url } => {
+                assert_eq!(paths, vec!["/tmp/x".to_string(), "/tmp/y".to_string()]);
+                assert_eq!(clone_url.as_deref(), Some("https://github.com/dtolnay/anyhow"));
+            }
+            other => panic!("expected Tenant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn job_trigger_tenant_round_trips_without_clone_url() {
+        let trigger = JobTrigger::Tenant {
+            paths: vec!["/tmp/x".into()],
+            clone_url: None,
+        };
+        let json = serde_json::to_string(&trigger).unwrap();
+        let parsed: JobTrigger = serde_json::from_str(&json).unwrap();
+        match parsed {
+            JobTrigger::Tenant { clone_url, .. } => assert!(clone_url.is_none()),
+            other => panic!("expected Tenant, got {other:?}"),
         }
     }
 }

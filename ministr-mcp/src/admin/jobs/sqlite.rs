@@ -12,13 +12,19 @@ use crate::time::epoch_now;
 use super::{Job, JobProgress, JobQueue, JobQueueError, JobResult, JobStatus, JobTrigger};
 
 #[derive(Debug, Clone)]
-pub(crate) struct SqliteJobQueue {
+pub struct SqliteJobQueue {
     conn: Arc<Mutex<Connection>>,
 }
 
 impl SqliteJobQueue {
+    /// Open (or create) a `SQLite`-backed job queue at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JobQueueError::Backend`] if the file cannot be opened
+    /// or the schema cannot be applied.
     #[allow(dead_code)] // wired in PR1.4
-    pub(crate) fn open(path: &Path) -> JobResult<Self> {
+    pub fn open(path: &Path) -> JobResult<Self> {
         let conn = Connection::open(path)
             .map_err(|e| JobQueueError::Backend(format!("open {}: {e}", path.display())))?;
         configure(&conn)?;

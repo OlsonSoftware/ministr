@@ -33,9 +33,15 @@ case "${ENTRYPOINT_MODE:-serve}" in
   index)
     exec ministr index "$@"
     ;;
+  indexer-worker)
+    # PHASE3 chunk 3 — single-shot queue-driven worker. Pops one
+    # pending job from the cloud Postgres queue, runs ingestion,
+    # uploads the bundle, and exits. ACA Job re-runs on cron.
+    exec ministr indexer-worker "$@"
+    ;;
   *)
     echo "ministr: unknown ENTRYPOINT_MODE='${ENTRYPOINT_MODE}'" >&2
-    echo "ministr: expected 'serve' or 'index'" >&2
+    echo "ministr: expected 'serve', 'index', or 'indexer-worker'" >&2
     exit 64
     ;;
 esac

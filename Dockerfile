@@ -45,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3t64 \
     libgomp1 \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user

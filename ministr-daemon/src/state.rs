@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use ministr_api::activity::ActivityEvent;
 use ministr_api::coherence::CoherenceEvent;
-use ministr_api::{InstallationTokenMinter, UsageSink};
+use ministr_api::{BlobSink, IndexJobSink, InstallationTokenMinter, UsageSink};
 use tokio::sync::RwLock;
 
 use crate::inference::{ClaudeCliInference, Inference};
@@ -62,6 +62,21 @@ pub struct AppState {
     /// authenticated-clone option. The `clone_repo` handler awaits this
     /// when the request body carries `github_installation_id`.
     pub installation_minter: Option<Arc<dyn InstallationTokenMinter>>,
+    /// Durable corpus-bundle export sink (Phase 2). `Some` when cloud
+    /// mode has wired `ministr_cloud::blob_sink::BlobBackendSink`;
+    /// `None` for self-hosted serve where the user's local disk is
+    /// already durable. The registry's completion reactor fires this
+    /// fire-and-forget whenever a corpus finishes ingesting so the
+    /// bundle lands in Azure Blob Storage before the pod recycles.
+    pub blob_sink: Option<Arc<dyn BlobSink>>,
+    /// PHASE3 chunk 4 — cloud serve-pod enqueue hook. `Some` when
+    /// `cmd_serve_http` has wired
+    /// `ministr_cloud::PostgresIndexJobSink`; `None` on self-hosted
+    /// serve. When wired, the `POST /api/v1/corpora` and clone
+    /// handlers route through this instead of running ingestion
+    /// inline; the progress SSE polls `latest_for_corpus` against
+    /// Postgres instead of the in-memory `IngestionProgress`.
+    pub index_job_sink: Option<Arc<dyn IndexJobSink>>,
 }
 
 impl AppState {
@@ -85,6 +100,8 @@ impl AppState {
             coherence,
             usage_sink: None,
             installation_minter: None,
+            blob_sink: None,
+            index_job_sink: None,
         }
     }
 
@@ -106,6 +123,8 @@ impl AppState {
             coherence,
             usage_sink: None,
             installation_minter: None,
+            blob_sink: None,
+            index_job_sink: None,
         }
     }
 
@@ -125,6 +144,22 @@ impl AppState {
         minter: Arc<dyn InstallationTokenMinter>,
     ) -> Self {
         self.installation_minter = Some(minter);
+        self
+    }
+
+    /// Wire a durable corpus-bundle export sink (Phase 2 cloud mode).
+    /// Returns `self` for chainable construction in `cmd_serve_http`.
+    #[must_use]
+    pub fn with_blob_sink(mut self, sink: Arc<dyn BlobSink>) -> Self {
+        self.blob_sink = Some(sink);
+        self
+    }
+
+    /// Wire a cloud-mode index-job enqueue sink (PHASE3 chunk 4).
+    /// Returns `self` for chainable construction in `cmd_serve_http`.
+    #[must_use]
+    pub fn with_index_job_sink(mut self, sink: Arc<dyn IndexJobSink>) -> Self {
+        self.index_job_sink = Some(sink);
         self
     }
 
