@@ -1,9 +1,20 @@
 // Query Container App.
 //
 // Sizing: 0.5 vCPU / 1 GiB, minReplicas=1, maxReplicas=1 — always-warm,
-// no cold starts, no concurrent-writer SQLite hazards.
-// Mounts the shared Azure Files share at /data so OAuth + admin SQLite
-// state persists across pod restarts.
+// no cold starts.
+//
+// Architecture (Option B):
+//   - SystemAssigned managed identity, granted `Storage Blob Data
+//     Contributor` on the storage account (see lib/role-assignment.ts)
+//     so the container can read/write the corpora blob container with
+//     no shared key.
+//   - `MINISTR_PG_URL` (secret env) → Postgres Flex for OAuth +
+//     tenancy + usage events.
+//   - `MINISTR_BLOB_STORE_KIND=azure` + account + container env →
+//     `CorpusBlobStore` durable HNSW bundles.
+//   - **No volume mount.** `$HOME=/data` (from the image's `useradd`)
+//     is the pod-local writable filesystem; the daemon's working
+//     SQLite + HNSW live there and warm-restart from blob at boot.
 
 import * as pulumi from "@pulumi/pulumi";
 import * as app from "@pulumi/azure-native/app";
@@ -18,6 +29,8 @@ import { InsightsArtifact } from "./insights";
 export interface AppArtifact {
   containerApp: app.ContainerApp;
   fqdn: pulumi.Output<string>;
+  /** Managed identity principal id — feed into role assignments. */
+  principalId: pulumi.Output<string>;
 }
 
 export interface AppInputs {
@@ -31,6 +44,15 @@ export interface AppInputs {
   memory: string;
   webhookSecret?: pulumi.Output<string>;
   corpusPaths: string;
+  // Public URL users hit. Used for OAuth issuer + cloud base URL.
+  publicUrl: pulumi.Input<string>;
+  // Bare host for MINISTR_ALLOWED_HOSTS.
+  publicHost: pulumi.Input<string>;
+  // Postgres connection URI (secret). When set, OAuth + tenancy live in
+  // Postgres and the F1.3+ routes (billing, Stripe, GitHub IdP, Atlas)
+  // auto-mount. When unset the cloud falls back to SQLite + skips those
+  // routes — fine for local dev, never for prod.
+  pgConnectionString?: pulumi.Input<string>;
 }
 
 export function createApp(inputs: AppInputs): AppArtifact {
@@ -45,46 +67,69 @@ export function createApp(inputs: AppInputs): AppArtifact {
     memory,
     webhookSecret,
     corpusPaths,
+    publicUrl,
+    publicHost,
+    pgConnectionString,
   } = inputs;
 
   const imageRef = pulumi.interpolate`${registry.loginServer}/ministr:${imageTag}`;
 
   // Secrets surface to the container as ContainerApp.secrets[] entries that
   // env vars and `registries[].passwordSecretRef` reference by name.
-  const baseSecrets: types.app.SecretArgs[] = [
+  const secretsList: pulumi.Input<types.app.SecretArgs>[] = [
     { name: "registry-password", value: registry.adminPassword },
     { name: "appinsights-connection-string", value: insights.connectionString },
   ];
-  const secrets: pulumi.Input<types.app.SecretArgs>[] = webhookSecret
-    ? [...baseSecrets, { name: "github-webhook-secret", value: webhookSecret }]
-    : baseSecrets;
+  if (webhookSecret) {
+    secretsList.push({ name: "github-webhook-secret", value: webhookSecret });
+  }
+  if (pgConnectionString) {
+    secretsList.push({ name: "pg-url", value: pgConnectionString });
+  }
 
-  const baseEnv: types.app.EnvironmentVarArgs[] = [
-    { name: "MINISTR_CLOUD_DATA_DIR", value: "/data" },
-    { name: "MINISTR_CORPUS_PATHS", value: corpusPaths },
-    // Enables OAuth on the public deployment — the entrypoint passes
-    // `--oauth --oauth-issuer $MINISTR_OAUTH_ISSUER` when this is set.
-    // Without it, every endpoint we just mounted (including the new
-    // `/api/v1/corpora/*` write routes) would be open to the internet.
-    { name: "MINISTR_OAUTH_ISSUER", value: "https://mcp.ministr.ai" },
+  const baseEnv: pulumi.Input<types.app.EnvironmentVarArgs>[] = [
+    // Intentionally NOT setting MINISTR_CORPUS_PATHS — that triggers a
+    // boot-time auto-register of the path, which crashes on an empty
+    // dir (HNSW persist with 0 points fails to rename) and leaves the
+    // corpus in a half-state that breaks later POST registrations of
+    // the same path. The cloud starts with zero corpora; clients POST
+    // /api/v1/corpora to register theirs.
+    //
+    // OAuth + base URL: must equal the URL clients hit, since OAuth
+    // Discovery emits absolute URLs built from the issuer.
+    { name: "MINISTR_OAUTH_ISSUER", value: publicUrl },
+    { name: "MINISTR_CLOUD_BASE_URL", value: publicUrl },
+    // Streamable HTTP transport rejects non-allowlisted Host headers.
+    { name: "MINISTR_ALLOWED_HOSTS", value: publicHost },
+    // Blob backend for durable HNSW bundles. CorpusBlobStore uses
+    // DeveloperToolsCredential locally and ManagedIdentityCredential
+    // in-pod (auto-detected by the azure_identity chain). The role
+    // assignment in index.ts grants this identity blob-data access.
+    { name: "MINISTR_BLOB_STORE_KIND", value: "azure" },
+    { name: "MINISTR_BLOB_AZURE_ACCOUNT", value: storage.accountName },
+    { name: "MINISTR_BLOB_AZURE_CONTAINER", value: storage.blobContainerName },
     {
       name: "APPLICATIONINSIGHTS_CONNECTION_STRING",
       secretRef: "appinsights-connection-string",
     },
     { name: "RUST_LOG", value: "info,ministr=debug" },
   ];
-  const envVars: pulumi.Input<types.app.EnvironmentVarArgs>[] = webhookSecret
-    ? [
-        ...baseEnv,
-        { name: "MINISTR_GITHUB_WEBHOOK_SECRET", secretRef: "github-webhook-secret" },
-      ]
-    : baseEnv;
+  if (webhookSecret) {
+    baseEnv.push({
+      name: "MINISTR_GITHUB_WEBHOOK_SECRET",
+      secretRef: "github-webhook-secret",
+    });
+  }
+  if (pgConnectionString) {
+    baseEnv.push({ name: "MINISTR_PG_URL", secretRef: "pg-url" });
+  }
 
   const containerApp = new app.ContainerApp(named("app"), {
     resourceGroupName: rg.name,
     containerAppName: named("app"),
     location,
     managedEnvironmentId: env.id,
+    identity: { type: "SystemAssigned" },
     configuration: {
       activeRevisionsMode: "Single",
       ingress: {
@@ -100,7 +145,7 @@ export function createApp(inputs: AppInputs): AppArtifact {
           passwordSecretRef: "registry-password",
         },
       ],
-      secrets,
+      secrets: secretsList,
     },
     template: {
       containers: [
@@ -108,28 +153,28 @@ export function createApp(inputs: AppInputs): AppArtifact {
           name: "ministr",
           image: imageRef,
           resources: { cpu: Number(cpu), memory },
-          env: envVars,
-          volumeMounts: [{ volumeName: "data", mountPath: "/data" }],
-          // Probes intentionally omitted during placeholder bootstrap — they
-          // require /healthz on 8080 and would block ACA from accepting the
-          // first revision. Re-add once the real ministr image is in ACR.
-        },
-      ],
-      volumes: [
-        {
-          name: "data",
-          storageType: "AzureFile",
-          storageName: storage.storageName,
+          env: baseEnv,
+          // No volumeMounts — $HOME=/data is the pod-local writable FS
+          // (from the image's useradd). Blob is the durable backing
+          // store; local /data is the working cache.
         },
       ],
       scale: { minReplicas: 1, maxReplicas: 1 },
     },
   });
 
+  // `identity.principalId` is populated by the platform after creation;
+  // the apply() unwraps the Output<{...}|undefined> for downstream role
+  // assignments.
+  const principalId = containerApp.identity.apply(
+    (i) => i?.principalId ?? "",
+  ) as pulumi.Output<string>;
+
   return {
     containerApp,
     fqdn: containerApp.configuration.apply(
       (c) => c?.ingress?.fqdn ?? "",
     ) as pulumi.Output<string>,
+    principalId,
   };
 }

@@ -11,10 +11,14 @@
 //! No heavy dependencies here: only serde, schemars, tokio, and std.
 
 pub mod activity;
+pub mod blob_sink;
 pub mod client;
 pub mod coherence;
+pub mod corpora_repo;
 pub mod corpus;
+pub mod corpus_restorer;
 pub mod github_app;
+pub mod index_job_sink;
 pub mod query;
 pub mod session;
 pub mod status;
@@ -22,7 +26,13 @@ pub mod tenant;
 pub mod transport;
 pub mod usage;
 
+pub use blob_sink::BlobSink;
+pub use corpora_repo::{CorporaRepo, CorporaRepoError, CorpusRegistration, RepoFuture};
+pub use corpus_restorer::{CorpusRestoreError, CorpusRestorer, RestoreFuture};
 pub use github_app::{InstallationTokenMinter, MintError};
+pub use index_job_sink::{
+    IndexJobError, IndexJobFuture, IndexJobSink, IndexJobSnapshot, IndexJobStatus,
+};
 pub use tenant::TenantId;
 pub use usage::UsageSink;
 

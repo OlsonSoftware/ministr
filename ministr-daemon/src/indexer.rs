@@ -35,8 +35,12 @@ const DEBOUNCE_MAX_WINDOW: Duration = Duration::from_secs(10);
 /// then persists the vector index to disk. After a successful ingest the
 /// per-corpus prefetch cache is flushed so that subsequent reads don't
 /// serve stale warm entries for sections whose text was just rewritten.
+// Sequential ingest pipeline; many distinct steps (status transitions,
+// stats refresh, resolver heal, cloud durability hook). Extracting a
+// helper just to satisfy the lint would obscure the flow.
+#[allow(clippy::too_many_lines)]
 pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
-    let (storage, embedder, index, index_dir, progress, prefetch) = {
+    let (storage, embedder, index, data_dir, index_dir, progress, prefetch) = {
         let corpora = registry.corpora().read().await;
         let Some(handle) = corpora.get(corpus_id) else {
             return;
@@ -45,6 +49,7 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
             Arc::clone(&handle.storage),
             Arc::clone(registry.embedder()),
             Arc::clone(&handle.index),
+            handle.data_dir.clone(),
             handle.data_dir.join("index"),
             Arc::clone(&handle.progress),
             Arc::clone(&handle.prefetch),
@@ -149,6 +154,10 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
                     "resolver auto-heal failed"
                 ),
             }
+
+            // Cloud durability hook: fires the blob-upload reactor on
+            // every successful ingest. No-op when no sink is wired.
+            registry.notify_complete(corpus_id, &data_dir);
         }
         Err(ministr_core::error::IngestionError::Cancelled) => {
             info!(corpus_id, "indexing cancelled");

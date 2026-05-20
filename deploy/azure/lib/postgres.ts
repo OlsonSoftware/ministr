@@ -21,7 +21,7 @@ import * as resources from "@pulumi/azure-native/resources";
 import * as pg from "@pulumi/azure-native/dbforpostgresql";
 import * as pgEnums from "@pulumi/azure-native/types/enums/dbforpostgresql";
 
-import { location, named } from "./naming";
+import { location as defaultLocation, named } from "./naming";
 
 export interface PostgresArtifact {
   server: pg.Server;
@@ -44,16 +44,31 @@ export interface PostgresInputs {
   adminLogin: string;
   /** Admin password — must be a Pulumi secret. */
   adminPassword: pulumi.Output<string>;
+  /**
+   * Azure region for the Postgres server. May differ from the global
+   * `location` because some subscriptions are restricted from
+   * provisioning Postgres Flex Burstable in certain regions
+   * (`LocationIsOfferRestricted`). Cross-region latency between ACA
+   * and Postgres is single-digit ms within the same continent.
+   */
+  pgLocation?: string;
 }
 
 export function createPostgres({
   rg,
   adminLogin,
   adminPassword,
+  pgLocation,
 }: PostgresInputs): PostgresArtifact {
+  const location = pgLocation ?? defaultLocation;
+  // Suffix the server name with the location. Azure's resource-provider
+  // metadata caches the location of a previously-named server even after
+  // the resource itself is gone, so picking a fresh name lets us
+  // re-create cleanly in a different region after a failed attempt.
+  const serverName = pgLocation ? named(`pg-${pgLocation}`) : named("pg-prod");
   const server = new pg.Server(named("pg"), {
     resourceGroupName: rg.name,
-    serverName: named("pg-prod"),
+    serverName,
     location,
     // PostgreSQL 17 — current stable; major-version upgrade path available
     // via concepts-major-version-upgrade. 16 also acceptable. Avoid 18

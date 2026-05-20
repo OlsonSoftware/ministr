@@ -275,3 +275,84 @@ TL;DR:
 - Domain split: `ministr.ai` (docs-next on GitHub Pages) +
   `mcp.ministr.ai` (cloud binary) — see ROADMAP §3 and the existing
   `docs-next/public/CNAME` for the static-site side.
+
+---
+
+## 13. Demo against your Azure deployment
+
+`just demo-remote` is the cloud analogue of `just demo-local` — it
+points the same `ministr cloud demo` client at your live Azure
+container and watches a real repo get cloned + indexed end-to-end.
+
+### Run the demo (two commands)
+
+```sh
+just azure-init    # one-time: npm ci + pulumi stack init prod
+just azure-demo    # provision (if needed) + push + roll + demo-remote
+```
+
+`azure-demo` handles both fresh-deploy AND subsequent runs:
+
+- Fresh stack: runs `pulumi up` to provision everything (~5-7 min),
+  then pushes the image, then `pulumi up` again to roll the revision,
+  then runs `demo-remote`.
+- Subsequent runs: skips the initial provisioning, just pushes the
+  current code (tagged with the git sha), bumps the Pulumi `imageTag`,
+  rolls the revision, and runs the demo.
+
+Day-to-day after code changes, `just azure-demo` is the only command
+you need.
+
+### Other recipes
+
+| Recipe | What it does |
+|---|---|
+| `just azure-init` | One-time: npm ci + `pulumi stack init prod` |
+| `just azure-push` | Build + push image tagged with current git sha; bump pulumi config |
+| `just azure-up` | `pulumi up` against the prod stack |
+| `just azure-demo` | One-shot: provision (if needed) + push + roll + `demo-remote` |
+| `just azure-status` | `pulumi stack output` + `/healthz` probe |
+| `just azure-logs` | Tail live ACA container logs |
+| `just azure-down` | Tear down the entire stack (asks for confirmation) |
+| `just demo-remote` | Just the demo step — assumes the cloud is already deployed |
+
+Swap the demo repo with `CLONE_URL=https://github.com/owner/repo.git just demo-remote`.
+
+### Optional: custom domain
+
+To use `mcp.ministr.ai` instead of the default ACA FQDN, set the
+Pulumi config BEFORE the first apply:
+
+```sh
+pulumi -C deploy/azure config set customDomain mcp.ministr.ai
+```
+
+Then add a `CNAME` in DNS pointing your domain to the ACA managed-env
+FQDN (printed as `appFqdn` after the first apply). The managed cert
+provisions automatically within ~5 min once DNS resolves.
+
+The script will:
+
+1. Resolve the URL from `pulumi stack output publicBaseUrl` (or
+   from `MINISTR_CLOUD_BASE_URL` if set).
+2. Probe `/healthz`.
+3. Mint a bearer token via the cloud's OAuth self-issuer
+   (auto-consent — no IdP wired in MVP scope).
+4. Hand off to `ministr cloud demo --clone-url …` which uses the
+   auto-registered `/data/corpus` corpus as the clone parent, kicks
+   off a server-side clone + index, and streams the SSE progress
+   feed back into your terminal.
+
+### Cost note
+
+The MVP wiring (no Postgres, no Blob container, no Stripe, no IdP)
+keeps you at the **~$25/mo baseline** of the existing Pulumi stack.
+The cloud auto-disables every F1.3+ vendor route when its env vars
+aren't set, so this is genuinely minimum-viable — no half-wired
+billing or auth surfaces are reachable.
+
+To opt into the next tier, flip `enablePostgres true` in Pulumi
+config (adds ~$13/mo) and re-apply; the cloud picks up
+`MINISTR_PG_URL` from the stack output and auto-mounts billing +
+quota + rate-limit + Atlas + Stripe webhook + GitHub sign-in
+routes (each independently env-gated — see `cmd_serve_http`).

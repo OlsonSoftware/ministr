@@ -433,6 +433,44 @@ async fn register_corpus(
     State(state): State<AppState>,
     Json(req): Json<RegisterCorpusRequest>,
 ) -> impl IntoResponse {
+    // PHASE3 chunk 4 — when an IndexJobSink is wired (cloud mode), do
+    // NOT run ingestion inline. Compute the deterministic corpus_id,
+    // upsert cloud_corpora + enqueue a Tenant job via the sink, and
+    // return (corpus_id, indexing_started=true) so the existing
+    // demo-client contract is preserved (the worker will set the
+    // status; the SSE will see the transition).
+    if let Some(sink) = state.index_job_sink.as_ref() {
+        let canonical = match ministr_core::corpus_id::canonical_corpus_paths(&req.paths) {
+            Ok(c) => c,
+            Err(e) => {
+                return err(StatusCode::BAD_REQUEST, "register_failed", e).into_response();
+            }
+        };
+        let corpus_id = match ministr_core::corpus_id::corpus_id_from_paths(&canonical) {
+            Ok(id) => id,
+            Err(e) => {
+                return err(StatusCode::BAD_REQUEST, "register_failed", e).into_response();
+            }
+        };
+        if let Err(e) = sink
+            .create_pending(
+                &corpus_id,
+                &canonical,
+                req.display_name.as_deref(),
+                None,
+            )
+            .await
+        {
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "enqueue_failed", e)
+                .into_response();
+        }
+        return Json(RegisterCorpusResponse {
+            corpus_id,
+            indexing_started: true,
+        })
+        .into_response();
+    }
+
     match state.registry.register(&req.paths).await {
         Ok((corpus_id, indexing_started)) => {
             // Apply the caller-supplied display_name override (e.g. the
@@ -476,6 +514,73 @@ async fn clone_repo(
     Path(parent_id): Path<String>,
     Json(req): Json<CloneRepoRequest>,
 ) -> impl IntoResponse {
+    // PHASE3 chunk 4 — cloud-mode enqueue path. The serve pod no
+    // longer clones inline; it computes a deterministic corpus_id
+    // from the repo URL and enqueues a `Tenant{clone_url}` job. The
+    // worker (chunk 3) does the clone + index + upload. Parent
+    // lookup and parent .ministr.toml updates are skipped — the
+    // linked-toml update only meaningful for self-hosted parents
+    // and the worker doesn't ship a registry.
+    if let Some(sink) = state.index_job_sink.as_ref() {
+        // GitHub App installation-token minting is deferred — the
+        // token would expire before the worker dequeues. A future
+        // refinement adds `installation_id` to the Tenant trigger so
+        // the worker mints at clone time. PAT-in-URL still works.
+        if req.github_installation_id.is_some() {
+            return err(
+                StatusCode::NOT_IMPLEMENTED,
+                "github_app_clone_not_supported_in_queue_mode",
+                "github-app clones via installation_id not yet supported in cloud queue mode; \
+                 use a PAT-in-URL clone for now".to_string(),
+            )
+            .into_response();
+        }
+        let label = req
+            .label
+            .clone()
+            .unwrap_or_else(|| derive_repo_label(&req.repo));
+        // The deterministic id is derived from the clone URL itself —
+        // same URL ⇒ same corpus_id across pods, so a re-POST is
+        // idempotent on the canonical id.
+        let canonical = match ministr_core::corpus_id::canonical_corpus_paths(std::slice::from_ref(&req.repo)) {
+            Ok(c) => c,
+            Err(e) => {
+                return err(StatusCode::BAD_REQUEST, "register_failed", e).into_response();
+            }
+        };
+        let corpus_id = match ministr_core::corpus_id::corpus_id_from_paths(&canonical) {
+            Ok(id) => id,
+            Err(e) => {
+                return err(StatusCode::BAD_REQUEST, "register_failed", e).into_response();
+            }
+        };
+        if let Err(e) = sink
+            .create_pending(
+                &corpus_id,
+                &canonical,
+                Some(&label),
+                Some(&req.repo),
+            )
+            .await
+        {
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "enqueue_failed", e)
+                .into_response();
+        }
+        // Response carries placeholders for the worker-derived fields
+        // (clone_dir, commit_sha, branch) — those are unknown until
+        // the worker clones. The progress SSE surfaces the transitions.
+        return Json(CloneRepoResponse {
+            corpus_id,
+            clone_dir: String::new(),
+            label,
+            commit_sha: String::new(),
+            branch: req.branch.clone().unwrap_or_default(),
+            linked_toml_updated: false,
+            indexing_started: true,
+        })
+        .into_response();
+    }
+
     // 1. Lookup parent corpus paths via its info handle so we can locate
     //    the parent's `.ministr.toml` later.
     let parent_paths = match state.registry.get(&parent_id).await {
@@ -1424,6 +1529,17 @@ async fn ingestion_progress(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    // PHASE3 chunk 4 — when an `IndexJobSink` is wired (cloud mode),
+    // poll `latest_for_corpus` against Postgres instead of reading the
+    // in-memory `IngestionProgress` (which belongs to the worker pod,
+    // not the serve pod, post-split).
+    if let Some(sink) = state.index_job_sink.clone() {
+        let stream = queue_progress_stream(sink, id);
+        return Sse::new(stream)
+            .keep_alive(KeepAlive::default())
+            .into_response();
+    }
+
     let progress = {
         let corpora = state.registry.corpora().read().await;
         match corpora.get(&id) {
@@ -1469,6 +1585,67 @@ fn progress_stream(
             }
             // Stop streaming once ingestion is complete.
             if status_code >= 2 {
+                break;
+            }
+        }
+    }
+}
+
+/// PHASE3 chunk 4 — Postgres-backed progress stream. Polls
+/// `latest_for_corpus` every 500ms, emits an [`IngestionProgressEvent`]
+/// matching the existing wire shape, and closes when the latest job is
+/// in a terminal state (`Completed` / `Failed`). On lookup error or
+/// `None` (no job yet), emits a `pending` placeholder so the demo
+/// client doesn't see a dead stream while the row is being written.
+fn queue_progress_stream(
+    sink: Arc<dyn ministr_api::IndexJobSink>,
+    corpus_id: String,
+) -> impl Stream<Item = Result<Event, Infallible>> {
+    use ministr_api::IndexJobStatus;
+    async_stream::stream! {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        loop {
+            interval.tick().await;
+            let snapshot = match sink.latest_for_corpus(&corpus_id).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(
+                        corpus_id = %corpus_id,
+                        error = %e,
+                        "queue progress lookup failed — yielding pending placeholder"
+                    );
+                    None
+                }
+            };
+            let (status, terminal) = match snapshot.as_ref().map(|s| s.status) {
+                Some(IndexJobStatus::Pending) | None => ("pending", false),
+                Some(IndexJobStatus::Running) => ("running", false),
+                Some(IndexJobStatus::Completed) => ("complete", true),
+                Some(IndexJobStatus::Failed) => ("error", true),
+            };
+            let event = ministr_api::corpus::IngestionProgressEvent {
+                status: status.to_string(),
+                phase: snapshot
+                    .as_ref()
+                    .map_or_else(String::new, |s| s.stage.clone()),
+                files_total: snapshot.as_ref().map_or(0, |s| {
+                    usize::try_from(s.total_files).unwrap_or(usize::MAX)
+                }),
+                files_done: snapshot.as_ref().map_or(0, |s| {
+                    usize::try_from(s.processed_files).unwrap_or(usize::MAX)
+                }),
+                sections_done: 0,
+                embeddings_total: 0,
+                embeddings_done: 0,
+                current_file: snapshot
+                    .as_ref()
+                    .and_then(|s| s.current_file.clone())
+                    .unwrap_or_default(),
+            };
+            if let Ok(json) = serde_json::to_string(&event) {
+                yield Ok(Event::default().data(json));
+            }
+            if terminal {
                 break;
             }
         }

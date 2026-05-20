@@ -37,6 +37,7 @@ use tracing::{debug, info};
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_initial.sql")),
     (2, include_str!("../migrations/0002_usage_rollups.sql")),
+    (3, include_str!("../migrations/0003_corpus_registry.sql")),
 ];
 
 /// Errors surfaced by [`connect`] and [`run_migrations`].

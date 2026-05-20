@@ -1,12 +1,18 @@
-// Storage Account + File Share + ManagedEnvironmentsStorage mount.
+// Storage Account + Blob Container + (legacy) File Share.
 //
-// One Azure Files share holds:
-//   /data/oauth.db        — OAuth state (PR1.2)
-//   /data/jobs.db         — Indexer job queue (PR1.3)
-//   /data/corpora/...     — SQLite + HNSW per indexed corpus (PR2)
+// Architecture (post-Option B):
+//   - **Blob container** `ministr-corpora` is the source of truth for
+//     HNSW bundles. `ministr_cloud::CorpusBlobStore` reads/writes
+//     versioned `.ministr-index` bundles + a small manifest pointer.
+//   - **Pod-ephemeral `/data`** holds the working SQLite + HNSW that
+//     the query app reads (container filesystem, supports WAL). At
+//     boot the app calls `download_corpus` for every blob bundle.
+//     On shutdown / after each ingest the app calls `upload_corpus`.
+//   - **Postgres** holds OAuth state, tenancy metadata, usage events,
+//     audit log (see lib/postgres.ts).
 //
-// Both the query App and the Indexer Job mount this same share at /data,
-// so the App reads what the Job writes (and vice versa for OAuth/jobs).
+// The Azure Files share is kept for the v1 indexer-job mount but the
+// query app no longer mounts it (SMB can't host SQLite WAL).
 
 import * as pulumi from "@pulumi/pulumi";
 import * as resources from "@pulumi/azure-native/resources";
@@ -18,9 +24,11 @@ import { location, named, storageAccountName } from "./naming";
 export interface StorageArtifact {
   account: storage.StorageAccount;
   share: storage.FileShare;
+  blobContainer: storage.BlobContainer;
   accountName: pulumi.Output<string>;
   accountKey: pulumi.Output<string>;
   shareName: pulumi.Output<string>;
+  blobContainerName: pulumi.Output<string>;
   envStorage: app.ManagedEnvironmentsStorage;
   /** ACA `storageName` to reference from container-app volumes. */
   storageName: pulumi.Output<string>;
@@ -71,6 +79,17 @@ export function createStorage({ rg, env }: StorageInputs): StorageArtifact {
     { dependsOn: [fileService] },
   );
 
+  // Blob container for HNSW bundles. `CorpusBlobStore` reads/writes
+  // `corpora/<id>/manifest.json` (pointer) + `corpora/<id>/<version>.ministr-index`
+  // (versioned bundle). Container name must match
+  // MINISTR_BLOB_AZURE_CONTAINER set in lib/app.ts.
+  const blobContainer = new storage.BlobContainer(named("corpora"), {
+    resourceGroupName: rg.name,
+    accountName: account.name,
+    containerName: "ministr-corpora",
+    publicAccess: storage.PublicAccess.None,
+  });
+
   // Container Apps environment mount declaration — referenced by name from
   // each container-app revision's `template.volumes`.
   const envStorage = new app.ManagedEnvironmentsStorage(named("envstorage"), {
@@ -90,9 +109,11 @@ export function createStorage({ rg, env }: StorageInputs): StorageArtifact {
   return {
     account,
     share,
+    blobContainer,
     accountName: account.name,
     accountKey,
     shareName: share.name,
+    blobContainerName: blobContainer.name,
     envStorage,
     storageName: envStorage.name,
   };
