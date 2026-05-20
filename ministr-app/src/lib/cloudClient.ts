@@ -22,6 +22,17 @@ export interface CloudHealth {
   latency_ms: number;
 }
 
+/**
+ * Mirrors `ministr_cloud::UsageResponse` (F1.4 sub-bullet 4). The
+ * cloud's `/api/v1/billing/usage` endpoint returns this verbatim and
+ * the overview-tile badges (F1.4 sub-bullet 5) render from it.
+ */
+export interface CloudUsage {
+  tenant_id: string;
+  rollups: Array<{ day: string; kind: string; total: number }>;
+  today_partial: Array<{ kind: string; total: number }>;
+}
+
 /** Minimal subset of `ministr_api::corpus::CorpusInfo` the panel renders. */
 export interface CloudCorpusInfo {
   corpus_id: string;
@@ -76,6 +87,8 @@ export const cloudClient = {
   authenticate: () => invoke<void>("cloud_authenticate"),
   disconnect: () => invoke<void>("cloud_disconnect"),
   healthCheck: () => invoke<CloudHealth>("cloud_health_check"),
+  /** F1.4 sub-bullet 5 — fetch the calling tenant's metered usage. */
+  billingUsage: () => invoke<CloudUsage>("cloud_billing_usage"),
   triggerReindex: (corpusId: string) =>
     invoke<string>("cloud_trigger_reindex", { corpusId }),
 

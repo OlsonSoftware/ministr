@@ -701,6 +701,34 @@ fn authed_client(timeout_secs: u64) -> Result<(reqwest::Client, String, String),
     Ok((client, cfg.endpoint, token))
 }
 
+/// GET `/api/v1/billing/usage` — fetch the calling tenant's metered
+/// usage (F1.4 sub-bullet 4). Drives the overview-tile badges
+/// (F1.4 sub-bullet 5).
+///
+/// Returns the server's `UsageResponse` payload verbatim — the panel
+/// renders against the wire shape rather than a re-mapped local
+/// struct so the contract stays in one place.
+#[tauri::command]
+pub async fn cloud_billing_usage() -> Result<serde_json::Value, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/billing/usage");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("billing usage returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse billing usage: {e}")))
+}
+
 /// GET `/api/v1/corpora` — list all corpora the remote server has registered.
 #[tauri::command]
 pub async fn cloud_list_corpora() -> Result<serde_json::Value, CommandError> {
