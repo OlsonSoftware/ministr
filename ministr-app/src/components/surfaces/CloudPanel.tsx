@@ -33,6 +33,7 @@ import {
   type CloudHealth,
   type CloudProgressEvent,
   type CloudStatus,
+  type CloudUsage,
 } from "../../lib/cloudClient";
 import { cn } from "../../lib/utils";
 
@@ -54,6 +55,17 @@ export function CloudPanel() {
   >(null);
   const [signInError, setSignInError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [usage, setUsage] = useState<CloudUsage | null>(null);
+
+  const refreshUsage = useCallback(async () => {
+    try {
+      const u = await cloudClient.billingUsage();
+      setUsage(u);
+    } catch {
+      // Endpoint absent (self-hosted) or auth missing — keep badges hidden.
+      setUsage(null);
+    }
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     const s = await cloudClient.status();
@@ -64,6 +76,14 @@ export function CloudPanel() {
   useEffect(() => {
     void refreshStatus();
   }, [refreshStatus]);
+
+  useEffect(() => {
+    if (status?.authenticated) {
+      void refreshUsage();
+    } else {
+      setUsage(null);
+    }
+  }, [status?.authenticated, refreshUsage]);
 
   const onSaveEndpoint = async () => {
     setBusy("save-endpoint");
@@ -111,6 +131,11 @@ export function CloudPanel() {
     try {
       const h = await cloudClient.healthCheck();
       setHealth(h);
+      // Probing /healthz is also a natural moment to refresh
+      // billable-usage counters, so the badges stay live.
+      if (status?.authenticated) {
+        void refreshUsage();
+      }
     } catch (e) {
       setHealth(null);
       setHealthError(String(e));
@@ -283,6 +308,9 @@ export function CloudPanel() {
           health={health}
           healthError={healthError}
         />
+        {status?.authenticated && (
+          <UsageBadges usage={usage} latencyMs={health?.latency_ms ?? null} />
+        )}
       </section>
 
       <CorporaSection authenticated={!!status?.authenticated} />
@@ -889,5 +917,55 @@ function LatencyChip({ ms }: { ms: number }) {
     ms < 150 ? "text-accent" : ms < 500 ? "text-text" : "text-danger";
   return (
     <span className={cn("font-mono text-xs", tone)}>{ms} ms</span>
+  );
+}
+
+/**
+ * Cost/latency badges fed by the F1.4 metering pipeline. Renders
+ * three compact chips: queries served today, index-minutes consumed
+ * today, and last-probe round-trip latency. Hidden when no usage
+ * data is available (self-hosted serve, or the user hasn't been
+ * authenticated long enough for the cloud to have any events yet).
+ */
+function UsageBadges({
+  usage,
+  latencyMs,
+}: {
+  usage: CloudUsage | null;
+  latencyMs: number | null;
+}) {
+  const todayTotal = (kind: string): number => {
+    if (!usage) return 0;
+    return usage.today_partial.find((p) => p.kind === kind)?.total ?? 0;
+  };
+  const queriesToday = todayTotal("query.served");
+  const indexMinutesToday = todayTotal("index.minutes");
+  // Render even when usage is null so the surface area is stable —
+  // the chips just show "0" / "—" instead of disappearing.
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-xs">
+      <UsageChip label="Queries today" value={String(queriesToday)} />
+      <span className="text-text-muted">·</span>
+      <UsageChip
+        label="Index-min today"
+        value={String(indexMinutesToday)}
+      />
+      <span className="text-text-muted">·</span>
+      <UsageChip
+        label="p50 latency"
+        value={latencyMs == null ? "—" : `${latencyMs} ms`}
+      />
+    </div>
+  );
+}
+
+function UsageChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="flex items-baseline gap-1.5">
+      <span className="font-mono uppercase tracking-[0.06em] text-text-muted">
+        {label}
+      </span>
+      <span className="font-mono text-text">{value}</span>
+    </span>
   );
 }
