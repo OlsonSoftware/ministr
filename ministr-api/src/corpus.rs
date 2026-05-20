@@ -122,7 +122,7 @@ pub struct ListCorporaResponse {
 /// A single SSE event for ingestion progress.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IngestionProgressEvent {
-    /// Phase: `"pending"`, `"running"`, or `"complete"`.
+    /// Phase: `"pending"`, `"running"`, `"complete"`, or `"failed"`.
     pub status: String,
     /// Current ingestion phase: `"idle"`, `"discovering"`, `"parsing"`,
     /// `"embedding"`, or `"finalizing"`.
@@ -140,6 +140,10 @@ pub struct IngestionProgressEvent {
     /// Relative path of the file currently being processed (empty if idle).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub current_file: String,
+    /// Terminal error message — set on the final event when `status == "failed"`.
+    /// Lets clients surface the cause without re-querying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Compact bundle manifest for API responses.

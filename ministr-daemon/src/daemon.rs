@@ -1579,6 +1579,7 @@ fn progress_stream(
                 embeddings_total: progress.embeddings_total(),
                 embeddings_done: progress.embeddings_done(),
                 current_file: progress.current_file(),
+                error: None,
             };
             if let Ok(json) = serde_json::to_string(&event) {
                 yield Ok(Event::default().data(json));
@@ -1597,6 +1598,11 @@ fn progress_stream(
 /// in a terminal state (`Completed` / `Failed`). On lookup error or
 /// `None` (no job yet), emits a `pending` placeholder so the demo
 /// client doesn't see a dead stream while the row is being written.
+///
+/// PHASE4 chunk 6: the terminal event carries `status = "complete"` or
+/// `"failed"` (matching the doc'd wire shape and what `cloud_demo`
+/// already checks for), plus the snapshot's `error` field on failure
+/// so clients don't need a follow-up GET to surface the cause.
 fn queue_progress_stream(
     sink: Arc<dyn ministr_api::IndexJobSink>,
     corpus_id: String,
@@ -1621,7 +1627,12 @@ fn queue_progress_stream(
                 Some(IndexJobStatus::Pending) | None => ("pending", false),
                 Some(IndexJobStatus::Running) => ("running", false),
                 Some(IndexJobStatus::Completed) => ("complete", true),
-                Some(IndexJobStatus::Failed) => ("error", true),
+                Some(IndexJobStatus::Failed) => ("failed", true),
+            };
+            let error = if terminal && status == "failed" {
+                snapshot.as_ref().and_then(|s| s.error.clone())
+            } else {
+                None
             };
             let event = ministr_api::corpus::IngestionProgressEvent {
                 status: status.to_string(),
@@ -1641,6 +1652,7 @@ fn queue_progress_stream(
                     .as_ref()
                     .and_then(|s| s.current_file.clone())
                     .unwrap_or_default(),
+                error,
             };
             if let Ok(json) = serde_json::to_string(&event) {
                 yield Ok(Event::default().data(json));
