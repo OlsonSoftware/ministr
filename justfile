@@ -500,6 +500,116 @@ azure-restart-app:
     sleep 15
     just azure-status
 
+# PHASE4 chunk 6 — list state drift between `cloud_corpora` and
+# `indexer_jobs`, plus orphan role-assignments on the storage account
+# whose principalIds no longer resolve.
+#
+# Why this matters: PHASE3 surfaced two ways drift accumulates —
+# (a) RBAC role-assignment GUIDs orphaned by Pulumi replace operations
+# (the `lib/role-assignment.ts` deterministic-GUID fix stops *new*
+# drift but not historic), and (b) `cloud_corpora` rows whose worker
+# crashed pre-`claimed_at`-reclaim (PHASE4 chunk 2) left no
+# `completed` indexer_jobs row behind. Catching both before the
+# operator notices via a failed demo run.
+#
+# Uses the same auto-firewall + docker postgres:16 pattern as
+# `azure-psql` so it doesn't depend on the operator's local psql or
+# leave a firewall rule behind on Ctrl-C.
+#
+# State-drift report: orphan cloud_corpora + orphan role-assignments.
+azure-orphans:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ [1/4] resolving cloud env"
+    eval "$(./scripts/azure-env.sh)"
+    PGURL=$(pulumi -C deploy/azure stack output pgConnectionString --show-secrets)
+    PGHOST=$(pulumi -C deploy/azure stack output pgHost)
+    PGSERVER="${PGHOST%%.*}"
+    RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    IP=$(curl -sS --max-time 5 https://api.ipify.org)
+    [ -n "$IP" ] || { echo "could not resolve public IP"; exit 1; }
+    RULE="temp-orphans-$(date +%s)"
+    echo "▶ [2/4] opening firewall: rule=$RULE ip=$IP server=$PGSERVER (~30-90s)"
+    az postgres flexible-server firewall-rule create \
+        --resource-group "$RG" \
+        --name "$PGSERVER" \
+        --rule-name "$RULE" \
+        --start-ip-address "$IP" \
+        --end-ip-address "$IP" >/dev/null
+    trap 'echo "▶ removing firewall rule $RULE"; \
+          az postgres flexible-server firewall-rule delete \
+              --resource-group "'"$RG"'" \
+              --name "'"$PGSERVER"'" \
+              --rule-name "'"$RULE"'" \
+              --yes >/dev/null || true' EXIT
+    echo "▶ [3/4] corpora with no completed indexer_jobs row:"
+    docker run --rm -i postgres:16 psql "$PGURL" -A -F $'\t' -c "
+        SELECT c.corpus_id,
+               c.display_name,
+               c.status                                              AS corpus_status,
+               COALESCE(
+                   (SELECT j.status FROM indexer_jobs j
+                      WHERE j.corpus_id = c.corpus_id
+                      ORDER BY j.created_at DESC LIMIT 1),
+                   '(no job rows)'
+               )                                                     AS latest_job_status,
+               to_timestamp(c.created_at / 1000.0)::timestamptz       AS created
+          FROM cloud_corpora c
+         WHERE NOT EXISTS (
+                   SELECT 1 FROM indexer_jobs j
+                    WHERE j.corpus_id = c.corpus_id
+                      AND j.status = 'completed'
+               )
+         ORDER BY c.created_at DESC;
+    " | sed -n '1,/^(/p'
+    echo ""
+    echo "▶ [4/4] storage role-assignments whose principal no longer resolves:"
+    STORAGE_ID=$(az storage account show --name ministrv2data \
+        --resource-group "$RG" --query id -o tsv 2>/dev/null) || {
+            echo "(storage account not yet provisioned — skipping role-assignment scan)"
+            exit 0
+        }
+    # `az role assignment list` returns one row per assignment scoped at
+    # or above the storage account. `principalName` is empty when the
+    # principal is deleted; that's the orphan signal we want.
+    az role assignment list --scope "$STORAGE_ID" \
+        --query "[?principalName==''].{name:name, principalId:principalId, role:roleDefinitionName}" \
+        -o table 2>/dev/null \
+        || echo "(no orphan role-assignments — RBAC clean)"
+
+# PHASE4 chunk 6 — per-day indexer-job execution-seconds from the
+# Azure REST surface, plus an estimated $/month at the right-sized
+# spec (4 vCPU / 4 GiB). Validates PHASE4 chunk 1's "≈$0/mo when
+# idle" claim: a quiet stack should report near-zero seconds.
+#
+# Pricing (May 2026, East US, ACA Consumption profile):
+#   vCPU-second  = $0.0000257
+#   GiB-second   = $0.0000032
+# At 4 vCPU + 4 GiB that's $0.0001156 per active second.
+# Override with COST_PER_SECOND=... if your spec or region differs.
+#
+# Uses `az containerapp job execution list --output json` rather than
+# Log Analytics, because the execution timestamps live on the control
+# plane regardless of whether the log workspace is sampling — making
+# this recipe accurate even when log retention is short.
+#
+# Per-day indexer execution-seconds + estimated monthly cost.
+azure-cost:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    JOB=$(pulumi -C deploy/azure stack output indexerJobName 2>/dev/null || echo "ministrv2-indexer")
+    : "${COST_PER_SECOND:=0.0001156}"
+    export COST_PER_SECOND
+    echo "▶ pricing model: \$${COST_PER_SECOND}/active-second (4 vCPU + 4 GiB; override via COST_PER_SECOND=…)"
+    echo ""
+    echo "▶ executions in the last 30 days:"
+    az containerapp job execution list \
+        --name "$JOB" --resource-group "$RG" \
+        --output json 2>/dev/null \
+        | python3 ./scripts/azure-cost-summary.py
+
 # PHASE3 chunk 6 acceptance: serve/worker split end-to-end.
 #
 # 1. demo-remote: clone-url → POST /api/v1/corpora returns pending

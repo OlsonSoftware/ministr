@@ -309,6 +309,8 @@ struct ProgressEvent {
     embeddings_done: usize,
     #[serde(default)]
     current_file: String,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 /// Stream `/api/v1/corpora/{id}/progress` SSE and pretty-print each
@@ -366,13 +368,22 @@ async fn stream_progress(endpoint: &str, token: &str, corpus_id: &str) -> Result
                     print_event(elapsed, &evt, &mut last_phase);
                     if evt.status == "complete" {
                         println!();
-                        println!("  {C_GREEN}✓ indexing complete in {}{C_RESET}", fmt_elapsed(elapsed));
+                        println!(
+                            "  {C_GREEN}✓ indexing complete in {} ({} files){C_RESET}",
+                            fmt_elapsed(elapsed),
+                            evt.files_done
+                        );
                         return Ok(());
                     }
                     if evt.status == "failed" {
                         println!();
-                        println!("  {C_RED}✗ indexing failed after {}{C_RESET}", fmt_elapsed(elapsed));
-                        return Err(miette::miette!("indexing failed"));
+                        let cause = evt.error.as_deref().unwrap_or("(no cause reported)");
+                        println!(
+                            "  {C_RED}✗ indexing failed after {} — {}{C_RESET}",
+                            fmt_elapsed(elapsed),
+                            cause
+                        );
+                        return Err(miette::miette!("indexing failed: {cause}"));
                     }
                 }
             }
