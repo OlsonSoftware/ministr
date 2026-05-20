@@ -4794,6 +4794,7 @@ dependencies = [
 name = "ministr-cloud"
 version = "0.6.0"
 dependencies = [
+ "axum",
  "azure_core",
  "azure_identity",
  "azure_storage_blob",
