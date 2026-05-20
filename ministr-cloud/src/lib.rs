@@ -28,7 +28,7 @@
 //! | F2.1 | `github::app` installation-token minter |
 //! | F2.3 | `quota` plan-aware tower middleware |
 //! | F2.4 | `billing::checkout` Stripe Checkout sessions |
-//! | F3.1 | `orgs` org CRUD + magic-link invites |
+//! | F3.1a | `orgs` org CRUD + member listing (landed; F3.1b adds invites; F3.1c adds Stripe seat sync) |
 //! | F3.2 | `acl` corpus ACL middleware |
 //! | F3.4 | `api_keys` service-account keys |
 //! | F3.5 | `webhooks::outbound` Slack/Discord/HMAC delivery |
@@ -48,6 +48,7 @@ pub mod db;
 pub mod github;
 pub mod idp;
 pub mod index_job_sink;
+pub mod orgs;
 pub mod quota;
 pub mod ratelimit;
 pub mod users;
@@ -78,6 +79,10 @@ pub use quota::{
 pub use ratelimit::{
     ip_key, rate_limit_middleware, tenant_key, InMemoryBucket, RateLimitConfig,
     RateLimitDecision, TokenBucket,
+};
+pub use orgs::{
+    create_org, list_org_members, list_orgs_for_user, member_role, orgs_routes, MemberRow,
+    OrgError, OrgRow, OrgWithRole, OrgsState, DEFAULT_ORG_PLAN,
 };
 pub use users::{
     set_stripe_customer_id, upsert_github_user, UserError, UserRow, DEFAULT_GITHUB_SIGNIN_PLAN,
