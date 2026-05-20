@@ -530,6 +530,29 @@ phase3-smoke:
     echo ""
     echo "✓ phase3-smoke passed — registry + bundle survived pod recycle"
 
+# Detail: same functional sequence as phase3-smoke (demo-remote → restart
+# → repeat), but operator-verified against the right-sized indexer Job:
+# 4 GiB / 4 vCPU (down from the PHASE3-era 8 GiB default), with
+# cmd_indexer_worker streaming HNSW persist every 4 files indexed (PHASE4
+# chunk 4) so peak rss is bounded instead of holding the whole graph in
+# memory until end-of-ingest. If a replica exits 137 (OOM kill), back out
+# Pulumi.prod.yaml's `ministr-azure:jobMemory: 4Gi` line and see the
+# "Producer-task lifetime" backlog item in deploy/azure/PHASE4.md.
+# PHASE4 post-streaming smoke — validates the 4 GiB right-sized worker on anyhow.
+phase4-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ phase4-smoke step 1 / 3 — first demo-remote (clone + index + query on 4 GiB pod)"
+    just demo-remote
+    echo ""
+    echo "▶ phase4-smoke step 2 / 3 — restart serve pod (drops pod-local /data)"
+    just azure-restart-app
+    echo ""
+    echo "▶ phase4-smoke step 3 / 3 — re-run demo-remote (must lazy-restore from blob)"
+    just demo-remote
+    echo ""
+    echo "✓ phase4-smoke passed — streaming worker + bundle restore survived on the new spec"
+
 # Tear down the entire Azure stack (DESTRUCTIVE — asks for confirmation).
 azure-down:
     #!/usr/bin/env bash

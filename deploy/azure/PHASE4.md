@@ -110,10 +110,7 @@ Concretely changes from PHASE3:
   - **Honest negatives:** the persist hook has no targeted unit test — verification relies on the existing 1495-test suite (which exercises every ingestion path with `persist_every=None`) plus chunk 5's operator smoke. Cloud-worker wiring (passing `corpus_dir` + `persist_every=Some(4)` from `cmd_indexer_worker` / `run_corpus_ingestion`) is **not** in this commit — moved to the backlog as a follow-up so chunk 4 stays atomic to "core plumbing + dead-code purge".
   - The actual cloud OOM lever (ONNX activations + per-file AST + claim graph held across `buffer_unordered` futures) was NOT addressed. Those are downstream of the embedder and parser, not the pipeline; surfaced as backlog items.
 
-- [ ] **Chunk 5 — Right-size worker post-streaming**
-  - `Pulumi.prod.yaml`: `jobMemory: 4Gi`, `jobCpu: 2`. (CPU drop only if ingestion-pipeline benchmarks show 4 vCPU was over-provisioned.)
-  - Cost: from ~$4/h-when-running at 4 vCPU / 12 GiB down to ~$2/h at 2 vCPU / 4 GiB.
-  - Operator-side smoke: `just phase3-smoke` (rename to `just phase4-smoke`?) ends-to-end on the new spec, including the pod-restart-then-query step.
+- [x] **Chunk 5 — Right-size worker post-streaming** — added `ministr-azure:jobMemory: 4Gi` to `Pulumi.prod.yaml` (down from the 8 GiB default in `index.ts`). `jobCpu` stays at the default 4: the doc conditioned the drop on a benchmark we haven't run. Added `just phase4-smoke` recipe — same functional sequence as `phase3-smoke` (demo-remote → restart serve pod → re-run demo-remote), with the comment block flagging OOM rollback semantics if a replica exits 137. Cost win at the right-sized spec: ~$2/h-when-running on 4 vCPU / 4 GiB vs ~$4/h on 4 vCPU / 8 GiB; idle is $0 either way via the KEDA 0-replica scaler. `npx tsc --noEmit` clean. **Operator-side verification still required** — `pulumi up` + `just phase4-smoke` against the live cluster — can't run here without Azure creds.
 
 - [ ] **Chunk 6 — Observability + ops polish**
   - `just azure-orphans` recipe: lists `cloud_corpora` rows whose `indexer_jobs` history has no `Completed` entry, OR role-assignments on the storage account whose principals don't resolve. Helps catch state drift before it bites.
