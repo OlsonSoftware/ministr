@@ -10,13 +10,13 @@ use crate::time::epoch_now;
 use super::{Job, JobProgress, JobQueue, JobQueueError, JobResult, JobStatus, JobTrigger};
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct InMemoryJobQueue {
+pub struct InMemoryJobQueue {
     jobs: Arc<RwLock<HashMap<String, Job>>>,
 }
 
 impl InMemoryJobQueue {
-    #[allow(dead_code)] // selected once the admin router is wired
-    pub(crate) fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self::default()
     }
 }

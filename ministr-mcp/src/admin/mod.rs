@@ -17,7 +17,7 @@
 
 mod handlers;
 mod ids;
-mod jobs;
+pub mod jobs;
 mod router;
 mod webhook;
 
@@ -28,8 +28,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jobs::{InMemoryJobQueue, SqliteJobQueue};
 
+pub use jobs::JobQueueBackend;
 pub use router::{admin_protected_routes, admin_public_routes};
-pub(crate) use jobs::JobQueueBackend;
 
 /// State shared by every admin handler.
 ///
