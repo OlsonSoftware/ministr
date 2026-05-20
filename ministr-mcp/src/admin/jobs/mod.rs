@@ -79,12 +79,39 @@ impl JobStatus {
 }
 
 /// Indexer progress snapshot. Updated by the worker; streamed by SSE.
+///
+/// `total_files` / `processed_files` are the parser-side counts —
+/// `processed_files` is bumped per file as soon as parsing completes,
+/// which can race ahead of the embedder by minutes on a large corpus.
+/// `sections_done` / `embeddings_*` are the embedding-side counters
+/// added in PHASE5 chunk 3: the streaming consumer updates the
+/// in-memory `IngestionProgress` per batch and the 500ms reporter
+/// snapshots all five into this struct. SSE clients render embedding
+/// progress as the primary signal during the long embedder phase, with
+/// `processed_files` as a secondary "parse phase done" indicator.
+///
+/// `serde(default)` on the new fields keeps in-flight Postgres rows
+/// from PHASE4 deserialisable — old rows simply report zero for the
+/// new fields until the next worker writes a fresh snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JobProgress {
     pub stage: String,
     pub total_files: u64,
     pub processed_files: u64,
     pub current_file: Option<String>,
+    /// PHASE5 chunk 3 — section count bumped by the producer per file.
+    #[serde(default)]
+    pub sections_done: u64,
+    /// PHASE5 chunk 3 — embedding-pairs *expected* across the run.
+    /// Producer increments as it discovers them; reflects total work
+    /// the embedder needs to do.
+    #[serde(default)]
+    pub embeddings_total: u64,
+    /// PHASE5 chunk 3 — embedding-pairs *flushed to HNSW*. Streaming
+    /// consumer bumps per `batch_embed_and_insert`. SSE renders this as
+    /// the embedding-progress bar.
+    #[serde(default)]
+    pub embeddings_done: u64,
 }
 
 /// A reindex job record.

@@ -2157,6 +2157,12 @@ pub(crate) async fn cmd_indexer_worker(
                     _ = &mut cancel_rx => break,
                     _ = interval.tick() => {
                         let current = progress.current_file();
+                        // PHASE5 chunk 3 — sample the embedding-side
+                        // counters too so the SSE renders real per-batch
+                        // embedder progress. Pre-chunk-3 the reporter
+                        // only wrote (total_files, processed_files), so
+                        // during the long embedder phase the bar
+                        // plateaued at parser-side N/N until terminal.
                         let snap = JobProgress {
                             stage: progress.phase().as_str().to_string(),
                             total_files: progress.files_total() as u64,
@@ -2166,6 +2172,9 @@ pub(crate) async fn cmd_indexer_worker(
                             } else {
                                 Some(current)
                             },
+                            sections_done: progress.sections_done() as u64,
+                            embeddings_total: progress.embeddings_total() as u64,
+                            embeddings_done: progress.embeddings_done() as u64,
                         };
                         if let Err(e) = queue.update_progress(&job_id, snap).await {
                             // Soft failure — the worker still owns the
