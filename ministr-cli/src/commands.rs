@@ -462,6 +462,25 @@ pub(crate) async fn cmd_serve_http(
             );
             composed = composed.merge(billing_protected);
             tracing::info!("billing endpoint mounted — GET /api/v1/billing/usage");
+
+            // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
+            // Mounted behind `ministr:read` so any paid-tier token
+            // admits; the F2.3 `AtlasAccessRule` runs higher up in the
+            // composed stack and short-circuits unauthenticated /
+            // free callers with the 402 paywall. Cloud-only —
+            // self-hosted serve leaves Atlas unmounted.
+            let atlas_router =
+                ministr_atlas::atlas_routes(ministr_atlas::AtlasState::from_seed_list());
+            let atlas_protected = ministr_mcp::auth::scope_protected_router(
+                atlas_router,
+                store.clone(),
+                "ministr:read",
+            );
+            composed = composed.merge(atlas_protected);
+            tracing::info!(
+                count = ministr_atlas::ATLAS_SEED_REPOS.len(),
+                "atlas v0 mounted — GET /atlas/manifest.json + /atlas/{{slug}}/*"
+            );
             // F1.5 sub-bullet 3 — Stripe webhook receiver. Mounted
             // when both the cloud pool AND the Stripe signing secret
             // are present. Public route (Stripe is the caller); the
@@ -1710,4 +1729,117 @@ fn would_hook_block(tool_name: &str, tool_args: &str) -> bool {
         }
         _ => false,
     }
+}
+
+// ---------------------------------------------------------------------------
+// ministr atlas — F2.6
+// ---------------------------------------------------------------------------
+
+/// `ministr atlas reindex` — F2.6 worker entrypoint.
+///
+/// The Azure Container Apps Job invokes this on the F4.2 weekly cron.
+/// F2.6 v0 ships the orchestration with no-op step impls so the
+/// command itself is stable: the cron's structured-log dashboard, the
+/// dead-letter table, and the alerts all see real data from day one.
+///
+/// F4.2 replaces the no-op trait impls below with concrete
+/// `ministr_core::git::GitFetcher` / corpus-registry / Azure Blob
+/// upload paths without changing this function's signature.
+pub(crate) async fn cmd_atlas_reindex() -> miette::Result<()> {
+    use std::pin::Pin;
+    use std::sync::Arc;
+
+    use ministr_atlas::{
+        BlobWriter, Cloner, IndexerStep, ReindexError, reindex_once,
+    };
+
+    type BoxFut<'a, T> =
+        Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+
+    /// No-op clone step — logs the URL and returns a synthetic path.
+    /// F4.2 replaces with a real `ministr_core::git::GitFetcher`.
+    #[derive(Debug)]
+    struct StubCloner;
+    impl Cloner for StubCloner {
+        fn clone_to_tmp<'a>(
+            &'a self,
+            clone_url: &'a str,
+        ) -> BoxFut<'a, Result<std::path::PathBuf, ReindexError>> {
+            Box::pin(async move {
+                tracing::info!(clone_url, "atlas: would clone (stub)");
+                Ok(std::path::PathBuf::from(format!(
+                    "/tmp/atlas-stub-{}",
+                    clone_url.len()
+                )))
+            })
+        }
+    }
+
+    /// No-op index step — returns a placeholder bundle handle.
+    #[derive(Debug)]
+    struct StubIndexer;
+    impl IndexerStep for StubIndexer {
+        fn index_dir<'a>(
+            &'a self,
+            path: &'a std::path::Path,
+        ) -> BoxFut<'a, Result<String, ReindexError>> {
+            Box::pin(async move {
+                tracing::info!(path = %path.display(), "atlas: would index (stub)");
+                Ok(format!("stub-bundle:{}", path.display()))
+            })
+        }
+    }
+
+    /// No-op blob writer — returns the synthetic blob path the cron
+    /// dashboard expects to see in the log.
+    #[derive(Debug)]
+    struct StubWriter;
+    impl BlobWriter for StubWriter {
+        fn write_blob<'a>(
+            &'a self,
+            slug: &'a str,
+            _handle: &'a str,
+        ) -> BoxFut<'a, Result<String, ReindexError>> {
+            Box::pin(async move {
+                let blob = format!("atlas/{slug}/latest.idx");
+                tracing::info!(blob, "atlas: would write (stub)");
+                Ok(blob)
+            })
+        }
+    }
+
+    let cloner: Arc<dyn Cloner> = Arc::new(StubCloner);
+    let indexer: Arc<dyn IndexerStep> = Arc::new(StubIndexer);
+    let writer: Arc<dyn BlobWriter> = Arc::new(StubWriter);
+    let license: Arc<dyn ministr_atlas::LicenseFilter> =
+        Arc::new(ministr_atlas::SpdxFilter);
+    let optout: Arc<dyn ministr_atlas::OptOutRegistry> =
+        Arc::new(ministr_atlas::InMemoryRegistry::new());
+
+    tracing::info!(
+        seed_count = ministr_atlas::ATLAS_SEED_REPOS.len(),
+        "atlas reindex starting (F2.6 v0 stub orchestration)"
+    );
+    let outcome = reindex_once(&cloner, &indexer, &writer, &license, &optout).await;
+    tracing::info!(
+        indexed = outcome.indexed.len(),
+        skipped = outcome.skipped.len(),
+        failed = outcome.failed.len(),
+        "atlas reindex complete"
+    );
+    if !outcome.failed.is_empty() {
+        tracing::warn!("{} step failures recorded", outcome.failed.len());
+    }
+    Ok(())
+}
+
+/// `ministr atlas manifest` — emit the F2.6 v0 manifest as JSON on
+/// stdout. The cron pipes this into the Atlas storage account so the
+/// public mirror at `ministr.ai/atlas/manifest.json` stays in sync.
+pub(crate) fn cmd_atlas_manifest() -> miette::Result<()> {
+    let manifest = ministr_atlas::ManifestSnapshot::from_seed_list();
+    let json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| miette::miette!("serialise atlas manifest: {e}"))?;
+    println!("{json}");
+    Ok(())
 }
