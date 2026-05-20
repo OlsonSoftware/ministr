@@ -14,7 +14,7 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::code::AstParser;
 use crate::code::bridge::linker::BridgeLinker;
-use crate::code::bridge::{BridgeEndpoint, BridgeKind, create_linker_for_kinds, detector};
+use crate::code::bridge::{BridgeKind, create_linker_for_kinds, detector};
 use crate::code::package_graph::PackageGraph;
 use crate::embedding::Embedder;
 use crate::error::IngestionError;
@@ -350,7 +350,6 @@ pub(super) enum FileResult {
         sections: usize,
         claims: usize,
         pending_refs: Vec<PendingRef>,
-        bridge_endpoints: Vec<BridgeEndpoint>,
         embedding_pairs: Vec<(VectorId, String)>,
     },
 }
@@ -481,12 +480,17 @@ pub struct IngestionPipeline {
     dual_embedder: Option<Arc<dyn crate::embedding::DualEmbedder>>,
     /// Storage handle for full-dim vectors (used only when `dual_embedder` is set).
     full_dim_storage: Option<crate::storage::SqliteStorage>,
-    /// Streaming-ingestion knobs (PHASE4 chunk 3 scaffolding). Read by
-    /// chunk 4's per-batch persist hook; today only stored. See
-    /// [`BatchIngestionConfig`] for the four-phase model and HNSW
-    /// persistence notes.
-    #[allow(dead_code)] // wired into the per-batch persist hook in PHASE4 chunk 4
+    /// Streaming-ingestion knobs. See [`BatchIngestionConfig`] for the
+    /// four-phase model + HNSW persistence notes; consumed by
+    /// `run_producer_consumer`'s per-batch persist hook (PHASE4 chunk 4).
     batch_config: BatchIngestionConfig,
+    /// On-disk location to flush the HNSW index to when
+    /// `batch_config.persist_every` fires. `None` (default) disables
+    /// mid-run persist regardless of `persist_every`; callers that want
+    /// streaming persistence opt in via [`Self::with_corpus_dir`]. The
+    /// path is forwarded straight to `VectorIndex::persist`, so it must
+    /// be the same directory the caller hands off to bundle export.
+    corpus_dir: Option<PathBuf>,
 }
 
 impl Default for IngestionPipeline {
@@ -510,16 +514,30 @@ impl IngestionPipeline {
             dual_embedder: None,
             full_dim_storage: None,
             batch_config: BatchIngestionConfig::default(),
+            corpus_dir: None,
         }
     }
 
-    /// Configure streaming-ingestion knobs (PHASE4 chunk 3). Today
-    /// only `persist_every` will eventually influence behaviour — see
-    /// [`BatchIngestionConfig`] for the consumption plan. Passing the
-    /// default is a no-op vs `new()`.
+    /// Configure streaming-ingestion knobs. With
+    /// [`BatchIngestionConfig::persist_every`] set AND a corpus dir
+    /// configured via [`Self::with_corpus_dir`], the producer flushes
+    /// the HNSW index to disk every N files indexed. Either knob
+    /// missing skips the mid-run flush — useful for tests + the local
+    /// `ministr index` path that bundles at end-of-ingest.
     #[must_use]
     pub fn with_batch_config(mut self, cfg: BatchIngestionConfig) -> Self {
         self.batch_config = cfg;
+        self
+    }
+
+    /// Provide the on-disk location for [`VectorIndex::persist`] to
+    /// write to when [`BatchIngestionConfig::persist_every`] fires.
+    /// Must match the directory the caller will bundle/upload at the
+    /// end of ingest — otherwise the streamed snapshots are pointing
+    /// to a dir that nobody reads.
+    #[must_use]
+    pub fn with_corpus_dir(mut self, dir: PathBuf) -> Self {
+        self.corpus_dir = Some(dir);
         self
     }
 
@@ -755,7 +773,6 @@ impl IngestionPipeline {
             sections: result.section_count,
             claims: result.claim_count,
             pending_refs: Vec::new(),
-            bridge_endpoints: Vec::new(),
             embedding_pairs: Vec::new(),
         })
     }
@@ -878,7 +895,7 @@ impl IngestionPipeline {
         // For code files: extract symbols and embed immediately
         if parser_kind == ParserKind::Code {
             let sym_result =
-                extract_code_symbols(source_path, content, storage, None, None).await?;
+                extract_code_symbols(source_path, content, storage, None).await?;
             if !sym_result.embedding_pairs.is_empty() {
                 batch_embed_and_insert(&sym_result.embedding_pairs, embedder, index).await?;
             }
@@ -1052,14 +1069,13 @@ impl IngestionPipeline {
             .map(|f| (f.path.clone(), f.relative.clone()))
             .collect();
 
-        let (was_cancelled, embed_count, pending_refs, _bridge_endpoints) = self
+        let (was_cancelled, embed_count, pending_refs) = self
             .run_producer_consumer(
                 file_items,
                 storage,
                 embedder,
                 index,
                 active_graph,
-                bridge_linker.as_ref(),
                 &mut stats,
                 ct,
             )
@@ -1303,14 +1319,13 @@ impl IngestionPipeline {
             .map(|f| (f.path.clone(), f.relative.clone()))
             .collect();
 
-        let (_was_cancelled, embed_count, pending_refs, _bridge_endpoints) = self
+        let (_was_cancelled, embed_count, pending_refs) = self
             .run_producer_consumer(
                 file_items,
                 storage,
                 embedder,
                 index,
                 active_graph,
-                bridge_linker.as_ref(),
                 &mut stats,
                 None,
             )
@@ -1391,10 +1406,9 @@ impl IngestionPipeline {
         embedder: &E,
         index: &I,
         active_graph: Option<&PackageGraph>,
-        bridge_linker: Option<&BridgeLinker>,
         stats: &mut IngestionStats,
         ct: Option<&CancellationToken>,
-    ) -> Result<(bool, usize, Vec<PendingRef>, Vec<BridgeEndpoint>), IngestionError>
+    ) -> Result<(bool, usize, Vec<PendingRef>), IngestionError>
     where
         S: Storage + ?Sized,
         E: Embedder + ?Sized,
@@ -1410,7 +1424,11 @@ impl IngestionPipeline {
         let (embed_tx, embed_rx) = tokio::sync::mpsc::channel::<Vec<(VectorId, String)>>(16);
 
         let mut all_pending_refs = Vec::new();
-        let mut all_bridge_endpoints: Vec<BridgeEndpoint> = Vec::new();
+        // PHASE4 chunk 4: `all_bridge_endpoints` used to be accumulated
+        // here, returned, and immediately discarded by both callers —
+        // `finalize_ingestion` rebuilds bridge data from `all_files`
+        // (see its doc comment) so the per-file batch is dead weight on
+        // a code-heavy corpus. Removed entirely.
 
         // Shared cancel signal: when the consumer errors it trips this token
         // so the producer stops scheduling new parses and exits promptly.
@@ -1463,7 +1481,6 @@ impl IngestionPipeline {
                                     storage,
                                     index,
                                     active_graph,
-                                    bridge_linker,
                                 )
                                 .await;
                             (item, result)
@@ -1482,7 +1499,6 @@ impl IngestionPipeline {
                         sections,
                         claims,
                         pending_refs,
-                        bridge_endpoints,
                         embedding_pairs,
                     }) => {
                         debug!(path = %item.relative, sections, claims, "parsed and stored");
@@ -1490,7 +1506,38 @@ impl IngestionPipeline {
                         stats.total_sections += sections;
                         stats.total_claims += claims;
                         all_pending_refs.extend(pending_refs);
-                        all_bridge_endpoints.extend(bridge_endpoints);
+
+                        // PHASE4 chunk 4: periodic HNSW persist. Fires
+                        // only when *both* `persist_every` and a
+                        // `corpus_dir` are configured (callers that
+                        // bundle at end-of-ingest leave corpus_dir
+                        // unset — see [`with_corpus_dir`]). HNSW
+                        // persist is atomic (tmp-rename + fsync), so
+                        // we hold the in-memory graph for ongoing
+                        // inserts and the persisted snapshot is a
+                        // recoverable point-in-time copy. Sync call
+                        // inside an async block: persist is fast
+                        // enough on hot-disk to not warrant
+                        // spawn_blocking for the current corpus sizes.
+                        if let (Some(n), Some(dir)) = (
+                            self.batch_config.persist_every,
+                            self.corpus_dir.as_ref(),
+                        ) && n != 0
+                            && stats.files_indexed.is_multiple_of(n)
+                        {
+                            match index.persist(dir) {
+                                Ok(()) => debug!(
+                                    files_indexed = stats.files_indexed,
+                                    dir = %dir.display(),
+                                    "mid-run HNSW persist snapshot"
+                                ),
+                                Err(e) => warn!(
+                                    files_indexed = stats.files_indexed,
+                                    error = %e,
+                                    "mid-run HNSW persist failed; continuing"
+                                ),
+                            }
+                        }
 
                         // Track this doc for rollback on consumer failure.
                         let doc_id = crate::types::ContentId(item.relative.clone());
@@ -1605,12 +1652,7 @@ impl IngestionPipeline {
             progress.set_current_file("");
         }
 
-        Ok((
-            was_cancelled,
-            embed_count,
-            all_pending_refs,
-            all_bridge_endpoints,
-        ))
+        Ok((was_cancelled, embed_count, all_pending_refs))
     }
 
     /// Consume embedding pairs from the producer channel, batch them, and insert.
@@ -1756,7 +1798,7 @@ impl IngestionPipeline {
 
     /// Parse, enrich, and store a single file. Embedding is deferred.
     #[allow(clippy::too_many_arguments)]
-    #[instrument(skip(self, storage, index, package_graph, bridge_linker), fields(path = %relative_path))]
+    #[instrument(skip(self, storage, index, package_graph), fields(path = %relative_path))]
     async fn parse_and_store_file<S, I>(
         &self,
         file_path: &Path,
@@ -1765,7 +1807,6 @@ impl IngestionPipeline {
         storage: &S,
         index: &I,
         package_graph: Option<&PackageGraph>,
-        bridge_linker: Option<&BridgeLinker>,
     ) -> Result<FileResult, IngestionError>
     where
         S: Storage + ?Sized,
@@ -1871,18 +1912,10 @@ impl IngestionPipeline {
             .parser_override
             .or_else(|| detect_parser_kind(Path::new(relative_path)));
         let mut pending_refs = Vec::new();
-        let mut bridge_endpoints = Vec::new();
         if parser_kind == Some(ParserKind::Code) {
-            let sym_result = extract_code_symbols(
-                relative_path,
-                &content_str,
-                storage,
-                package_graph,
-                bridge_linker,
-            )
-            .await?;
+            let sym_result =
+                extract_code_symbols(relative_path, &content_str, storage, package_graph).await?;
             pending_refs = sym_result.pending_refs;
-            bridge_endpoints = sym_result.bridge_endpoints;
             embedding_pairs.extend(sym_result.embedding_pairs);
         }
 
@@ -1890,7 +1923,6 @@ impl IngestionPipeline {
             sections: result.section_count,
             claims: result.claim_count,
             pending_refs,
-            bridge_endpoints,
             embedding_pairs,
         })
     }
