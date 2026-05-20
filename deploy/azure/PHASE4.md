@@ -101,16 +101,15 @@ Concretely changes from PHASE3:
   - `cargo build --workspace`, `cargo test -p ministr-mcp --lib` (237 pass, 10 ignored — the postgres integration suite), `cargo clippy -p ministr-mcp -p ministr-cli --all-targets -- -D warnings -W clippy::pedantic` all clean.
   - Honest negative: the new reclaim test is in the ignored set; real-Postgres verification waits on CI or a manual `MINISTR_TEST_PG_URL` run.
 
-- [ ] **Chunk 3 — Streaming ingestion design + migration plan**
-  - This chunk is **design + scaffolding only**, not the big refactor. Splits the existing `IngestionPipeline::ingest_paths_with_embeddings` into composable phases (discover, parse, embed, persist) without changing the contract. Adds an internal `BatchIngestionConfig { batch_size: usize, persist_every: usize }` that's currently set to "everything at end" to preserve behaviour.
-  - Writes the design doc inline: how `ministr-core::index::HnswIndex` handles incremental adds vs full builds (currently full-build via `with_config`); whether we need an `append_batch + persist_incremental` API.
-  - No behavioural change. Just the refactor surface so chunk 4 can plug in.
+- [x] **Chunk 3 — Streaming ingestion design + migration plan** — added `pub struct BatchIngestionConfig { batch_size, persist_every: Option<usize> }` to `ministr_core::ingestion` and plumbed it through `IngestionPipeline` (new private field + `with_batch_config()` builder). `Default` preserves PHASE3 behaviour (`persist_every: None`). The struct's rustdoc captures the four-phase model (discover/parse/embed/persist) and three findings worth flagging: (a) the pipeline is **already streaming** at the parse↔embed boundary via mpsc + `buffer_unordered`; (b) `HnswIndex::insert` is already incremental — `with_config` is one construction path, not the hot path; (c) `HnswIndex::persist` is atomic (tmp-rename + fsync per the existing `atomic HNSW persist with crash-recovery backup` change), so mid-run persist is safe today.
+  - `cargo build --workspace`, `cargo clippy -p ministr-core --all-targets -- -D warnings -W clippy::pedantic`, `cargo test -p ministr-core --lib` (1495/1495 pass) all clean.
+  - **Plan deviation for chunk 4:** the doc framed chunk 4 as "HNSW supports incremental adds — verify in chunk 3" + "storage commits per batch instead of one big transaction". Reality: HNSW is already incremental, and SQLite already commits per file (via `parse_and_store_file`). The OOM lever isn't there — it's the per-file *intermediate state* (parsed sections, claim graphs, ONNX activations) held in process memory until end-of-ingest. Chunk 4 should focus on (a) consuming `persist_every` to flush HNSW to disk periodically (cheap), and (b) explicitly freeing the producer's per-file intermediates after each embedding batch is sent.
 
-- [ ] **Chunk 4 — Streaming ingestion implementation**
-  - The actual swap: per-batch parse → embed → persist → free. Default `batch_size: 4`.
-  - HNSW: `index.add_batch(...) + index.persist()` after each batch (HNSW supports incremental adds — verify in chunk 3).
-  - Storage (SQLite): commits per batch instead of one big transaction.
-  - Bundle export still runs at the end (corpus_roots + manifest), so a one-time spike there. Measure peak rss; should be ~2 GiB on anyhow.
+- [ ] **Chunk 4 — Streaming ingestion implementation** *(scope refined by chunk 3 findings)*
+  - Consume `BatchIngestionConfig::persist_every` in `run_producer_consumer` — after every N files indexed in the producer loop, call `index.persist(corpus_dir/index)`. HNSW persist is already atomic so this is mostly bookkeeping. Flip the default `persist_every` to `Some(4)`.
+  - **Real OOM lever:** explicitly drop the producer's per-file intermediates (`pending_refs`, `bridge_endpoints`, the parsed-section buffer) at batch boundaries rather than accumulating into `all_pending_refs` / `all_bridge_endpoints` for the whole run. Today the consumer batches embedding pairs (good) but the producer accumulates everything else into vectors that grow with corpus size (bad). Likely needs a checkpoint-and-flush pattern: every `persist_every` files, finalise refs + bridge endpoints for that batch, then clear.
+  - SQLite is already per-file via `parse_and_store_file`; no transaction restructuring needed.
+  - Bundle export still runs at the end (corpus_roots + manifest), one-time spike. Measure peak rss; target ~2 GiB on anyhow.
   - Verified by: anyhow ingest completes on a 4 GiB / 4 vCPU job. `mem_profile` peak well under 4 GiB.
 
 - [ ] **Chunk 5 — Right-size worker post-streaming**
@@ -126,7 +125,7 @@ Concretely changes from PHASE3:
 ## Open questions
 
 - ~~**KEDA `postgresql` scaler auth in ACA.**~~ *Resolved in chunk 1.* Use the standard ACA `JobScaleRule.auth` array mapping the `pg-url` secret onto `triggerParameter: "connection"` — the same TriggerAuthentication pattern KEDA uses upstream. No `connectionFromEnv` needed.
-- **`HnswIndex` incremental add semantics.** Our wrapper around `hnsw_rs` builds the index in one shot via `with_config`. Need to confirm `add_one`/`add_batch` work incrementally and that `persist` is safe to call mid-build (the tmp-rename trap from Fix A may recur if persist is called on an in-flight build).
+- ~~**`HnswIndex` incremental add semantics.**~~ *Resolved in chunk 3.* `HnswIndex::insert` is already incremental (the consumer calls it per batch today). `HnswIndex::persist` is atomic via stage-into-tmp + fsync + rename (per the existing `atomic HNSW persist with crash-recovery backup` change), safe to call mid-build. The `with_config` constructor is one path, not the hot path.
 - **Streaming + claim coherence.** If the worker streams progress and the next poll mid-ingest sees claimed_at is fresh (because the worker just updated it), reclaim shouldn't fire. That's the design, but worth a unit test where progress-update bumps claimed_at as a side effect.
 - **PHASE5 trigger.** When (if ever) to flip to managed embedding API. Open until we have a sustained workload that pushes streaming past its limits.
 

@@ -368,6 +368,86 @@ struct FileItem {
     root_path: Option<PathBuf>,
 }
 
+// ── BatchIngestionConfig ─────────────────────────────────────────────────────
+
+/// Tuning knobs for streaming ingestion (PHASE4 chunk 3 scaffolding).
+///
+/// The pipeline conceptually runs in four phases:
+///
+/// 1. **Discover** — walk the input paths and filter for ingestable files
+///    ([`discover_paths`](crate::ingestion::discover_paths)).
+/// 2. **Parse** — tree-sit each file, split it into sections, extract
+///    claims/symbols/refs, and persist the document + section rows to
+///    SQLite. Per-file; already streams concurrently via
+///    `buffer_unordered`.
+/// 3. **Embed** — pull batches of `(VectorId, String)` pairs off the
+///    producer's mpsc channel, call the embedder, and insert vectors
+///    into the HNSW index in-memory. Already batched at
+///    `EMBED_FLUSH_THRESHOLD`.
+/// 4. **Persist** — flush the HNSW graph to disk via
+///    [`VectorIndex::persist`]. Today this happens **once**, after
+///    ingestion ends; the resulting peak rss (everything held in
+///    memory until the very end) is what motivates PHASE4 chunk 4.
+///
+/// # HNSW + persistence
+///
+/// - `HnswIndex::insert` works incrementally — the graph keeps growing
+///   across calls; no "build mode" needs to be closed first.
+/// - `HnswIndex::persist` is atomic (stage-into-tmp + fsync + rename)
+///   per the CHANGELOG entry `atomic HNSW persist with crash-recovery
+///   backup`. Calling it mid-build is safe: it snapshots the current
+///   graph state into a tmp dir and rename-swaps, leaving the
+///   in-memory graph untouched.
+///
+/// So the substrate for "persist every N files" already exists in the
+/// trait surface and the HNSW backend. This struct just gives chunk 4
+/// a knob to read; today it's plumbed through but **not consumed**.
+///
+/// # Defaults
+///
+/// [`BatchIngestionConfig::default`] preserves PHASE3-era behaviour:
+/// `persist_every: None`, i.e. flush only at end-of-ingest. Chunk 4 will
+/// change the default to `Some(4)` once the per-batch persist hook
+/// lands and benchmarks settle.
+///
+/// # Example (chunk-4-shape, not wired today)
+///
+/// ```no_run
+/// use ministr_core::ingestion::{BatchIngestionConfig, IngestionPipeline};
+///
+/// let pipeline = IngestionPipeline::new()
+///     .with_batch_config(BatchIngestionConfig {
+///         batch_size: 4,
+///         persist_every: Some(4),
+///     });
+/// # let _ = pipeline;
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct BatchIngestionConfig {
+    /// Files per parse/embed batch. The producer is already
+    /// `buffer_unordered(concurrency)` over per-file futures, so this
+    /// is read as a hint for how many files' embedding pairs to gather
+    /// before flushing the consumer's HNSW insert. Defaults to 4 in
+    /// the chunk-4 spec; chunk 3 leaves it advisory.
+    pub batch_size: usize,
+    /// When `Some(n)`, persist the HNSW index to disk after every `n`
+    /// files indexed. `None` preserves PHASE3 behaviour: persist once
+    /// at end-of-ingest. Chunk 4 will consume this; chunk 3 only
+    /// scaffolds the surface.
+    pub persist_every: Option<usize>,
+}
+
+impl Default for BatchIngestionConfig {
+    fn default() -> Self {
+        // Preserve PHASE3 behaviour by default: no mid-run persist.
+        // Chunk 4 will flip persist_every once the consume site lands.
+        Self {
+            batch_size: 4,
+            persist_every: None,
+        }
+    }
+}
+
 // ── IngestionPipeline ────────────────────────────────────────────────────────
 
 /// Ingestion pipeline orchestrator.
@@ -401,6 +481,12 @@ pub struct IngestionPipeline {
     dual_embedder: Option<Arc<dyn crate::embedding::DualEmbedder>>,
     /// Storage handle for full-dim vectors (used only when `dual_embedder` is set).
     full_dim_storage: Option<crate::storage::SqliteStorage>,
+    /// Streaming-ingestion knobs (PHASE4 chunk 3 scaffolding). Read by
+    /// chunk 4's per-batch persist hook; today only stored. See
+    /// [`BatchIngestionConfig`] for the four-phase model and HNSW
+    /// persistence notes.
+    #[allow(dead_code)] // wired into the per-batch persist hook in PHASE4 chunk 4
+    batch_config: BatchIngestionConfig,
 }
 
 impl Default for IngestionPipeline {
@@ -423,7 +509,18 @@ impl IngestionPipeline {
             concurrency: None,
             dual_embedder: None,
             full_dim_storage: None,
+            batch_config: BatchIngestionConfig::default(),
         }
+    }
+
+    /// Configure streaming-ingestion knobs (PHASE4 chunk 3). Today
+    /// only `persist_every` will eventually influence behaviour — see
+    /// [`BatchIngestionConfig`] for the consumption plan. Passing the
+    /// default is a no-op vs `new()`.
+    #[must_use]
+    pub fn with_batch_config(mut self, cfg: BatchIngestionConfig) -> Self {
+        self.batch_config = cfg;
+        self
     }
 
     /// Enable two-stage Matryoshka retrieval during ingestion.
