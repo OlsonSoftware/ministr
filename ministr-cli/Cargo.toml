@@ -32,6 +32,9 @@ ministr-daemon.workspace = true
 # seam where open-core CLI orchestration meets the cloud's tenancy +
 # billing + IdP impls. F1.4 sub-bullet 2 uses it for PostgresUsageSink.
 ministr-cloud.workspace = true
+# F2.6 — Atlas curated network. Link-time inclusion makes the CLI
+# carry proprietary terms; same rationale as ministr-cloud above.
+ministr-atlas.workspace = true
 clap.workspace = true
 rmcp.workspace = true
 axum.workspace = true

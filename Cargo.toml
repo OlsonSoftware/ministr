@@ -1,5 +1,5 @@
 [workspace]
-members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-mcp", "ministr-cli", "ministr-app/src-tauri", "ministr-cloud"]
+members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-mcp", "ministr-cli", "ministr-app/src-tauri", "ministr-cloud", "ministr-atlas"]
 resolver = "3"
 
 [workspace.package]
@@ -243,3 +243,6 @@ ministr-mcp = { path = "ministr-mcp", version = "0.6.0" }
 # MIT, but binaries built with this dep included carry the
 # `ministr-cloud` proprietary terms.
 ministr-cloud = { path = "ministr-cloud", version = "0.6.0" }
+# Closed crate — Atlas curated network of pre-indexed OSS repos.
+# Same proprietary-licence rationale as ministr-cloud above.
+ministr-atlas = { path = "ministr-atlas", version = "0.6.0" }
