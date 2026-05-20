@@ -215,15 +215,20 @@ Atomic, one per `/roadmap PHASE6` invocation:
   - [x] Workspace verification clean: **1983** total tests passing (1979 lib + 4 worker bin); workspace clippy pedantic clean.
   - **Honest finding**: the chunk-1 embedder refactor was load-bearing. Chunk 1 shipped with `reqwest::blocking::Client`; tests passed only because they explicitly dropped the embedder inside `spawn_blocking`. Production drop in `cmd_serve_http` would panic at shutdown. Caught while exploring `init_infrastructure` for chunk 2.
 
-- [ ] **Chunk 3 — Delete ACA Jobs from Pulumi + delete `job_start.rs`**
-  - `deploy/azure/lib/job.ts` deleted.
-  - `deploy/azure/lib/job-start-role.ts` deleted.
-  - `deploy/azure/index.ts` drops `createIndexerJob` + `grantJobsOperator`.
-  - `deploy/azure/lib/app.ts` drops the three `MINISTR_ACA_*` env vars.
-  - `ministr-cloud/src/job_start.rs` deleted (PHASE5 chunk 1 + hotfix both revert).
-  - `ministr-cloud/src/index_job_sink.rs` drops the `with_start_trigger` builder (no more fan-out site).
-  - `ministr-cli/src/commands.rs` drops the `AcaJobStartTrigger` wiring block + `cmd_indexer_worker` function entirely.
-  - **Verify**: workspace tests + clippy. The deleted-code path is the cleanest "did we miss a reference" signal.
+- [x] **Chunk 3 — Delete ACA Jobs from Pulumi + delete `job_start.rs`**
+  - [x] `deploy/azure/lib/job.ts` deleted.
+  - [x] `deploy/azure/lib/job-start-role.ts` deleted.
+  - [x] `deploy/azure/index.ts` drops `createIndexerJob`, `grantJobsOperator`, `indexer-blob-rw` role, `indexerJobName` output, `authorization` import. `jobCpu`/`jobMemory` Pulumi config keys are now orphan but harmless — operator can `pulumi config rm` if they want.
+  - [x] `deploy/azure/lib/app.ts` drops the three `MINISTR_ACA_*` env-var inputs + the threading at the bottom of `baseEnv`.
+  - [x] `deploy/docker-entrypoint.sh` drops the `indexer-worker` mode (was the ACA Job entrypoint); accepted modes are now just `serve` and `index`.
+  - [x] `ministr-api/src/job_start_trigger.rs` deleted (the MIT trait went with the only impl).
+  - [x] `ministr-cloud/src/job_start.rs` deleted (PHASE5 chunk 1 + the ACA IMDS hotfix both revert in one motion).
+  - [x] `ministr-cloud/src/index_job_sink.rs` drops the `start_trigger` field + `with_start_trigger` builder + the post-commit `tokio::spawn` fan-out call. `create_pending` is back to just committing the txn.
+  - [x] `ministr-cli/src/commands.rs` drops the three `MINISTR_ACA_*` fields from `CloudEnv` + their `read_cloud_env` lines + the entire `AcaJobStartTrigger` build/match block in `cmd_serve_http` + the whole `cmd_indexer_worker` function (~245 lines).
+  - [x] `ministr-cli/src/main.rs` drops the `IndexerWorker` Command variant + its dispatch arm.
+  - [x] Re-exports cleaned: `ministr-api/src/lib.rs` no longer surfaces `JobStartError/Future/Trigger`; `ministr-cloud/src/lib.rs` no longer surfaces `AcaJobStart*` or `ImdsAuth`.
+  - **Verify**: `cargo build --workspace` clean; workspace tests **1973 passing** (1969 lib + 4 worker bin; the 10 `job_start::tests` are gone with the file); workspace clippy pedantic clean; `cd deploy/azure && npx tsc --noEmit` clean.
+  - **Operator action remaining**: `pulumi up` will see the indexer Job + two role assignments + four env vars as deletions — confirm the diff looks right before applying. The first `pulumi up` after this chunk is the actual demolition. Chunk 4 wraps that with a fresh `azure-demo`.
 
 - [ ] **Chunk 4 — `pulumi up` + first live azure-demo on new arch**
   - First deploy with `MINISTR_EMBEDDER_KIND=openai` and a deployment name pinned via Pulumi config.

@@ -84,13 +84,6 @@ struct CloudEnv {
     github_app_private_key: Option<String>,
     stripe_price_pro: Option<String>,
     stripe_price_team: Option<String>,
-    // PHASE5 chunk 1 — ACA fast-path trigger config. All three are
-    // required together; partial config falls back to KEDA-only mode
-    // (the safety net polls every 5 min after PHASE5 chunk 1's Pulumi
-    // bump). Pulumi injects these into the serve pod container env.
-    aca_subscription_id: Option<String>,
-    aca_resource_group: Option<String>,
-    aca_indexer_job_name: Option<String>,
 }
 
 fn read_cloud_env() -> CloudEnv {
@@ -117,9 +110,6 @@ fn read_cloud_env() -> CloudEnv {
             .filter(|s| !s.trim().is_empty()),
         stripe_price_pro: trimmed("MINISTR_STRIPE_PRICE_PRO"),
         stripe_price_team: trimmed("MINISTR_STRIPE_PRICE_TEAM"),
-        aca_subscription_id: trimmed("MINISTR_ACA_SUBSCRIPTION_ID"),
-        aca_resource_group: trimmed("MINISTR_ACA_RESOURCE_GROUP"),
-        aca_indexer_job_name: trimmed("MINISTR_ACA_INDEXER_JOB_NAME"),
     }
 }
 
@@ -346,60 +336,14 @@ pub(crate) async fn cmd_serve_http(
 
         // PHASE3 chunk 4 — route POST /api/v1/corpora and the clone
         // route through the cloud index-job queue instead of running
-        // ingestion inline. The serve pod becomes embed-free; the
-        // worker (chunk 3) drains the queue.
-        //
-        // PHASE5 chunk 1 — when all three MINISTR_ACA_* env vars
-        // resolve, attach an `AcaJobStartTrigger` so each commit fires
-        // a direct ARM `jobs/{name}/start` POST. Missing env =>
-        // KEDA-only path (5-min safety-net poll) and a single warn at
-        // boot to make the absent fast path visible in the deploy logs.
-        let mut sink = ministr_cloud::PostgresIndexJobSink::new(Arc::clone(pool), None);
-        match (
-            cloud_env.aca_subscription_id.as_deref(),
-            cloud_env.aca_resource_group.as_deref(),
-            cloud_env.aca_indexer_job_name.as_deref(),
-        ) {
-            (Some(sub), Some(rg), Some(job)) => {
-                let cfg = ministr_cloud::AcaJobStartConfig {
-                    subscription_id: sub.to_owned(),
-                    resource_group: rg.to_owned(),
-                    job_name: job.to_owned(),
-                };
-                match ministr_cloud::AcaJobStartTrigger::new(cfg) {
-                    Ok(trigger) => {
-                        let trigger_arc: std::sync::Arc<dyn ministr_api::JobStartTrigger> =
-                            std::sync::Arc::new(trigger);
-                        sink = sink.with_start_trigger(trigger_arc);
-                        tracing::info!(
-                            subscription = %sub,
-                            resource_group = %rg,
-                            job_name = %job,
-                            "AcaJobStartTrigger wired — enqueue fans out to ARM jobs/start",
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "AcaJobStartTrigger build failed — KEDA safety-net poll is the only path",
-                        );
-                    }
-                }
-            }
-            _ => {
-                tracing::warn!(
-                    has_subscription = cloud_env.aca_subscription_id.is_some(),
-                    has_resource_group = cloud_env.aca_resource_group.is_some(),
-                    has_job_name = cloud_env.aca_indexer_job_name.is_some(),
-                    "MINISTR_ACA_* env vars incomplete — running on KEDA safety-net poll only (PHASE5 chunk 1 fast path disabled)",
-                );
-            }
-        }
+        // ingestion inline. The serve pod's in-process WorkerLoop
+        // (PHASE6 chunk 2) drains the queue.
+        let sink = ministr_cloud::PostgresIndexJobSink::new(Arc::clone(pool), None);
         let index_job_sink: std::sync::Arc<dyn ministr_api::IndexJobSink> =
             std::sync::Arc::new(sink);
         daemon_state = daemon_state.with_index_job_sink(index_job_sink);
         tracing::info!(
-            "PostgresIndexJobSink wired — serve pod enqueues instead of running indexer::run"
+            "PostgresIndexJobSink wired — serve pod enqueues; WorkerLoop drains in-process"
         );
 
         // PHASE6 chunk 2 — in-process WorkerLoop. The serve pod now
@@ -2072,251 +2016,5 @@ pub(crate) fn cmd_atlas_manifest() -> miette::Result<()> {
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| miette::miette!("serialise atlas manifest: {e}"))?;
     println!("{json}");
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// ministr indexer-worker — PHASE3 chunk 3
-// ---------------------------------------------------------------------------
-
-/// `ministr indexer-worker` — single-shot queue-driven worker.
-///
-/// Pops one `Pending` job from the cloud Postgres queue, runs the
-/// existing ingestion pipeline against the job's source(s), uploads the
-/// resulting `.ministr-index` bundle to blob storage under the job's
-/// deterministic `corpus_id`, marks the job `Completed`, and exits.
-///
-/// Designed for ACA Job `parallelism: 1` cron-poll: a `None` from
-/// `claim_next` exits clean with status 0 so the cron's "no work this
-/// tick" path doesn't page anyone.
-///
-/// Only [`JobTrigger::Tenant`] is dispatched here in chunk 3; other
-/// triggers (Manual, Github) return `Failed` with an explanatory error
-/// so the serve pod's progress endpoint can surface the mismatch.
-#[allow(clippy::too_many_lines)] // sequential job lifecycle — each section is its own concern
-pub(crate) async fn cmd_indexer_worker(
-    config: &ministr_core::config::MinistrConfig,
-    resolved_model: &str,
-    resolved_dimension: Option<usize>,
-    rerank_depth: Option<usize>,
-) -> Result<()> {
-    use ministr_mcp::admin::jobs::{JobQueue as _, JobStatus, JobTrigger, PostgresJobQueue};
-
-    tracing::info!("ministr indexer-worker — single-shot job runner");
-
-    let pg_url = std::env::var("MINISTR_PG_URL")
-        .into_diagnostic()
-        .wrap_err("MINISTR_PG_URL required for indexer-worker mode")?;
-    let queue = PostgresJobQueue::open(&pg_url)
-        .await
-        .map_err(|e| miette::miette!("open postgres job queue: {e}"))?;
-
-    // PHASE4 chunk 2 — reclaim orphans before claiming new work.
-    // Timeout matches the ACA Job `replicaTimeout` (3600s): any row
-    // in `running` with a `claimed_at` older than that belongs to a
-    // worker that exceeded its hard cap or crashed. Soft failure —
-    // if reclaim errors, log and continue; an orphan will be retried
-    // on the next replica boot.
-    match queue.reclaim_orphans(3600).await {
-        Ok(0) => {}
-        Ok(n) => tracing::info!(reclaimed = n, "reclaimed stale running jobs"),
-        Err(e) => tracing::warn!(error = %e, "reclaim_orphans failed; continuing"),
-    }
-
-    let blob_backend = ministr_cloud::build_blob_backend_from_env()
-        .into_diagnostic()
-        .wrap_err("build blob backend from env")?;
-
-    let job = match queue.claim_next().await {
-        Ok(Some(j)) => j,
-        Ok(None) => {
-            tracing::info!("no pending jobs — exiting clean");
-            return Ok(());
-        }
-        Err(e) => return Err(miette::miette!("claim_next: {e}")),
-    };
-    tracing::info!(
-        job_id = %job.id,
-        corpus_id = %job.corpus_id,
-        "claimed job"
-    );
-
-    // Resolve corpus sources from the trigger. Chunk 3 only dispatches
-    // Tenant; other variants (Manual, Github) belong to chunks 4-6 once
-    // the serve-pod and webhook enqueue paths land.
-    let sources: Vec<String> = match &job.trigger {
-        JobTrigger::Tenant { paths, clone_url } => {
-            // `clone_url` wins when present — it identifies a remote
-            // source. `paths` then describes local-mount paths. We
-            // never expect both, but if both appear we trust clone_url.
-            if let Some(url) = clone_url {
-                vec![url.clone()]
-            } else if !paths.is_empty() {
-                paths.clone()
-            } else {
-                let msg = "tenant trigger has neither paths nor clone_url";
-                let _ = queue
-                    .finish(&job.id, JobStatus::Failed, Some(msg.to_string()))
-                    .await;
-                return Err(miette::miette!("{msg}"));
-            }
-        }
-        other => {
-            let msg = format!("unsupported trigger in indexer-worker: {other:?}");
-            tracing::warn!("{msg}");
-            let _ = queue.finish(&job.id, JobStatus::Failed, Some(msg)).await;
-            return Ok(());
-        }
-    };
-
-    // Build infrastructure scoped to this job. The on-disk `corpus_dir`
-    // is hashed from `sources` (init_infrastructure's local convention)
-    // and is independent of `job.corpus_id` — the blob upload below
-    // uses the job's deterministic id so the serve pod's lookup matches.
-    let ctx = infra::init_infrastructure(
-        &sources,
-        config,
-        Some(resolved_model),
-        resolved_dimension,
-        rerank_depth,
-    )
-    .await?;
-
-    let progress = Arc::new(ministr_core::ingestion::IngestionProgress::new());
-
-    // PHASE3 fix B — emit periodic `update_progress` while the
-    // ingestion pipeline runs. Without this the serve pod's
-    // `queue_progress_stream` (chunk 4) polls Postgres every 500ms
-    // and sees the initial `total_files=0` row until the worker
-    // calls `finish` — i.e. the demo's SSE shows `0/0` for the
-    // entire run. The reporter polls the in-memory IngestionProgress
-    // snapshot every 500ms and writes it into the queue row, so the
-    // SSE reflects real per-file progress.
-    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-    let reporter = {
-        use ministr_mcp::admin::jobs::{JobProgress, JobQueue as _};
-        let queue = queue.clone();
-        let job_id = job.id.clone();
-        let progress = Arc::clone(&progress);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
-            let mut cancel_rx = cancel_rx;
-            loop {
-                tokio::select! {
-                    _ = &mut cancel_rx => break,
-                    _ = interval.tick() => {
-                        let current = progress.current_file();
-                        // PHASE5 chunk 3 — sample the embedding-side
-                        // counters too so the SSE renders real per-batch
-                        // embedder progress. Pre-chunk-3 the reporter
-                        // only wrote (total_files, processed_files), so
-                        // during the long embedder phase the bar
-                        // plateaued at parser-side N/N until terminal.
-                        let snap = JobProgress {
-                            stage: progress.phase().as_str().to_string(),
-                            total_files: progress.files_total() as u64,
-                            processed_files: progress.files_done() as u64,
-                            current_file: if current.is_empty() {
-                                None
-                            } else {
-                                Some(current)
-                            },
-                            sections_done: progress.sections_done() as u64,
-                            embeddings_total: progress.embeddings_total() as u64,
-                            embeddings_done: progress.embeddings_done() as u64,
-                        };
-                        if let Err(e) = queue.update_progress(&job_id, snap).await {
-                            // Soft failure — the worker still owns the
-                            // job and will mark it terminal at the end.
-                            tracing::warn!(
-                                job_id = %job_id,
-                                error = %e,
-                                "update_progress failed; ingestion continues"
-                            );
-                        }
-                    }
-                }
-            }
-        })
-    };
-
-    // PHASE4 cloud-streaming opt-in: flush the HNSW index every 4
-    // files indexed. The worker runs in a memory-constrained ACA pod
-    // (4 GiB target after chunk 5 lands); bounding the HNSW rss with
-    // periodic atomic snapshots is the lever we earned by shipping
-    // chunks 3+4. Local `ministr index` stays on bundle-at-end.
-    let ingest_result =
-        ingestion::run_corpus_ingestion(&sources, &[], &ctx, &progress, Some(4)).await;
-
-    // Stop the reporter before flipping the job's terminal status so
-    // a late update_progress doesn't overwrite the `Failed`/`Completed`
-    // row the rest of this function is about to write.
-    let _ = cancel_tx.send(());
-    let _ = reporter.await;
-
-    if let Err(e) = ingest_result {
-        let msg = format!("ingestion failed: {e}");
-        let _ = queue
-            .finish(&job.id, JobStatus::Failed, Some(msg.clone()))
-            .await;
-        return Err(miette::miette!("{msg}"));
-    }
-    tracing::info!(corpus_id = %job.corpus_id, "ingestion complete");
-
-    // Upload the bundle under the job's deterministic corpus_id (not
-    // `ctx.corpus_dir`'s hashed name). The serve pod will look up
-    // `corpora/<job.corpus_id>/manifest.json` against the same id.
-    //
-    // PHASE3 fix C — `bundle::export_bundle` chokes on an empty corpus
-    // (`corpus_roots` is empty → the tar build walks a path that
-    // resolves to "/" and fails with `missing file /`). Skip the
-    // upload when there's nothing to upload; the job is still
-    // `Completed` because the worker successfully processed the empty
-    // request — the upload is a no-op, not a failure.
-    let nothing_to_upload = ctx.index.is_empty();
-    if nothing_to_upload {
-        tracing::info!(
-            corpus_id = %job.corpus_id,
-            "no vectors after ingestion — skipping bundle upload"
-        );
-    } else if let Some(backend) = blob_backend {
-        let backend_arc = Arc::new(backend);
-        match ministr_cloud::build_manifest_from_corpus_dir(&ctx.corpus_dir, resolved_model).await {
-            Ok(manifest) => match backend_arc
-                .upload_corpus(&job.corpus_id, &ctx.corpus_dir, &manifest)
-                .await
-            {
-                Ok(version) => tracing::info!(
-                    corpus_id = %job.corpus_id,
-                    version,
-                    "uploaded bundle to blob"
-                ),
-                Err(e) => {
-                    let msg = format!("blob upload failed: {e}");
-                    let _ = queue
-                        .finish(&job.id, JobStatus::Failed, Some(msg.clone()))
-                        .await;
-                    return Err(miette::miette!("{msg}"));
-                }
-            },
-            Err(e) => {
-                let msg = format!("manifest build failed: {e}");
-                let _ = queue
-                    .finish(&job.id, JobStatus::Failed, Some(msg.clone()))
-                    .await;
-                return Err(miette::miette!("{msg}"));
-            }
-        }
-    } else {
-        tracing::info!(
-            "no blob backend configured — corpus indexed locally but not uploaded"
-        );
-    }
-
-    queue
-        .finish(&job.id, JobStatus::Completed, None)
-        .await
-        .map_err(|e| miette::miette!("finish job: {e}"))?;
-    tracing::info!(job_id = %job.id, "job completed");
     Ok(())
 }
