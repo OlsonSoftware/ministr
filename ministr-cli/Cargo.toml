@@ -35,6 +35,13 @@ ministr-cloud.workspace = true
 # F2.6 — Atlas curated network. Link-time inclusion makes the CLI
 # carry proprietary terms; same rationale as ministr-cloud above.
 ministr-atlas.workspace = true
+# Direct rustls dep — used by main() to install the process-wide
+# CryptoProvider exactly once at startup. Both `ring` and
+# `aws-lc-rs` are pulled in transitively (via reqwest +
+# rustls-platform-verifier + tokio-postgres-rustls), so rustls 0.23+
+# refuses to auto-pick. Without `install_default` every TLS path
+# (Postgres pool, reqwest, Azure SDK) panics on first use.
+rustls.workspace = true
 clap.workspace = true
 rmcp.workspace = true
 axum.workspace = true
