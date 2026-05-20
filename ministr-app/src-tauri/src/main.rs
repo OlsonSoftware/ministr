@@ -152,6 +152,8 @@ fn main() {
             commands_cloud::cloud_health_check,
             commands_cloud::cloud_trigger_reindex,
             commands_cloud::cloud_billing_usage,
+            commands_cloud::cloud_billing_checkout,
+            commands_cloud::cloud_billing_portal,
             commands_cloud::cloud_list_corpora,
             commands_cloud::cloud_register_corpus,
             commands_cloud::cloud_clone_repo,

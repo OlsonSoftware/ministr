@@ -880,6 +880,87 @@ fn authed_client(timeout_secs: u64) -> Result<(reqwest::Client, String, String),
     Ok((client, cfg.endpoint, token))
 }
 
+/// POST `/api/v1/billing/checkout` — mint a Stripe Checkout session
+/// for the requested plan (F2.4). Opens the returned URL in the
+/// system browser so the user pays in Stripe-hosted UI; the cloud
+/// webhook flips `users.plan_id` once payment lands.
+#[tauri::command]
+pub async fn cloud_billing_checkout(
+    app: AppHandle,
+    plan: String,
+) -> Result<(), CommandError> {
+    let (client, endpoint, token) = authed_client(15)?;
+    let url = format!("{endpoint}/api/v1/billing/checkout");
+    let body = serde_json::json!({ "plan": plan });
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("checkout returned HTTP {}", resp.status()),
+        ));
+    }
+    let payload: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse checkout: {e}")))?;
+    let session_url = payload
+        .get("url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            CommandError::new(ErrorKind::Io, "checkout response missing url".to_string())
+        })?;
+    #[allow(deprecated)] // matches cloud_authenticate's TODO; F2.7 migrates to tauri-plugin-opener
+    app.shell()
+        .open(session_url.to_string(), None)
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("open browser: {e}")))?;
+    info!(plan = %plan, "cloud_billing_checkout: stripe session opened in browser");
+    Ok(())
+}
+
+/// POST `/api/v1/billing/portal` — open the Stripe Customer Portal for
+/// invoices, card management, and cancellation (F2.4). Same browser-
+/// open pattern as the checkout flow.
+#[tauri::command]
+pub async fn cloud_billing_portal(app: AppHandle) -> Result<(), CommandError> {
+    let (client, endpoint, token) = authed_client(15)?;
+    let url = format!("{endpoint}/api/v1/billing/portal");
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("portal returned HTTP {}", resp.status()),
+        ));
+    }
+    let payload: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse portal: {e}")))?;
+    let session_url = payload
+        .get("url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            CommandError::new(ErrorKind::Io, "portal response missing url".to_string())
+        })?;
+    #[allow(deprecated)]
+    app.shell()
+        .open(session_url.to_string(), None)
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("open browser: {e}")))?;
+    info!("cloud_billing_portal: stripe portal opened in browser");
+    Ok(())
+}
+
 /// GET `/api/v1/billing/usage` — fetch the calling tenant's metered
 /// usage (F1.4 sub-bullet 4). Drives the overview-tile badges
 /// (F1.4 sub-bullet 5).
