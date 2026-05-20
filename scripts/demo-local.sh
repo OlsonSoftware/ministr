@@ -245,10 +245,15 @@ echo
 # --corpus skips the auto-pick logic and points the watcher at the
 # corpus we just registered. The SSE stream now ticks in real time
 # as the embedder works through the sample files.
+#
+# `--flag=value` syntax is deliberate: ~1/64 tokens start with `-`
+# (base64url alphabet includes `-`), and `--token <value>` with a
+# `-`-prefixed value gets ambiguous for clap. The `=` form removes
+# the ambiguity even if the value starts with `-`.
 cargo run -q -p ministr-cli -- cloud demo \
-    --endpoint "${ENDPOINT}" \
-    --token "${TOKEN}" \
-    --corpus "${CORPUS_ID}"
+    "--endpoint=${ENDPOINT}" \
+    "--token=${TOKEN}" \
+    "--corpus=${CORPUS_ID}"
 
 echo
 printf "${C_GREEN}${C_BOLD}━━ demo complete ━━${C_RESET}\n"
