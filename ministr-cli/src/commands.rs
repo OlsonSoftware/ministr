@@ -202,17 +202,24 @@ pub(crate) async fn cmd_serve_http(
     // observability spans authenticated calls only (auth check sits
     // outside the activity layer).
     //
-    // F1.4 sub-bullet 2 — when MINISTR_PG_URL is set, attach a
-    // PostgresUsageSink so every successful tool route also writes a
-    // billable usage_events row. Self-hosted serve leaves the sink
-    // `None` and bills nobody.
-    let mut daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&corpus_registry));
-    if let Some(pg_url) = cloud_env.pg_url.as_deref() {
+    // F1.4 — when MINISTR_PG_URL is set, open one cloud Postgres pool
+    // and share it across every consumer: PostgresUsageSink for the
+    // activity middleware (sub-bullet 2), and the billing endpoint
+    // for `GET /api/v1/billing/usage` (sub-bullet 4). Self-hosted
+    // serve leaves the pool unbuilt and bills/serves nobody.
+    let cloud_pool = if let Some(pg_url) = cloud_env.pg_url.as_deref() {
         let pool = ministr_cloud::connect(pg_url)
             .into_diagnostic()
-            .wrap_err("open postgres pool for usage sink")?;
+            .wrap_err("open cloud postgres pool")?;
+        Some(Arc::new(pool))
+    } else {
+        None
+    };
+
+    let mut daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&corpus_registry));
+    if let Some(pool) = cloud_pool.as_ref() {
         let sink: std::sync::Arc<dyn ministr_api::UsageSink> =
-            std::sync::Arc::new(ministr_cloud::PostgresUsageSink::new(pool));
+            std::sync::Arc::new(ministr_cloud::PostgresUsageSink::from_arc(Arc::clone(pool)));
         daemon_state = daemon_state.with_usage_sink(sink);
         tracing::info!("PostgresUsageSink wired — billable usage events enabled");
     }
@@ -273,10 +280,14 @@ pub(crate) async fn cmd_serve_http(
         );
         let daemon_obs_p = ministr_mcp::auth::scope_protected_router(
             daemon_obs_router,
-            store,
+            store.clone(),
             "ministr:write",
         );
-        a2a_router
+        // F1.4 sub-bullet 4 — billing endpoint. Mounted only when
+        // a cloud Postgres pool exists; otherwise the route is absent
+        // and clients see 404, matching the absence of any billable
+        // surface on self-hosted serve.
+        let mut composed = a2a_router
             .merge(protected)
             .merge(protected_bundles)
             .merge(protected_admin)
@@ -284,7 +295,23 @@ pub(crate) async fn cmd_serve_http(
             .merge(daemon_read_p)
             .merge(daemon_write_p)
             .merge(daemon_bundle_p)
-            .merge(daemon_obs_p)
+            .merge(daemon_obs_p);
+        if let Some(pool) = cloud_pool.as_ref() {
+            let billing_router = ministr_cloud::billing_routes(
+                ministr_cloud::BillingState::from_arc(Arc::clone(pool)),
+            );
+            let billing_protected = ministr_mcp::auth::scope_protected_router(
+                billing_router,
+                store,
+                "ministr:read",
+            );
+            composed = composed.merge(billing_protected);
+            tracing::info!("billing endpoint mounted — GET /api/v1/billing/usage");
+        } else {
+            // Keep `store` lifetimes consistent in both branches.
+            drop(store);
+        }
+        composed
     } else {
         // No OAuth: daemon + admin protected routes mount but anyone on the
         // network can hit them. Only safe for local dev — cloud deployments
