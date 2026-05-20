@@ -1983,6 +1983,18 @@ pub(crate) async fn cmd_indexer_worker(
         .await
         .map_err(|e| miette::miette!("open postgres job queue: {e}"))?;
 
+    // PHASE4 chunk 2 — reclaim orphans before claiming new work.
+    // Timeout matches the ACA Job `replicaTimeout` (3600s): any row
+    // in `running` with a `claimed_at` older than that belongs to a
+    // worker that exceeded its hard cap or crashed. Soft failure —
+    // if reclaim errors, log and continue; an orphan will be retried
+    // on the next replica boot.
+    match queue.reclaim_orphans(3600).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(reclaimed = n, "reclaimed stale running jobs"),
+        Err(e) => tracing::warn!(error = %e, "reclaim_orphans failed; continuing"),
+    }
+
     let blob_backend = ministr_cloud::build_blob_backend_from_env()
         .into_diagnostic()
         .wrap_err("build blob backend from env")?;
