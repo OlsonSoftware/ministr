@@ -155,6 +155,10 @@ export const registryServer = registry.loginServer;
 export const storageAccount = storage.accountName;
 export const blobContainer = storage.blobContainerName;
 export const appFqdn = queryApp.fqdn;
+// Container App resource name — used by just recipes (azure-logs,
+// azure-restart-app, azure-rbac-reconcile) to look up the live
+// resource without hardcoding the `ministrv2` project prefix.
+export const appName = queryApp.containerApp.name;
 export const customDomainConfigured = customDomain || "(none)";
 export const customDomainCertId = domainBinding?.apply((d) => d.certId);
 export const publicBaseUrl = publicUrl;

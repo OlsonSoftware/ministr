@@ -62,10 +62,19 @@ export interface OpenAiInputs {
   modelVersion?: string;
   /**
    * Throughput allocation — tokens-per-minute / 1000. `1` = 1K TPM.
-   * The S0 account-level cap is ~350K TPM for embeddings in 2026;
-   * 10 = 10K TPM is generous for a single Pro-tier worker and bills
-   * the same per-token whether you reserve more or less. Bump if you
-   * see HTTP 429s in the worker logs.
+   * The S0 account-level cap is ~350K TPM for embeddings in 2026.
+   *
+   * Default `250` (= 250K TPM) accommodates the bursty pattern of a
+   * single repo ingest: anyhow is ~466K tokens which the consumer
+   * tries to deliver in 30s = ~930K TPM equivalent. With 250K TPM and
+   * the embedder's 429-Retry-After backoff (see
+   * `ministr_cloud::embedding::OpenAiEmbedder::embed_async`), the
+   * burst is paced rather than rejected. Set lower only if you're
+   * sharing the S0 account budget with other workloads.
+   *
+   * The earlier value (10) was too small — bursting at 466K tokens
+   * against a 10K-TPM cap rejected every request in the first
+   * minute (PHASE6 chunk 4b post-deploy finding).
    */
   capacity?: number;
 }
@@ -80,7 +89,7 @@ export function createOpenAi({
   const accountLocation = openaiLocation ?? location;
   const modelDeploymentName = modelName ?? "text-embedding-3-small";
   const resolvedModelVersion = modelVersion ?? "1";
-  const resolvedCapacity = capacity ?? 10;
+  const resolvedCapacity = capacity ?? 250;
 
   const account = new cognitive.Account(named("openai"), {
     resourceGroupName: rg.name,

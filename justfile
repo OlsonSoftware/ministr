@@ -385,8 +385,9 @@ azure-logs:
     set -euo pipefail
     eval "$(./scripts/azure-env.sh)"
     RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    APP=$(pulumi -C deploy/azure stack output appName)
     az containerapp logs show \
-        --name ministr-app \
+        --name "$APP" \
         --resource-group "$RG" \
         --follow --tail 100
 
@@ -426,12 +427,13 @@ azure-logs:
 # pulumi *thinks* it owns for those logical resources, then imports
 # the live Azure resources under the correct logical names.
 #
-# After running this, `just azure-up` should diff-clean for both
-# `ministrv2-app-blob-rw` and `ministrv2-indexer-blob-rw`.
+# After running this, `just azure-up` should diff-clean for the
+# app-blob-rw role assignment.
 #
 # PHASE6 chunk 3 retired the indexer Job + its blob-data role + the
 # jobs-operator role; this recipe now only reconciles the queryApp's
-# Storage Blob Data Contributor grant.
+# Storage Blob Data Contributor grant. All names are derived from
+# pulumi stack outputs — no `ministrv2*` hardcoding.
 #
 # Re-import role-assignment state from Azure (one-time reconcile).
 azure-rbac-reconcile:
@@ -440,10 +442,12 @@ azure-rbac-reconcile:
     eval "$(./scripts/azure-env.sh)"
     SUB=$(az account show --query id -o tsv)
     RG=$(pulumi -C deploy/azure stack output resourceGroup)
-    STORAGE_ID=$(az storage account show --name ministrv2data \
+    APP=$(pulumi -C deploy/azure stack output appName)
+    STORAGE=$(pulumi -C deploy/azure stack output storageAccount)
+    STORAGE_ID=$(az storage account show --name "$STORAGE" \
         --resource-group "$RG" --query id -o tsv)
     SBDC="ba92f5b4-2d11-453d-a403-e96b0029c9fe"
-    APP_MI=$(az containerapp show --name ministrv2-app \
+    APP_MI=$(az containerapp show --name "$APP" \
         --resource-group "$RG" --query identity.principalId -o tsv)
     echo "▶ app MI: $APP_MI"
 
@@ -453,14 +457,19 @@ azure-rbac-reconcile:
     [ -n "$APP_GUID" ] || { echo "no live app role assignment found"; exit 1; }
     echo "▶ live app role assignment: $APP_GUID"
 
-    URN="urn:pulumi:prod::ministr-azure::azure-native:authorization:RoleAssignment::ministrv2-app-blob-rw"
+    # Pulumi logical name for the assignment is `<projectName>-app-blob-rw`
+    # (see lib/naming.ts::named); derive from the registry to stay
+    # portable across project-name changes.
+    REGISTRY=$(pulumi -C deploy/azure stack output registryServer)
+    PROJECT="${REGISTRY%%acr.azurecr.io}"
+    URN="urn:pulumi:prod::ministr-azure::azure-native:authorization:RoleAssignment::${PROJECT}-app-blob-rw"
     echo "▶ pulumi state delete $URN"
     pulumi -C deploy/azure state delete "$URN" --yes 2>/dev/null || true
 
-    APP_RA="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/ministrv2data/providers/Microsoft.Authorization/roleAssignments/$APP_GUID"
-    echo "▶ pulumi import ministrv2-app-blob-rw"
+    APP_RA="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$STORAGE/providers/Microsoft.Authorization/roleAssignments/$APP_GUID"
+    echo "▶ pulumi import ${PROJECT}-app-blob-rw"
     pulumi -C deploy/azure import azure-native:authorization:RoleAssignment \
-        ministrv2-app-blob-rw "$APP_RA" --yes --skip-preview
+        "${PROJECT}-app-blob-rw" "$APP_RA" --yes --skip-preview
 
     echo ""
     echo "✓ state reconciled. Re-run 'just azure-up' to verify diff-clean."
@@ -509,15 +518,16 @@ azure-restart-app:
     set -euo pipefail
     eval "$(./scripts/azure-env.sh)"
     RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    APP=$(pulumi -C deploy/azure stack output appName)
     REV=$(az containerapp revision list \
-        --name ministr-app \
+        --name "$APP" \
         --resource-group "$RG" \
         --query "[?properties.active].name | [0]" \
         -o tsv)
     [ -n "$REV" ] || { echo "no active revision found"; exit 1; }
     echo "▶ restarting revision ${REV}"
     az containerapp revision restart \
-        --name ministr-app \
+        --name "$APP" \
         --resource-group "$RG" \
         --revision "$REV"
     echo "▶ waiting 15s for the new pod to become ready"
@@ -588,7 +598,11 @@ azure-orphans:
     " | sed -n '1,/^(/p'
     echo ""
     echo "▶ [4/4] storage role-assignments whose principal no longer resolves:"
-    STORAGE_ID=$(az storage account show --name ministrv2data \
+    STORAGE=$(pulumi -C deploy/azure stack output storageAccount 2>/dev/null) || {
+        echo "(storage account not yet provisioned — skipping role-assignment scan)"
+        exit 0
+    }
+    STORAGE_ID=$(az storage account show --name "$STORAGE" \
         --resource-group "$RG" --query id -o tsv 2>/dev/null) || {
             echo "(storage account not yet provisioned — skipping role-assignment scan)"
             exit 0
@@ -601,39 +615,6 @@ azure-orphans:
         -o table 2>/dev/null \
         || echo "(no orphan role-assignments — RBAC clean)"
 
-# PHASE4 chunk 6 — per-day indexer-job execution-seconds from the
-# Azure REST surface, plus an estimated $/month at the right-sized
-# spec (4 vCPU / 4 GiB). Validates PHASE4 chunk 1's "≈$0/mo when
-# idle" claim: a quiet stack should report near-zero seconds.
-#
-# Pricing (May 2026, East US, ACA Consumption profile):
-#   vCPU-second  = $0.0000257
-#   GiB-second   = $0.0000032
-# At 4 vCPU + 4 GiB that's $0.0001156 per active second.
-# Override with COST_PER_SECOND=... if your spec or region differs.
-#
-# Uses `az containerapp job execution list --output json` rather than
-# Log Analytics, because the execution timestamps live on the control
-# plane regardless of whether the log workspace is sampling — making
-# this recipe accurate even when log retention is short.
-#
-# Per-day indexer execution-seconds + estimated monthly cost.
-azure-cost:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval "$(./scripts/azure-env.sh)"
-    RG=$(pulumi -C deploy/azure stack output resourceGroup)
-    JOB=$(pulumi -C deploy/azure stack output indexerJobName 2>/dev/null || echo "ministrv2-indexer")
-    : "${COST_PER_SECOND:=0.0001156}"
-    export COST_PER_SECOND
-    echo "▶ pricing model: \$${COST_PER_SECOND}/active-second (4 vCPU + 4 GiB; override via COST_PER_SECOND=…)"
-    echo ""
-    echo "▶ executions in the last 30 days:"
-    az containerapp job execution list \
-        --name "$JOB" --resource-group "$RG" \
-        --output json 2>/dev/null \
-        | python3 ./scripts/azure-cost-summary.py
-
 # The canonical end-to-end smoke for the deployed Azure stack. Each
 # new PHASE extends this in place — `just azure-demo` always calls
 # `just azure-smoke` at its tail, so there's only one command to
@@ -641,9 +622,10 @@ azure-cost:
 #
 # Sequence (idempotent — safe to re-run any time):
 #   1. demo-remote: clone-url → POST /api/v1/corpora returns pending
-#      instantly, progress SSE streams from Postgres until the
-#      KEDA-triggered indexer Job (PHASE4 chunk 1) drains the queue,
-#      then a survey query against the corpus succeeds.
+#      instantly; progress SSE streams from Postgres while the
+#      in-process WorkerLoop (PHASE6 chunk 2) drains the queue and
+#      calls Azure OpenAI for embeddings (PHASE6 chunk 1); then a
+#      survey query against the corpus succeeds.
 #   2. azure-restart-app: drops pod-local /data.
 #   3. demo-remote again: same CLONE_URL → deterministic corpus_id
 #      hits the existing cloud_corpora row (PHASE3 chunk 1), the
@@ -651,12 +633,11 @@ azure-cost:
 #      chunk 5) and succeeds — proving end-to-end durability across
 #      pod recycle.
 #
-# What this currently validates (as of PHASE4):
+# What this validates (as of PHASE6):
 #   - PHASE3: corpus registry, queue-backed SSE, on-demand bundle restore
-#   - PHASE4: KEDA event-driven worker, streaming ingestion on a 4 GiB
-#     right-sized Job (replicas exiting 137 = OOM; back out
-#     `ministr-azure:jobMemory: 4Gi` and see PHASE4.md "Producer-task
-#     lifetime" backlog item)
+#   - PHASE5 chunk 2: streaming HNSW persist gate (no "nb point 0" WARNs)
+#   - PHASE5 chunk 3: embeddings_done flows to the SSE during ingest
+#   - PHASE6: in-process WorkerLoop + Azure OpenAI embedder + MI auth
 #
 # Extension policy: when you add PHASE N, append the new validations
 # here. CLONE_URL is forwarded to demo-remote; defaults to its
@@ -684,16 +665,27 @@ azure-down:
     eval "$(./scripts/azure-env.sh)"
     pulumi -C deploy/azure destroy ${PULUMI_FLAGS:-}
 
-# Full reset: delete the Azure RG, wipe local Pulumi stack state, re-init
-# with empty passphrase, set a fresh webhook secret. Use this when the
-# passphrase is lost or the stack is unrecoverably wedged. Asks for
-# confirmation. Run `just azure-demo` after this to redeploy.
+# Use this when the Pulumi passphrase is lost or the stack is
+# unrecoverably wedged. Asks for confirmation. Run `just azure-demo`
+# after this to redeploy. Resource-group name is derived from the
+# live stack output when available; falls back to a Pulumi-config
+# lookup if the stack is too broken to enumerate outputs.
+#
+# Full reset: delete the Azure RG + Pulumi state + encrypted secrets.
 azure-reset:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(./scripts/azure-env.sh)"
+    # Pulumi stack output may fail on a wedged stack; fall back to
+    # reading the projectName config + lib/naming.ts's convention.
+    RG=$(pulumi -C deploy/azure stack output resourceGroup 2>/dev/null || true)
+    if [ -z "$RG" ]; then
+        PROJECT=$(pulumi -C deploy/azure config get projectName 2>/dev/null || echo "ministr")
+        RG="${PROJECT}-rg-prod"
+        echo "▶ stack output unreachable — falling back to RG=${RG} from projectName"
+    fi
     echo "This will DELETE:"
-    echo "  - Azure resource group ministr-rg-prod (all resources inside)"
+    echo "  - Azure resource group ${RG} (all resources inside)"
     echo "  - Pulumi stack 'prod' from azblob://pulumi-state"
     echo "  - Encrypted secrets in deploy/azure/Pulumi.prod.yaml"
     echo ""
@@ -701,7 +693,7 @@ azure-reset:
     [ "$CONFIRM" = "yes" ] || { echo "aborted"; exit 1; }
     echo ""
     echo "▶ kicking off async RG delete"
-    az group delete --name ministr-rg-prod --yes --no-wait 2>/dev/null || true
+    az group delete --name "$RG" --yes --no-wait 2>/dev/null || true
     echo "▶ wiping Pulumi stack state"
     pulumi -C deploy/azure stack rm prod --force --yes 2>/dev/null || true
     echo "▶ clearing encrypted secrets from Pulumi.prod.yaml"

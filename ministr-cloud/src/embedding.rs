@@ -97,6 +97,19 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// for full-fidelity 1536-dim runs (separate, incompatible indexes).
 pub const DEFAULT_DIMENSIONS: usize = 384;
 
+/// Max times to retry a `429 Too Many Requests` before surfacing the
+/// failure to the caller. PHASE6 chunk 4b post-deploy: anyhow's
+/// ~466K-token burst against a (default-too-small) S0 deployment was
+/// rejected on the first batch; honouring the `Retry-After` header
+/// for up to ~2 minutes total recovers cleanly without breaking the
+/// ingestion pipeline's rollback semantics.
+const MAX_429_RETRIES: usize = 3;
+
+/// Fallback `Retry-After` value when the header is missing or
+/// unparseable. Azure returns `Retry-After: 60` in practice but
+/// nothing in the spec mandates it.
+const FALLBACK_RETRY_AFTER: Duration = Duration::from_secs(30);
+
 /// Azure `OpenAI` cognitive-services scope for Microsoft Entra bearer
 /// tokens. The trailing slash is required by IMDS.
 const AZURE_COGNITIVE_SERVICES_RESOURCE: &str = "https://cognitiveservices.azure.com";
@@ -362,20 +375,47 @@ impl OpenAiEmbedder {
             input: texts,
             dimensions: self.dimensions,
         };
-        let request = self
-            .http
-            .post(self.embeddings_url())
-            .header("content-type", "application/json")
-            .json(&body);
-        let request = self.apply_auth(request).await?;
-        let resp = request
-            .send()
-            .await
-            .map_err(|e| IndexError::EmbeddingFailed {
-                reason: format!("openai post: {e}"),
-            })?;
-        let status = resp.status();
-        if !status.is_success() {
+
+        // PHASE6 chunk 4b — honour `Retry-After` on 429 up to
+        // MAX_429_RETRIES. Azure's S0 tier emits this with the actual
+        // recommended wait (~60s for ratelimit-reached errors); other
+        // 4xx surface immediately. The retry loop rebuilds the request
+        // each iteration because reqwest's RequestBuilder isn't
+        // Cloneable for body-bearing requests once `.json()` is
+        // attached.
+        let mut attempts = 0_usize;
+        let parsed: EmbeddingsResponse = loop {
+            let request = self
+                .http
+                .post(self.embeddings_url())
+                .header("content-type", "application/json")
+                .json(&body);
+            let request = self.apply_auth(request).await?;
+            let resp = request
+                .send()
+                .await
+                .map_err(|e| IndexError::EmbeddingFailed {
+                    reason: format!("openai post: {e}"),
+                })?;
+            let status = resp.status();
+            if status.is_success() {
+                break resp.json().await.map_err(|e| IndexError::EmbeddingFailed {
+                    reason: format!("openai parse: {e}"),
+                })?;
+            }
+            if status.as_u16() == 429 && attempts < MAX_429_RETRIES {
+                let wait = retry_after_from_headers(resp.headers())
+                    .unwrap_or(FALLBACK_RETRY_AFTER);
+                attempts += 1;
+                warn!(
+                    attempt = attempts,
+                    max = MAX_429_RETRIES,
+                    wait_secs = wait.as_secs(),
+                    "openai 429 — backing off and retrying",
+                );
+                tokio::time::sleep(wait).await;
+                continue;
+            }
             let body = resp.text().await.unwrap_or_default();
             // Trim long error bodies for log triage; Azure `OpenAI`
             // returns structured { error: { code, message } } JSON.
@@ -389,11 +429,7 @@ impl OpenAiEmbedder {
             return Err(IndexError::EmbeddingFailed {
                 reason: format!("openai status {}: {trimmed}", status.as_u16()),
             });
-        }
-        let parsed: EmbeddingsResponse =
-            resp.json().await.map_err(|e| IndexError::EmbeddingFailed {
-                reason: format!("openai parse: {e}"),
-            })?;
+        };
         // Azure returns embeddings in input-order when there's no
         // multi-batch reordering — but the spec also says responses
         // carry an `index` field for correctness. Sort by index to be
@@ -485,6 +521,17 @@ fn epoch_now() -> u64 {
         .as_secs()
 }
 
+/// Parse `Retry-After` from response headers. Per RFC 7231 the value
+/// can be either an integer-seconds delta OR an HTTP-date. Azure
+/// `OpenAI` emits the integer-seconds form on 429; we only parse that
+/// shape and fall back to [`FALLBACK_RETRY_AFTER`] when the header is
+/// missing, malformed, or in the HTTP-date form.
+fn retry_after_from_headers(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    let secs: u64 = raw.trim().parse().ok()?;
+    Some(Duration::from_secs(secs))
+}
+
 fn trim_trailing_slashes(mut s: String) -> String {
     while s.ends_with('/') {
         s.pop();
@@ -511,7 +558,7 @@ mod tests {
     //! Tests exercise [`OpenAiEmbedder::embed_async`] directly so they
     //! stay fully inside the tokio runtime; the sync [`Embedder::embed`]
     //! is a thin `block_in_place` bridge over the same path and is
-    //! covered separately by [`embed_sync_bridge_works`].
+    //! covered separately by `embed_sync_bridge_works`.
     use super::*;
     use axum::{
         Json, Router,
@@ -537,6 +584,11 @@ mod tests {
         embed_body: Option<Value>,
         expect_api_key: bool,
         expect_mi_header: bool,
+        /// PHASE6 chunk 4b — when true, the FIRST embed call returns
+        /// 429 with `Retry-After: 1`; subsequent calls return
+        /// `embed_status` normally. Drives the
+        /// `retries_429_then_succeeds` test.
+        simulate_429_first_call: bool,
     }
 
     #[derive(Serialize)]
@@ -581,7 +633,45 @@ mod tests {
         headers: HeaderMap,
         Json(body): Json<Value>,
     ) -> impl IntoResponse {
-        s.embed_calls.fetch_add(1, Ordering::SeqCst);
+        let call_number = s.embed_calls.fetch_add(1, Ordering::SeqCst);
+        // Simulate-429-first-call: on the very first invocation,
+        // return 429 + Retry-After: 1 regardless of the test's
+        // embed_status. Subsequent calls fall through to the normal
+        // path. Used by retries_429_then_succeeds.
+        if s.simulate_429_first_call && call_number == 0 {
+            let mut resp = (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({
+                    "error": { "code": "RateLimitReached", "message": "first-call retry" }
+                })),
+            )
+                .into_response();
+            // Retry-After: 0 keeps the test fast — production uses
+            // Azure's real header value (~60s on a rate-limited S0
+            // deployment). The retry-from-header parse path is the
+            // same either way.
+            resp.headers_mut().insert(
+                "Retry-After",
+                axum::http::HeaderValue::from_static("0"),
+            );
+            return resp;
+        }
+        // Persistent-429 path (gives_up_after_max_429_retries): emit
+        // Retry-After: 0 on every 429 so the retry loop spins
+        // instantly through MAX_429_RETRIES rather than waiting
+        // FALLBACK_RETRY_AFTER × N. Same parse path as production.
+        if s.embed_status == 429 {
+            let mut resp = (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(s.embed_body.clone().unwrap_or(serde_json::json!({}))),
+            )
+                .into_response();
+            resp.headers_mut().insert(
+                "Retry-After",
+                axum::http::HeaderValue::from_static("0"),
+            );
+            return resp;
+        }
         assert_eq!(deployment, "embed-test-deployment");
         assert_eq!(
             q.get("api-version").map(String::as_str),
@@ -749,10 +839,13 @@ mod tests {
 
     #[tokio::test]
     async fn http_4xx_surfaces_as_embedding_failed() {
+        // Non-429 4xx surfaces immediately (no retry). 429 is exercised
+        // separately by `retries_429_then_succeeds` /
+        // `gives_up_after_max_429_retries` below.
         let shared = MockShared {
-            embed_status: 429,
+            embed_status: 400,
             embed_body: Some(serde_json::json!({
-                "error": { "code": "TooManyRequests", "message": "Throttled" }
+                "error": { "code": "BadRequest", "message": "malformed input" }
             })),
             expect_api_key: true,
             ..MockShared::default()
@@ -763,11 +856,79 @@ mod tests {
         let err = embedder.embed_async(&["x"]).await.unwrap_err();
         match err {
             IndexError::EmbeddingFailed { reason } => {
-                assert!(reason.contains("429"), "got {reason:?}");
-                assert!(reason.contains("Throttled"), "got {reason:?}");
+                assert!(reason.contains("400"), "got {reason:?}");
+                assert!(reason.contains("malformed input"), "got {reason:?}");
             }
             other => panic!("wanted EmbeddingFailed, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn retries_429_then_succeeds() {
+        // PHASE6 chunk 4b — anyhow's 466K-token burst hit S0's per-
+        // deployment TPM cap and got rejected with 429 + Retry-After.
+        // The embedder must honor the header and recover. This test
+        // uses `start_paused` so the simulated sleep doesn't actually
+        // block — tokio's mocked clock advances instantly when no
+        // task is ready.
+        //
+        // Mock: first call returns 429 with `Retry-After: 1`, second
+        // call returns 200. We pause time and let the retry's sleep
+        // resolve immediately under the paused clock.
+        let shared = MockShared {
+            embed_status: 200, // becomes 200 after first 429 (toggled below)
+            expect_api_key: true,
+            simulate_429_first_call: true,
+            ..MockShared::default()
+        };
+        let (base, _h) = spawn_mock(shared.clone()).await;
+        let embedder = OpenAiEmbedder::new(cfg_api_key(&base)).unwrap();
+
+        // Drive the future; let tokio fast-forward the retry sleep.
+        let fut = embedder.embed_async(&["alpha"]);
+        let result = tokio::time::timeout(Duration::from_secs(120), fut)
+            .await
+            .expect("retry should complete before timeout")
+            .expect("retry should produce a successful vector");
+
+        assert_eq!(result.len(), 1);
+        // Two requests total: 429 then 200.
+        assert_eq!(shared.embed_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn gives_up_after_max_429_retries() {
+        // Persistent 429s exhaust the retry budget and surface as a
+        // structured EmbeddingFailed so the WorkerLoop marks the job
+        // Failed (rather than retrying forever).
+        let shared = MockShared {
+            embed_status: 429,
+            embed_body: Some(serde_json::json!({
+                "error": { "code": "RateLimitReached", "message": "Try later" }
+            })),
+            expect_api_key: true,
+            ..MockShared::default()
+        };
+        let (base, _h) = spawn_mock(shared.clone()).await;
+        let embedder = OpenAiEmbedder::new(cfg_api_key(&base)).unwrap();
+
+        let fut = embedder.embed_async(&["x"]);
+        let err = tokio::time::timeout(Duration::from_secs(300), fut)
+            .await
+            .expect("retry budget should exhaust before outer timeout")
+            .unwrap_err();
+        match err {
+            IndexError::EmbeddingFailed { reason } => {
+                assert!(reason.contains("429"), "got {reason:?}");
+            }
+            other => panic!("wanted EmbeddingFailed, got {other:?}"),
+        }
+        // 1 initial + MAX_429_RETRIES = 4 total calls.
+        assert_eq!(
+            shared.embed_calls.load(Ordering::SeqCst),
+            MAX_429_RETRIES + 1,
+            "expected initial call + MAX_429_RETRIES retries",
+        );
     }
 
     #[tokio::test]

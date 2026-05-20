@@ -3,7 +3,7 @@ config:
   ministr-azure:githubWebhookSecret:
     secure: v1:sOeWG1QU0OMF/Zzm:sCztPAqLPtBNPdVrjsqUe8LwlGgYTmgXWtUVumVX4hvKdGXIdGXEClnfJRjSXq58gmwtFw3WSIUbxt+bk6+xQfN6aGCTXwYCXOF3c0VRDKw=
   ministr-azure:projectName: ministrv2
-  ministr-azure:imageTag: c00ad95-1779314091
+  ministr-azure:imageTag: 3287265-1779320288
   ministr-azure:pgLocation: westus2
   # PHASE4 chunk 5 — right-size the indexer Job now that the cloud
   # worker streams HNSW persistence every 4 files (`cmd_indexer_worker`

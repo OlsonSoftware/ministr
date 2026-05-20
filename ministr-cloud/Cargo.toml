@@ -94,3 +94,7 @@ jsonwebtoken = "9"
 # `Router::oneshot` (tower's ServiceExt). Test-only dep; not pulled
 # into the production binary.
 tower = { version = "0.5", features = ["util"] }
+# PHASE6 chunk 4b — tokio test-util enables `#[tokio::test(start_paused = true)]`
+# so the embedder's 429-Retry-After backoff tests don't wait wall-clock
+# seconds. Not in `full` because it changes runtime behavior.
+tokio = { workspace = true, features = ["test-util"] }
