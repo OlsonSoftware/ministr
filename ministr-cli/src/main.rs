@@ -14,6 +14,7 @@ mod cloud_demo;
 mod commands;
 mod infra;
 mod ingestion;
+mod worker;
 
 use std::path::PathBuf;
 

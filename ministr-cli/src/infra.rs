@@ -31,6 +31,7 @@ pub(crate) struct InfrastructureContext {
 /// Initialize shared infrastructure: storage, embedder, and vector index.
 ///
 /// Returns the corpus data directory, index directory, and Arc-wrapped components.
+#[allow(clippy::too_many_lines)] // embedder-kind branch + cache-key logic; further splitting would obscure the local-vs-remote flow
 pub(crate) async fn init_infrastructure(
     corpus_paths: &[String],
     config: &ministr_core::config::MinistrConfig,
@@ -69,47 +70,95 @@ pub(crate) async fn init_infrastructure(
     let model_name = resolved_model.map_or_else(|| config.default_model.clone(), String::from);
     tracing::info!(model = %model_name, "resolved embedding model");
 
-    // Initialize embedder with content-addressable cache.
+    // PHASE6 chunk 2 — embedder selection.
     //
-    // Backend selection:
-    // - MINISTR_BACKEND=candle  → Candle with Metal GPU (fastest on Apple Silicon)
-    // - MINISTR_BACKEND=onnx    → FastEmbed/ONNX Runtime with CoreML (default)
-    // - unset on macOS with candle feature → auto-detect: use Candle if the model
-    //   is supported, otherwise fall back to ONNX.
-    ministr_core::mem_profile::checkpoint("before embedding model init");
-    let (raw_embedder, backend_info) = create_embedder(&model_name, &config.data_dir)?;
-    tracing::info!(
-        backend = ?backend_info.format,
-        device = %backend_info.device,
-        "embedding backend selected"
-    );
-    ministr_core::mem_profile::checkpoint("after embedding model init");
+    // When `MINISTR_EMBEDDER_KIND=openai` is set AND the Azure `OpenAI`
+    // env (endpoint, deployment, auth) resolves, build an
+    // [`ministr_cloud::OpenAiEmbedder`] and SKIP the local fastembed
+    // model load entirely. The model file isn't downloaded, ONNX
+    // runtime isn't initialised, no GPU device is touched. This is the
+    // cloud worker's primary path — it drops worker pod memory from
+    // ~3.6 GiB (local ONNX) to <500 MiB (just SQLite + HNSW + reqwest).
+    //
+    // Local CLI (`ministr index`) leaves the env var unset and gets
+    // the existing fastembed/ONNX path unchanged.
+    //
+    // Failure-mode: env var set to "openai" but config incomplete →
+    // hard error (don't silently fall back to the local 3.6 GiB path on
+    // a cloud pod that may not be sized for it).
+    let embedder_kind = std::env::var("MINISTR_EMBEDDER_KIND").ok();
+    let use_openai = embedder_kind.as_deref() == Some("openai");
 
-    // Wrap in MatryoshkaEmbedder when dimension is configured for two-stage retrieval.
-    let (embedder, dual_embedder): (
+    let (embedder, dual_embedder, cache_model_key): (
         Arc<dyn ministr_core::embedding::Embedder>,
         Option<Arc<dyn ministr_core::embedding::DualEmbedder>>,
-    ) = if let Some(target_dim) = resolved_dimension {
+        String,
+    ) = if use_openai {
+        tracing::info!("MINISTR_EMBEDDER_KIND=openai — using Azure OpenAI embedder");
+        let openai_cfg = ministr_cloud::OpenAiConfig::from_env().ok_or_else(|| {
+            miette::miette!(
+                "MINISTR_EMBEDDER_KIND=openai requires MINISTR_AZURE_OPENAI_ENDPOINT, \
+                 MINISTR_AZURE_OPENAI_DEPLOYMENT, and an auth source \
+                 (MINISTR_AZURE_OPENAI_API_KEY or IDENTITY_ENDPOINT+IDENTITY_HEADER)",
+            )
+        })?;
+        // Honour resolved_dimension when set; otherwise default to 384
+        // (`ministr_cloud::DEFAULT_DIMENSIONS`) so HNSW indexes stay
+        // cross-compatible with the local fastembed family.
+        let dim = resolved_dimension.unwrap_or(ministr_cloud::DEFAULT_DIMENSIONS);
+        let remote = ministr_cloud::OpenAiEmbedder::with_dimensions(openai_cfg, dim)
+            .map_err(|e| miette::miette!("build OpenAiEmbedder: {e}"))?;
+        let arc: Arc<dyn ministr_core::embedding::Embedder> = Arc::new(remote);
+        // No DualEmbedder for the remote path — Matryoshka is a
+        // fastembed-specific facility; OpenAI v3 supports the
+        // `dimensions` param natively which we already pin above.
+        let key = format!("{model_name}:openai:{dim}");
+        (arc, None, key)
+    } else {
+        // Local fastembed/ONNX path (default).
+        //
+        // Backend selection:
+        // - MINISTR_BACKEND=candle  → Candle with Metal GPU (fastest on Apple Silicon)
+        // - MINISTR_BACKEND=onnx    → FastEmbed/ONNX Runtime with CoreML (default)
+        // - unset on macOS with candle feature → auto-detect: use Candle if the model
+        //   is supported, otherwise fall back to ONNX.
+        ministr_core::mem_profile::checkpoint("before embedding model init");
+        let (raw_embedder, backend_info) = create_embedder(&model_name, &config.data_dir)?;
         tracing::info!(
-            target_dim,
-            full_dim = raw_embedder.dimension(),
-            "Matryoshka two-stage retrieval enabled"
+            backend = ?backend_info.format,
+            device = %backend_info.device,
+            "embedding backend selected"
         );
-        let matryoshka = Arc::new(
-            ministr_core::embedding::MatryoshkaEmbedder::new(Arc::clone(&raw_embedder), target_dim)
+        ministr_core::mem_profile::checkpoint("after embedding model init");
+
+        // Backend-aware cache key matches the historical scheme so
+        // existing SQLite caches survive the PHASE6 refactor on local
+        // CLI users' boxes.
+        let key = format!("{model_name}{}", backend_info.cache_key_suffix());
+
+        // Wrap in MatryoshkaEmbedder when dimension is configured for two-stage retrieval.
+        if let Some(target_dim) = resolved_dimension {
+            tracing::info!(
+                target_dim,
+                full_dim = raw_embedder.dimension(),
+                "Matryoshka two-stage retrieval enabled"
+            );
+            let matryoshka = Arc::new(
+                ministr_core::embedding::MatryoshkaEmbedder::new(
+                    Arc::clone(&raw_embedder),
+                    target_dim,
+                )
                 .into_diagnostic()
                 .wrap_err("failed to create MatryoshkaEmbedder")?,
-        );
-        let emb: Arc<dyn ministr_core::embedding::Embedder> = Arc::clone(&matryoshka) as _;
-        let dual: Arc<dyn ministr_core::embedding::DualEmbedder> = matryoshka;
-        (emb, Some(dual))
-    } else {
-        (raw_embedder, None)
+            );
+            let emb: Arc<dyn ministr_core::embedding::Embedder> = Arc::clone(&matryoshka) as _;
+            let dual: Arc<dyn ministr_core::embedding::DualEmbedder> = matryoshka;
+            (emb, Some(dual), key)
+        } else {
+            (raw_embedder, None, key)
+        }
     };
 
-    // Backend-aware cache key: "model-name:candle" or "model-name:onnx" so
-    // vectors from different backends don't collide in the embedding cache.
-    let cache_model_key = format!("{model_name}{}", backend_info.cache_key_suffix());
     let embedding_cache = ministr_core::embedding::cache::EmbeddingCache::new(storage.conn());
     let embedder: Arc<dyn ministr_core::embedding::Embedder> = Arc::new(
         ministr_core::embedding::CachedEmbedder::new(embedder, embedding_cache, &cache_model_key),

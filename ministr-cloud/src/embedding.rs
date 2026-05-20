@@ -49,12 +49,27 @@
 //!
 //! # Sync over async
 //!
-//! The [`Embedder`] trait is sync. [`Self::embed`] uses
-//! [`reqwest::blocking::Client`] internally. The worker runs one
-//! ingestion at a time per replica (PHASE6 chunk 2's `WorkerLoop` sets
-//! `concurrency=1`), so blocking the calling tokio thread for ~500ms–2s
-//! per batch is acceptable: at worst one worker thread is parked at a
-//! time per replica, and HTTP serve happens on a different thread.
+//! The [`Embedder`] trait is sync. [`Self::embed`] uses an async
+//! [`reqwest::Client`] internally, bridged via
+//! [`tokio::task::block_in_place`] + [`tokio::runtime::Handle::block_on`].
+//! Two reasons for async-over-blocking rather than
+//! `reqwest::blocking::Client`:
+//!
+//! 1. `reqwest::blocking::Client` spins up its own tokio runtime and
+//!    panics when dropped from inside an outer tokio runtime — and the
+//!    serve binary holds the embedder Arc for the entire process
+//!    lifetime, so the drop happens at `#[tokio::main]` shutdown,
+//!    inside the runtime.
+//! 2. `block_in_place` requires a multi-threaded runtime (which is
+//!    what `serve` uses) but doesn't construct a second runtime; it
+//!    just signals the scheduler to move other work off this worker
+//!    thread while we block. Lower overhead and no drop landmines.
+//!
+//! The worker runs one ingestion at a time per replica (PHASE6 chunk
+//! 2's `WorkerLoop` sets `concurrency=1`), so blocking the calling
+//! tokio thread for ~500ms–2s per batch is acceptable: at worst one
+//! worker thread is parked at a time per replica, and HTTP serve
+//! happens on a different thread.
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -179,13 +194,16 @@ impl OpenAiConfig {
     }
 }
 
-/// Azure `OpenAI`–backed [`Embedder`]. Constructs blocking HTTP requests
+/// Azure `OpenAI`–backed [`Embedder`]. Constructs async HTTP requests
 /// against the resource's `/embeddings` endpoint, deserialises the
 /// response into `Vec<Vec<f32>>` matching the [`Embedder`] contract.
+///
+/// The sync [`Embedder::embed`] is implemented via `block_in_place` on
+/// the current tokio runtime — see the module preamble for why.
 #[derive(Clone)]
 pub struct OpenAiEmbedder {
     config: OpenAiConfig,
-    http: reqwest::blocking::Client,
+    http: reqwest::Client,
     dimensions: usize,
     /// MI token cache (only used when `auth` is `ManagedIdentity`).
     token_cache: Arc<Mutex<Option<CachedToken>>>,
@@ -231,15 +249,9 @@ impl OpenAiEmbedder {
     ///
     /// Same as [`Self::new`].
     pub fn with_dimensions(config: OpenAiConfig, dimensions: usize) -> Result<Self, IndexError> {
-        let http = reqwest::blocking::Client::builder()
+        let http = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
             .user_agent("ministr-cloud-openai-embedder/1 (+https://ministr.ai)")
-            // ACA's IDENTITY_ENDPOINT is localhost; the Azure `OpenAI`
-            // endpoint is a public hostname. `no_proxy` would prevent
-            // the public call from going through any HTTPS_PROXY the
-            // operator legitimately set, so we don't disable proxy
-            // here — only the IMDS sub-call needs that, and `reqwest`
-            // tracks loopback separately.
             .build()
             .map_err(|e| IndexError::EmbeddingFailed {
                 reason: format!("openai: build http: {e}"),
@@ -261,7 +273,7 @@ impl OpenAiEmbedder {
 
     /// Mint or read-from-cache an MI bearer token for the Azure `OpenAI`
     /// resource. Only called when `auth` is `ManagedIdentity`.
-    fn mi_token(&self, endpoint: &str, header_secret: &str) -> Result<String, IndexError> {
+    async fn mi_token(&self, endpoint: &str, header_secret: &str) -> Result<String, IndexError> {
         if let Some(cached) = self.cached_token() {
             debug!("openai mi token cache hit");
             return Ok(cached);
@@ -274,19 +286,21 @@ impl OpenAiEmbedder {
             .get(&url)
             .header("X-IDENTITY-HEADER", header_secret)
             .send()
+            .await
             .map_err(|e| IndexError::EmbeddingFailed {
                 reason: format!("openai mi imds: {e}"),
             })?;
         let status = resp.status();
         if !status.is_success() {
-            let body = resp.text().unwrap_or_default();
+            let body = resp.text().await.unwrap_or_default();
             return Err(IndexError::EmbeddingFailed {
                 reason: format!("openai mi imds: status {} body {body}", status.as_u16()),
             });
         }
-        let parsed: ImdsTokenResponse = resp.json().map_err(|e| IndexError::EmbeddingFailed {
-            reason: format!("openai mi imds parse: {e}"),
-        })?;
+        let parsed: ImdsTokenResponse =
+            resp.json().await.map_err(|e| IndexError::EmbeddingFailed {
+                reason: format!("openai mi imds parse: {e}"),
+            })?;
         let usable_until = parsed
             .expires_on
             .as_deref()
@@ -315,25 +329,32 @@ impl OpenAiEmbedder {
     }
 
     /// Apply the right authentication header(s) for this auth mode.
-    fn apply_auth(
+    async fn apply_auth(
         &self,
-        request: reqwest::blocking::RequestBuilder,
-    ) -> Result<reqwest::blocking::RequestBuilder, IndexError> {
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder, IndexError> {
         match &self.config.auth {
             OpenAiAuth::ApiKey(key) => Ok(request.header("api-key", key)),
             OpenAiAuth::ManagedIdentity {
                 endpoint,
                 header_secret,
             } => {
-                let token = self.mi_token(endpoint, header_secret)?;
+                let token = self.mi_token(endpoint, header_secret).await?;
                 Ok(request.bearer_auth(token))
             }
         }
     }
-}
 
-impl Embedder for OpenAiEmbedder {
-    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+    /// Async core of [`Embedder::embed`]. Public so consumers already
+    /// inside an async context (no current example, but a future
+    /// async-aware Embedder trait would call this directly without the
+    /// `block_in_place` bridge).
+    ///
+    /// # Errors
+    ///
+    /// See [`IndexError::EmbeddingFailed`] — see the trait impl for
+    /// the full failure surface (HTTP, MI, batch-size, dim, parse).
+    pub async fn embed_async(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -346,13 +367,16 @@ impl Embedder for OpenAiEmbedder {
             .post(self.embeddings_url())
             .header("content-type", "application/json")
             .json(&body);
-        let request = self.apply_auth(request)?;
-        let resp = request.send().map_err(|e| IndexError::EmbeddingFailed {
-            reason: format!("openai post: {e}"),
-        })?;
+        let request = self.apply_auth(request).await?;
+        let resp = request
+            .send()
+            .await
+            .map_err(|e| IndexError::EmbeddingFailed {
+                reason: format!("openai post: {e}"),
+            })?;
         let status = resp.status();
         if !status.is_success() {
-            let body = resp.text().unwrap_or_default();
+            let body = resp.text().await.unwrap_or_default();
             // Trim long error bodies for log triage; Azure `OpenAI`
             // returns structured { error: { code, message } } JSON.
             let trimmed = if body.len() > 512 {
@@ -367,7 +391,7 @@ impl Embedder for OpenAiEmbedder {
             });
         }
         let parsed: EmbeddingsResponse =
-            resp.json().map_err(|e| IndexError::EmbeddingFailed {
+            resp.json().await.map_err(|e| IndexError::EmbeddingFailed {
                 reason: format!("openai parse: {e}"),
             })?;
         // Azure returns embeddings in input-order when there's no
@@ -403,6 +427,22 @@ impl Embedder for OpenAiEmbedder {
             }
         }
         Ok(vectors)
+    }
+}
+
+impl Embedder for OpenAiEmbedder {
+    /// Sync bridge over the async core. Uses
+    /// [`tokio::task::block_in_place`] + [`tokio::runtime::Handle::block_on`]
+    /// to await `embed_async` without constructing a second runtime.
+    /// Requires a multi-threaded tokio runtime — the serve binary
+    /// uses the default `#[tokio::main]` flavor which provides one.
+    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+            IndexError::EmbeddingFailed {
+                reason: "OpenAiEmbedder::embed called outside a tokio runtime".to_owned(),
+            }
+        })?;
+        tokio::task::block_in_place(|| handle.block_on(self.embed_async(texts)))
     }
 
     fn dimension(&self) -> usize {
@@ -468,13 +508,10 @@ mod tests {
     //! body (input + dimensions), batch-order preservation, dim
     //! enforcement, and 4xx surfacing as `IndexError::EmbeddingFailed`.
     //!
-    //! Tests use `reqwest::blocking::Client` from inside a tokio test
-    //! runtime; that's exactly the production setup the worker uses.
-    //! `block_in_place` would be needed for `current_thread` runtimes
-    //! but `tokio::test(flavor = "multi_thread")` (the default flavor
-    //! when more than one thread is needed) lets blocking reqwest run.
-    //! We use `#[tokio::test]` plus a `tokio::task::spawn_blocking` for
-    //! the embedder call so the test doesn't park the only test thread.
+    //! Tests exercise [`OpenAiEmbedder::embed_async`] directly so they
+    //! stay fully inside the tokio runtime; the sync [`Embedder::embed`]
+    //! is a thin `block_in_place` bridge over the same path and is
+    //! covered separately by [`embed_sync_bridge_works`].
     use super::*;
     use axum::{
         Json, Router,
@@ -637,22 +674,7 @@ mod tests {
         }
     }
 
-    /// `reqwest::blocking::Client` spins up its own internal tokio
-    /// runtime; dropping it from inside an outer async context panics
-    /// with "Cannot drop a runtime in a context where blocking is not
-    /// allowed." Workaround: build the embedder AND drop it inside the
-    /// `spawn_blocking` closure so its full lifecycle stays on a
-    /// blocking thread. This is identical to how the production
-    /// `WorkerLoop` (PHASE6 chunk 2) will use it.
-    async fn run_blocking<F, R>(f: F) -> R
-    where
-        F: FnOnce() -> R + Send + 'static,
-        R: Send + 'static,
-    {
-        tokio::task::spawn_blocking(f).await.unwrap()
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn round_trips_against_mock_with_api_key() {
         let shared = MockShared {
             embed_status: 200,
@@ -660,21 +682,19 @@ mod tests {
             ..MockShared::default()
         };
         let (base, _h) = spawn_mock(shared.clone()).await;
+        let embedder = OpenAiEmbedder::new(cfg_api_key(&base)).unwrap();
 
-        let shared_for_assert = shared.clone();
-        let result = run_blocking(move || {
-            let embedder = OpenAiEmbedder::new(cfg_api_key(&base)).unwrap();
-            embedder.embed(&["alpha", "beta", "gamma"])
-        })
-        .await
-        .unwrap();
+        let result = embedder
+            .embed_async(&["alpha", "beta", "gamma"])
+            .await
+            .unwrap();
 
         assert_eq!(result.len(), 3, "one vector per input");
         for v in &result {
             assert_eq!(v.len(), MOCK_DIMENSION);
         }
-        assert_eq!(shared_for_assert.embed_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(shared_for_assert.imds_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(shared.embed_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(shared.imds_calls.load(Ordering::SeqCst), 0);
 
         // Confirm sort-by-index undid the mock's reverse-order shuffle:
         // index 0 in the response was the LAST element the mock built,
@@ -686,7 +706,7 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn round_trips_against_mock_with_mi() {
         let shared = MockShared {
             embed_status: 200,
@@ -694,22 +714,17 @@ mod tests {
             ..MockShared::default()
         };
         let (base, _h) = spawn_mock(shared.clone()).await;
-        let shared_for_assert = shared.clone();
+        let embedder = OpenAiEmbedder::new(cfg_mi(&base)).unwrap();
 
-        let result = run_blocking(move || {
-            let embedder = OpenAiEmbedder::new(cfg_mi(&base)).unwrap();
-            embedder.embed(&["one", "two"])
-        })
-        .await
-        .unwrap();
+        let result = embedder.embed_async(&["one", "two"]).await.unwrap();
 
         assert_eq!(result.len(), 2);
-        assert_eq!(shared_for_assert.embed_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(shared.embed_calls.load(Ordering::SeqCst), 1);
         // IMDS should have been called once to mint the token.
-        assert_eq!(shared_for_assert.imds_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(shared.imds_calls.load(Ordering::SeqCst), 1);
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn mi_token_is_cached_across_batches() {
         let shared = MockShared {
             embed_status: 200,
@@ -717,30 +732,22 @@ mod tests {
             ..MockShared::default()
         };
         let (base, _h) = spawn_mock(shared.clone()).await;
-        let shared_for_assert = shared.clone();
+        let embedder = OpenAiEmbedder::new(cfg_mi(&base)).unwrap();
 
-        // Build the embedder ONCE inside spawn_blocking, run both
-        // batches in the same closure, then drop. Sharing across two
-        // separate spawn_blocking calls would also work via Arc but
-        // this is the minimal shape.
-        run_blocking(move || {
-            let embedder = OpenAiEmbedder::new(cfg_mi(&base)).unwrap();
-            embedder.embed(&["a"]).unwrap();
-            embedder.embed(&["b"]).unwrap();
-        })
-        .await;
+        embedder.embed_async(&["a"]).await.unwrap();
+        embedder.embed_async(&["b"]).await.unwrap();
 
-        assert_eq!(shared_for_assert.embed_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(shared.embed_calls.load(Ordering::SeqCst), 2);
         // Critical: IMDS should fire ONCE, not twice. The internal
-        // cache survives across embed() calls — proves cache works.
+        // cache survives across embed_async() calls — proves cache works.
         assert_eq!(
-            shared_for_assert.imds_calls.load(Ordering::SeqCst),
+            shared.imds_calls.load(Ordering::SeqCst),
             1,
             "MI token was not cached across batches",
         );
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn http_4xx_surfaces_as_embedding_failed() {
         let shared = MockShared {
             embed_status: 429,
@@ -751,13 +758,9 @@ mod tests {
             ..MockShared::default()
         };
         let (base, _h) = spawn_mock(shared).await;
+        let embedder = OpenAiEmbedder::new(cfg_api_key(&base)).unwrap();
 
-        let err = run_blocking(move || {
-            let embedder = OpenAiEmbedder::new(cfg_api_key(&base)).unwrap();
-            embedder.embed(&["x"])
-        })
-        .await
-        .unwrap_err();
+        let err = embedder.embed_async(&["x"]).await.unwrap_err();
         match err {
             IndexError::EmbeddingFailed { reason } => {
                 assert!(reason.contains("429"), "got {reason:?}");
@@ -767,7 +770,7 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn batch_size_mismatch_surfaces_clearly() {
         // Mock returns ONE embedding for a TWO-input request — should
         // surface as a clear error not a silent truncation.
@@ -782,13 +785,9 @@ mod tests {
             ..MockShared::default()
         };
         let (base, _h) = spawn_mock(shared).await;
+        let embedder = OpenAiEmbedder::new(cfg_api_key(&base)).unwrap();
 
-        let err = run_blocking(move || {
-            let embedder = OpenAiEmbedder::new(cfg_api_key(&base)).unwrap();
-            embedder.embed(&["a", "b"])
-        })
-        .await
-        .unwrap_err();
+        let err = embedder.embed_async(&["a", "b"]).await.unwrap_err();
         match err {
             IndexError::EmbeddingFailed { reason } => {
                 assert!(reason.contains("mismatch"), "got {reason:?}");
@@ -797,20 +796,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn empty_input_is_a_no_op() {
+    #[tokio::test]
+    async fn empty_input_is_a_no_op() {
         let embedder = OpenAiEmbedder::new(OpenAiConfig {
             endpoint: "http://unused".into(),
             deployment: "unused".into(),
             auth: OpenAiAuth::ApiKey("unused".into()),
         })
         .unwrap();
-        let out = embedder.embed(&[]).unwrap();
+        let out = embedder.embed_async(&[]).await.unwrap();
         assert!(out.is_empty());
     }
 
-    #[test]
-    fn embedder_reports_configured_dimension() {
+    #[tokio::test]
+    async fn embedder_reports_configured_dimension() {
         let embedder = OpenAiEmbedder::with_dimensions(
             OpenAiConfig {
                 endpoint: "http://unused".into(),
@@ -830,8 +829,8 @@ mod tests {
         assert_eq!(trim_trailing_slashes("https://x".into()), "https://x");
     }
 
-    #[test]
-    fn dyn_trait_dispatch_compiles() {
+    #[tokio::test]
+    async fn dyn_trait_dispatch_compiles() {
         let embedder = OpenAiEmbedder::new(OpenAiConfig {
             endpoint: "http://unused".into(),
             deployment: "unused".into(),
@@ -839,5 +838,50 @@ mod tests {
         })
         .unwrap();
         let _dyn_embedder: Arc<dyn Embedder> = Arc::new(embedder);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn embed_sync_bridge_works() {
+        // Confirms the sync Embedder::embed wrapper round-trips through
+        // block_in_place + Handle::block_on without panicking. The
+        // bridge ALSO requires multi-threaded runtime — single-thread
+        // would panic at block_in_place; this test pins the contract.
+        let shared = MockShared {
+            embed_status: 200,
+            expect_api_key: true,
+            ..MockShared::default()
+        };
+        let (base, _h) = spawn_mock(shared.clone()).await;
+        let embedder = OpenAiEmbedder::new(cfg_api_key(&base)).unwrap();
+        let dyn_embedder: Arc<dyn Embedder> = Arc::new(embedder);
+
+        // Call the sync trait method directly from inside this async
+        // test. The block_in_place bridge moves the await off this
+        // worker thread.
+        let result = dyn_embedder.embed(&["alpha", "beta"]).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(shared.embed_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn embed_sync_bridge_errors_outside_runtime() {
+        // Plain #[test], no tokio runtime active. The bridge should
+        // surface a structured error instead of panicking.
+        let embedder = OpenAiEmbedder::new(OpenAiConfig {
+            endpoint: "http://unused".into(),
+            deployment: "unused".into(),
+            auth: OpenAiAuth::ApiKey("unused".into()),
+        })
+        .unwrap();
+        let err = embedder.embed(&["x"]).unwrap_err();
+        match err {
+            IndexError::EmbeddingFailed { reason } => {
+                assert!(
+                    reason.contains("outside a tokio runtime"),
+                    "got {reason:?}",
+                );
+            }
+            other => panic!("wanted EmbeddingFailed, got {other:?}"),
+        }
     }
 }
