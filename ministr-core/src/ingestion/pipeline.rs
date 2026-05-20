@@ -1529,8 +1529,20 @@ impl IngestionPipeline {
     {
         let mut total_embeddings = 0usize;
         let mut buffer: Vec<(VectorId, String)> = Vec::new();
+        // Track whether we've signalled the `Embedding` phase yet — flip
+        // it on the FIRST batch received so SSE consumers see the phase
+        // change at the right moment. Before the first batch arrives,
+        // the producer is still parsing; flipping any earlier would
+        // misreport the work.
+        let mut phase_flipped = false;
 
         while let Some(pairs) = embed_rx.recv().await {
+            if !phase_flipped
+                && let Some(p) = progress
+            {
+                p.set_phase(IngestionPhase::Embedding);
+                phase_flipped = true;
+            }
             buffer.extend(pairs);
             if buffer.len() >= EMBED_FLUSH_THRESHOLD {
                 let count = batch_embed_and_insert(&buffer, embedder, index).await?;
@@ -1565,8 +1577,18 @@ impl IngestionPipeline {
     {
         let mut total_embeddings = 0usize;
         let mut buffer: Vec<(VectorId, String)> = Vec::new();
+        // Mirror of the single-embedder path — flip phase on the
+        // first batch so SSE consumers see `Embedding` at the
+        // right moment.
+        let mut phase_flipped = false;
 
         while let Some(pairs) = embed_rx.recv().await {
+            if !phase_flipped
+                && let Some(p) = progress
+            {
+                p.set_phase(IngestionPhase::Embedding);
+                phase_flipped = true;
+            }
             buffer.extend(pairs);
             if buffer.len() >= EMBED_FLUSH_THRESHOLD {
                 let count = super::embedding::batch_embed_and_insert_dual(
