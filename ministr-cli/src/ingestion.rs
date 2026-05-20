@@ -19,11 +19,19 @@ use crate::infra::InfrastructureContext;
 /// - Local paths are ingested via the standard file ingestion pipeline.
 /// - Web URLs are fetched and ingested via `WebFetcher`.
 /// - Git URLs are cloned and their content is ingested as local files.
+///
+/// `streaming_persist_every: Some(n)` flips the pipeline into per-batch
+/// HNSW persistence mode — the index is flushed to `ctx.index_dir`
+/// every `n` files indexed (PHASE4 chunk 4 plumbing). Cloud-worker
+/// callers opt in because they run on a 4 GiB pod and need to bound
+/// peak HNSW rss; local `ministr index` passes `None` and keeps the
+/// bundle-at-end shape, avoiding gratuitous fsyncs on developer disks.
 pub(crate) async fn run_corpus_ingestion(
     corpus_paths: &[String],
     git_includes: &[ministr_core::config::GitInclude],
     ctx: &InfrastructureContext,
     progress: &Arc<ministr_core::ingestion::IngestionProgress>,
+    streaming_persist_every: Option<usize>,
 ) -> Result<()> {
     use ministr_core::config::{CorpusSource, classify_corpus_path};
 
@@ -44,6 +52,7 @@ pub(crate) async fn run_corpus_ingestion(
         web = web_urls.len(),
         git = git_urls.len(),
         local_paths = ?local_paths,
+        streaming_persist_every,
         "classified corpus sources"
     );
 
@@ -52,8 +61,16 @@ pub(crate) async fn run_corpus_ingestion(
     let index = &*ctx.index;
 
     let start = std::time::Instant::now();
-    let pipeline =
+    let mut pipeline =
         ministr_core::ingestion::IngestionPipeline::new().with_progress(Arc::clone(progress));
+    if let Some(n) = streaming_persist_every {
+        pipeline = pipeline
+            .with_corpus_dir(ctx.index_dir.clone())
+            .with_batch_config(ministr_core::ingestion::BatchIngestionConfig {
+                batch_size: 4,
+                persist_every: Some(n),
+            });
+    }
 
     // Ingest local paths.
     if !local_paths.is_empty() {
@@ -567,7 +584,7 @@ pub(crate) fn spawn_config_watcher(
 
             let git_includes = repo_config.corpus.git.clone();
 
-            match run_corpus_ingestion(&new_paths, &git_includes, &bg_ctx, &progress).await {
+            match run_corpus_ingestion(&new_paths, &git_includes, &bg_ctx, &progress, None).await {
                 Ok(()) => {
                     known_paths.extend(new_paths);
                     tracing::info!("config-triggered ingestion complete");

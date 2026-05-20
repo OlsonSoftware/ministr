@@ -347,6 +347,7 @@ pub(crate) fn spawn_background_ingestion(
             &bg_git_includes,
             &bg_ctx,
             &bg_progress,
+            None, // local/dev path — bundle at end, no mid-run persist
         )
         .await
         {
