@@ -171,6 +171,412 @@ dev-cloud-check:
 demo-local *args:
     ./scripts/demo-local.sh {{args}}
 
+# Watch the deployed Azure cloud index a real repo. Reads the public URL
+# from `pulumi -C deploy/azure stack output publicBaseUrl` (override with
+# MINISTR_CLOUD_BASE_URL=…), runs `cloud check` against it, then runs
+# `cloud demo --clone-url …` so the live SSE progress prints in your
+# terminal. Pass CLONE_URL=<repo> to swap the demo repo (defaults to a
+# small fixture). No daemon spawn — the deployed cloud is the daemon.
+demo-remote *args:
+    ./scripts/demo-remote.sh {{args}}
+
+# ── Azure deployment (see DEMO.md §13) ─────────────────────────────────
+#
+# Typical first run:
+#   just azure-init      # one-time: npm ci + pulumi stack init prod
+#   just azure-demo      # build+push image, pulumi up, run demo-remote
+#
+# Day-to-day after code changes:
+#   just azure-demo      # rebuilds image with current git sha + re-rolls
+#
+# Inspection:
+#   just azure-status    # stack outputs + /healthz probe
+#   just azure-logs      # tail ACA container logs
+
+# One-time Azure setup: npm ci + pulumi stack init prod (idempotent).
+azure-init:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v pulumi >/dev/null || { echo "pulumi CLI not found — install from https://www.pulumi.com/docs/install/"; exit 1; }
+    command -v az     >/dev/null || { echo "az CLI not found — install from https://learn.microsoft.com/cli/azure/install-azure-cli"; exit 1; }
+    command -v docker >/dev/null || { echo "docker not found"; exit 1; }
+    eval "$(./scripts/azure-env.sh)"
+    cd deploy/azure
+    [ -d node_modules ] || npm ci
+    pulumi stack ls 2>/dev/null | grep -q '^prod ' || pulumi stack init prod
+    echo "✓ azure-init complete — run 'just azure-demo' next"
+
+# Build the linux/amd64 image, tag it with the current git sha, push to
+# the stack's ACR, and bump pulumi's `imageTag` config so the next
+# `azure-up` creates a fresh ACA revision (ACA only rolls when the tag
+# changes — same-tag pushes are ignored).
+#
+# Build + push current code to ACR; set pulumi imageTag to git sha.
+azure-push:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    # Default tag = `<sha>-<unix-ts>`. The unique suffix ensures pulumi
+    # sees a config diff on every push — without it, pushing a rebuilt
+    # image with the same git sha makes ACA think the revision is
+    # already current and skip the roll, even though image *content*
+    # changed (e.g. Dockerfile edits, dependency bumps).
+    TAG="${TAG:-$(git rev-parse --short HEAD)-$(date +%s)}"
+    REGISTRY=$(pulumi -C deploy/azure stack output registryServer 2>/dev/null || true)
+    if [ -z "$REGISTRY" ]; then
+        # Fall back to the deterministic naming convention from lib/naming.ts.
+        # Outputs only commit on a fully successful `pulumi up`, so a partial
+        # first apply leaves them empty even when the ACR itself exists.
+        PROJ=$(pulumi -C deploy/azure config get projectName 2>/dev/null || echo "ministr")
+        REGISTRY="${PROJ}acr.azurecr.io"
+        echo "▶ stack output empty — falling back to ${REGISTRY} from projectName=${PROJ}"
+    fi
+    echo "▶ az acr login --name ${REGISTRY%%.*}"
+    az acr login --name "${REGISTRY%%.*}"
+    echo "▶ docker buildx build --platform linux/amd64 --push -t ${REGISTRY}/ministr:${TAG} ."
+    docker buildx build --platform linux/amd64 --push \
+        -t "${REGISTRY}/ministr:${TAG}" .
+    echo "▶ pulumi config set imageTag ${TAG}"
+    pulumi -C deploy/azure config set imageTag "${TAG}"
+    echo "✓ pushed ministr:${TAG} — run 'just azure-up' to roll the revision"
+
+# Run `pulumi up` against the prod stack. First run provisions
+# everything (~5-7 min); subsequent runs only diff the changed config.
+# PULUMI_FLAGS=--yes skips confirmation.
+#
+# Run pulumi up against the prod stack.
+azure-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    pulumi -C deploy/azure up ${PULUMI_FLAGS:-}
+
+# One-shot: provision (if needed), push, roll revision, run demo.
+# Handles fresh deploy AND subsequent updates.
+#
+# Full one-shot: pulumi up + push + roll + demo-remote.
+azure-demo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    REGISTRY=$(pulumi -C deploy/azure stack output registryServer 2>/dev/null || true)
+    if [ -z "$REGISTRY" ]; then
+        echo "▶ first-time deploy — provisioning Azure resources (~5 min)"
+        pulumi -C deploy/azure up --yes
+    fi
+    just azure-push
+    echo ""
+    echo "▶ pulumi up to roll the new revision with the fresh image"
+    pulumi -C deploy/azure up --yes
+    echo ""
+    echo "▶ waiting 30s for ACA to roll the revision"
+    sleep 30
+    echo ""
+    just demo-remote
+
+# Show stack outputs and probe the live /healthz.
+azure-status:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    pulumi -C deploy/azure stack output
+    URL=$(pulumi -C deploy/azure stack output publicBaseUrl 2>/dev/null || true)
+    if [ -n "$URL" ]; then
+        echo ""
+        echo "▶ GET ${URL}/healthz"
+        curl -sS "${URL}/healthz" && echo
+    fi
+
+# Tail live ACA container logs (Ctrl-C to stop).
+azure-logs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    az containerapp logs show \
+        --name ministr-app \
+        --resource-group "$RG" \
+        --follow --tail 100
+
+# The scheduled trigger (PHASE3 chunk 6, cron every 1 min) spawns short
+# replicas; `--show-previous` rolls across them so you can see the
+# claim_next + ingest + upload sequence from any recent tick.
+#
+# Open a psql session against the cloud Postgres flex-server. Azure
+# blocks the flex-server's TCP port from arbitrary public IPs by
+# default, so this temporarily adds a firewall rule for the caller's
+# current public IP, runs psql in a one-shot postgres:16 docker
+# container, and removes the rule on exit (via `trap`). Pass `-c
+# "SQL"` for one-shot queries or no args for interactive REPL.
+#
+#   just azure-psql -c "SELECT corpus_id, status FROM indexer_jobs;"
+#   just azure-psql                                  # interactive
+#
+# `az postgres flexible-server firewall-rule create/delete` can take
+# 30-90s each — the recipe emits ▶ progress markers so it doesn't
+# appear hung. `--no-wait` is intentionally NOT used: we need the
+# rule active before psql connects, so synchronous is correct.
+#
+# Reconcile Pulumi state with the role-assignment GUIDs currently
+# live in Azure. Background:
+#
+#   - PHASE3 chunk 6 introduced a deterministic UUID-v5 role-assignment
+#     name (see lib/role-assignment.ts). The deterministic GUID is
+#     computed from (scope, principalId, roleDefinitionId).
+#   - Earlier deploys with auto-generated GUIDs left orphans on the
+#     storage account. A partial pulumi up after the deterministic-
+#     name change may also have created the resources on Azure but
+#     failed to record them in state (the dreaded `RoleAssignmentExists
+#     ... ID X` 409). State and reality diverge.
+#
+# This recipe re-aligns them: looks up the deterministic GUIDs by
+# (storage, principal, role) against live Azure, removes whatever
+# pulumi *thinks* it owns for those logical resources, then imports
+# the live Azure resources under the correct logical names.
+#
+# After running this, `just azure-up` should diff-clean for both
+# `ministrv2-app-blob-rw` and `ministrv2-indexer-blob-rw`.
+#
+# Re-import role-assignment state from Azure (one-time reconcile).
+azure-rbac-reconcile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    SUB=$(az account show --query id -o tsv)
+    RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    STORAGE_ID=$(az storage account show --name ministrv2data \
+        --resource-group "$RG" --query id -o tsv)
+    SBDC="ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+    APP_MI=$(az containerapp show --name ministrv2-app \
+        --resource-group "$RG" --query identity.principalId -o tsv)
+    INDEXER_MI=$(az containerapp job show --name ministrv2-indexer \
+        --resource-group "$RG" --query identity.principalId -o tsv)
+    echo "▶ app MI:     $APP_MI"
+    echo "▶ indexer MI: $INDEXER_MI"
+
+    # Find the existing role-assignment GUIDs for each (principal, scope, role) triple.
+    APP_GUID=$(az role assignment list --scope "$STORAGE_ID" \
+        --query "[?principalId=='$APP_MI' && contains(roleDefinitionId, '$SBDC')].name | [0]" \
+        -o tsv)
+    INDEXER_GUID=$(az role assignment list --scope "$STORAGE_ID" \
+        --query "[?principalId=='$INDEXER_MI' && contains(roleDefinitionId, '$SBDC')].name | [0]" \
+        -o tsv)
+    [ -n "$APP_GUID" ]     || { echo "no live app role assignment found"; exit 1; }
+    [ -n "$INDEXER_GUID" ] || { echo "no live indexer role assignment found"; exit 1; }
+    echo "▶ live app role assignment:     $APP_GUID"
+    echo "▶ live indexer role assignment: $INDEXER_GUID"
+
+    # Drop whatever pulumi currently tracks for these URNs. Use `|| true`
+    # because the first run may legitimately have nothing tracked.
+    for URN in \
+        "urn:pulumi:prod::ministr-azure::azure-native:authorization:RoleAssignment::ministrv2-app-blob-rw" \
+        "urn:pulumi:prod::ministr-azure::azure-native:authorization:RoleAssignment::ministrv2-indexer-blob-rw"; do
+        echo "▶ pulumi state delete $URN"
+        pulumi -C deploy/azure state delete "$URN" --yes 2>/dev/null || true
+    done
+
+    # Import the live resources under the deterministic names.
+    APP_RA="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/ministrv2data/providers/Microsoft.Authorization/roleAssignments/$APP_GUID"
+    INDEXER_RA="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/ministrv2data/providers/Microsoft.Authorization/roleAssignments/$INDEXER_GUID"
+    echo "▶ pulumi import ministrv2-app-blob-rw"
+    pulumi -C deploy/azure import azure-native:authorization:RoleAssignment \
+        ministrv2-app-blob-rw "$APP_RA" --yes --skip-preview
+    echo "▶ pulumi import ministrv2-indexer-blob-rw"
+    pulumi -C deploy/azure import azure-native:authorization:RoleAssignment \
+        ministrv2-indexer-blob-rw "$INDEXER_RA" --yes --skip-preview
+
+    echo ""
+    echo "✓ state reconciled. Re-run 'just azure-up' to verify diff-clean."
+
+# Fast non-psql alternative for the common case "what just happened
+# with the indexer job?" — queries Log Analytics for system events
+# (execution lifecycle + container exit codes) and console logs in
+# the last 10 minutes, then prints terminal status per execution.
+# Use this BEFORE reaching for `just azure-psql` since it doesn't
+# touch the Postgres firewall.
+#
+# Quick indexer-job state dump from Log Analytics (no firewall).
+azure-jobs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    WS=$(az monitor log-analytics workspace list --resource-group "$RG" \
+        --query "[0].customerId" -o tsv)
+    echo "▶ recent indexer executions (last 30 min):"
+    az containerapp job execution list \
+        --name ministrv2-indexer --resource-group "$RG" \
+        --query "[].{name: name, status: properties.status, start: properties.startTime}" \
+        -o table 2>/dev/null | head -15
+    echo ""
+    echo "▶ recent failures + final lines (last 30 min):"
+    az monitor log-analytics query --workspace "$WS" \
+        --analytics-query "ContainerAppConsoleLogs_CL \
+            | where ContainerName_s == 'indexer' \
+            | where TimeGenerated > ago(30m) \
+            | where Log_s contains 'claimed' \
+              or Log_s contains 'no pending' \
+              or Log_s contains 'ingestion complete' \
+              or Log_s contains 'uploaded bundle' \
+              or Log_s contains 'job completed' \
+              or Log_s contains 'Error' \
+              or Log_s contains 'failed' \
+            | project TimeGenerated, Log_s \
+            | order by TimeGenerated desc \
+            | take 30" -o tsv 2>&1 | tail -30
+
+# Open a psql session against the cloud Postgres (auto-firewall).
+azure-psql *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ [1/5] resolving cloud env"
+    eval "$(./scripts/azure-env.sh)"
+    echo "▶ [2/5] reading pulumi stack outputs"
+    PGURL=$(pulumi -C deploy/azure stack output pgConnectionString --show-secrets)
+    PGHOST=$(pulumi -C deploy/azure stack output pgHost)
+    # Flex server is `<host>.postgres.database.azure.com`; the
+    # firewall-rule API wants the short server name.
+    PGSERVER="${PGHOST%%.*}"
+    RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    IP=$(curl -sS --max-time 5 https://api.ipify.org)
+    [ -n "$IP" ] || { echo "could not resolve public IP"; exit 1; }
+    RULE="temp-claude-$(date +%s)"
+    echo "▶ [3/5] opening firewall: rule=$RULE ip=$IP server=$PGSERVER (~30-90s)"
+    az postgres flexible-server firewall-rule create \
+        --resource-group "$RG" \
+        --name "$PGSERVER" \
+        --rule-name "$RULE" \
+        --start-ip-address "$IP" \
+        --end-ip-address "$IP" >/dev/null
+    trap 'echo "▶ [5/5] removing firewall rule $RULE"; \
+          az postgres flexible-server firewall-rule delete \
+              --resource-group "'"$RG"'" \
+              --name "'"$PGSERVER"'" \
+              --rule-name "'"$RULE"'" \
+              --yes >/dev/null || true' EXIT
+    echo "▶ [4/5] running psql"
+    docker run --rm -i postgres:16 psql "$PGURL" {{args}}
+
+# The scheduled trigger (PHASE3 chunk 6, cron every 1 min) spawns short
+# replicas; `--show-previous` rolls across them so you can see the
+# claim_next + ingest + upload sequence from any recent tick.
+#
+# Tail the indexer-worker ACA Job logs across recent executions.
+azure-logs-indexer:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    JOB=$(pulumi -C deploy/azure stack output indexerJobName)
+    az containerapp job logs show \
+        --name "$JOB" \
+        --resource-group "$RG" \
+        --follow --tail 100
+
+# PHASE3 smoke uses this between an initial demo-remote (which leaves
+# a bundle in blob + a cloud_corpora row) and a follow-up query, to
+# validate that (a) the durable registry survived the restart and
+# (b) chunk 5's on-demand restore re-populates pod-local /data on
+# first touch.
+#
+# Restart the serve-pod's currently active revision.
+azure-restart-app:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    REV=$(az containerapp revision list \
+        --name ministr-app \
+        --resource-group "$RG" \
+        --query "[?properties.active].name | [0]" \
+        -o tsv)
+    [ -n "$REV" ] || { echo "no active revision found"; exit 1; }
+    echo "▶ restarting revision ${REV}"
+    az containerapp revision restart \
+        --name ministr-app \
+        --resource-group "$RG" \
+        --revision "$REV"
+    echo "▶ waiting 15s for the new pod to become ready"
+    sleep 15
+    just azure-status
+
+# PHASE3 chunk 6 acceptance: serve/worker split end-to-end.
+#
+# 1. demo-remote: clone-url → POST /api/v1/corpora returns pending
+#    instantly (chunk 4), progress SSE streams from Postgres until
+#    the scheduled worker (chunk 6) drains the queue, then a survey
+#    query against the corpus succeeds.
+# 2. azure-restart-app: drops pod-local /data.
+# 3. demo-remote again: same CLONE_URL → deterministic corpus_id
+#    hits the existing cloud_corpora row (chunk 1), the survey query
+#    lazy-downloads the bundle from blob (chunk 5) and succeeds —
+#    proving end-to-end durability across pod recycle.
+#
+# CLONE_URL is forwarded to demo-remote; defaults to its built-in
+# small fixture.
+#
+# PHASE3 serve/worker-split smoke (demo-remote, restart pod, repeat).
+phase3-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ phase3-smoke step 1 / 3 — first demo-remote (clone + index + query)"
+    just demo-remote
+    echo ""
+    echo "▶ phase3-smoke step 2 / 3 — restart serve pod (drops pod-local /data)"
+    just azure-restart-app
+    echo ""
+    echo "▶ phase3-smoke step 3 / 3 — re-run demo-remote (must lazy-restore from blob)"
+    just demo-remote
+    echo ""
+    echo "✓ phase3-smoke passed — registry + bundle survived pod recycle"
+
+# Tear down the entire Azure stack (DESTRUCTIVE — asks for confirmation).
+azure-down:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    pulumi -C deploy/azure destroy ${PULUMI_FLAGS:-}
+
+# Full reset: delete the Azure RG, wipe local Pulumi stack state, re-init
+# with empty passphrase, set a fresh webhook secret. Use this when the
+# passphrase is lost or the stack is unrecoverably wedged. Asks for
+# confirmation. Run `just azure-demo` after this to redeploy.
+azure-reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    echo "This will DELETE:"
+    echo "  - Azure resource group ministr-rg-prod (all resources inside)"
+    echo "  - Pulumi stack 'prod' from azblob://pulumi-state"
+    echo "  - Encrypted secrets in deploy/azure/Pulumi.prod.yaml"
+    echo ""
+    read -p "Type 'yes' to confirm: " CONFIRM
+    [ "$CONFIRM" = "yes" ] || { echo "aborted"; exit 1; }
+    echo ""
+    echo "▶ kicking off async RG delete"
+    az group delete --name ministr-rg-prod --yes --no-wait 2>/dev/null || true
+    echo "▶ wiping Pulumi stack state"
+    pulumi -C deploy/azure stack rm prod --force --yes 2>/dev/null || true
+    echo "▶ clearing encrypted secrets from Pulumi.prod.yaml"
+    # Strip the encryptionsalt + githubWebhookSecret lines so the
+    # re-init starts fresh. The other config keys have defaults in
+    # Pulumi.yaml so losing them is harmless.
+    awk '
+        /^encryptionsalt:/ {next}
+        /githubWebhookSecret:/ {skip=1; next}
+        skip && /^    secure:/ {skip=0; next}
+        {print}
+    ' deploy/azure/Pulumi.prod.yaml > deploy/azure/Pulumi.prod.yaml.tmp
+    mv deploy/azure/Pulumi.prod.yaml.tmp deploy/azure/Pulumi.prod.yaml
+    echo "▶ re-initialising stack with empty passphrase"
+    pulumi -C deploy/azure stack init prod
+    echo "▶ setting fresh githubWebhookSecret"
+    pulumi -C deploy/azure config set --secret githubWebhookSecret "$(openssl rand -hex 32)"
+    echo "▶ waiting for RG delete to finish (can take 5-10 min)"
+    az group wait --name ministr-rg-prod --deleted --timeout 900 2>/dev/null || true
+    echo ""
+    echo "✓ azure-reset complete. Next: just azure-demo"
+
 # Build signed + notarized macOS .pkg installer
 pkg:
     #!/usr/bin/env bash
