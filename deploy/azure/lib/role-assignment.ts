@@ -52,6 +52,13 @@ import * as storage from "@pulumi/azure-native/storage";
 const STORAGE_BLOB_DATA_CONTRIBUTOR =
   "ba92f5b4-2d11-453d-a403-e96b0029c9fe";
 
+// Built-in role definition ID for Cognitive Services User. Grants
+// the principal "Read Cognitive Services data and write completions".
+// Sufficient for the embedder's POST /embeddings + MI bearer auth.
+// learn.microsoft.com/azure/role-based-access-control/built-in-roles/ai-machine-learning#cognitive-services-user
+const COGNITIVE_SERVICES_USER =
+  "a97b65f3-24c7-4388-baec-2e87135dc908";
+
 /**
  * UUID-v5-style GUID derived from the joined inputs. Stable across
  * runs as long as the inputs are stable. Used to give each role
@@ -141,6 +148,50 @@ export function grantBlobDataContributor(
       // (409 on the new GUID). Marking `principalId` as
       // replace-triggering makes Pulumi treat principal rotation as a
       // genuine delete+create up front — the only correct behaviour.
+      replaceOnChanges: ["principalId"],
+    },
+  );
+}
+
+export interface CognitiveServicesUserInputs {
+  /** Resource name to use for the assignment (Pulumi logical name). */
+  name: string;
+  /** Cognitive Services / Azure OpenAI account id the role is scoped to. */
+  accountId: pulumi.Input<string>;
+  /** Principal id of the identity being granted the role. */
+  principalId: pulumi.Input<string>;
+}
+
+/** Grant the principal `Cognitive Services User` on the OpenAI account.
+ *
+ * PHASE6 chunk 4a — the serve pod's MI mints a Bearer for
+ * `https://cognitiveservices.azure.com` and the embedder's
+ * `POST /embeddings` call needs this role on the OpenAI account.
+ * Without it, the call returns 403. Same deterministic-GUID pattern
+ * as `grantBlobDataContributor` — see that function's preamble for
+ * the rationale. */
+export function grantCognitiveServicesUser(
+  inputs: CognitiveServicesUserInputs,
+): authorization.RoleAssignment {
+  const subscriptionId =
+    authorization.getClientConfigOutput().subscriptionId;
+  const roleDefinitionId = pulumi.interpolate`/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleDefinitions/${COGNITIVE_SERVICES_USER}`;
+
+  const roleAssignmentName = pulumi
+    .all([inputs.accountId, inputs.principalId, COGNITIVE_SERVICES_USER])
+    .apply(([s, p, r]) => deterministicAssignmentGuid(s, p, r));
+
+  return new authorization.RoleAssignment(
+    inputs.name,
+    {
+      roleAssignmentName,
+      principalId: inputs.principalId,
+      principalType: authorization.PrincipalType.ServicePrincipal,
+      roleDefinitionId,
+      scope: inputs.accountId,
+    },
+    {
+      ignoreChanges: ["scope", "principalType", "roleAssignmentName"],
       replaceOnChanges: ["principalId"],
     },
   );

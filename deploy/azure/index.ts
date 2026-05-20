@@ -21,7 +21,11 @@ import { createInsights } from "./lib/insights";
 import { createApp } from "./lib/app";
 import { bindCustomDomain } from "./lib/domain";
 import { createPostgres } from "./lib/postgres";
-import { grantBlobDataContributor } from "./lib/role-assignment";
+import { createOpenAi } from "./lib/openai";
+import {
+  grantBlobDataContributor,
+  grantCognitiveServicesUser,
+} from "./lib/role-assignment";
 import { named } from "./lib/naming";
 
 const cfg = new pulumi.Config();
@@ -42,6 +46,15 @@ const webhookSecret = cfg.getSecret("githubWebhookSecret");
 // Postgres on.
 const enablePostgres = cfg.getBoolean("enablePostgres") ?? true;
 const pgAdminLogin = cfg.get("pgAdminLogin") ?? "ministradmin";
+// PHASE6 chunk 4a — Azure OpenAI is the cloud worker's embedder.
+// Toggle off (`enableOpenAi=false`) to provision the rest of the
+// stack without the OpenAI account — the serve pod will then run
+// without `MINISTR_EMBEDDER_KIND=openai` and fall back to local
+// fastembed (which OOMs on 2 GiB pods, see PHASE6.md — so this is
+// only useful for the bootstrap step before the OpenAI capacity has
+// been approved in the subscription).
+const enableOpenAi = cfg.getBoolean("enableOpenAi") ?? true;
+const openaiLocation = cfg.get("openaiLocation");
 // Some subscriptions are restricted from provisioning Postgres Flex
 // Burstable in certain regions (e.g. eastus). Override with
 // `pulumi config set pgLocation westus2`.
@@ -76,6 +89,13 @@ const postgres =
       })
     : undefined;
 
+const openai = enableOpenAi
+  ? createOpenAi({
+      rg: net.rg,
+      openaiLocation,
+    })
+  : undefined;
+
 // Predict the ACA-assigned FQDN from the env's default domain + the
 // container app name so we can feed it into the app's env vars at plan
 // time without a two-step apply.
@@ -97,6 +117,8 @@ const queryApp = createApp({
   publicUrl,
   publicHost,
   pgConnectionString: postgres?.pgConnectionString,
+  openaiEndpoint: openai?.endpoint,
+  openaiDeployment: openai?.deploymentName,
 });
 
 // Grant the app's managed identity read+write on the corpora blob
@@ -107,6 +129,17 @@ grantBlobDataContributor({
   storageAccount: storage.account,
   principalId: queryApp.principalId,
 });
+
+// PHASE6 chunk 4a — grant the app's MI Cognitive Services User on the
+// OpenAI account. The worker mints a Bearer via the same MI; without
+// this role grant, POST /embeddings returns 403 and ingestion stalls.
+if (openai) {
+  grantCognitiveServicesUser({
+    name: named("app-openai-user"),
+    accountId: openai.accountId,
+    principalId: queryApp.principalId,
+  });
+}
 
 const domainBinding = customDomain
   ? bindCustomDomain({
@@ -127,3 +160,7 @@ export const customDomainCertId = domainBinding?.apply((d) => d.certId);
 export const publicBaseUrl = publicUrl;
 export const pgHost = postgres?.host;
 export const pgConnectionString = postgres?.pgConnectionString;
+// PHASE6 chunk 4a — surface the OpenAI endpoint + deployment so the
+// operator can sanity-check via `pulumi stack output` after a deploy.
+export const openaiEndpoint = openai?.endpoint;
+export const openaiDeployment = openai?.deploymentName;

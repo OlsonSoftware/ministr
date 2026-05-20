@@ -53,6 +53,19 @@ export interface AppInputs {
   // auto-mount. When unset the cloud falls back to SQLite + skips those
   // routes — fine for local dev, never for prod.
   pgConnectionString?: pulumi.Input<string>;
+  // PHASE6 chunk 4a — Azure OpenAI embedder.
+  //
+  // When both `openaiEndpoint` and `openaiDeployment` resolve, the
+  // serve pod gets `MINISTR_EMBEDDER_KIND=openai` and the two endpoint
+  // env vars. Without them the pod falls back to the local fastembed
+  // path — fine for local dev, NOT for the cloud (where the local
+  // path OOMs at 3.6 GB ONNX activation memory).
+  //
+  // No API key here — the worker's `OpenAiAuth::ManagedIdentity` path
+  // mints a Bearer via the pod's MI. The Cognitive Services User role
+  // grant in index.ts is what gates 200 vs 403.
+  openaiEndpoint?: pulumi.Input<string>;
+  openaiDeployment?: pulumi.Input<string>;
 }
 
 export function createApp(inputs: AppInputs): AppArtifact {
@@ -70,6 +83,8 @@ export function createApp(inputs: AppInputs): AppArtifact {
     publicUrl,
     publicHost,
     pgConnectionString,
+    openaiEndpoint,
+    openaiDeployment,
   } = inputs;
 
   const imageRef = pulumi.interpolate`${registry.loginServer}/ministr:${imageTag}`;
@@ -122,6 +137,18 @@ export function createApp(inputs: AppInputs): AppArtifact {
   }
   if (pgConnectionString) {
     baseEnv.push({ name: "MINISTR_PG_URL", secretRef: "pg-url" });
+  }
+  // PHASE6 chunk 4a — Azure OpenAI embedder env. Both endpoint and
+  // deployment must resolve together; either missing falls back to
+  // local fastembed (defeats the purpose on a 2 GiB pod, but at least
+  // the binary boots so the operator can fix the gap).
+  if (openaiEndpoint && openaiDeployment) {
+    baseEnv.push({ name: "MINISTR_EMBEDDER_KIND", value: "openai" });
+    baseEnv.push({ name: "MINISTR_AZURE_OPENAI_ENDPOINT", value: openaiEndpoint });
+    baseEnv.push({
+      name: "MINISTR_AZURE_OPENAI_DEPLOYMENT",
+      value: openaiDeployment,
+    });
   }
 
   const containerApp = new app.ContainerApp(named("app"), {

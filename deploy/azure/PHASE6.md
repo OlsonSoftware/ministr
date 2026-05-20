@@ -230,11 +230,20 @@ Atomic, one per `/roadmap PHASE6` invocation:
   - **Verify**: `cargo build --workspace` clean; workspace tests **1973 passing** (1969 lib + 4 worker bin; the 10 `job_start::tests` are gone with the file); workspace clippy pedantic clean; `cd deploy/azure && npx tsc --noEmit` clean.
   - **Operator action remaining**: `pulumi up` will see the indexer Job + two role assignments + four env vars as deletions — confirm the diff looks right before applying. The first `pulumi up` after this chunk is the actual demolition. Chunk 4 wraps that with a fresh `azure-demo`.
 
-- [ ] **Chunk 4 — `pulumi up` + first live azure-demo on new arch**
-  - First deploy with `MINISTR_EMBEDDER_KIND=openai` and a deployment name pinned via Pulumi config.
-  - Provision the Azure OpenAI resource if not present (one new Pulumi module `lib/openai.ts`).
-  - Demo expectation: clone anyhow → SSE shows embeddings_done climbing in real time → completes in <5 min → blob upload succeeds.
-  - **Verify**: operator runs `just azure-demo`, observes a healthy completion, files an issue here if not.
+- [x] **Chunk 4a — Pulumi module for Azure OpenAI** *(code landed; operator runs `pulumi up` + live demo in chunk 4b)*
+  - [x] New `deploy/azure/lib/openai.ts` — `createOpenAi` provisions a `cognitiveservices.Account` (kind=OpenAI, SKU=S0, customSubDomain enabled for Entra auth) + a `Deployment` for `text-embedding-3-small` v1 (Standard tier, 10K TPM capacity). System-assigned MI on the account itself; `disableLocalAuth: false` for now so operators can bootstrap with an API key during the first live demo (flipped to `true` once MI propagation is confirmed).
+  - [x] New `grantCognitiveServicesUser` helper in `lib/role-assignment.ts` — mirrors `grantBlobDataContributor` exactly. Uses the built-in `Cognitive Services User` role (`a97b65f3-24c7-4388-baec-2e87135dc908`) scoped to the OpenAI account. Same deterministic UUID-v5 GUID pattern so Pulumi state stays clean across reapplies.
+  - [x] `lib/app.ts` gains `openaiEndpoint`/`openaiDeployment` inputs. When both resolve, the serve pod gets `MINISTR_EMBEDDER_KIND=openai` + `MINISTR_AZURE_OPENAI_ENDPOINT` + `MINISTR_AZURE_OPENAI_DEPLOYMENT` env vars. No API key in env — the Rust embedder's `OpenAiAuth::ManagedIdentity` path mints the Bearer via the pod's MI; the new role grant gates 200 vs 403.
+  - [x] `index.ts` wires it together: `createOpenAi` after Postgres, threads outputs into `createApp`, calls `grantCognitiveServicesUser` after the queryApp exists. New `enableOpenAi` Pulumi config bool (defaults true) lets the operator provision the rest of the stack without OpenAI capacity (e.g. before the subscription's OpenAI quota is approved).
+  - [x] Two new stack outputs: `openaiEndpoint` + `openaiDeployment`. Operator can `pulumi stack output openaiEndpoint` to sanity-check the resource after deploy.
+  - **Verify**: `cd deploy/azure && npx tsc --noEmit` clean.
+
+- [ ] **Chunk 4b — `pulumi up` + first live azure-demo on new arch** *(operator-driven)*
+  - Operator step 1: `cd deploy/azure && pulumi preview` — confirm the diff shows the indexer Job + two old role assignments + four ACA env vars as **deletions**, plus the new OpenAI account + deployment + Cognitive Services User role assignment as **creations**.
+  - Operator step 2: `pulumi up` to apply. First apply provisions the OpenAI resource (~30s) and the model deployment (~1 min). Subsequent re-rolls only update the app revision.
+  - Operator step 3: `just azure-push && just azure-up` to ship the PHASE6 Rust changes.
+  - Operator step 4: `just azure-demo`. Demo expectation: clone anyhow → SSE shows `embeddings_done` climbing in real time → completes in <5 min → blob upload succeeds → no OOM, no 403, no stalls.
+  - If MI propagation lags (the role assignment can take a couple of minutes to fully propagate on first apply), the embedder may surface as `JobStartError::Arm{status: 403, ...}` — wait 2 min and re-run the demo. Alternative: set `MINISTR_AZURE_OPENAI_API_KEY` from the resource's primary key as a bootstrap; the embedder's `OpenAiAuth::from_env()` prefers `ApiKey` when both are set.
 
 ## What's NOT in this phase
 
