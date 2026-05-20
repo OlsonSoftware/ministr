@@ -13,32 +13,30 @@
 // browser tab mint a session against another user's customer — by
 // design, the cloud handler reads `Tenant` from the bearer token and
 // rejects bearer-less requests with 401.
+//
+// # Static export
+//
+// `docs-next/next.config.mjs` uses `output: 'export'`. That forbids
+// per-request rendering, so we can't read `searchParams` server-side
+// (Next 16 fails the build with `dynamic = "error"`). Instead the
+// headline lives in a small client island (`headline-client.tsx`)
+// that runs `useSearchParams()` at hydrate — see the import below.
+// The static shell pre-renders at build time; the `?from=` swap
+// happens after the bundle loads.
 
+import { Suspense } from 'react';
 import Link from 'next/link';
 
-interface PageProps {
-  searchParams: Promise<{ from?: string }>;
-}
+import { UpgradeHeadline } from './headline-client';
 
-const PLAN_HEADLINE: Record<string, { title: string; price: string }> = {
-  pro: { title: 'Upgrade to Pro', price: '$20 / month' },
-  team: { title: 'Upgrade to Team', price: '$30 / seat / month (3-seat min)' },
-  enterprise: { title: 'Enterprise — contact sales', price: 'Custom' },
-};
-
-export default async function BillingUpgradePage({ searchParams }: PageProps) {
-  const params = await searchParams;
-  const from = (params.from ?? '').toLowerCase();
-  const headline = PLAN_HEADLINE[from] ?? PLAN_HEADLINE.pro;
-
+export default function BillingUpgradePage() {
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 p-8">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold">{headline.title}</h1>
-        <p className="text-fd-muted-foreground">
-          ministr Cloud — {headline.price}.
-        </p>
-      </header>
+      {/* useSearchParams() requires a Suspense boundary — see Next.js
+          docs on "Missing Suspense boundary with useSearchParams". */}
+      <Suspense fallback={<HeadlineFallback />}>
+        <UpgradeHeadline />
+      </Suspense>
 
       <section className="rounded-lg border border-fd-border p-6">
         <h2 className="mb-3 text-lg font-medium">How to complete the upgrade</h2>
@@ -62,7 +60,7 @@ export default async function BillingUpgradePage({ searchParams }: PageProps) {
             <span className="font-mono">sk_test_…</span> deployments).
           </li>
           <li>
-            Stripe's webhook fires{' '}
+            Stripe&rsquo;s webhook fires{' '}
             <span className="font-mono">customer.subscription.updated</span> against
             our cloud; your plan flips on the next API call.
           </li>
@@ -77,6 +75,19 @@ export default async function BillingUpgradePage({ searchParams }: PageProps) {
         .
       </section>
     </main>
+  );
+}
+
+/**
+ * Server-rendered fallback shown while the client island hydrates.
+ * Defaults to the Pro copy so first paint isn't blank.
+ */
+function HeadlineFallback() {
+  return (
+    <header className="flex flex-col gap-2">
+      <h1 className="text-3xl font-semibold">Upgrade to Pro</h1>
+      <p className="text-fd-muted-foreground">ministr Cloud — $20 / month.</p>
+    </header>
   );
 }
 
