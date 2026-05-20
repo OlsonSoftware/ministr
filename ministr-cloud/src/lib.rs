@@ -42,8 +42,9 @@ pub mod db;
 pub mod idp;
 
 pub use billing::{
-    billing_routes, record_usage, rollup_day, BillingState, PartialRow, PostgresUsageSink,
-    RollupRow, UsageEventKind, UsageResponse,
+    billing_routes, record_usage, rollup_day, stripe_webhook_routes, BillingState, PartialRow,
+    PostgresUsageSink, RollupRow, StripeWebhookError, StripeWebhookState, UsageEventKind,
+    UsageResponse,
 };
 pub use blob::{BlobError, BlobResult, CorpusBlobStore};
 pub use db::{connect, run_migrations, DbError};

@@ -41,10 +41,15 @@ use crate::ingestion;
 /// (`OAuthBackend::Postgres`) and takes precedence over the `SQLite`
 /// path; multi-pod cloud deployments rely on this so every pod shares
 /// the same `oauth_clients`/`oauth_codes`/`oauth_tokens` rows.
+/// `MINISTR_STRIPE_WEBHOOK_SECRET` — endpoint signing secret from the
+/// Stripe dashboard (prefixed `whsec_`). When set, mounts
+/// `POST /webhooks/stripe`; the handler rejects all events without a
+/// matching signature.
 struct CloudEnv {
     data_dir: Option<PathBuf>,
     webhook_secret: Option<String>,
     pg_url: Option<String>,
+    stripe_webhook_secret: Option<String>,
 }
 
 fn read_cloud_env() -> CloudEnv {
@@ -52,6 +57,10 @@ fn read_cloud_env() -> CloudEnv {
         data_dir: std::env::var("MINISTR_CLOUD_DATA_DIR").ok().map(PathBuf::from),
         webhook_secret: std::env::var("MINISTR_GITHUB_WEBHOOK_SECRET").ok(),
         pg_url: std::env::var("MINISTR_PG_URL")
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty()),
+        stripe_webhook_secret: std::env::var("MINISTR_STRIPE_WEBHOOK_SECRET")
             .ok()
             .map(|s| s.trim().to_owned())
             .filter(|s| !s.is_empty()),
@@ -307,9 +316,20 @@ pub(crate) async fn cmd_serve_http(
             );
             composed = composed.merge(billing_protected);
             tracing::info!("billing endpoint mounted — GET /api/v1/billing/usage");
-        } else {
-            // Keep `store` lifetimes consistent in both branches.
-            drop(store);
+            // F1.5 sub-bullet 3 — Stripe webhook receiver. Mounted
+            // when both the cloud pool AND the Stripe signing secret
+            // are present. Public route (Stripe is the caller); the
+            // signature check is the only auth.
+            if let Some(stripe_secret) = cloud_env.stripe_webhook_secret.as_ref() {
+                let stripe_router = ministr_cloud::billing::stripe::stripe_webhook_routes(
+                    ministr_cloud::StripeWebhookState::new(
+                        Arc::clone(pool),
+                        stripe_secret.clone(),
+                    ),
+                );
+                composed = composed.merge(stripe_router);
+                tracing::info!("stripe webhook mounted — POST /webhooks/stripe");
+            }
         }
         composed
     } else {

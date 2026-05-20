@@ -15,9 +15,11 @@
 pub mod endpoint;
 pub mod rollup;
 pub mod sink;
+pub mod stripe;
 pub mod usage;
 
 pub use endpoint::{billing_routes, BillingState, PartialRow, RollupRow, UsageResponse};
 pub use rollup::rollup_day;
 pub use sink::PostgresUsageSink;
+pub use stripe::{stripe_webhook_routes, StripeWebhookError, StripeWebhookState};
 pub use usage::{record_usage, UsageEventKind};
