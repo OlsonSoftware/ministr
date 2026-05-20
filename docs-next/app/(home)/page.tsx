@@ -288,8 +288,16 @@ export default function HomePage() {
             <Link href="/docs/concepts" className="ms-link">
               Concepts
             </Link>
+            <Link href="/pricing" className="ms-link">
+              Pricing
+            </Link>
+            <Link href="/stewardship" className="ms-link">
+              Stewardship
+            </Link>
           </nav>
-          <p className="ms-folio mt-10">Local · Rust · no API calls</p>
+          <p className="ms-folio mt-10">
+            Local · Rust · no API calls · <Link href="/stewardship" className="ms-link">MIT core, paid cloud</Link>
+          </p>
         </footer>
       </article>
     </main>
