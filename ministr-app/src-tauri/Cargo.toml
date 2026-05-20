@@ -19,7 +19,11 @@ tauri-build = { version = "2", features = [] }
 # Tauri framework
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
-tauri-plugin-shell = "2"
+# F2.7 — replaces tauri-plugin-shell, whose `Shell::open` was
+# deprecated in Tauri 2.x. Same `open_url` / `open_path` surface,
+# tighter capability scoping (only the URL schemes we explicitly
+# grant in capabilities/default.json).
+tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"

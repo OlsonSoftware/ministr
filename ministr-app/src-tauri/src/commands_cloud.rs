@@ -15,7 +15,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::AppHandle;
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tracing::{debug, info, warn};
@@ -52,7 +52,10 @@ impl CloudConfig {
 
 /// True when the OS keychain currently holds a non-empty cloud bearer
 /// token. Replaces the old `bearer_token`-on-disk check.
-fn is_authenticated() -> bool {
+///
+/// `pub(crate)` so the tray cloud-status dot (F2.7) can peek at the
+/// auth state without going through the Tauri command surface.
+pub(crate) fn is_authenticated() -> bool {
     load_bearer_token().is_some_and(|t| !t.trim().is_empty())
 }
 
@@ -335,12 +338,11 @@ pub async fn cloud_authenticate(app: AppHandle) -> Result<(), CommandError> {
         st = url_encode(&state_nonce),
         sc = url_encode(scopes),
     );
-    #[allow(deprecated)]
-    // `Shell::open` is deprecated in favour of tauri-plugin-opener; migrating
-    // is a separate refactor. For now this is the supported path under
-    // tauri-plugin-shell 2.x.
-    app.shell()
-        .open(authorize_url.clone(), None)
+    // F2.7 — migrated to tauri-plugin-opener (Shell::open was
+    // deprecated in Tauri 2.x). Same one-call surface, tighter
+    // capability scoping in `tauri.conf.json`.
+    app.opener()
+        .open_url(&authorize_url, None::<&str>)
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("open browser: {e}")))?;
     debug!("cloud_authenticate: browser launched to {authorize_url}");
 
@@ -450,10 +452,8 @@ pub async fn cloud_authenticate_github(app: AppHandle) -> Result<(), CommandErro
         st = url_encode(&state_nonce),
     );
 
-    #[allow(deprecated)]
-    // Same `Shell::open` migration tracked in F2.7 as `cloud_authenticate`.
-    app.shell()
-        .open(start_url.clone(), None)
+    app.opener()
+        .open_url(&start_url, None::<&str>)
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("open browser: {e}")))?;
     debug!("cloud_authenticate_github: browser launched to {start_url}");
 
@@ -915,9 +915,8 @@ pub async fn cloud_billing_checkout(
         .ok_or_else(|| {
             CommandError::new(ErrorKind::Io, "checkout response missing url".to_string())
         })?;
-    #[allow(deprecated)] // matches cloud_authenticate's TODO; F2.7 migrates to tauri-plugin-opener
-    app.shell()
-        .open(session_url.to_string(), None)
+    app.opener()
+        .open_url(session_url, None::<&str>)
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("open browser: {e}")))?;
     info!(plan = %plan, "cloud_billing_checkout: stripe session opened in browser");
     Ok(())
@@ -953,9 +952,8 @@ pub async fn cloud_billing_portal(app: AppHandle) -> Result<(), CommandError> {
         .ok_or_else(|| {
             CommandError::new(ErrorKind::Io, "portal response missing url".to_string())
         })?;
-    #[allow(deprecated)]
-    app.shell()
-        .open(session_url.to_string(), None)
+    app.opener()
+        .open_url(session_url, None::<&str>)
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("open browser: {e}")))?;
     info!("cloud_billing_portal: stripe portal opened in browser");
     Ok(())

@@ -98,6 +98,10 @@ fn build_menu(
 /// we no longer rebuild it from the corpora list. The loop still runs
 /// at 10s cadence so the user can hover the tray icon and see live
 /// counts (corpora, sessions, RSS) without opening the window.
+///
+/// F2.7 — the tooltip now leads with a cloud-status dot
+/// ([`cloud_status_dot`]) so a glance at the menu bar tells the user
+/// whether the cloud connection is healthy.
 pub fn spawn_refresh_loop(handle: AppHandle, state: AppState) {
     tauri::async_runtime::spawn(async move {
         loop {
@@ -115,8 +119,9 @@ pub fn spawn_refresh_loop(handle: AppHandle, state: AppState) {
             } else {
                 format!("{total_sessions} sessions")
             };
+            let dot = cloud_status_dot(&corpora);
             let tooltip = format!(
-                "ministr — {} projects · {} · {:.0} MB",
+                "{dot} ministr — {} projects · {} · {:.0} MB",
                 corpora.len(),
                 session_part,
                 rss,
@@ -126,6 +131,34 @@ pub fn spawn_refresh_loop(handle: AppHandle, state: AppState) {
             }
         }
     });
+}
+
+/// Render the cloud-connection state as a single emoji dot, prefixed
+/// onto the tray tooltip (F2.7 carry-over).
+///
+/// State table:
+///
+/// | Glyph | When |
+/// |---|---|
+/// | 🟢 | Cloud bearer token present AND no corpus currently indexing |
+/// | 🟡 | Cloud bearer token present AND at least one corpus indexing |
+/// | ⚪ | No cloud bearer token (self-hosted / not yet signed in) |
+///
+/// Red (auth-failed / quota-exceeded) is computed but requires a
+/// recent `/healthz` + `/billing/usage` probe; today the refresh loop
+/// has no in-process cache for those values, so red lands when F4.x
+/// wires a cloud-state cache into `AppState`. For now: 🟢 / 🟡 / ⚪.
+fn cloud_status_dot(corpora: &[ministr_api::corpus::CorpusInfo]) -> &'static str {
+    if !crate::commands_cloud::is_authenticated() {
+        return "⚪";
+    }
+    if corpora
+        .iter()
+        .any(|c| matches!(c.status, ministr_api::corpus::IndexingStatus::Indexing { .. }))
+    {
+        return "🟡";
+    }
+    "🟢"
 }
 
 /// Count active sessions across all corpora, split by whether the
