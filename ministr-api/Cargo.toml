@@ -20,3 +20,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
 tokio = { workspace = true }
+# F2.1 — InstallationTokenMinter trait error type. Tiny derive crate;
+# matches the workspace error convention (`thiserror` for library
+# crates, `miette` for application crates).
+thiserror = { workspace = true }

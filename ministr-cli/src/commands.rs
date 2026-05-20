@@ -60,6 +60,12 @@ use crate::ingestion;
 /// GitHub sign-in is enabled because the `redirect_uri` passed to the
 /// GitHub authorize endpoint must exactly match the value registered
 /// in the App's settings.
+/// `MINISTR_GITHUB_APP_ID` / `MINISTR_GITHUB_APP_PRIVATE_KEY` — the
+/// GitHub App credentials for private-repo cloning (F2.1). The private
+/// key is the multi-line PEM downloaded from the App settings page —
+/// pass it verbatim (Container Apps secrets handle newlines correctly).
+/// Both must be present together. When unset, `clone_repo` requests
+/// carrying `github_installation_id` fail with 400.
 struct CloudEnv {
     data_dir: Option<PathBuf>,
     webhook_secret: Option<String>,
@@ -69,6 +75,8 @@ struct CloudEnv {
     github_client_id: Option<String>,
     github_client_secret: Option<String>,
     cloud_base_url: Option<String>,
+    github_app_id: Option<String>,
+    github_app_private_key: Option<String>,
 }
 
 fn read_cloud_env() -> CloudEnv {
@@ -87,6 +95,12 @@ fn read_cloud_env() -> CloudEnv {
         github_client_id: trimmed("MINISTR_GITHUB_CLIENT_ID"),
         github_client_secret: trimmed("MINISTR_GITHUB_CLIENT_SECRET"),
         cloud_base_url: trimmed("MINISTR_CLOUD_BASE_URL"),
+        github_app_id: trimmed("MINISTR_GITHUB_APP_ID"),
+        // Don't trim the PEM body — that would strip newlines + drop
+        // the trailing footer line. Just reject when entirely blank.
+        github_app_private_key: std::env::var("MINISTR_GITHUB_APP_PRIVATE_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
     }
 }
 
@@ -254,6 +268,39 @@ pub(crate) async fn cmd_serve_http(
             std::sync::Arc::new(ministr_cloud::PostgresUsageSink::from_arc(Arc::clone(pool)));
         daemon_state = daemon_state.with_usage_sink(sink);
         tracing::info!("PostgresUsageSink wired — billable usage events enabled");
+    }
+
+    // F2.1 — GitHub App installation-token minter for private-repo
+    // cloning. Built independently of the GitHub OAuth IdP (F1.3) so a
+    // deployment can enable App-driven clones without also enabling the
+    // user-facing GitHub sign-in flow (or vice versa).
+    if let (Some(app_id), Some(pem)) = (
+        cloud_env.github_app_id.as_ref(),
+        cloud_env.github_app_private_key.as_ref(),
+    ) {
+        match ministr_cloud::GitHubAppClient::new(app_id.clone(), pem) {
+            Ok(client) => {
+                let minter: std::sync::Arc<dyn ministr_api::InstallationTokenMinter> =
+                    std::sync::Arc::new(client);
+                daemon_state = daemon_state.with_installation_minter(minter);
+                tracing::info!(
+                    app_id = %app_id,
+                    "GitHubAppClient wired — private-repo cloning via installation tokens enabled"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "GitHub App disabled — MINISTR_GITHUB_APP_ID/PRIVATE_KEY rejected"
+                );
+            }
+        }
+    } else if cloud_env.github_app_id.is_some() || cloud_env.github_app_private_key.is_some() {
+        tracing::warn!(
+            has_app_id = cloud_env.github_app_id.is_some(),
+            has_private_key = cloud_env.github_app_private_key.is_some(),
+            "GitHub App NOT wired — both MINISTR_GITHUB_APP_ID and MINISTR_GITHUB_APP_PRIVATE_KEY must be set"
+        );
     }
 
     let activity_layer = axum::middleware::from_fn_with_state(

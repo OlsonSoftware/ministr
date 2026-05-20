@@ -40,6 +40,7 @@ pub mod auth;
 pub mod billing;
 pub mod blob;
 pub mod db;
+pub mod github;
 pub mod idp;
 pub mod users;
 
@@ -53,6 +54,7 @@ pub use auth::{
 };
 pub use blob::{BlobError, BlobResult, CorpusBlobStore};
 pub use db::{connect, run_migrations, DbError};
+pub use github::{GitHubAppClient, GitHubAppError};
 pub use idp::{GitHubIdp, IdentityProvider, IdpError, ResolvedIdentity, GITHUB_ISSUER};
 pub use users::{
     set_stripe_customer_id, upsert_github_user, UserError, UserRow, DEFAULT_GITHUB_SIGNIN_PLAN,
