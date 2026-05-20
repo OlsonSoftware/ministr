@@ -1,13 +1,13 @@
 #!/bin/sh
 # ministr container entrypoint.
 #
-# Dual mode selected by ENTRYPOINT_MODE:
-#   serve  (default)  →  ministr serve --transport http   (query app)
-#   index             →  ministr index                    (ACA Job, sync)
+# Mode selected by ENTRYPOINT_MODE:
+#   serve  (default)  →  ministr serve --transport http   (query + worker)
+#   index             →  ministr index                    (one-shot local)
 #
-# The `index` mode reads corpus paths from /data/.ministr.toml (mounted
-# from the Azure Files share). The query app writes/updates that config
-# as the user adds corpora via the admin endpoints.
+# PHASE6 chunk 3 retired the `indexer-worker` mode: the serve pod now
+# drains `indexer_jobs` in-process via its WorkerLoop (no separate ACA
+# Job replica needed). See `deploy/azure/PHASE6.md`.
 #
 # Anything else is a misconfiguration; fail fast so ACA logs a clear error.
 set -e
@@ -33,15 +33,9 @@ case "${ENTRYPOINT_MODE:-serve}" in
   index)
     exec ministr index "$@"
     ;;
-  indexer-worker)
-    # PHASE3 chunk 3 — single-shot queue-driven worker. Pops one
-    # pending job from the cloud Postgres queue, runs ingestion,
-    # uploads the bundle, and exits. ACA Job re-runs on cron.
-    exec ministr indexer-worker "$@"
-    ;;
   *)
     echo "ministr: unknown ENTRYPOINT_MODE='${ENTRYPOINT_MODE}'" >&2
-    echo "ministr: expected 'serve', 'index', or 'indexer-worker'" >&2
+    echo "ministr: expected 'serve' or 'index'" >&2
     exit 64
     ;;
 esac
