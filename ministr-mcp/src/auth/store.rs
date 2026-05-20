@@ -14,7 +14,7 @@ use super::OAuthConfig;
 use super::storage::{InMemoryStorage, OAuthBackend, PostgresStorage, SqliteStorage, StorageResult};
 use super::tenant::Tenant;
 use super::types::{AccessToken, AuthorizationCode, RegisteredClient};
-use super::util::epoch_now;
+use super::util::{epoch_now, generate_id};
 
 /// Configured OAuth state plus the chosen storage backend.
 ///
@@ -113,6 +113,42 @@ impl OAuthStore {
         self.backend.save_token(token).await
     }
 
+    /// Mint a fresh bearer token bound to `client_id` + `scope` and persist
+    /// it through the configured storage backend.
+    ///
+    /// The lifetime is the store's [`OAuthConfig::token_ttl`]. The returned
+    /// string is the opaque token value — clients use it as the `Bearer`
+    /// header on subsequent requests.
+    ///
+    /// Cloud-side federation flows (F1.3 GitHub `IdP`) call this after
+    /// resolving the user's identity to deliver a token without going
+    /// through the RFC 6749 §4.1 code-grant dance. The local-stack OAuth
+    /// handlers continue to use the existing private path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OAuthIssueError::Storage`] when the backend rejects the
+    /// write (network outage, schema drift, etc.). Matches the closed-fail
+    /// posture of [`Self::validate_token`].
+    pub async fn issue_bearer_token(
+        &self,
+        client_id: &str,
+        scope: &str,
+    ) -> Result<String, OAuthIssueError> {
+        let token = generate_id();
+        let access = AccessToken {
+            token: token.clone(),
+            client_id: client_id.to_owned(),
+            scope: scope.to_owned(),
+            expires_at: epoch_now() + self.config.token_ttl.as_secs(),
+        };
+        self.backend
+            .save_token(access)
+            .await
+            .map_err(|e| OAuthIssueError::Storage(e.to_string()))?;
+        Ok(token)
+    }
+
     /// Validate a bearer token. Returns the `client_id` if the token exists
     /// and has not expired.
     ///
@@ -177,6 +213,18 @@ impl OAuthStore {
             }
         }
     }
+}
+
+/// Public error surface for [`OAuthStore::issue_bearer_token`]. Internal
+/// storage variants are collapsed into a single opaque string so callers
+/// outside `ministr-mcp` (e.g. cloud federation) don't depend on the
+/// backend taxonomy.
+#[derive(Debug, thiserror::Error)]
+pub enum OAuthIssueError {
+    /// Backend rejected the write. The inner string is human-readable and
+    /// safe to log; do not surface it directly in HTTP responses.
+    #[error("oauth storage error: {0}")]
+    Storage(String),
 }
 
 #[cfg(test)]
@@ -345,6 +393,34 @@ mod tests {
             .await
             .expect("tenant resolves through postgres backend");
         assert_eq!(tenant.subject, "client-1");
+    }
+
+    #[tokio::test]
+    async fn issue_bearer_token_round_trips_through_validate() {
+        let store = store();
+        let issued = store
+            .issue_bearer_token("github:42", "ministr:read ministr:write")
+            .await
+            .expect("issue succeeds against in-memory store");
+        assert_eq!(
+            store.validate_token(&issued).await,
+            Some("github:42".into())
+        );
+        assert_eq!(
+            store
+                .resolve_tenant_with_scope(&issued, "ministr:read")
+                .await
+                .map(|t| t.subject),
+            Some("github:42".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn issue_bearer_token_returns_distinct_tokens() {
+        let store = store();
+        let a = store.issue_bearer_token("c", "ministr:read").await.unwrap();
+        let b = store.issue_bearer_token("c", "ministr:read").await.unwrap();
+        assert_ne!(a, b, "successive issues must not collide");
     }
 
     #[tokio::test]
