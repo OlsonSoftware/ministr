@@ -8,13 +8,32 @@
 //!
 //! # Auth flow
 //!
-//! 1. `GET http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/`
-//!    with the header `Metadata: true`. Azure's IMDS responds with
-//!    `{ access_token, expires_on, ... }` — `expires_on` is an epoch
-//!    second string.
-//! 2. `POST {arm}/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.App/jobs/{name}/start?api-version=2026-01-01`
-//!    with `Authorization: Bearer <token>` and an empty JSON body.
-//!    ACA accepts 200/202; either is success.
+//! Token source depends on the host:
+//!
+//! - **Azure Container Apps** (the prod path here): ACA does **not**
+//!   expose the `IaaS` IMDS endpoint at `169.254.169.254`. Instead it
+//!   injects two env vars into every container that has a managed
+//!   identity bound — `IDENTITY_ENDPOINT` (typically
+//!   `http://localhost:42356/msi/token`) and `IDENTITY_HEADER` (a
+//!   per-replica secret). The token call is then:
+//!   `GET ${IDENTITY_ENDPOINT}?resource=https://management.azure.com/&api-version=2019-08-01`
+//!   with the header `X-IDENTITY-HEADER: ${IDENTITY_HEADER}`. This is
+//!   the same protocol App Service / Functions use.
+//!   (`learn.microsoft.com/azure/container-apps/managed-identity#rest-endpoint-reference`.)
+//!
+//! - **VMSS / classic VM**: `GET http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/`
+//!   with header `Metadata: true`. Kept as a fallback so the same
+//!   binary still works if we ever run the trigger inside a VMSS
+//!   sidecar.
+//!
+//! Either way the response is `{ access_token, expires_on, ... }` and
+//! `expires_on` is an epoch-second string.
+//!
+//! After fetching the token:
+//!
+//! `POST {arm}/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.App/jobs/{name}/start?api-version=2026-01-01`
+//! with `Authorization: Bearer <token>` and an empty JSON body.
+//! ACA accepts 200/202; either is success.
 //!
 //! # Cache TTL
 //!
@@ -50,10 +69,18 @@ const ARM_API_VERSION: &str = "2026-01-01";
 /// Trailing slash is required — the IMDS endpoint validates it.
 const ARM_RESOURCE: &str = "https://management.azure.com/";
 
-/// IMDS api-version. `2018-02-01` is the stable surface and the version
-/// Azure SDK clients pin to today; later versions exist but add no
-/// fields we read.
-const IMDS_API_VERSION: &str = "2018-02-01";
+/// IMDS api-version for the VMSS / `IaaS` endpoint at `169.254.169.254`.
+/// `2018-02-01` is the stable surface and the version Azure SDK clients
+/// pin to today; later versions exist but add no fields we read.
+const VMSS_IMDS_API_VERSION: &str = "2018-02-01";
+
+/// IMDS api-version for the ACA / App Service / Functions identity
+/// endpoint (the one selected by `IDENTITY_ENDPOINT` env var).
+/// `2019-08-01` is the value the Azure SDKs use against this surface;
+/// older `2017-09-01` is documented but produces a different response
+/// shape on some Azure properties — pinning to `2019-08-01` keeps the
+/// `expires_on` field stable across hosts.
+const ACA_IMDS_API_VERSION: &str = "2019-08-01";
 
 /// HTTP timeout for IMDS and ARM calls. IMDS is loopback so the timeout
 /// only kicks in on a pathologically slow Azure host; ARM round-trips
@@ -101,6 +128,71 @@ impl AcaJobStartConfig {
     }
 }
 
+/// IMDS protocol variant. Selected at construction time from the host
+/// environment so the trigger can run on both ACA (the prod target) and
+/// VMSS (the historical default that 169.254 documentation describes).
+#[derive(Debug, Clone)]
+pub enum ImdsAuth {
+    /// Classic `IaaS` / VMSS IMDS at the well-known link-local address.
+    /// Request shape: `GET <base>/metadata/identity/oauth2/token?api-version=2018-02-01&resource=<R>`
+    /// with header `Metadata: true`.
+    Vmss { base_url: String },
+    /// ACA / App Service / Functions identity endpoint. Request shape:
+    /// `GET <endpoint>?resource=<R>&api-version=2019-08-01` with header
+    /// `X-IDENTITY-HEADER: <header_secret>`. ACA injects both fields as
+    /// `IDENTITY_ENDPOINT` / `IDENTITY_HEADER` env vars when the
+    /// container app has a managed identity bound.
+    Aca {
+        endpoint: String,
+        header_secret: String,
+    },
+}
+
+impl ImdsAuth {
+    /// Auto-detect the right variant from process env. Prefers the ACA
+    /// path when both `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` resolve;
+    /// otherwise returns the VMSS variant at the well-known link-local
+    /// address.
+    #[must_use]
+    pub fn detect() -> Self {
+        let read = |k: &str| -> Option<String> {
+            std::env::var(k)
+                .ok()
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty())
+        };
+        match (read("IDENTITY_ENDPOINT"), read("IDENTITY_HEADER")) {
+            (Some(endpoint), Some(header_secret)) => Self::Aca {
+                endpoint: trim_trailing_slashes(endpoint),
+                header_secret,
+            },
+            _ => Self::Vmss {
+                base_url: "http://169.254.169.254".to_owned(),
+            },
+        }
+    }
+
+    fn token_url(&self) -> String {
+        match self {
+            Self::Vmss { base_url } => format!(
+                "{base_url}/metadata/identity/oauth2/token?api-version={VMSS_IMDS_API_VERSION}&resource={ARM_RESOURCE}",
+            ),
+            Self::Aca { endpoint, .. } => format!(
+                "{endpoint}?resource={ARM_RESOURCE}&api-version={ACA_IMDS_API_VERSION}",
+            ),
+        }
+    }
+
+    /// Brief shape for the Debug impl on the trigger — avoids leaking
+    /// the header secret in logs.
+    fn variant_name(&self) -> &'static str {
+        match self {
+            Self::Vmss { .. } => "vmss",
+            Self::Aca { .. } => "aca",
+        }
+    }
+}
+
 /// Outbound trigger that asks ARM to start the indexer Job. Holds the
 /// reqwest client + token cache; cheap to clone (everything is `Arc`'d
 /// internally).
@@ -109,7 +201,7 @@ pub struct AcaJobStartTrigger {
     config: AcaJobStartConfig,
     http: reqwest::Client,
     arm_base_url: String,
-    imds_base_url: String,
+    imds: ImdsAuth,
     cache: Arc<Mutex<HashMap<String, CachedArmToken>>>,
 }
 
@@ -120,7 +212,7 @@ impl std::fmt::Debug for AcaJobStartTrigger {
             .field("resource_group", &self.config.resource_group)
             .field("job_name", &self.config.job_name)
             .field("arm_base_url", &self.arm_base_url)
-            .field("imds_base_url", &self.imds_base_url)
+            .field("imds_variant", &self.imds.variant_name())
             .field("cached_tokens", &self.cache.lock().len())
             .finish_non_exhaustive()
     }
@@ -141,8 +233,10 @@ struct ImdsTokenResponse {
 }
 
 impl AcaJobStartTrigger {
-    /// Production constructor — IMDS at the well-known loopback address,
-    /// ARM at the standard management endpoint.
+    /// Production constructor. Auto-detects the IMDS protocol from the
+    /// process env via [`ImdsAuth::detect`] — ACA pods take the
+    /// `IDENTITY_ENDPOINT`/`IDENTITY_HEADER` path; everything else falls
+    /// back to the `IaaS` IMDS endpoint at `169.254.169.254`.
     ///
     /// # Errors
     ///
@@ -151,11 +245,7 @@ impl AcaJobStartTrigger {
     /// validity is the caller's responsibility — pass a fully populated
     /// [`AcaJobStartConfig`].
     pub fn new(config: AcaJobStartConfig) -> Result<Self, JobStartError> {
-        Self::with_endpoints(
-            config,
-            "https://management.azure.com",
-            "http://169.254.169.254",
-        )
+        Self::with_endpoints(config, "https://management.azure.com", ImdsAuth::detect())
     }
 
     /// Test-only constructor that points at mock endpoints. Production
@@ -167,7 +257,7 @@ impl AcaJobStartTrigger {
     pub fn with_endpoints(
         config: AcaJobStartConfig,
         arm_base_url: impl Into<String>,
-        imds_base_url: impl Into<String>,
+        imds: ImdsAuth,
     ) -> Result<Self, JobStartError> {
         let http = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
@@ -175,7 +265,8 @@ impl AcaJobStartTrigger {
             // Loopback IMDS must never go through an HTTP proxy — even
             // a misconfigured `HTTPS_PROXY=…` on the pod would route a
             // 169.254 metadata call to the proxy and produce a token
-            // for *the proxy's* identity. `no_proxy` enforces the path.
+            // for *the proxy's* identity. ACA's IDENTITY_ENDPOINT is
+            // also localhost-only, so the same `no_proxy` covers both.
             .no_proxy()
             .build()
             .map_err(|e| JobStartError::Http(format!("build http: {e}")))?;
@@ -183,7 +274,7 @@ impl AcaJobStartTrigger {
             config,
             http,
             arm_base_url: trim_trailing_slashes(arm_base_url.into()),
-            imds_base_url: trim_trailing_slashes(imds_base_url.into()),
+            imds,
             cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -248,17 +339,21 @@ impl AcaJobStartTrigger {
             debug!("imds token cache hit");
             return Ok(t);
         }
-        let url = format!(
-            "{}/metadata/identity/oauth2/token?api-version={}&resource={}",
-            self.imds_base_url, IMDS_API_VERSION, ARM_RESOURCE,
-        );
-        let resp = self
-            .http
-            .get(&url)
-            // IMDS rejects requests without this header — defends against
-            // SSRF tricks that would otherwise let an attacker tunnel
-            // through a vulnerable in-pod HTTP handler.
-            .header("Metadata", "true")
+        let url = self.imds.token_url();
+        // Both protocols require an anti-SSRF header — `Metadata: true`
+        // for VMSS, `X-IDENTITY-HEADER: <secret>` for ACA. The secret
+        // is a per-replica value Azure injects; logging it would expose
+        // it, so the header value never reaches a tracing macro here.
+        let mut request = self.http.get(&url);
+        match &self.imds {
+            ImdsAuth::Vmss { .. } => {
+                request = request.header("Metadata", "true");
+            }
+            ImdsAuth::Aca { header_secret, .. } => {
+                request = request.header("X-IDENTITY-HEADER", header_secret);
+            }
+        }
+        let resp = request
             .send()
             .await
             .map_err(|e| JobStartError::Http(format!("imds get: {e}")))?;
@@ -369,11 +464,20 @@ mod tests {
         }
     }
 
+    /// Expected ACA `X-IDENTITY-HEADER` secret. Tests assert the
+    /// trigger forwarded this exact value so a typo in the auth path
+    /// surfaces as a test failure rather than a 401 in prod.
+    const ACA_SECRET: &str = "test-secret-do-not-leak";
+
     #[derive(Debug, Clone, Default)]
     struct MockShared {
         arm_calls: Arc<AtomicUsize>,
         imds_calls: Arc<AtomicUsize>,
+        /// VMSS: enforce `Metadata: true`. ACA: enforce
+        /// `X-IDENTITY-HEADER: ACA_SECRET`. Mirrors what each Azure
+        /// IMDS surface actually rejects.
         imds_expects_metadata_header: bool,
+        imds_expects_aca_header: bool,
         arm_status: u16,
         arm_body: String,
     }
@@ -394,6 +498,14 @@ mod tests {
             && headers.get("Metadata").is_none_or(|v| v != "true")
         {
             return (StatusCode::BAD_REQUEST, "missing Metadata header").into_response();
+        }
+        if s.imds_expects_aca_header
+            && headers
+                .get("X-IDENTITY-HEADER")
+                .is_none_or(|v| v != ACA_SECRET)
+        {
+            return (StatusCode::BAD_REQUEST, "missing X-IDENTITY-HEADER")
+                .into_response();
         }
         let _ = q.get("api-version");
         let _ = q.get("resource");
@@ -428,7 +540,12 @@ mod tests {
 
     async fn spawn_mock(shared: MockShared) -> (String, tokio::task::JoinHandle<()>) {
         let app = Router::new()
+            // VMSS IMDS path.
             .route("/metadata/identity/oauth2/token", get(imds_handler))
+            // ACA IDENTITY_ENDPOINT path — different URL, same handler.
+            // PHASE5 chunk 1 hotfix wires both so a single mock proves
+            // both protocols.
+            .route("/msi/token", get(imds_handler))
             .route(
                 "/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.App/jobs/{job}/start",
                 post(arm_handler),
@@ -442,8 +559,21 @@ mod tests {
         (format!("http://{addr}"), handle)
     }
 
+    fn vmss_auth(base: &str) -> ImdsAuth {
+        ImdsAuth::Vmss {
+            base_url: base.to_owned(),
+        }
+    }
+
+    fn aca_auth(base: &str) -> ImdsAuth {
+        ImdsAuth::Aca {
+            endpoint: format!("{base}/msi/token"),
+            header_secret: ACA_SECRET.to_owned(),
+        }
+    }
+
     #[tokio::test]
-    async fn happy_path_round_trips_against_mock() {
+    async fn happy_path_round_trips_against_mock_vmss() {
         let shared = MockShared {
             arm_status: 202,
             arm_body: String::new(),
@@ -451,7 +581,7 @@ mod tests {
             ..MockShared::default()
         };
         let (base, _h) = spawn_mock(shared.clone()).await;
-        let trig = AcaJobStartTrigger::with_endpoints(cfg(), &base, &base).unwrap();
+        let trig = AcaJobStartTrigger::with_endpoints(cfg(), &base, vmss_auth(&base)).unwrap();
         trig.start_indexer_job("corpus-abc").await.unwrap();
         assert_eq!(shared.imds_calls.load(Ordering::SeqCst), 1);
         assert_eq!(shared.arm_calls.load(Ordering::SeqCst), 1);
@@ -463,6 +593,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn happy_path_round_trips_against_mock_aca() {
+        // PHASE5 chunk 1 hotfix — ACA pods can't reach 169.254.169.254;
+        // they use IDENTITY_ENDPOINT + X-IDENTITY-HEADER. This test
+        // pins that the trigger sends the right URL + header on that
+        // path so a typo would fail here, not in prod.
+        let shared = MockShared {
+            arm_status: 202,
+            arm_body: String::new(),
+            imds_expects_aca_header: true,
+            ..MockShared::default()
+        };
+        let (base, _h) = spawn_mock(shared.clone()).await;
+        let trig = AcaJobStartTrigger::with_endpoints(cfg(), &base, aca_auth(&base)).unwrap();
+        trig.start_indexer_job("corpus-abc").await.unwrap();
+        assert_eq!(shared.imds_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(shared.arm_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn aca_path_omitting_header_fails_imds() {
+        // Negative test: if the trigger forgot to set X-IDENTITY-HEADER
+        // the mock returns 400. Acts as a regression guard so a future
+        // refactor doesn't silently drop the header.
+        let shared = MockShared {
+            arm_status: 202,
+            imds_expects_aca_header: true,
+            ..MockShared::default()
+        };
+        let (base, _h) = spawn_mock(shared).await;
+        // Construct the ACA variant but with a WRONG secret so the
+        // mock's header check fails.
+        let bad_auth = ImdsAuth::Aca {
+            endpoint: format!("{base}/msi/token"),
+            header_secret: "wrong-secret".into(),
+        };
+        let trig = AcaJobStartTrigger::with_endpoints(cfg(), &base, bad_auth).unwrap();
+        let err = trig.start_indexer_job("c1").await.unwrap_err();
+        match err {
+            JobStartError::Imds(msg) => assert!(msg.contains("400"), "got {msg:?}"),
+            other => panic!("wanted Imds, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn arm_4xx_surfaces_as_arm_error() {
         let shared = MockShared {
             arm_status: 403,
@@ -470,7 +644,7 @@ mod tests {
             ..MockShared::default()
         };
         let (base, _h) = spawn_mock(shared).await;
-        let trig = AcaJobStartTrigger::with_endpoints(cfg(), &base, &base).unwrap();
+        let trig = AcaJobStartTrigger::with_endpoints(cfg(), &base, vmss_auth(&base)).unwrap();
         let err = trig.start_indexer_job("c1").await.unwrap_err();
         match err {
             JobStartError::Arm { status, body } => {
@@ -492,9 +666,31 @@ mod tests {
         };
         let (base, _h) = spawn_mock(shared).await;
         let trig: Arc<dyn JobStartTrigger> = Arc::new(
-            AcaJobStartTrigger::with_endpoints(cfg(), &base, &base).unwrap(),
+            AcaJobStartTrigger::with_endpoints(cfg(), &base, vmss_auth(&base)).unwrap(),
         );
         trig.start_job_for("c1").await.unwrap();
+    }
+
+    #[test]
+    fn imds_auth_token_url_shapes() {
+        // Sanity-check the URL constructors so a typo lands as a unit-
+        // test failure rather than a production token-fetch error.
+        let vmss = ImdsAuth::Vmss {
+            base_url: "http://169.254.169.254".into(),
+        };
+        let url = vmss.token_url();
+        assert!(url.contains("/metadata/identity/oauth2/token"));
+        assert!(url.contains(&format!("api-version={VMSS_IMDS_API_VERSION}")));
+        assert!(url.contains(ARM_RESOURCE));
+
+        let aca = ImdsAuth::Aca {
+            endpoint: "http://localhost:42356/msi/token".into(),
+            header_secret: "s".into(),
+        };
+        let url = aca.token_url();
+        assert!(url.starts_with("http://localhost:42356/msi/token?"));
+        assert!(url.contains(&format!("api-version={ACA_IMDS_API_VERSION}")));
+        assert!(url.contains(ARM_RESOURCE));
     }
 
     #[test]
