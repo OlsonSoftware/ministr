@@ -188,6 +188,17 @@ enum Command {
         action: AtlasAction,
     },
 
+    /// PHASE3 chunk 3 — single-shot queue-driven indexer worker.
+    ///
+    /// Pops one pending job from the cloud Postgres queue
+    /// (`MINISTR_PG_URL` required), runs ingestion against the job's
+    /// source(s), uploads the resulting bundle to blob storage under
+    /// the job's deterministic `corpus_id`, marks the job done, and
+    /// exits. Designed for ACA Job `parallelism: 1` cron-poll — a
+    /// `None` from `claim_next` exits clean.
+    #[command(name = "indexer-worker")]
+    IndexerWorker,
+
     /// Cloud operator commands. `check` smoke-tests every wired
     /// integration (Postgres, Stripe, GitHub OAuth, GitHub App, blob
     /// backend) and exits with the number of failed probes — drop
@@ -601,6 +612,15 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
             AtlasAction::Reindex => commands::cmd_atlas_reindex().await,
             AtlasAction::Manifest => commands::cmd_atlas_manifest(),
         },
+        Command::IndexerWorker => {
+            commands::cmd_indexer_worker(
+                &rc.config,
+                &rc.resolved_model,
+                rc.resolved_dimension,
+                rc.rerank_depth,
+            )
+            .await
+        }
         Command::Cloud { action } => match action {
             CloudAction::Check => {
                 let failed = cloud_check::run_all().await;
