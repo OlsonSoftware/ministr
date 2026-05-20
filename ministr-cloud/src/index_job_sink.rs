@@ -151,6 +151,13 @@ impl IndexJobSink for PostgresIndexJobSink {
                 "total_files": 0,
                 "processed_files": 0,
                 "current_file": null,
+                // PHASE5 chunk 3 — seed the embedding-progress fields
+                // to 0 so the SSE's first sample has the full shape.
+                // Older rows without these fields deserialise to the
+                // same 0 defaults via the IndexJobSnapshot helpers.
+                "sections_done": 0,
+                "embeddings_total": 0,
+                "embeddings_done": 0,
             });
             let job_blob = json!({
                 "id": job_id,
@@ -263,45 +270,59 @@ impl IndexJobSink for PostgresIndexJobSink {
                 .map_err(map_err("latest_for_corpus: row.data"))?;
             let value: serde_json::Value = serde_json::from_str(&blob)
                 .map_err(map_err("latest_for_corpus: parse data"))?;
-
-            let progress = value.get("progress");
-            Ok(Some(IndexJobSnapshot {
-                job_id: value
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                corpus_id: value
-                    .get("corpus_id")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or(corpus_id)
-                    .to_string(),
-                status: parse_status(
-                    value.get("status").and_then(serde_json::Value::as_str),
-                ),
-                stage: progress
-                    .and_then(|p| p.get("stage"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                total_files: progress
-                    .and_then(|p| p.get("total_files"))
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(0),
-                processed_files: progress
-                    .and_then(|p| p.get("processed_files"))
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(0),
-                current_file: progress
-                    .and_then(|p| p.get("current_file"))
-                    .and_then(serde_json::Value::as_str)
-                    .map(String::from),
-                error: value
-                    .get("error")
-                    .and_then(serde_json::Value::as_str)
-                    .map(String::from),
-            }))
+            Ok(Some(snapshot_from_blob(&value, corpus_id)))
         })
+    }
+}
+
+/// PHASE5 chunk 3 — walks the `indexer_jobs.data` JSON blob the worker
+/// writes via [`ministr_mcp::admin::jobs::JobQueue::update_progress`]
+/// and lifts it into an [`IndexJobSnapshot`] the SSE handler can
+/// render. Extracted from `latest_for_corpus` so the JSON shape can be
+/// round-tripped in unit tests without spinning up Postgres.
+///
+/// Missing fields (PHASE4-era rows that pre-date the embedding
+/// counters) default to 0. `fallback_corpus_id` is used when the blob
+/// omits the field — the data we read was queried under that id so it
+/// is the authoritative answer.
+fn snapshot_from_blob(value: &serde_json::Value, fallback_corpus_id: &str) -> IndexJobSnapshot {
+    let progress = value.get("progress");
+    let read_u64 = |key: &str| -> u64 {
+        progress
+            .and_then(|p| p.get(key))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    IndexJobSnapshot {
+        job_id: value
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        corpus_id: value
+            .get("corpus_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(fallback_corpus_id)
+            .to_string(),
+        status: parse_status(value.get("status").and_then(serde_json::Value::as_str)),
+        stage: progress
+            .and_then(|p| p.get("stage"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        total_files: read_u64("total_files"),
+        processed_files: read_u64("processed_files"),
+        current_file: progress
+            .and_then(|p| p.get("current_file"))
+            .and_then(serde_json::Value::as_str)
+            .map(String::from),
+        error: value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .map(String::from),
+        sections_done: read_u64("sections_done"),
+        embeddings_total: read_u64("embeddings_total"),
+        embeddings_done: read_u64("embeddings_done"),
     }
 }
 
@@ -340,5 +361,83 @@ mod tests {
         });
         cfg.create_pool(Some(Runtime::Tokio1), NoTls)
             .expect("create_pool")
+    }
+
+    // PHASE5 chunk 3 — JSON round-trip tests for the embedding-progress
+    // wire shape. These pin that the snapshot helper reads the new
+    // fields the worker writes AND that PHASE4-era rows (which lack
+    // those fields) still parse without panic, defaulting to 0.
+
+    #[test]
+    fn snapshot_round_trips_phase5_chunk3_fields() {
+        let blob = serde_json::json!({
+            "id": "job_abc",
+            "corpus_id": "c1",
+            "status": "running",
+            "progress": {
+                "stage": "embedding",
+                "total_files": 8,
+                "processed_files": 8,
+                "current_file": "src/lib.rs",
+                "sections_done": 42,
+                "embeddings_total": 100,
+                "embeddings_done": 37,
+            },
+            "error": null,
+        });
+        let snap = snapshot_from_blob(&blob, "fallback-id");
+        assert_eq!(snap.job_id, "job_abc");
+        assert_eq!(snap.corpus_id, "c1");
+        assert_eq!(snap.status, IndexJobStatus::Running);
+        assert_eq!(snap.stage, "embedding");
+        assert_eq!(snap.total_files, 8);
+        assert_eq!(snap.processed_files, 8);
+        assert_eq!(snap.current_file.as_deref(), Some("src/lib.rs"));
+        assert_eq!(snap.sections_done, 42);
+        assert_eq!(snap.embeddings_total, 100);
+        assert_eq!(
+            snap.embeddings_done, 37,
+            "PHASE5 chunk 3: embeddings_done must round-trip — this is the field SSE renders as the live bar",
+        );
+    }
+
+    #[test]
+    fn snapshot_back_compat_with_phase4_blobs() {
+        // A PHASE4-era row that pre-dates the embedding counters.
+        // Must still parse without panic; the new fields default to 0.
+        let blob = serde_json::json!({
+            "id": "job_old",
+            "corpus_id": "c1",
+            "status": "running",
+            "progress": {
+                "stage": "parsing",
+                "total_files": 4,
+                "processed_files": 2,
+                "current_file": "old/file.rs",
+            },
+            "error": null,
+        });
+        let snap = snapshot_from_blob(&blob, "fallback-id");
+        assert_eq!(snap.total_files, 4);
+        assert_eq!(snap.processed_files, 2);
+        // PHASE5 fields default to 0 — keeps in-flight rows from
+        // PHASE4 deployments parseable on first restart after upgrade.
+        assert_eq!(snap.sections_done, 0);
+        assert_eq!(snap.embeddings_total, 0);
+        assert_eq!(snap.embeddings_done, 0);
+    }
+
+    #[test]
+    fn snapshot_falls_back_to_caller_corpus_id() {
+        // Blob without an explicit corpus_id (theoretical edge case;
+        // create_pending always writes it but the helper must be
+        // defensive against drift).
+        let blob = serde_json::json!({
+            "id": "job_x",
+            "status": "pending",
+            "progress": {},
+        });
+        let snap = snapshot_from_blob(&blob, "caller-supplied");
+        assert_eq!(snap.corpus_id, "caller-supplied");
     }
 }

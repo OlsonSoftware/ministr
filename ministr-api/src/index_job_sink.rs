@@ -40,6 +40,11 @@ pub enum IndexJobStatus {
 
 /// Snapshot of a queued indexing job — surface the daemon's progress
 /// SSE reads from Postgres in cloud mode.
+///
+/// PHASE5 chunk 3 added the `sections_done` / `embeddings_*` fields so
+/// the streaming consumer's per-batch progress reaches the SSE
+/// instead of being clipped at the wire boundary. `serde(default)`
+/// keeps the snapshot deserialisable from PHASE4-era data blobs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexJobSnapshot {
     pub job_id: String,
@@ -50,6 +55,16 @@ pub struct IndexJobSnapshot {
     pub processed_files: u64,
     pub current_file: Option<String>,
     pub error: Option<String>,
+    /// PHASE5 chunk 3 — see [`JobProgress::sections_done`].
+    #[serde(default)]
+    pub sections_done: u64,
+    /// PHASE5 chunk 3 — see [`JobProgress::embeddings_total`].
+    #[serde(default)]
+    pub embeddings_total: u64,
+    /// PHASE5 chunk 3 — see [`JobProgress::embeddings_done`]. The
+    /// primary signal SSE consumers render as the live progress bar.
+    #[serde(default)]
+    pub embeddings_done: u64,
 }
 
 /// Errors surfaced by [`IndexJobSink`] implementations.
@@ -121,6 +136,9 @@ mod tests {
                     processed_files: 0,
                     current_file: None,
                     error: None,
+                    sections_done: 0,
+                    embeddings_total: 0,
+                    embeddings_done: 0,
                 });
                 Ok(job_id)
             })

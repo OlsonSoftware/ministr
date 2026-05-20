@@ -536,6 +536,7 @@ mod tests {
                 total_files: 100,
                 processed_files: 42,
                 current_file: Some("foo.rs".into()),
+                ..Default::default()
             },
         )
         .await

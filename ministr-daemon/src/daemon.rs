@@ -1634,6 +1634,10 @@ fn queue_progress_stream(
             } else {
                 None
             };
+            // PHASE5 chunk 3 — populate embeddings_* + sections_done
+            // from the snapshot now that JobProgress carries them.
+            // Pre-chunk-3 these were hardcoded to 0 because the wire
+            // shape clipped the embedder's per-batch updates.
             let event = ministr_api::corpus::IngestionProgressEvent {
                 status: status.to_string(),
                 phase: snapshot
@@ -1645,9 +1649,15 @@ fn queue_progress_stream(
                 files_done: snapshot.as_ref().map_or(0, |s| {
                     usize::try_from(s.processed_files).unwrap_or(usize::MAX)
                 }),
-                sections_done: 0,
-                embeddings_total: 0,
-                embeddings_done: 0,
+                sections_done: snapshot.as_ref().map_or(0, |s| {
+                    usize::try_from(s.sections_done).unwrap_or(usize::MAX)
+                }),
+                embeddings_total: snapshot.as_ref().map_or(0, |s| {
+                    usize::try_from(s.embeddings_total).unwrap_or(usize::MAX)
+                }),
+                embeddings_done: snapshot.as_ref().map_or(0, |s| {
+                    usize::try_from(s.embeddings_done).unwrap_or(usize::MAX)
+                }),
                 current_file: snapshot
                     .as_ref()
                     .and_then(|s| s.current_file.clone())
