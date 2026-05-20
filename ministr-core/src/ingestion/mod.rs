@@ -29,7 +29,8 @@ mod tests;
 
 // Primary public API
 pub use pipeline::{
-    ContentIngestionStats, IngestionPhase, IngestionPipeline, IngestionProgress, IngestionStats,
+    BatchIngestionConfig, ContentIngestionStats, IngestionPhase, IngestionPipeline,
+    IngestionProgress, IngestionStats,
 };
 
 // Re-export utility functions used by other crates
