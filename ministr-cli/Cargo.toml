@@ -51,6 +51,12 @@ clap.workspace = true
 rmcp.workspace = true
 axum.workspace = true
 tokio.workspace = true
+# PHASE6 chunk 2 — the WorkerLoop in src/worker.rs uses
+# `tokio_util::sync::CancellationToken` for cooperative shutdown and
+# `futures::Future` for the boxed-future return shape of the JobRunner
+# trait. Same versions ministr-core already pins.
+tokio-util = "0.7"
+futures = "0.3"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 miette.workspace = true

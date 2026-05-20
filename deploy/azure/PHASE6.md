@@ -204,12 +204,16 @@ Atomic, one per `/roadmap PHASE6` invocation:
   - [x] Workspace verification clean: 1977 lib tests passing (+9
     new); workspace clippy pedantic clean.
 
-- [ ] **Chunk 2 — WorkerLoop in the serve binary**
-  - `ministr-cli::cmd_serve_http` spawns a background tokio task that polls `JobQueue::claim_next` every N seconds (configurable; default 5s — same as PHASE3 cron).
-  - On claim: run `run_corpus_ingestion` exactly like `cmd_indexer_worker` does today, then `queue.finish`.
-  - Concurrency cap: one in-flight job per replica. Backlog accumulates in `indexer_jobs.pending`.
-  - The 500ms reporter from `cmd_indexer_worker` moves here verbatim.
-  - **Verify**: integration test against a real Postgres + an in-process WorkerLoop drains a fake job.
+- [x] **Chunk 2 — WorkerLoop in the serve binary** *(code + 4 in-memory drive tests landed; live `azure-demo` confirmation pending operator run)*
+  - [x] New `ministr-cli/src/worker.rs` module: `WorkerLoop` + `JobRunner` trait + `IngestionRunner` production impl. Lives in `ministr-cli` (MIT) because the loop is self-hosted-compatible; the cloud crate just contributes concrete impls.
+  - [x] `WorkerLoop` polls `JobQueueBackend::claim_next` every 5s (default; `with_poll_interval` test override). Cancellation via shared `CancellationToken`. Strictly serial — one job in-flight per replica; backlog drains as jobs complete; scale by adding Container App replicas.
+  - [x] `IngestionRunner` lifts the body of the (soon-deleted) `cmd_indexer_worker` verbatim: builds per-job `InfrastructureContext`, runs `run_corpus_ingestion` with `persist_every=4`, uploads bundle to blob, finishes the row. The 500ms reporter (incl PHASE5 chunk 3 embedding fields) moves here verbatim.
+  - [x] **Embedder selector** lands in `infra::init_infrastructure`: when `MINISTR_EMBEDDER_KIND=openai`, build `OpenAiEmbedder` and SKIP the local fastembed model load entirely — no ONNX init, no model download. Hard-error (not silent fallback) when the env var is set but `OpenAiConfig::from_env()` doesn't resolve. Local CLI unchanged.
+  - [x] **Chunk 1 embedder revision**: refactored `OpenAiEmbedder` from `reqwest::blocking::Client` to async `reqwest::Client` + sync-bridge via `tokio::task::block_in_place` + `Handle::block_on`. Blocking client panics on drop inside a tokio runtime — and the serve binary holds the embedder Arc for the process lifetime, so the drop happens at `#[tokio::main]` shutdown inside the runtime. New `OpenAiEmbedder::embed_async` is the public async surface; the sync trait method is a thin bridge.
+  - [x] **Wired in `cmd_serve_http`**: opens `PostgresJobQueue`, wraps in `JobQueueBackend::Postgres`, builds the `IngestionRunner` with the existing blob backend, spawns the `WorkerLoop` on a detached tokio task. Runs alongside the legacy ACA Job during the chunk-2-to-chunk-3 transition; both compete via `FOR UPDATE SKIP LOCKED` so no correctness issue.
+  - [x] Tests: 4 new `worker::tests` against `JobQueueBackend::InMemory`: cancel-before-claim, claim+run+finish, runner-error→Failed, drains-3-queued-in-sequence. Embedder tests grew to 11 (was 9) with `embed_sync_bridge_works` and `embed_sync_bridge_errors_outside_runtime`.
+  - [x] Workspace verification clean: **1983** total tests passing (1979 lib + 4 worker bin); workspace clippy pedantic clean.
+  - **Honest finding**: the chunk-1 embedder refactor was load-bearing. Chunk 1 shipped with `reqwest::blocking::Client`; tests passed only because they explicitly dropped the embedder inside `spawn_blocking`. Production drop in `cmd_serve_http` would panic at shutdown. Caught while exploring `init_infrastructure` for chunk 2.
 
 - [ ] **Chunk 3 — Delete ACA Jobs from Pulumi + delete `job_start.rs`**
   - `deploy/azure/lib/job.ts` deleted.
