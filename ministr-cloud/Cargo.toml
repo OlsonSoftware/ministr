@@ -65,3 +65,10 @@ reqwest = { workspace = true, features = ["json"] }
 # for `GET /api/v1/billing/usage`. Same axum version as ministr-mcp /
 # ministr-daemon to keep one Tower middleware tree in the binary.
 axum.workspace = true
+# F1.5 sub-bullet 3 — Stripe webhook signature verification.
+# HMAC-SHA256 over the raw request body keyed by the endpoint signing
+# secret; constant-time compare via `subtle` immune to timing-channel
+# attacks. Same crates ministr-mcp uses for GitHub webhook HMAC.
+hmac.workspace = true
+sha2.workspace = true
+subtle.workspace = true
