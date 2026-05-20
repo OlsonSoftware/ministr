@@ -214,24 +214,29 @@ enum CloudAction {
     /// indexed corpus.
     Demo {
         /// Cloud base URL, e.g. `https://my-deployment.example.com`.
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         endpoint: String,
         /// Skip the OAuth flow and use this bearer token instead.
         /// Useful when you already have a token in the keychain
         /// (paste from the Tauri panel's Advanced → "Show token").
-        #[arg(long)]
+        ///
+        /// `allow_hyphen_values` is set because the OAuth issuer's
+        /// `generate_id` includes `-` in its base64url alphabet —
+        /// ~1 in 64 tokens start with `-`, which clap would
+        /// otherwise reject as an unknown short flag.
+        #[arg(long, allow_hyphen_values = true)]
         token: Option<String>,
         /// Clone this Git URL as part of the demo (cloud-side
         /// `POST /api/v1/corpora/{parent}/clone`). Requires either
         /// an existing parent corpus on the cloud OR `--parent`.
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         clone_url: Option<String>,
         /// Parent corpus ID for the clone. Defaults to the first
         /// listed corpus.
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         parent: Option<String>,
         /// Watch THIS corpus's progress (skip the clone step).
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         corpus: Option<String>,
     },
 
@@ -240,11 +245,11 @@ enum CloudAction {
     /// clone from the Tauri panel and want to follow it in a
     /// terminal in parallel.
     Watch {
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         endpoint: String,
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         token: String,
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         corpus: String,
     },
 }
