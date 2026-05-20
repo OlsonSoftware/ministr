@@ -45,6 +45,7 @@ pub mod blob_sink;
 pub mod corpora_repo;
 pub mod corpus_restorer;
 pub mod db;
+pub mod embedding;
 pub mod github;
 pub mod idp;
 pub mod index_job_sink;
@@ -70,6 +71,7 @@ pub use blob_sink::{build_manifest_from_corpus_dir, BlobBackendSink, ManifestBui
 pub use corpora_repo::PostgresCorporaRepo;
 pub use corpus_restorer::BlobCorpusRestorer;
 pub use index_job_sink::PostgresIndexJobSink;
+pub use embedding::{OpenAiAuth, OpenAiConfig, OpenAiEmbedder, DEFAULT_DIMENSIONS};
 pub use job_start::{AcaJobStartConfig, AcaJobStartTrigger, ImdsAuth};
 pub use db::{connect, run_migrations, DbError};
 pub use github::{GitHubAppClient, GitHubAppError};

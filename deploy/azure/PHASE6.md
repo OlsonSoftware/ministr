@@ -158,12 +158,51 @@ The break-even point for self-hosted ONNX vs managed API is well above our curre
 
 Atomic, one per `/roadmap PHASE6` invocation:
 
-- [ ] **Chunk 1 — RemoteEmbedder trait impl + Azure OpenAI client**
-  - New `ministr-core::embedding::RemoteEmbedder` (MIT) — reqwest-based, batches into the API's max request size.
-  - New `ministr-cloud::OpenAiEmbedder` (proprietary) — managed-identity bearer token from `DefaultAzureCredential`; resource = `https://cognitiveservices.azure.com/.default`; endpoint = `https://<resource>.openai.azure.com/openai/deployments/<deployment>/embeddings?api-version=2024-10-21`.
-  - Behind a feature flag / env var: `MINISTR_EMBEDDER_KIND=local|openai`.
-  - Unit tests against an axum mock (same pattern as `AcaJobStartTrigger`'s tests).
-  - **Verify**: `cargo test`, mock round-trips, model dimension matches HNSW config.
+- [x] **Chunk 1 — `OpenAiEmbedder` against Azure OpenAI** *(code + tests landed; wiring lands with chunk 2's `WorkerLoop`)*
+  - **Decision revision**: dropped the proposed `RemoteEmbedder`
+    intermediary trait — the existing `ministr-core::embedding::Embedder`
+    surface is already the right contract. The concrete type lives in
+    `ministr-cloud` (proprietary) and impls `Embedder` directly.
+  - [x] `ministr-cloud::OpenAiEmbedder` ships with two auth paths:
+    `OpenAiAuth::ApiKey` (read from `MINISTR_AZURE_OPENAI_API_KEY`,
+    sets the `api-key` header) and `OpenAiAuth::ManagedIdentity` (reads
+    `IDENTITY_ENDPOINT` + `IDENTITY_HEADER`, mints a bearer for
+    `https://cognitiveservices.azure.com` via the same ACA IMDS shape
+    PHASE5's hotfix uses, then `Authorization: Bearer …`). MI tokens
+    cached with proactive evict; same pattern as `GitHubAppClient`.
+  - [x] `OpenAiAuth::from_env()` auto-selects (`ApiKey` wins if set,
+    falls back to MI). `OpenAiConfig::from_env()` returns `None` when
+    any of (endpoint, deployment, auth) are missing so the caller can
+    fall back to local fastembed cleanly.
+  - [x] Request shape: `POST {endpoint}/openai/deployments/{deployment}/embeddings?api-version=2024-10-21`
+    with body `{ "input": [...], "dimensions": 384 }`. Default
+    dimension is 384 (`DEFAULT_DIMENSIONS`) to keep HNSW indexes
+    cross-compatible with the local `all-MiniLM-L6-v2*` family;
+    operators wanting full 1536-dim quality build with
+    `with_dimensions(1536)` and accept incompatible indexes.
+  - [x] Sync-over-async: uses `reqwest::blocking::Client` (workspace
+    feature `blocking` enabled). The worker is single-concurrent per
+    replica so blocking the tokio thread for the ~500ms–2s request is
+    acceptable; chunk 2's `WorkerLoop` calls `embed()` from inside a
+    `spawn_blocking` for hygiene.
+  - [x] Response handling: sorts response rows by `index` (Azure spec
+    guarantee, defended), enforces returned-batch-size matches
+    requested-batch-size, enforces every vector's dimension matches
+    the configured `dimensions`. All three checks surface as
+    `IndexError::EmbeddingFailed { reason }` with diagnostic detail.
+  - [x] 9 round-trip tests against an axum mock (mirrors
+    `AcaJobStartTrigger::tests` pattern): API-key path, MI path, MI
+    token cache survives across batches, 4xx body surfaces with status
+    code + message excerpt, batch-size mismatch caught, empty input is
+    a no-op, dimension reporting, dyn-trait dispatch.
+  - **Honest finding**: `reqwest::blocking::Client` can't be dropped
+    from inside an outer tokio runtime — its internal runtime panics.
+    Tests build the embedder inside `spawn_blocking` so the full
+    lifecycle stays on a blocking thread. Documented in the test
+    module's preamble; the production `WorkerLoop` follows the same
+    pattern.
+  - [x] Workspace verification clean: 1977 lib tests passing (+9
+    new); workspace clippy pedantic clean.
 
 - [ ] **Chunk 2 — WorkerLoop in the serve binary**
   - `ministr-cli::cmd_serve_http` spawns a background tokio task that polls `JobQueue::claim_next` every N seconds (configurable; default 5s — same as PHASE3 cron).

@@ -64,7 +64,7 @@ webpki-roots.workspace = true
 # rustls + http2 the same way ministr-mcp and ministr-app do, so there's
 # no second TLS stack in the binary. `json` enables the .json() helper
 # the GitHubIdp uses for the token + user-info responses.
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "blocking"] }
 # F1.4 sub-bullet 4 — billing endpoint module exposes an axum Router
 # for `GET /api/v1/billing/usage`. Same axum version as ministr-mcp /
 # ministr-daemon to keep one Tower middleware tree in the binary.
