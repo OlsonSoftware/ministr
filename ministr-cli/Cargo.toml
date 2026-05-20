@@ -42,6 +42,11 @@ ministr-atlas.workspace = true
 # refuses to auto-pick. Without `install_default` every TLS path
 # (Postgres pool, reqwest, Azure SDK) panics on first use.
 rustls.workspace = true
+# F2.6+ — `ministr cloud demo` builds the PKCE verifier from the OS
+# CSPRNG (RFC 7636 §4.1) and serialises a few small response
+# envelopes off the wire.
+serde = { workspace = true }
+getrandom = "0.3"
 clap.workspace = true
 rmcp.workspace = true
 axum.workspace = true
