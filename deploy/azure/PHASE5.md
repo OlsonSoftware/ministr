@@ -93,7 +93,25 @@ Concretely changes from PHASE4:
 
 ## Chunks (atomic, one per `/roadmap` invocation)
 
-- [x] **Chunk 1 — ARM-start trigger from serve pod** *(code + Pulumi landed; live `just azure-demo` smoke pending operator run)*
+- [x] **Chunk 1 — ARM-start trigger from serve pod** *(code + Pulumi landed; hotfix shipped for ACA IMDS endpoint)*
+
+  **Post-deploy hotfix** *(first live `azure-demo` run surfaced this)*:
+  ACA pods **cannot reach the IaaS IMDS endpoint** at
+  `169.254.169.254` — that's VMSS-only. ACA injects
+  `IDENTITY_ENDPOINT` + `IDENTITY_HEADER` env vars and the call must
+  use `X-IDENTITY-HEADER: <secret>` with api-version `2019-08-01`. The
+  initial chunk 1 code only knew the VMSS path, so every enqueue
+  emitted `WARN ARM jobs/start failed — KEDA safety net will pick the
+  row up within 5 min` with `error=http: imds get: error sending
+  request for url (http://169.254.169.254/...)`.
+
+  Fix: new `ImdsAuth` enum (`Vmss { base_url } | Aca { endpoint,
+  header_secret }`) with `ImdsAuth::detect()` that prefers ACA when
+  both env vars resolve and falls back to VMSS otherwise. The trigger
+  picks the right URL + auth header per variant. Two new round-trip
+  tests pin both paths against a single axum mock so a future refactor
+  can't silently drop the ACA header (which would surface as 401 in
+  prod, not as a test failure).
   - [x] Pulumi: `lib/job-start-role.ts` (NEW) grants serve pod MI the
     built-in `Container Apps Jobs Operator` role
     (`b9a307c4-5aa3-4b52-ba60-2b17c136cd7b`) scoped to the indexer Job,
