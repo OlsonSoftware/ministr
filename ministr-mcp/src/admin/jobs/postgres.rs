@@ -29,17 +29,20 @@ use crate::time::epoch_now;
 
 /// Persistent indexer queue, deadpool-pooled.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
-pub(crate) struct PostgresJobQueue {
+pub struct PostgresJobQueue {
     pool: Pool,
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
 impl PostgresJobQueue {
     /// Open (or attach to) the `indexer_jobs` table in the database
     /// referenced by `url`. Schema creation is idempotent so every pod
     /// can run this on boot without coordination.
-    pub(crate) async fn open(url: &str) -> JobResult<Self> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JobQueueError::Backend`] if the connection pool cannot
+    /// be created or the schema cannot be applied.
+    pub async fn open(url: &str) -> JobResult<Self> {
         let mut cfg = Config::new();
         cfg.url = Some(url.to_string());
         cfg.manager = Some(ManagerConfig {
@@ -58,12 +61,95 @@ impl PostgresJobQueue {
         Ok(Self { pool })
     }
 
-    /// Bare-pool constructor for tests that supply a pre-configured
-    /// `Pool` (custom TLS, local container, etc.).
-    #[cfg(test)]
-    pub(crate) async fn from_pool(pool: Pool) -> JobResult<Self> {
-        ensure_schema(&pool).await?;
-        Ok(Self { pool })
+    /// Flip stale `running` rows back to `pending` so a crashed
+    /// worker's job re-enters the queue instead of sitting locked
+    /// forever. A row is "stale" when its `claimed_at` is older than
+    /// `timeout_secs` seconds before the Postgres server clock.
+    ///
+    /// The worker calls this once at boot before [`claim_next`], with
+    /// `timeout_secs` matching the ACA Job `replicaTimeout` (3600s
+    /// today). Returns the number of rows reclaimed for observability.
+    ///
+    /// Implementation: `SELECT … FOR UPDATE SKIP LOCKED` so racing
+    /// workers can't double-reclaim the same row, then a
+    /// deserialise→mutate→UPDATE per row because the JSON `data` blob
+    /// duplicates `status`. The stale set is small (one per crashed
+    /// replica), so the serial loop is fine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JobQueueError::Backend`] if the connection cannot be
+    /// acquired or any of the SQL statements fails.
+    ///
+    /// [`claim_next`]: JobQueue::claim_next
+    #[allow(dead_code)] // consumed by cmd_indexer_worker in PHASE4 chunk 2
+    pub async fn reclaim_orphans(&self, timeout_secs: i64) -> JobResult<usize> {
+        let mut conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| JobQueueError::Backend(format!("reclaim conn: {e}")))?;
+        let tx = conn
+            .transaction()
+            .await
+            .map_err(|e| JobQueueError::Backend(format!("reclaim tx: {e}")))?;
+
+        // `make_interval(secs => $1)` takes `double precision`, so
+        // we widen i64 → f64 for the bind. 3600 (the ACA
+        // replicaTimeout) and any reasonable timeout fits losslessly
+        // in f64's 53-bit mantissa, but clippy's strict cast lint
+        // doesn't know that, hence the allow. The
+        // `claimed_at IS NOT NULL` guard skips rows that pre-date
+        // PHASE4 chunk 2 — they were claimed before the column
+        // existed and we can't tell whether they're stale; leave
+        // them alone rather than over-reclaim.
+        #[allow(clippy::cast_precision_loss)]
+        let timeout = timeout_secs as f64;
+        let rows = tx
+            .query(
+                "SELECT id, data FROM indexer_jobs
+                   WHERE status = 'running'
+                     AND claimed_at IS NOT NULL
+                     AND claimed_at < NOW() - make_interval(secs => $1)
+                   FOR UPDATE SKIP LOCKED",
+                &[&timeout],
+            )
+            .await
+            .map_err(|e| JobQueueError::Backend(format!("reclaim select: {e}")))?;
+
+        let mut reclaimed = 0usize;
+        for row in rows {
+            let id: String = row
+                .try_get("id")
+                .map_err(|e| JobQueueError::Backend(format!("reclaim row.id: {e}")))?;
+            let blob: String = row
+                .try_get("data")
+                .map_err(|e| JobQueueError::Backend(format!("reclaim row.data: {e}")))?;
+            let mut job = deserialise(&blob)?;
+            job.status = JobStatus::Pending;
+            job.updated_at = epoch_now();
+            let updated = serialise(&job)?;
+            tx.execute(
+                "UPDATE indexer_jobs
+                    SET status = $1, updated_at = $2, data = $3,
+                        claimed_at = NULL
+                  WHERE id = $4",
+                &[
+                    &status_str(job.status),
+                    &job.updated_at.cast_signed(),
+                    &updated,
+                    &id,
+                ],
+            )
+            .await
+            .map_err(|e| JobQueueError::Backend(format!("reclaim update: {e}")))?;
+            reclaimed += 1;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| JobQueueError::Backend(format!("reclaim commit: {e}")))?;
+        Ok(reclaimed)
     }
 }
 
@@ -114,7 +200,21 @@ async fn ensure_schema(pool: &Pool) -> JobResult<()> {
              ALTER TABLE indexer_jobs
                  ADD COLUMN IF NOT EXISTS priority SMALLINT NOT NULL DEFAULT 0;
              CREATE INDEX IF NOT EXISTS idx_indexer_jobs_status_priority_created
-                 ON indexer_jobs (status, priority DESC, created_at);",
+                 ON indexer_jobs (status, priority DESC, created_at);
+             -- PHASE4 chunk 2: orphan reclaim. `claimed_at` is set to
+             -- NOW() when claim_next flips a row to 'running', and the
+             -- worker calls `reclaim_orphans` once at boot to flip
+             -- stale 'running' rows (claimed_at older than the ACA
+             -- replicaTimeout) back to 'pending'. The bigint
+             -- created_at/updated_at columns mirror the JSON blob's
+             -- Unix-epoch fields; claimed_at is Postgres-only
+             -- bookkeeping, so TIMESTAMPTZ + NOW()/INTERVAL is the
+             -- natural shape. NULL means 'never claimed' (a row
+             -- inserted with status='pending').
+             ALTER TABLE indexer_jobs
+                 ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+             CREATE INDEX IF NOT EXISTS idx_indexer_jobs_status_claimed_at
+                 ON indexer_jobs (status, claimed_at);",
         )
         .await
         .map_err(|e| JobQueueError::Backend(format!("schema: {e}")))?;
@@ -262,9 +362,15 @@ impl JobQueue for PostgresJobQueue {
             job.status = JobStatus::Running;
             job.updated_at = epoch_now();
             let updated = serialise(&job)?;
+            // PHASE4 chunk 2: stamp claimed_at = NOW() so the
+            // reclaim sweeper can identify stale 'running' rows that
+            // belong to a crashed worker. We use the server clock so
+            // the timestamp is comparable to NOW()-INTERVAL in
+            // reclaim_orphans without trusting the worker's clock.
             tx.execute(
                 "UPDATE indexer_jobs
-                    SET status = $1, updated_at = $2, data = $3
+                    SET status = $1, updated_at = $2, data = $3,
+                        claimed_at = NOW()
                   WHERE id = $4",
                 &[
                     &status_str(job.status),
@@ -438,6 +544,62 @@ mod tests {
         let got = q.get(&job.id).await.unwrap().unwrap();
         assert_eq!(got.status, JobStatus::Completed);
         assert_eq!(got.progress.processed_files, 42);
+    }
+
+    /// PHASE4 chunk 2 — a row in `running` with a stale `claimed_at`
+    /// (simulating a crashed worker) must be reclaimed back to
+    /// `pending`, both at the column level and inside the JSON blob.
+    /// A row claimed within the timeout window must NOT be reclaimed.
+    #[tokio::test]
+    #[ignore = "needs MINISTR_TEST_PG_URL"]
+    async fn reclaim_orphans_recovers_stale_running_rows() {
+        let Some(q) = open().await else { return };
+
+        // Two rows: one stale (claimed 2h ago, timeout 1h),
+        // one fresh (claimed 1s ago, timeout 1h). Only the stale
+        // one should flip back.
+        let stale = q
+            .enqueue(format!("stale-{}", epoch_now()), JobTrigger::Manual, 0)
+            .await
+            .unwrap();
+        let _stale_claimed = q.claim_next().await.unwrap().unwrap();
+        let fresh = q
+            .enqueue(format!("fresh-{}", epoch_now()), JobTrigger::Manual, 0)
+            .await
+            .unwrap();
+        let _fresh_claimed = q.claim_next().await.unwrap().unwrap();
+
+        // Backdate the stale row's claimed_at directly. We can't
+        // use claim_next for this because claim_next stamps NOW().
+        {
+            let conn = q.pool.get().await.unwrap();
+            conn.execute(
+                "UPDATE indexer_jobs SET claimed_at = NOW() - INTERVAL '2 hours' WHERE id = $1",
+                &[&stale.id],
+            )
+            .await
+            .unwrap();
+        }
+
+        let reclaimed = q.reclaim_orphans(3600).await.unwrap();
+        assert_eq!(reclaimed, 1, "exactly the stale row should be reclaimed");
+
+        let stale_after = q.get(&stale.id).await.unwrap().unwrap();
+        assert_eq!(stale_after.status, JobStatus::Pending);
+        let fresh_after = q.get(&fresh.id).await.unwrap().unwrap();
+        assert_eq!(fresh_after.status, JobStatus::Running);
+
+        // claimed_at on the reclaimed row is NULL.
+        let conn = q.pool.get().await.unwrap();
+        let row = conn
+            .query_one(
+                "SELECT claimed_at FROM indexer_jobs WHERE id = $1",
+                &[&stale.id],
+            )
+            .await
+            .unwrap();
+        let claimed_at: Option<std::time::SystemTime> = row.try_get("claimed_at").unwrap();
+        assert!(claimed_at.is_none(), "reclaimed row must clear claimed_at");
     }
 
     /// Two workers racing `claim_next` on a single pending row must
