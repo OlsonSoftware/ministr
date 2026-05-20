@@ -54,6 +54,11 @@ pub(super) async fn github_webhook(
 
     let payload = parse_push_payload(&body).ok_or(StatusCode::BAD_REQUEST)?;
 
+    // GitHub-webhook-triggered jobs run at the default priority bucket
+    // — the push event has no tenant context (the webhook secret
+    // authenticates the SENDER, not a customer). F4.2 weekly Atlas
+    // re-indexing similarly enqueues at priority 0 since it's
+    // operator-driven, not customer-driven.
     let job = state
         .queue
         .enqueue(
@@ -62,6 +67,7 @@ pub(super) async fn github_webhook(
                 reference: payload.r#ref,
                 commit: payload.after,
             },
+            0,
         )
         .await
         .map_err(|e| {

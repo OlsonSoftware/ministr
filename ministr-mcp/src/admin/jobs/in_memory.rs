@@ -22,7 +22,12 @@ impl InMemoryJobQueue {
 }
 
 impl JobQueue for InMemoryJobQueue {
-    async fn enqueue(&self, corpus_id: String, trigger: JobTrigger) -> JobResult<Job> {
+    async fn enqueue(
+        &self,
+        corpus_id: String,
+        trigger: JobTrigger,
+        priority: i16,
+    ) -> JobResult<Job> {
         let now = epoch_now();
         let job = Job {
             id: new_job_id(),
@@ -33,6 +38,7 @@ impl JobQueue for InMemoryJobQueue {
             created_at: now,
             updated_at: now,
             error: None,
+            priority,
         };
         self.jobs.write().await.insert(job.id.clone(), job.clone());
         Ok(job)
@@ -44,10 +50,13 @@ impl JobQueue for InMemoryJobQueue {
 
     async fn claim_next(&self) -> JobResult<Option<Job>> {
         let mut jobs = self.jobs.write().await;
+        // ORDER BY priority DESC, created_at ASC — mirrors the Postgres
+        // SQL in `claim_next` so in-memory and persistent paths produce
+        // identical drain order for the same input.
         let next_id = jobs
             .values()
             .filter(|j| j.status == JobStatus::Pending)
-            .min_by_key(|j| j.created_at)
+            .min_by_key(|j| (-j.priority, j.created_at))
             .map(|j| j.id.clone());
         match next_id {
             Some(id) => {
@@ -97,7 +106,7 @@ mod tests {
     #[tokio::test]
     async fn enqueue_and_get() {
         let q = InMemoryJobQueue::new();
-        let job = q.enqueue("corpus-a".into(), JobTrigger::Manual).await.unwrap();
+        let job = q.enqueue("corpus-a".into(), JobTrigger::Manual, 0).await.unwrap();
         let got = q.get(&job.id).await.unwrap().unwrap();
         assert_eq!(got.corpus_id, "corpus-a");
         assert_eq!(got.status, JobStatus::Pending);
@@ -106,10 +115,10 @@ mod tests {
     #[tokio::test]
     async fn claim_next_is_fifo_and_transitions_to_running() {
         let q = InMemoryJobQueue::new();
-        let a = q.enqueue("a".into(), JobTrigger::Manual).await.unwrap();
+        let a = q.enqueue("a".into(), JobTrigger::Manual, 0).await.unwrap();
         // Force distinct created_at values: sleep 1s would slow tests; instead
         // adjust b's created_at after enqueue to simulate a later submission.
-        let b = q.enqueue("b".into(), JobTrigger::Manual).await.unwrap();
+        let b = q.enqueue("b".into(), JobTrigger::Manual, 0).await.unwrap();
         {
             let mut jobs = q.jobs.write().await;
             jobs.get_mut(&b.id).unwrap().created_at = a.created_at + 1;
@@ -130,12 +139,38 @@ mod tests {
     #[tokio::test]
     async fn finish_records_status_and_error() {
         let q = InMemoryJobQueue::new();
-        let job = q.enqueue("c".into(), JobTrigger::Manual).await.unwrap();
+        let job = q.enqueue("c".into(), JobTrigger::Manual, 0).await.unwrap();
         q.finish(&job.id, JobStatus::Failed, Some("boom".into()))
             .await
             .unwrap();
         let got = q.get(&job.id).await.unwrap().unwrap();
         assert_eq!(got.status, JobStatus::Failed);
         assert_eq!(got.error.as_deref(), Some("boom"));
+    }
+
+    #[tokio::test]
+    async fn claim_next_orders_by_priority_then_fifo() {
+        let q = InMemoryJobQueue::new();
+        // Enqueue order: pro(=1), pro(=1), team(=2).
+        let pro_a = q.enqueue("pa".into(), JobTrigger::Manual, 1).await.unwrap();
+        let pro_b = q.enqueue("pb".into(), JobTrigger::Manual, 1).await.unwrap();
+        let team = q.enqueue("t".into(), JobTrigger::Manual, 2).await.unwrap();
+        // Deterministic created_at so the test doesn't depend on clock
+        // resolution.
+        {
+            let mut jobs = q.jobs.write().await;
+            jobs.get_mut(&pro_a.id).unwrap().created_at = 1;
+            jobs.get_mut(&pro_b.id).unwrap().created_at = 2;
+            jobs.get_mut(&team.id).unwrap().created_at = 3;
+        }
+
+        // Highest-priority job drains first regardless of arrival.
+        let first = q.claim_next().await.unwrap().unwrap();
+        assert_eq!(first.id, team.id, "team must jump ahead of pro");
+        // Ties on priority fall back to FIFO.
+        let second = q.claim_next().await.unwrap().unwrap();
+        assert_eq!(second.id, pro_a.id);
+        let third = q.claim_next().await.unwrap().unwrap();
+        assert_eq!(third.id, pro_b.id);
     }
 }

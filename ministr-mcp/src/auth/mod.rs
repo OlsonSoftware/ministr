@@ -41,7 +41,7 @@ pub use middleware::{
 };
 pub use router::{oauth_routes, protected_router};
 pub use store::{OAuthIssueError, OAuthStore};
-pub use tenant::{Plan, Tenant};
+pub use tenant::{queue_priority, Plan, Tenant};
 
 /// OAuth 2.1 server configuration.
 #[derive(Debug, Clone)]
