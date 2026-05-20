@@ -39,6 +39,8 @@
 pub mod auth;
 pub mod billing;
 pub mod blob;
+pub mod blob_backend;
+pub mod blob_fs;
 pub mod db;
 pub mod github;
 pub mod idp;
@@ -55,7 +57,9 @@ pub use billing::{
 pub use auth::{
     github_signin_routes, GitHubSigninError, GitHubSigninState, DEFAULT_SIGNIN_SCOPE,
 };
-pub use blob::{BlobError, BlobResult, CorpusBlobStore};
+pub use blob::{BlobError, BlobResult, CorpusBlobStore, CorpusManifest};
+pub use blob_backend::{build_from_env as build_blob_backend_from_env, BlobBackend};
+pub use blob_fs::FilesystemBlobStore;
 pub use db::{connect, run_migrations, DbError};
 pub use github::{GitHubAppClient, GitHubAppError};
 pub use idp::{GitHubIdp, IdentityProvider, IdpError, ResolvedIdentity, GITHUB_ISSUER};

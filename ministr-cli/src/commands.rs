@@ -266,6 +266,18 @@ pub(crate) async fn cmd_serve_http(
         let pool = ministr_cloud::connect(pg_url)
             .into_diagnostic()
             .wrap_err("open cloud postgres pool")?;
+        // Auto-apply F1.2 + later migrations on every pod boot. The
+        // runner short-circuits when the schema is up to date so this
+        // is cheap on warm starts; on a fresh DB it creates the
+        // users / orgs / corpora / usage_events / audit_events tables
+        // before any handler can query them. Without this, a brand-new
+        // deployment crashes the first time any tenant-scoped handler
+        // runs.
+        ministr_cloud::run_migrations(&pool)
+            .await
+            .into_diagnostic()
+            .wrap_err("apply cloud postgres migrations")?;
+        tracing::info!("cloud postgres migrations applied");
         Some(Arc::new(pool))
     } else {
         None

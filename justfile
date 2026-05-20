@@ -124,6 +124,46 @@ docker-build:
 docker-run *args:
     docker run -p 8080:8080 -v ministr_data:/data ministr {{args}}
 
+# ── Local cloud development (see DEMO.md) ──────────────────────────────
+
+# Bring up the local cloud-mode dependencies (Postgres on :55432).
+# Blob storage in dev mode uses the filesystem (FilesystemBlobStore),
+# so no Azurite container is needed.
+dev-cloud-up:
+    docker compose -f docker-compose.dev.yml up -d
+    @echo ""
+    @echo "Postgres ready on localhost:55432 (user=ministr db=ministr_dev)."
+    @echo "Next: copy .env.dev.example → .env.dev, fill the Stripe + GitHub bits, then:"
+    @echo "  source .env.dev && cargo run -p ministr-cli -- serve --transport http --oauth"
+    @echo ""
+    @echo "Once running, verify with:"
+    @echo "  cargo run -p ministr-cli -- cloud check"
+
+# Stop the local cloud-mode dependencies. Volume is preserved so the
+# next `dev-cloud-up` keeps your data.
+dev-cloud-down:
+    docker compose -f docker-compose.dev.yml down
+
+# Stop AND wipe Postgres data. Useful when you want to start clean.
+dev-cloud-reset:
+    docker compose -f docker-compose.dev.yml down --volumes
+
+# Follow the Postgres log.
+dev-cloud-logs:
+    docker compose -f docker-compose.dev.yml logs -f postgres
+
+# Open a psql shell against the dev DB.
+dev-cloud-psql:
+    docker compose -f docker-compose.dev.yml exec postgres \
+        psql -U ministr -d ministr_dev
+
+# Smoke-check every wired cloud integration (Postgres, Stripe keys,
+# GitHub App key, base URL). Reads the same env vars that `ministr
+# serve --transport http --oauth` consumes; prints a tick/cross table.
+# Run AFTER `dev-cloud-up` + `source .env.dev`.
+dev-cloud-check:
+    cargo run -p ministr-cli -- cloud check
+
 # Build signed + notarized macOS .pkg installer
 pkg:
     #!/usr/bin/env bash
