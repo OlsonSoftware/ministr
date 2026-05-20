@@ -17,7 +17,11 @@ set -euo pipefail
 
 PORT="${PORT:-8080}"
 ENDPOINT="http://localhost:${PORT}"
-SAMPLE_DIR="${SAMPLE_DIR:-/tmp/ministr-demo-source}"
+# Timestamp the sample dir per-run so the daemon's content-merkle
+# fast-skip can't short-circuit (same path → same corpus_id → "all
+# files unchanged → skipping ingestion"). Each run now produces a
+# genuinely fresh corpus the watcher can see indexed live.
+SAMPLE_DIR="${SAMPLE_DIR:-/tmp/ministr-demo-source-$(date +%s)}"
 SERVE_LOG="${SERVE_LOG:-/tmp/ministr-demo-serve.log}"
 KEEP="${KEEP:-0}"
 
