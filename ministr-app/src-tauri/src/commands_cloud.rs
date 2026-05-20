@@ -960,11 +960,17 @@ pub async fn cloud_register_corpus(
 
 /// POST `/api/v1/corpora/{slug}/clone` — git-clone a remote repo and register
 /// it as a corpus. The `slug` is derived from the URL when not supplied.
+///
+/// `github_installation_id`, when set, drives the F2.1 private-repo path:
+/// the cloud mints a short-lived GitHub App installation token and
+/// splices it into the clone URL server-side. The token never reaches
+/// this command.
 #[tauri::command]
 pub async fn cloud_clone_repo(
     repo: String,
     branch: Option<String>,
     label: Option<String>,
+    github_installation_id: Option<String>,
 ) -> Result<serde_json::Value, CommandError> {
     let (client, endpoint, token) = authed_client(120)?;
     // Derive a slug from the URL when label is missing: last path segment,
@@ -974,6 +980,11 @@ pub async fn cloud_clone_repo(
     let mut body = serde_json::json!({ "repo": repo });
     if let Some(b) = branch {
         body["branch"] = serde_json::Value::String(b);
+    }
+    if let Some(id) = github_installation_id
+        && !id.trim().is_empty()
+    {
+        body["github_installation_id"] = serde_json::Value::String(id);
     }
     let resp = client
         .post(&url)

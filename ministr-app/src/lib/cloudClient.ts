@@ -106,8 +106,23 @@ export const cloudClient = {
       .then((r): CloudCorpusInfo[] => Array.isArray(r) ? r : r.corpora ?? []),
   registerCorpus: (paths: string[]) =>
     invoke<CloudRegisterResponse>("cloud_register_corpus", { paths }),
-  cloneRepo: (repo: string, branch?: string, label?: string) =>
-    invoke<CloudCloneResponse>("cloud_clone_repo", { repo, branch, label }),
+  /**
+   * Clone a remote repo. Pass `githubInstallationId` to use the cloud's
+   * GitHub App for private-repo access (F2.1) — the token is minted
+   * server-side and never reaches this process.
+   */
+  cloneRepo: (
+    repo: string,
+    branch?: string,
+    label?: string,
+    githubInstallationId?: string,
+  ) =>
+    invoke<CloudCloneResponse>("cloud_clone_repo", {
+      repo,
+      branch,
+      label,
+      githubInstallationId,
+    }),
   unregisterCorpus: (corpusId: string) =>
     invoke<void>("cloud_unregister_corpus", { corpusId }),
   /**
