@@ -4781,6 +4781,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ministr-atlas"
+version = "0.6.0"
+dependencies = [
+ "axum",
+ "ministr-core",
+ "ministr-mcp",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
 name = "ministr-cli"
 version = "0.6.0"
 dependencies = [
@@ -4789,6 +4805,7 @@ dependencies = [
  "dialoguer",
  "miette",
  "ministr-api",
+ "ministr-atlas",
  "ministr-cloud",
  "ministr-core",
  "ministr-daemon",

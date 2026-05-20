@@ -178,6 +178,13 @@ enum Command {
         #[arg(long)]
         uninstall: bool,
     },
+
+    /// Atlas operator commands (F2.6+). Invoked by the weekly cron
+    /// in cloud deployments and by developers locally.
+    Atlas {
+        #[command(subcommand)]
+        action: AtlasAction,
+    },
 }
 
 /// Subcommands for `ministr hooks`.
@@ -188,6 +195,24 @@ enum HooksAction {
     /// Checks all agent platform hook files, validates their structure,
     /// and simulates common tool calls to report which would be blocked.
     Test,
+}
+
+/// Subcommands for `ministr atlas` — Atlas curated-network operator
+/// commands. Invoked by the Azure Container Apps Job on the weekly
+/// cron schedule (F4.2); also runnable locally during development.
+#[derive(Debug, Subcommand)]
+enum AtlasAction {
+    /// Re-index every seed repo once. F2.6 v0 ships the
+    /// orchestration with stubbed step impls (no real clone / index /
+    /// blob upload — those land in F4.2); the command logs the
+    /// outcome counts so the cron's structured-log dashboard works
+    /// end-to-end.
+    Reindex,
+    /// Emit the public manifest as JSON on stdout. The cron writes
+    /// this into the Atlas storage account so `ministr.ai/atlas/
+    /// manifest.json` mirrors it (the docs-next route renders the
+    /// same source for the public mirror).
+    Manifest,
 }
 
 /// MCP transport mode.
@@ -487,6 +512,10 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 commands::cmd_hooks_test(&rc.cwd);
                 Ok(())
             }
+        },
+        Command::Atlas { action } => match action {
+            AtlasAction::Reindex => commands::cmd_atlas_reindex().await,
+            AtlasAction::Manifest => commands::cmd_atlas_manifest(),
         },
         Command::Setup { .. } => {
             unreachable!("ministr setup is dispatched before resolve_config in main()")

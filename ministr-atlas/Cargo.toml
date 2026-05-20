@@ -1,0 +1,49 @@
+[package]
+name = "ministr-atlas"
+version = "0.6.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+# Closed-source crate. Atlas is the moat made code — a curated network
+# of pre-indexed OSS repos that the cloud serves under paid tiers (B7
+# resolved: ship the 50-repo pilot under provisional legal opinion;
+# F4.1 expansion to 5K gated by G.1).
+license = "LicenseRef-Proprietary"
+repository.workspace = true
+homepage.workspace = true
+description = "Proprietary Atlas surface for ministr — curated repo index network + read-only /atlas/* routes."
+readme = "../README.md"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# Route tests drive the axum router via Router::oneshot — same pattern
+# as ministr-cloud's rate-limit tests. Test-only, not in the prod
+# binary.
+tower = { version = "0.5", features = ["util"] }
+
+[dependencies]
+# Shape of the seed list + manifest mirrors ROADMAP §3 verbatim; serde
+# is the only build-time dep needed to expose it on the wire and in
+# JSON form for the public manifest.
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+# parking_lot::Mutex for the in-memory opt-out registry — matches the
+# workspace convention (no poisoning, smaller, faster).
+parking_lot.workspace = true
+# F2.6 routes module — axum router served at `/atlas/*` by
+# cmd_serve_http (mounted behind the F2.3 quota check using the
+# already-shipped `AtlasAccessRule`).
+axum.workspace = true
+# F4.2 — the Atlas worker re-uses ministr-core's index pipeline +
+# bundle export so the same hashing / chunking / embedding rules
+# apply to atlas blobs as to user-owned corpora.
+ministr-core.workspace = true
+# Manifest is the wire contract between this crate and the public
+# `ministr.ai/atlas/manifest.json` mirror in docs-next; sharing the
+# Plan type keeps the access check in cloud handlers consistent.
+ministr-mcp.workspace = true
