@@ -12,6 +12,8 @@
 //! | F1.5 | `stripe` — Stripe Meters + webhook receiver |
 //! | F2.4 | `checkout` — Stripe Checkout session creation |
 
+pub mod sink;
 pub mod usage;
 
+pub use sink::PostgresUsageSink;
 pub use usage::{record_usage, UsageEventKind};

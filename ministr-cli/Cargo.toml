@@ -27,6 +27,11 @@ ministr-mcp.workspace = true
 # Headless daemon host: the `ministr __daemon` subcommand runs the same
 # daemon ministr-app does, so the CLI can self-spawn it (no GUI needed).
 ministr-daemon.workspace = true
+# Cloud-side closed code (LicenseRef-Proprietary). The CLI source
+# stays MIT; the link-time inclusion of ministr-cloud is the natural
+# seam where open-core CLI orchestration meets the cloud's tenancy +
+# billing + IdP impls. F1.4 sub-bullet 2 uses it for PostgresUsageSink.
+ministr-cloud.workspace = true
 clap.workspace = true
 rmcp.workspace = true
 axum.workspace = true
