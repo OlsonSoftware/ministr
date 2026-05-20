@@ -21,7 +21,6 @@ use super::roots::module_path_from_file;
 /// Result of code symbol extraction.
 pub(super) struct CodeSymbolsResult {
     pub pending_refs: Vec<PendingRef>,
-    pub bridge_endpoints: Vec<BridgeEndpoint>,
     pub embedding_pairs: Vec<(VectorId, String)>,
 }
 
@@ -45,13 +44,11 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
     content: &str,
     storage: &S,
     package_graph: Option<&PackageGraph>,
-    bridge_linker: Option<&BridgeLinker>,
 ) -> Result<CodeSymbolsResult, IngestionError> {
     let source = content.as_bytes();
     let empty_result = || {
         Ok(CodeSymbolsResult {
             pending_refs: Vec::new(),
-            bridge_endpoints: Vec::new(),
             embedding_pairs: Vec::new(),
         })
     };
@@ -189,18 +186,12 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
         }
     };
 
-    let bridge_endpoints = if let Some(linker) = bridge_linker {
-        let language_name = language;
-        let sf = BridgeSourceFile {
-            file_path: relative_path,
-            language: language_name,
-            tree: &tree,
-            source,
-        };
-        linker.extract_all(&[sf])
-    } else {
-        Vec::new()
-    };
+    // PHASE4 chunk 4: per-file bridge extraction was here. It was
+    // expensive (extract_all parses every applicable language extractor
+    // per file) and the result was accumulated into all_bridge_endpoints
+    // and discarded — finalize_ingestion rebuilds bridges from
+    // all_files anyway. The full-corpus rebuild is the authoritative
+    // source; doing it here too is duplicate work.
 
     let mut embedding_pairs: Vec<(VectorId, String)> = Vec::new();
     for (sym, record) in symbols.iter().zip(symbol_records.iter()) {
@@ -228,7 +219,6 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
     );
     Ok(CodeSymbolsResult {
         pending_refs,
-        bridge_endpoints,
         embedding_pairs,
     })
 }
@@ -252,8 +242,7 @@ async fn extract_cpp_fallback_into_storage<S: Storage + ?Sized>(
         let _ = storage.delete_symbols_for_file(relative_path).await;
         return Ok(CodeSymbolsResult {
             pending_refs: Vec::new(),
-            bridge_endpoints: Vec::new(),
-            embedding_pairs: Vec::new(),
+                embedding_pairs: Vec::new(),
         });
     }
 
@@ -292,7 +281,6 @@ async fn extract_cpp_fallback_into_storage<S: Storage + ?Sized>(
 
     Ok(CodeSymbolsResult {
         pending_refs: Vec::new(),
-        bridge_endpoints: Vec::new(),
         embedding_pairs,
     })
 }
@@ -320,8 +308,7 @@ async fn extract_shader_symbols<S: Storage + ?Sized>(
         let _ = storage.delete_symbols_for_file(relative_path).await;
         return Ok(CodeSymbolsResult {
             pending_refs: Vec::new(),
-            bridge_endpoints: Vec::new(),
-            embedding_pairs: Vec::new(),
+                embedding_pairs: Vec::new(),
         });
     }
 
@@ -362,7 +349,6 @@ async fn extract_shader_symbols<S: Storage + ?Sized>(
 
     Ok(CodeSymbolsResult {
         pending_refs: Vec::new(),
-        bridge_endpoints: Vec::new(),
         embedding_pairs,
     })
 }
@@ -1066,7 +1052,7 @@ mod tests {
         file_path: &str,
     ) -> (Vec<SymbolRecord>, Vec<SymbolRefRecord>) {
         let storage = SqliteStorage::open_in_memory().unwrap();
-        let result = extract_code_symbols(file_path, source, &storage, None, None)
+        let result = extract_code_symbols(file_path, source, &storage, None)
             .await
             .unwrap();
         // Result's pending_refs are for targets not yet indexed — we only
@@ -1356,7 +1342,7 @@ impl Bundle {
     }
 }
 ";
-        let _ = extract_code_symbols("core/src/bundle.rs", source, &storage, None, None)
+        let _ = extract_code_symbols("core/src/bundle.rs", source, &storage, None)
             .await
             .unwrap();
 
