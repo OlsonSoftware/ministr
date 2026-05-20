@@ -29,6 +29,7 @@ use axum::{
 };
 use deadpool_postgres::Pool;
 use ministr_api::TenantId;
+use ministr_mcp::auth::{Plan, Tenant};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -44,6 +45,11 @@ pub struct UsageResponse {
     /// Echo of the caller's tenant subject. Useful for the UI to
     /// confirm "you are viewing X's billing".
     pub tenant_id: String,
+    /// Resolved billing tier (lowercase, matches the `Plan` enum's
+    /// `serde(rename_all = "lowercase")` shape — `"pro" | "team" |
+    /// "enterprise"`). F2.4 — the Tauri panel reads this to render
+    /// the plan badge.
+    pub plan: Plan,
     /// Per-(day, kind) rolled-up totals for the last
     /// [`DEFAULT_ROLLUP_DAYS`] days, newest day first.
     pub rollups: Vec<RollupRow>,
@@ -109,14 +115,19 @@ pub fn billing_routes(state: BillingState) -> Router {
 
 async fn usage_handler(
     State(state): State<BillingState>,
-    tenant: Option<Extension<TenantId>>,
+    full_tenant: Option<Extension<Tenant>>,
 ) -> Result<Json<UsageResponse>, BillingError> {
-    let Extension(tenant) = tenant.ok_or(BillingError::MissingTenant)?;
-    let resp = fetch_usage(&state.pool, &tenant).await?;
+    let Extension(tenant) = full_tenant.ok_or(BillingError::MissingTenant)?;
+    let tenant_id = TenantId::from(tenant.subject.as_str());
+    let resp = fetch_usage(&state.pool, &tenant_id, tenant.plan).await?;
     Ok(Json(resp))
 }
 
-async fn fetch_usage(pool: &Pool, tenant: &TenantId) -> Result<UsageResponse, BillingError> {
+async fn fetch_usage(
+    pool: &Pool,
+    tenant: &TenantId,
+    plan: Plan,
+) -> Result<UsageResponse, BillingError> {
     let client = pool
         .get()
         .await
@@ -166,6 +177,7 @@ async fn fetch_usage(pool: &Pool, tenant: &TenantId) -> Result<UsageResponse, Bi
 
     Ok(UsageResponse {
         tenant_id: tenant.as_str().to_owned(),
+        plan,
         rollups,
         today_partial,
     })
@@ -212,6 +224,7 @@ mod tests {
     fn usage_response_serialises_stable_field_order() {
         let resp = UsageResponse {
             tenant_id: "abc".into(),
+            plan: Plan::Pro,
             rollups: vec![RollupRow {
                 day: "2026-05-19".into(),
                 kind: "query.served".into(),
@@ -224,6 +237,7 @@ mod tests {
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"tenant_id\":\"abc\""));
+        assert!(json.contains("\"plan\":\"pro\""));
         assert!(json.contains("\"rollups\":["));
         assert!(json.contains("\"today_partial\":["));
         assert!(json.contains("\"day\":\"2026-05-19\""));
@@ -266,7 +280,7 @@ mod tests {
             .unwrap();
 
         // Before any rollup: nothing in rollups, everything in today_partial.
-        let resp = fetch_usage(&pool, &TenantId::from(tenant.clone()))
+        let resp = fetch_usage(&pool, &TenantId::from(tenant.clone()), Plan::Pro)
             .await
             .unwrap();
         assert_eq!(resp.tenant_id, tenant);
@@ -286,7 +300,7 @@ mod tests {
         // intentional — the UI dedupes by treating rollups as
         // authoritative for past days and partial as "today only".
         rollup_day(&pool, 0).await.unwrap();
-        let resp = fetch_usage(&pool, &TenantId::from(tenant.clone()))
+        let resp = fetch_usage(&pool, &TenantId::from(tenant.clone()), Plan::Pro)
             .await
             .unwrap();
         let rollup_totals: std::collections::HashMap<_, _> = resp

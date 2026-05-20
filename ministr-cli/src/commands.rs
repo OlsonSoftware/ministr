@@ -50,6 +50,11 @@ use crate::ingestion;
 /// creation on signup in F1.5; Meter events later). When unset, the
 /// cloud runs without ever calling Stripe; the GitHub sign-in flow
 /// still works, just without seeding a Stripe Customer.
+/// `MINISTR_STRIPE_PRICE_PRO` / `MINISTR_STRIPE_PRICE_TEAM` — Stripe
+/// price IDs configured in the dashboard for Pro / Team subscription
+/// products (F2.4). When unset, `POST /api/v1/billing/checkout` for
+/// the corresponding plan returns 503 `price_not_configured`. Pricing
+/// matches §3 of the roadmap.
 /// `MINISTR_GITHUB_CLIENT_ID` / `MINISTR_GITHUB_CLIENT_SECRET` — the
 /// GitHub OAuth App credentials registered on github.com. Both must be
 /// present together for the F1.3 `/auth/github/*` sign-in routes to
@@ -77,6 +82,8 @@ struct CloudEnv {
     cloud_base_url: Option<String>,
     github_app_id: Option<String>,
     github_app_private_key: Option<String>,
+    stripe_price_pro: Option<String>,
+    stripe_price_team: Option<String>,
 }
 
 fn read_cloud_env() -> CloudEnv {
@@ -101,6 +108,8 @@ fn read_cloud_env() -> CloudEnv {
         github_app_private_key: std::env::var("MINISTR_GITHUB_APP_PRIVATE_KEY")
             .ok()
             .filter(|s| !s.trim().is_empty()),
+        stripe_price_pro: trimmed("MINISTR_STRIPE_PRICE_PRO"),
+        stripe_price_team: trimmed("MINISTR_STRIPE_PRICE_TEAM"),
     }
 }
 
@@ -493,6 +502,39 @@ pub(crate) async fn cmd_serve_http(
                     }
                 }
             });
+
+            // F2.4 — Stripe Checkout + Customer Portal routes.
+            // Requires the outbound stripe client AND the cloud base
+            // URL (used to build success/return URLs Stripe redirects
+            // back to). Mounted behind `ministr:read` — the calling
+            // tenant authorises against its own Stripe Customer.
+            if let (Some(stripe), Some(base_url)) =
+                (stripe_client.as_ref(), cloud_env.cloud_base_url.as_ref())
+            {
+                let catalog: std::sync::Arc<dyn ministr_cloud::PriceCatalog> =
+                    std::sync::Arc::new(ministr_cloud::EnvPriceCatalog::new(
+                        cloud_env.stripe_price_pro.clone(),
+                        cloud_env.stripe_price_team.clone(),
+                    ));
+                let checkout_state = ministr_cloud::CheckoutState::new(
+                    Arc::clone(stripe),
+                    Arc::clone(pool),
+                    catalog,
+                    base_url.clone(),
+                );
+                let checkout_router = ministr_cloud::checkout_routes(checkout_state);
+                let checkout_protected = ministr_mcp::auth::scope_protected_router(
+                    checkout_router,
+                    store.clone(),
+                    "ministr:read",
+                );
+                composed = composed.merge(checkout_protected);
+                tracing::info!(
+                    has_pro_price = cloud_env.stripe_price_pro.is_some(),
+                    has_team_price = cloud_env.stripe_price_team.is_some(),
+                    "stripe checkout + portal mounted — POST /api/v1/billing/{{checkout,portal}}"
+                );
+            }
 
             if let (Some(cid), Some(secret), Some(base_url)) = (
                 cloud_env.github_client_id.as_ref(),

@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ChevronRight,
   CloudOff,
+  CreditCard,
   GitBranch,
   Loader2,
   LogIn,
@@ -73,6 +74,8 @@ export function CloudPanel() {
     | "sign-in-github"
     | "probe"
     | "disconnect"
+    | "manage-billing"
+    | "upgrade"
   >(null);
   const [signInError, setSignInError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -162,6 +165,37 @@ export function CloudPanel() {
     }
   };
 
+  // F2.4 — open the Stripe Customer Portal in the system browser.
+  // The cloud handler validates the bearer token and mints a portal
+  // session bound to the user's stripe_customer_id; the URL is
+  // short-lived and single-use.
+  const onManageBilling = async () => {
+    setBusy("manage-billing");
+    setSignInError(null);
+    try {
+      await cloudClient.billingPortal();
+    } catch (e) {
+      setSignInError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // F2.4 — start a Stripe Checkout flow for the target plan. The user
+  // pays in Stripe-hosted UI; the cloud webhook flips
+  // `users.plan_id` once payment completes.
+  const onUpgrade = async (plan: "pro" | "team") => {
+    setBusy("upgrade");
+    setSignInError(null);
+    try {
+      await cloudClient.billingCheckout(plan);
+    } catch (e) {
+      setSignInError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const onProbe = async () => {
     setBusy("probe");
     setHealthError(null);
@@ -242,9 +276,12 @@ export function CloudPanel() {
             Authentication
           </span>
           {status?.authenticated && (
-            <span className="text-xs text-accent font-mono flex items-center gap-1">
-              <Check className="size-3.5" /> signed in
-            </span>
+            <div className="flex items-center gap-2 text-xs font-mono">
+              {usage?.plan && <PlanBadge plan={usage.plan} />}
+              <span className="text-accent flex items-center gap-1">
+                <Check className="size-3.5" /> signed in
+              </span>
+            </div>
           )}
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -285,6 +322,37 @@ export function CloudPanel() {
         {signInError && (
           <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
             {signInError}
+          </div>
+        )}
+
+        {status?.authenticated && (
+          <div className="flex gap-2 flex-wrap pt-1 border-t border-border-soft mt-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void onManageBilling()}
+              disabled={busy === "manage-billing"}
+            >
+              {busy === "manage-billing" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <CreditCard className="size-3.5" />
+              )}
+              Manage billing
+            </Button>
+            {usage?.plan === "pro" && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void onUpgrade("team")}
+                disabled={busy === "upgrade"}
+              >
+                {busy === "upgrade" ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : null}
+                Upgrade to Team
+              </Button>
+            )}
           </div>
         )}
 
@@ -1023,6 +1091,30 @@ function UsageBadges({
         value={latencyMs == null ? "—" : `${latencyMs} ms`}
       />
     </div>
+  );
+}
+
+/**
+ * F2.4 — Plan-tier indicator rendered next to the "signed in" chip.
+ * Pinned colour palette per tier so screenshots are visually distinct
+ * across pricing-page card mocks.
+ */
+function PlanBadge({ plan }: { plan: "pro" | "team" | "enterprise" }) {
+  const styles: Record<typeof plan, string> = {
+    pro: "border-accent/40 bg-accent/10 text-accent",
+    team: "border-violet-500/40 bg-violet-500/10 text-violet-300",
+    enterprise: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+  };
+  const label = plan.charAt(0).toUpperCase() + plan.slice(1);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] uppercase tracking-[0.1em] font-semibold",
+        styles[plan],
+      )}
+    >
+      {label}
+    </span>
   );
 }
 
