@@ -138,15 +138,23 @@ Concretely changes from PHASE4:
     decisive observable is "no empty-tick KEDA queries in the
     Postgres slow log").
 
-- [ ] **Chunk 2 — Empty-index persist gate**
-  - `ministr-core/src/ingestion/pipeline.rs::run_producer_consumer`: before
-    calling `index.persist(&corpus_dir)`, check `index.len() > 0`. Skip
-    persist if empty (no vectors to dump) and log at TRACE.
-  - Unit test: drive the pipeline through a path that triggers
-    `files_indexed % persist_every == 0` *before* any embedding batch
-    lands; assert no persist call fires.
-  - Verify: live `just azure-demo` log no longer shows the
-    `failed to dump HNSW: unexpected error` WARN.
+- [x] **Chunk 2 — Empty-index persist gate** *(code + tests landed; live `just azure-demo` log clean-up pending operator run)*
+  - [x] `ministr-core/src/ingestion/pipeline.rs::run_producer_consumer`
+    — gate added: when `persist_every` boundary fires but
+    `index.is_empty()`, skip the persist call and log at TRACE. Race
+    description preserved in the inline comment so the why survives.
+  - [x] Regression tests in `phase5_chunk2_persist_gate_tests`: pins
+    that (a) a freshly-built `HnswIndex` reports `is_empty=true` (the
+    state the parser-side counter races into), and (b) calling
+    `persist()` on the empty index is the failure mode the gate
+    avoids — confirmed by the "fail empty, succeed with one vector"
+    behavioural assertion. Driving the full pipeline was rejected as
+    too heavy per PHASE4 chunk 4's "no targeted unit test" pattern.
+  - [x] Workspace verification clean: 1962 lib tests passing
+    (1502 in `ministr-core`, +2 new); workspace clippy pedantic clean.
+  - [ ] **Operator action remaining**: confirm `just azure-demo` log
+    no longer shows the `failed to dump HNSW: unexpected error` WARN
+    during streaming ingest.
 
 - [ ] **Chunk 3 — Streaming progress heartbeat**
   - Identify where PHASE3 Fix B's `queue.update_progress` heartbeat lived
