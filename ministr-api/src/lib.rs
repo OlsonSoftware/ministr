@@ -19,6 +19,7 @@ pub mod corpus;
 pub mod corpus_restorer;
 pub mod github_app;
 pub mod index_job_sink;
+pub mod job_start_trigger;
 pub mod query;
 pub mod session;
 pub mod status;
@@ -33,6 +34,7 @@ pub use github_app::{InstallationTokenMinter, MintError};
 pub use index_job_sink::{
     IndexJobError, IndexJobFuture, IndexJobSink, IndexJobSnapshot, IndexJobStatus,
 };
+pub use job_start_trigger::{JobStartError, JobStartFuture, JobStartTrigger};
 pub use tenant::TenantId;
 pub use usage::UsageSink;
 

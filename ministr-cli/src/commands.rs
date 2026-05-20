@@ -84,6 +84,13 @@ struct CloudEnv {
     github_app_private_key: Option<String>,
     stripe_price_pro: Option<String>,
     stripe_price_team: Option<String>,
+    // PHASE5 chunk 1 — ACA fast-path trigger config. All three are
+    // required together; partial config falls back to KEDA-only mode
+    // (the safety net polls every 5 min after PHASE5 chunk 1's Pulumi
+    // bump). Pulumi injects these into the serve pod container env.
+    aca_subscription_id: Option<String>,
+    aca_resource_group: Option<String>,
+    aca_indexer_job_name: Option<String>,
 }
 
 fn read_cloud_env() -> CloudEnv {
@@ -110,6 +117,9 @@ fn read_cloud_env() -> CloudEnv {
             .filter(|s| !s.trim().is_empty()),
         stripe_price_pro: trimmed("MINISTR_STRIPE_PRICE_PRO"),
         stripe_price_team: trimmed("MINISTR_STRIPE_PRICE_TEAM"),
+        aca_subscription_id: trimmed("MINISTR_ACA_SUBSCRIPTION_ID"),
+        aca_resource_group: trimmed("MINISTR_ACA_RESOURCE_GROUP"),
+        aca_indexer_job_name: trimmed("MINISTR_ACA_INDEXER_JOB_NAME"),
     }
 }
 
@@ -338,9 +348,55 @@ pub(crate) async fn cmd_serve_http(
         // route through the cloud index-job queue instead of running
         // ingestion inline. The serve pod becomes embed-free; the
         // worker (chunk 3) drains the queue.
-        let index_job_sink: std::sync::Arc<dyn ministr_api::IndexJobSink> = std::sync::Arc::new(
-            ministr_cloud::PostgresIndexJobSink::new(Arc::clone(pool), None),
-        );
+        //
+        // PHASE5 chunk 1 — when all three MINISTR_ACA_* env vars
+        // resolve, attach an `AcaJobStartTrigger` so each commit fires
+        // a direct ARM `jobs/{name}/start` POST. Missing env =>
+        // KEDA-only path (5-min safety-net poll) and a single warn at
+        // boot to make the absent fast path visible in the deploy logs.
+        let mut sink = ministr_cloud::PostgresIndexJobSink::new(Arc::clone(pool), None);
+        match (
+            cloud_env.aca_subscription_id.as_deref(),
+            cloud_env.aca_resource_group.as_deref(),
+            cloud_env.aca_indexer_job_name.as_deref(),
+        ) {
+            (Some(sub), Some(rg), Some(job)) => {
+                let cfg = ministr_cloud::AcaJobStartConfig {
+                    subscription_id: sub.to_owned(),
+                    resource_group: rg.to_owned(),
+                    job_name: job.to_owned(),
+                };
+                match ministr_cloud::AcaJobStartTrigger::new(cfg) {
+                    Ok(trigger) => {
+                        let trigger_arc: std::sync::Arc<dyn ministr_api::JobStartTrigger> =
+                            std::sync::Arc::new(trigger);
+                        sink = sink.with_start_trigger(trigger_arc);
+                        tracing::info!(
+                            subscription = %sub,
+                            resource_group = %rg,
+                            job_name = %job,
+                            "AcaJobStartTrigger wired — enqueue fans out to ARM jobs/start",
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "AcaJobStartTrigger build failed — KEDA safety-net poll is the only path",
+                        );
+                    }
+                }
+            }
+            _ => {
+                tracing::warn!(
+                    has_subscription = cloud_env.aca_subscription_id.is_some(),
+                    has_resource_group = cloud_env.aca_resource_group.is_some(),
+                    has_job_name = cloud_env.aca_indexer_job_name.is_some(),
+                    "MINISTR_ACA_* env vars incomplete — running on KEDA safety-net poll only (PHASE5 chunk 1 fast path disabled)",
+                );
+            }
+        }
+        let index_job_sink: std::sync::Arc<dyn ministr_api::IndexJobSink> =
+            std::sync::Arc::new(sink);
         daemon_state = daemon_state.with_index_job_sink(index_job_sink);
         tracing::info!(
             "PostgresIndexJobSink wired — serve pod enqueues instead of running indexer::run"

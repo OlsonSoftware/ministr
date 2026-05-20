@@ -23,16 +23,28 @@ use deadpool_postgres::Pool;
 use ministr_api::index_job_sink::{
     IndexJobError, IndexJobFuture, IndexJobSink, IndexJobSnapshot, IndexJobStatus,
 };
+use ministr_api::job_start_trigger::JobStartTrigger;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use tracing::warn;
 
 /// Postgres-backed `IndexJobSink` for the cloud serve pod.
 ///
-/// Cheap to clone — wraps an `Arc<Pool>`.
+/// Cheap to clone — wraps an `Arc<Pool>` and (optionally) an
+/// `Arc<dyn JobStartTrigger>`. The trigger is invoked fire-and-forget
+/// AFTER `create_pending` commits, so a trigger failure never rolls the
+/// row back; KEDA's 5-minute safety net picks the row up in the worst
+/// case (PHASE5 chunk 1 design).
 #[derive(Debug, Clone)]
 pub struct PostgresIndexJobSink {
     pool: Arc<Pool>,
     tenant_id: Option<String>,
+    /// PHASE5 chunk 1 — optional ARM `jobs/start` trigger. `None` on
+    /// self-hosted serve and on cloud deployments where the new
+    /// `MINISTR_ACA_*` env vars aren't set (the deploy then operates
+    /// in PHASE4-equivalent KEDA-only mode at the slower polling
+    /// cadence).
+    start_trigger: Option<Arc<dyn JobStartTrigger>>,
 }
 
 impl PostgresIndexJobSink {
@@ -41,7 +53,20 @@ impl PostgresIndexJobSink {
     /// nullability `PostgresCorporaRepo` uses.
     #[must_use]
     pub fn new(pool: Arc<Pool>, tenant_id: Option<String>) -> Self {
-        Self { pool, tenant_id }
+        Self {
+            pool,
+            tenant_id,
+            start_trigger: None,
+        }
+    }
+
+    /// Attach a `JobStartTrigger` so each successful enqueue fans out
+    /// to ACA via ARM. Builder-style so `cmd_serve_http` can stitch the
+    /// trigger in only when the `MINISTR_ACA_*` env vars resolve.
+    #[must_use]
+    pub fn with_start_trigger(mut self, trigger: Arc<dyn JobStartTrigger>) -> Self {
+        self.start_trigger = Some(trigger);
+        self
     }
 }
 
@@ -186,6 +211,27 @@ impl IndexJobSink for PostgresIndexJobSink {
             tx.commit()
                 .await
                 .map_err(map_err("create_pending: commit"))?;
+
+            // PHASE5 chunk 1 — fire-and-forget ARM trigger AFTER the
+            // commit succeeds. Detached via `tokio::spawn` so the
+            // enqueue handler returns to the caller immediately; any
+            // ARM/IMDS error logs at warn and the KEDA safety-net
+            // (5-min poll) picks the row up. A spawn failure is
+            // impossible inside a running tokio runtime; we never
+            // unwrap a JoinHandle.
+            if let Some(trigger) = self.start_trigger.clone() {
+                let corpus_owned = corpus_id.to_string();
+                tokio::spawn(async move {
+                    if let Err(e) = trigger.start_job_for(&corpus_owned).await {
+                        warn!(
+                            error = %e,
+                            corpus_id = %corpus_owned,
+                            "ARM jobs/start failed — KEDA safety net will pick the row up within 5 min",
+                        );
+                    }
+                });
+            }
+
             Ok(job_id)
         })
     }
