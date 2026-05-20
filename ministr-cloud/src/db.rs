@@ -34,7 +34,10 @@ use tracing::{debug, info};
 ///
 /// Append to the end when adding a migration; never reorder, never
 /// renumber. The runner applies the smallest unapplied version first.
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../migrations/0001_initial.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../migrations/0001_initial.sql")),
+    (2, include_str!("../migrations/0002_usage_rollups.sql")),
+];
 
 /// Errors surfaced by [`connect`] and [`run_migrations`].
 #[derive(Debug, thiserror::Error)]

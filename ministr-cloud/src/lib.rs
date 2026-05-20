@@ -41,7 +41,7 @@ pub mod blob;
 pub mod db;
 pub mod idp;
 
-pub use billing::{record_usage, PostgresUsageSink, UsageEventKind};
+pub use billing::{record_usage, rollup_day, PostgresUsageSink, UsageEventKind};
 pub use blob::{BlobError, BlobResult, CorpusBlobStore};
 pub use db::{connect, run_migrations, DbError};
 pub use idp::{GitHubIdp, IdentityProvider, IdpError, ResolvedIdentity, GITHUB_ISSUER};
