@@ -401,6 +401,55 @@ pub(crate) async fn cmd_serve_http(
         tracing::info!(
             "PostgresIndexJobSink wired — serve pod enqueues instead of running indexer::run"
         );
+
+        // PHASE6 chunk 2 — in-process WorkerLoop. The serve pod now
+        // drains the same `indexer_jobs` table the ACA Job currently
+        // does (which will be deleted in chunk 3). Both compete via
+        // `FOR UPDATE SKIP LOCKED` so this is safe to run alongside
+        // the legacy Job path during the chunk-2-to-chunk-3 transition.
+        //
+        // The loop is spawned with an always-live cancel token; SIGTERM
+        // handling lands in chunk 4 along with the operator-side deploy.
+        match ministr_mcp::admin::jobs::PostgresJobQueue::open(
+            cloud_env
+                .pg_url
+                .as_deref()
+                .expect("cloud_pool is_some implies pg_url is_some"),
+        )
+        .await
+        {
+            Ok(pg_queue) => {
+                let queue_backend = std::sync::Arc::new(
+                    ministr_mcp::admin::jobs::JobQueueBackend::Postgres(pg_queue),
+                );
+                let runner = std::sync::Arc::new(crate::worker::IngestionRunner {
+                    config: std::sync::Arc::new(config.clone()),
+                    resolved_model: std::sync::Arc::from(resolved_model),
+                    resolved_dimension,
+                    rerank_depth,
+                    blob_backend: blob_backend_arc
+                        .as_ref()
+                        .map(std::sync::Arc::clone),
+                    queue: std::sync::Arc::clone(&queue_backend),
+                });
+                let runner_dyn: std::sync::Arc<dyn crate::worker::JobRunner> = runner;
+                let worker_loop = crate::worker::WorkerLoop::new(
+                    queue_backend,
+                    runner_dyn,
+                    tokio_util::sync::CancellationToken::new(),
+                );
+                tokio::spawn(worker_loop.run());
+                tracing::info!(
+                    "PHASE6 WorkerLoop spawned — serve pod drains indexer_jobs in-process"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "WorkerLoop disabled — PostgresJobQueue::open failed",
+                );
+            }
+        }
     }
 
     // F2.1 — GitHub App installation-token minter for private-repo
