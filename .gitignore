@@ -58,6 +58,10 @@ eval/lsp-nav/ra.lsif
 # Signing credentials
 .env.signing
 
+# Local dev env (DEMO.md). The template `.env.dev.example` IS committed.
+.env.dev
+.env.dev.local
+
 # Design-iteration screenshots (archived, not versioned)
 /design-archive/
 

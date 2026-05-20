@@ -10,6 +10,7 @@
 //! - [`ingestion`] — corpus ingestion orchestration and file watching
 
 mod cloud_check;
+mod cloud_demo;
 mod commands;
 mod infra;
 mod ingestion;
@@ -204,6 +205,48 @@ enum CloudAction {
     /// Probe every cloud integration and print a tick/cross table.
     /// Exit code = number of failed probes (so CI can gate on it).
     Check,
+
+    /// End-to-end watchable runner against a deployed cloud. Probes
+    /// /healthz, walks the OAuth loopback PKCE flow (browser opens),
+    /// lists corpora, optionally registers + clones a repo, then
+    /// streams the indexing-progress SSE live to the terminal until
+    /// completion, and finishes with a survey query against the
+    /// indexed corpus.
+    Demo {
+        /// Cloud base URL, e.g. `https://my-deployment.example.com`.
+        #[arg(long)]
+        endpoint: String,
+        /// Skip the OAuth flow and use this bearer token instead.
+        /// Useful when you already have a token in the keychain
+        /// (paste from the Tauri panel's Advanced → "Show token").
+        #[arg(long)]
+        token: Option<String>,
+        /// Clone this Git URL as part of the demo (cloud-side
+        /// `POST /api/v1/corpora/{parent}/clone`). Requires either
+        /// an existing parent corpus on the cloud OR `--parent`.
+        #[arg(long)]
+        clone_url: Option<String>,
+        /// Parent corpus ID for the clone. Defaults to the first
+        /// listed corpus.
+        #[arg(long)]
+        parent: Option<String>,
+        /// Watch THIS corpus's progress (skip the clone step).
+        #[arg(long)]
+        corpus: Option<String>,
+    },
+
+    /// Trimmed version of `demo`: just stream a specific corpus's
+    /// progress to the terminal. Useful when you've triggered a
+    /// clone from the Tauri panel and want to follow it in a
+    /// terminal in parallel.
+    Watch {
+        #[arg(long)]
+        endpoint: String,
+        #[arg(long)]
+        token: String,
+        #[arg(long)]
+        corpus: String,
+    },
 }
 
 /// Subcommands for `ministr hooks`.
@@ -561,6 +604,18 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 }
                 Ok(())
             }
+            CloudAction::Demo {
+                endpoint,
+                token,
+                clone_url,
+                parent,
+                corpus,
+            } => cloud_demo::run_demo(endpoint, token, clone_url, corpus, parent).await,
+            CloudAction::Watch {
+                endpoint,
+                token,
+                corpus,
+            } => cloud_demo::run_watch(endpoint, token, corpus).await,
         },
         Command::Setup { .. } => {
             unreachable!("ministr setup is dispatched before resolve_config in main()")
