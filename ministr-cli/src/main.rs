@@ -9,6 +9,7 @@
 //! - [`infra`] — shared infrastructure setup (storage, embedder, index)
 //! - [`ingestion`] — corpus ingestion orchestration and file watching
 
+mod cloud_check;
 mod commands;
 mod infra;
 mod ingestion;
@@ -185,6 +186,24 @@ enum Command {
         #[command(subcommand)]
         action: AtlasAction,
     },
+
+    /// Cloud operator commands. `check` smoke-tests every wired
+    /// integration (Postgres, Stripe, GitHub OAuth, GitHub App, blob
+    /// backend) and exits with the number of failed probes — drop
+    /// it into CI as `just dev-cloud-check`.
+    Cloud {
+        #[command(subcommand)]
+        action: CloudAction,
+    },
+}
+
+/// Subcommands for `ministr cloud` — operator diagnostics + future
+/// admin tooling.
+#[derive(Debug, Subcommand)]
+enum CloudAction {
+    /// Probe every cloud integration and print a tick/cross table.
+    /// Exit code = number of failed probes (so CI can gate on it).
+    Check,
 }
 
 /// Subcommands for `ministr hooks`.
@@ -358,6 +377,23 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
 async fn main() -> Result<()> {
     let mut cli = Cli::parse();
 
+    // rustls 0.23 requires the process to install a default
+    // CryptoProvider before any TLS work runs. The workspace pulls in
+    // both `ring` and `aws-lc-rs` transitively (via reqwest +
+    // rustls-platform-verifier + tokio-postgres-rustls), so rustls
+    // refuses to auto-pick. Use `aws_lc_rs` — same crypto stack the
+    // platform-verifier crate already brings in, so we don't double
+    // the binary size with `ring`. Idempotent: the panic is downgraded
+    // to a log because a second call (in tests / a re-entrant runtime)
+    // would otherwise crash on `unwrap`.
+    if rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .is_err()
+    {
+        // A provider was already installed by an earlier call site
+        // (e.g. a library's `static`-init path). Safe to ignore.
+    }
+
     miette::set_hook(Box::new(|_| {
         Box::new(miette::MietteHandlerOpts::new().build())
     }))
@@ -516,6 +552,15 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
         Command::Atlas { action } => match action {
             AtlasAction::Reindex => commands::cmd_atlas_reindex().await,
             AtlasAction::Manifest => commands::cmd_atlas_manifest(),
+        },
+        Command::Cloud { action } => match action {
+            CloudAction::Check => {
+                let failed = cloud_check::run_all().await;
+                if failed > 0 {
+                    std::process::exit(i32::try_from(failed).unwrap_or(1));
+                }
+                Ok(())
+            }
         },
         Command::Setup { .. } => {
             unreachable!("ministr setup is dispatched before resolve_config in main()")

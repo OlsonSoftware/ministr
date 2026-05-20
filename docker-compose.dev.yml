@@ -1,0 +1,46 @@
+# Local development cloud stack.
+#
+# Brings up just enough infrastructure to run `ministr serve --transport
+# http --oauth` against — Postgres for the OAuth state + F1.2 tenancy
+# tables, nothing else. Blob storage in dev mode uses the filesystem
+# (FilesystemBlobStore in ministr-cloud); no Azurite needed.
+#
+# Usage:
+#   just dev-cloud-up      # start Postgres
+#   just dev-cloud-down    # stop + clean volume
+#   just dev-cloud-logs    # follow Postgres logs
+#   just dev-cloud-psql    # open psql against the dev DB
+#
+# Once Postgres is up, in a separate terminal:
+#   source .env.dev         # see DEMO.md for the full env-var list
+#   cargo run -p ministr-cli -- serve --transport http --oauth
+#
+# Production uses Azure Postgres Flexible Server (per F1.1); the
+# schema, TLS posture, and connection-string shape are identical so
+# the dev/prod gap is the storage backend only.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ministr-dev-postgres
+    environment:
+      POSTGRES_USER: ministr
+      POSTGRES_PASSWORD: ministr
+      POSTGRES_DB: ministr_dev
+    ports:
+      # Host port 55432 on purpose — avoids colliding with a system
+      # Postgres on 5432. The cloud reads MINISTR_PG_URL with this
+      # port baked in (see .env.dev.example).
+      - "55432:5432"
+    volumes:
+      - ministr-dev-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ministr -d ministr_dev"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  ministr-dev-pg-data:
+    name: ministr-dev-pg-data
