@@ -251,10 +251,13 @@ azure-up:
     eval "$(./scripts/azure-env.sh)"
     pulumi -C deploy/azure up ${PULUMI_FLAGS:-}
 
-# One-shot: provision (if needed), push, roll revision, run demo.
-# Handles fresh deploy AND subsequent updates.
+# One-shot, idempotent: provision (if needed), push, roll revision,
+# then run the full `azure-smoke` (demo-remote → restart-app → repeat)
+# so the registry + bundle-restore + streaming-worker path is
+# end-to-end exercised. Safe to re-run any time — this is the single
+# command for "deploy current code and verify it works."
 #
-# Full one-shot: pulumi up + push + roll + demo-remote.
+# Full one-shot: pulumi up + push + roll + azure-smoke.
 azure-demo:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -272,7 +275,7 @@ azure-demo:
     echo "▶ waiting 30s for ACA to roll the revision"
     sleep 30
     echo ""
-    just demo-remote
+    just azure-smoke
 
 # Show stack outputs and probe the live /healthz.
 azure-status:
@@ -610,58 +613,48 @@ azure-cost:
         --output json 2>/dev/null \
         | python3 ./scripts/azure-cost-summary.py
 
-# PHASE3 chunk 6 acceptance: serve/worker split end-to-end.
+# The canonical end-to-end smoke for the deployed Azure stack. Each
+# new PHASE extends this in place — `just azure-demo` always calls
+# `just azure-smoke` at its tail, so there's only one command to
+# remember regardless of which phase you're validating.
 #
-# 1. demo-remote: clone-url → POST /api/v1/corpora returns pending
-#    instantly (chunk 4), progress SSE streams from Postgres until
-#    the scheduled worker (chunk 6) drains the queue, then a survey
-#    query against the corpus succeeds.
-# 2. azure-restart-app: drops pod-local /data.
-# 3. demo-remote again: same CLONE_URL → deterministic corpus_id
-#    hits the existing cloud_corpora row (chunk 1), the survey query
-#    lazy-downloads the bundle from blob (chunk 5) and succeeds —
-#    proving end-to-end durability across pod recycle.
+# Sequence (idempotent — safe to re-run any time):
+#   1. demo-remote: clone-url → POST /api/v1/corpora returns pending
+#      instantly, progress SSE streams from Postgres until the
+#      KEDA-triggered indexer Job (PHASE4 chunk 1) drains the queue,
+#      then a survey query against the corpus succeeds.
+#   2. azure-restart-app: drops pod-local /data.
+#   3. demo-remote again: same CLONE_URL → deterministic corpus_id
+#      hits the existing cloud_corpora row (PHASE3 chunk 1), the
+#      survey query lazy-downloads the bundle from blob (PHASE3
+#      chunk 5) and succeeds — proving end-to-end durability across
+#      pod recycle.
 #
-# CLONE_URL is forwarded to demo-remote; defaults to its built-in
-# small fixture.
+# What this currently validates (as of PHASE4):
+#   - PHASE3: corpus registry, queue-backed SSE, on-demand bundle restore
+#   - PHASE4: KEDA event-driven worker, streaming ingestion on a 4 GiB
+#     right-sized Job (replicas exiting 137 = OOM; back out
+#     `ministr-azure:jobMemory: 4Gi` and see PHASE4.md "Producer-task
+#     lifetime" backlog item)
 #
-# PHASE3 serve/worker-split smoke (demo-remote, restart pod, repeat).
-phase3-smoke:
+# Extension policy: when you add PHASE N, append the new validations
+# here. CLONE_URL is forwarded to demo-remote; defaults to its
+# built-in small fixture.
+#
+# End-to-end smoke for the deployed Azure stack (extend per phase).
+azure-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "▶ phase3-smoke step 1 / 3 — first demo-remote (clone + index + query)"
+    echo "▶ azure-smoke step 1 / 3 — first demo-remote (clone + index + query)"
     just demo-remote
     echo ""
-    echo "▶ phase3-smoke step 2 / 3 — restart serve pod (drops pod-local /data)"
+    echo "▶ azure-smoke step 2 / 3 — restart serve pod (drops pod-local /data)"
     just azure-restart-app
     echo ""
-    echo "▶ phase3-smoke step 3 / 3 — re-run demo-remote (must lazy-restore from blob)"
+    echo "▶ azure-smoke step 3 / 3 — re-run demo-remote (must lazy-restore from blob)"
     just demo-remote
     echo ""
-    echo "✓ phase3-smoke passed — registry + bundle survived pod recycle"
-
-# Detail: same functional sequence as phase3-smoke (demo-remote → restart
-# → repeat), but operator-verified against the right-sized indexer Job:
-# 4 GiB / 4 vCPU (down from the PHASE3-era 8 GiB default), with
-# cmd_indexer_worker streaming HNSW persist every 4 files indexed (PHASE4
-# chunk 4) so peak rss is bounded instead of holding the whole graph in
-# memory until end-of-ingest. If a replica exits 137 (OOM kill), back out
-# Pulumi.prod.yaml's `ministr-azure:jobMemory: 4Gi` line and see the
-# "Producer-task lifetime" backlog item in deploy/azure/PHASE4.md.
-# PHASE4 post-streaming smoke — validates the 4 GiB right-sized worker on anyhow.
-phase4-smoke:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "▶ phase4-smoke step 1 / 3 — first demo-remote (clone + index + query on 4 GiB pod)"
-    just demo-remote
-    echo ""
-    echo "▶ phase4-smoke step 2 / 3 — restart serve pod (drops pod-local /data)"
-    just azure-restart-app
-    echo ""
-    echo "▶ phase4-smoke step 3 / 3 — re-run demo-remote (must lazy-restore from blob)"
-    just demo-remote
-    echo ""
-    echo "✓ phase4-smoke passed — streaming worker + bundle restore survived on the new spec"
+    echo "✓ azure-smoke passed — registry + streaming worker + bundle restore survived pod recycle"
 
 # Tear down the entire Azure stack (DESTRUCTIVE — asks for confirmation).
 azure-down:
