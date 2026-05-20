@@ -14,6 +14,7 @@ pub mod activity;
 pub mod client;
 pub mod coherence;
 pub mod corpus;
+pub mod github_app;
 pub mod query;
 pub mod session;
 pub mod status;
@@ -21,6 +22,7 @@ pub mod tenant;
 pub mod transport;
 pub mod usage;
 
+pub use github_app::{InstallationTokenMinter, MintError};
 pub use tenant::TenantId;
 pub use usage::UsageSink;
 

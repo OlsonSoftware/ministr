@@ -470,6 +470,7 @@ async fn register_corpus(
 ///   5. Locate the parent corpus's `.ministr.toml` and append a
 ///      `[[linked]]` entry (idempotent — no-op if already present).
 ///   6. Return `CloneRepoResponse`.
+#[allow(clippy::too_many_lines)] // sequential 6-step flow; splitting fragments the clone narrative
 async fn clone_repo(
     State(state): State<AppState>,
     Path(parent_id): Path<String>,
@@ -487,6 +488,44 @@ async fn clone_repo(
         }
     };
 
+    // 1b. F2.1 — mint a GitHub App installation token when the caller
+    //     supplies an `installation_id` AND a minter is wired. The
+    //     resulting URL is identical in shape to a PAT URL
+    //     (`https://x-access-token:<token>@github.com/...`), so the
+    //     downstream `GitFetcher::clone` path stays untouched. The token
+    //     is never persisted; on cache miss it lives only for the
+    //     duration of this request.
+    let effective_repo: String = match (
+        req.github_installation_id.as_ref(),
+        state.installation_minter.as_ref(),
+    ) {
+        (Some(installation_id), Some(minter)) => match minter.mint(installation_id).await {
+            Ok(token) => match inject_github_app_token(&req.repo, &token) {
+                Ok(url) => url,
+                Err(e) => {
+                    return err(StatusCode::BAD_REQUEST, "github_url_invalid", e).into_response();
+                }
+            },
+            Err(e) => {
+                return err(
+                    StatusCode::BAD_GATEWAY,
+                    "github_app_token_mint_failed",
+                    e.to_string(),
+                )
+                .into_response();
+            }
+        },
+        (Some(_), None) => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "github_app_not_configured",
+                "this deployment has no GitHub App; supply a PAT in the URL instead".to_string(),
+            )
+            .into_response();
+        }
+        _ => req.repo.clone(),
+    };
+
     // 2. Clone via GitFetcher into ~/.ministr/clones/{sanitised}/.
     let git_fetcher = ministr_core::git::GitFetcher::with_defaults();
     let paths_ref: Option<Vec<String>> = if req.paths.is_empty() {
@@ -495,7 +534,12 @@ async fn clone_repo(
         Some(req.paths.clone())
     };
     let clone_result = match git_fetcher
-        .clone(&req.repo, paths_ref.as_deref(), req.branch.as_deref(), None)
+        .clone(
+            &effective_repo,
+            paths_ref.as_deref(),
+            req.branch.as_deref(),
+            None,
+        )
         .await
     {
         Ok(r) => r,
@@ -573,6 +617,31 @@ async fn clone_repo(
         indexing_started,
     })
     .into_response()
+}
+
+/// Splice a GitHub App installation access token into an `https://`
+/// clone URL using the documented `x-access-token` username scheme
+/// (per GitHub Docs — Generating an installation access token):
+/// `https://x-access-token:<token>@github.com/owner/repo.git`.
+///
+/// Refuses non-`https://` schemes (SSH URLs cannot carry a token) and
+/// URLs that already contain credentials (the caller should pick PAT
+/// OR App, not both).
+///
+/// Returns the rewritten URL on success.
+fn inject_github_app_token(repo: &str, token: &str) -> Result<String, String> {
+    let Some(rest) = repo.strip_prefix("https://") else {
+        return Err(
+            "GitHub App installation tokens require an https:// clone URL".to_string(),
+        );
+    };
+    if rest.contains('@') {
+        return Err(
+            "clone URL already contains credentials — pick PAT or App, not both"
+                .to_string(),
+        );
+    }
+    Ok(format!("https://x-access-token:{token}@{rest}"))
 }
 
 /// Sanitise a repo URL into a filesystem-safe label.
@@ -1960,6 +2029,36 @@ mod tests {
     /// "Not routed" — request did not reach any handler matching method+path.
     fn unrouted(status: StatusCode) -> bool {
         status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED
+    }
+
+    #[test]
+    fn inject_github_app_token_rewrites_https_urls() {
+        let url = super::inject_github_app_token(
+            "https://github.com/anthropics/ministr.git",
+            "ghs_abc123",
+        )
+        .expect("rewrite succeeds");
+        assert_eq!(
+            url,
+            "https://x-access-token:ghs_abc123@github.com/anthropics/ministr.git"
+        );
+    }
+
+    #[test]
+    fn inject_github_app_token_rejects_ssh_urls() {
+        let err = super::inject_github_app_token("git@github.com:owner/repo.git", "ghs_x")
+            .expect_err("SSH URLs cannot carry installation tokens");
+        assert!(err.contains("https://"), "got {err}");
+    }
+
+    #[test]
+    fn inject_github_app_token_rejects_urls_with_existing_credentials() {
+        let err = super::inject_github_app_token(
+            "https://alice:pat-1234@github.com/owner/repo.git",
+            "ghs_x",
+        )
+        .expect_err("PAT-in-URL + App token would conflict");
+        assert!(err.contains("credentials"), "got {err}");
     }
 
     #[tokio::test]

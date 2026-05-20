@@ -1876,6 +1876,10 @@ impl MinistrServer {
                     paths: params.paths.clone().unwrap_or_default(),
                     branch: params.branch.clone(),
                     label: None,
+                    // F2.1 — MCP tool path is the local-stack clone surface;
+                    // GitHub App federation is cloud-only. PAT-in-URL flow
+                    // remains for self-hosted users.
+                    github_installation_id: None,
                 };
                 return match client.clone_repo(parent_id, &req).await {
                     Ok(resp) => {

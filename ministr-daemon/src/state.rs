@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use ministr_api::activity::ActivityEvent;
 use ministr_api::coherence::CoherenceEvent;
-use ministr_api::UsageSink;
+use ministr_api::{InstallationTokenMinter, UsageSink};
 use tokio::sync::RwLock;
 
 use crate::inference::{ClaudeCliInference, Inference};
@@ -56,6 +56,12 @@ pub struct AppState {
     /// billed. The activity middleware fires this fire-and-forget
     /// whenever a tool route completes successfully.
     pub usage_sink: Option<Arc<dyn UsageSink>>,
+    /// GitHub App installation-token minter (F2.1). `Some` when cloud
+    /// mode has wired `ministr_cloud::github::GitHubAppClient`; `None`
+    /// on self-hosted serve where the PAT-in-URL path is the only
+    /// authenticated-clone option. The `clone_repo` handler awaits this
+    /// when the request body carries `github_installation_id`.
+    pub installation_minter: Option<Arc<dyn InstallationTokenMinter>>,
 }
 
 impl AppState {
@@ -78,6 +84,7 @@ impl AppState {
             ))),
             coherence,
             usage_sink: None,
+            installation_minter: None,
         }
     }
 
@@ -98,6 +105,7 @@ impl AppState {
             ))),
             coherence,
             usage_sink: None,
+            installation_minter: None,
         }
     }
 
@@ -106,6 +114,17 @@ impl AppState {
     #[must_use]
     pub fn with_usage_sink(mut self, sink: Arc<dyn UsageSink>) -> Self {
         self.usage_sink = Some(sink);
+        self
+    }
+
+    /// Wire a GitHub App installation-token minter (F2.1 cloud mode).
+    /// Returns `self` for chainable construction.
+    #[must_use]
+    pub fn with_installation_minter(
+        mut self,
+        minter: Arc<dyn InstallationTokenMinter>,
+    ) -> Self {
+        self.installation_minter = Some(minter);
         self
     }
 

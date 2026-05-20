@@ -656,6 +656,7 @@ function CloneDialog({ onClose, onSuccess }: CloneDialogProps) {
   const [repo, setRepo] = useState("");
   const [branch, setBranch] = useState("");
   const [label, setLabel] = useState("");
+  const [installationId, setInstallationId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -667,6 +668,7 @@ function CloneDialog({ onClose, onSuccess }: CloneDialogProps) {
         repo.trim(),
         branch.trim() || undefined,
         label.trim() || undefined,
+        installationId.trim() || undefined,
       );
       onSuccess(res.corpus_id);
     } catch (e) {
@@ -697,6 +699,18 @@ function CloneDialog({ onClose, onSuccess }: CloneDialogProps) {
         value={label}
         onChange={setLabel}
       />
+      <LabeledInput
+        label="GitHub App installation ID (private repos)"
+        placeholder="leave blank for public repos"
+        value={installationId}
+        onChange={setInstallationId}
+      />
+      <p className="text-xs text-text-muted -mt-1">
+        For private repos, install the ministr GitHub App on the target
+        repo or org, then paste the installation ID here. The cloud
+        mints a short-lived access token server-side — your local
+        machine never sees a PAT.
+      </p>
       {error && (
         <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
           {error}

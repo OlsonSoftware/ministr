@@ -209,6 +209,18 @@ pub struct CloneRepoRequest {
     /// `owner-repo`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// F2.1 — when set AND an
+    /// [`InstallationTokenMinter`](crate::github_app::InstallationTokenMinter)
+    /// is wired into the daemon's `AppState`, the daemon mints a short-lived
+    /// installation access token and splices it into the clone URL as
+    /// `https://x-access-token:<token>@…`. Lets a Pro/Team customer
+    /// clone a private repo without ever handing the daemon a PAT — the
+    /// token is minted on demand per indexing job and discarded.
+    ///
+    /// When unset, the daemon clones `repo` verbatim (PAT-in-URL flow
+    /// for self-hosted serve).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_installation_id: Option<String>,
 }
 
 /// Response from the daemon's clone-and-link endpoint.
