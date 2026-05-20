@@ -40,7 +40,7 @@ pub use middleware::{
     ScopedState, scope_protected_router, validate_scope_middleware, validate_token_middleware,
 };
 pub use router::{oauth_routes, protected_router};
-pub use store::OAuthStore;
+pub use store::{OAuthIssueError, OAuthStore};
 pub use tenant::{Plan, Tenant};
 
 /// OAuth 2.1 server configuration.

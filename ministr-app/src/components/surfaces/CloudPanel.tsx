@@ -25,6 +25,26 @@ import {
   X,
 } from "lucide-react";
 
+// Inline GitHub Octocat mark. Lucide-react doesn't ship brand logos
+// (intentionally vendor-neutral) so the icon for the federated sign-in
+// button is a hand-trimmed copy of the canonical Octocat SVG. Mirrors
+// the GitHub Logos usage guidelines: monochrome, no modifications
+// beyond stroke/colour, and only on buttons that initiate a GitHub
+// auth flow.
+function GitHubMark({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55 0-.27-.01-1.17-.02-2.13-3.2.7-3.87-1.36-3.87-1.36-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.25 3.34.96.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.15 1.18.91-.25 1.88-.38 2.85-.39.97.01 1.94.14 2.85.39 2.18-1.49 3.15-1.18 3.15-1.18.62 1.57.23 2.73.11 3.02.74.81 1.18 1.84 1.18 3.1 0 4.44-2.7 5.41-5.27 5.69.41.36.78 1.06.78 2.14 0 1.55-.01 2.8-.01 3.18 0 .31.21.67.8.55C20.21 21.38 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z" />
+    </svg>
+  );
+}
+
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import {
@@ -50,6 +70,7 @@ export function CloudPanel() {
     | "save-endpoint"
     | "save-token"
     | "sign-in"
+    | "sign-in-github"
     | "probe"
     | "disconnect"
   >(null);
@@ -117,6 +138,22 @@ export function CloudPanel() {
         await cloudClient.setEndpoint(endpointDraft);
       }
       await cloudClient.authenticate();
+      await refreshStatus();
+    } catch (e) {
+      setSignInError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onSignInGitHub = async () => {
+    setBusy("sign-in-github");
+    setSignInError(null);
+    try {
+      if (endpointDraft.trim() && endpointDraft !== status?.endpoint) {
+        await cloudClient.setEndpoint(endpointDraft);
+      }
+      await cloudClient.authenticateGitHub();
       await refreshStatus();
     } catch (e) {
       setSignInError(String(e));
@@ -210,24 +247,40 @@ export function CloudPanel() {
             </span>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button
             size="sm"
+            onClick={onSignInGitHub}
+            disabled={busy === "sign-in-github" || busy === "sign-in"}
+          >
+            {busy === "sign-in-github" ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <GitHubMark className="size-3.5" />
+            )}
+            {status?.authenticated ? "Re-sign in with GitHub" : "Sign in with GitHub"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={onSignIn}
-            disabled={busy === "sign-in"}
+            disabled={busy === "sign-in" || busy === "sign-in-github"}
           >
             {busy === "sign-in" ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : (
               <LogIn className="size-3.5" />
             )}
-            {status?.authenticated ? "Re-sign in" : "Sign in to ministr Cloud"}
+            Use OAuth (self-hosted)
           </Button>
         </div>
         <p className="text-xs text-text-muted">
-          Opens your browser, completes the OAuth flow, stores the token in{" "}
-          <span className="font-mono text-text">~/.ministr/cloud.json</span>
-          {" "}(owner-only). Times out after 3 minutes.
+          {"Sign in with GitHub"} opens your browser, federates the
+          sign-in through the cloud's GitHub OAuth App, and stores the
+          resulting bearer token in your OS keychain. The OAuth fallback
+          is for self-hosted deployments where the cloud is not
+          configured with GitHub credentials. Either flow times out after
+          3 minutes.
         </p>
         {signInError && (
           <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">

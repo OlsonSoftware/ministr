@@ -45,25 +45,41 @@ use crate::ingestion;
 /// Stripe dashboard (prefixed `whsec_`). When set, mounts
 /// `POST /webhooks/stripe`; the handler rejects all events without a
 /// matching signature.
+/// `MINISTR_GITHUB_CLIENT_ID` / `MINISTR_GITHUB_CLIENT_SECRET` — the
+/// GitHub OAuth App credentials registered on github.com. Both must be
+/// present together for the F1.3 `/auth/github/*` sign-in routes to
+/// mount; absence keeps the cloud running on the OAuth-only code-grant
+/// path (self-hosted single-user serve).
+/// `MINISTR_CLOUD_BASE_URL` — absolute base URL the public Internet
+/// reaches the cloud at (e.g. `https://mcp.ministr.ai`). Required when
+/// GitHub sign-in is enabled because the `redirect_uri` passed to the
+/// GitHub authorize endpoint must exactly match the value registered
+/// in the App's settings.
 struct CloudEnv {
     data_dir: Option<PathBuf>,
     webhook_secret: Option<String>,
     pg_url: Option<String>,
     stripe_webhook_secret: Option<String>,
+    github_client_id: Option<String>,
+    github_client_secret: Option<String>,
+    cloud_base_url: Option<String>,
 }
 
 fn read_cloud_env() -> CloudEnv {
+    let trimmed = |k: &str| -> Option<String> {
+        std::env::var(k)
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+    };
     CloudEnv {
         data_dir: std::env::var("MINISTR_CLOUD_DATA_DIR").ok().map(PathBuf::from),
         webhook_secret: std::env::var("MINISTR_GITHUB_WEBHOOK_SECRET").ok(),
-        pg_url: std::env::var("MINISTR_PG_URL")
-            .ok()
-            .map(|s| s.trim().to_owned())
-            .filter(|s| !s.is_empty()),
-        stripe_webhook_secret: std::env::var("MINISTR_STRIPE_WEBHOOK_SECRET")
-            .ok()
-            .map(|s| s.trim().to_owned())
-            .filter(|s| !s.is_empty()),
+        pg_url: trimmed("MINISTR_PG_URL"),
+        stripe_webhook_secret: trimmed("MINISTR_STRIPE_WEBHOOK_SECRET"),
+        github_client_id: trimmed("MINISTR_GITHUB_CLIENT_ID"),
+        github_client_secret: trimmed("MINISTR_GITHUB_CLIENT_SECRET"),
+        cloud_base_url: trimmed("MINISTR_CLOUD_BASE_URL"),
     }
 }
 
@@ -311,7 +327,7 @@ pub(crate) async fn cmd_serve_http(
             );
             let billing_protected = ministr_mcp::auth::scope_protected_router(
                 billing_router,
-                store,
+                store.clone(),
                 "ministr:read",
             );
             composed = composed.merge(billing_protected);
@@ -329,6 +345,46 @@ pub(crate) async fn cmd_serve_http(
                 );
                 composed = composed.merge(stripe_router);
                 tracing::info!("stripe webhook mounted — POST /webhooks/stripe");
+            }
+            // F1.3 sub-bullet — GitHub sign-in flow. Mounted when the
+            // cloud Postgres pool, the GitHub OAuth App credentials,
+            // and a public base URL are ALL present. Public routes
+            // (sign-in must be reachable without an existing token); the
+            // CSRF + loopback-allowlist check inside the handlers is
+            // the only gate.
+            if let (Some(cid), Some(secret), Some(base_url)) = (
+                cloud_env.github_client_id.as_ref(),
+                cloud_env.github_client_secret.as_ref(),
+                cloud_env.cloud_base_url.as_ref(),
+            ) {
+                match ministr_cloud::GitHubIdp::new(cid.clone(), secret.clone()) {
+                    Ok(idp) => {
+                        let state = ministr_cloud::GitHubSigninState::new(
+                            Arc::new(idp),
+                            (**pool).clone(),
+                            store,
+                            base_url.clone(),
+                        );
+                        composed = composed.merge(ministr_cloud::github_signin_routes(state));
+                        tracing::info!(
+                            base_url = %base_url,
+                            "github sign-in mounted — GET /auth/github/start, /auth/github/callback"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "github sign-in disabled — invalid credentials");
+                    }
+                }
+            } else if cloud_env.github_client_id.is_some()
+                || cloud_env.github_client_secret.is_some()
+                || cloud_env.cloud_base_url.is_some()
+            {
+                tracing::warn!(
+                    has_client_id = cloud_env.github_client_id.is_some(),
+                    has_client_secret = cloud_env.github_client_secret.is_some(),
+                    has_base_url = cloud_env.cloud_base_url.is_some(),
+                    "github sign-in NOT mounted — MINISTR_GITHUB_CLIENT_ID, MINISTR_GITHUB_CLIENT_SECRET, and MINISTR_CLOUD_BASE_URL must ALL be set"
+                );
             }
         }
         composed
