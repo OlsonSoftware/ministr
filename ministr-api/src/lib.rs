@@ -17,7 +17,12 @@ pub mod corpus;
 pub mod query;
 pub mod session;
 pub mod status;
+pub mod tenant;
 pub mod transport;
+pub mod usage;
+
+pub use tenant::TenantId;
+pub use usage::UsageSink;
 
 /// Canonical data directory for the ministr daemon (`~/.ministr` on Unix,
 /// `%USERPROFILE%\.ministr` on Windows).

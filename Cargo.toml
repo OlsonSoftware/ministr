@@ -237,3 +237,9 @@ ministr-api = { path = "ministr-api", version = "0.6.0" }
 ministr-core = { path = "ministr-core", version = "0.6.0" }
 ministr-daemon = { path = "ministr-daemon", version = "0.6.0" }
 ministr-mcp = { path = "ministr-mcp", version = "0.6.0" }
+# Closed crate — proprietary, link-time only. Consumers that import
+# this become un-distributable as MIT binaries unless they ship the
+# closed crate alongside; this is intentional. The MIT source stays
+# MIT, but binaries built with this dep included carry the
+# `ministr-cloud` proprietary terms.
+ministr-cloud = { path = "ministr-cloud", version = "0.6.0" }

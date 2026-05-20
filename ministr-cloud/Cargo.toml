@@ -34,6 +34,10 @@ ministr-core.workspace = true
 # to request extensions without depending on this closed crate. We
 # re-export Plan here for downstream cloud-only consumers.
 ministr-mcp.workspace = true
+# F1.4 sub-bullet 2 — PostgresUsageSink impls ministr_api::UsageSink
+# and consumes ministr_api::TenantId. Direct dep keeps the closed
+# billing impl honest about which open-core types it composes against.
+ministr-api.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
