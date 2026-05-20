@@ -4821,6 +4821,7 @@ dependencies = [
  "jsonwebtoken",
  "ministr-api",
  "ministr-core",
+ "ministr-daemon",
  "ministr-mcp",
  "parking_lot",
  "reqwest 0.13.2",

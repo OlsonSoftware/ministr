@@ -347,6 +347,21 @@ pub(crate) async fn cmd_serve_http(
             store.clone(),
             "ministr:read",
         );
+        // F2.3 — quota enforcement state. The probe wraps the daemon's
+        // existing CorpusRegistry; rules are ordered cheapest-first
+        // (CorpusCountRule's match predicate is a string compare).
+        // Mounted as a single Tower layer beneath the scope guards —
+        // see the daemon_write_q binding below.
+        let quota_state = ministr_cloud::QuotaState::new(
+            vec![
+                std::sync::Arc::new(ministr_cloud::CorpusCountRule),
+                std::sync::Arc::new(ministr_cloud::AtlasAccessRule),
+            ],
+            std::sync::Arc::new(ministr_cloud::RegistryProbe::new(Arc::clone(
+                &corpus_registry,
+            ))),
+        );
+
         // F2.2 — rate-limit write/clone routes on cloud only. Two
         // layers stack: per-IP first (rejects pre-auth abuse before
         // touching the bucket store with a tenant key), then
@@ -384,8 +399,23 @@ pub(crate) async fn cmd_serve_http(
         } else {
             daemon_write_router
         };
+        // F2.3 — quota check sits BETWEEN the scope guard (auth) and
+        // the rate limit (anti-abuse). Order matters: the request needs
+        // a populated `Tenant` extension (from scope_protected_router)
+        // before the quota middleware can read it, and quota rejection
+        // (402) should preempt rate-limit accounting (429) so an
+        // already-over-cap tenant doesn't also burn rate-limit
+        // tokens on the rejection.
+        let daemon_write_q = if cloud_env.pg_url.is_some() {
+            daemon_write_rl.layer(axum::middleware::from_fn_with_state(
+                quota_state.clone(),
+                ministr_cloud::quota_middleware,
+            ))
+        } else {
+            daemon_write_rl
+        };
         let daemon_write_p = ministr_mcp::auth::scope_protected_router(
-            daemon_write_rl,
+            daemon_write_q,
             store.clone(),
             "ministr:write",
         );
