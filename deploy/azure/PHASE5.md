@@ -156,21 +156,49 @@ Concretely changes from PHASE4:
     no longer shows the `failed to dump HNSW: unexpected error` WARN
     during streaming ingest.
 
-- [ ] **Chunk 3 — Streaming progress heartbeat**
-  - Identify where PHASE3 Fix B's `queue.update_progress` heartbeat lived
-    pre-PHASE4-chunk-4 (`ministr-cli/src/commands.rs::cmd_indexer_worker`
-    or `run_corpus_ingestion`) and why the chunk-4 refactor dropped it from
-    the streaming path. The honest answer might be "it was tied to a
-    finalize step that no longer fires per-batch."
-  - Re-establish at the streaming consumer's batch boundary: after each
-    `index.insert()` batch, the worker bumps `queue.update_progress` with
-    fresh `(processed_files, total_files, current_file)`.
-  - Unit test in `ministr-mcp` or `ministr-cloud`: drive an ingestion that
-    indexes 8 files with `persist_every=4`, assert the test sink saw
-    ≥4 progress events (one per file or per batch — set the bar by what
-    the heartbeat actually emits).
-  - Verify: live `just azure-demo` SSE shows real per-file progress
-    instead of stuck `0/0`.
+- [x] **Chunk 3 — Streaming progress heartbeat** *(code + tests landed; live `just azure-demo` SSE confirmation pending operator run)*
+  - **Honest revision.** PHASE5.md's premise that "the heartbeat got
+    dropped" turned out to be wrong on code-read: the 500ms reporter
+    in `cmd_indexer_worker` (commands.rs:2148-2186) is still wired and
+    has been since PHASE3 chunk 3. The actual gap was a **wire-shape
+    clip**: `JobProgress` only carried `(stage, total_files,
+    processed_files, current_file)`, and `queue_progress_stream`
+    hardcoded `sections_done = embeddings_total = embeddings_done =
+    0`. So the streaming consumer's per-batch
+    `progress.add_embeddings_done(count)` updated the in-memory
+    `IngestionProgress` but never reached the SSE. Result: the SSE bar
+    plateaued at parser-side N/N during the long embedder phase
+    (which manifests as "stuck" to a user, and as 0/0 on an
+    empty-corpus run).
+  - [x] Extended `JobProgress` (`ministr-mcp::admin::jobs`) with three
+    new fields: `sections_done`, `embeddings_total`, `embeddings_done`.
+    All three carry `#[serde(default)]` so in-flight PHASE4-era rows in
+    `indexer_jobs.data` (TEXT JSON column) deserialise without
+    migration.
+  - [x] Extended `IndexJobSnapshot` (`ministr-api::index_job_sink`)
+    with matching fields. Same `serde(default)` backward-compat.
+  - [x] `PostgresIndexJobSink::create_pending` seeds the new fields in
+    the initial blob; `latest_for_corpus` lifts them out via the
+    extracted `snapshot_from_blob` helper.
+  - [x] `cmd_indexer_worker` reporter samples
+    `progress.{sections_done, embeddings_total, embeddings_done}` and
+    writes the full snapshot to `queue.update_progress`. The streaming
+    consumer's existing per-batch `add_embeddings_done(count)` is the
+    "heartbeat at the batch boundary" — no new callback was needed.
+  - [x] `daemon::queue_progress_stream` populates the
+    `IngestionProgressEvent` from the snapshot's new fields (was
+    hardcoded `0` for all three pre-chunk-3).
+  - [x] Round-trip regression tests in
+    `ministr-cloud/src/index_job_sink.rs::tests`:
+    `snapshot_round_trips_phase5_chunk3_fields` pins the JSON shape;
+    `snapshot_back_compat_with_phase4_blobs` pins that PHASE4-era
+    rows still parse with new fields defaulting to 0.
+  - [x] Workspace verification clean: **1965** lib tests passing (+3
+    new); workspace clippy pedantic clean.
+  - [ ] **Operator action remaining**: confirm `just azure-demo` SSE
+    shows live `embeddings_done` progress during the embedder phase
+    (the field the UI should render as the primary bar; client-side
+    UI refresh to follow if needed).
 
 ## Open questions
 
