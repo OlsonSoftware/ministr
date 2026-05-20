@@ -104,10 +104,25 @@ pub(crate) async fn run_corpus_ingestion(
         ingest_git_includes(git_includes, &pipeline, storage, embedder, index).await;
     }
 
-    index
-        .persist(&ctx.index_dir)
-        .into_diagnostic()
-        .wrap_err("failed to persist vector index")?;
+    // HNSW's tar dump fails on an empty index (`Hnsw nb point 0` →
+    // rename trap), so skip the persist when nothing landed. This is
+    // the worker-side guard for chunk-4 enqueue flows where the
+    // requested paths can legitimately be empty (e.g. the demo's
+    // parent-corpus placeholder pointing at an empty `/data/corpus`).
+    // The query path reads via `index.len()` on the in-memory handle,
+    // so skipping the on-disk dump has no behavioural effect — the
+    // next ingest that adds vectors persists normally.
+    if index.is_empty() {
+        tracing::info!(
+            index_dir = %ctx.index_dir.display(),
+            "no vectors to persist — skipping HNSW dump"
+        );
+    } else {
+        index
+            .persist(&ctx.index_dir)
+            .into_diagnostic()
+            .wrap_err("failed to persist vector index")?;
+    }
 
     let elapsed_ms = crate::infra::elapsed_millis(start);
     tracing::info!(
