@@ -164,6 +164,13 @@ dev-cloud-psql:
 dev-cloud-check:
     cargo run -p ministr-cli -- cloud check
 
+# Run the full local cloud demo end-to-end: Postgres up → seed sample
+# corpus → start serve → mint bearer → `ministr cloud demo` →
+# survey query → cleanup. ~30s after warm cache, ~3min cold (first
+# build pulls the embedding model). KEEP=1 leaves the stack running.
+demo-local *args:
+    ./scripts/demo-local.sh {{args}}
+
 # Build signed + notarized macOS .pkg installer
 pkg:
     #!/usr/bin/env bash
