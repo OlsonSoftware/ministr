@@ -125,6 +125,7 @@ impl JobQueue for SqliteJobQueue {
         &self,
         corpus_id: String,
         trigger: JobTrigger,
+        priority: i16,
     ) -> impl Future<Output = JobResult<Job>> + Send {
         self.with_conn(move |conn| {
             let now = epoch_now();
@@ -137,6 +138,10 @@ impl JobQueue for SqliteJobQueue {
                 created_at: now,
                 updated_at: now,
                 error: None,
+                // Self-hosted single-worker SQLite path doesn't honour
+                // priority — captured on the JSON blob for future
+                // observability but never used by `claim_next`.
+                priority,
             };
             let blob = serialise(&job)?;
             conn.execute(
@@ -304,7 +309,7 @@ mod tests {
         {
             let q = SqliteJobQueue::open(&path).unwrap();
             let job = q
-                .enqueue("c1".into(), JobTrigger::Manual)
+                .enqueue("c1".into(), JobTrigger::Manual, 0)
                 .await
                 .unwrap();
             id = job.id;
@@ -320,7 +325,7 @@ mod tests {
     async fn claim_next_transitions_status_atomically() {
         let (_dir, q) = open();
         let job = q
-            .enqueue("c1".into(), JobTrigger::Manual)
+            .enqueue("c1".into(), JobTrigger::Manual, 0)
             .await
             .unwrap();
         let claimed = q.claim_next().await.unwrap().unwrap();
@@ -333,7 +338,7 @@ mod tests {
     async fn progress_and_finish() {
         let (_dir, q) = open();
         let job = q
-            .enqueue("c1".into(), JobTrigger::Manual)
+            .enqueue("c1".into(), JobTrigger::Manual, 0)
             .await
             .unwrap();
         q.update_progress(

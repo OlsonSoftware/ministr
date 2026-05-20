@@ -84,3 +84,9 @@ getrandom = "0.3"
 # standard 2026 Rust JWT crate (no transitive openssl, pure-Rust
 # ring/rustls under the hood).
 jsonwebtoken = "9"
+
+[dev-dependencies]
+# F2.2 — rate-limit tests drive the axum middleware via
+# `Router::oneshot` (tower's ServiceExt). Test-only dep; not pulled
+# into the production binary.
+tower = { version = "0.5", features = ["util"] }

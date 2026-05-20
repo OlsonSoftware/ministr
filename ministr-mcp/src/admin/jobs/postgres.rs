@@ -104,7 +104,17 @@ async fn ensure_schema(pool: &Pool) -> JobResult<()> {
                  data        TEXT NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_indexer_jobs_status_created
-                 ON indexer_jobs (status, created_at);",
+                 ON indexer_jobs (status, created_at);
+             -- F2.2: priority lane. `ALTER TABLE ADD COLUMN IF NOT EXISTS`
+             -- is idempotent in Postgres 9.6+; safe to run on every pod
+             -- boot. The matching index covers the `(status, priority,
+             -- created_at)` drain order used by claim_next so the
+             -- planner picks an index scan over a seq scan on busy
+             -- queues.
+             ALTER TABLE indexer_jobs
+                 ADD COLUMN IF NOT EXISTS priority SMALLINT NOT NULL DEFAULT 0;
+             CREATE INDEX IF NOT EXISTS idx_indexer_jobs_status_priority_created
+                 ON indexer_jobs (status, priority DESC, created_at);",
         )
         .await
         .map_err(|e| JobQueueError::Backend(format!("schema: {e}")))?;
@@ -133,6 +143,7 @@ impl JobQueue for PostgresJobQueue {
         &self,
         corpus_id: String,
         trigger: JobTrigger,
+        priority: i16,
     ) -> impl Future<Output = JobResult<Job>> + Send {
         let pool = self.pool.clone();
         async move {
@@ -146,6 +157,7 @@ impl JobQueue for PostgresJobQueue {
                 created_at: now,
                 updated_at: now,
                 error: None,
+                priority,
             };
             let blob = serialise(&job)?;
             let created = job.created_at.cast_signed();
@@ -155,8 +167,9 @@ impl JobQueue for PostgresJobQueue {
                 .await
                 .map_err(|e| JobQueueError::Backend(format!("enqueue conn: {e}")))?;
             conn.execute(
-                "INSERT INTO indexer_jobs (id, corpus_id, status, created_at, updated_at, data)
-                 VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO indexer_jobs
+                     (id, corpus_id, status, created_at, updated_at, data, priority)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 &[
                     &job.id,
                     &job.corpus_id,
@@ -164,6 +177,7 @@ impl JobQueue for PostgresJobQueue {
                     &created,
                     &updated,
                     &blob,
+                    &job.priority,
                 ],
             )
             .await
@@ -215,11 +229,17 @@ impl JobQueue for PostgresJobQueue {
             // get a different row. SKIP LOCKED returns rows other
             // workers haven't acquired in *their* in-flight tx; the
             // FOR UPDATE keeps our row locked until commit.
+            //
+            // F2.2: ORDER BY priority DESC, created_at ASC — Team jumps
+            // Pro; Enterprise jumps both. Ties on priority fall back to
+            // FIFO submission order. The composite index
+            // `idx_indexer_jobs_status_priority_created` covers this
+            // ordering for an index-only scan.
             let row = tx
                 .query_opt(
                     "SELECT id, data FROM indexer_jobs
                        WHERE status = 'pending'
-                       ORDER BY created_at
+                       ORDER BY priority DESC, created_at ASC
                        FOR UPDATE SKIP LOCKED
                        LIMIT 1",
                     &[],
@@ -374,7 +394,7 @@ mod tests {
     async fn enqueue_and_round_trip() {
         let Some(q) = open().await else { return };
         let job = q
-            .enqueue(format!("c-{}", epoch_now()), JobTrigger::Manual)
+            .enqueue(format!("c-{}", epoch_now()), JobTrigger::Manual, 0)
             .await
             .unwrap();
         let got = q.get(&job.id).await.unwrap().unwrap();
@@ -387,7 +407,7 @@ mod tests {
     async fn claim_next_transitions_status_atomically() {
         let Some(q) = open().await else { return };
         let job = q
-            .enqueue(format!("c-{}", epoch_now()), JobTrigger::Manual)
+            .enqueue(format!("c-{}", epoch_now()), JobTrigger::Manual, 0)
             .await
             .unwrap();
         let claimed = q.claim_next().await.unwrap().unwrap();
@@ -400,7 +420,7 @@ mod tests {
     async fn progress_and_finish() {
         let Some(q) = open().await else { return };
         let job = q
-            .enqueue(format!("c-{}", epoch_now()), JobTrigger::Manual)
+            .enqueue(format!("c-{}", epoch_now()), JobTrigger::Manual, 0)
             .await
             .unwrap();
         q.update_progress(
@@ -427,7 +447,7 @@ mod tests {
     async fn concurrent_claim_skip_locked() {
         let Some(q) = open().await else { return };
         let q = Arc::new(q);
-        q.enqueue(format!("race-{}", epoch_now()), JobTrigger::Manual)
+        q.enqueue(format!("race-{}", epoch_now()), JobTrigger::Manual, 0)
             .await
             .unwrap();
 

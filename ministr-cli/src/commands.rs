@@ -347,8 +347,45 @@ pub(crate) async fn cmd_serve_http(
             store.clone(),
             "ministr:read",
         );
+        // F2.2 — rate-limit write/clone routes on cloud only. Two
+        // layers stack: per-IP first (rejects pre-auth abuse before
+        // touching the bucket store with a tenant key), then
+        // per-tenant (rejects leaked-key bursts from authenticated
+        // callers). Self-hosted serve mounts neither — the
+        // open-core stack stays untouched.
+        let daemon_write_rl = if cloud_env.pg_url.is_some() {
+            let ip_bucket = std::sync::Arc::new(ministr_cloud::InMemoryBucket::new(
+                /* capacity */ 20.0,
+                /* refill_per_sec */ 0.5,
+            ));
+            let tenant_bucket = std::sync::Arc::new(ministr_cloud::InMemoryBucket::new(
+                /* capacity */ 60.0,
+                /* refill_per_sec */ 1.0,
+            ));
+            let ip_cfg = std::sync::Arc::new(ministr_cloud::RateLimitConfig::new(
+                ip_bucket,
+                ministr_cloud::ip_key::<axum::body::Body>,
+                "per-ip",
+            ));
+            let tenant_cfg = std::sync::Arc::new(ministr_cloud::RateLimitConfig::new(
+                tenant_bucket,
+                ministr_cloud::tenant_key::<axum::body::Body>,
+                "per-tenant",
+            ));
+            daemon_write_router
+                .layer(axum::middleware::from_fn_with_state(
+                    tenant_cfg,
+                    ministr_cloud::rate_limit_middleware,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    ip_cfg,
+                    ministr_cloud::rate_limit_middleware,
+                ))
+        } else {
+            daemon_write_router
+        };
         let daemon_write_p = ministr_mcp::auth::scope_protected_router(
-            daemon_write_router,
+            daemon_write_rl,
             store.clone(),
             "ministr:write",
         );

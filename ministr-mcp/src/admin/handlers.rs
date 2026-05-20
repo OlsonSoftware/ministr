@@ -8,7 +8,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,7 @@ use tracing::{debug, warn};
 
 use super::AdminState;
 use super::jobs::{Job, JobTrigger};
+use crate::auth::{queue_priority, Tenant};
 
 #[derive(Debug, Serialize)]
 pub(super) struct HealthResponse {
@@ -48,19 +49,33 @@ pub(super) struct ReindexResponse {
 }
 
 /// Enqueue a new reindex job.
+///
+/// `tenant` is `Option` so the same handler powers BOTH the cloud
+/// (where token-validation middleware always populates it) and
+/// self-hosted serve without auth (where the extension is absent and
+/// every job lands in the default priority bucket).
 pub(super) async fn reindex(
     State(state): State<AdminState>,
+    tenant: Option<Extension<Tenant>>,
     Json(req): Json<ReindexRequest>,
 ) -> Result<(StatusCode, Json<ReindexResponse>), (StatusCode, String)> {
+    let priority = tenant
+        .as_ref()
+        .map_or(0, |t| queue_priority(t.plan));
     let job = state
         .queue
-        .enqueue(req.corpus_id, JobTrigger::Manual)
+        .enqueue(req.corpus_id, JobTrigger::Manual, priority)
         .await
         .map_err(|e| {
             warn!(error = %e, "failed to enqueue reindex job");
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         })?;
-    debug!(job_id = %job.id, corpus_id = %job.corpus_id, "enqueued reindex job");
+    debug!(
+        job_id = %job.id,
+        corpus_id = %job.corpus_id,
+        priority,
+        "enqueued reindex job"
+    );
     Ok((StatusCode::ACCEPTED, Json(ReindexResponse { job_id: job.id })))
 }
 
