@@ -284,11 +284,12 @@ Lifecycle of a new registration:
 ### Smoke acceptance (operator-run after `pulumi up`)
 
 ```sh
-just azure-demo         # build + push image + pulumi up + first demo-remote
-just phase3-smoke       # end-to-end serve/worker-split smoke
+just azure-demo         # idempotent: provision-if-needed + push + roll + azure-smoke
 ```
 
-`just phase3-smoke` runs three steps in sequence:
+`just azure-demo`'s tail step `just azure-smoke` (the canonical, ever-evolving smoke
+extended by each phase — was `phase3-smoke` at PHASE3, then `phase4-smoke`, now
+just `azure-smoke`) runs three steps in sequence:
 
 1. **`just demo-remote`** — clone-url → `POST /api/v1/corpora` returns
    `(corpus_id, status: pending)` instantly (chunk 4: serve pod no
