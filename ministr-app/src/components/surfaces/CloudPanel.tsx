@@ -48,6 +48,7 @@ function GitHubMark({ className }: { className?: string }) {
 
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm-dialog";
+import { OnboardingWizard } from "../onboarding/OnboardingWizard";
 import {
   cloudClient,
   type CloudCorpusInfo,
@@ -108,6 +109,31 @@ export function CloudPanel() {
       setUsage(null);
     }
   }, [status?.authenticated, refreshUsage]);
+
+  // F2.7 — top-level corpora count probe, used by the OnboardingWizard
+  // to mark step 4 complete. The `CorporaSection` further down owns
+  // its own corpora list; this probe is read-only and intentionally
+  // sparse (one fetch per auth flip) so the wizard's signal stays
+  // accurate without duplicating CorporaSection's reactive loop.
+  const [corporaCount, setCorporaCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!status?.authenticated) {
+      setCorporaCount(null);
+      return;
+    }
+    let cancelled = false;
+    void cloudClient
+      .listCorpora()
+      .then((list) => {
+        if (!cancelled) setCorporaCount(list.length);
+      })
+      .catch(() => {
+        if (!cancelled) setCorporaCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [status?.authenticated]);
 
   const onSaveEndpoint = async () => {
     setBusy("save-endpoint");
@@ -240,6 +266,45 @@ export function CloudPanel() {
           users.
         </p>
       </header>
+
+      <OnboardingWizard
+        signals={{
+          authenticated: status?.authenticated ?? false,
+          plan: usage?.plan ?? null,
+          hasCorpus: (corporaCount ?? 0) > 0,
+          // F2.7 v0 — keyed off whether the user has ever submitted
+          // an installation ID in the clone dialog. Persisted to
+          // localStorage by the clone flow when an ID is supplied;
+          // read here so dismissing the wizard sticks.
+          hasGithubAppInstallation:
+            typeof window !== "undefined" &&
+            window.localStorage.getItem("ministr.github_app.installation_seen") === "1",
+        }}
+        handlers={{
+          onSignInGitHub: onSignInGitHub,
+          onUpgradePro: () => onUpgrade("pro"),
+          onInstallGitHubApp: async () => {
+            // The "Install GitHub App" deep-link lives on github.com;
+            // open it in the system browser. Stripe Customer Portal
+            // and onboarding both use the same `open_url` path on the
+            // Tauri side, so a fresh window opens without leaving
+            // the app.
+            window.open(
+              "https://github.com/apps/ministr/installations/new",
+              "_blank",
+              "noopener,noreferrer",
+            );
+            window.localStorage.setItem("ministr.github_app.installation_seen", "1");
+          },
+          // F2.7 — scroll to the corpora section and signal it to
+          // open the clone dialog. CorporaSection owns its own
+          // cloneOpen state; we communicate via a custom event so we
+          // don't have to lift that state out.
+          onCloneFirstRepo: () => {
+            window.dispatchEvent(new CustomEvent("ministr.cloud.open-clone"));
+          },
+        }}
+      />
 
       <section className="flex flex-col gap-3">
         <label className="flex flex-col gap-1.5">
@@ -465,6 +530,18 @@ function CorporaSection({ authenticated }: CorporaSectionProps) {
   const [deleteCandidate, setDeleteCandidate] = useState<string | null>(null);
   const [progressFor, setProgressFor] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "list" | "delete" | "reindex">(null);
+
+  // F2.7 — onboarding wizard's "Clone first repo" step dispatches a
+  // custom event so this section can open the clone dialog without
+  // CloudPanel lifting cloneOpen out of here. SRP: the event surface
+  // is internal to CloudPanel.tsx; no global event-bus pattern needed.
+  useEffect(() => {
+    const handler = () => {
+      if (authenticated) setCloneOpen(true);
+    };
+    window.addEventListener("ministr.cloud.open-clone", handler);
+    return () => window.removeEventListener("ministr.cloud.open-clone", handler);
+  }, [authenticated]);
 
   const refresh = useCallback(async () => {
     if (!authenticated) {
