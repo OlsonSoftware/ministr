@@ -243,6 +243,103 @@ impl StripeClient {
         );
         Ok(())
     }
+
+    /// Create a Stripe Checkout session for the upgrade flow (F2.4).
+    ///
+    /// `customer_id` ties the resulting subscription to the existing
+    /// `users.stripe_customer_id`. `price_id` is the Pro/Team price
+    /// configured in the Stripe dashboard (per §3 pricing matrix —
+    /// `MINISTR_STRIPE_PRICE_PRO` / `MINISTR_STRIPE_PRICE_TEAM`).
+    /// `success_url` and `cancel_url` are absolute URLs the browser
+    /// returns to after the Stripe-hosted flow.
+    ///
+    /// Returns the session URL the browser should be redirected to.
+    ///
+    /// # Errors
+    ///
+    /// Same surface as [`Self::create_customer`].
+    pub async fn create_checkout_session(
+        &self,
+        customer_id: &str,
+        price_id: &str,
+        success_url: &str,
+        cancel_url: &str,
+    ) -> Result<String, StripeApiError> {
+        let form = checkout_session_form_body(customer_id, price_id, success_url, cancel_url);
+        let url = format!("{}/v1/checkout/sessions", self.base_url);
+
+        let resp = self
+            .http
+            .post(&url)
+            .basic_auth(&self.api_key, Some(""))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header("Stripe-Version", STRIPE_API_VERSION)
+            .body(form)
+            .send()
+            .await
+            .map_err(|e| StripeApiError::Transport(format!("checkout_session: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StripeApiError::Protocol(format!(
+                "checkout_session status {status}: {body}"
+            )));
+        }
+        let parsed: SessionUrlResponse = resp.json().await.map_err(|e| {
+            StripeApiError::Protocol(format!("checkout_session parse: {e}"))
+        })?;
+        debug!(customer_id, "stripe checkout session created");
+        Ok(parsed.url)
+    }
+
+    /// Create a Stripe Customer Portal session (F2.4) so the user can
+    /// manage invoices, swap cards, or cancel. `return_url` is where
+    /// the browser bounces back to after the portal flow closes (the
+    /// Tauri panel deep-link or the docs-next `/billing/manage` page).
+    ///
+    /// # Errors
+    ///
+    /// Same surface as [`Self::create_customer`].
+    pub async fn create_billing_portal_session(
+        &self,
+        customer_id: &str,
+        return_url: &str,
+    ) -> Result<String, StripeApiError> {
+        let form = portal_session_form_body(customer_id, return_url);
+        let url = format!("{}/v1/billing_portal/sessions", self.base_url);
+
+        let resp = self
+            .http
+            .post(&url)
+            .basic_auth(&self.api_key, Some(""))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header("Stripe-Version", STRIPE_API_VERSION)
+            .body(form)
+            .send()
+            .await
+            .map_err(|e| StripeApiError::Transport(format!("portal_session: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StripeApiError::Protocol(format!(
+                "portal_session status {status}: {body}"
+            )));
+        }
+        let parsed: SessionUrlResponse = resp.json().await.map_err(|e| {
+            StripeApiError::Protocol(format!("portal_session parse: {e}"))
+        })?;
+        debug!(customer_id, "stripe billing portal session created");
+        Ok(parsed.url)
+    }
+}
+
+/// Subset of `Checkout.Session` / `BillingPortal.Session` — both
+/// surface a `url` field the browser is redirected to.
+#[derive(Debug, Deserialize)]
+struct SessionUrlResponse {
+    url: String,
 }
 
 /// Subset of Stripe's `Customer` object the client reads. Stripe
@@ -261,6 +358,42 @@ fn customer_form_body(email: &str, github_id: i64) -> String {
     body.push_str("&metadata[github_id]=");
     body.push_str(&form_encode(&github_id.to_string()));
     body.push_str("&metadata[source]=ministr-cloud-signin");
+    body
+}
+
+/// Build the form-encoded body for `POST /v1/checkout/sessions`.
+/// Stripe's subscription Checkout mode requires `mode=subscription`,
+/// at least one `line_items[0][price]` line, and the customer / return
+/// URLs. `payment_method_types[]=card` keeps the surface narrow to
+/// cards for now; future ACH / Link is a follow-on knob.
+fn checkout_session_form_body(
+    customer_id: &str,
+    price_id: &str,
+    success_url: &str,
+    cancel_url: &str,
+) -> String {
+    let mut body = String::new();
+    body.push_str("mode=subscription");
+    body.push_str("&customer=");
+    body.push_str(&form_encode(customer_id));
+    body.push_str("&line_items[0][price]=");
+    body.push_str(&form_encode(price_id));
+    body.push_str("&line_items[0][quantity]=1");
+    body.push_str("&success_url=");
+    body.push_str(&form_encode(success_url));
+    body.push_str("&cancel_url=");
+    body.push_str(&form_encode(cancel_url));
+    body.push_str("&payment_method_types[]=card");
+    body
+}
+
+/// Build the form-encoded body for `POST /v1/billing_portal/sessions`.
+fn portal_session_form_body(customer_id: &str, return_url: &str) -> String {
+    let mut body = String::new();
+    body.push_str("customer=");
+    body.push_str(&form_encode(customer_id));
+    body.push_str("&return_url=");
+    body.push_str(&form_encode(return_url));
     body
 }
 
@@ -350,6 +483,44 @@ mod tests {
         assert!(body.contains("email=user%2Bplus%40example.com"), "got {body}");
         assert!(body.contains("metadata[github_id]=42"), "got {body}");
         assert!(body.contains("metadata[source]=ministr-cloud-signin"));
+    }
+
+    #[test]
+    fn checkout_session_form_body_carries_required_fields() {
+        let body = checkout_session_form_body(
+            "cus_abc",
+            "price_pro_monthly",
+            "https://ministr.ai/billing/success",
+            "https://ministr.ai/billing/cancel",
+        );
+        assert!(body.contains("mode=subscription"), "{body}");
+        assert!(body.contains("customer=cus_abc"), "{body}");
+        assert!(body.contains("line_items[0][price]=price_pro_monthly"), "{body}");
+        assert!(body.contains("line_items[0][quantity]=1"), "{body}");
+        assert!(
+            body.contains("success_url=https%3A%2F%2Fministr.ai%2Fbilling%2Fsuccess"),
+            "{body}"
+        );
+        assert!(
+            body.contains("cancel_url=https%3A%2F%2Fministr.ai%2Fbilling%2Fcancel"),
+            "{body}"
+        );
+        assert!(body.contains("payment_method_types[]=card"), "{body}");
+    }
+
+    #[test]
+    fn portal_session_form_body_carries_customer_and_return_url() {
+        let body = portal_session_form_body(
+            "cus_abc",
+            "https://mcp.ministr.ai/billing/portal-return",
+        );
+        assert!(body.contains("customer=cus_abc"), "{body}");
+        assert!(
+            body.contains(
+                "return_url=https%3A%2F%2Fmcp.ministr.ai%2Fbilling%2Fportal-return"
+            ),
+            "{body}"
+        );
     }
 
     #[test]
@@ -478,6 +649,81 @@ mod tests {
             .await
             .expect_err("4xx should surface as Protocol");
         assert!(matches!(err, StripeApiError::Protocol(ref m) if m.contains("401")));
+    }
+
+    #[tokio::test]
+    async fn create_checkout_session_returns_url_from_stripe() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt as _;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let req = drain_http_request(&mut stream).await;
+            let body = "{\"url\":\"https://checkout.stripe.com/c/pay/cs_test_123\"}";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(resp.as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+            req
+        });
+
+        let base = format!("http://{addr}");
+        let client = StripeClient::with_base_url("sk_test_dummy", base).unwrap();
+        let url = client
+            .create_checkout_session(
+                "cus_abc",
+                "price_pro_monthly",
+                "https://ministr.ai/billing/success",
+                "https://ministr.ai/billing/cancel",
+            )
+            .await
+            .expect("create_checkout_session succeeds");
+        assert_eq!(url, "https://checkout.stripe.com/c/pay/cs_test_123");
+
+        let req = server.await.unwrap();
+        assert!(req.starts_with("POST /v1/checkout/sessions"), "request: {req}");
+        assert!(req.contains("mode=subscription"), "{req}");
+        assert!(req.contains("customer=cus_abc"), "{req}");
+    }
+
+    #[tokio::test]
+    async fn create_billing_portal_session_returns_url() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt as _;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let req = drain_http_request(&mut stream).await;
+            let body = "{\"url\":\"https://billing.stripe.com/p/session/test_xyz\"}";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(resp.as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+            req
+        });
+
+        let base = format!("http://{addr}");
+        let client = StripeClient::with_base_url("sk_test_dummy", base).unwrap();
+        let url = client
+            .create_billing_portal_session("cus_abc", "https://mcp.ministr.ai/billing/portal-return")
+            .await
+            .expect("create_billing_portal_session succeeds");
+        assert_eq!(url, "https://billing.stripe.com/p/session/test_xyz");
+
+        let req = server.await.unwrap();
+        assert!(
+            req.starts_with("POST /v1/billing_portal/sessions"),
+            "request: {req}"
+        );
+        assert!(req.contains("customer=cus_abc"), "{req}");
     }
 
     #[tokio::test]

@@ -29,6 +29,13 @@ export interface CloudHealth {
  */
 export interface CloudUsage {
   tenant_id: string;
+  /**
+   * Resolved billing tier — `"pro" | "team" | "enterprise"`. Mirrors
+   * the Rust `ministr_mcp::auth::Plan` enum's `serde(rename_all =
+   * "lowercase")` shape. F2.4 — the CloudPanel renders this as the
+   * plan badge.
+   */
+  plan: "pro" | "team" | "enterprise";
   rollups: Array<{ day: string; kind: string; total: number }>;
   today_partial: Array<{ kind: string; total: number }>;
 }
@@ -97,6 +104,19 @@ export const cloudClient = {
   healthCheck: () => invoke<CloudHealth>("cloud_health_check"),
   /** F1.4 sub-bullet 5 — fetch the calling tenant's metered usage. */
   billingUsage: () => invoke<CloudUsage>("cloud_billing_usage"),
+  /**
+   * F2.4 — mint a Stripe Checkout session for the given plan and open
+   * it in the system browser. Resolves once the URL has been opened;
+   * the actual payment happens in Stripe-hosted UI and the cloud
+   * webhook flips `users.plan_id` on success.
+   */
+  billingCheckout: (plan: "pro" | "team") =>
+    invoke<void>("cloud_billing_checkout", { plan }),
+  /**
+   * F2.4 — mint a Stripe Customer Portal session and open it in the
+   * system browser. Invoices, card management, cancellation.
+   */
+  billingPortal: () => invoke<void>("cloud_billing_portal"),
   triggerReindex: (corpusId: string) =>
     invoke<string>("cloud_trigger_reindex", { corpusId }),
 

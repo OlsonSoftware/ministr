@@ -47,9 +47,10 @@ pub mod ratelimit;
 pub mod users;
 
 pub use billing::{
-    billing_routes, record_usage, rollup_day, stripe_webhook_routes, BillingState, PartialRow,
-    PostgresUsageSink, RollupRow, StripeApiError, StripeClient, StripeWebhookError,
-    StripeWebhookState, UsageEventKind, UsageResponse,
+    billing_routes, checkout_routes, record_usage, rollup_day, stripe_webhook_routes,
+    BillingState, CheckoutState, EnvPriceCatalog, PartialRow, PostgresUsageSink, PriceCatalog,
+    RollupRow, StripeApiError, StripeClient, StripeWebhookError, StripeWebhookState,
+    UsageEventKind, UsageResponse,
 };
 pub use auth::{
     github_signin_routes, GitHubSigninError, GitHubSigninState, DEFAULT_SIGNIN_SCOPE,

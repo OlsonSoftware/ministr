@@ -12,6 +12,7 @@
 //! | F1.5 | `stripe` — Stripe Meters + webhook receiver |
 //! | F2.4 | `checkout` — Stripe Checkout session creation |
 
+pub mod checkout;
 pub mod endpoint;
 pub mod rollup;
 pub mod sink;
@@ -19,6 +20,7 @@ pub mod stripe;
 pub mod stripe_api;
 pub mod usage;
 
+pub use checkout::{checkout_routes, CheckoutState, EnvPriceCatalog, PriceCatalog};
 pub use endpoint::{billing_routes, BillingState, PartialRow, RollupRow, UsageResponse};
 pub use rollup::rollup_day;
 pub use sink::PostgresUsageSink;
