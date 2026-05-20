@@ -121,11 +121,18 @@ pub async fn run_demo(
     step("step 5", &format!("streaming /api/v1/corpora/{target_corpus}/progress"));
     stream_progress(&endpoint, &token, &target_corpus).await?;
 
-    // 6. quick survey to prove the corpus is queryable
-    step("step 6", "ministr_survey 'fn' to prove the corpus is queryable");
-    match survey(&endpoint, &token, &target_corpus, "fn").await {
-        Ok(hits) => info(&format!("survey returned {hits} hits")),
-        Err(e) => warn(&format!("survey failed: {e}")),
+    // 6. fetch the corpus detail to prove it's persisted + indexed
+    step("step 6", &format!("verifying corpus {target_corpus} via /api/v1/corpora"));
+    match list_corpora(&endpoint, &token).await {
+        Ok(list) => match list.iter().find(|c| c.id == target_corpus) {
+            Some(c) => info(&format!(
+                "{} now reports {} files indexed",
+                c.id,
+                c.files_indexed.unwrap_or(0)
+            )),
+            None => warn("corpus disappeared from the list — check serve logs"),
+        },
+        Err(e) => warn(&format!("list_corpora failed: {e}")),
     }
 
     println!();
@@ -414,34 +421,6 @@ fn fmt_elapsed(d: Duration) -> String {
     } else {
         format!("{s}s")
     }
-}
-
-async fn survey(endpoint: &str, token: &str, corpus_id: &str, query: &str) -> Result<usize> {
-    let client = http_client(15)?;
-    let url = format!(
-        "{endpoint}/api/v1/corpora/{corpus_id}/survey?query={}",
-        urlencoding(query)
-    );
-    let resp = client
-        .get(&url)
-        .bearer_auth(token)
-        .send()
-        .await
-        .into_diagnostic()
-        .wrap_err("GET /survey")?;
-    if !resp.status().is_success() {
-        return Err(miette::miette!(
-            "/survey returned HTTP {}",
-            resp.status()
-        ));
-    }
-    let v: serde_json::Value = resp.json().await.into_diagnostic()?;
-    let hits = v
-        .get("results")
-        .and_then(|r| r.get("results"))
-        .and_then(|r| r.as_array())
-        .map_or(0, std::vec::Vec::len);
-    Ok(hits)
 }
 
 // ── OAuth loopback PKCE flow ──────────────────────────────────────────
