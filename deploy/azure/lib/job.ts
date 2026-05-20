@@ -1,25 +1,38 @@
-// Indexer ACA Job — PHASE4 chunk 1.
+// Indexer ACA Job — current trigger: KEDA postgresql scaler (PHASE4
+// chunk 1). Slated for replacement: PHASE5 chunk 1 swaps the primary
+// trigger to a direct ARM `POST /jobs/{name}/start` REST call from
+// the serve pod immediately after enqueue, and degrades this KEDA
+// scaler to a slow-poll (5 min) safety net for missed triggers.
 //
-// Event-driven trigger (KEDA postgresql scaler): the job's KEDA
-// postgresql scaler polls the cloud Postgres `indexer_jobs` queue
-// every 5s; whenever the SELECT count of `status='pending'` rows
-// exceeds `targetQueryValue`, ACA starts one replica. The replica
-// runs the `indexer-worker` entrypoint — claims one row, runs
-// ingestion, uploads the bundle, exits. With the queue drained the
-// scaler reports 0 and replicas stay at minExecutions=0, so an idle
-// cluster costs ~$0/mo on the job side (was ~$15/mo of empty cron
-// ticks under PHASE3 chunk 6).
+// What's here right now:
+//   - `triggerType: "Event"` with a KEDA postgresql scaler against
+//     `indexer_jobs` (SELECT count(*) WHERE status='pending', polled
+//     every 5s). Whenever count ≥ targetQueryValue (1), ACA starts
+//     one replica running the `indexer-worker` entrypoint — it
+//     claims one row, runs ingestion, uploads, exits. Idle queue ⇒
+//     scaler reports 0 ⇒ minExecutions=0 ⇒ $0/mo on the job side
+//     (vs ~$15/mo of empty cron ticks under PHASE3 chunk 6).
 //
-// Auth: the scaler reads the same `pg-url` secret the worker uses,
-// injected as the KEDA `connection` triggerParameter via the standard
-// ScaleRuleAuth mapping. No separate Postgres principal needed.
+//   - Auth: the scaler reads the same `pg-url` secret the worker
+//     uses, injected as the KEDA `connection` triggerParameter via
+//     the standard ScaleRuleAuth mapping. No separate Postgres
+//     principal needed.
 //
-// Sized for headroom under the monolithic ingest pipeline (PHASE4
-// chunk 4 will switch to streaming + downsize to 4 GiB / 2 vCPU in
-// chunk 5). Blob auth via SystemAssigned managed identity (mirrors
-// the query app); `grantBlobDataContributor` in index.ts scopes the
-// role. PHASE3 chunk 6 option B (serve-pod triggers via the Azure
-// REST API) is now superseded by KEDA and removed from the backlog.
+//   - Blob auth via SystemAssigned managed identity (mirrors the
+//     query app); `grantBlobDataContributor` in index.ts scopes the
+//     role.
+//
+// Why this is being retired in PHASE5 chunk 1: ACA's `triggerType:
+// "Event"` is marketing — KEDA is still polling Postgres every 5s.
+// Real event-driven means the producer (serve pod) tells ACA to
+// start a replica directly. The original PHASE3 chunk 6 "option B"
+// designed exactly that and was deferred for one RBAC role
+// assignment on the serve pod MI — a bad trade we are now undoing.
+// See `deploy/azure/PHASE5.md` and the `feedback-no-rbac-deferral`
+// memory for the principle.
+//
+// Sized for the streaming pipeline (PHASE4 chunk 4 + 5):
+// 2 vCPU / 4 GiB by default. Override via Pulumi.prod.yaml.
 
 import * as pulumi from "@pulumi/pulumi";
 import * as app from "@pulumi/azure-native/app";
@@ -105,12 +118,15 @@ export function createIndexerJob(inputs: JobInputs): JobArtifact {
     // contributor on this principal.
     identity: { type: "SystemAssigned" },
     configuration: {
-      // PHASE4 chunk 1 — KEDA event-driven trigger. The postgresql
-      // scaler polls `indexer_jobs` every 5s; replicas spin up only
-      // when `status='pending'` rows exist. Idle queue ⇒ 0 replicas
-      // ⇒ $0/h. `maxExecutions: 1` keeps it single-replica today
-      // (single-tenant cloud); raise once the worker concurrency
-      // backlog item is picked up.
+      // PHASE4 chunk 1 — KEDA postgres-poll trigger.
+      //
+      // This is being retired in PHASE5 chunk 1: the serve pod will
+      // call ARM `POST /jobs/{name}/start` directly after enqueue,
+      // and this KEDA scaler stays as a slow-poll (~5 min) safety
+      // net for missed triggers. `pollingInterval` below will bump
+      // from 5 → 300 when chunk 1 lands. `maxExecutions: 1` keeps
+      // it single-replica today (single-tenant cloud); raise once
+      // the worker concurrency backlog item is picked up.
       triggerType: "Event",
       replicaTimeout: 3600, // 1h hard cap (matches ACA Jobs default ceiling).
       replicaRetryLimit: 0,

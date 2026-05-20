@@ -1,5 +1,24 @@
 # Cloud Phase 4 — event-driven worker + streaming ingestion
 
+> **Retroactive correction (2026-05-20, after PHASE4 chunks 1-6 shipped):**
+> The "event-driven worker" claim in this phase's title is overstated.
+> Chunk 1 swapped PHASE3's cron-poll for a **KEDA `postgresql` scaler**
+> that still polls Postgres every 5s for a pending-count, just dressed
+> up as event-driven via the ACA `triggerType: "Event"` field. That's
+> faster polling, not true event-driven. The actually-event-driven
+> design (option B from PHASE3 chunk 6 — the serve pod calls ARM
+> `POST /jobs/{name}/start` straight after enqueue) was deferred in
+> PHASE3 because it needed one RBAC role assignment, and PHASE4 chunk 1
+> doubled down on that deferral instead of fixing it. **PHASE5 chunk 1
+> retires the KEDA poll in favour of option B**, with KEDA staying as
+> a slow-poll (5-minute) safety net rather than the primary trigger.
+> The streaming ingestion half of PHASE4 (chunks 3-4) is independent
+> and correct; only the trigger substrate is being retired.
+>
+> See `feedback-no-rbac-deferral` memory for the principle the docs
+> below originally violated: never defer an architectural win to dodge
+> a one-time IaC change.
+
 PHASE3 (May 2026) split the serve and worker pods, made the corpus
 registry durable in Postgres, and put a scheduled-cron worker behind
 an `indexer_jobs` queue. It shipped end-to-end in six chunks. The
@@ -34,12 +53,18 @@ What didn't get fixed in PHASE3 and is the reason PHASE4 exists:
 
 Two structural changes — one substrate, one pipeline — that make PHASE3's serve/worker split production-ready:
 
-1. **Event-driven worker** — the ACA indexer Job listens on the Postgres `indexer_jobs` queue via KEDA's `postgresql` scaler. Replicas spin up *only* when there's pending work. Latency improves from cron tick (0-60s) to KEDA poll (~5-30s); empty-tick cost drops to ≈$0/mo. Adds `claimed_at` reclaim so a crashed worker's row doesn't sit in `running` forever.
+1. **~~Event-driven worker~~ → Faster-polled worker** — the ACA indexer Job listens on the Postgres `indexer_jobs` queue via KEDA's `postgresql` scaler. Replicas spin up *only* when there's pending work. Latency improves from cron tick (0-60s) to KEDA poll (~5-30s); empty-tick cost drops to ≈$0/mo. Adds `claimed_at` reclaim so a crashed worker's row doesn't sit in `running` forever. **(Retroactive note: the KEDA scaler polls Postgres every 5s — this is faster polling, not event-driven. PHASE5 chunk 1 replaces the KEDA poll with an ARM `POST /jobs/{name}/start` call from the serve pod after enqueue, with KEDA degraded to a slow-poll safety net. The streaming half below is unaffected.)**
 2. **Streaming ingestion** — `ministr_core::ingestion::IngestionPipeline` switches from corpus-wide load-then-persist to per-file-batch embed-and-persist. Memory becomes O(batch_size) instead of O(corpus_size). Worker can shrink to 4 vCPU / 4 GiB; large corpora become feasible regardless of size.
 
-A speculative PHASE5 (managed embedding API) is outlined at the end as a strategic option, not a planned chunk.
+PHASE5 picks up the corrected trigger substrate + a couple of bugs surfaced by the live PHASE4 deploy (see [`PHASE5.md`](./PHASE5.md)).
 
 ## Architecture
+
+The KEDA postgresql scaler in the middle of the diagram below is the
+*as-shipped* PHASE4 substrate — it polls every 5s. PHASE5 chunk 1
+replaces it with a direct ARM-start REST call from the serve pod
+(zero polling on the fast path; KEDA stays as a 5-minute safety net).
+The boxes above and below the scaler are unchanged.
 
 ```
                 ┌────────────────────────────────┐
@@ -57,17 +82,17 @@ A speculative PHASE5 (managed embedding API) is outlined at the end as a strateg
   │  + SSE      │     │           created_at     │
   └──────┬──────┘     │                          │
          │            │                          │
-         │ download   │   KEDA postgresql scaler │
-         ▼            │   queries pending count  │
-  ┌──────────────┐    │   every ~5s              │
-  │  Azure Blob  │    │                          │
-  │ ministr-     │    │                          │
+         │ download   │   KEDA postgresql scaler │ ← PHASE5 ch.1
+         ▼            │   queries pending count  │   replaces this
+  ┌──────────────┐    │   every ~5s              │   with ARM
+  │  Azure Blob  │    │                          │   /jobs/start
+  │ ministr-     │    │                          │   from serve pod
   │ corpora      │    └──────┬───────────────────┘
   └──────┬───────┘           │
          │                   ▼
          │           ┌─────────────────────────┐
          │ upload    │  Indexer Job (Event)    │
-         └───────────┤  4 vCPU / 4 GiB         │
+         └───────────┤  2 vCPU / 4 GiB         │
                      │  scale 0→N on queue     │
                      │                         │
                      │  1. claim_next          │
@@ -96,6 +121,7 @@ Concretely changes from PHASE3:
 
 - [x] **Chunk 1 — KEDA event-driven trigger (Pulumi only)** — `lib/job.ts` swapped Schedule for `triggerType: "Event"` with `eventTriggerConfig.scale.rules` carrying a `postgresql` KEDA scaler against `indexer_jobs` (status='pending' count, polling 5s, min/max 0/1). Auth via the existing `pg-url` secret on `triggerParameter: "connection"`. `npx tsc --noEmit` clean. Correction vs the doc: actual KEDA metadata key is `targetQueryValue`, not `targetValue`. Pulumi.prod.yaml left untouched in this chunk — chunk 5 right-sizes after streaming lands.
   - Cloud smoke (operator-run after `pulumi up`): `just azure-jobs` should show zero executions when the queue is empty; a `POST /api/v1/corpora` should produce one execution within ~10s of insert. *Pending real-cloud verification.*
+  - **Retroactive postmortem (2026-05-20):** this chunk swapped one polling substrate (cron) for a slightly-faster polling substrate (KEDA at 5s) and called the result "event-driven" because ACA's API uses `triggerType: "Event"`. That terminology is misleading — KEDA is still polling Postgres on a fixed interval. The genuinely event-driven design (option B from PHASE3 chunk 6) was deferred in this chunk's planning because it needed one RBAC role on the serve pod's MI; the doc framed that role assignment as a real cost, which it isn't. PHASE5 chunk 1 retires this KEDA trigger in favour of an ARM `POST /jobs/{name}/start` call from the serve pod after enqueue, with KEDA degraded to a slow-poll (5-minute) safety net. The `lib/job.ts` config from this chunk stays largely intact — the only change is `pollingInterval: 5` → `300` and the addition of the serve pod's ARM-trigger path.
 
 - [x] **Chunk 2 — `claimed_at` + reclaim sweeper** — added a `claimed_at TIMESTAMPTZ` column + `(status, claimed_at)` index to `indexer_jobs` (via `ensure_schema`'s idempotent `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, not a separate `migrations/0004_...` — that dir owns `cloud_corpora`, indexer_jobs is set up in-process). `PostgresJobQueue::claim_next` now stamps `claimed_at = NOW()`. New inherent method `PostgresJobQueue::reclaim_orphans(timeout_secs: i64) -> JobResult<usize>` uses `SELECT … FOR UPDATE SKIP LOCKED` then a per-row deserialise→mutate→UPDATE so the status flip lands in *both* the column and the JSON `data` blob (the `get()` path reads from the blob). `cmd_indexer_worker` calls `reclaim_orphans(3600)` once at boot, soft-failing on error. Integration test `reclaim_orphans_recovers_stale_running_rows` covers the happy path + the fresh-row-untouched path; gated on `MINISTR_TEST_PG_URL` like the rest of the postgres suite.
   - `cargo build --workspace`, `cargo test -p ministr-mcp --lib` (237 pass, 10 ignored — the postgres integration suite), `cargo clippy -p ministr-mcp -p ministr-cli --all-targets -- -D warnings -W clippy::pedantic` all clean.
@@ -124,17 +150,17 @@ Concretely changes from PHASE3:
 - ~~**KEDA `postgresql` scaler auth in ACA.**~~ *Resolved in chunk 1.* Use the standard ACA `JobScaleRule.auth` array mapping the `pg-url` secret onto `triggerParameter: "connection"` — the same TriggerAuthentication pattern KEDA uses upstream. No `connectionFromEnv` needed.
 - ~~**`HnswIndex` incremental add semantics.**~~ *Resolved in chunk 3.* `HnswIndex::insert` is already incremental (the consumer calls it per batch today). `HnswIndex::persist` is atomic via stage-into-tmp + fsync + rename (per the existing `atomic HNSW persist with crash-recovery backup` change), safe to call mid-build. The `with_config` constructor is one path, not the hot path.
 - **Streaming + claim coherence.** If the worker streams progress and the next poll mid-ingest sees claimed_at is fresh (because the worker just updated it), reclaim shouldn't fire. That's the design, but worth a unit test where progress-update bumps claimed_at as a side effect.
-- **PHASE5 trigger.** When (if ever) to flip to managed embedding API. Open until we have a sustained workload that pushes streaming past its limits.
+- **Managed embedding API (was "PHASE5 trigger").** When (if ever) to flip to a managed embedding API like Azure OpenAI `text-embedding-3-small`. Open until we have a sustained workload that pushes streaming past its limits. Renumbered from PHASE5 to keep PHASE5 focused on the trigger-substrate correction (see [`PHASE5.md`](./PHASE5.md)); the managed-embedding option is now an unscheduled side track.
 
 ## Discovered / backlog (inherited from PHASE3 + new)
 
 - [ ] **Per-tenant blob prefix** — for multi-tenant pivot.
 - [ ] **Worker concurrency > 1** — already supported by `FOR UPDATE SKIP LOCKED`; just needs `parallelism: 2+` in chunk 1's `eventTriggerConfig`. Defer until a single-replica's serial drain becomes a bottleneck.
-- ~~**Azure REST trigger from serve pod (PHASE3 chunk 6 option B)**~~ — superseded by KEDA event trigger (chunk 1 shipped). Removable.
+- **Azure REST trigger from serve pod (PHASE3 chunk 6 option B)** — **PROMOTED to PHASE5 chunk 1.** Originally backlogged across PHASE3 + PHASE4 because it needed one RBAC role on the serve pod MI; the doc-trail framed that as a real reason to defer, which it wasn't. KEDA polling (chunk 1) is being retired in favour of this. See [`PHASE5.md`](./PHASE5.md) and the `feedback-no-rbac-deferral` memory.
 - [ ] **Disk eviction in the serve pod** — restored corpora pile up under `/data` until pod recycle. Will become a real issue once on-demand restore (PHASE3 chunk 5) sees regular traffic.
 - [ ] **Promote `BlobError::is_not_found` to public** — the chunk-5 `BlobCorpusRestorer` string-shape probes for it; expose the typed helper.
 - [ ] **github-app `installation_id` in `JobTrigger::Tenant`** — for clone-mode github-app cloning (PHASE3 chunk 4 returned 501 for this).
-- [ ] **PHASE 5: managed embedding API** — `text-embedding-3-small` (1536-dim) via Azure OpenAI. Removes ONNX/fastembed from the worker entirely. Cost: ~$0.02/1M tokens (~$0.01 per full reindex of anyhow). Tradeoff: vendor lock-in + 384→1536 dimension change requires re-embedding existing corpora. Decision deferred; only worth shipping if streaming (chunk 4) hits a wall.
+- [ ] **Managed embedding API (was "PHASE 5")** — `text-embedding-3-small` (1536-dim) via Azure OpenAI. Removes ONNX/fastembed from the worker entirely. Cost: ~$0.02/1M tokens (~$0.01 per full reindex of anyhow). Tradeoff: vendor lock-in + 384→1536 dimension change requires re-embedding existing corpora. Decision deferred; only worth shipping if streaming hits a wall. (No longer "PHASE 5" — PHASE5 is now the trigger-substrate correction; this stays an unscheduled side track.)
 - [x] **Cloud worker streams via `persist_every`** — `run_corpus_ingestion` gained a `streaming_persist_every: Option<usize>` parameter. `cmd_indexer_worker` opts in with `Some(4)`; `cmd_index` + `infra::spawn_*` + `spawn_config_watcher` pass `None` to preserve PHASE3 bundle-at-end. When opted in, the pipeline gets `with_corpus_dir(ctx.index_dir)` + `BatchIngestionConfig { persist_every: Some(4), batch_size: 4 }`, so chunk 4's persist hook fires every 4 indexed files. cargo build --workspace, clippy --pedantic, ministr-cli + ministr-core tests all clean. Now actually exercises the chunk-4 plumbing on cloud; chunk 5's right-size is no longer functionally blocked.
 - [ ] **ONNX activation peak** — likely the real OOM driver on anyhow (`~600 MB per file` in PHASE4 doc analysis). Options: smaller batch into the embedder; spawn_blocking the per-batch embed call so the runtime can free Tokio-task locals between batches; or constrain the producer's `buffer_unordered` concurrency from `default_concurrency()` to a lower fixed value under cloud-worker memory pressure.
 - [ ] **Producer-task lifetime** — each in-flight `parse_and_store_file` future holds an AST + claim graph for the file's duration. `buffer_unordered(concurrency)` keeps `concurrency` futures alive at once. On a 4 GiB worker this caps how many large files can be in flight; the current `default_concurrency()` (likely #cpus) may be too aggressive. Profile rss vs concurrency to find a safe upper bound.

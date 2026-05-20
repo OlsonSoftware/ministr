@@ -262,7 +262,16 @@ Lifecycle of a new registration:
     - `triggerType: "Schedule"` with
       `scheduleTriggerConfig: { cronExpression: "*/1 * * * *", replicaCompletionCount: 1, parallelism: 1 }`.
       Cron-poll option (A) per the recommendation; option (B) — serve
-      pod triggers via Azure REST — stays in backlog.
+      pod triggers via Azure REST — stays in backlog. **(Retroactive
+      correction, 2026-05-20: this A/B framing was wrong. Option B
+      was deferred because it needed one RBAC role on the serve pod's
+      managed identity — a one-line IaC change that we treated like a
+      cost item. Option B is the architecturally right answer; PHASE4
+      chunk 1 then doubled down by swapping the cron for a KEDA
+      postgres-count poll, which is still polling, just faster.
+      PHASE5 chunk 1 retires both A and the PHASE4 KEDA path in favour
+      of the original option B. The historical decision stands; the
+      framing of "smaller blast radius wins" is what got fixed.)**
     - `ENTRYPOINT_MODE` env switched from `index` → `indexer-worker`
       (the chunk-3 subcommand).
     - `MINISTR_CORPUS_PATHS` env dropped — the worker ignores it
@@ -353,5 +362,5 @@ Useful side recipes during smoke:
 - [ ] **Per-tenant blob prefix** — see Open questions.
 - [ ] **Worker concurrency > 1** — needs `FOR UPDATE SKIP LOCKED` + Pulumi parallelism bump.
 - [ ] **Crashed-worker reclaim sweeper** — `claimed_at` + janitor.
-- [ ] **Azure REST trigger from serve pod (chunk 6 option B)** — latency win, costs an extra Azure SDK dep + RBAC role.
+- [x] ~~**Azure REST trigger from serve pod (chunk 6 option B)** — latency win, costs an extra Azure SDK dep + RBAC role.~~ **PROMOTED to PHASE5 chunk 1.** Originally backlogged because of the extra SDK dep + a single RBAC role assignment — both trivial. The real cost was running the polling-substrate alternatives (cron in PHASE3, KEDA-postgres-count in PHASE4) in production for two phases instead. See PHASE5 chunk 1 and `feedback-no-rbac-deferral` memory for the corrected principle.
 - [ ] **Disk eviction in the serve pod** — restored corpora pile up under `/data` until pod recycle.
