@@ -4834,6 +4834,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
+ "tower",
  "tracing",
  "webpki-roots 1.0.7",
 ]

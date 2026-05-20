@@ -42,6 +42,7 @@ pub mod blob;
 pub mod db;
 pub mod github;
 pub mod idp;
+pub mod ratelimit;
 pub mod users;
 
 pub use billing::{
@@ -56,6 +57,10 @@ pub use blob::{BlobError, BlobResult, CorpusBlobStore};
 pub use db::{connect, run_migrations, DbError};
 pub use github::{GitHubAppClient, GitHubAppError};
 pub use idp::{GitHubIdp, IdentityProvider, IdpError, ResolvedIdentity, GITHUB_ISSUER};
+pub use ratelimit::{
+    ip_key, rate_limit_middleware, tenant_key, InMemoryBucket, RateLimitConfig,
+    RateLimitDecision, TokenBucket,
+};
 pub use users::{
     set_stripe_customer_id, upsert_github_user, UserError, UserRow, DEFAULT_GITHUB_SIGNIN_PLAN,
 };
@@ -67,21 +72,12 @@ pub use users::{
 /// — both paths see the same enum.
 pub use ministr_mcp::auth::Plan;
 
-/// Indexing-queue priority for a tier. Higher wins. The pool drains in
-/// `ORDER BY priority DESC, enqueued_at ASC`. F2.2 wires this into
-/// `JobQueue::enqueue`; F5.5 reserves `priority = 4` for the dedicated
-/// Enterprise pool.
-///
-/// Free function (not a method on `Plan`) so the open `Plan` enum stays
-/// free of cloud-only business logic.
-#[must_use]
-pub const fn queue_priority(plan: Plan) -> i16 {
-    match plan {
-        Plan::Pro => 1,
-        Plan::Team => 2,
-        Plan::Enterprise => 3,
-    }
-}
+/// Re-exported from `ministr-mcp` (MIT). Lives there so the open-core
+/// handler surface can derive priority without depending on this
+/// closed crate; cloud-side callers (F1.4 metering, F2.4 Checkout) keep
+/// reading `ministr_cloud::queue_priority` so the public surface stays
+/// stable.
+pub use ministr_mcp::auth::queue_priority;
 
 #[cfg(test)]
 mod tests {

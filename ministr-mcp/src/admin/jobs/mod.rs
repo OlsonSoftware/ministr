@@ -86,6 +86,14 @@ pub(crate) struct Job {
     pub(crate) created_at: u64,
     pub(crate) updated_at: u64,
     pub(crate) error: Option<String>,
+    /// F2.2 — tier-derived scheduling priority. Higher wins. The
+    /// Postgres backend drains `ORDER BY priority DESC, created_at ASC`
+    /// so Team jumps Pro; in-memory + `SQLite` back-ends ignore the
+    /// value (single-worker self-hosted has no notion of priority).
+    /// Defaults to `0` to keep self-hosted enqueue calls source-stable
+    /// — they emit a single bucket and queue order remains FIFO.
+    #[serde(default)]
+    pub(crate) priority: i16,
 }
 
 /// Contract every queue backend implements.
@@ -98,10 +106,14 @@ pub(crate) struct Job {
 /// - `update_*` is upsert-by-id. Concurrent updates from the worker and
 ///   `claim_next` are safe under WAL.
 pub(crate) trait JobQueue: Send + Sync {
+    /// Enqueue a new pending job. `priority` is the tier-derived
+    /// scheduling weight (see [`Job::priority`]); pass `0` from
+    /// self-hosted call sites where every job sits in a single bucket.
     fn enqueue(
         &self,
         corpus_id: String,
         trigger: JobTrigger,
+        priority: i16,
     ) -> impl Future<Output = JobResult<Job>> + Send;
 
     fn get(&self, job_id: &str) -> impl Future<Output = JobResult<Option<Job>>> + Send;
@@ -139,11 +151,12 @@ impl JobQueueBackend {
         &self,
         corpus_id: String,
         trigger: JobTrigger,
+        priority: i16,
     ) -> JobResult<Job> {
         match self {
-            Self::InMemory(q) => q.enqueue(corpus_id, trigger).await,
-            Self::Sqlite(q) => q.enqueue(corpus_id, trigger).await,
-            Self::Postgres(q) => q.enqueue(corpus_id, trigger).await,
+            Self::InMemory(q) => q.enqueue(corpus_id, trigger, priority).await,
+            Self::Sqlite(q) => q.enqueue(corpus_id, trigger, priority).await,
+            Self::Postgres(q) => q.enqueue(corpus_id, trigger, priority).await,
         }
     }
 

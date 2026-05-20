@@ -41,6 +41,24 @@ pub enum Plan {
     Enterprise,
 }
 
+/// Indexing-queue priority for a tier. Higher wins. The pool drains in
+/// `ORDER BY priority DESC, enqueued_at ASC`. F2.2 wires this into
+/// `JobQueue::enqueue`; F5.5 reserves higher values for the dedicated
+/// Enterprise pool.
+///
+/// Lives here (MIT) — not on `Plan` itself — so the open-core handler
+/// surface can derive priority without depending on `ministr-cloud`.
+/// `ministr-cloud` re-exports this verbatim under its own name to keep
+/// the existing cloud-side call sites compiling.
+#[must_use]
+pub const fn queue_priority(plan: Plan) -> i16 {
+    match plan {
+        Plan::Pro => 1,
+        Plan::Team => 2,
+        Plan::Enterprise => 3,
+    }
+}
+
 /// Resolved tenant identity attached to every authenticated request.
 ///
 /// Handlers read this through `axum::Extension<Tenant>`. The
