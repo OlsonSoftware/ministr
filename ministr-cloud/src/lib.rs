@@ -23,7 +23,7 @@
 //! |---|---|
 //! | F1.2 | `db` (Postgres-backed schema migrations); `Tenant` itself lives in `ministr-mcp::auth::tenant` (MIT) so handlers in the local stack can read it without depending on this closed crate |
 //! | F1.3 | `idp::IdentityProvider` trait (landed); GitHub/Google/Microsoft impls plug in via the same trait |
-//! | F1.4 | `billing::usage` daily rollup + `/api/v1/billing/usage` |
+//! | F1.4 | `billing::usage` write path (landed); daily rollup + `/api/v1/billing/usage` plug in alongside |
 //! | F1.5 | `billing::stripe` Stripe Meters + webhook receiver |
 //! | F2.1 | `github::app` installation-token minter |
 //! | F2.3 | `quota` plan-aware tower middleware |
@@ -36,10 +36,12 @@
 
 #![deny(unsafe_code)]
 
+pub mod billing;
 pub mod blob;
 pub mod db;
 pub mod idp;
 
+pub use billing::{record_usage, UsageEventKind};
 pub use blob::{BlobError, BlobResult, CorpusBlobStore};
 pub use db::{connect, run_migrations, DbError};
 pub use idp::{GitHubIdp, IdentityProvider, IdpError, ResolvedIdentity, GITHUB_ISSUER};
