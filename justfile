@@ -251,6 +251,18 @@ azure-up:
     eval "$(./scripts/azure-env.sh)"
     pulumi -C deploy/azure up ${PULUMI_FLAGS:-}
 
+# Dry-run pulumi up against the prod stack. Prints the resource diff
+# without applying anything. Use this before any large architectural
+# change (PHASE6 chunk 4b, etc.) to confirm the planned deletions and
+# creations match expectation.
+#
+# Dry-run pulumi up (no changes applied).
+azure-preview:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    pulumi -C deploy/azure preview
+
 # One-shot, idempotent: provision (if needed), push, roll revision,
 # then run the full `azure-smoke` (demo-remote → restart-app → repeat)
 # so the registry + bundle-restore + streaming-worker path is
@@ -289,6 +301,83 @@ azure-status:
         echo "▶ GET ${URL}/healthz"
         curl -sS "${URL}/healthz" && echo
     fi
+
+# PHASE6 chunk 4a — sanity-check the Azure OpenAI resource after a
+# pulumi up. Prints the endpoint + deployment name from stack outputs
+# and probes the deployment with a no-auth request so the operator can
+# distinguish "resource exists" from "MI role propagation pending".
+# A 401 means the resource is up and the OpenAI account is healthy;
+# a connection error means the resource isn't deployed yet.
+#
+# Sanity-check the cloud's Azure OpenAI resource.
+azure-openai-status:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    ENDPOINT=$(pulumi -C deploy/azure stack output openaiEndpoint 2>/dev/null || true)
+    DEPLOYMENT=$(pulumi -C deploy/azure stack output openaiDeployment 2>/dev/null || true)
+    if [ -z "$ENDPOINT" ] || [ -z "$DEPLOYMENT" ]; then
+        echo "✗ OpenAI not provisioned — run 'just azure-up' first."
+        exit 1
+    fi
+    echo "▶ endpoint:   $ENDPOINT"
+    echo "▶ deployment: $DEPLOYMENT"
+    echo ""
+    URL="${ENDPOINT}/openai/deployments/${DEPLOYMENT}/embeddings?api-version=2024-10-21"
+    echo "▶ POST $URL (no auth — expect 401)"
+    STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
+        -X POST "$URL" \
+        -H "Content-Type: application/json" \
+        -d '{"input":["healthcheck"]}' || true)
+    case "$STATUS" in
+      401) echo "✓ 401 — resource reachable; MI role grant (or API key) determines whether real calls succeed" ;;
+      404) echo "✗ 404 — deployment not found; pulumi up may still be provisioning the model" ;;
+      000) echo "✗ no response — endpoint unreachable; check Pulumi state" ;;
+      *)   echo "? HTTP $STATUS — unexpected; inspect manually" ;;
+    esac
+
+# PHASE6 chunk 4a — bootstrap path for the first-deploy MI propagation
+# lag. The Cognitive Services User role assignment can take a couple of
+# minutes to fully propagate on first apply; if the WorkerLoop returns
+# 403 from /embeddings, this recipe pulls the OpenAI primary key into
+# Pulumi config as MINISTR_AZURE_OPENAI_API_KEY so the embedder's
+# OpenAiAuth::ApiKey path takes over immediately. Once `just azure-demo`
+# completes successfully, run `just azure-openai-revoke-key` to drop
+# the bootstrap key and rely on MI alone.
+#
+# Bootstrap the OpenAI API key into Pulumi config (MI-fallback).
+azure-openai-bootstrap-key:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    RG=$(pulumi -C deploy/azure stack output resourceGroup)
+    ACCOUNT=$(az cognitiveservices account list \
+        --resource-group "$RG" \
+        --query "[?kind=='OpenAI'].name | [0]" -o tsv)
+    if [ -z "$ACCOUNT" ]; then
+        echo "✗ no OpenAI account in $RG — run 'just azure-up' first."
+        exit 1
+    fi
+    echo "▶ account: $ACCOUNT"
+    KEY=$(az cognitiveservices account keys list \
+        --resource-group "$RG" --name "$ACCOUNT" \
+        --query "key1" -o tsv)
+    [ -n "$KEY" ] || { echo "✗ could not read primary key"; exit 1; }
+    pulumi -C deploy/azure config set --secret openaiApiKey "$KEY"
+    echo "✓ openaiApiKey set as Pulumi secret"
+    echo "  next: lib/app.ts must wire MINISTR_AZURE_OPENAI_API_KEY from this secret"
+    echo "  (left as a one-line wiring follow-up so the default deploy stays MI-only)"
+
+# Drop the bootstrap API key from Pulumi config; the deployment will
+# go back to MI-only auth on the next 'just azure-up'.
+#
+# Drop the bootstrapped OpenAI API key.
+azure-openai-revoke-key:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(./scripts/azure-env.sh)"
+    pulumi -C deploy/azure config rm openaiApiKey 2>/dev/null || true
+    echo "✓ openaiApiKey removed from Pulumi config"
 
 # Tail live ACA container logs (Ctrl-C to stop).
 azure-logs:
@@ -340,6 +429,10 @@ azure-logs:
 # After running this, `just azure-up` should diff-clean for both
 # `ministrv2-app-blob-rw` and `ministrv2-indexer-blob-rw`.
 #
+# PHASE6 chunk 3 retired the indexer Job + its blob-data role + the
+# jobs-operator role; this recipe now only reconciles the queryApp's
+# Storage Blob Data Contributor grant.
+#
 # Re-import role-assignment state from Azure (one-time reconcile).
 azure-rbac-reconcile:
     #!/usr/bin/env bash
@@ -352,81 +445,25 @@ azure-rbac-reconcile:
     SBDC="ba92f5b4-2d11-453d-a403-e96b0029c9fe"
     APP_MI=$(az containerapp show --name ministrv2-app \
         --resource-group "$RG" --query identity.principalId -o tsv)
-    INDEXER_MI=$(az containerapp job show --name ministrv2-indexer \
-        --resource-group "$RG" --query identity.principalId -o tsv)
-    echo "▶ app MI:     $APP_MI"
-    echo "▶ indexer MI: $INDEXER_MI"
+    echo "▶ app MI: $APP_MI"
 
-    # Find the existing role-assignment GUIDs for each (principal, scope, role) triple.
     APP_GUID=$(az role assignment list --scope "$STORAGE_ID" \
         --query "[?principalId=='$APP_MI' && contains(roleDefinitionId, '$SBDC')].name | [0]" \
         -o tsv)
-    INDEXER_GUID=$(az role assignment list --scope "$STORAGE_ID" \
-        --query "[?principalId=='$INDEXER_MI' && contains(roleDefinitionId, '$SBDC')].name | [0]" \
-        -o tsv)
-    [ -n "$APP_GUID" ]     || { echo "no live app role assignment found"; exit 1; }
-    [ -n "$INDEXER_GUID" ] || { echo "no live indexer role assignment found"; exit 1; }
-    echo "▶ live app role assignment:     $APP_GUID"
-    echo "▶ live indexer role assignment: $INDEXER_GUID"
+    [ -n "$APP_GUID" ] || { echo "no live app role assignment found"; exit 1; }
+    echo "▶ live app role assignment: $APP_GUID"
 
-    # Drop whatever pulumi currently tracks for these URNs. Use `|| true`
-    # because the first run may legitimately have nothing tracked.
-    for URN in \
-        "urn:pulumi:prod::ministr-azure::azure-native:authorization:RoleAssignment::ministrv2-app-blob-rw" \
-        "urn:pulumi:prod::ministr-azure::azure-native:authorization:RoleAssignment::ministrv2-indexer-blob-rw"; do
-        echo "▶ pulumi state delete $URN"
-        pulumi -C deploy/azure state delete "$URN" --yes 2>/dev/null || true
-    done
+    URN="urn:pulumi:prod::ministr-azure::azure-native:authorization:RoleAssignment::ministrv2-app-blob-rw"
+    echo "▶ pulumi state delete $URN"
+    pulumi -C deploy/azure state delete "$URN" --yes 2>/dev/null || true
 
-    # Import the live resources under the deterministic names.
     APP_RA="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/ministrv2data/providers/Microsoft.Authorization/roleAssignments/$APP_GUID"
-    INDEXER_RA="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/ministrv2data/providers/Microsoft.Authorization/roleAssignments/$INDEXER_GUID"
     echo "▶ pulumi import ministrv2-app-blob-rw"
     pulumi -C deploy/azure import azure-native:authorization:RoleAssignment \
         ministrv2-app-blob-rw "$APP_RA" --yes --skip-preview
-    echo "▶ pulumi import ministrv2-indexer-blob-rw"
-    pulumi -C deploy/azure import azure-native:authorization:RoleAssignment \
-        ministrv2-indexer-blob-rw "$INDEXER_RA" --yes --skip-preview
 
     echo ""
     echo "✓ state reconciled. Re-run 'just azure-up' to verify diff-clean."
-
-# Fast non-psql alternative for the common case "what just happened
-# with the indexer job?" — queries Log Analytics for system events
-# (execution lifecycle + container exit codes) and console logs in
-# the last 10 minutes, then prints terminal status per execution.
-# Use this BEFORE reaching for `just azure-psql` since it doesn't
-# touch the Postgres firewall.
-#
-# Quick indexer-job state dump from Log Analytics (no firewall).
-azure-jobs:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval "$(./scripts/azure-env.sh)"
-    RG=$(pulumi -C deploy/azure stack output resourceGroup)
-    WS=$(az monitor log-analytics workspace list --resource-group "$RG" \
-        --query "[0].customerId" -o tsv)
-    echo "▶ recent indexer executions (last 30 min):"
-    az containerapp job execution list \
-        --name ministrv2-indexer --resource-group "$RG" \
-        --query "[].{name: name, status: properties.status, start: properties.startTime}" \
-        -o table 2>/dev/null | head -15
-    echo ""
-    echo "▶ recent failures + final lines (last 30 min):"
-    az monitor log-analytics query --workspace "$WS" \
-        --analytics-query "ContainerAppConsoleLogs_CL \
-            | where ContainerName_s == 'indexer' \
-            | where TimeGenerated > ago(30m) \
-            | where Log_s contains 'claimed' \
-              or Log_s contains 'no pending' \
-              or Log_s contains 'ingestion complete' \
-              or Log_s contains 'uploaded bundle' \
-              or Log_s contains 'job completed' \
-              or Log_s contains 'Error' \
-              or Log_s contains 'failed' \
-            | project TimeGenerated, Log_s \
-            | order by TimeGenerated desc \
-            | take 30" -o tsv 2>&1 | tail -30
 
 # Open a psql session against the cloud Postgres (auto-firewall).
 azure-psql *args:
@@ -459,22 +496,6 @@ azure-psql *args:
               --yes >/dev/null || true' EXIT
     echo "▶ [4/5] running psql"
     docker run --rm -i postgres:16 psql "$PGURL" {{args}}
-
-# The scheduled trigger (PHASE3 chunk 6, cron every 1 min) spawns short
-# replicas; `--show-previous` rolls across them so you can see the
-# claim_next + ingest + upload sequence from any recent tick.
-#
-# Tail the indexer-worker ACA Job logs across recent executions.
-azure-logs-indexer:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval "$(./scripts/azure-env.sh)"
-    RG=$(pulumi -C deploy/azure stack output resourceGroup)
-    JOB=$(pulumi -C deploy/azure stack output indexerJobName)
-    az containerapp job logs show \
-        --name "$JOB" \
-        --resource-group "$RG" \
-        --follow --tail 100
 
 # PHASE3 smoke uses this between an initial demo-remote (which leaves
 # a bundle in blob + a cloud_corpora row) and a follow-up query, to

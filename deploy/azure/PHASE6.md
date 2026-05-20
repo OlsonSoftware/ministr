@@ -238,12 +238,23 @@ Atomic, one per `/roadmap PHASE6` invocation:
   - [x] Two new stack outputs: `openaiEndpoint` + `openaiDeployment`. Operator can `pulumi stack output openaiEndpoint` to sanity-check the resource after deploy.
   - **Verify**: `cd deploy/azure && npx tsc --noEmit` clean.
 
-- [ ] **Chunk 4b — `pulumi up` + first live azure-demo on new arch** *(operator-driven)*
-  - Operator step 1: `cd deploy/azure && pulumi preview` — confirm the diff shows the indexer Job + two old role assignments + four ACA env vars as **deletions**, plus the new OpenAI account + deployment + Cognitive Services User role assignment as **creations**.
-  - Operator step 2: `pulumi up` to apply. First apply provisions the OpenAI resource (~30s) and the model deployment (~1 min). Subsequent re-rolls only update the app revision.
-  - Operator step 3: `just azure-push && just azure-up` to ship the PHASE6 Rust changes.
-  - Operator step 4: `just azure-demo`. Demo expectation: clone anyhow → SSE shows `embeddings_done` climbing in real time → completes in <5 min → blob upload succeeds → no OOM, no 403, no stalls.
-  - If MI propagation lags (the role assignment can take a couple of minutes to fully propagate on first apply), the embedder may surface as `JobStartError::Arm{status: 403, ...}` — wait 2 min and re-run the demo. Alternative: set `MINISTR_AZURE_OPENAI_API_KEY` from the resource's primary key as a bootstrap; the embedder's `OpenAiAuth::from_env()` prefers `ApiKey` when both are set.
+- [ ] **Chunk 4b — pulumi up + first live azure-demo on new arch** *(operator-driven)*
+
+  Operator workflow — all `just`:
+
+  1. `just azure-preview` — dry-run. Confirm the diff shows:
+     - **Deletions**: indexer Job + `indexer-blob-rw` role + `app-jobs-start` role + four ACA env vars (from PHASE6 chunk 3).
+     - **Creations**: OpenAI account + embedding deployment + `app-openai-user` role + three new OpenAI env vars on the app (from PHASE6 chunk 4a).
+  2. `just azure-up` — apply. First apply provisions the OpenAI resource (~30s) and the model deployment (~1 min). Subsequent rolls only update the app revision.
+  3. `just azure-openai-status` — confirm the OpenAI account is reachable and the embedding deployment exists. A `401` from the no-auth probe is the healthy signal (resource is up; the MI role grant gates real calls).
+  4. `just azure-demo` — full smoke. Demo expectation: clone anyhow → SSE shows `embeddings_done` climbing in real time → completes in <5 min → blob upload succeeds → no OOM, no 403, no stalls.
+
+  If MI propagation lags on first apply (the role assignment can take 2–3 min to fully propagate), the embedder may surface a 403 from the `POST /embeddings` call. Two recovery paths:
+
+  - **Wait + retry**: `just azure-demo` again after 2 min.
+  - **Bootstrap API key**: `just azure-openai-bootstrap-key` pulls the resource's primary key into Pulumi config. (Needs a one-line follow-up in `lib/app.ts` to wire it as `MINISTR_AZURE_OPENAI_API_KEY` env — left as an explicit step so the default deploy stays MI-only. Then `just azure-up` + `just azure-demo`.) Once the live demo is healthy on MI alone, drop the bootstrap with `just azure-openai-revoke-key`.
+
+  After demo: `just azure-status` for stack outputs + healthz, `just azure-logs` to tail the serve pod, `just azure-psql` for direct DB inspection.
 
 ## What's NOT in this phase
 
