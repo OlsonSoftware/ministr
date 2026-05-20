@@ -93,27 +93,50 @@ Concretely changes from PHASE4:
 
 ## Chunks (atomic, one per `/roadmap` invocation)
 
-- [ ] **Chunk 1 — ARM-start trigger from serve pod**
-  - Pulumi: add `Container Apps Jobs Operator` role assignment on the serve
-    pod MI, scoped to the indexer Job. Add a `lib/job-start-role.ts` mirroring
-    `lib/role-assignment.ts`'s deterministic-GUID pattern so a redeploy
-    doesn't orphan the role.
-  - Pulumi: `pollingInterval: 5` → `300` on the KEDA scaler in `lib/job.ts`.
-    Keep everything else (the safety net stays functional).
-  - Rust: new `ministr-api::JobStartTrigger` trait (`BoxFuture`-returning
-    `start_job_for(corpus_id) -> Result<(), JobStartError>`) in ministr-api so
-    ministr-daemon can consume without depending on ministr-cloud (same dep
-    direction as `IndexJobSink`).
-  - Rust: new `ministr-cloud::AcaJobStartTrigger` impl that calls
-    `POST /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.App/jobs/{name}/start`
-    via reqwest, authenticating with the pod's MI token from IMDS. Soft-fail
-    on non-2xx (logged, returns Err — KEDA's safety net picks it up within
-    5 min). Reads sub/rg/job-name from env injected by Pulumi.
-  - Rust: `cmd_serve_http` wires the trigger; `PostgresIndexJobSink::enqueue`
-    invokes it fire-and-forget after a successful INSERT.
-  - Verify: `cargo test -p ministr-cloud --lib`, `npx tsc --noEmit`,
-    `just azure-demo` end-to-end (the canonical smoke). Expected: SSE picks
-    up `status=running` within ~5s of the demo's POST.
+- [x] **Chunk 1 — ARM-start trigger from serve pod** *(code + Pulumi landed; live `just azure-demo` smoke pending operator run)*
+  - [x] Pulumi: `lib/job-start-role.ts` (NEW) grants serve pod MI the
+    built-in `Container Apps Jobs Operator` role
+    (`b9a307c4-5aa3-4b52-ba60-2b17c136cd7b`) scoped to the indexer Job,
+    using the same deterministic UUID-v5 GUID pattern as
+    `lib/role-assignment.ts`. Wired in `index.ts` via `grantJobsOperator`.
+  - [x] Pulumi: `lib/job.ts` `pollingInterval: 5 → 300`. KEDA stays
+    wired as the 5-min safety net.
+  - [x] Pulumi: `lib/app.ts` injects `MINISTR_ACA_SUBSCRIPTION_ID`
+    (`authorization.getClientConfigOutput().subscriptionId`),
+    `MINISTR_ACA_RESOURCE_GROUP`, `MINISTR_ACA_INDEXER_JOB_NAME` env
+    vars into the serve pod container.
+  - [x] Rust: `ministr_api::JobStartTrigger` trait (NEW) +
+    `JobStartError {Http, Imds, Arm{status,body}, Config}`. BoxFuture
+    surface mirrors `IndexJobSink`; trait stays in MIT
+    (`ministr-api`).
+  - [x] Rust: `ministr_cloud::AcaJobStartTrigger` impl posts
+    `https://management.azure.com/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.App/jobs/{job}/start?api-version=2026-01-01`
+    with bearer token sourced from IMDS
+    (`http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/`,
+    `Metadata: true` header). Single-key token cache, `expires_on - 10min`
+    proactive evict, `no_proxy()` so loopback IMDS never goes through
+    `HTTPS_PROXY`. Hand-rolled reqwest — `azure_mgmt_appcontainers`
+    SDK rejected for binary-size reasons.
+  - [x] Rust: `PostgresIndexJobSink::with_start_trigger` builder
+    attaches an `Arc<dyn JobStartTrigger>`; `create_pending` fires
+    the trigger via `tokio::spawn` AFTER the txn commits, so a
+    trigger failure never rolls the row back. `cmd_serve_http`
+    builds the trigger when all three `MINISTR_ACA_*` env vars
+    resolve, falls back to KEDA-only with a single warn at boot
+    when any are absent.
+  - [x] Verified: `cargo test --workspace --lib` (1960 passed, 0
+    failed, 31 ignored Postgres-gated); `cargo clippy --workspace
+    --all-targets -- -D warnings -W clippy::pedantic` clean;
+    `cd deploy/azure && npx tsc --noEmit` clean. New tests:
+    `job_start::tests` (happy-path round-trip against axum mock
+    IMDS+ARM; ARM 403 surfaces as `JobStartError::Arm{403, body}`;
+    dyn-trait dispatch).
+  - [ ] **Operator action remaining**: `just azure-demo` end-to-end
+    smoke. Expected: SSE picks up `status=running` within ~5s of the
+    demo's POST (vs. up-to-5s under the old 5s KEDA cadence — the
+    speed-up shows under load when multiple enqueues coincide; the
+    decisive observable is "no empty-tick KEDA queries in the
+    Postgres slow log").
 
 - [ ] **Chunk 2 — Empty-index persist gate**
   - `ministr-core/src/ingestion/pipeline.rs::run_producer_consumer`: before

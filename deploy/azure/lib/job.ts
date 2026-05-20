@@ -118,15 +118,21 @@ export function createIndexerJob(inputs: JobInputs): JobArtifact {
     // contributor on this principal.
     identity: { type: "SystemAssigned" },
     configuration: {
-      // PHASE4 chunk 1 — KEDA postgres-poll trigger.
+      // PHASE5 chunk 1 — KEDA postgres-poll demoted to safety net.
       //
-      // This is being retired in PHASE5 chunk 1: the serve pod will
-      // call ARM `POST /jobs/{name}/start` directly after enqueue,
-      // and this KEDA scaler stays as a slow-poll (~5 min) safety
-      // net for missed triggers. `pollingInterval` below will bump
-      // from 5 → 300 when chunk 1 lands. `maxExecutions: 1` keeps
-      // it single-replica today (single-tenant cloud); raise once
-      // the worker concurrency backlog item is picked up.
+      // The fast path now is the serve pod calling ARM
+      // `POST /jobs/{name}/start` directly after enqueue (see
+      // `ministr-cloud::AcaJobStartTrigger`). This scaler keeps the
+      // same `triggerType: "Event"` + postgres rule but at a 5-minute
+      // polling interval — it is the floor that catches rows the ARM
+      // call missed (ARM 5xx, transient network failure on the serve
+      // pod, etc). `maxExecutions: 1` keeps it single-replica today
+      // (single-tenant cloud); raise once the worker concurrency
+      // backlog item is picked up.
+      //
+      // Cost effect of the bump: 12 KEDA queries/hour instead of 720
+      // — empty-tick Postgres load drops by ~98%. The bump landed in
+      // PHASE5 chunk 1 alongside the ARM trigger.
       triggerType: "Event",
       replicaTimeout: 3600, // 1h hard cap (matches ACA Jobs default ceiling).
       replicaRetryLimit: 0,
@@ -136,7 +142,9 @@ export function createIndexerJob(inputs: JobInputs): JobArtifact {
         scale: {
           minExecutions: 0,
           maxExecutions: 1,
-          pollingInterval: 5,
+          // PHASE5 chunk 1 — 300s (5min) is the safety-net cadence;
+          // ARM jobs/start from the serve pod is the fast path.
+          pollingInterval: 300,
           rules: [
             {
               name: "pg-pending",

@@ -17,6 +17,8 @@ import { createIndexerJob } from "./lib/job";
 import { bindCustomDomain } from "./lib/domain";
 import { createPostgres } from "./lib/postgres";
 import { grantBlobDataContributor } from "./lib/role-assignment";
+import { grantJobsOperator } from "./lib/job-start-role";
+import * as authorization from "@pulumi/azure-native/authorization";
 import { named } from "./lib/naming";
 
 const cfg = new pulumi.Config();
@@ -80,31 +82,10 @@ const predictedHost = pulumi.interpolate`${named("app")}.${net.env.defaultDomain
 const publicHost: pulumi.Input<string> = customDomain || predictedHost;
 const publicUrl = pulumi.interpolate`https://${publicHost}`;
 
-const queryApp = createApp({
-  rg: net.rg,
-  env: net.env,
-  registry,
-  storage,
-  insights,
-  imageTag,
-  cpu: appCpu,
-  memory: appMemory,
-  webhookSecret,
-  corpusPaths,
-  publicUrl,
-  publicHost,
-  pgConnectionString: postgres?.pgConnectionString,
-});
-
-// Grant the app's managed identity read+write on the corpora blob
-// container. Without this the Rust ManagedIdentityCredential chain
-// gets a token but every blob op returns 403.
-grantBlobDataContributor({
-  name: named("app-blob-rw"),
-  storageAccount: storage.account,
-  principalId: queryApp.principalId,
-});
-
+// Build the indexer Job first so its name + RG can be threaded into the
+// serve pod's env (PHASE5 chunk 1's fast-path config). Pulumi resolves
+// the Output dependencies regardless of code order, but reading-order
+// matches eval-order here.
 const indexer = createIndexerJob({
   rg: net.rg,
   env: net.env,
@@ -119,11 +100,60 @@ const indexer = createIndexerJob({
 // PHASE3 chunk 6 — the indexer worker uses ManagedIdentityCredential
 // for blob ops (download + upload), so its MI needs blob-data access
 // scoped to the corpora storage account. Mirrors the queryApp grant
-// above; both principals get the same role on the same scope.
+// below; both principals get the same role on the same scope.
 grantBlobDataContributor({
   name: named("indexer-blob-rw"),
   storageAccount: storage.account,
   principalId: indexer.principalId,
+});
+
+// PHASE5 chunk 1 — sub id sourced from the current Azure session;
+// fed both to grantJobsOperator (scope construction) and the serve pod
+// env (URL construction). Output<string> threads through both call
+// sites unmodified.
+const subscriptionId =
+  authorization.getClientConfigOutput().subscriptionId;
+
+const queryApp = createApp({
+  rg: net.rg,
+  env: net.env,
+  registry,
+  storage,
+  insights,
+  imageTag,
+  cpu: appCpu,
+  memory: appMemory,
+  webhookSecret,
+  corpusPaths,
+  publicUrl,
+  publicHost,
+  pgConnectionString: postgres?.pgConnectionString,
+  // PHASE5 chunk 1 — fast-path ARM trigger config. The Rust trigger
+  // (`AcaJobStartTrigger::from_env`) requires all three to resolve;
+  // any one missing falls back to KEDA-only.
+  acaSubscriptionId: subscriptionId,
+  acaResourceGroup: net.rg.name,
+  acaIndexerJobName: indexer.name,
+});
+
+// Grant the app's managed identity read+write on the corpora blob
+// container. Without this the Rust ManagedIdentityCredential chain
+// gets a token but every blob op returns 403.
+grantBlobDataContributor({
+  name: named("app-blob-rw"),
+  storageAccount: storage.account,
+  principalId: queryApp.principalId,
+});
+
+// PHASE5 chunk 1 — grant the serve pod's MI `Container Apps Jobs
+// Operator` scoped to the indexer Job so its ARM POST .../start
+// succeeds. This is the role PHASE3 chunk 6 declined to add. See
+// `lib/job-start-role.ts` + `PHASE5.md` + the
+// `feedback-no-rbac-deferral` memory.
+grantJobsOperator({
+  name: named("app-jobs-start"),
+  indexerJob: indexer.job,
+  principalId: queryApp.principalId,
 });
 
 const domainBinding = customDomain

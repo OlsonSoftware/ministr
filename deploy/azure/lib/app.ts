@@ -53,6 +53,13 @@ export interface AppInputs {
   // auto-mount. When unset the cloud falls back to SQLite + skips those
   // routes — fine for local dev, never for prod.
   pgConnectionString?: pulumi.Input<string>;
+  // PHASE5 chunk 1 — ARM jobs/start fast-path identifiers. All three
+  // must be present together; missing any falls back to KEDA-only
+  // (now at 5-min polling). Pulumi sources them from the indexer Job +
+  // the current subscription so they round-trip even on first apply.
+  acaSubscriptionId?: pulumi.Input<string>;
+  acaResourceGroup?: pulumi.Input<string>;
+  acaIndexerJobName?: pulumi.Input<string>;
 }
 
 export function createApp(inputs: AppInputs): AppArtifact {
@@ -70,6 +77,9 @@ export function createApp(inputs: AppInputs): AppArtifact {
     publicUrl,
     publicHost,
     pgConnectionString,
+    acaSubscriptionId,
+    acaResourceGroup,
+    acaIndexerJobName,
   } = inputs;
 
   const imageRef = pulumi.interpolate`${registry.loginServer}/ministr:${imageTag}`;
@@ -122,6 +132,20 @@ export function createApp(inputs: AppInputs): AppArtifact {
   }
   if (pgConnectionString) {
     baseEnv.push({ name: "MINISTR_PG_URL", secretRef: "pg-url" });
+  }
+  // PHASE5 chunk 1 — ARM jobs/start fast-path identifiers. Plain env
+  // (not secrets): the subscription id, RG name, and Job name are
+  // already visible in any Pulumi output the operator inspects, so a
+  // secretRef here would be theatre. The serve pod's
+  // AcaJobStartConfig::from_env trims+validates each value.
+  if (acaSubscriptionId) {
+    baseEnv.push({ name: "MINISTR_ACA_SUBSCRIPTION_ID", value: acaSubscriptionId });
+  }
+  if (acaResourceGroup) {
+    baseEnv.push({ name: "MINISTR_ACA_RESOURCE_GROUP", value: acaResourceGroup });
+  }
+  if (acaIndexerJobName) {
+    baseEnv.push({ name: "MINISTR_ACA_INDEXER_JOB_NAME", value: acaIndexerJobName });
   }
 
   const containerApp = new app.ContainerApp(named("app"), {
