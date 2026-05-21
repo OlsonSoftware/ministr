@@ -165,6 +165,7 @@ fn main() {
             commands_cloud::cloud_revoke_corpus_share,
             commands_cloud::cloud_transfer_corpus_to_org,
             commands_cloud::cloud_transfer_personal_sub,
+            commands_cloud::cloud_fetch_session_bundle,
             commands_cloud::cloud_list_api_keys,
             commands_cloud::cloud_create_api_key,
             commands_cloud::cloud_revoke_api_key,

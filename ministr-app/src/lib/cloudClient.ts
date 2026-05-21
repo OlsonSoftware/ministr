@@ -91,6 +91,60 @@ export interface CloudTransferPersonalResponse {
 }
 
 /**
+ * F6.2-d — mirrors `ministr_mcp::sessions::export::SessionBundleManifest`.
+ * Header summary the inspector renders above the per-event tables.
+ */
+export interface CloudSessionManifest {
+  schema_version: number;
+  session_id: string;
+  opened_at: string;
+  exported_at: string;
+  budget_used: number;
+  delivered_count: number;
+  total_delivered_tokens: number;
+  /** `"normal"` | `"elevated"` | `"critical"`. */
+  pressure_level: string;
+}
+
+/**
+ * F6.2-d — one row from `delivered.jsonl`. Mirrors the subset of
+ * `ministr_core::session::DeliveredItem` the inspector renders.
+ */
+export interface CloudSessionDelivered {
+  content_id: string;
+  resolution: string;
+  token_count: number;
+  turn_delivered: number;
+  content_hash: string;
+  compression_tier: string;
+  compressed_summary?: string;
+}
+
+/**
+ * F6.2-d — one eviction event from `drops.jsonl`. Mirrors
+ * `ministr_api::DropEntry`.
+ */
+export interface CloudSessionDrop {
+  session_id: string;
+  tenant_id: string;
+  claim_id: string;
+  evicted_at: string;
+}
+
+/**
+ * F6.2-d — parsed bundle the Tauri side returns to the React inspector.
+ * `drops` is `undefined` when the cloud's response didn't include a
+ * `drops.jsonl` entry (self-hosted serve or no tenant scope); the UI
+ * distinguishes "queried but empty" (`[]`) from "not queried"
+ * (`undefined`).
+ */
+export interface CloudSessionBundle {
+  manifest: CloudSessionManifest;
+  delivered: CloudSessionDelivered[];
+  drops?: CloudSessionDrop[];
+}
+
+/**
  * Mirrors `ministr_cloud::api_keys::ApiKeyRow` (F3.4a). One row in the
  * caller's active-keys list — secret fields (`hash`, raw token) are
  * deliberately absent; only `prefix` (first 8 chars of the random
@@ -313,6 +367,14 @@ export const cloudClient = {
     invoke<CloudTransferResponse>("cloud_transfer_corpus_to_org", { corpusId, orgId }),
   transferPersonalSub: (orgId: string) =>
     invoke<CloudTransferPersonalResponse>("cloud_transfer_personal_sub", { orgId }),
+  /**
+   * F6.2-d — fetch + parse a session bundle for the inspector. POSTs
+   * to `/api/v1/sessions/{id}/export`, parses the tar in Rust, returns
+   * the structured payload. The Tauri side eats the tar bytes so the
+   * JS bundle stays slim (no JS tar parser).
+   */
+  fetchSessionBundle: (sessionId: string) =>
+    invoke<CloudSessionBundle>("cloud_fetch_session_bundle", { sessionId }),
   /** F3.4b — list the caller's active service-account API keys. */
   listApiKeys: () => invoke<CloudApiKey[]>("cloud_list_api_keys"),
   /**

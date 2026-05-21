@@ -1843,6 +1843,164 @@ pub async fn cloud_trigger_reindex(corpus_id: String) -> Result<String, CommandE
         })
 }
 
+// ── F6.2-d — Session inspector ──────────────────────────────────────────────
+
+/// Mirrors `ministr_mcp::sessions::export::SessionBundleManifest`. Kept
+/// as a separate struct on the Tauri side so the JS/TS layer can
+/// `import { CloudSessionManifest } from "./cloudClient"` without
+/// reaching into ministr-mcp.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudSessionManifest {
+    pub schema_version: u32,
+    pub session_id: String,
+    pub opened_at: String,
+    pub exported_at: String,
+    pub budget_used: usize,
+    pub delivered_count: usize,
+    pub total_delivered_tokens: usize,
+    pub pressure_level: String,
+}
+
+/// One delivered-content row from `delivered.jsonl`. Mirrors the
+/// subset of `ministr_core::session::DeliveredItem` the inspector
+/// actually renders.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudSessionDelivered {
+    pub content_id: String,
+    pub resolution: String,
+    pub token_count: usize,
+    pub turn_delivered: u32,
+    pub content_hash: String,
+    pub compression_tier: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compressed_summary: Option<String>,
+}
+
+/// One eviction-event row from `drops.jsonl`. Mirrors
+/// `ministr_api::DropEntry`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudSessionDrop {
+    pub session_id: String,
+    pub tenant_id: String,
+    pub claim_id: String,
+    pub evicted_at: String,
+}
+
+/// Parsed session bundle returned to the React inspector. `drops` is
+/// `None` when the cloud's response carries no `drops.jsonl` entry
+/// (self-hosted serve or no tenant scope on the server side); UI
+/// distinguishes "queried but empty" from "not queried" by `Some(vec![])`
+/// vs `None`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudSessionBundle {
+    pub manifest: CloudSessionManifest,
+    pub delivered: Vec<CloudSessionDelivered>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drops: Option<Vec<CloudSessionDrop>>,
+}
+
+/// POST `/api/v1/sessions/{id}/export` — fetch the tar bundle, parse
+/// it locally, return a structured payload the React inspector can
+/// render without re-parsing the tar in JS.
+#[tauri::command]
+pub async fn cloud_fetch_session_bundle(
+    session_id: String,
+) -> Result<CloudSessionBundle, CommandError> {
+    let (client, endpoint, token) = authed_client(30)?;
+    let url = format!("{endpoint}/api/v1/sessions/{session_id}/export");
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("session export returned HTTP {}", resp.status()),
+        ));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("read session tar: {e}")))?;
+    parse_session_bundle_tar(&bytes)
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse session tar: {e}")))
+}
+
+/// Walk the tar entries in one pass and assemble [`CloudSessionBundle`].
+/// Treats `manifest.json` as required (404 if missing); `delivered.jsonl`
+/// as required (empty body ⇒ empty vec); `drops.jsonl` as optional
+/// (missing ⇒ `drops: None`, present-but-empty ⇒ `Some(vec![])`).
+fn parse_session_bundle_tar(bytes: &[u8]) -> Result<CloudSessionBundle, String> {
+    use std::io::Read;
+
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive = tar::Archive::new(cursor);
+
+    let mut manifest_bytes: Option<Vec<u8>> = None;
+    let mut delivered_bytes: Option<Vec<u8>> = None;
+    let mut drops_bytes: Option<Vec<u8>> = None;
+
+    for entry_result in archive
+        .entries()
+        .map_err(|e| format!("tar entries: {e}"))?
+    {
+        let mut entry = entry_result.map_err(|e| format!("tar entry: {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("tar path: {e}"))?
+            .to_string_lossy()
+            .into_owned();
+        let mut buf = Vec::new();
+        entry
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("tar read {path}: {e}"))?;
+        match path.as_str() {
+            "manifest.json" => manifest_bytes = Some(buf),
+            "delivered.jsonl" => delivered_bytes = Some(buf),
+            "drops.jsonl" => drops_bytes = Some(buf),
+            other => {
+                tracing::debug!(other, "ignoring unknown tar entry in session bundle");
+            }
+        }
+    }
+
+    let manifest_bytes = manifest_bytes
+        .ok_or_else(|| "bundle missing manifest.json".to_string())?;
+    let delivered_bytes = delivered_bytes
+        .ok_or_else(|| "bundle missing delivered.jsonl".to_string())?;
+
+    let manifest: CloudSessionManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|e| format!("parse manifest.json: {e}"))?;
+    let delivered = parse_jsonl::<CloudSessionDelivered>(&delivered_bytes, "delivered.jsonl")?;
+    let drops = match drops_bytes {
+        Some(bytes) => Some(parse_jsonl::<CloudSessionDrop>(&bytes, "drops.jsonl")?),
+        None => None,
+    };
+    Ok(CloudSessionBundle {
+        manifest,
+        delivered,
+        drops,
+    })
+}
+
+/// Parse JSONL (one JSON value per line) into a Vec. Empty input
+/// returns an empty vec; trailing blank lines are tolerated.
+fn parse_jsonl<T: for<'de> Deserialize<'de>>(bytes: &[u8], label: &str) -> Result<Vec<T>, String> {
+    let text = std::str::from_utf8(bytes).map_err(|e| format!("{label} not utf-8: {e}"))?;
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let parsed: T = serde_json::from_str(line)
+            .map_err(|e| format!("{label} line {}: {e}", i + 1))?;
+        out.push(parsed);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
