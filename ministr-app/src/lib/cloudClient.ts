@@ -92,6 +92,40 @@ export interface CloudCreatedApiKey extends CloudApiKey {
   token: string;
 }
 
+/**
+ * Mirrors `ministr_cloud::webhooks::WebhookSubscription` (F3.5a).
+ * The signing `secret` is intentionally absent — only the one-time
+ * create response (see [`CloudCreatedWebhookSub`]) carries it.
+ */
+export interface CloudWebhookSub {
+  id: string;
+  org_id: string;
+  url: string;
+  event_filter: string;
+  created_by: string;
+  created_at: string;
+  last_delivered_at: string | null;
+}
+
+/**
+ * `POST /api/v1/orgs/{id}/webhooks` response (F3.5a). The `secret`
+ * field carries the raw HMAC signing secret EXACTLY ONCE — the cloud
+ * cannot recover it after this response.
+ */
+export interface CloudCreatedWebhookSub extends CloudWebhookSub {
+  secret: string;
+}
+
+/**
+ * `POST .../webhooks/{wid}/test` response. Outcome of one synthetic
+ * delivery against the subscription's URL.
+ */
+export interface CloudWebhookTestResult {
+  final_status: number | null;
+  attempts: number;
+  succeeded: boolean;
+}
+
 /** Minimal subset of `ministr_api::corpus::CorpusInfo` the panel renders. */
 export interface CloudCorpusInfo {
   corpus_id: string;
@@ -223,6 +257,29 @@ export const cloudClient = {
   /** F3.4b — soft-revoke a key. */
   revokeApiKey: (keyId: string) =>
     invoke<void>("cloud_revoke_api_key", { keyId }),
+  /** F3.5b-ii — list webhook subscriptions for an org. */
+  listWebhookSubs: (orgId: string) =>
+    invoke<CloudWebhookSub[]>("cloud_list_webhook_subs", { orgId }),
+  /**
+   * F3.5b-ii — mint a webhook subscription. Returns the one-time HMAC
+   * signing secret; callers MUST surface it immediately and never
+   * persist it.
+   */
+  createWebhookSub: (orgId: string, webhookUrl: string, eventFilter?: string) =>
+    invoke<CloudCreatedWebhookSub>("cloud_create_webhook_sub", {
+      orgId,
+      webhookUrl,
+      eventFilter,
+    }),
+  /** F3.5b-ii — remove a subscription. */
+  deleteWebhookSub: (orgId: string, subscriptionId: string) =>
+    invoke<void>("cloud_delete_webhook_sub", { orgId, subscriptionId }),
+  /** F3.5b-ii — fire a synthetic `ministr.test` payload at the receiver. */
+  testWebhookSub: (orgId: string, subscriptionId: string) =>
+    invoke<CloudWebhookTestResult>("cloud_test_webhook_sub", {
+      orgId,
+      subscriptionId,
+    }),
   /**
    * Open the SSE progress stream for a corpus on the remote server.
    * Returns the Channel; consumers attach `.onmessage` and let the

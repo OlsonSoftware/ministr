@@ -23,9 +23,11 @@ import {
   LogIn,
   Plus,
   RefreshCw,
+  Send,
   Share2,
   ShieldAlert,
   Trash2,
+  Webhook,
   X,
 } from "lucide-react";
 
@@ -58,11 +60,14 @@ import {
   type CloudApiKey,
   type CloudCorpusInfo,
   type CloudCreatedApiKey,
+  type CloudCreatedWebhookSub,
   type CloudHealth,
   type CloudOrg,
   type CloudProgressEvent,
   type CloudStatus,
   type CloudUsage,
+  type CloudWebhookSub,
+  type CloudWebhookTestResult,
 } from "../../lib/cloudClient";
 import { cn } from "../../lib/utils";
 
@@ -509,6 +514,8 @@ export function CloudPanel() {
       <CorporaSection authenticated={!!status?.authenticated} />
 
       <ApiKeysSection authenticated={!!status?.authenticated} />
+
+      <WebhooksSection authenticated={!!status?.authenticated} />
 
       <section className="flex flex-col gap-2 border-t border-border-soft pt-5">
         <Button
@@ -1497,6 +1504,494 @@ function ShowApiKeyDialog({ created, onClose }: ShowApiKeyDialogProps) {
         Use as <span className="font-mono">Authorization: Bearer {created.token.slice(0, 14)}…</span>{" "}
         — every cloud endpoint that accepts your session token also
         accepts this key.
+      </p>
+      <div className="flex justify-end gap-2 pt-1">
+        <Button size="sm" onClick={onClose}>
+          I've saved it
+        </Button>
+      </div>
+    </DialogShell>
+  );
+}
+
+// ── Webhooks section (F3.5b-ii) ────────────────────────────────────────────
+
+interface WebhooksSectionProps {
+  authenticated: boolean;
+}
+
+/**
+ * F3.5b-ii — outbound webhook subscription management. Webhooks are
+ * org-scoped, so the section starts with an org picker (populated from
+ * `cloud_list_orgs`). The selected org's subscriptions show below
+ * with create / test / delete actions.
+ *
+ * SOLID note: mirrors `ApiKeysSection` (F3.4b) with the addition of
+ * the org-picker. The CreateDialog returns a one-time HMAC secret
+ * displayed via `ShowWebhookSecretDialog` — identical pattern to
+ * `ShowApiKeyDialog`.
+ */
+function WebhooksSection({ authenticated }: WebhooksSectionProps) {
+  const [orgs, setOrgs] = useState<CloudOrg[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState<string>("");
+  const [subs, setSubs] = useState<CloudWebhookSub[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createdSub, setCreatedSub] = useState<CloudCreatedWebhookSub | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<string | null>(null);
+  const [busy, setBusy] = useState<null | "list-orgs" | "list-subs" | "delete" | "test">(null);
+  const [testResult, setTestResult] = useState<{
+    subId: string;
+    outcome: CloudWebhookTestResult;
+  } | null>(null);
+
+  // Load orgs once the user authenticates; the picker only renders
+  // when there's at least one org. v0 stops short of remembering the
+  // user's most-recently-used org — refreshing the section just
+  // re-defaults to the first one in the list.
+  useEffect(() => {
+    if (!authenticated) {
+      setOrgs([]);
+      setSelectedOrgId("");
+      return;
+    }
+    let cancelled = false;
+    setBusy("list-orgs");
+    void cloudClient
+      .listOrgs()
+      .then((list) => {
+        if (cancelled) return;
+        setOrgs(list);
+        if (list.length > 0 && !selectedOrgId) {
+          setSelectedOrgId(list[0].id);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setOrgs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // selectedOrgId intentionally NOT in deps — only fetch orgs once
+    // per auth flip, not on every selection change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated]);
+
+  const refreshSubs = useCallback(async () => {
+    if (!authenticated || !selectedOrgId) {
+      setSubs([]);
+      return;
+    }
+    setBusy("list-subs");
+    setListError(null);
+    try {
+      setSubs(await cloudClient.listWebhookSubs(selectedOrgId));
+    } catch (e) {
+      setListError(String(e));
+      setSubs([]);
+    } finally {
+      setBusy(null);
+    }
+  }, [authenticated, selectedOrgId]);
+
+  useEffect(() => {
+    void refreshSubs();
+  }, [refreshSubs]);
+
+  const onDelete = async () => {
+    if (!deleteCandidate || !selectedOrgId) return;
+    setBusy("delete");
+    try {
+      await cloudClient.deleteWebhookSub(selectedOrgId, deleteCandidate);
+      setDeleteCandidate(null);
+      await refreshSubs();
+    } catch (e) {
+      setListError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onTest = async (subId: string) => {
+    if (!selectedOrgId) return;
+    setBusy("test");
+    try {
+      const outcome = await cloudClient.testWebhookSub(selectedOrgId, subId);
+      setTestResult({ subId, outcome });
+      // Auto-clear after a few seconds so a successful test doesn't
+      // permanently dim other rows' visual state.
+      window.setTimeout(() => {
+        setTestResult((prev) => (prev?.subId === subId ? null : prev));
+      }, 5000);
+      await refreshSubs(); // refresh last_delivered_at on success
+    } catch (e) {
+      setListError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const selectedOrgName =
+    orgs.find((o) => o.id === selectedOrgId)?.name ?? "(select an org)";
+
+  return (
+    <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
+      <div className="flex items-center justify-between">
+        <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Webhooks
+        </h3>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={refreshSubs}
+            disabled={!authenticated || !selectedOrgId || busy === "list-subs"}
+          >
+            {busy === "list-subs" ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            Refresh
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => setCreateOpen(true)}
+            disabled={!authenticated || !selectedOrgId}
+          >
+            <Plus className="size-3.5" />
+            New webhook
+          </Button>
+        </div>
+      </div>
+
+      <p className="text-xs text-text-muted">
+        HMAC-SHA256 signed POSTs fire when audit events in the
+        selected org match the subscription's filter (
+        <span className="font-mono">share.granted</span>,{" "}
+        <span className="font-mono">api_key.created</span>,{" "}
+        <span className="font-mono">corpus.*</span>, …). Use{" "}
+        <span className="font-mono">*</span> to subscribe to every audit
+        action.
+      </p>
+
+      {!authenticated && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          Sign in to manage webhooks.
+        </div>
+      )}
+
+      {authenticated && orgs.length === 0 && !listError && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          {busy === "list-orgs"
+            ? "Loading orgs…"
+            : "You're not in any orgs yet — webhooks are org-scoped."}
+        </div>
+      )}
+
+      {authenticated && orgs.length > 0 && (
+        <label className="flex flex-col gap-1.5">
+          <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+            Org
+          </span>
+          <select
+            value={selectedOrgId}
+            onChange={(e) => setSelectedOrgId(e.target.value)}
+            className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+          >
+            {orgs.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name} ({o.role})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {listError && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-text font-mono">
+          {listError}
+        </div>
+      )}
+
+      {authenticated && selectedOrgId && subs.length === 0 && !listError && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          No webhooks for <span className="font-mono">{selectedOrgName}</span>.
+          Click <span className="font-mono">New webhook</span> to mint one.
+        </div>
+      )}
+
+      {subs.length > 0 && (
+        <WebhooksTable
+          subs={subs}
+          busy={busy === "delete" || busy === "test"}
+          testResult={testResult}
+          onDeleteRequest={setDeleteCandidate}
+          onTest={(id) => void onTest(id)}
+        />
+      )}
+
+      {createOpen && selectedOrgId && (
+        <CreateWebhookDialog
+          orgId={selectedOrgId}
+          onClose={() => setCreateOpen(false)}
+          onSuccess={(created) => {
+            setCreateOpen(false);
+            setCreatedSub(created);
+            void refreshSubs();
+          }}
+        />
+      )}
+
+      {createdSub && (
+        <ShowWebhookSecretDialog
+          created={createdSub}
+          onClose={() => setCreatedSub(null)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={!!deleteCandidate}
+        title="Delete webhook?"
+        body={
+          <>
+            The receiver will stop receiving events immediately. If you
+            need it back, mint a new subscription — secrets can't be
+            recovered after deletion.
+          </>
+        }
+        confirmLabel="Delete"
+        cancelLabel="Keep"
+        tone="danger"
+        onConfirm={() => void onDelete()}
+        onCancel={() => setDeleteCandidate(null)}
+      />
+    </section>
+  );
+}
+
+interface WebhooksTableProps {
+  subs: CloudWebhookSub[];
+  busy: boolean;
+  testResult: { subId: string; outcome: CloudWebhookTestResult } | null;
+  onDeleteRequest: (id: string) => void;
+  onTest: (id: string) => void;
+}
+
+function WebhooksTable({
+  subs,
+  busy,
+  testResult,
+  onDeleteRequest,
+  onTest,
+}: WebhooksTableProps) {
+  return (
+    <div className="rounded-md border border-border-soft bg-surface overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-surface-overlay border-b border-border-soft">
+          <tr className="text-left text-xs font-mono uppercase tracking-[0.08em] text-text-muted">
+            <th className="px-3 py-2 font-semibold">URL</th>
+            <th className="px-3 py-2 font-semibold">Filter</th>
+            <th className="px-3 py-2 font-semibold">Last delivered</th>
+            <th className="px-3 py-2 font-semibold w-28 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {subs.map((s) => {
+            const tr = testResult?.subId === s.id ? testResult.outcome : null;
+            return (
+              <tr key={s.id} className="border-b border-border-soft last:border-b-0">
+                <td className="px-3 py-2 align-top">
+                  <div className="font-mono text-xs text-text break-all">{s.url}</div>
+                  {tr && (
+                    <div className="text-xs mt-1">
+                      {tr.succeeded ? (
+                        <span className="text-accent">
+                          ✓ delivered ({tr.attempts} attempt
+                          {tr.attempts === 1 ? "" : "s"})
+                        </span>
+                      ) : (
+                        <span className="text-danger">
+                          ✗ failed (status {tr.final_status ?? "—"} after{" "}
+                          {tr.attempts} attempts)
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-2 align-top">
+                  <span className="font-mono text-xs text-text-muted">
+                    {s.event_filter}
+                  </span>
+                </td>
+                <td className="px-3 py-2 align-top">
+                  <span className="text-xs text-text-muted">
+                    {s.last_delivered_at?.slice(0, 10) ?? "never"}
+                  </span>
+                </td>
+                <td className="px-3 py-2 align-top">
+                  <div className="flex justify-end gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => onTest(s.id)}
+                      title="Send synthetic test payload"
+                    >
+                      <Send className="size-3.5" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => onDeleteRequest(s.id)}
+                      title="Delete"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+interface CreateWebhookDialogProps {
+  orgId: string;
+  onClose: () => void;
+  onSuccess: (created: CloudCreatedWebhookSub) => void;
+}
+
+function CreateWebhookDialog({ orgId, onClose, onSuccess }: CreateWebhookDialogProps) {
+  const [url, setUrl] = useState("");
+  const [eventFilter, setEventFilter] = useState("*");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const onSubmit = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const created = await cloudClient.createWebhookSub(
+        orgId,
+        url.trim(),
+        eventFilter.trim() || undefined,
+      );
+      onSuccess(created);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DialogShell title="New webhook" onClose={onClose}>
+      <LabeledInput
+        label="Receiver URL"
+        placeholder="https://hooks.slack.com/services/…"
+        value={url}
+        onChange={setUrl}
+        type="url"
+      />
+      <LabeledInput
+        label="Event filter"
+        placeholder="* or share.granted,api_key.created"
+        value={eventFilter}
+        onChange={setEventFilter}
+      />
+      <p className="text-xs text-text-muted -mt-1">
+        <span className="font-mono">*</span> admits every audit event.
+        Otherwise a comma-separated list of exact action names
+        (<span className="font-mono">share.granted</span>,{" "}
+        <span className="font-mono">corpus.created</span>, …). v0 doesn't
+        support wildcards inside action names.
+      </p>
+      {error && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
+          {error}
+        </div>
+      )}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button size="sm" variant="ghost" onClick={onClose} disabled={busy}>
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => void onSubmit()}
+          disabled={busy || !url.trim()}
+        >
+          {busy ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Webhook className="size-3.5" />
+          )}
+          Mint subscription
+        </Button>
+      </div>
+    </DialogShell>
+  );
+}
+
+interface ShowWebhookSecretDialogProps {
+  created: CloudCreatedWebhookSub;
+  onClose: () => void;
+}
+
+function ShowWebhookSecretDialog({
+  created,
+  onClose,
+}: ShowWebhookSecretDialogProps) {
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(created.secret);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Best-effort; user can still manually select + copy.
+    }
+  };
+
+  return (
+    <DialogShell
+      title="Webhook secret minted"
+      onClose={onClose}
+      hint={
+        "Save this signing secret now — the cloud cannot show it again. " +
+        "Your receiver verifies inbound deliveries by recomputing " +
+        "HMAC-SHA256(secret, timestamp + \".\" + body) and comparing " +
+        "to the X-Ministr-Signature header."
+      }
+    >
+      <div className="flex flex-col gap-1">
+        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          {created.url}
+        </span>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 rounded-md border border-border bg-surface-overlay px-3 py-2 font-mono text-xs text-text break-all">
+            {created.secret}
+          </code>
+          <Button size="sm" variant="outline" onClick={() => void onCopy()}>
+            {copied ? (
+              <Check className="size-3.5" />
+            ) : (
+              <Copy className="size-3.5" />
+            )}
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        </div>
+      </div>
+      <p className="text-xs text-text-muted">
+        Filter: <span className="font-mono">{created.event_filter}</span>
       </p>
       <div className="flex justify-end gap-2 pt-1">
         <Button size="sm" onClick={onClose}>
