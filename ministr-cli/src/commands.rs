@@ -803,6 +803,22 @@ pub(crate) async fn cmd_serve_http(
                 "orgs endpoints mounted — POST /api/v1/orgs, GET /api/v1/orgs, GET /api/v1/orgs/{{id}}/members, POST /api/v1/orgs/{{id}}/invites"
             );
 
+            // F3.3a — per-org usage dashboard endpoint. Aggregates
+            // `usage_rollups` across `org_members`. Owner/admin only.
+            // Mounted behind `ministr:read` alongside the orgs router.
+            let org_usage_router = ministr_cloud::org_usage_routes(
+                ministr_cloud::OrgUsageState::from_arc(Arc::clone(pool)),
+            );
+            let org_usage_protected = ministr_mcp::auth::scope_protected_router(
+                org_usage_router,
+                store.clone(),
+                "ministr:read",
+            );
+            composed = composed.merge(org_usage_protected);
+            tracing::info!(
+                "org usage endpoint mounted — GET /api/v1/orgs/{{id}}/usage"
+            );
+
             // F3.4a — service-account API keys (mint, list, revoke).
             // Cloud-only: backed by the `api_keys` table. Mounted behind
             // `ministr:read` because every action targets the caller's

@@ -27,6 +27,7 @@ pub mod invites;
 pub mod repo;
 pub mod routes;
 pub mod seats;
+pub mod usage;
 
 pub use corpus_acl::{
     AclEntry, acl_grants_access, corpus_owner_tenant, list_acl, revoke_org_share, share_with_org,
@@ -40,3 +41,7 @@ pub use repo::{
 };
 pub use routes::{OrgsState, orgs_routes};
 pub use seats::{SeatsSyncError, SeatsSyncOutcome, count_org_members, sync_org_seats};
+pub use usage::{
+    DEFAULT_USAGE_DAYS, OrgPartialRow, OrgRollupRow, OrgUsageQuery, OrgUsageResponse,
+    OrgUsageState, fetch_org_usage, org_usage_routes,
+};
