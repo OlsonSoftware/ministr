@@ -36,7 +36,8 @@ pub use index_job_sink::{
 };
 pub use tenant::TenantId;
 pub use tenant_filter::{
-    DefaultCorpusFuture, TenantCorpusFilter, TenantFilterError, TenantFilterFuture,
+    DefaultCorpusFuture, TenantCorpusFilter, TenantCorpusVisibility, TenantFilterError,
+    TenantFilterFuture, VisibleCorpusFuture,
 };
 pub use usage::UsageSink;
 

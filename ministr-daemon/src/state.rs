@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use ministr_api::activity::ActivityEvent;
 use ministr_api::coherence::CoherenceEvent;
-use ministr_api::{BlobSink, IndexJobSink, InstallationTokenMinter, UsageSink};
+use ministr_api::{
+    BlobSink, IndexJobSink, InstallationTokenMinter, TenantCorpusVisibility, UsageSink,
+};
 use tokio::sync::RwLock;
 
 use crate::inference::{ClaudeCliInference, Inference};
@@ -77,6 +79,13 @@ pub struct AppState {
     /// inline; the progress SSE polls `latest_for_corpus` against
     /// Postgres instead of the in-memory `IngestionProgress`.
     pub index_job_sink: Option<Arc<dyn IndexJobSink>>,
+    /// F3.2-iii — tenant-aware corpus visibility filter. `Some` when
+    /// cloud mode has wired `ministr_cloud::PostgresTenantCorpusFilter`
+    /// (the same struct implements both `TenantCorpusFilter` for the
+    /// MCP-side gate and this trait for the daemon-side list). `None`
+    /// on self-hosted serve where every authenticated caller sees
+    /// every corpus.
+    pub corpus_visibility: Option<Arc<dyn TenantCorpusVisibility>>,
 }
 
 impl AppState {
@@ -102,6 +111,7 @@ impl AppState {
             installation_minter: None,
             blob_sink: None,
             index_job_sink: None,
+            corpus_visibility: None,
         }
     }
 
@@ -125,6 +135,7 @@ impl AppState {
             installation_minter: None,
             blob_sink: None,
             index_job_sink: None,
+            corpus_visibility: None,
         }
     }
 
@@ -160,6 +171,21 @@ impl AppState {
     #[must_use]
     pub fn with_index_job_sink(mut self, sink: Arc<dyn IndexJobSink>) -> Self {
         self.index_job_sink = Some(sink);
+        self
+    }
+
+    /// F3.2-iii — wire a tenant-aware corpus visibility filter for
+    /// `GET /api/v1/corpora`. When set, the list handler reads the
+    /// `Tenant` request extension + asks the filter for the set of
+    /// visible `corpus_id`s, then intersects with `registry.list()`.
+    /// When unset (self-hosted serve), the list returns every
+    /// in-memory corpus — matches the pre-F3.2-iii behaviour.
+    #[must_use]
+    pub fn with_corpus_visibility(
+        mut self,
+        visibility: Arc<dyn TenantCorpusVisibility>,
+    ) -> Self {
+        self.corpus_visibility = Some(visibility);
         self
     }
 

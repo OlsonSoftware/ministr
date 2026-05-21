@@ -860,10 +860,45 @@ async fn append_linked_entry(
     Ok(true)
 }
 
-async fn list_corpora(State(state): State<AppState>) -> impl IntoResponse {
-    Json(ListCorporaResponse {
-        corpora: state.registry.list().await,
-    })
+async fn list_corpora(
+    State(state): State<AppState>,
+    full_tenant: Option<axum::extract::Extension<ministr_api::TenantId>>,
+) -> impl IntoResponse {
+    let all = state.registry.list().await;
+
+    // F3.2-iii — when cloud mode wires a visibility filter AND the
+    // auth middleware populated a TenantId, filter the list to own +
+    // ACL-granted corpora. Self-hosted serve has no filter and no
+    // TenantId; the list returns every in-memory corpus.
+    let filtered = match (&state.corpus_visibility, full_tenant) {
+        (Some(filter), Some(axum::extract::Extension(tenant_id))) => {
+            match filter.visible_corpus_ids(tenant_id.as_str()).await {
+                Ok(Some(allow)) => {
+                    let allow_set: std::collections::HashSet<&str> =
+                        allow.iter().map(String::as_str).collect();
+                    all.into_iter()
+                        .filter(|c| allow_set.contains(c.id.as_str()))
+                        .collect()
+                }
+                Ok(None) => all,
+                Err(e) => {
+                    // Fail closed on storage errors: surface an empty
+                    // list rather than leak cross-tenant rows. The
+                    // tracing line above is the operator-visible
+                    // signal.
+                    tracing::warn!(
+                        error = %e,
+                        subject = %tenant_id.as_str(),
+                        "corpus visibility lookup failed — failing closed with empty list",
+                    );
+                    Vec::new()
+                }
+            }
+        }
+        _ => all,
+    };
+
+    Json(ListCorporaResponse { corpora: filtered })
 }
 
 async fn corpus_status(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
