@@ -231,6 +231,68 @@ async fn list_handler(
     Ok(Json(AuditListResponse { rows }))
 }
 
+/// Default audit-retention window in days. The F3.7c cron drops
+/// rows older than this on a daily schedule. Per §3 of ROADMAP.md
+/// Team-tier audit ships at "90-day retention"; the F5.3 immutable
+/// audit-log feature inherits the same `audit_events` shape but
+/// retains forever.
+pub const DEFAULT_AUDIT_RETENTION_DAYS: u32 = 90;
+
+/// Outcome of one [`prune_audit_events`] pass.
+#[derive(Debug, Clone, Copy)]
+pub struct PruneOutcome {
+    /// Rows deleted by this pass.
+    pub deleted: u64,
+    /// How long the DELETE took. Tracked so the cron's structured-log
+    /// dashboard can alarm on a runaway pass (large catch-up after a
+    /// missed run, etc.).
+    pub elapsed: std::time::Duration,
+    /// Days kept (the cutoff). Echoes the caller's input so the cron's
+    /// log message is self-describing without a second lookup.
+    pub retention_days: u32,
+}
+
+/// F3.7c — drop `audit_events` rows older than `retention_days`. The
+/// daily Container Apps Job invokes this via the `ministr audit prune`
+/// CLI subcommand; manual local runs are equivalent.
+///
+/// Implemented as a single statement so Postgres can stream the
+/// delete plan without a temp result set. The partial index on `ts`
+/// is not created today (audit volume is tiny in v0); add one when
+/// daily prune wall-clock exceeds a few hundred ms.
+///
+/// # Errors
+///
+/// [`AuditError::GetConn`] when the pool refuses a connection,
+/// [`AuditError::Sql`] when the DELETE itself fails.
+pub async fn prune_audit_events(
+    pool: &Pool,
+    retention_days: u32,
+) -> Result<PruneOutcome, AuditError> {
+    let client = pool
+        .get()
+        .await
+        .map_err(|e| AuditError::GetConn(format!("prune_audit_events: {e}")))?;
+    let started = std::time::Instant::now();
+    // `make_interval(days => $1::integer)` is Postgres' interval-from-int
+    // helper; using it (rather than concatenating into a literal) keeps
+    // the value strictly parameterised so even a bogus retention number
+    // can never inject SQL.
+    let deleted = client
+        .execute(
+            "DELETE FROM audit_events
+             WHERE ts < now() - make_interval(days => $1::integer)",
+            &[&i32::try_from(retention_days).unwrap_or(i32::MAX)],
+        )
+        .await
+        .map_err(|e| AuditError::Sql(format!("prune audit_events: {e}")))?;
+    Ok(PruneOutcome {
+        deleted,
+        elapsed: started.elapsed(),
+        retention_days,
+    })
+}
+
 /// Direct read used by the list handler. Exposed `pub` for the
 /// eventual /orgs/{slug}/audit web page to call from the same crate.
 ///
@@ -350,5 +412,32 @@ mod tests {
         // Compile-time check that PostgresAuditSink implements AuditSink.
         fn assert_impl<T: AuditSink>() {}
         assert_impl::<PostgresAuditSink>();
+    }
+
+    #[test]
+    fn default_retention_is_team_tier_window() {
+        // ROADMAP §3 Team tier ships "audit-light, 90-day retention".
+        // If this constant ever changes, the F5.3 immutable-audit feature
+        // (which inherits the same audit_events shape) must also be
+        // re-checked.
+        assert_eq!(DEFAULT_AUDIT_RETENTION_DAYS, 90);
+    }
+
+    #[test]
+    fn prune_outcome_serialises_durations_safely() {
+        // Compile-time guard: PruneOutcome's elapsed is a Duration —
+        // converting to_ms() via `u64::try_from(d.as_millis())` is the
+        // canonical pattern used by `cmd_audit_prune` for tracing.
+        // This test catches a regression where someone replaces
+        // `Duration` with a type that loses the ::as_millis() API.
+        let o = PruneOutcome {
+            deleted: 7,
+            elapsed: std::time::Duration::from_millis(42),
+            retention_days: 90,
+        };
+        let ms = u64::try_from(o.elapsed.as_millis()).unwrap();
+        assert_eq!(ms, 42);
+        assert_eq!(o.deleted, 7);
+        assert_eq!(o.retention_days, 90);
     }
 }
